@@ -3,11 +3,9 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"p202/internal/api"
-	"p202/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -87,7 +85,7 @@ var rotatorCreateCmd = &cobra.Command{
 		}
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
-			return validationError("required flag --name is missing")
+			return fmt.Errorf("required flag --name is missing")
 		}
 		body := map[string]interface{}{"name": name}
 		for _, f := range []string{"default_url", "default_campaign", "default_lp"} {
@@ -121,7 +119,7 @@ var rotatorUpdateCmd = &cobra.Command{
 			}
 		}
 		if len(body) == 0 {
-			return validationError("no fields specified; pass at least one flag to update")
+			return fmt.Errorf("no fields specified; pass at least one flag to update")
 		}
 		data, err := c.Put("rotators/"+args[0], body)
 		if err != nil {
@@ -135,76 +133,15 @@ var rotatorUpdateCmd = &cobra.Command{
 var rotatorDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a redirector/rotator and all its routing rules",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.MaximumNArgs(0)(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	},
+	Args:  deleteArgsValidator,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one ID").WithHint("Comma-separate internal ids, e.g. --ids 12,13,14 (find them with the matching `... list`).")
-			}
-
-			if dryRun {
-				return renderDeletePreviews(c, "rotators", idList)
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, "rotators", idList)
-			}
-
-			force, _ := cmd.Flags().GetBool("force")
-			if !force && !confirmPrompt("Delete %d rotators and all their rules?", len(idList)) {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-
-			deleted := 0
-			failed := 0
-			for _, id := range idList {
-				if err := c.Delete("rotators/" + id); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete rotator %s: %v\n", id, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d rotators.", deleted, len(idList))
-			if failed > 0 {
-				return partialFailureError("failed to delete %d rotators", failed)
-			}
-			return nil
-		}
-
-		if dryRun {
-			return renderDeletePreviews(c, "rotators", []string{args[0]})
-		}
-		if api.StagedMode() {
-			return stageDeletes(c, "rotators", []string{args[0]})
-		}
-
-		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete rotator %s and all its rules?", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
-		}
-		if err := c.Delete("rotators/" + args[0]); err != nil {
-			return err
-		}
-		output.Success("Rotator %s deleted.", args[0])
-		return nil
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			endpoint:    "rotators",
+			noun:        "rotator",
+			plural:      "rotators",
+			cascadeOne:  " and all its rules",
+			cascadeMany: " and all their rules",
+		})
 	},
 }
 
@@ -219,7 +156,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		}
 		ruleName, _ := cmd.Flags().GetString("rule_name")
 		if ruleName == "" {
-			return validationError("required flag --rule_name is missing")
+			return fmt.Errorf("required flag --rule_name is missing")
 		}
 		body := map[string]interface{}{
 			"rule_name": ruleName,
@@ -230,7 +167,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return withHint(fmt.Errorf("invalid --criteria_json: %w", err), "Pass a JSON object; `p202 rotator criteria-values` shows accepted keys and values. Quote it so the shell keeps it intact.")
+				return fmt.Errorf("invalid --criteria_json: %w", err)
 			}
 			body["criteria"] = criteria
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
@@ -238,14 +175,14 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			// never has to know the exact "Name(CC)" value string.
 			value := countryCriteriaValue(code)
 			if value == "" {
-				return validationError("unknown country code %q", code).WithHint("Find codes with `p202 rotator criteria-values --search <name>`, or pass raw criteria via --criteria_json.")
+				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria_json", code)
 			}
 			body["criteria"] = []map[string]string{{"type": "country", "statement": "is", "value": value}}
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return withHint(fmt.Errorf("invalid --redirects_json: %w", err), "Pass a JSON array of {url, weight} objects; quote it so the shell keeps it intact.")
+				return fmt.Errorf("invalid --redirects_json: %w", err)
 			}
 			body["redirects"] = redirects
 		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
@@ -265,86 +202,19 @@ var rotatorRuleCreateCmd = &cobra.Command{
 var rotatorRuleDeleteCmd = &cobra.Command{
 	Use:   "rule-delete <rotator_id> <rule_id>",
 	Short: "Delete a routing rule from a redirector/rotator",
-	Args: func(cmd *cobra.Command, args []string) error {
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			return cobra.ExactArgs(1)(cmd, args)
-		}
-		return cobra.ExactArgs(2)(cmd, args)
-	},
+	Args:  deleteArgsValidatorN(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
+		rotatorID, err := validateID(args[0])
 		if err != nil {
 			return err
 		}
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		idsFlag, _ := cmd.Flags().GetString("ids")
-		if strings.TrimSpace(idsFlag) != "" {
-			idList, parseErr := parseIDList(idsFlag)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(idList) == 0 {
-				return validationError("--ids requires at least one rule ID").WithHint("Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator rules <rotator_id>`).")
-			}
-			rotatorID := args[0]
-			if dryRun {
-				return renderDeletePreviews(c, "rotators/"+rotatorID+"/rules", idList)
-			}
-			if api.StagedMode() {
-				return stageDeletes(c, "rotators/"+rotatorID+"/rules", idList)
-			}
-			force, _ := cmd.Flags().GetBool("force")
-			if !force {
-				fmt.Printf("Delete %d rules from rotator %s? [y/N] ", len(idList), rotatorID)
-				var answer string
-				fmt.Scanln(&answer)
-				answer = strings.ToLower(strings.TrimSpace(answer))
-				if answer != "y" && answer != "yes" {
-					fmt.Println("Cancelled.")
-					return nil
-				}
-			}
-
-			deleted := 0
-			failed := 0
-			for _, ruleID := range idList {
-				if err := c.Delete("rotators/" + rotatorID + "/rules/" + ruleID); err != nil {
-					failed++
-					fmt.Fprintf(os.Stderr, "Failed to delete rule %s from rotator %s: %v\n", ruleID, rotatorID, err)
-					continue
-				}
-				deleted++
-			}
-			output.Success("Deleted %d of %d rules from rotator %s.", deleted, len(idList), rotatorID)
-			if failed > 0 {
-				return partialFailureError("failed to delete %d rules", failed)
-			}
-			return nil
-		}
-
-		if dryRun {
-			return renderDeletePreviews(c, "rotators/"+args[0]+"/rules", []string{args[1]})
-		}
-		if api.StagedMode() {
-			return stageDeletes(c, "rotators/"+args[0]+"/rules", []string{args[1]})
-		}
-
-		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete rule %s from rotator %s? [y/N] ", args[1], args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-		}
-		if err := c.Delete("rotators/" + args[0] + "/rules/" + args[1]); err != nil {
-			return err
-		}
-		output.Success("Rule %s deleted from rotator %s.", args[1], args[0])
-		return nil
+		return runBulkOrSingleDelete(cmd, args[1:], deleteSpec{
+			endpoint:    "rotators/" + rotatorID + "/rules",
+			noun:        "rule",
+			plural:      "rules",
+			context:     " from rotator " + rotatorID,
+			idsHintText: "Comma-separate rule ids, e.g. --ids 3,4 (find them with `p202 rotator get <rotator_id>`).",
+		})
 	},
 }
 
@@ -369,7 +239,7 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		}
 		ruleID = strings.TrimSpace(ruleID)
 		if ruleID == "" {
-			return validationError("rule id is required (pass it as the second argument or via --rule_id)").WithHint("`p202 rotator rules <rotator_id>` lists rule ids.")
+			return fmt.Errorf("rule id is required (pass it as the second argument or via --rule_id)")
 		}
 
 		body := map[string]interface{}{}
@@ -385,19 +255,19 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return withHint(fmt.Errorf("invalid --criteria_json: %w", err), "Pass a JSON object; `p202 rotator criteria-values` shows accepted keys and values. Quote it so the shell keeps it intact.")
+				return fmt.Errorf("invalid --criteria_json: %w", err)
 			}
 			body["criteria"] = criteria
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return withHint(fmt.Errorf("invalid --redirects_json: %w", err), "Pass a JSON array of {url, weight} objects; quote it so the shell keeps it intact.")
+				return fmt.Errorf("invalid --redirects_json: %w", err)
 			}
 			body["redirects"] = redirects
 		}
 		if len(body) == 0 {
-			return validationError("no fields specified; pass at least one flag to update")
+			return fmt.Errorf("no fields specified; pass at least one flag to update")
 		}
 
 		data, err := c.Put("rotators/"+args[0]+"/rules/"+ruleID, body)

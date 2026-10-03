@@ -78,7 +78,9 @@ class ServerStateStore implements QuotaStore
         self::sortPayloadRecursive($payload);
         $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($json === false) {
-            return sha1((string)microtime(true));
+            // A random fallback hash would silently break idempotency replay
+            // and incremental-sync diffing (nothing would ever match again).
+            throw new DatabaseException('Failed to encode payload for hashing: ' . json_last_error_msg());
         }
         return sha1($json);
     }
@@ -464,27 +466,33 @@ class ServerStateStore implements QuotaStore
         if (!isset($job['job_id'])) {
             throw new DatabaseException('Job payload missing job_id');
         }
-        $job['updated_at'] = gmdate('c');
-        $this->writeJsonFileAtomic($this->jobPath((string)$job['job_id']), $job);
+        $this->mutateJsonFile($this->jobPath((string)$job['job_id']), [], static function (array $current) use ($job): array {
+            // The worker saves its whole in-memory copy after long-running
+            // work; a cancel flag set concurrently on disk must survive that.
+            if (!empty($current['cancel_requested'])) {
+                $job['cancel_requested'] = true;
+            }
+            $job['updated_at'] = gmdate('c');
+            return $job;
+        });
     }
 
     public function appendJobEvent(string $jobId, string $level, string $message, array $data = []): void
     {
-        $path = $this->jobEventsPath($jobId);
-        $events = $this->readJsonFile($path, ['items' => []]);
-        $events['items'][] = [
+        $event = [
             'event_id' => bin2hex(random_bytes(8)),
             'timestamp' => gmdate('c'),
             'level' => $level,
             'message' => $message,
             'data' => $this->sanitizeSensitive($data),
         ];
-
-        if (count($events['items']) > self::DEFAULT_RETENTION) {
-            $events['items'] = array_slice($events['items'], -self::DEFAULT_RETENTION);
-        }
-
-        $this->writeJsonFileAtomic($path, $events);
+        $this->mutateJsonFile($this->jobEventsPath($jobId), ['items' => []], static function (array $events) use ($event): array {
+            $events['items'][] = $event;
+            if (count($events['items']) > self::DEFAULT_RETENTION) {
+                $events['items'] = array_slice($events['items'], -self::DEFAULT_RETENTION);
+            }
+            return $events;
+        });
     }
 
     public function listJobEvents(string $jobId, int $offset, int $limit): array
@@ -686,15 +694,14 @@ class ServerStateStore implements QuotaStore
 
     public function appendAudit(array $record): void
     {
-        $path = $this->auditPath();
-        $audit = $this->readJsonFile($path, ['items' => []]);
-        $audit['items'][] = $this->sanitizeSensitive($record);
-
-        if (count($audit['items']) > self::DEFAULT_RETENTION) {
-            $audit['items'] = array_slice($audit['items'], -self::DEFAULT_RETENTION);
-        }
-
-        $this->writeJsonFileAtomic($path, $audit);
+        $sanitized = $this->sanitizeSensitive($record);
+        $this->mutateJsonFile($this->auditPath(), ['items' => []], static function (array $audit) use ($sanitized): array {
+            $audit['items'][] = $sanitized;
+            if (count($audit['items']) > self::DEFAULT_RETENTION) {
+                $audit['items'] = array_slice($audit['items'], -self::DEFAULT_RETENTION);
+            }
+            return $audit;
+        });
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -783,35 +790,38 @@ class ServerStateStore implements QuotaStore
     public function issuePruneToken(string $pairKey, int $ttlSeconds = 600): string
     {
         $token = bin2hex(random_bytes(16));
-        $path = $this->dir('tokens') . '/prune.json';
-        $state = $this->readJsonFile($path, ['items' => []]);
-        $state['items'][$token] = [
+        $entry = [
             'pair_key' => $pairKey,
             'expires_at' => time() + $ttlSeconds,
         ];
-        $this->writeJsonFileAtomic($path, $state);
+        $this->mutateJsonFile($this->pruneTokensPath(), ['items' => []], static function (array $state) use ($token, $entry): array {
+            $state['items'][$token] = $entry;
+            return $state;
+        });
 
         return $token;
     }
 
     public function validatePruneToken(string $token, string $pairKey): bool
     {
-        $path = $this->dir('tokens') . '/prune.json';
-        $state = $this->readJsonFile($path, ['items' => []]);
-        $item = $state['items'][$token] ?? null;
-        if (!is_array($item)) {
-            return false;
-        }
-        if ((string)($item['pair_key'] ?? '') !== $pairKey) {
-            return false;
-        }
-        if ((int)($item['expires_at'] ?? 0) < time()) {
-            return false;
-        }
+        // Check-and-consume must happen under the state lock: the bare
+        // read-then-write version let two concurrent runs both spend the
+        // same single-use token (TOCTOU double-prune).
+        $valid = false;
+        $this->mutateJsonFile($this->pruneTokensPath(), ['items' => []], static function (array $state) use ($token, $pairKey, &$valid): array {
+            $item = $state['items'][$token] ?? null;
+            if (
+                is_array($item)
+                && (string)($item['pair_key'] ?? '') === $pairKey
+                && (int)($item['expires_at'] ?? 0) >= time()
+            ) {
+                $valid = true;
+                unset($state['items'][$token]);
+            }
+            return $state;
+        });
 
-        unset($state['items'][$token]);
-        $this->writeJsonFileAtomic($path, $state);
-        return true;
+        return $valid;
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -883,11 +893,12 @@ class ServerStateStore implements QuotaStore
     public function incrementMetric(string $name, int $delta = 1): void
     {
         $path = $this->dir('metrics') . '/metrics.json';
-        $state = $this->readJsonFile($path, ['counters' => []]);
-        $current = (int)($state['counters'][$name] ?? 0);
-        $state['counters'][$name] = $current + $delta;
-        $state['updated_at'] = gmdate('c');
-        $this->writeJsonFileAtomic($path, $state);
+        $this->mutateJsonFile($path, ['counters' => []], static function (array $state) use ($name, $delta): array {
+            $current = (int)($state['counters'][$name] ?? 0);
+            $state['counters'][$name] = $current + $delta;
+            $state['updated_at'] = gmdate('c');
+            return $state;
+        });
     }
 
     /** @return array<string, mixed> */
@@ -899,10 +910,8 @@ class ServerStateStore implements QuotaStore
     /** @param array<string, mixed> $meta */
     public function startSpan(string $name, array $meta = []): string
     {
-        $path = $this->dir('traces') . '/spans.json';
-        $state = $this->readJsonFile($path, ['items' => []]);
         $id = bin2hex(random_bytes(8));
-        $state['items'][] = [
+        $span = [
             'span_id' => $id,
             'name' => $name,
             'status' => 'running',
@@ -913,44 +922,48 @@ class ServerStateStore implements QuotaStore
             'ended_at_epoch' => null,
             'duration_ms' => null,
         ];
-        if (count($state['items']) > self::DEFAULT_RETENTION) {
-            $state['items'] = array_slice($state['items'], -self::DEFAULT_RETENTION);
-        }
-        $this->writeJsonFileAtomic($path, $state);
+        $this->mutateJsonFile($this->spansPath(), ['items' => []], static function (array $state) use ($span): array {
+            $state['items'][] = $span;
+            if (count($state['items']) > self::DEFAULT_RETENTION) {
+                $state['items'] = array_slice($state['items'], -self::DEFAULT_RETENTION);
+            }
+            return $state;
+        });
         return $id;
     }
 
     /** @param array<string, mixed> $meta */
     public function endSpan(string $spanId, string $status = 'ok', array $meta = []): void
     {
-        $path = $this->dir('traces') . '/spans.json';
-        $state = $this->readJsonFile($path, ['items' => []]);
-        if (!is_array($state['items'] ?? null)) {
-            return;
-        }
-
-        $now = time();
-        foreach ($state['items'] as &$item) {
-            if ((string)($item['span_id'] ?? '') !== $spanId) {
-                continue;
+        $resultMeta = $this->sanitizeSensitive($meta);
+        $this->mutateJsonFile($this->spansPath(), ['items' => []], static function (array $state) use ($spanId, $status, $resultMeta): array {
+            if (!is_array($state['items'] ?? null)) {
+                return $state;
             }
-            $item['status'] = $status;
-            $item['ended_at'] = gmdate('c');
-            $item['ended_at_epoch'] = $now;
-            $started = (int)($item['started_at_epoch'] ?? $now);
-            $item['duration_ms'] = max(0, ($now - $started) * 1000);
-            $item['result_meta'] = $this->sanitizeSensitive($meta);
-            break;
-        }
-        unset($item);
 
-        $this->writeJsonFileAtomic($path, $state);
+            $now = time();
+            foreach ($state['items'] as &$item) {
+                if ((string)($item['span_id'] ?? '') !== $spanId) {
+                    continue;
+                }
+                $item['status'] = $status;
+                $item['ended_at'] = gmdate('c');
+                $item['ended_at_epoch'] = $now;
+                $started = (int)($item['started_at_epoch'] ?? $now);
+                $item['duration_ms'] = max(0, ($now - $started) * 1000);
+                $item['result_meta'] = $resultMeta;
+                break;
+            }
+            unset($item);
+
+            return $state;
+        });
     }
 
     /** @return array<int, array<string, mixed>> */
     public function listSpans(?string $name = null, int $limit = 200): array
     {
-        $state = $this->readJsonFile($this->dir('traces') . '/spans.json', ['items' => []]);
+        $state = $this->readJsonFile($this->spansPath(), ['items' => []]);
         $items = is_array($state['items'] ?? null) ? $state['items'] : [];
         $filtered = [];
         foreach ($items as $item) {
@@ -1411,6 +1424,16 @@ class ServerStateStore implements QuotaStore
     private function manifestPath(string $pairKey): string
     {
         return $this->dir('manifests') . '/' . $this->slug($pairKey) . '.json';
+    }
+
+    private function pruneTokensPath(): string
+    {
+        return $this->dir('tokens') . '/prune.json';
+    }
+
+    private function spansPath(): string
+    {
+        return $this->dir('traces') . '/spans.json';
     }
 
     /**

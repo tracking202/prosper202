@@ -28,7 +28,7 @@ class LtvBreakdownCommand extends BaseCommand
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $result = $this->client()->get('ltv/breakdown', LtvSummaryCommand::collectLtvParams($input));
+        $result = $this->client()->get('ltv/breakdown', $this->collectOptions($input, LtvSummaryCommand::LTV_PARAMS));
         $this->render($output, $result, $input);
         return Command::SUCCESS;
     }

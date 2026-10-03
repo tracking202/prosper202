@@ -24,11 +24,15 @@ func Enabled() bool {
 }
 
 // Event represents a single telemetry event.
+//
+// duration_ms carries no omitempty on purpose: an operation that finishes inside
+// a millisecond has a genuine duration of 0, and dropping the field left log
+// consumers unable to tell "completed instantly" from "never measured".
 type Event struct {
 	Op       string            `json:"op"`
 	Entity   string            `json:"entity,omitempty"`
 	Action   string            `json:"action,omitempty"`
-	Duration float64           `json:"duration_ms,omitempty"`
+	Duration float64           `json:"duration_ms"`
 	Count    int               `json:"count,omitempty"`
 	Success  bool              `json:"success"`
 	Error    string            `json:"error,omitempty"`
@@ -68,10 +72,16 @@ func Timer(op, entity string) func(success bool, errMsg string) {
 	}
 }
 
+// appendTimestamp returns a copy of fields carrying the emission timestamp.
+// It must not write into the caller's map: Emit takes Event by value but the
+// Fields map is shared with the caller, so stamping it in place mutated data the
+// caller still owns — and would be an unsynchronized map write if that caller
+// built the event on one of the worker goroutines.
 func appendTimestamp(fields map[string]string) map[string]string {
-	if fields == nil {
-		fields = map[string]string{}
+	out := make(map[string]string, len(fields)+1)
+	for k, v := range fields {
+		out[k] = v
 	}
-	fields["ts"] = time.Now().UTC().Format(time.RFC3339)
-	return fields
+	out["ts"] = time.Now().UTC().Format(time.RFC3339)
+	return out
 }

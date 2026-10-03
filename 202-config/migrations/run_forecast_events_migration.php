@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 include_once dirname(__DIR__) . '/connect.php';
 
+use Prosper202\Database\Connection;
+
 if (!isset($db) || !($db instanceof mysqli)) {
     die("Error: Database connection not available\n");
 }
@@ -91,15 +93,14 @@ try {
         $dml = [];
     }
 
-    $db->begin_transaction();
-    $inTransaction = true;
-
-    foreach ($dml as $statement) {
-        $runStatement($statement);
-    }
-
-    $db->commit();
-    $inTransaction = false;
+    // Connection::transaction() does the checked begin, the checked commit and
+    // the rollback-on-throw; hand-rolling those here is how the unchecked
+    // begin_transaction() got in. run_ltv_backfill.php uses the same shape.
+    (new Connection($db))->transaction(static function () use ($dml, $runStatement): void {
+        foreach ($dml as $statement) {
+            $runStatement($statement);
+        }
+    });
 
     echo "\nMigration completed successfully!\n";
 
@@ -123,10 +124,8 @@ try {
         }
     }
 
-} catch (Exception $e) {
-    if (!empty($inTransaction)) {
-        $db->rollback();
-    }
+} catch (Throwable $e) {
+    // Connection::transaction() has already rolled back if the seed failed.
     echo "\nMigration failed: " . $e->getMessage() . "\n";
     exit(1);
 }

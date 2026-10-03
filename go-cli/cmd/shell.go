@@ -258,7 +258,14 @@ func emitBatchResult(command string, output []byte, err error) {
 			result["output"] = strings.TrimSpace(string(output))
 		}
 	}
-	line, _ := json.Marshal(result)
+	line, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		// Never drop a batch record silently: a consumer counting JSONL lines
+		// against commands would misread the run as having fewer results.
+		fmt.Fprintf(os.Stderr, "Error encoding result for %q: %v\n", command, marshalErr)
+		fmt.Printf("{\"command\":%q,\"success\":false,\"error\":\"result could not be encoded\"}\n", command)
+		return
+	}
 	fmt.Println(string(line))
 }
 
@@ -324,14 +331,21 @@ func handleBuiltin(line string, state *shell.State, currentProfile string) (bool
 			if cmdStr == "" {
 				return true, "", false, fmt.Errorf("syntax error: assignment to $%s requires a command", varName)
 			}
-			output, err := executeShellCommand(cmdStr)
+			output, err := executeShellCommandWith(cmdStr, true)
 			if err != nil {
 				printOutput(output) // partial output produced before the error
 				return true, "", false, err
 			}
-			if value, ok := normalizeValue(output); ok {
-				state.Set(varName, value)
+			value, ok := normalizeValue(output)
+			if !ok {
+				// Captured as JSON above, so empty stdout is unambiguous here: a
+				// void operation (delete, revoke) that reports success on stderr
+				// and has no result to store. An empty result SET is {"data":[]}
+				// and lands in state.Set below. Silently leaving $name unset
+				// would let the user believe the result was captured.
+				return true, "", false, fmt.Errorf("command produced no output to capture; $%s was not set", varName)
 			}
+			state.Set(varName, value)
 			printOutput(output)
 			return true, "", false, nil
 		}
@@ -424,6 +438,21 @@ func currentProfileName() string {
 // produced before the failure is returned alongside the error; the caller
 // decides how to surface it (printing it here would corrupt JSONL output).
 func executeShellCommand(line string) ([]byte, error) {
+	return executeShellCommandWith(line, false)
+}
+
+// executeShellCommandWith runs a shell line, optionally forcing JSON output.
+//
+// forceJSON exists for `$name = <command>`. In the session's default table
+// mode a list with zero rows writes NOTHING to stdout — renderTable sends
+// "No results." to stderr — so an empty capture is indistinguishable from a
+// void operation that has no result at all. Forcing JSON removes the
+// ambiguity at the source rather than making the assignment guess: an empty
+// result set becomes {"data":[]} and is stored, while a genuine void
+// operation still writes nothing and is reported. Variables hold JSON
+// anyway ($name pretty-prints the stored value), so this is also the format
+// the capture is for.
+func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	tokens, err := shell.TokenizeLine(line)
 	if err != nil {
 		return nil, fmt.Errorf("parse error: %w", err)
@@ -452,6 +481,11 @@ func executeShellCommand(line string) ([]byte, error) {
 	// it would only propose. PersistentPreRunE reads this variable on every
 	// Execute(), so it has to be restored like the others.
 	savedStaged := stagedWrites
+	// The command path the top-level error envelope and its hint name.
+	// PersistentPreRunE re-stamps this for every inner command, so without
+	// restoring it a failing `p202 shell` reports the LAST command the batch
+	// ran and points an agent at that command's --help instead of its own.
+	savedCommandPath := activeCommandPath
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
@@ -461,6 +495,14 @@ func executeShellCommand(line string) ([]byte, error) {
 		jsonOutput = savedJSON
 		csvOutput = savedCSV
 		tableOutput = savedTable
+	}
+	// A capture is JSON whatever the session's format: set here, before
+	// Execute(), it reads to resolveOutputMode as an explicit --json, so
+	// neither P202_OUTPUT, config nor agent detection re-derives it. The
+	// other formats are cleared, or a --csv session would make every
+	// capture a "--json and --csv" conflict.
+	if forceJSON {
+		jsonOutput, csvOutput, tableOutput = true, false, false
 	}
 	profileName = savedProfile
 	groupName = savedGroup
@@ -480,6 +522,7 @@ func executeShellCommand(line string) ([]byte, error) {
 	})
 
 	// Restore session-level state the command's own flags may have modified.
+	activeCommandPath = savedCommandPath
 	jsonOutput = savedJSON
 	csvOutput = savedCSV
 	tableOutput = savedTable
@@ -516,12 +559,19 @@ func captureStdout(fn func()) []byte {
 		done <- buf
 	}()
 
-	fn()
-
-	os.Stdout = oldStdout
-	_ = w.Close()
-	captured := <-done
-	_ = r.Close()
+	// Restore through a defer: if fn panics, leaving os.Stdout pointing at this
+	// pipe would silence every later command in the session and leak the reader
+	// goroutine. The panic still propagates after the restore runs.
+	var captured []byte
+	func() {
+		defer func() {
+			os.Stdout = oldStdout
+			_ = w.Close()
+			captured = <-done
+			_ = r.Close()
+		}()
+		fn()
+	}()
 	return captured
 }
 
@@ -554,11 +604,15 @@ func normalizeValue(output []byte) (json.RawMessage, bool) {
 	return json.RawMessage(quoted), true
 }
 
-// storeResult saves command output as the $_ variable.
+// storeResult saves command output as the $_ variable. A command that produced
+// no output sets $_ to null rather than leaving the previous command's value in
+// place, which would misreport stale data as the last result.
 func storeResult(state *shell.State, output []byte) {
 	if value, ok := normalizeValue(output); ok {
 		state.SetLast(value)
+		return
 	}
+	state.SetLast(json.RawMessage("null"))
 }
 
 func init() {

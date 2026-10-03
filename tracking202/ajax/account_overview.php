@@ -60,7 +60,7 @@ while ($user_row2 = $user_result->fetch_assoc()) {
 
 $cpv = $user_row['user_cpc_or_cpv'] === 'cpv';
 $canSee = isset($userObj) && $userObj->hasPermission('access_to_campaign_data');
-$masked = isset($userObj) && !$userObj->hasPermission('access_to_campaign_data') && empty($_SESSION['publisher']);
+$masked = \Prosper202\Report\CampaignDataMask::hidden();
 
 $de = new DataEngine();
 

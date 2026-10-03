@@ -33,7 +33,6 @@ $pageFlashes = [];
 $profileForm = [];
 $html = [];
 $mysql = [];
-$change_p202_customer_api_key = false;
 
 $utc = new DateTimeZone('UTC');
 $dt = new DateTime('now', $utc);
@@ -42,7 +41,7 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -148,22 +147,19 @@ if (isset($_POST['remove_rest_api_key'])) {
 }
 
 // The customer-dashboard hand-back: my.tracking202.com returns the person
-// here with their key in the query string. It is validated against the
-// dashboard before it is stored.
+// here with their key base64'd in the query string. A GET must not change
+// state: the dashboard cannot carry our session token, so writing here let
+// any site <img src="...account.php?customers_api_key=..."> rewrite the
+// account's key. The key is decoded and held; the customer-key form below is
+// filled with it, and the person saves it through update_p202_customer_api_key,
+// which checks the token and validates the key with the dashboard first.
+$pendingCustomerApiKey = null;
 if (!empty($_GET['customers_api_key'])) {
-	$mysql['p202_customer_api_key'] = $db->real_escape_string(base64_decode((string) $_GET['customers_api_key']));
-	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
-	$validate = validateCustomersApiKey($mysql['p202_customer_api_key']);
-	if ($validate['code'] != 200) {
-		$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
-	}
-	if (!$keyErrors) {
-		if ($db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'")) {
-			$change_p202_customer_api_key = true;
-		} else {
-			error_log('account.php: the customer API key was not saved: ' . $db->error);
-			$keyErrors['p202_customer_api_key'] = 'The key is valid but could not be saved; try again.';
-		}
+	$decodedCustomerApiKey = base64_decode((string) $_GET['customers_api_key'], true);
+	if ($decodedCustomerApiKey === false || trim($decodedCustomerApiKey) === '') {
+		$keyErrors['p202_customer_api_key'] = 'That API key link was malformed. Copy your key from my.tracking202.com and paste it in the field below.';
+	} else {
+		$pendingCustomerApiKey = trim($decodedCustomerApiKey);
 	}
 }
 
@@ -219,7 +215,7 @@ if (!$canPersonal) {
 }
 
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
@@ -746,7 +742,7 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 /** The stored value, or what the person typed on a refused submit. */
@@ -820,8 +816,8 @@ template_top('Personal Settings');
 
 <?php
 $extraFlashes = $pageFlashes;
-if ($change_p202_customer_api_key) {
-	$extraFlashes[] = ['kind' => 'ok', 'text' => 'Your Prosper202 customer API key is saved.'];
+if ($pendingCustomerApiKey !== null) {
+	$extraFlashes[] = ['kind' => 'info', 'text' => 'Your customer API key from my.tracking202.com is filled in under Prosper202 customer API key below. Press Save key to connect it to this account; nothing is saved until you do.'];
 }
 foreach (['clickserver_api_key', 'user_api_key', 'user_stats202_app_key'] as $keyField) {
 	if (isset($keyErrors[$keyField])) {
@@ -1066,7 +1062,7 @@ echo p202_account_render_flashes($extraFlashes);
 						<?php echo p202_account_token_field(); ?>
 						<label class="form-label" for="p202_customer_api_key">Customer API key</label>
 						<div class="input-group">
-							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['p202_customer_api_key'] ?? ($user_row['p202_customer_api_key'] ?? '')); ?>">
+							<input type="text" class="form-control<?php echo p202_account_invalid($keyErrors, 'p202_customer_api_key'); ?>" id="p202_customer_api_key" name="p202_customer_api_key" autocomplete="off" spellcheck="false" value="<?php echo $e($_POST['p202_customer_api_key'] ?? $pendingCustomerApiKey ?? ($user_row['p202_customer_api_key'] ?? '')); ?>">
 							<button class="btn btn-secondary" type="submit">Save key</button>
 						</div>
 						<div class="form-text">From your <a href="https://my.tracking202.com/api/customers/register" target="_blank" rel="noopener">Prosper202 customer dashboard</a>. It is checked with the dashboard before it is saved; save it empty to remove it.</div>

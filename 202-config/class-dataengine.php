@@ -1229,13 +1229,33 @@ class DisplayData
         'platform' => 'Platform',
     ];
 
+    /**
+     * Masks the variables excel download for a viewer without
+     * access_to_campaign_data. The 1.9.76 rewrite removed the HTML renderers
+     * this used to sit among and took it with them, which left
+     * downloadVariables() printing real clicks, leads, income, cost and net to
+     * exactly the users the permission withholds them from.
+     *
+     * The variable report nests its rows (network -> variable -> value) and
+     * carries totals under total_* keys, so the mask walks the whole structure
+     * for both prefixes.
+     */
+    private function maskVariableData($theData)
+    {
+        if (!\Prosper202\Report\CampaignDataMask::hidden()) {
+            return $theData;
+        }
+
+        return \Prosper202\Report\CampaignDataMask::applyDeep((array) $theData);
+    }
+
     public function downloadReport($reportType, $theData, $foundRows = '')
     {
-        global $userObj;
-
         $featureLabel = self::FEATURE_LABELS[$reportType] ?? 'Item';
 
         echo $featureLabel . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
+
+        $masked = \Prosper202\Report\CampaignDataMask::hidden();
 
         foreach (array_values((array) $theData) as $html) {
             // The trailing totals row carries only total_* keys; letting it
@@ -1271,13 +1291,8 @@ class DisplayData
                 continue;
             }
 
-            if ($userObj && !$userObj->hasPermission("access_to_campaign_data") && empty($_SESSION['publisher'])) {
-                $html['clicks'] = '?';
-                $html['click_out'] = '?';
-                $html['leads'] = '?';
-                $html['income'] = '?';
-                $html['cost'] = '?';
-                $html['net'] = '?';
+            if ($masked) {
+                $html = \Prosper202\Report\CampaignDataMask::apply($html);
             }
 
             echo $featureKey . "\t" . $html['clicks'] . "\t" . $html['click_out'] . "\t" . $html['ctr'] . "\t" . $html['leads'] . "\t" . $html['su_ratio'] . "\t" . $html['payout'] . "\t" . $html['epc'] . "\t" . $html['cpc'] . "\t" . $html['income'] . "\t" . $html['cost'] . "\t" . $html['net'] . "\t" . $html['roi'] . "\n";
@@ -1286,6 +1301,8 @@ class DisplayData
 
     public function downloadVariables($theData)
     {
+        $theData = $this->maskVariableData($theData);
+
         echo "Custom Variables" . "\t" . "Clicks" . "\t" . "Click Throughs" . "\t" . "LP CTR" . "\t" . "Leads" . "\t" . "S/U" . "\t" . "Payout" . "\t" . "EPC" . "\t" . "Avg CPC" . "\t" . "Income" . "\t" . "Cost" . "\t" . "Net" . "\t" . "ROI" . "\n";
 
         $rows = array_values((array) $theData);

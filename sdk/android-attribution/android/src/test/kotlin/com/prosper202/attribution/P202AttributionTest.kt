@@ -152,7 +152,11 @@ class P202AttributionTest {
         assertEquals(reference["expect"]!!.objOrNull!!["canonical"]!!.stringOrNull, canonical, "the canonical form the server fingerprints")
         assertEquals(reference["expect"]!!.objOrNull!!["fingerprint"]!!.stringOrNull, sha256Hex(canonical))
 
-        pumpUntil("the install to be recorded") { P202Attribution.installMatch != null }
+        // Wait for the listener, not for installMatch: the engine's thread
+        // persists the answer (which is what installMatch reads) and only then
+        // calls the listener, so a test woken by installMatch can read events
+        // before the callback has run.
+        pumpUntil("the install to be recorded") { events.isNotEmpty() }
         assertEquals("attributed", P202Attribution.installMatch)
         assertEquals(listOf("recorded attributed"), events.toList())
     }
@@ -221,7 +225,7 @@ class P202AttributionTest {
         val bodies = List(3) { server.next(seconds = 15).body }
 
         assertEquals(1, bodies.toSet().size, "every retry resends the persisted body byte for byte")
-        pumpUntil("the install to be recorded") { P202Attribution.installMatch != null }
+        pumpUntil("the install to be answered") { events.isNotEmpty() } // the listener, as above
         assertEquals("attributed", P202Attribution.installMatch)
         assertEquals(listOf("recorded attributed"), events.toList(), "neither the 429 nor the 503 was taken as an answer")
         assertNull(state()["install_attempts"], "the attempt count is cleared once answered")

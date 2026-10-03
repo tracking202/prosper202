@@ -40,6 +40,6 @@ echo p202_overview_metrics_table($data, [
     'label' => 'Day',
     'caption' => 'Your figures per day of the week',
     'key' => static fn (array $row): string => (string) ($row['click_time_from_disp'] ?? ''),
-    'masked' => isset($userObj) && !$userObj->hasPermission('access_to_campaign_data') && empty($_SESSION['publisher']),
+    'masked' => \Prosper202\Report\CampaignDataMask::hidden(),
     'empty' => p202_overview_empty(get_absolute_url()),
 ]);

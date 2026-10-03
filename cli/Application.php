@@ -141,7 +141,9 @@ class Application extends ConsoleApplication
                     'payout_mode' => 'How conversions set a click\'s value (replace|accumulate)',
                     'identity_signals' => 'Link clicks into multi-touch journeys (1|0)',
                 ],
-                'required' => ['aff_campaign_name', 'aff_campaign_url'],
+                // Must match CampaignsController::fields() required flags, or
+                // client-side validation passes and the server 422s anyway.
+                'required' => ['aff_campaign_name', 'aff_campaign_url', 'aff_campaign_payout', 'aff_network_id'],
                 'listParams' => ['filter[aff_network_id]' => 'Filter by affiliate network'],
             ],
             [

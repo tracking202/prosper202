@@ -12,7 +12,7 @@ declare(strict_types=1);
  * both sides sign json_encode(config) with PHP defaults), persists it to
  * 202_users_pref.lpo_bridge_config, and applies it to the local webhook
  * row: enabled_events maps onto subscribed_events ('*' = '' = subscribe-all)
- * and a hook_url change re-runs the SSRF guard (assertUrlAllowed) before the
+ * and a hook_url change re-runs the SSRF guard (OutboundUrlGuard::assertWellFormed) before the
  * URL is updated. This makes event routing and endpoints adjustable
  * server-side after install, without a Prosper202 release.
  *
@@ -167,7 +167,7 @@ foreach ($paired as $row) {
         // Apply a hook_url change, re-running the SSRF guard first.
         $newUrl = trim((string) ($config['hook_url'] ?? ''));
         if ($newUrl !== '' && $newUrl !== (string) $hook['webhook_url']) {
-            MysqlWebhookRepository::assertUrlAllowed($newUrl);
+            \Prosper202\Validation\OutboundUrlGuard::assertWellFormed($newUrl, 'hook_url');
             $update = $conn->prepareWrite(
                 'UPDATE 202_ltv_webhooks SET webhook_url = ?, updated_at = ? WHERE webhook_id = ? AND user_id = ?'
             );

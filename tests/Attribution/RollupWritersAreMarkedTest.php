@@ -63,6 +63,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Report/RollupDirty.php' => 'the marks themselves: they read the click rows they mark',
         '202-config/Click/MysqlClickRepository.php' => 'inserts a new click at the time of the request that records it; its hour is not summed until it is sealed',
         '202-config/connect2.php' => 'inserts new clicks (and new device models) at the time of the request that records them',
+        '202-config/Repository/Mysql/MysqlDeviceRepository.php' => 'inserts a device model only when its name is absent, while recording the click that uses it; no click already summed can join a row that did not exist',
+        '202-config/class-indexes.php' => 'INDEXES::get_device_id(): inserts a device model only when its name is absent, while recording the click that uses it; no click already summed can join a row that did not exist',
         '202-config/Conversion/Ledger/MysqlConversionLedger.php' => 'ledger rows change counted state through the outbox, and the worker marks every journey and credit it rewrites; the click columns it writes (click_lead, click_payout) are summed by no part of the rollup',
         '202-config/Conversion/MysqlConversionRepository.php' => 'ledger rows change counted state through the outbox, and the worker marks every journey and credit it rewrites; campaign_id and user_id, which the effective rows read, are written only when a row is inserted',
         '202-config/functions-upgrade.php' => 'upgrade rungs below the one that creates the rollup tables: no database they run on has a rollup yet',

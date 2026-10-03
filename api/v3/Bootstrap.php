@@ -32,6 +32,17 @@ final class Bootstrap
 
         require_once $configFile;
 
+        // 202-config.php assigns $dbhost/$dbuser/... at whatever scope includes
+        // it. When this method is the first include, those land in local scope
+        // and DB::getInstance()'s `global` lookups would find nothing — so
+        // export them. (When index.php already required the config at file
+        // scope, require_once is a no-op and the globals are already set.)
+        foreach (['dbhost', 'dbhostro', 'dbuser', 'dbpass', 'dbname'] as $var) {
+            if (isset($$var) && !isset($GLOBALS[$var])) {
+                $GLOBALS[$var] = $$var;
+            }
+        }
+
         $authHelpers = $root . '/202-config/functions-auth.php';
         if (file_exists($authHelpers)) {
             require_once $authHelpers;

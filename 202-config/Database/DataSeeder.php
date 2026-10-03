@@ -16,6 +16,24 @@ final readonly class DataSeeder
     }
 
     /**
+     * Run a seed statement on THIS connection and fail loudly.
+     *
+     * Every statement previously used the one-arg _mysqli_query() (which
+     * resolves `global $db`, not the installer's connection) and discarded the
+     * result. Under MYSQLI_REPORT_STRICT a query error is a false return, and
+     * seed()/seedVersion() are void, so INSTALL::install_databases() could not
+     * see a failure — an install with half-seeded roles reported success and
+     * locked the new super-user out.
+     */
+    private function run(string $sql): void
+    {
+        $result = _mysqli_query($this->connection, $sql);
+        if ($result === false) {
+            throw new \RuntimeException('Seeding failed: ' . $this->connection->error);
+        }
+    }
+
+    /**
      * Seed all initial data.
      */
     public function seed(): void
@@ -42,7 +60,7 @@ final readonly class DataSeeder
             ('Postback'),
             ('Raw'),
             ('Bot202 Facebook Pixel Assistant')";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -55,7 +73,7 @@ final readonly class DataSeeder
             (2, 'Mobile'),
             (3, 'Tablet'),
             (4, 'Bot')";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -70,7 +88,7 @@ final readonly class DataSeeder
             (4, 'Campaign optimizer'),
             (5, 'Campaign viewer'),
             (6, 'Publisher')";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -102,7 +120,7 @@ final readonly class DataSeeder
             (21, 'remove_tracker'),
             (22, 'view_attribution_reports'),
             (23, 'manage_attribution_models')";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -119,7 +137,7 @@ final readonly class DataSeeder
             (2, 22), (2, 23),
             (3, 12), (3, 14), (3, 15), (3, 22),
             (4, 12)";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -128,7 +146,7 @@ final readonly class DataSeeder
     public function seedClicksTotal(): void
     {
         $sql = "INSERT IGNORE INTO `" . TableRegistry::CLICKS_TOTAL . "` (`click_count`) VALUES (0)";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 
     /**
@@ -138,13 +156,13 @@ final readonly class DataSeeder
     {
         // Idempotent: 202_version is read as a single row (e.g. functions-upgrade.php),
         // so don't add a second row when an install retry re-runs the seed step.
-        $existing = _mysqli_query("SELECT 1 FROM " . TableRegistry::VERSION . " LIMIT 1");
+        $existing = _mysqli_query($this->connection, "SELECT 1 FROM " . TableRegistry::VERSION . " LIMIT 1");
         if ($existing instanceof \mysqli_result && $existing->num_rows > 0) {
             return;
         }
 
         $escapedVersion = $this->connection->real_escape_string($version);
         $sql = "INSERT INTO " . TableRegistry::VERSION . " SET version='{$escapedVersion}'";
-        _mysqli_query($sql);
+        $this->run($sql);
     }
 }

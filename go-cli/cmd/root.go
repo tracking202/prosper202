@@ -93,7 +93,7 @@ func Execute() {
 }
 
 // unknownSubcommandError refuses a word after a command group that names
-// none of its subcommands (`p202 campaign lsit`). Cobra checks this only at
+// none of its subcommands ("p202 campaign lsit"). Cobra checks this only at
 // the root; below it, it prints the group's help and exits 0, which reads as
 // success. Returns nil when args resolve to a command, or to a group with no
 // further words.

@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
 	"sort"
 	"strconv"
 
@@ -98,23 +100,26 @@ func breakevenVerdict(leads, cost, margin float64) string {
 	return "OVER-BID"
 }
 
+// round rounds to the given number of decimal places, half away from zero.
+// It delegates to math.Round rather than casting through int64: that cast is
+// undefined in Go once f*10^places exceeds the int64 range, and it turned NaN or
+// an infinity into an arbitrary finite number instead of preserving it.
 func round(f float64, places int) float64 {
-	p := 1.0
-	for i := 0; i < places; i++ {
-		p *= 10
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return f
 	}
-	return float64(int64(f*p+sign(f)*0.5)) / p
-}
-
-func sign(f float64) float64 {
-	if f < 0 {
-		return -1
-	}
-	return 1
+	p := math.Pow(10, float64(places))
+	return math.Round(f*p) / p
 }
 
 func rowsToJSON(rows []map[string]interface{}) []byte {
-	out, _ := json.Marshal(map[string]interface{}{"data": rows})
+	out, err := json.Marshal(map[string]interface{}{"data": rows})
+	if err != nil {
+		// Returning nil here would render as no output at all; render() reports
+		// the empty payload, so add the cause.
+		fmt.Fprintf(os.Stderr, "Error encoding rows for output: %v\n", err)
+		return nil
+	}
 	return out
 }
 

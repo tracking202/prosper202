@@ -18,6 +18,8 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
 require_once(substr(__DIR__, 0, -17) . '/202-config/functions-ui-overview.php');
 
+use Prosper202\Report\CampaignDataMask;
+
 AUTH::require_user();
 
 // Draw the view the page rendered, not whatever the stored filters say by
@@ -39,7 +41,11 @@ $userId = (int) $_SESSION['user_id'];
 $prefs = p202_report_prefs_load(new \Prosper202\Database\Connection($db), $userId);
 $click_filtered = \Prosper202\DataEngine\UserPrefFilters::showFilter((string) ($prefs['user_pref_show'] ?? ''));
 $cpv = ($prefs['user_cpc_or_cpv'] ?? '') === 'cpv';
-$canSee = isset($userObj) && $userObj->hasPermission('access_to_campaign_data');
+// The one masking decision every report surface shares (CampaignDataMask):
+// it exempts a publisher session, whose queries are already scoped to its own
+// rows, as every other report does -- the classic rotator page was the one
+// screen that masked publishers.
+$canSee = !CampaignDataMask::hidden();
 
 /**
  * Run one of the page's queries; a failure is the classic page's database

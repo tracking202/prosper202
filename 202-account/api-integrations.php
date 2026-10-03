@@ -146,8 +146,14 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
-$username = $user_row['username'];
+// A failed query must stop here, not read as an account with no settings:
+// this row supplies the install hash the DNI network lookup below sends
+// (CLAUDE.md #1). record_mysql_error() logs and exits.
+if (!$user_results) {
+	record_mysql_error($user_sql);
+}
+$user_row = $user_results->fetch_assoc() ?: [];
+$username = $user_row['username'] ?? '';
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
 // The network list comes from the DNI service; when it cannot be reached the
@@ -184,7 +190,10 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+if (!$user_result) {
+	record_mysql_error($user_sql);
+}
+$user_row = $user_result->fetch_assoc() ?: [];
 
 $cb_verified = $user_row['cb_verified'];
 

@@ -52,7 +52,7 @@ while ($row = $info_result->fetch_assoc()) {
 	$summary_form->addReportData($row);
 }
 
-$masked = isset($userObj) && !$userObj->hasPermission('access_to_campaign_data') && empty($_SESSION['publisher']);
+$masked = \Prosper202\Report\CampaignDataMask::hidden();
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 
 /**

@@ -25,6 +25,7 @@ $reportView = p202_report_view_begin(array_keys(p202_overview_groupings()));
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$user_sql = "SELECT * FROM 202_users_pref WHERE user_id=".$mysql['user_id'];
 	$user_result = _mysqli_query($user_sql);
+	if (!$user_result) { record_mysql_error($user_sql); }
 	$user_row = \Prosper202\DataEngine\ReportView::apply($user_result->fetch_assoc() ?? [], $_SESSION['user_id']);
 
 	$html['user_pref_group_1'] = htmlentities((string)($user_row['user_pref_group_1'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -47,7 +48,9 @@ $reportView = p202_report_view_begin(array_keys(p202_overview_groupings()));
 
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
-	$info_result = _mysqli_query($summary_form->getQuery($mysql['user_id'],$user_row));
+	$info_sql = $summary_form->getQuery($mysql['user_id'],$user_row);
+	$info_result = _mysqli_query($info_sql);
+	if (!$info_result) { record_mysql_error($info_sql); }
 	while ($row = $info_result->fetch_assoc()) {
 		$summary_form->addReportData($row);
 	}

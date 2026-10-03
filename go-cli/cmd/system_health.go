@@ -189,7 +189,7 @@ func runSystemHealth(cmd *cobra.Command, _ []string) error {
 		hint := api.HintFor(apiErr)
 		var notFound *api.APIError
 		if errors.As(apiErr, &notFound) && notFound.Status == http.StatusNotFound {
-			hint = "The URL answered, but not with the Prosper202 API at /api/v3/system/health. Check it with `p202 config get` and set the instance's base URL (without /api/v3) with `p202 config set-url`."
+			hint = "The URL answered, but not with the Prosper202 API at /api/v3/system/health. Check it with `p202 config show` and set the instance's base URL (without /api/v3) with `p202 config set-url`."
 		}
 		if cert.status == tlsStatusOK {
 			hint += fmt.Sprintf(" The TLS certificate for %s is fine (valid until %s), so the failure is past TLS.",

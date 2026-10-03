@@ -195,11 +195,11 @@ var userRoleAssignCmd = &cobra.Command{
 		}
 		roleIDStr := roleIDFrom(cmd, args)
 		if roleIDStr == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		roleID, err := strconv.Atoi(roleIDStr)
 		if err != nil {
-			return validationError("role_id must be an integer: %s", roleIDStr).WithHint("`p202 user roles` lists role ids.")
+			return validationError("role_id must be an integer: %s", roleIDStr).WithHint("`p202 user role list` lists role ids.")
 		}
 		data, err := c.Post("users/"+args[0]+"/roles", map[string]interface{}{
 			"role_id": roleID,
@@ -223,7 +223,7 @@ var userRoleRemoveCmd = &cobra.Command{
 		}
 		roleID := roleIDFrom(cmd, args)
 		if roleID == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user roles` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
@@ -340,14 +340,9 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			return stageDeletes(c, "users/"+args[0]+"/api-keys", []string{args[1]})
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force {
-			fmt.Printf("Delete API key for user %s? [y/N] ", args[0])
-			var answer string
-			fmt.Scanln(&answer)
-			if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
+		if !force && !confirmPrompt("Delete API key for user %s?", args[0]) {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
 		}
 		if err := c.Delete("users/" + args[0] + "/api-keys/" + args[1]); err != nil {
 			return err
@@ -451,11 +446,11 @@ var userAPIKeyRotateCmd = &cobra.Command{
 		deletedOld := false
 		if !keepOld {
 			if !force {
-				fmt.Printf("Delete old API key for user %s? [y/N] ", userID)
-				var answer string
-				fmt.Scanln(&answer)
-				if strings.ToLower(answer) != "y" && strings.ToLower(answer) != "yes" {
-					fmt.Println("Skipping old key deletion.")
+				// Prompt via the shared helper so the question and the outcome go
+				// to stderr; this command renders a JSON result on stdout, which
+				// the prompt text used to corrupt.
+				if !confirmPrompt("Delete old API key for user %s?", userID) {
+					fmt.Fprintln(os.Stderr, "Skipping old key deletion.")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
 						return err
@@ -472,13 +467,23 @@ var userAPIKeyRotateCmd = &cobra.Command{
 
 		configUpdated := false
 		configUpdateSkipped := false
+		configProfile := ""
 		if updateConfig {
 			cfg, err := configpkg.Load()
 			if err != nil {
 				return err
 			}
-			if cfg.APIKey == oldAPIKey || forceConfigUpdate {
-				cfg.APIKey = newAPIKey
+			// Compare and write through the resolved profile. This used to read
+			// the legacy top-level cfg.APIKey, which is empty for every
+			// profile-based config, so the match never fired and --update-config
+			// was a no-op unless --force-config-update was also passed.
+			p, resolvedName, err := cfg.EnsureProfile(profileName)
+			if err != nil {
+				return err
+			}
+			configProfile = resolvedName
+			if p.APIKey == oldAPIKey || forceConfigUpdate {
+				p.APIKey = newAPIKey
 				if err := cfg.Save(); err != nil {
 					return err
 				}
@@ -500,6 +505,7 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			"old_key_kept":          keepOld || !deletedOld,
 			"config_updated":        configUpdated,
 			"config_update_skipped": configUpdateSkipped,
+			"config_profile":        configProfile,
 		}
 		encoded, _ := json.Marshal(out)
 		render(encoded)

@@ -33,10 +33,15 @@ gen_secret() {
 # into the database volume on first start, so we never overwrite an existing one.
 if [ ! -f .env ]; then
     echo "Creating .env with a generated database password..."
+    # Create it 0600 BEFORE writing: this file holds the MySQL root password and
+    # the default umask would otherwise leave it world-readable (0644). install.sh
+    # already does this for the .env it writes; both paths must match.
+    (umask 077; : > .env)
     {
         echo "MYSQL_ROOT_PASSWORD=$(gen_secret)"
         echo "APP_ENV=development"
     } > .env
+    chmod 600 .env 2>/dev/null || true
 fi
 
 docker compose up -d --build

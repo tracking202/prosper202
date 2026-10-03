@@ -50,7 +50,7 @@ if ($breakdown === null) {
 }
 
 $click = $breakdown['click'];
-$masked = isset($userObj) && !$userObj->hasPermission('access_to_campaign_data') && empty($_SESSION['publisher']);
+$masked = \Prosper202\Report\CampaignDataMask::hidden();
 $money = static fn (?string $v): string => $masked ? '?' : ($v === null ? '—' : (string) dollar_format((float) $v));
 
 $tiles = [
