@@ -162,6 +162,54 @@ final class UpgradeBackupWarningTest extends TestCase
         return '';
     }
 
+    /**
+     * The value of a T_CONSTANT_ENCAPSED_STRING, escapes decoded as PHP does:
+     * '\update_needed', '\\update_needed' and "\x75pdate_needed" are each a
+     * name call_user_func() resolves. Such a token carries no interpolation,
+     * so every escape is one of these; any other backslash is kept.
+     */
+    private static function literalValue(string $literal): string
+    {
+        $literal = ltrim($literal, 'bB');
+        $body = substr($literal, 1, -1);
+        if ($literal[0] === "'") {
+            return (string) preg_replace('/\\\\([\\\\\'])/', '$1', $body);
+        }
+        $simple = ['n' => "\n", 'r' => "\r", 't' => "\t", 'v' => "\v", 'e' => "\e", 'f' => "\f",
+            '\\' => '\\', '$' => '$', '"' => '"'];
+
+        return (string) preg_replace_callback(
+            '/\\\\(?:([nrtvef\\\\$"])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u\{([0-9A-Fa-f]+)\})/',
+            static function (array $m) use ($simple): string {
+                if (($m[1] ?? '') !== '') {
+                    return $simple[$m[1]];
+                }
+                if (($m[2] ?? '') !== '') {
+                    return chr(octdec($m[2]) & 0xFF);
+                }
+                if (($m[3] ?? '') !== '') {
+                    return chr(hexdec($m[3]));
+                }
+                // UTF-8 by hand: PHP encodes a surrogate too, where mb_chr()
+                // returns false.
+                $cp = (int) hexdec($m[4]);
+                if ($cp < 0x80) {
+                    return chr($cp);
+                }
+                if ($cp < 0x800) {
+                    return chr(0xC0 | $cp >> 6) . chr(0x80 | $cp & 0x3F);
+                }
+                if ($cp < 0x10000) {
+                    return chr(0xE0 | $cp >> 12) . chr(0x80 | $cp >> 6 & 0x3F) . chr(0x80 | $cp & 0x3F);
+                }
+
+                return chr(0xF0 | $cp >> 18) . chr(0x80 | $cp >> 12 & 0x3F)
+                    . chr(0x80 | $cp >> 6 & 0x3F) . chr(0x80 | $cp & 0x3F);
+            },
+            $body
+        );
+    }
+
     public function testEveryCallerOfTheLadderIsAPageHereOrListedWithItsReason(): void
     {
         $callers = [];
@@ -196,11 +244,12 @@ final class UpgradeBackupWarningTest extends TestCase
     /**
      * NO_FORM's reason for functions.php, held to the tree. A call by name
      * (bare, \-qualified, namespace\-relative or imported with use function)
-     * or a quoted string naming it (a callable for call_user_func(),
-     * array_map(), ...) is a use; a quoted string that is an array key or a
-     * subscript is the session flag of the same name. A name assembled at
-     * runtime, spelled with an escape sequence, or written inside a heredoc
-     * or an interpolated string is not seen.
+     * or a quoted string whose value names it, with or without the leading
+     * backslash and however its escapes spell it (a callable for
+     * call_user_func(), array_map(), ...), is a use; a quoted string that is
+     * an array key or a subscript is the session flag of the same name. A
+     * name assembled at runtime, or written inside a heredoc or an
+     * interpolated string, is not seen.
      */
     public function testNothingCallsUpdateNeeded(): void
     {
@@ -214,7 +263,7 @@ final class UpgradeBackupWarningTest extends TestCase
                 $named = in_array($token[0], [T_STRING, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)
                     && in_array(strtolower($token[1]), $names, true);
                 $quoted = $token[0] === T_CONSTANT_ENCAPSED_STRING
-                    && strtolower(substr(ltrim($token[1], 'bB'), 1, -1)) === 'update_needed';
+                    && in_array(strtolower(self::literalValue($token[1])), ['update_needed', '\\update_needed'], true);
                 if (!$named && !$quoted) {
                     continue;
                 }
