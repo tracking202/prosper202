@@ -1286,19 +1286,24 @@ API call fails, the exit code is that error's (3 network, 4 server).
 
 `system cron` summarizes `202_cronjobs` instead of printing every row (an install can hold
 thousands): per job type, its row count and last run with its age, then the last execution
-recorded in `202_cronjob_logs`. `hourl` and `secon` are `hourly` and `second` cut to the column's
-`char(5)`; when one holds more than 100 rows, a note says why they pile up.
+recorded in `202_cronjob_logs`. The column is `char(5)`: `hour` is the hourly tier and `secon` the
+per-minute one, which records a row every minute by design (the daily prune keeps one day).
 
 ```
 $ p202 system cron
-type                       rows  last_run                 age
--------------------------  ----  -----------------------  ------
-daily                      1     2026-09-29 12:00:00 UTC  30h08m
-hourl (hourly, truncated)  1281  2026-09-30 18:00:00 UTC  8m44s
-secon (second, truncated)  1281  2026-09-30 18:08:25 UTC  19s
-Last cron execution: 2026-09-30 18:08:04 UTC (40s ago); 2563 row(s) in 202_cronjobs.
-Note: 202_cronjobs holds 1281 hourl and 1281 secon rows: cronjob_type is char(5), so 'hourly' and 'second' are stored truncated, the scheduler's already-ran check never matches them, and it adds a row every minute (a server schema bug, not a stopped cron).
+type                  rows  last_run                 age
+--------------------  ----  -----------------------  ---------
+daily                 1     2026-10-03 12:00:00 UTC  in 11h42m
+hour (hourly)         1     2026-10-03 00:00:00 UTC  17m49s
+secon (every minute)  1     2026-10-03 00:17:01 UTC  48s
+Last cron execution: 2026-10-03 00:17:49 UTC (0s ago); 3 row(s) in 202_cronjobs.
 ```
+
+Development builds between 1.9.55 and 1.9.76 wrote the hourly type as `hourly` (1.9.55 wrote
+`hour`), which the column stores as `hourl`: their already-ran check never found that row, so the
+hourly tier ran, and added a row, every minute. Those rows are labelled `hourl (hourly, truncated)`,
+and when they number more than 100 a note says so. Upgrading the server fixes it; the leftover rows
+go with the next daily prune.
 
 Rows record the slot a job ran for: the daily row is noon of its day, the hourly row the start of
 its hour. When the last execution is older than 5 minutes (cron is not ticking) or none is

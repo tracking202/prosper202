@@ -263,7 +263,7 @@ say "the minutely cron drains the outbox too"
 X1=$(click "$OUT/x" "t202id=$T1" 198.51.100.70)
 gpb "subid=$X1&amount=2&txid=MTA-X" >/dev/null
 CONV_X=$(convid "$X1" MTA-X)
-mysql_q "$DB" -e "DELETE FROM 202_cronjobs WHERE cronjob_type='second'"
+mysql_q "$DB" -e "DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
 curl -s -o "$OUT/cron.html" "$BASE/202-cronjobs/index.php"
 eq "$(Q "SELECT COUNT(*) FROM 202_attribution_pending WHERE conv_id=$CONV_X")" 0 "202-cronjobs/index.php ran the worker"
 eq "$(convsum "$CONV_X" "$DEFAULT")" 2.00000 "and the conversion is credited"

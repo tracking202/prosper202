@@ -92,3 +92,6 @@ rules:
     # and fails on this identifier alone; that test is what gives the rule its
     # reach, and registering it here is what makes the test's run real.
     - Prosper202\PHPStan\Rules\VacuousAssertionRule
+    # CLAUDE.md #23 — versions compared as text. `$logs['version'] >= $version`
+    # listed 1.9.8's release notes as new on the 1-click upgrade page.
+    - Prosper202\PHPStan\Rules\ForbidVersionRelationalCompareRule

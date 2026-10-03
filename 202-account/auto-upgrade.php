@@ -255,7 +255,7 @@ template_top('1-Click Upgrade');
 					<?php } ?>
 
 					<?php if ($upgrade_done != true) { ?>
-						<p>Upgrade automatically here, or <a href="https://my.tracking202.com/clickserver/download/latest/paid" target="_blank" rel="noopener">download the latest version</a> and upgrade by hand.</p>
+						<p>Upgrade automatically here, or <a href="https://my.tracking202.com/clickserver/download/latest/paid" target="_blank" rel="noopener">download the latest version</a> and upgrade by hand. The upgrade replaces this install's files, so PHP must be able to write to the install directory.</p>
 						<form method="post" action="">
 							<input type="hidden" name="start_upgrade" value="1">
 							<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION['token'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
@@ -275,9 +275,9 @@ template_top('1-Click Upgrade');
 									<div class="form-text">Yes is the default: modern browsers require landing pages over HTTPS, or tracking stops working.</div>
 								</div>
 							<?php } ?>
-							<?php echo p202_flash('warn', 'Back up your database before upgrading, and make sure PHP can write to the install directory.'); ?>
+							<?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
 							<div class="p202-form-actions">
-								<button class="btn btn-primary" type="submit">Upgrade Prosper202</button>
+								<button class="btn btn-primary" id="upgrade-submit" type="submit">Upgrade Prosper202</button>
 							</div>
 						</form>
 					<?php } else {
@@ -293,7 +293,7 @@ template_top('1-Click Upgrade');
 				<div class="p202-panel__head"><h2 class="p202-panel__title">What changed</h2></div>
 				<div class="p202-panel__body">
 					<?php foreach (changelog() as $logs) {
-						if ($logs['version'] >= $version) { ?>
+						if (version_compare((string) $logs['version'], (string) $version, '>=')) { ?>
 							<details class="p202-disclosure mb-2">
 								<summary>v<?php echo $e($logs['version']); ?></summary>
 								<div class="p202-disclosure__body">

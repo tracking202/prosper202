@@ -200,10 +200,15 @@ function RunHourlyCronJob()
         //the click_time is recorded at the start of the hour
         $cronjob_time = mktime((int)$today_hour, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
         $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        $mysql['cronjob_type'] = $db->real_escape_string('hourly');
+        // cronjob_type is char(5): a longer name is stored cut short and never
+        // matches the check below, so the hour's row was never found and this
+        // tier ran every minute. 'hour' is the name 1.9.55 wrote; 'hourl' is
+        // what the six-letter 'hourly' was stored as, still on the day of the
+        // upgrade until the daily prune. CronjobTypesFitTheColumnTest.
+        $mysql['cronjob_type'] = $db->real_escape_string('hour');
 
-        //check to make sure this cronjob doesn't already exist (support both 'hour' and 'hourly' for backwards compatibility)
-        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE (cronjob_type='hour' OR cronjob_type='" . $mysql['cronjob_type'] . "') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
+        //check to make sure this cronjob doesn't already exist
+        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type IN ('" . $mysql['cronjob_type'] . "', 'hourl') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
         $check_result = $db->query($check_sql);
 
         if ($check_result === false) {
@@ -403,7 +408,10 @@ function RunSecondsCronjob()
         $cronjob_time = mktime((int)$today_hour, (int)$today_minute, (int)$today_second, (int)$today_month, (int)$today_day, (int)$today_year);
 
         $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        $mysql['cronjob_type'] = $db->real_escape_string('second');
+        // 'secon', not 'second': cronjob_type is char(5), and a six-letter
+        // name is stored as 'secon' while the check below asks for 'second',
+        // so it never found the minute's row (CronjobTypesFitTheColumnTest).
+        $mysql['cronjob_type'] = $db->real_escape_string('secon');
 
         //check to make sure this cronjob doesn't already exist
         $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
