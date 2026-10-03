@@ -278,7 +278,8 @@ func sortRowsBy(rows []map[string]interface{}, field string, asc bool) {
 
 func init() {
 	addReportFilters(reportBreakevenCmd)
-	reportBreakevenCmd.Flags().StringP("breakdown", "b", "keyword", "Dimension: keyword, country, ppc_account, device, ... (alias: lp)")
+	reportBreakevenCmd.Flags().StringP("breakdown", "b", "keyword", "Dimension")
+	enumFlag(reportBreakevenCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakevenCmd.Flags().Float64("max-cpc", 0, "Override the payout-derived break-even CPC target")
 	reportCmd.AddCommand(reportBreakevenCmd)
 
@@ -286,7 +287,8 @@ func init() {
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos", true)
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
-		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage (keyword, country, ppc_account, device, ...)")
+		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
+		enumFlag(c, "breakdown", dimensionEnum(breakdownDimensions))
 		c.Flags().Float64("min-clicks", 1, "Ignore rows with fewer than N clicks (significance floor)")
 		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else derived from campaign payout × CVR)")
 		reportCmd.AddCommand(c)

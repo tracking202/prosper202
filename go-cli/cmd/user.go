@@ -649,6 +649,7 @@ func init() {
 	userUpdateCmd.Flags().String("user_pass", "", "New password (prompted securely if flag given without value)")
 	userUpdateCmd.Flags().String("user_timezone", "", "Timezone")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
+	enumFlag(userUpdateCmd, "user_active", newEnum(binaryValues))
 
 	registerDeleteFlags(userDeleteCmd, "user")
 	registerIdempotencyKeyFlag(userCreateCmd)

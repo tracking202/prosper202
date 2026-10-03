@@ -160,11 +160,32 @@ func errorEnvelope(err error) map[string]interface{} {
 	return map[string]interface{}{"error": env}
 }
 
+// unknownInputHint answers Cobra's and pflag's errors for a command or
+// flag that does not exist: the caller guessed a name, so point at the
+// list and at search, which finds a command by what it does.
+func unknownInputHint(err error) string {
+	msg := err.Error()
+	path := strings.TrimSpace(activeCommandPath)
+	if path == "" {
+		path = "p202"
+	}
+	switch {
+	case strings.HasPrefix(msg, "unknown command "):
+		return fmt.Sprintf("Run `%s --help` for its commands, or `p202 search <what you want to do>` to find one by task (`p202 commands --json` lists them all).", path)
+	case strings.HasPrefix(msg, "unknown flag: "), strings.HasPrefix(msg, "unknown shorthand flag: "):
+		return fmt.Sprintf("Run `%s --help` for the flags it accepts, or `p202 search <what you want to do>` to find the command that has the one you need.", path)
+	}
+	return ""
+}
+
 // hintFor returns the recovery hint for an error: an explicit hint attached
 // by the command or the API layer, else a generic pointer to --help for
 // validation errors from a known command.
 func hintFor(err error) string {
 	if hint := api.HintFor(err); hint != "" {
+		return hint
+	}
+	if hint := unknownInputHint(err); hint != "" {
 		return hint
 	}
 	if activeCommandPath != "" && exitCodeForError(err) == ExitValidation && api.ErrorCategory(err) != "auth" {

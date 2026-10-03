@@ -15,19 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var forecastAllowedMetrics = map[string]bool{
-	"total_clicks":         true,
-	"total_click_throughs": true,
-	"total_leads":          true,
-	"total_income":         true,
-	"total_cost":           true,
-	"total_net":            true,
-	"epc":                  true,
-	"avg_cpc":              true,
-	"conv_rate":            true,
-	"roi":                  true,
-	"cpa":                  true,
-}
+// forecastMetricEnum is what --metric takes: a timeseries metric column,
+// or one of forecastMetricAliases.
+var forecastMetricEnum = newEnum(metricColumns, enumAliases(forecastMetricAliases), enumFoldCase())
 
 // forecastSignedMetrics can legitimately go negative; all other metrics
 // are clamped at zero in the forecast output.
@@ -126,21 +116,16 @@ Examples:
 
 func runForecast(cmd *cobra.Command, args []string) error {
 	allMetrics, _ := cmd.Flags().GetBool("all-metrics")
-	metric, _ := cmd.Flags().GetString("metric")
-	metric = strings.ToLower(strings.TrimSpace(metric))
+	// --metric, --method, --interval and --history were checked against
+	// their lists in PersistentPreRunE (enum_flags.go).
+	metric := enumValue(cmd, "metric")
 	if allMetrics {
 		if metric != "" {
 			return validationError("--all-metrics forecasts the core metrics together and cannot be combined with --metric")
 		}
 	} else {
 		if metric == "" {
-			return validationError("--metric is required. Choose from: %s", forecastMetricList())
-		}
-		if mapped, ok := forecastMetricAliases[metric]; ok {
-			metric = mapped
-		}
-		if !forecastAllowedMetrics[metric] {
-			return validationError("unsupported metric %q. Choose from: %s", metric, forecastMetricList())
+			return validationError("--metric is required; one of: %s", forecastMetricEnum.describe()).WithHint("Or pass --all-metrics to forecast the core metrics together.")
 		}
 	}
 
@@ -150,13 +135,6 @@ func runForecast(cmd *cobra.Command, args []string) error {
 		methodStr = "auto"
 	}
 	method := forecast.Method(methodStr)
-	validMethods := map[string]bool{}
-	for _, m := range forecast.ValidMethods() {
-		validMethods[m] = true
-	}
-	if !validMethods[methodStr] {
-		return validationError("unsupported method %q. Choose from: %s", methodStr, strings.Join(forecast.ValidMethods(), ", "))
-	}
 
 	horizon, _ := cmd.Flags().GetInt("horizon")
 	if horizon <= 0 {
@@ -170,13 +148,6 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	interval = strings.ToLower(strings.TrimSpace(interval))
 	if interval == "" {
 		interval = "day"
-	}
-	validIntervals := map[string]bool{}
-	for _, iv := range forecast.ValidIntervals() {
-		validIntervals[iv] = true
-	}
-	if !validIntervals[interval] {
-		return validationError("unsupported interval %q. Choose from: %s", interval, strings.Join(forecast.ValidIntervals(), ", "))
 	}
 
 	// --history is the canonical flag; --period/--days are accepted aliases so
@@ -681,7 +652,7 @@ func responseMetricNames(data []byte) []string {
 		if !ok {
 			continue
 		}
-		for m := range forecastAllowedMetrics {
+		for _, m := range metricColumns {
 			if seen[m] {
 				continue
 			}
@@ -991,16 +962,6 @@ func roundTo(v float64, n int) float64 {
 	return math.Round(v*pow) / pow
 }
 
-// forecastMetricList returns a sorted comma-separated list of valid metrics.
-func forecastMetricList() string {
-	keys := make([]string, 0, len(forecastAllowedMetrics))
-	for k := range forecastAllowedMetrics {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return strings.Join(keys, ", ")
-}
-
 // maxForecastEventPages caps pagination at 50 pages × 500 events. Hitting it
 // means a pathological event count (or a server cursor bug); erroring is
 // safer than silently forecasting with a truncated event list.
@@ -1189,13 +1150,19 @@ func filterEventsByTag(events []forecast.Event, tagFilter string) []forecast.Eve
 }
 
 func init() {
-	forecastCmd.Flags().StringP("metric", "m", "", "Metric to forecast (clicks, revenue, profit, roi, epc, conv_rate, cost, conversions, cpa)")
-	forecastCmd.Flags().String("method", "auto", "Forecasting method: auto (ensemble), ensemble, linear, sma, wma, holtwinters")
+	forecastCmd.Flags().StringP("metric", "m", "", "Metric to forecast")
+	enumFlag(forecastCmd, "metric", forecastMetricEnum)
+	forecastCmd.Flags().String("method", "auto", "Forecasting method (auto = ensemble)")
+	enumFlag(forecastCmd, "method", newEnum(forecast.ValidMethods(), enumFoldCase()))
 	forecastCmd.Flags().IntP("horizon", "n", 7, "Number of periods to forecast forward")
-	forecastCmd.Flags().StringP("interval", "i", "day", "Forecast granularity: hour, day, week, month")
-	forecastCmd.Flags().String("history", "last90", "Historical data period: today, yesterday, last7, last30, last90 (aliases: --period, --days)")
+	forecastCmd.Flags().StringP("interval", "i", "day", "Forecast granularity")
+	enumFlag(forecastCmd, "interval", newEnum(forecast.ValidIntervals(), enumFoldCase()))
+	forecastCmd.Flags().String("history", "last90", "Historical data period (aliases: --period, --days)")
 	forecastCmd.Flags().String("period", "", "Alias of --history")
 	forecastCmd.Flags().String("days", "", "Alias of --history")
+	for _, name := range []string{"history", "period", "days"} {
+		enumFlag(forecastCmd, name, newEnum(reportPeriods))
+	}
 	forecastCmd.Flags().Int("window", 0, "SMA/WMA window size (0 = auto-select)")
 	forecastCmd.Flags().Bool("all-metrics", false, "Forecast clicks, leads, income, cost, and net together via ratio decomposition (coherent output)")
 	forecastCmd.Flags().Bool("seasonal", false, "Apply a day-of-week profile learned from the fetched history (hour interval also gets an hour-of-day profile)")

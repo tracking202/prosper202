@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ type Opts struct {
 	Wide       bool     // show all columns (no width cap)
 	RawHeaders bool     // keep raw API keys as headers instead of friendly names
 	Fields     []string // explicit column selection (in order)
+	Compact    bool     // JSON on one line, HTML characters unescaped (for agents)
 }
 
 // friendlyHeaders maps raw API field names to human-readable column headers.
@@ -74,7 +76,7 @@ func RenderWith(data []byte, opts Opts) {
 		return
 	}
 	if opts.JSON {
-		renderJSON(data)
+		renderJSON(data, opts.Compact)
 		return
 	}
 	if opts.CSV {
@@ -108,9 +110,13 @@ func RenderWith(data []byte, opts Opts) {
 	}
 }
 
-func renderJSON(data []byte) {
+func renderJSON(data []byte, compact bool) {
 	var parsed interface{}
 	if json.Unmarshal(data, &parsed) == nil {
+		if compact {
+			renderCompactJSON(data, parsed)
+			return
+		}
 		pretty, err := json.MarshalIndent(parsed, "", "  ")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
@@ -123,6 +129,22 @@ func renderJSON(data []byte) {
 	}
 	_, _ = os.Stdout.Write(data)
 	fmt.Println()
+}
+
+// renderCompactJSON prints parsed as one line. It decodes and sorts exactly
+// as the pretty form does; only whitespace and HTML escaping differ, since an
+// agent reads the bytes and \u0026 in every URL costs tokens.
+func renderCompactJSON(data []byte, parsed interface{}) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(parsed); err != nil {
+		fmt.Fprintln(os.Stderr, "Error formatting JSON:", err)
+		_, _ = os.Stdout.Write(data)
+		return
+	}
+	// A closed stdout (piping to `head`) is not actionable here.
+	_, _ = os.Stdout.Write(buf.Bytes())
 }
 
 // renderQuiet prints one id per row (no header) for scripting pipelines.

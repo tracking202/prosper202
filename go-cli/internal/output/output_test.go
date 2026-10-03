@@ -86,6 +86,42 @@ func TestRenderJSONModePrettyPrints(t *testing.T) {
 	}
 }
 
+// Compact is the agent form: the same document as --json on one line, with
+// & < > left as they are. Pretty (--json) keeps its indentation and escaping.
+func TestRenderJSONCompactVersusPretty(t *testing.T) {
+	input := `{"data":[{"id":2,"url":"https://x.example/?a=1&b=<2>"},{"id":1,"name":"n"}],"pagination":{"total":2}}`
+
+	compact := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true, Compact: true})
+	})
+	if strings.Count(compact, "\n") != 1 || !strings.HasSuffix(compact, "}\n") {
+		t.Fatalf("compact JSON should be exactly one line, got %q", compact)
+	}
+	if !strings.Contains(compact, `"url":"https://x.example/?a=1&b=<2>"`) {
+		t.Errorf("compact JSON should keep & < > unescaped and have no spaces, got %s", compact)
+	}
+
+	pretty := captureStdout(t, func() {
+		RenderWith([]byte(input), Opts{JSON: true})
+	})
+	if !strings.Contains(pretty, "\n  \"data\": [") || !strings.Contains(pretty, `\u0026`) {
+		t.Errorf("--json output should stay indented and HTML-escaped as before, got:\n%s", pretty)
+	}
+
+	var a, b interface{}
+	if err := json.Unmarshal([]byte(compact), &a); err != nil {
+		t.Fatalf("compact output is not JSON: %v", err)
+	}
+	if err := json.Unmarshal([]byte(pretty), &b); err != nil {
+		t.Fatalf("pretty output is not JSON: %v", err)
+	}
+	ca, _ := json.Marshal(a)
+	cb, _ := json.Marshal(b)
+	if string(ca) != string(cb) {
+		t.Errorf("compact and pretty must carry the same document:\n%s\n%s", ca, cb)
+	}
+}
+
 func TestRenderJSONModeWithArray(t *testing.T) {
 	input := `[{"id":1},{"id":2}]`
 	out := captureStdout(t, func() {

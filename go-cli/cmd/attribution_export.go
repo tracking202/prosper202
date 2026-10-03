@@ -40,9 +40,6 @@ var attrExportListCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
 		if v, _ := cmd.Flags().GetString("status"); v != "" {
-			if !containsString(attributionExportStatuses, v) {
-				return validationError("invalid --status %q; valid: %s", v, strings.Join(attributionExportStatuses, ", "))
-			}
 			params["status"] = v
 		}
 		if cmd.Flags().Changed("limit") {
@@ -92,9 +89,6 @@ var attrExportGetCmd = &cobra.Command{
 func attributionExportBody(cmd *cobra.Command) (map[string]interface{}, error) {
 	body := map[string]interface{}{}
 	groupBy, _ := cmd.Flags().GetString("group-by")
-	if !containsString(attributionDimensions, groupBy) {
-		return nil, validationError("invalid --group-by %q; valid: %s", groupBy, strings.Join(attributionDimensions, ", "))
-	}
 	body["group_by"] = groupBy
 	for flag, field := range map[string]string{"model": "model_id", "compare-model": "compare_model_id"} {
 		v, _ := cmd.Flags().GetString(flag)
@@ -265,10 +259,12 @@ var attrExportDeleteCmd = &cobra.Command{
 }
 
 func init() {
-	attrExportListCmd.Flags().String("status", "", "Filter: "+strings.Join(attributionExportStatuses, ", "))
+	attrExportListCmd.Flags().String("status", "", "Only this status")
+	enumFlag(attrExportListCmd, "status", newEnum(attributionExportStatuses))
 	attrExportListCmd.Flags().Int("limit", 50, "Rows, 1-200")
 
-	attrExportCreateCmd.Flags().String("group-by", "campaign", "Dimension: "+strings.Join(attributionDimensions, ", "))
+	attrExportCreateCmd.Flags().String("group-by", "campaign", "Dimension")
+	enumFlag(attrExportCreateCmd, "group-by", newEnum(attributionDimensions))
 	attrExportCreateCmd.Flags().String("model", "", "Model id (default: the account default model)")
 	attrExportCreateCmd.Flags().String("compare-model", "", "A second model id, side by side")
 	registerAttributionRangeFlags(attrExportCreateCmd)

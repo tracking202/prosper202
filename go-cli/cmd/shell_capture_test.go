@@ -112,6 +112,53 @@ func TestAssignmentDoesNotChangeTheSessionOutputMode(t *testing.T) {
 	}
 }
 
+// A capture stores JSON whatever format the session is in: one asked for by
+// flag is restored before each command, one from P202_OUTPUT, config or an
+// agent is derived again, and the capture must win over both -- forced on
+// top of a --csv session it would otherwise be a "--json and --csv" conflict,
+// and left to the derivation it would store CSV.
+func TestAssignmentCapturesJSONWhateverTheSessionFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T)
+	}{
+		{"session --csv", func(t *testing.T) {
+			saved := csvOutput
+			csvOutput = true
+			t.Cleanup(func() { csvOutput = saved })
+		}},
+		{"P202_OUTPUT=csv", func(t *testing.T) {
+			t.Setenv(outputEnvVar, "csv")
+			saved := outputImplicit
+			outputImplicit = true
+			t.Cleanup(func() { outputImplicit = saved })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setTestHome(t, home)
+			srv := emptyListServer(t)
+			writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+			tc.setup(t)
+
+			state := shell.NewState()
+			if _, _, _, err := handleBuiltin("$rows = campaign list", state, "default"); err != nil {
+				t.Fatalf("assignment: %v", err)
+			}
+			raw, ok := state.Get("rows")
+			if !ok {
+				t.Fatal("$rows was not set")
+			}
+			var parsed struct {
+				Data []interface{} `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Data == nil {
+				t.Fatalf("stored value is not the JSON envelope: %v (%q)", err, raw)
+			}
+		})
+	}
+}
+
 // activeCommandPath is a package global that PersistentPreRunE re-stamps on
 // every in-process execution. Without restoring it across the shell's
 // re-entry, a failing `p202 shell` reports the last command the batch ran, and

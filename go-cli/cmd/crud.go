@@ -22,7 +22,11 @@ type crudField struct {
 	Required bool
 	QueryKey string
 	Aliases  []string
+	Enum     []string // the values the field takes (the controller's 'allowed'); nil: not a fixed set
 }
+
+// forecastEventRecurrences are ForecastEventsController's recurrence values.
+var forecastEventRecurrences = []string{"none", "monthly", "yearly", "custom"}
 
 type crudEntity struct {
 	Name          string
@@ -31,8 +35,10 @@ type crudEntity struct {
 	Endpoint      string
 	Fields        []crudField
 	ListParams    []crudField
-	IDField       string // internal primary-key field (e.g. aff_campaign_id)
-	PublicIDField string // public-facing id field (e.g. aff_campaign_id_public)
+	IDField       string   // internal primary-key field (e.g. aff_campaign_id)
+	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
+	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
+	StatsGroupBy  string   // reports/breakdown dimension `list --with-stats` merges by IDField; "" means no such flag
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -532,11 +538,17 @@ func parseIDList(raw string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, part := range parts {
 		id := strings.TrimSpace(part)
-		if id == "" || seen[id] {
+		if id == "" {
 			continue
 		}
-		if _, err := strconv.Atoi(id); err != nil {
+		n, err := strconv.Atoi(id)
+		if err != nil {
 			return nil, validationError("invalid ID %q: must be a numeric value", id).WithHint("Use the internal numeric id from the matching `... list`; public ids from tracking links need --public where supported.")
+		}
+		// Canonical form, so "007" matches the API's 7 in callers that compare ids.
+		id = strconv.Itoa(n)
+		if seen[id] {
+			continue
 		}
 		seen[id] = true
 		out = append(out, id)
@@ -623,6 +635,33 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("list", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
+			urlContains := ""
+			if len(entity.URLFields) > 0 {
+				urlContains, _ = cmd.Flags().GetString("url-contains")
+			}
+			var statsParams map[string]string
+			minClicks := 0
+			if entity.StatsGroupBy != "" {
+				var err error
+				if statsParams, minClicks, err = listStatsParams(cmd, entity); err != nil {
+					return err
+				}
+			}
+			// Client-side filters read every page, so paging flags make no sense with them.
+			clientFilter := ""
+			if urlContains != "" {
+				clientFilter = "--url-contains"
+			} else if minClicks > 0 {
+				clientFilter = "--min-clicks"
+			}
+			if clientFilter != "" {
+				for _, paging := range []string{"page", "limit", "offset"} {
+					if cmd.Flags().Changed(paging) {
+						return validationError("%s searches every page, so it cannot be combined with --%s", clientFilter, paging).
+							WithHint("Drop --page/--limit/--offset; every match is returned.")
+					}
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -649,6 +688,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				}
 			}
 			allRows, _ := cmd.Flags().GetBool("all")
+			if clientFilter != "" {
+				allRows = true
+			}
 			resolveNames, _ := cmd.Flags().GetBool("resolve-names")
 			if resolveNames && !envFlagEnabled("CLI_ENABLE_RESOLVE_NAMES", true) {
 				return validationError("--resolve-names is disabled").WithHint("Set CLI_ENABLE_RESOLVE_NAMES=1 in the environment to enable it, or drop the flag.")
@@ -658,6 +700,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 				rows, err := fetchAllRowsWithParams(c, entity.Endpoint, params)
 				if err != nil {
 					return err
+				}
+				if urlContains != "" {
+					matched := make([]map[string]interface{}, 0, len(rows))
+					for _, row := range rows {
+						if rowMatchesURL(row, entity.URLFields, urlContains) {
+							matched = append(matched, row)
+						}
+					}
+					rows = matched
+				}
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, minClicks); err != nil {
+						return err
+					}
 				}
 				if resolveNames {
 					if err := resolveForeignKeyNames(c, rows); err != nil {
@@ -689,13 +745,20 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if resolveNames {
+			if resolveNames || statsParams != nil {
 				rows, err := parseDataArray(data)
 				if err != nil {
 					return err
 				}
-				if err := resolveForeignKeyNames(c, rows); err != nil {
-					return err
+				if statsParams != nil {
+					if rows, err = addListStats(c, entity, rows, statsParams, 0); err != nil {
+						return err
+					}
+				}
+				if resolveNames {
+					if err := resolveForeignKeyNames(c, rows); err != nil {
+						return err
+					}
 				}
 				var parsed map[string]interface{}
 				resp := map[string]interface{}{"data": rows}
@@ -715,8 +778,17 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	listCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	listCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	listCmd.Flags().Bool("resolve-names", false, "Resolve foreign key IDs to names")
+	if len(entity.URLFields) > 0 {
+		listCmd.Flags().String("url-contains", "", fmt.Sprintf("Only %s with a URL containing this text (case-insensitive; searches every page; fields: %s)", entity.Name+"s", strings.Join(entity.URLFields, ", ")))
+	}
+	if entity.StatsGroupBy != "" {
+		registerListStatsFlags(listCmd, entity)
+	}
 	for _, p := range entity.ListParams {
 		listCmd.Flags().String(p.Name, "", p.Desc)
+		if p.Enum != nil {
+			enumFlag(listCmd, p.Name, newEnum(p.Enum))
+		}
 		for _, alias := range p.Aliases {
 			listCmd.Flags().String(alias, "", p.Desc+" (legacy alias)")
 			_ = listCmd.Flags().MarkHidden(alias)
@@ -785,7 +857,14 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		createCmd.Flags().String(f.Name, "", f.Desc)
+		desc := f.Desc
+		if f.Required {
+			desc += " (required)"
+		}
+		createCmd.Flags().String(f.Name, "", desc)
+		if f.Enum != nil {
+			enumFlag(createCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 	registerIdempotencyKeyFlag(createCmd)
 
@@ -824,6 +903,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	}
 	for _, f := range entity.Fields {
 		updateCmd.Flags().String(f.Name, "", f.Desc)
+		if f.Enum != nil {
+			enumFlag(updateCmd, f.Name, newEnum(f.Enum))
+		}
 	}
 
 	// delete
@@ -851,9 +933,12 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 func init() {
 	entities := []crudEntity{
 		{
-			Name:     "campaign",
-			Plural:   "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint: "campaigns",
+			Name:         "campaign",
+			Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+			Endpoint:     "campaigns",
+			IDField:      "aff_campaign_id",
+			URLFields:    campaignURLFields,
+			StatsGroupBy: "campaign",
 			Fields: []crudField{
 				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
@@ -866,10 +951,10 @@ func init() {
 				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
 				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
 				{Name: "aff_network_id", Desc: "Affiliate network ID"},
-				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (0 or 1)"},
-				{Name: "aff_campaign_rotate", Desc: "Enable rotation (0 or 1)"},
-				{Name: "payout_mode", Desc: "How conversions set a click's value: replace (latest payout, default) or accumulate (sum)"},
-				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)"},
+				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
+				{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
+				{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
 				{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
 				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
 				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
@@ -912,7 +997,7 @@ func init() {
 			Fields: []crudField{
 				{Name: "ppc_account_name", Desc: "Account name", Required: true},
 				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
-				{Name: "ppc_account_default", Desc: "Set as default account (0 or 1)"},
+				{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
 			},
 			ListParams: []crudField{
 				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
@@ -932,7 +1017,7 @@ func init() {
 				{Name: "rotator_id", Desc: "Rotator ID"},
 				{Name: "click_cpc", Desc: "Cost per click"},
 				{Name: "click_cpa", Desc: "Cost per action"},
-				{Name: "click_cloaking", Desc: "Enable cloaking (0 or 1)"},
+				{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
 				{Name: "tracker_id_public", Desc: "Public tracker ID"},
 			},
 			ListParams: []crudField{
@@ -943,9 +1028,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "landing-page",
-			Plural:   "landing pages (pre-sell pages visitors see before the offer)",
-			Endpoint: "landing-pages",
+			Name:      "landing-page",
+			Plural:    "landing pages (pre-sell pages visitors see before the offer)",
+			Endpoint:  "landing-pages",
+			URLFields: []string{"landing_page_url", "leave_behind_page_url"},
 			Fields: []crudField{
 				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
 				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
@@ -983,8 +1069,8 @@ func init() {
 				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
 				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
 				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
-				{Name: "recurrence", Desc: "Recurrence: none, monthly, yearly, custom"},
-				{Name: "impact_type", Desc: "Impact type: boost, suppress, neutral"},
+				{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
+				{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
 				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
 				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
 				{Name: "lag_days", Desc: "Days after event that impact decays"},
@@ -993,7 +1079,7 @@ func init() {
 			},
 			ListParams: []crudField{
 				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
-				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type"},
+				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
 				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
 			},
 		},
@@ -1054,7 +1140,8 @@ func init() {
 		}
 		cloneCmd.Flags().String("name", "", "Optional name override for the cloned campaign")
 		registerIdempotencyKeyFlag(cloneCmd)
-		campaignCmd.AddCommand(cloneCmd)
+		campaignCmd.AddCommand(cloneCmd, newCampaignReplaceURLCmd())
+		campaignCmd.AddCommand(newCampaignCheckURLsCmd())
 	}
 
 	if trackerCmd != nil {

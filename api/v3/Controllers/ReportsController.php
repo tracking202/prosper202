@@ -90,6 +90,18 @@ class ReportsController
     {
     }
 
+    /**
+     * The dimensions breakdown() accepts, in BREAKDOWNS order. /capabilities
+     * advertises this list (features.report_breakdowns) so clients validate
+     * against the server rather than a copy.
+     *
+     * @return list<string>
+     */
+    public static function breakdownDimensions(): array
+    {
+        return array_keys(self::BREAKDOWNS);
+    }
+
     public function summary(array $params): array
     {
         $where = ['de.user_id = ?'];

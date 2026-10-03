@@ -128,9 +128,11 @@ var configShowCmd = &cobra.Command{
 				"api_key":         p.MaskedKey(),
 				"config_path":     config.Path(),
 				"available_names": profiles,
+				"output_format":   outputFormatName(),
+				"output_source":   outputSource,
 			}
 			data, _ := json.Marshal(obj)
-			output.Render(data, true)
+			output.RenderWith(data, output.Opts{JSON: true, Compact: compactJSON})
 		} else {
 			fmt.Printf("Config file: %s\n", config.Path())
 			fmt.Printf("Active:      %s\n", cfg.ActiveProfile)
@@ -138,6 +140,7 @@ var configShowCmd = &cobra.Command{
 			fmt.Printf("URL:         %s\n", p.URL)
 			fmt.Printf("API key:     %s\n", p.MaskedKey())
 			fmt.Printf("Profiles:    %s\n", profilesStr)
+			fmt.Printf("Output:      %s (%s)\n", outputFormatName(), outputSource)
 		}
 		return nil
 	},
@@ -175,6 +178,13 @@ var configSetDefaultCmd = &cobra.Command{
 		}
 		if !isSupportedDefaultKey(key) {
 			return validationError("unsupported default key %q. Supported keys: %s", key, strings.Join(supportedDefaultKeys(), ", "))
+		}
+		if key == outputDefaultKey {
+			format, ok := parseOutputFormat(value)
+			if !ok {
+				return validationError("%s must be one of: %s (got %q)", outputDefaultKey, strings.Join(outputFormats, ", "), value)
+			}
+			value = format
 		}
 
 		cfg, err := config.Load()

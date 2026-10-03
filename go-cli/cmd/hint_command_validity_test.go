@@ -42,9 +42,13 @@ func TestEveryCommandNamedInAHintExists(t *testing.T) {
 				words := strings.Fields(invocation)[1:] // drop "p202"
 				// Keep only the leading subcommand path; stop at the first flag
 				// or placeholder, which are arguments rather than command names.
+				// A format verb (`p202 %s list`) is a placeholder too: what fills
+				// it is not in the source, so the words after it are not checked
+				// -- the one such hint today is list_stats.go's, filled with
+				// entity.Name, which registerCRUD makes the command group's name.
 				var pathWords []string
 				for _, w := range words {
-					if strings.HasPrefix(w, "-") || strings.HasPrefix(w, "<") || strings.HasPrefix(w, "[") {
+					if strings.HasPrefix(w, "-") || strings.HasPrefix(w, "<") || strings.HasPrefix(w, "[") || strings.Contains(w, "%") {
 						break
 					}
 					pathWords = append(pathWords, w)

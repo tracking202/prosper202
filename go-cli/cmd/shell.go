@@ -472,6 +472,8 @@ func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	// whole tree to defaults, then re-apply the session's persistent flags.
 	savedJSON := jsonOutput
 	savedCSV := csvOutput
+	savedTable := tableOutput
+	savedCompact, savedSource, savedImplicit := compactJSON, outputSource, outputImplicit
 	savedProfile := profileName
 	savedGroup := groupName
 	// --staged is a safety promise, not a display preference: losing it in
@@ -487,8 +489,21 @@ func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	sessionOverride := configpkg.GetActiveOverride()
 
 	resetAllFlags(rootCmd)
-	jsonOutput = savedJSON || forceJSON
-	csvOutput = savedCSV
+	// A format the session did not ask for by flag (agent, P202_OUTPUT,
+	// config) is derived again per command, so that command's --table wins.
+	if !savedImplicit {
+		jsonOutput = savedJSON
+		csvOutput = savedCSV
+		tableOutput = savedTable
+	}
+	// A capture is JSON whatever the session's format: set here, before
+	// Execute(), it reads to resolveOutputMode as an explicit --json, so
+	// neither P202_OUTPUT, config nor agent detection re-derives it. The
+	// other formats are cleared, or a --csv session would make every
+	// capture a "--json and --csv" conflict.
+	if forceJSON {
+		jsonOutput, csvOutput, tableOutput = true, false, false
+	}
 	profileName = savedProfile
 	groupName = savedGroup
 	stagedWrites = savedStaged
@@ -510,6 +525,8 @@ func executeShellCommandWith(line string, forceJSON bool) ([]byte, error) {
 	activeCommandPath = savedCommandPath
 	jsonOutput = savedJSON
 	csvOutput = savedCSV
+	tableOutput = savedTable
+	compactJSON, outputSource, outputImplicit = savedCompact, savedSource, savedImplicit
 	profileName = savedProfile
 	groupName = savedGroup
 	stagedWrites = savedStaged

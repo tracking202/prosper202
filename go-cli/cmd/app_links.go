@@ -93,8 +93,8 @@ var appLinkCmd = &cobra.Command{
 
 // ── Notification outbox ─────────────────────────────────────────────
 
-var appNotificationStatuses = map[string]bool{"pending": true, "sent": true, "failed": true, "cancelled": true, "suppressed": true}
-var appNotificationKinds = map[string]bool{"reached": true, "correction": true, "retraction": true}
+var appNotificationStatuses = []string{"pending", "sent", "failed", "cancelled", "suppressed"}
+var appNotificationKinds = []string{"reached", "correction", "retraction"}
 
 var appNotificationsCmd = &cobra.Command{
 	Use:   "notifications",
@@ -115,12 +115,6 @@ var appNotificationsCmd = &cobra.Command{
 			return validationError("--registration-id must be a positive whole number, got %q", v).
 				WithHint("`p202 app list` lists your apps and their registration ids.")
 		}
-		if v, ok := params["status"]; ok && !appNotificationStatuses[v] {
-			return validationError("--status must be one of: pending, sent, failed, cancelled, suppressed; got %q", v)
-		}
-		if v, ok := params["kind"]; ok && !appNotificationKinds[v] {
-			return validationError("--kind must be one of: reached, correction, retraction; got %q", v)
-		}
 		for _, f := range []string{"time_from", "time_to"} {
 			if v, ok := params[f]; ok {
 				if _, err := strconv.ParseInt(v, 10, 64); err != nil {
@@ -138,8 +132,10 @@ func init() {
 
 	registerPagedListFlags(appNotificationsCmd)
 	appNotificationsCmd.Flags().String("registration-id", "", "Only this app's postbacks (`p202 app list`)")
-	appNotificationsCmd.Flags().String("status", "", "Only this status: pending, sent, failed, cancelled, suppressed")
-	appNotificationsCmd.Flags().String("kind", "", "Only this kind: reached, correction, retraction")
+	appNotificationsCmd.Flags().String("status", "", "Only this status")
+	enumFlag(appNotificationsCmd, "status", newEnum(appNotificationStatuses))
+	appNotificationsCmd.Flags().String("kind", "", "Only this kind")
+	enumFlag(appNotificationsCmd, "kind", newEnum(appNotificationKinds))
 	appNotificationsCmd.Flags().String("time-from", "", "Queued at or after (unix timestamp)")
 	appNotificationsCmd.Flags().String("time-to", "", "Queued at or before (unix timestamp)")
 
