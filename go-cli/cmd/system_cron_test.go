@@ -148,7 +148,7 @@ func TestSystemCronHumanSummaryIsShort(t *testing.T) {
 	if len(lines) != 5 { // header, rule, three types
 		t.Fatalf("stdout has %d lines, want 5:\n%s", len(lines), stdout)
 	}
-	for _, want := range []string{"type", "rows", "last_run", "age", "hourl (hourly, truncated)", "secon (second, truncated)", "1281", "2026-09-30 15:12:00 UTC", "daily"} {
+	for _, want := range []string{"type", "rows", "last_run", "age", "hourl (hourly, truncated)", "secon (every minute)", "1281", "2026-09-30 15:12:00 UTC", "daily"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("table lacks %q:\n%s", want, stdout)
 		}
@@ -160,13 +160,42 @@ func TestSystemCronHumanSummaryIsShort(t *testing.T) {
 	for _, l := range strings.Split(stderr, "\n") {
 		if strings.HasPrefix(l, "Note: ") {
 			notes++
-			if !strings.Contains(l, "1281 hourl and 1281 secon") || !strings.Contains(l, "char(5)") {
+			// secon's row a minute is the per-minute tier working; only
+			// hourl is a pile-up.
+			if !strings.Contains(l, "holds 1281 hourl rows") || strings.Contains(l, "secon") || !strings.Contains(l, "char(5)") {
 				t.Errorf("note = %q", l)
 			}
 		}
 	}
 	if notes != 1 {
 		t.Errorf("stderr has %d note lines, want 1:\n%s", notes, stderr)
+	}
+}
+
+// A day of a working scheduler: 'hour' once an hour, 'secon' once a minute.
+// The minute rows are the per-minute tier's design, not the char(5) pile-up,
+// so nothing is noted; the old summary called 1440 'secon' rows a bug.
+func TestSystemCronWorkingSchedulerIsNotAPileUp(t *testing.T) {
+	var jobs []map[string]interface{}
+	jobs = append(jobs, cronRows("daily", 1, func(int) time.Time { return time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC) })...)
+	jobs = append(jobs, cronRows("hour", 24, func(i int) time.Time { return cronNow.Truncate(time.Hour).Add(-time.Duration(i) * time.Hour) })...)
+	jobs = append(jobs, cronRows("secon", 1440, minutesAgo(1))...)
+	setupCronServer(t, jobs, cronNow.Add(-time.Minute))
+
+	stdout, _, err := executeCommand("system", "cron", "--json")
+	assertExit(t, err, ExitOK)
+	sum, _ := decodeCron(t, stdout)
+	want := map[string]string{"daily": "daily", "hour": "hour (hourly)", "secon": "secon (every minute)"}
+	if len(sum.Types) != 3 {
+		t.Fatalf("types = %+v", sum.Types)
+	}
+	for _, ts := range sum.Types {
+		if ts.Label != want[ts.Type] || ts.TruncatedFrom != nil {
+			t.Errorf("%s: label %q, truncated_from %v; want %q and none", ts.Type, ts.Label, ts.TruncatedFrom, want[ts.Type])
+		}
+	}
+	if len(sum.Notes) != 0 || len(sum.Warnings) != 0 {
+		t.Errorf("notes %v, warnings %v; want none", sum.Notes, sum.Warnings)
 	}
 }
 
@@ -190,7 +219,7 @@ func TestSystemCronLabelsTruncatedTypesAndNotesOnlyAPileUp(t *testing.T) {
 			assertExit(t, err, ExitOK)
 			sum, _ := decodeCron(t, stdout)
 			if len(sum.Types) != 2 || sum.Types[0].Label != "hourl (hourly, truncated)" || *sum.Types[0].TruncatedFrom != "hourly" ||
-				sum.Types[1].Label != "secon (second, truncated)" || *sum.Types[1].TruncatedFrom != "second" {
+				sum.Types[1].Label != "secon (every minute)" || sum.Types[1].TruncatedFrom != nil {
 				t.Fatalf("types = %+v", sum.Types)
 			}
 			if len(sum.Notes) != tc.notes {

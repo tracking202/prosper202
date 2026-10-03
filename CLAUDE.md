@@ -576,7 +576,25 @@ names has to be read from both of them: when a check looks for a
 variable's part in a relation, ask which other positions the grammar lets
 that variable occupy in the same relation, and plant each.
 
-### 23. A validation in a hydration path fails the batch, not the record
+### 23. Versions compared as text
+
+`$logs['version'] >= $version` on the 1-click upgrade page compared two
+version strings with a relational operator, and PHP compares those as text,
+character by character: `"1.9.8" >= "1.9.76"` is true, so every install was
+shown the 1.9.8 and 1.9.9 release notes as "what changed". It read correctly
+and rendered plausibly — a list of notes — which is why it survived the move
+to the new shell. `version_compare()` is the comparison; a version that really
+is a counter (a goal's version number) is cast to `int`, which also tells the
+reader it is one. `ForbidVersionRelationalCompareRule` reports `<`, `>`, `<=`,
+`>=` and `<=>` on any operand *named* as a version — variable, property, array
+key, constant, function or method — that PHPStan cannot prove is a number.
+The name is the whole heuristic: a version held in `$v` or `$latest` is not
+seen, so a comparison of values that came out of `202_version`, a feed or a
+`changelog()` entry needs `version_compare()` whatever it is called. Equality
+is not covered either, and is not safe in general: `"1.9" == "1.90"` is true,
+because both are numeric strings.
+
+### 24. A validation in a hydration path fails the batch, not the record
 `ExportWebhook`'s constructor ran the SSRF guard. That constructor is also the
 row-hydration path: the export cron's `findPending()` maps every pending row
 through it, so one stored `http://` webhook — or one transient DNS failure —

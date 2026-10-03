@@ -1,4 +1,107 @@
 {
+  "1.9.76": {
+    "version": "1.9.76",
+    "logs": [
+      "Important: This upgrade changes your database in place and cannot be undone. Back up the Prosper202 database (a full mysqldump, or your host's snapshot) before you start: restoring that backup is the only way back",
+      "New: Android app install tracking. Register an app from its Google Play link and send campaign clicks to the store link Prosper202 builds; the Prosper202 Android SDK reports each install, and the events after it, as a conversion on the click that sent the user to the store",
+      "New: Android fraud signals and limits: Play Integrity checks (off, observe or require, per app), click-to-install time flags for click injection and click spamming, goals reached implausibly fast, and per-app install and per-install event caps",
+      "New: SKAdNetwork and AdAttributionKit measurement for iOS apps: receive Apple's signed postbacks, verify their signatures, and report installs, re-engagements and decoded revenue by app, ad network, source and country. Conversion values are configured on the server, so changing them needs no App Store resubmission",
+      "New: Android SDK (Kotlin), and an iOS SDK that evaluates your goals on the device and sets the matching conversion value",
+      "New: Mobile Apps pages under Setup and Analyze: register apps from a store link, build the store link a campaign should use, edit each app's goals, and report both platforms side by side",
+      "New: Goals. Define what counts as a conversion (an install, an event with conditions, the Nth purchase, a running total, a step after another goal, within a time window) and what it is worth. Goals are versioned, shared by web campaigns and apps, and each campaign can pay for each goal at its own payout",
+      "New: Web events. Add event= to your postbacks and pixels, call POST /api/v3/events, or use p202.track() on a landing page to record what a visitor does after the click; the campaign's goals decide what each event is worth, and on a campaign without goals event= is an ordinary conversion",
+      "New: Conversion ledger. Every amount on a click is its own row recording what produced it, and a click's value can be explained row by row in Visitors, Spy, the API and the CLI. A campaign setting chooses whether repeat conversions keep the latest payout (the default) or add up",
+      "New: Correction URLs on traffic source postbacks, so a network that already heard about a conversion is told when it is corrected or reversed",
+      "Changed: Multi-touch attribution is rebuilt. Journeys join a visitor's own clicks using first-party signals only (never IP addresses), under last-touch, first-touch, linear, time-decay and position-based models, with a new Attribution dashboard and scheduled CSV exports to signed webhooks",
+      "Changed: The whole app, including sign-in, the installer and the upgrader, uses one Bootstrap 5.3 interface with light and dark themes. The separate 202-Mobile pages are retired in favour of the responsive pages",
+      "Changed: Traffic source postbacks from the global postback and the universal pixel are queued with the conversion and sent from a retrying outbox, so a failed send is retried instead of lost, and deleting a conversion cancels or retracts the postbacks queued for it",
+      "Changed: Without a transaction id, the global postback and the universal pixel convert a click once, as the global pixel does. Send a transaction id to record several conversions on one click",
+      "Fixed: Security. The setup wizard could rewrite the configuration of an installed instance; the upgrade and license-key pages accepted a post without the session token; the Get Links and redirector pages accepted another account's campaign, traffic source and rule ids; and the ClickServer switch did not check its permission. Each is now refused",
+      "Fixed: Deleting a user revokes their API keys, which used to keep working, and removes their data in the same step",
+      "Fixed: Password reset works again; report pages no longer pick up filters set in another browser tab; and filter menus list only your own account's values",
+      "Fixed: Upgrading from 1.9.55 keeps transaction ids that differ only in letter case, runs one upgrade at a time, keeps going if the browser times out on a large database, and leaves exactly the schema a fresh install creates",
+      "New: Go CLI: find and bulk-rewrite offer URLs (with undo), check offer hosts without sending clicks, campaign stats in lists, before-and-after comparisons (analytics --split-at), conversion import from a network export, TLS certificate checks in system health, p202 search and p202 commands to find commands, and JSON output by default when an AI agent runs it",
+      "Changed: The release zip ships only what a server needs, with PHP dependencies installed from a locked, tested set"
+    ]
+  },
+  "1.9.75": {
+    "version": "1.9.75",
+    "logs": [
+      "New: Staged writes. Run any API or CLI write with --staged (or staged=1) to record it as a proposal that is approved or discarded later (p202 change list, apply, discard)",
+      "New: API key scopes. Create least-privilege keys: read-only, write, per area, or propose-only",
+      "New: Idempotency-Key support on creates, so a retried request cannot create a duplicate",
+      "New: Delete previews. dry_run=1 on the API and --dry-run on every CLI delete show what would be removed without deleting it",
+      "New: Visitor-supplied text in API responses (keywords, locations, device names) is cleaned of invisible characters and markup",
+      "New: Agent evals: a seeded test fixture, p202 eval run and a CI workflow for checking an AI agent that operates Prosper202"
+    ]
+  },
+  "1.9.74": {
+    "version": "1.9.74",
+    "logs": [
+      "New: Landing Page Optimizer keyword-privacy control lets you choose whether keyword text is included in the signed context tokens sent to the optimizer",
+      "New: Optional JSON data transport for the flat Analyze reports for faster client-side rendering (off by default)",
+      "Fixed: Customer API key validation now follows edge redirects and uses sensible timeouts, so valid keys are no longer wrongly reported as invalid",
+      "Fixed: Corrected pagination counts on reports"
+    ]
+  },
+  "1.9.73": {
+    "version": "1.9.73",
+    "logs": [
+      "New: Landing Page Optimizer bridge lets you pair your Prosper202 account with the Landing Page Optimizer to sync landing-page test data at the edge",
+      "Update: Campaign and landing-page dimensions sync to the optimizer automatically whenever they change"
+    ]
+  },
+  "1.9.72": {
+    "version": "1.9.72",
+    "logs": [
+      "New: Offer-recommendation tracking logs which next-offer recommendations were shown to each customer and how they performed",
+      "New: Per-account recommendation fatigue control stops the same offer from being shown over and over"
+    ]
+  },
+  "1.9.71": {
+    "version": "1.9.71",
+    "logs": [
+      "Update: More accurate next-offer recommendations using richer customer purchase-path statistics"
+    ]
+  },
+  "1.9.70": {
+    "version": "1.9.70",
+    "logs": [
+      "New: Company records for account-based marketing let you group customers under a company and roll up their value",
+      "New: Customizable engagement-score weights to tune how customer engagement is scored"
+    ]
+  },
+  "1.9.69": {
+    "version": "1.9.69",
+    "logs": [
+      "New: Engagement depth metrics capture time on page, scroll depth and video progress as engagement events"
+    ]
+  },
+  "1.9.68": {
+    "version": "1.9.68",
+    "logs": [
+      "New: Engagement events let you record custom customer engagement and account-based-marketing activity against clicks"
+    ]
+  },
+  "1.9.67": {
+    "version": "1.9.67",
+    "logs": [
+      "New: Next-offer recommendations based on your customers' purchase paths"
+    ]
+  },
+  "1.9.66": {
+    "version": "1.9.66",
+    "logs": [
+      "New: Landing-page personalization displays customer lifetime-value fields as dynamic tokens on your pages, with a per-account field allowlist"
+    ]
+  },
+  "1.9.65": {
+    "version": "1.9.65",
+    "logs": [
+      "New: Customer LTV tracking adds a full customer record with identity resolution, custom fields, a unified revenue ledger, products, subscriptions, and integrations with webhooks",
+      "New: Link clicks and conversions to a customer via a custom variable so lifetime value rolls up automatically"
+    ]
+  },
   "1.9.64": {
     "version": "1.9.64",
     "logs": [
@@ -38,7 +141,7 @@
   "1.9.59": {
     "version": "1.9.59",
     "logs": [
-      "New: Multi-touch attribution engine with Last Touch, Time Decay, Position Based, and Assisted models",
+      "New: Multi-touch attribution engine with Last Touch, First Touch, Linear, Time Decay and Position Based models",
       "New: Attribution REST API endpoint for accessing attribution calculations and results",
       "New: Automated attribution processing via cron with batch recalculation"
     ]
@@ -47,6 +150,89 @@
     "version": "1.9.56",
     "logs": [
       "Update: Centralized version management for more reliable upgrades"
+    ]
+  },
+  "1.9.55": {
+    "version": "1.9.55",
+    "logs": [
+      "New: Support for Chrome Samesite=none and secure requirement",
+      "New: PayKickstart Integration for Bot202 Link Assistant and Affiliate IPN for conversion tracking",
+      "New: Deferred Pixel Now Supports PurLinks",
+      "New: API Access To All Setup Data (Steps 1-8)",
+      "Update: Ability to remove all pixels from ppc account",
+      "Update: PurLinks on Simple Landing pages can now be updated dynamically via JavaScript call",
+      "Update: New Useragent detection list",
+      "Update: New Traffic source icons for LinkedIn and Yahoo",
+      "Update: Landing page JavaScript uses cache buster to ensure better tracking",
+      "Update: Duplicate emails no longer allowed when adding a new user",
+      "Fixed: Postbacks and pixels with a currency parameter were displaying wrong",
+      "Fixed: Url vars with a . were being replaced with _",
+      "Fixed: Manual Triggering Of Deferred Pixel Checker",
+      "Fixed: Conversion logs reports show manual and api conversion type",
+      "Fixed: Conversion logs filtering by subid or campaign works",
+      "Fixed: Conversion logs reports needed 2 clicks to run",
+      "Fixed: PHP warning when expected url variables were not used",
+      "Fixed: Currency Exchange Works with postbacks",
+      "Fixed: Google Ad GCLID export header csv fixed",
+      "Fixed: Google Ad GCLID uses conversion time instead of click time",
+      "Fixed: Bot202 Link Assistant wasn't working",
+      "Fixed: Bot202 Facebook Pixel Assistant wasn't fully installed"
+    ]
+  },
+  "1.9.54": {
+    "version": "1.9.54",
+    "logs": [
+      "New: Bot202 Facebook Pixel Assistant",
+      "Update: More accurate exchange rates",
+      "Update: Deferred Pixel fires on background mobile tabs",
+      "Update: Sentinel T.Q.E has improved fraud detection tuning",
+      "Fixed: Cron Jobs Don't Overload Servers with lots of data",
+      "Fixed: Group overview show correct stats when doing breakdown with c1-c5 and utm variables",
+      "Fixed: Deferred Pixel works on external domains",
+      "Fixed: Browsers details were not showing in spy/visitor view",
+      "Fixed: Initial Overview screen wasn't showing all data"
+    ]
+  },
+  "1.9.53": {
+    "version": "1.9.53",
+    "logs": [
+      "Fixed: IPQS api column was not created",
+      "Update: Tracking links automatically use https if secure server detected",
+      "Update: Auto upgrade messsage wording"
+    ]
+  },
+  "1.9.52": {
+    "version": "1.9.52",
+    "logs": [
+      "New: Advanced Deferred Pixel Support",
+      "New: FBCLID value is identified and saved",
+      "New: Sentinel T.Q.E Fraudulent Click Detection and Filtering",
+      "New: [[FBCLID]] token",
+      "New: Purlink support for advanced landing pages",
+      "New: Background automated cron jobs",
+      "Update: Up to 10x redirect speed boost for large databases",
+      "Update: Ignore DNT header",
+      "Update: Sortable columns on all reports",
+      "Update: Currency exchange rate values update on each new conversion",
+      "Update: Upgrades that take a while will not time out",
+      "Update: Landing page sets the right domain and subdirectory",
+      "Update: Adblocker warning removed",
+      "Update: Output javascript header for landing page javascript",
+      "Update: Switch to utf8mb4_general_ci in reports",
+      "Update: MySQL strict mode disabled",
+      "Update: Ability to get the landing page url from a get variable instead of referrer",
+      "Update: Better strict mode disabling",
+      "Update: Improved alp/slp code management",
+      "Update: SSL based redirects for referer shield if server has ssl installed",
+      "Update: Group Overview shows IPv6 addresses better",
+      "Update: PurLink performance enhancements for faster and better tracking",
+      "Fixed: Automatic 202-config.php settings transfer was passing blank values",
+      "Fixed: Simple landing page code works if installed in a subdirectory",
+      "Fixed: Charts were not showing all data",
+      "Fixed: ipv6 didn't work on older database versions",
+      "Fixed: Visitor download report works",
+      "Fixed: Maxbounty uses s2 for Bot202 LinkAssist",
+      "Fixed: LP doesn't double count visits on Safari"
     ]
   },
   "1.9.51": {

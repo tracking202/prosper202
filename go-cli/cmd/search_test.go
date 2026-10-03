@@ -53,6 +53,13 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 		t.Errorf("undo url change: %+v", a.Results)
 	}
 
+	// --split-at's only description was its own flag help, so this found
+	// forecast-event create (--lead-days "before", --lag-days "after").
+	a = searchJSON(t, "compare", "before", "and", "after", "a", "date")
+	if !a.GoodMatch || rankOf(a, "p202 analytics") != 1 {
+		t.Errorf("compare before and after a date: %+v", a.Results)
+	}
+
 	a = searchJSON(t, "clicks per campaign")
 	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
 		t.Errorf("clicks per campaign: %+v", a.Results)

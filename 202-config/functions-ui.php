@@ -197,6 +197,39 @@ function p202_flash(string $kind, string $text): string
 }
 
 /**
+ * The warning every page that starts a database upgrade shows inside its
+ * form, directly above its button: the upgrade page (202-config/upgrade.php)
+ * and both 1-click pages (202-account/auto-upgrade.php,
+ * auto-upgrade-premium.php). An upgrade is one-way (measurement-rewrite plan
+ * §7.5a, RELEASING.md), so each says the same thing in the same words; the
+ * 1-click pages used to say only "back up your database before upgrading",
+ * which reads as a precaution rather than the only way back.
+ *
+ * $fromVersion is the database's version (PROSPER202::prosper202_version()).
+ * Below 1.9.76 the warning also says why putting the old files back is no
+ * rollback: that upgrade makes 202_conversion_logs.dedupe_key NOT NULL.
+ *
+ * The kit's warning flash, parts included (CLAUDE.md #19). Nothing in it
+ * comes from the request, so nothing needs escaping.
+ */
+function p202_upgrade_backup_warning(string $fromVersion): string
+{
+    $why = version_compare($fromVersion, '1.9.76', '<')
+        ? ' It makes <code>202_conversion_logs.dedupe_key</code> required (NOT NULL), so the Prosper202'
+            . ' you are upgrading from can no longer record conversions against this database, even if'
+            . ' you put its files back.'
+        : '';
+
+    return '<div class="alert alert-warning p202-flash" role="status" id="upgrade-backup-warning">'
+        . '<i class="bi bi-exclamation-triangle"></i>'
+        . '<div class="p202-flash__body">'
+        . '<strong>Back up your database before you press the button.</strong>'
+        . ' This upgrade is one-way: it changes the database in place, and restoring that backup is the only way back.'
+        . $why
+        . '</div></div>';
+}
+
+/**
  * The inline Bootstrap Icons used by the shared chrome (header, account menu,
  * setup sub-menu). Inline SVG, so the chrome's icons need no icon font. Paths are from Bootstrap Icons (MIT), 16x16
  * viewBox: house, heart, graph (bar-chart-line), play (tv), star, gear,

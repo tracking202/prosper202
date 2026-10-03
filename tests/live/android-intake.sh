@@ -91,7 +91,7 @@ CRON_VIA=${P202_CRON_VIA:-app-installs}
 case "$CRON_VIA" in app-installs|index) ;; *) echo "P202_CRON_VIA must be app-installs or index" >&2; exit 2;; esac
 settle_cron() { # OUTFILE
     if [ "$CRON_VIA" = index ]; then
-        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='second'"
+        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
         local code
         code=$(curl -s -o "$1" -w '%{http_code}' "$BASE/202-cronjobs/index.php")
         [ "$code" = 200 ] && grep -qF 'pending clicks:' "$1"

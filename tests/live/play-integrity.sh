@@ -160,7 +160,7 @@ cron() {
     local job=202-cronjobs/app-installs.php
     if [ "$CRON_VIA" = index ]; then
         job=202-cronjobs/index.php
-        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='second'"
+        Q "DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
     fi
     (cd "$ROOT" && P202_PLAY_INTEGRITY_ENDPOINT="https://127.0.0.1:$FAKE_PORT" P202_PLAY_INTEGRITY_CA_FILE="$TLS/cert.pem" \
         "$PHP" "$job") > "$OUT/cron.txt" 2>&1
