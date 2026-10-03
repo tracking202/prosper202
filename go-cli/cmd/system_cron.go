@@ -20,12 +20,22 @@ import (
 const cronStaleAfter = 5 * time.Minute
 
 // cronPileUpRows: a truncated type with more rows than this is the
-// char(5) bug adding a row every minute.
+// char(5) bug adding a row every minute. An hourly tier that works keeps at
+// most a day of rows (the daily prune), about 25.
 const cronPileUpRows = 100
 
-// cronTruncated maps a type cut to 202_cronjobs.cronjob_type's char(5) back
-// to the type the scheduler wrote.
-var cronTruncated = map[string]string{"hourl": "hourly", "secon": "second"}
+// cronTier names the tier each 202_cronjobs type records. cronjob_type is
+// char(5): 'hour' and 'secon' are the scheduler's own names (1.9.55's, and
+// 1.9.76's again), and 'secon' gets a row every minute by design.
+var cronTier = map[string]string{"hour": "hourly", "secon": "every minute"}
+
+// cronTruncated maps a type cut to char(5) back to the name a server wrote.
+// Development builds between 1.9.55 and 1.9.76 wrote 'hourly' (1.9.55 itself
+// wrote 'hour'), stored as 'hourl', so their hourly check never matched and
+// the tier ran every minute. Their 'second' was stored as 'secon', which is
+// also the current name, so only 'hourl' tells the bug apart from a working
+// scheduler.
+var cronTruncated = map[string]string{"hourl": "hourly"}
 
 // Cron summary statuses.
 const (
@@ -122,6 +132,8 @@ func summarizeCron(jobs, logs []map[string]interface{}, now time.Time) cronSumma
 			if full, ok := cronTruncated[typ]; ok {
 				ts.TruncatedFrom = &full
 				ts.Label = fmt.Sprintf("%s (%s, truncated)", typ, full)
+			} else if tier, ok := cronTier[typ]; ok {
+				ts.Label = fmt.Sprintf("%s (%s)", typ, tier)
 			}
 			byType[typ] = ts
 		}
@@ -146,7 +158,7 @@ func summarizeCron(jobs, logs []map[string]interface{}, now time.Time) cronSumma
 		}
 	}
 	if len(piled) > 0 {
-		sum.Notes = append(sum.Notes, fmt.Sprintf("202_cronjobs holds %s rows: cronjob_type is char(5), so 'hourly' and 'second' are stored truncated, the scheduler's already-ran check never matches them, and it adds a row every minute (a server schema bug, not a stopped cron).", strings.Join(piled, " and ")))
+		sum.Notes = append(sum.Notes, fmt.Sprintf("202_cronjobs holds %s rows: cronjob_type is char(5), so this server's 'hourly' is stored truncated, its already-ran check never matches it, and the hourly tier runs (and adds a row) every minute. A server bug, not a stopped cron: Prosper202 1.9.76 writes 'hour', and the leftover rows go with the next daily prune.", strings.Join(piled, " and ")))
 	}
 
 	var last int64

@@ -71,9 +71,10 @@ var systemCronCmd = &cobra.Command{
 		"and age), then the last execution recorded in 202_cronjob_logs with its age.\n" +
 		"Rows record the slot a job ran for: the daily row is noon of its day (so\n" +
 		"before noon it reads as later today), the hourly row the start of its hour.\n\n" +
-		"hourl and secon are 'hourly' and 'second' cut to the column's char(5) and are\n" +
-		"labelled so; when one holds more than 100 rows, a note explains the server bug\n" +
-		"that adds a row every minute.\n\n" +
+		"The column is char(5): hour is the hourly tier, secon the per-minute one (a\n" +
+		"row a minute, by design). hourl is 'hourly' cut short, as development builds\n" +
+		"between 1.9.55 and 1.9.76 wrote it: their check never matched, so that tier\n" +
+		"ran every minute; past 100 such rows a note says so.\n\n" +
 		"Like `p202 rotator check`, it exits 5 (partial_failure) when the last\n" +
 		"execution is older than 5 minutes (stale) or none is recorded (never_ran),\n" +
 		"with the summary still printed on stdout.\n\n" +

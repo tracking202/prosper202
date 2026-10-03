@@ -50,6 +50,12 @@ func applyReportWindow(params map[string]string, period string, days int, timeFr
 var analyticsCmd = &cobra.Command{
 	Use:   "analytics",
 	Short: "Query performance stats grouped by campaign, traffic source, country, etc. (shorthand for report breakdown)",
+	Long: "Stats grouped by one dimension: the shorthand for `p202 report breakdown`.\n\n" +
+		"With --split-at, compare before and after a date: each value's totals on both\n" +
+		"sides, the change, and the daily rate on each side, so two windows of different\n" +
+		"lengths compare fairly.",
+	Example: "  p202 analytics --group-by country --period last30\n" +
+		"  p202 analytics --group-by country --split-at 2026-09-04",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !envFlagEnabled("CLI_ENABLE_ANALYTICS_SHORTHAND", true) {
 			return validationError("analytics shorthand is disabled").WithHint("Set CLI_ENABLE_ANALYTICS_SHORTHAND=1 in the environment, or use `p202 report breakdown` directly.")

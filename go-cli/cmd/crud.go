@@ -1036,8 +1036,10 @@ func init() {
 			},
 		},
 		{
-			Name:     "forecast-event",
-			Aliases:  []string{"event"},
+			Name: "forecast-event",
+			// No "event" alias: `p202 event` is the web-events command, which
+			// shadowed it, so the alias the help advertised never resolved
+			// here (TestEveryAliasResolvesToItsOwnCommand).
 			Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
 			Endpoint: "forecast-events",
 			Fields: []crudField{

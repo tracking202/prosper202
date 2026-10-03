@@ -313,9 +313,10 @@ the only way back. From 1.9.76, putting the old files back on an upgraded
 database leaves an install that can no longer record conversions. Take a full
 `mysqldump` (or your host's snapshot) of the Prosper202 database after the site
 stops taking traffic, then upgrade — through `202-config/upgrade.php`, or the
-**1-Click Upgrade** button in the new-version notice under the header. The
-1-click path does not show the upgrade page's backup reminder, so take the
-backup first either way.
+**1-Click Upgrade** button in the new-version notice under the header. Both
+pages say the same above their button. From 1.9.55, the 1-click page replaces
+the files and then sends you to the upgrade page for the database step, which
+checks the database server's version before it changes anything.
 
 On a large install the upgrade page can outlast a proxy's time limit (a million
 conversions takes one to two minutes). The upgrade keeps running on the server:
