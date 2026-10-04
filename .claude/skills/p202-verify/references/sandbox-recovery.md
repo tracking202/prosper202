@@ -229,14 +229,11 @@ goenv=$(go env GOENV); gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE);
 ```
 
 The empty-`HOME` run matters for anything touching a command that builds a
-client. Swap only `HOME`: Go's `GOPATH`, module cache and build cache default
-to `$HOME/go` and `$HOME/.cache`, so a bare `HOME=$(mktemp -d)` moves them too,
-refetches any toolchain selected through `GOTOOLCHAIN` into the temp tree, and
-turns a proxy hiccup there into a failure. The same goes for `GOENV`, where `go env -w`
-keeps `GOPROXY` and `GOFLAGS`. The command above resolves all four
-before the `HOME` assignment (bash applies a command's leading assignments
-left to right, so a `$(go env ...)` written after `HOME=` already sees the
-temp home), passes them through, removes the temp home afterwards, and ends with the test's own status rather than `rm`'s: a trailing cleanup command is the last command, so without saving `$?` first a failing run exits 0. The test runs as an `if` condition so that under `set -e` a failing run still reaches the cleanup: as the last command of an `&&` list it would have exited the shell first, leaving the temp home behind and `rc` unset. The `go` tier does the same. A flag check placed after `api.NewFromConfig()` passes locally only
+client. Swap only `HOME`: `GOENV`, `GOPATH`, `GOMODCACHE` and `GOCACHE`
+default to paths under it, so they are resolved first (before the `HOME=`
+assignment, which later `$(go env ...)` calls would already see) and passed
+through. The command removes the temp home and exits with the test's status,
+also under `set -e`. The `go` tier does the same. A flag check placed after `api.NewFromConfig()` passes locally only
 because the sandbox has a URL configured. CI has none, the config error wins,
 and the flag is never examined. Flag validation belongs before the client is
 built.

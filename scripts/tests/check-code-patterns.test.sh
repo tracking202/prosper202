@@ -522,28 +522,18 @@ XML
             if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
         }
         expect_go "go: healthy module PASSES" PASS
-        # A Go install without gofmt must not PASS: gofmt is CI's first
-        # gate, and a tier that never ran one has not mirrored it. A PATH
-        # shim answers `go env GOROOT` with a directory that has no
-        # bin/gofmt, for the local go only: under GOTOOLCHAIN it defers to
-        # the real go, whose fetched toolchain ships its own, so a later
-        # case can prove that one is used after the switch. The shim execs
-        # GOROOT's own binary, not `command -v go`: on a machine where that
-        # is itself a wrapper that re-resolves `go` through PATH, the shim
-        # would find itself first and recurse without end.
+        # A Go install without gofmt must not PASS. The shim hides gofmt
+        # from the local go only; a named GOTOOLCHAIN (go1.x.y, set by the
+        # switch) passes through. Not keyed on an unset GOTOOLCHAIN: CI's
+        # setup-go exports GOTOOLCHAIN=local. It execs GOROOT's go, not
+        # `command -v go`, which may be a wrapper that would recurse.
         real_go="$(go env GOROOT)/bin/go"
         mkdir -p "$REPO/nogofmt/bin" "$REPO/goshim"
-        printf '#!/bin/sh\nif [ "$1" = env ] && [ "$2" = GOROOT ] && [ -z "${GOTOOLCHAIN:-}" ]; then echo %s; exit 0; fi\nexec %s "$@"\n' "$REPO/nogofmt" "$real_go" > "$REPO/goshim/go" && chmod +x "$REPO/goshim/go"
+        printf '#!/bin/sh\ncase "${GOTOOLCHAIN:-}" in go*) ;; *) if [ "$1" = env ] && [ "$2" = GOROOT ]; then echo %s; exit 0; fi ;; esac\nexec %s "$@"\n' "$REPO/nogofmt" "$real_go" > "$REPO/goshim/go" && chmod +x "$REPO/goshim/go"
         expect_go "go: a toolchain without gofmt is SKIP, not PASS" SKIP PATH="$REPO/goshim:$PATH"
-        # If mktemp fails, HOME must not silently become empty: the
-        # empty-HOME step is an isolation probe and an unisolated run is not
-        # a pass. A PATH shim fails mktemp without touching TMPDIR, which go
-        # test itself needs.
-        # The shim fails only `mktemp -d`, which is the empty-HOME
-        # allocation; the plain `mktemp` the gofmt gate uses earlier in the
-        # same tier passes through to the real binary. A shim that failed
-        # every call tripped at the gofmt gate instead, and this case kept
-        # passing after the empty-HOME check it exists for was removed.
+        # A failed empty-HOME allocation is SKIP, not an unisolated PASS.
+        # Only `mktemp -d` fails, so the gofmt gate's plain mktemp still
+        # works and the case reaches the empty-HOME check.
         real_mktemp=$(command -v mktemp)
         mkdir -p "$REPO/shim" && printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "-d" ] && exit 1; done\nexec %s "$@"\n' "$real_mktemp" > "$REPO/shim/mktemp" && chmod +x "$REPO/shim/mktemp"
         expect_go "go: a failing mktemp -d is SKIP, not an unisolated PASS" SKIP PATH="$REPO/shim:$PATH"
@@ -597,23 +587,25 @@ XML
         if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
-        # gofmt needs no toolchain switch, so it must still report before
-        # the fetch-dependent SKIP.
+        # gofmt reports before the fetch-dependent SKIP.
         printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
         expect_go "go: an unformatted file is FAIL even when CI's Go cannot be fetched" FAIL
+        # A listing from another minor's gofmt says so in the FAIL note.
+        gap_out=$(./verify.sh --tier go 2>&1)
+        if printf '%s' "$gap_out" | grep -E '^  go +FAIL' | grep -q "CI pins 1.1.*the listing is the local gofmt's"; then
+            printf '  ok    %-46s\n' "go: a listing on another minor names the gap"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "go: a listing on another minor names the gap"; fail=$((fail + 1))
+            printf '%s\n' "$gap_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+        fi
         rm -f go-cli/cmd/x/ugly.go
-        # A parse failure is a verdict only when the local parser accepts
-        # at least what CI's does. CI on 1.1 is older than any local Go, so
-        # a syntax error is FAIL outright...
+        # A syntax error is FAIL when CI's Go is older than local...
         printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
         expect_go "go: a syntax error with CI on an older Go is FAIL" FAIL
-        # ...while CI on a Go newer than local (1.99 exists nowhere, so it
-        # cannot be fetched) leaves a syntax error and a version gap
-        # indistinguishable: SKIP, not FAIL, and not PASS.
+        # ...SKIP when CI's is newer and unfetchable (1.99)...
         printf "          go-version: '1.99'\n" > .github/workflows/go-cli.yml
         expect_go "go: a syntax error with CI on a newer, unfetchable Go is SKIP" SKIP
-        # ...but an unformatted file next to it is a definite,
-        # version-independent failure and must not be deferred with it.
+        # ...but an unformatted file beside it is still FAIL.
         printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
         expect_go "go: an unformatted file beside a deferred parse error is still FAIL" FAIL
         rm -f go-cli/cmd/x/ugly.go
@@ -634,20 +626,16 @@ XML
                 printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
                 printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
             fi
-            # The empty-HOME step must reuse the caches, not fetch the
-            # toolchain a second time into a temp tree.
-            # Count only after the marker: a first-ever fetch in the switch
-            # step is legitimate, a fetch inside the empty-HOME step is not.
+            # The empty-HOME step reuses the toolchain cache; count
+            # downloads after its marker only.
             dl=$(printf '%s\n' "$go_out" | sed -n '/^empty-HOME run:/,$p' | grep -c "downloading go1\.")
             if [ "$dl" -eq 0 ]; then
                 printf '  ok    %-46s downloads=%s\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; pass=$((pass + 1))
             else
                 printf '  FAIL  %-46s downloads=%s (wanted 0)\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; fail=$((fail + 1))
             fi
-            # Without a local gofmt, the formatter bundled with CI's
-            # toolchain must run after the switch: an unformatted file is
-            # FAIL, and a clean tree is a PASS under CI's Go, not the SKIP
-            # the same shim earns when there is no switch to supply one.
+            # Without a local gofmt, CI's toolchain's gofmt runs after the
+            # switch.
             printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
             expect_go "go: without a local gofmt, CI's toolchain formats after the switch" FAIL PATH="$REPO/goshim:$PATH"
             rm -f go-cli/cmd/x/ugly.go
