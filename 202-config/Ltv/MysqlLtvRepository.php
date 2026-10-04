@@ -221,7 +221,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             {$joins}
             {$where}
             GROUP BY {$bd['id']}, {$bd['name']}, sp.spend
-            ORDER BY total_revenue DESC
+            ORDER BY total_revenue DESC, {$bd['id']} ASC
             LIMIT ? OFFSET ?";
 
         $binds = array_merge($spendBinds, $binds, [$limit, $offset]);
@@ -557,7 +557,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             INNER JOIN 202_products p ON p.product_id = pc.product_id
             {$mrrSubquery}
             GROUP BY pc.product_id, name, p.sku
-            ORDER BY total_revenue DESC
+            ORDER BY total_revenue DESC, pc.product_id ASC
             LIMIT ? OFFSET ?";
 
         // Bind order follows SQL text: pc's cf-join + WHERE binds, then the MRR

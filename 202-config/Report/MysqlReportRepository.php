@@ -80,6 +80,7 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
         [$whereClause, $types, $binds] = $this->buildWhere($query);
 
+        // The id breaks sort ties so offset paging is stable (as in ReportsController).
         $sql = "SELECT
                 ref.{$bd['id']} as id,
                 ref.{$bd['name']} as name,
@@ -88,7 +89,7 @@ final class MysqlReportRepository implements ReportRepositoryInterface
             INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}
             $whereClause
             GROUP BY ref.{$bd['id']}, ref.{$bd['name']}
-            ORDER BY $sortBy $sortDir
+            ORDER BY $sortBy $sortDir, ref.{$bd['id']} ASC
             LIMIT ? OFFSET ?";
 
         $binds[] = $limit;

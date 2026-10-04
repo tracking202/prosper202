@@ -166,6 +166,8 @@ class ReportsController
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
+        // The id breaks sort ties (many rows share 0 clicks), so offset
+        // paging neither skips nor repeats a row between pages.
         $sql = "SELECT
                 ref.{$bd['id']} as id,
                 ref.{$bd['name']} as name,
@@ -184,7 +186,7 @@ class ReportsController
             INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}
             $whereClause
             GROUP BY ref.{$bd['id']}, ref.{$bd['name']}
-            ORDER BY $sortBy $sortDir
+            ORDER BY $sortBy $sortDir, ref.{$bd['id']} ASC
             LIMIT ? OFFSET ?";
 
         $binds[] = $limit;

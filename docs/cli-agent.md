@@ -245,6 +245,8 @@ p202 report breakdown --breakdown country --period last7 --sort total_net --sort
 
 Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad` (aliases `lp`, `source`, `network`, `offer`, `geo`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
 
+Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row.
+
 ### Compare before and after a date
 
 ```bash

@@ -161,4 +161,82 @@ final class ReportsControllerTest extends TestCase
             $this->assertArrayHasKey($field, $result['data'][0]);
         }
     }
+
+    // ─── breakdown paging ───────────────────────────────────────────
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function breakdownDimensions(): iterable
+    {
+        foreach (ReportsController::breakdownDimensions() as $dimension) {
+            yield $dimension => [$dimension];
+        }
+    }
+
+    /**
+     * Rows tied on the sort column (many campaigns with 0 clicks) have no
+     * defined order, so LIMIT/OFFSET pages could skip some and repeat others.
+     * The dimension's id, which the query groups on, must break the tie.
+     *
+     * @dataProvider breakdownDimensions
+     */
+    public function testBreakdownBreaksSortTiesByIdForStablePaging(string $dimension): void
+    {
+        $sorts = [[[], 'total_clicks DESC'], [['sort' => 'roi', 'sort_dir' => 'asc'], 'roi ASC']];
+        foreach ($sorts as [$sortParams, $expectedSort]) {
+            $prepared = [];
+            $db = $this->recordingDb([], $prepared);
+
+            $params = ['breakdown' => $dimension, 'limit' => 500, 'offset' => 500] + $sortParams;
+            (new ReportsController($db, 1))->breakdown($params);
+
+            $sql = $this->onlyStatementContaining($prepared, 'LIMIT ? OFFSET ?');
+            self::assertMatchesRegularExpression('/\bref\.(\w+) as id\b/', $sql);
+            preg_match('/\bref\.(\w+) as id\b/', $sql, $id);
+            self::assertStringContainsString("GROUP BY ref.{$id[1]},", $sql, 'the tie-breaker must be the grouped id');
+            self::assertMatchesRegularExpression(
+                '/ORDER BY ' . preg_quote($expectedSort, '/') . ', ref\.' . preg_quote($id[1], '/')
+                    . ' ASC\s+LIMIT \? OFFSET \?$/',
+                $sql,
+                "breakdown=$dimension must order by the sort column, then its id"
+            );
+        }
+    }
+
+    /**
+     * A mysqli mock that records every prepared statement and, like the
+     * server, returns no more rows than the statement's trailing LIMIT n.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @param list<string>               $prepared
+     */
+    private function recordingDb(array $rows, array &$prepared): \mysqli
+    {
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('prepare')->willReturnCallback(
+            function (string $sql) use ($rows, &$prepared): \mysqli_stmt {
+                $prepared[] = $sql;
+                if (preg_match('/LIMIT (\d+)\s*$/', $sql, $m) === 1) {
+                    $rows = array_slice($rows, 0, (int) $m[1]);
+                }
+
+                return $this->buildStmtMock($sql, ['SELECT' => $rows]);
+            }
+        );
+
+        return $db;
+    }
+
+    /**
+     * @param list<string> $prepared
+     */
+    private function onlyStatementContaining(array $prepared, string $needle): string
+    {
+        $matches = array_values(array_filter($prepared, static fn (string $sql): bool => str_contains($sql, $needle)));
+        self::assertCount(1, $matches, "expected one statement containing '$needle'");
+
+        return $matches[0];
+    }
 }

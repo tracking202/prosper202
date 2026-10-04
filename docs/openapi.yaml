@@ -1296,7 +1296,11 @@ paths:
     get:
       tags: [Reports]
       summary: Performance breakdown
-      description: Performance metrics grouped by a dimension.
+      description: >-
+        Performance metrics grouped by a dimension. Rows are ordered by `sort`,
+        then by `id` ascending, so rows tied on the sort column (many with 0
+        clicks) keep one order across requests and paging with `offset`
+        neither skips nor repeats a row.
       operationId: reportBreakdown
       parameters:
         - name: breakdown

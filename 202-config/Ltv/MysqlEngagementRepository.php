@@ -216,7 +216,7 @@ final class MysqlEngagementRepository
                AND cu.merged_into_customer_id IS NULL
              GROUP BY cu.company, eng.clicks, eng.top_campaign_name, ev.events, ev.top_event_name,
                       ev.avg_time_on_page, ev.avg_scroll_depth, ev.avg_video_pct
-             ORDER BY engagements DESC, total_revenue DESC
+             ORDER BY engagements DESC, total_revenue DESC, cu.company ASC
              LIMIT ? OFFSET ?"
         );
         $this->conn->bind($stmt, 'iiiiiii', [$since, $userId, $since, $userId, $userId, $limit, $offset]);

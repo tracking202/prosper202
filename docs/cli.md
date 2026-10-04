@@ -816,6 +816,8 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 
 **Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
 
+Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
+
 ### Analytics shorthand
 
 ```bash
