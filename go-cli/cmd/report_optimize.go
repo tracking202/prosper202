@@ -200,6 +200,13 @@ var filterDimension = map[string]string{
 // the account has one (assists don't depend on the model, so the check still runs without one). It pages through
 // every row. It never fails the command: when the check can't run it returns nil and a note saying why.
 func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string) (*starterCheck, []string, error) {
+	return loadAttributionCheck(c, cmd, dimension, params, false)
+}
+
+// loadAttributionCheck is the shared loader for `losers` (needFirstTouch false: assists alone still decide) and
+// `winners` (needFirstTouch true: a closer is only visible as a first-touch loss, so without a First touch model the
+// check is skipped).
+func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool) (*starterCheck, []string, error) {
 	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
 		return nil, nil, nil
 	}
@@ -219,7 +226,10 @@ func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, param
 				", so its numbers wouldn't match these rows. " + hint}, nil
 		}
 	}
-	minAssists, _ := cmd.Flags().GetInt64("min-assists")
+	var minAssists int64
+	if cmd.Flags().Lookup("min-assists") != nil {
+		minAssists, _ = cmd.Flags().GetInt64("min-assists")
+	}
 	var notes []string
 	modelID, _ := cmd.Flags().GetString("first-touch-model")
 	modelName := ""
@@ -255,6 +265,10 @@ func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, param
 					break
 				}
 			}
+		}
+		if modelID == "" && needFirstTouch {
+			return nil, []string{"closer check skipped: no active First touch model. Add one with " +
+				"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}, nil
 		}
 		if modelID == "" {
 			notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
@@ -393,6 +407,33 @@ func applyStarterCheck(row map[string]interface{}, check *starterCheck) {
 	}
 }
 
+// applyCloserCheck adds first-touch ROI and assists to a SCALE row and moves it to CLOSER when it loses money under
+// first touch: last-click credits it with sales other rows started, so more budget won't bring more new buyers.
+func applyCloserCheck(row map[string]interface{}, check *starterCheck) {
+	if check == nil || check.model == "" {
+		return
+	}
+	a, ok := check.byKey[fmt.Sprint(row["id"])]
+	if !ok {
+		if check.partial {
+			row["attribution_checked"] = false
+			row["reason"] = fmt.Sprintf("%s (attribution not checked: past the rows this server can return)", row["reason"])
+		}
+		return
+	}
+	row["assisted_conversions"] = int64(toFloat(a["assisted_conversions"]))
+	if a["roi"] == nil {
+		return
+	}
+	roi := toFloat(a["roi"])
+	row["first_touch_roi"] = roi
+	if roi < 0 {
+		row["bucket"] = "CLOSER"
+		row["reason"] = fmt.Sprintf("%s, but loses money under %s (ROI %+.1f%%): it closes sales other rows start, so more budget "+
+			"won't bring more new buyers. Check what feeds it before scaling", row["reason"], check.model, roi)
+	}
+}
+
 // triageCmd builds `report losers` / `report winners`.
 func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 	c := &cobra.Command{
@@ -430,16 +471,12 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				return err
 			}
 
-			var check *starterCheck
-			if !wantWinners {
-				var notes []string
-				check, notes, err = loadStarterCheck(client, cmd, params["breakdown"], params)
-				if err != nil {
-					return err
-				}
-				for _, n := range notes {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
-				}
+			check, notes, err := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners)
+			if err != nil {
+				return err
+			}
+			for _, n := range notes {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
 
 			out := make([]map[string]interface{}, 0, len(rows))
@@ -479,16 +516,20 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				if id, ok := r["id"]; ok {
 					row["id"] = id
 				}
-				if !wantWinners {
+				if wantWinners {
+					applyCloserCheck(row, check)
+				} else {
 					applyStarterCheck(row, check)
 				}
 				out = append(out, row)
 			}
 			sortRowsBy(out, "total_net", !wantWinners) // losers: worst first; winners: best first
-			if !wantWinners {
-				// CUT rows first, then the TEST rows held back by the attribution check.
-				sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == "CUT" && out[j]["bucket"] != "CUT" })
+			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
+			first := "CUT"
+			if wantWinners {
+				first = "SCALE"
 			}
+			sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == first && out[j]["bucket"] != first })
 			render(rowsToJSON(out))
 			return nil
 		},
@@ -547,7 +588,16 @@ func init() {
 		"An entity filter other than the breakdown itself turns the check off (the attribution report is account-wide).\n" +
 		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
 		"false. --no-attribution-check turns it off."
-	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos", true)
+	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
+	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting.\n\n" +
+		"Each SCALE row is then checked against the attribution report under a first-touch model, for the same dimension\n" +
+		"and range. A row that loses money under first touch comes back as CLOSER, with its first-touch ROI and assists:\n" +
+		"last-click credits it with sales other rows started (retargeting, brand search and email often look like this),\n" +
+		"so more budget won't bring more new buyers. Check what feeds it before scaling.\n\n" +
+		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country, and needs a First\n" +
+		"touch model (the first active one, or --first-touch-model) and an attribution:read key. When it can't run, the\n" +
+		"classic winners are still listed with the reason on stderr. An entity filter other than the breakdown itself\n" +
+		"turns it off; --no-attribution-check does too."
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
@@ -558,5 +608,7 @@ func init() {
 	}
 	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")
 	losers.Flags().Bool("no-attribution-check", false, "List classic last-click losers only, without the first-touch starter check")
+	winners.Flags().String("first-touch-model", "", "Attribution model id for the closer check (default: the first active First touch model)")
+	winners.Flags().Bool("no-attribution-check", false, "List classic last-click winners only, without the first-touch closer check")
 	losers.Flags().Int64("min-assists", 1, "A CUT row with at least this many assisted sales comes back as TEST (0 turns the assists rule off)")
 }

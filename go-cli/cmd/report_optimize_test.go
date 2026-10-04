@@ -398,3 +398,111 @@ func TestLosersRefusesNegativeMinAssistsBeforeAnyRequest(t *testing.T) {
 		t.Errorf("no report should be read for a refused flag")
 	}
 }
+
+// winnersServer answers the classic breakdown with two profitable sources: Meta Retargeting (a closer: it loses
+// money under first touch) and Google Search (wins either way).
+func winnersServer(t *testing.T, models string, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.Write([]byte(`{"data":[
+				{"id":"3","name":"Meta Retargeting","total_clicks":"800","total_leads":"73","total_cost":"1234.00","total_net":"11028.00"},
+				{"id":"5","name":"Google Search","total_clicks":"2000","total_leads":"76","total_cost":"5964.00","total_net":"6451.00"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.Write([]byte(models))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.Write([]byte(`{"data":[
+				{"key":"3","roi":-12.4,"assisted_conversions":19},
+				{"key":"5","roi":111.52,"assisted_conversions":33}],"meta":{"groups":2,"backfill":null}}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+func TestWinnersFlagsClosers(t *testing.T) {
+	cases := []struct {
+		name, models string
+		args         []string
+		note         string
+		wantCalls    int
+		retargeting  string
+	}{
+		{"closer comes back as CLOSER", firstTouchModels, nil, "", 1, "CLOSER"},
+		{"no first-touch model: skipped", `{"data":[]}`, nil, "closer check skipped", 0, "SCALE"},
+		{"turned off", firstTouchModels, []string{"--no-attribution-check"}, "", 0, "SCALE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []url.Values
+			srv := winnersServer(t, tc.models, &calls)
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			out, stderr, err := executeCommand(append([]string{"report", "winners", "--json", "--breakdown", "source", "--period", "last30"}, tc.args...)...)
+			if err != nil {
+				t.Fatalf("winners: %v", err)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Fatalf("attribution calls = %d, want %d", len(calls), tc.wantCalls)
+			}
+			if tc.wantCalls > 0 && calls[0].Get("model_id") != "4" {
+				t.Errorf("the closer check must run under the first-touch model, got model_id %q", calls[0].Get("model_id"))
+			}
+			if tc.note != "" && !strings.Contains(stderr, tc.note) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.note)
+			}
+			var resp struct {
+				Data []map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("output is not JSON: %v", err)
+			}
+			buckets := map[string]string{}
+			for _, r := range resp.Data {
+				buckets[fmt.Sprint(r["name"])] = fmt.Sprint(r["bucket"])
+			}
+			if buckets["Meta Retargeting"] != tc.retargeting || buckets["Google Search"] != "SCALE" {
+				t.Errorf("buckets = %v, want Meta Retargeting %s and Google Search SCALE", buckets, tc.retargeting)
+			}
+			if len(resp.Data) == 2 && resp.Data[0]["bucket"] != "SCALE" {
+				t.Errorf("SCALE rows come before CLOSER rows: %v", resp.Data)
+			}
+		})
+	}
+}
+
+func TestAttributionBreakdownOffset(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"groups":0,"offset":1000}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	if _, _, err := executeCommand("attribution", "breakdown", "--limit", "1000", "--offset", "1000"); err != nil {
+		t.Fatalf("breakdown --offset: %v", err)
+	}
+	if got.Get("offset") != "1000" || got.Get("limit") != "1000" {
+		t.Errorf("params = %v, want offset 1000 and limit 1000", got)
+	}
+	if _, _, err := executeCommand("attribution", "breakdown", "--offset", "0"); err != nil {
+		t.Errorf("--offset 0 is valid: %v", err)
+	}
+	for _, bad := range []string{"-1", "01", "1.5", "x"} {
+		got = nil
+		_, _, err := executeCommand("attribution", "breakdown", "--offset", bad)
+		if err == nil || !strings.Contains(err.Error(), "invalid --offset") {
+			t.Errorf("--offset %s should be refused, got %v", bad, err)
+		}
+		if got != nil {
+			t.Errorf("--offset %s: no request should be made", bad)
+		}
+	}
+}
