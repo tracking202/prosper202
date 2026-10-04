@@ -52,6 +52,8 @@ Rows are ordered by `sort`, then by `id` ascending. Rows tied on the sort column
 | --------- | ---- | ------- | ----------- |
 | `interval` | string | `day` | Grouping interval: `hour`, `day`, `week`, `month` |
 
+Buckets come oldest first, at most 2000 per response. Next to `data` and `interval` the response carries `limit` (2000) and `truncated`: `true` when the window held more buckets than that, in which case the newest ones are missing. Narrow `time_from`/`time_to`, or use a coarser `interval` (`week` and `month` give far fewer buckets). Servers from before `truncated` was added cut at 2000 without saying so.
+
 ## Daypart / Weekpart Parameters
 
 | Parameter | Type | Default | Description |

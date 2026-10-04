@@ -882,6 +882,8 @@ p202 report timeseries --interval hour --time_from 1700000000
 
 Invalid `--interval` values now return a validation error from the API (`422`) instead of silently defaulting.
 
+Buckets come oldest first, at most 2000 per response. When the window holds more, the server cuts the newest ones and says so (`"truncated": true`, `"limit": 2000` in `--json` output), and the CLI prints a warning to stderr naming the last bucket returned, with a hint: narrow `--time_from`/`--time_to` (or use a shorter `--period`), or use a coarser `--interval` (`week` or `month`). A server from before the flag cuts at 2000 without saying so; 2000 buckets from one of those get the same warning, as "may be missing".
+
 ### Daypart
 
 Performance aggregated by hour-of-day (`0`-`23`) across the selected date range.

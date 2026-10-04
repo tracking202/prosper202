@@ -247,6 +247,14 @@ Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `
 
 Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row.
 
+### Read performance over time
+
+```bash
+p202 report timeseries --interval day --period last90 --json
+```
+
+One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval`, the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time_from`/`--time_to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
+
 ### Compare before and after a date
 
 ```bash

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use Api\V3\Controllers\ReportsController;
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Tests\TestCase;
 
@@ -204,6 +205,77 @@ final class ReportsControllerTest extends TestCase
         }
     }
 
+    // ─── timeseries truncation ──────────────────────────────────────
+
+    public function testTimeseriesFlagsTruncationWhenMoreBucketsExistThanTheCap(): void
+    {
+        $prepared = [];
+        $db = $this->recordingDb($this->periodRows(2001), $prepared);
+
+        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'hour']);
+
+        self::assertStringContainsString('LIMIT 2001', $this->onlyStatementContaining($prepared, 'GROUP BY period'));
+        self::assertCount(2000, $result['data']);
+        self::assertTrue($result['truncated']);
+        self::assertSame(2000, $result['limit']);
+        self::assertSame('hour', $result['interval']);
+        // Oldest first: the cut drops the newest bucket, never an earlier one.
+        self::assertSame('p0000', $result['data'][0]['period']);
+        self::assertSame('p1999', $result['data'][1999]['period']);
+        self::assertSame(['data', 'interval', 'truncated', 'limit'], array_keys($result));
+    }
+
+    public function testTimeseriesReadsOnlyOneRowPastTheCap(): void
+    {
+        $prepared = [];
+        $db = $this->recordingDb($this->periodRows(5000), $prepared);
+
+        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+
+        self::assertCount(2000, $result['data']);
+        self::assertTrue($result['truncated']);
+    }
+
+    public function testTimeseriesAtExactlyTheCapIsNotTruncated(): void
+    {
+        $prepared = [];
+        $db = $this->recordingDb($this->periodRows(2000), $prepared);
+
+        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+
+        self::assertCount(2000, $result['data']);
+        self::assertFalse($result['truncated']);
+        self::assertSame(2000, $result['limit']);
+        self::assertSame('p1999', $result['data'][1999]['period']);
+    }
+
+    public function testTimeseriesBelowTheCapIsNotTruncated(): void
+    {
+        $prepared = [];
+        $db = $this->recordingDb($this->periodRows(3), $prepared);
+
+        $result = (new ReportsController($db, 1))->timeseries(['interval' => 'month']);
+
+        self::assertCount(3, $result['data']);
+        self::assertFalse($result['truncated']);
+    }
+
+    public function testTimeseriesFailedResultFetchIsAnErrorNotAnEmptySeries(): void
+    {
+        /** @var \mysqli_stmt&\PHPUnit\Framework\MockObject\MockObject $stmt */
+        $stmt = $this->getMockBuilder(\mysqli_stmt::class)->disableOriginalConstructor()->getMock();
+        $stmt->method('bind_param')->willReturn(true);
+        $stmt->method('execute')->willReturn(true);
+        $stmt->method('get_result')->willReturn(false);
+
+        /** @var \mysqli&\PHPUnit\Framework\MockObject\MockObject $db */
+        $db = $this->getMockBuilder(\mysqli::class)->disableOriginalConstructor()->getMock();
+        $db->method('prepare')->willReturn($stmt);
+
+        $this->expectException(DatabaseException::class);
+        (new ReportsController($db, 1))->timeseries(['interval' => 'day']);
+    }
+
     /**
      * A mysqli mock that records every prepared statement and, like the
      * server, returns no more rows than the statement's trailing LIMIT n.
@@ -238,5 +310,18 @@ final class ReportsControllerTest extends TestCase
         self::assertCount(1, $matches, "expected one statement containing '$needle'");
 
         return $matches[0];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function periodRows(int $count): array
+    {
+        $rows = [];
+        for ($i = 0; $i < $count; $i++) {
+            $rows[] = ['period' => sprintf('p%04d', $i), 'total_clicks' => 1];
+        }
+
+        return $rows;
     }
 }

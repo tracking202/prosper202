@@ -1385,7 +1385,11 @@ paths:
     get:
       tags: [Reports]
       summary: Performance timeseries
-      description: Performance metrics aggregated by time interval.
+      description: >-
+        Performance metrics aggregated by time interval, oldest bucket first,
+        at most `limit` (2000) buckets per response. When the window holds
+        more, `truncated` is true and the newest buckets are the ones left
+        out: narrow `time_from`/`time_to`, or use a coarser `interval`.
       operationId: reportTimeseries
       parameters:
         - name: interval
@@ -1443,6 +1447,16 @@ paths:
                           type: number
                   interval:
                     type: string
+                  truncated:
+                    type: boolean
+                    description: >-
+                      True when more buckets matched than `limit`; `data` then
+                      holds the oldest `limit` of them. Absent from servers
+                      that predate it, which cut at 2000 without saying so.
+                  limit:
+                    type: integer
+                    description: The most buckets one response carries (2000).
+                    example: 2000
         "422":
           $ref: "#/components/responses/ValidationError"
 

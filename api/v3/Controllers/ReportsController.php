@@ -66,6 +66,9 @@ class ReportsController
         'roi',
         'cpa',
     ];
+    /** Most buckets one timeseries response carries; more sets `truncated`. */
+    public const int TIMESERIES_MAX_ROWS = 2000;
+
     private const array DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     private const array METRIC_FIELDS = [
         'total_clicks',
@@ -260,12 +263,16 @@ class ReportsController
             $whereClause
             GROUP BY period
             ORDER BY period ASC
-            LIMIT 2000";
+            LIMIT " . (self::TIMESERIES_MAX_ROWS + 1);
 
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Timeseries query failed');
         $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Timeseries query failed');
+        }
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -273,7 +280,19 @@ class ReportsController
         }
         $stmt->close();
 
-        return ['data' => $rows, 'interval' => $interval];
+        // The extra row only says more buckets exist; buckets run oldest
+        // first, so a truncated series is missing its most recent periods.
+        $truncated = count($rows) > self::TIMESERIES_MAX_ROWS;
+        if ($truncated) {
+            $rows = array_slice($rows, 0, self::TIMESERIES_MAX_ROWS);
+        }
+
+        return [
+            'data' => $rows,
+            'interval' => $interval,
+            'truncated' => $truncated,
+            'limit' => self::TIMESERIES_MAX_ROWS,
+        ];
     }
 
     public function daypart(array $params): array
