@@ -344,4 +344,48 @@ class CrudCommandsTest extends TestCase
             $this->assertStringContainsString('Invalid --offset: a whole number, 0 or more', $tester->getDisplay(), $offset);
         }
     }
+
+    /**
+     * Forwarding --offset is the feature: a valid value reaches the
+     * attribution/reports/breakdown query, with --limit, unchanged.
+     */
+    public function testAttributionBreakdownForwardsAValidOffset(): void
+    {
+        foreach (['0', '1000', '2000'] as $offset) {
+            $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+                /** @var list<array{string, array<string, string>}> */
+                public array $calls = [];
+
+                public function get(string $path, array $params = []): array
+                {
+                    $this->calls[] = [$path, $params];
+
+                    return ['data' => [], 'meta' => ['groups' => 0, 'offset' => (int) ($params['offset'] ?? 0)]];
+                }
+            };
+            $command = new class ($client) extends AttributionBreakdownCommand {
+                public function __construct(private readonly \P202Cli\ApiClient $fake)
+                {
+                    // An anonymous subclass doesn't inherit the #[AsCommand] name.
+                    parent::__construct('attribution:breakdown');
+                }
+
+                protected function client(): \P202Cli\ApiClient
+                {
+                    return $this->fake;
+                }
+            };
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--limit' => '1000', '--offset' => $offset, '--json' => true]);
+
+            $this->assertSame(Command::SUCCESS, $status, $offset);
+            $this->assertCount(1, $client->calls, $offset);
+            [$path, $params] = $client->calls[0];
+            $this->assertSame('attribution/reports/breakdown', $path);
+            $this->assertSame($offset, $params['offset'] ?? null, 'offset reaches the query');
+            $this->assertSame('1000', $params['limit'] ?? null);
+        }
+    }
 }

@@ -287,6 +287,7 @@ final class AttributionReportsIntegrationTest extends TestCase
             ['offset' => '-1'],
             ['offset' => '1.5'],
             ['offset' => 'abc'],
+            ['offset' => '01'], // the contract refuses leading zeros
             ['time_from' => 'yesterday'],
             ['period' => 'last7', 'time_from' => '1'],
             ['groupby' => 'campaign'],
