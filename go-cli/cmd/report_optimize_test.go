@@ -357,7 +357,7 @@ func TestLosersNotesAndFallbacks(t *testing.T) {
 		{"no first-touch model: assists only", `{"data":[]}`, onePage, []string{"--breakdown", "source"}, "no active First touch model", 1, false, "TEST"},
 		{"dimension without an attribution equivalent", firstTouchModels, onePage, []string{"--breakdown", "browser"}, "no browser breakdown", 0, false, "CUT"},
 		{"turned off", firstTouchModels, onePage, []string{"--breakdown", "source", "--no-attribution-check"}, "", 0, false, "CUT"},
-		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "last 30 days", 1, true, "TEST"},
+		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "", 1, true, "TEST"},
 		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff_campaign_id", "7"}, "can't be filtered by --aff_campaign_id", 0, false, "CUT"},
 		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc_account_id", "7"}, "", 1, true, "TEST"},
 		{"backfill running", firstTouchModels, func(url.Values) (int, string) {
@@ -587,5 +587,40 @@ func TestTriageRefusesAMalformedFirstTouchModelBeforeAnyRequest(t *testing.T) {
 				t.Errorf("%s --first-touch-model %s: %d requests made, want 0", cmdName, bad, requests)
 			}
 		}
+	}
+}
+
+// The attribution request must cover the classic report's window: all time when no range is given (the classic
+// report has no lower bound; the attribution report would default to 30 days), and all time up to --time_to.
+func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want map[string]string
+		none []string
+	}{
+		{"no range: all time", nil, map[string]string{"time_from": "0"}, []string{"period", "time_to"}},
+		{"period", []string{"--period", "last7"}, map[string]string{"period": "last7"}, []string{"time_from", "time_to"}},
+		{"time_from only", []string{"--time_from", "1790000000"}, map[string]string{"time_from": "1790000000"}, []string{"period", "time_to"}},
+		{"time_to only: from the start", []string{"--time_to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000"}, []string{"period"}},
+		{"both bounds", []string{"--time_from", "1790000000", "--time_to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000"}, []string{"period"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, calls := runLosers(t, firstTouchModels, onePage, append([]string{"--breakdown", "source"}, tc.args...)...)
+			if len(calls) != 1 {
+				t.Fatalf("attribution calls = %d, want 1 (stderr %q)", len(calls), stderr)
+			}
+			for k, v := range tc.want {
+				if got := calls[0].Get(k); got != v {
+					t.Errorf("%s = %q, want %q", k, got, v)
+				}
+			}
+			for _, k := range tc.none {
+				if calls[0].Has(k) {
+					t.Errorf("%s should not be sent, got %q", k, calls[0].Get(k))
+				}
+			}
+		})
 	}
 }

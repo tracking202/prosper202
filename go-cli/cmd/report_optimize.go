@@ -297,17 +297,19 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	if modelID != "" {
 		q["model_id"] = modelID
 	}
-	switch {
-	case params["period"] != "":
+	// The same window as the classic report. Without a lower bound the classic report runs from the first click, while
+	// the attribution report would default to the last 30 days, so a missing time_from is sent as 0 (all time); a
+	// missing time_to defaults to now on both.
+	if params["period"] != "" {
 		q["period"] = params["period"]
-	case params["time_from"] != "" || params["time_to"] != "":
-		for _, k := range []string{"time_from", "time_to"} {
-			if params[k] != "" {
-				q[k] = params[k]
-			}
+	} else {
+		q["time_from"] = "0"
+		if params["time_from"] != "" {
+			q["time_from"] = params["time_from"]
 		}
-	default:
-		notes = append(notes, "attribution checked over the last 30 days (no --period or --time_from/--time_to was given)")
+		if params["time_to"] != "" {
+			q["time_to"] = params["time_to"]
+		}
 	}
 	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
 	if err != nil {
