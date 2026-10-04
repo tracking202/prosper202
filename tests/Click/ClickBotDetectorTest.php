@@ -38,6 +38,12 @@ final class ClickBotDetectorTest extends TestCase
         return self::fixture('humans');
     }
 
+    /** @return array<string, array{string}> HTTP libraries */
+    public static function serverUserAgents(): array
+    {
+        return self::fixture('servers');
+    }
+
     /** @dataProvider botUserAgents */
     public function testASignatureAloneFlagsTheClick(string $userAgent): void
     {
@@ -55,6 +61,29 @@ final class ClickBotDetectorTest extends TestCase
         self::assertFalse(ClickBotDetector::isBot($userAgent, $device), $userAgent);
         // A caller without the family: the detector's own parse agrees.
         self::assertFalse(ClickBotDetector::isBot($userAgent, ['type' => '2']), $userAgent);
+    }
+
+    /**
+     * Server-to-server and pass-through setups record real clicks with their
+     * HTTP library's agent; the agent evals record theirs with curl.
+     *
+     * @dataProvider serverUserAgents
+     */
+    public function testAnHttpLibraryIsNotABot(string $userAgent): void
+    {
+        $family = (string) Parser::create()->parse($userAgent)->device->family;
+        self::assertFalse(ClickBotDetector::matchesSignature($userAgent), $userAgent);
+        $device = ['type' => '1', 'ua_device_family' => $family];
+        self::assertFalse(ClickBotDetector::isBot($userAgent, $device), $userAgent);
+        self::assertFalse(ClickBotDetector::isBot($userAgent, ['type' => '1']), $userAgent);
+    }
+
+    public function testCurlAndGoClicksAreRecordedAsHuman(): void
+    {
+        foreach (['curl/8.4.0', 'Go-http-client/1.1'] as $userAgent) {
+            self::assertFalse(ClickBotDetector::isBot($userAgent, self::ORDINARY_DEVICE), $userAgent);
+            self::assertFalse(ClickBotDetector::isBot($userAgent, ['type' => '1']), $userAgent);
+        }
     }
 
     public function testDeviceTypeFourIsABotWhateverTheAgent(): void
@@ -106,20 +135,20 @@ final class ClickBotDetectorTest extends TestCase
     {
         $class = new \ReflectionClass(ClickBotDetector::class);
         $tokens = $class->getConstant('TOKENS');
-        $clients = $class->getConstant('CLIENTS');
+        $prefixes = $class->getConstant('PREFIXES');
         self::assertIsArray($tokens);
-        self::assertIsArray($clients);
+        self::assertIsArray($prefixes);
         self::assertNotEmpty($tokens);
-        self::assertNotEmpty($clients);
+        self::assertNotEmpty($prefixes);
 
         $agents = array_map(static fn(array $row): string => $row[0], self::fixture('bots'));
         foreach ($tokens as $token) {
             $hits = array_filter($agents, static fn(string $ua): bool => stripos($ua, $token) !== false);
             self::assertNotEmpty($hits, "no test agent carries the signature '$token'");
         }
-        foreach ($clients as $client) {
-            $hits = array_filter($agents, static fn(string $ua): bool => stripos($ua, $client) === 0);
-            self::assertNotEmpty($hits, "no test agent starts with the client '$client'");
+        foreach ($prefixes as $prefix) {
+            $hits = array_filter($agents, static fn(string $ua): bool => stripos($ua, $prefix) === 0);
+            self::assertNotEmpty($hits, "no test agent starts with the prefix '$prefix'");
         }
     }
 

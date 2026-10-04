@@ -1,5 +1,5 @@
 {
-    "about": "Real user agents for tests/Click/ClickBotDetectorTest.php. bots: one per ClickBotDetector signature; a new signature needs an agent here. humans: browsers and in-app WebViews that must never be flagged.",
+    "about": "Real user agents for tests/Click/ClickBotDetectorTest.php. bots: one per ClickBotDetector signature; a new signature needs an agent here. humans: browsers and in-app WebViews that must never be flagged. servers: HTTP libraries, which record legitimate server-to-server and pass-through clicks and must not be flagged either.",
     "bots": {
         "AdsBot-Google": "AdsBot-Google (+http://www.google.com/adsbot.html)",
         "AdsBot-Google-Mobile": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 (compatible; AdsBot-Google-Mobile; +http://www.google.com/mobile/adsbot.html)",
@@ -39,21 +39,7 @@
         "Playwright": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15 Playwright/1.44.0",
         "UptimeRobot": "Mozilla/5.0+(compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)",
         "Pingdom": "Pingdom.com_bot_version_1.4_(http://www.pingdom.com/)",
-        "StatusCake": "Mozilla/5.0 (compatible; StatusCake)",
-        "curl": "curl/8.4.0",
-        "Wget": "Wget/1.21.4",
-        "python-requests": "python-requests/2.31.0",
-        "Python-urllib": "Python-urllib/3.11",
-        "aiohttp": "Python/3.11 aiohttp/3.9.1",
-        "Go-http-client": "Go-http-client/1.1",
-        "okhttp": "okhttp/4.12.0",
-        "Java": "Java/17.0.2",
-        "Apache-HttpClient": "Apache-HttpClient/4.5.14 (Java/17.0.2)",
-        "libwww-perl": "libwww-perl/6.72",
-        "Scrapy": "Scrapy/2.11.0 (+https://scrapy.org)",
-        "axios": "axios/1.6.2",
-        "node-fetch": "node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
-        "PostmanRuntime": "PostmanRuntime/7.36.0"
+        "StatusCake": "Mozilla/5.0 (compatible; StatusCake)"
     },
     "humans": {
         "Chrome, Windows": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
@@ -91,5 +77,19 @@
         "a WebView that names WhatsApp": "Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.81 Mobile Safari/537.36 WhatsApp/2.24.20.89",
         "Slack desktop": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Slack/4.40.128 Chrome/128.0.6613.36 Electron/32.0.1 Safari/537.36 Sonic Slack_SSB/4.40.128",
         "Discord desktop": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9164 Chrome/124.0.6367.243 Electron/30.2.0 Safari/537.36"
+    },
+    "servers": {
+        "curl": "curl/8.4.0",
+        "Wget": "Wget/1.21.4",
+        "python-requests": "python-requests/2.31.0",
+        "aiohttp": "Python/3.11 aiohttp/3.9.1",
+        "Go-http-client": "Go-http-client/1.1",
+        "okhttp": "okhttp/4.12.0",
+        "Apache-HttpClient": "Apache-HttpClient/4.5.14 (Java/17.0.2)",
+        "libwww-perl": "libwww-perl/6.72",
+        "axios": "axios/1.6.2",
+        "node-fetch": "node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
+        "PostmanRuntime": "PostmanRuntime/7.36.0",
+        "Guzzle": "GuzzleHttp/7 curl/8.4.0 PHP/8.3.12"
     }
 }

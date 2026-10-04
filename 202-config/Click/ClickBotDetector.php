@@ -49,15 +49,20 @@ final class ClickBotDetector
     ];
 
     /**
-     * Matched only at the start of the user agent, ignoring case: an HTTP
-     * library or preview fetcher puts its own name first, so a browser or an
-     * in-app WebView that merely mentions one (an Android WebView ending in
-     * "WhatsApp/2.24") is not flagged. To extend: as for TOKENS.
+     * Matched only at the start of the user agent, ignoring case, where a
+     * preview fetcher puts its own name: a WebView that merely mentions one
+     * (an Android WebView ending in "WhatsApp/2.24") is not flagged.
+     *
+     * HTTP libraries (curl, Wget, python-requests, Go-http-client, okhttp,
+     * Java and the like) are deliberately absent. A tracker legitimately
+     * records clicks a server makes: server-to-server setups and pass-through
+     * redirects send the click with their library's agent, and the bots seen
+     * on real installs were crawlers, headless browsers and Google proxies,
+     * never libraries. (ua-parser itself still calls a few, such as
+     * Python-urllib and Java, "Spider", and the Spider rule follows it.)
      */
-    private const CLIENTS = [
-        'WhatsApp/', 'curl/', 'Wget/', 'python-requests/', 'Python-urllib/', 'Python/',
-        'Go-http-client/', 'okhttp/', 'Java/', 'Apache-HttpClient/', 'libwww-perl/',
-        'Scrapy/', 'axios/', 'node-fetch/', 'PostmanRuntime/',
+    private const PREFIXES = [
+        'WhatsApp/',
     ];
 
     private static ?string $pattern = null;
@@ -96,7 +101,7 @@ final class ClickBotDetector
         if (self::$pattern === null) {
             $alternatives = array_merge(
                 array_map(static fn(string $t): string => preg_quote($t, '/'), self::TOKENS),
-                array_map(static fn(string $c): string => '^' . preg_quote($c, '/'), self::CLIENTS),
+                array_map(static fn(string $c): string => '^' . preg_quote($c, '/'), self::PREFIXES),
             );
             self::$pattern = '/(?:' . implode('|', $alternatives) . ')/i';
         }

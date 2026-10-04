@@ -35,13 +35,17 @@ Read-only access to click tracking data.
 `dl.php`, `rtr.php`, `static/record_simple.php` and `static/record_adv.php`.
 A click is a bot when any of these holds:
 
-- its user agent carries a crawler, ad-reviewer, link-preview, automation,
-  HTTP-library or uptime-monitor signature (AdsBot-Google, Googlebot,
-  bingbot, Applebot, facebookexternalhit, Slackbot, WhatsApp, HeadlessChrome,
-  curl, python-requests, UptimeRobot and others; the list is
-  `ClickBotDetector::TOKENS` and `CLIENTS`);
+- its user agent carries a crawler, ad-reviewer, link-preview, automation
+  or uptime-monitor signature (AdsBot-Google, Googlebot, bingbot, Applebot,
+  facebookexternalhit, Slackbot, WhatsApp, HeadlessChrome, UptimeRobot and
+  others; the list is `ClickBotDetector::TOKENS` and `PREFIXES`);
 - ua-parser classifies its device as `Spider`;
 - the device lookup gave it device type 4 (Bot).
+
+HTTP libraries (curl, Wget, python-requests, Go-http-client, okhttp and the
+like) are not bots by signature: server-to-server setups and pass-through
+redirects record real clicks with them. ua-parser itself calls a few of
+them, such as `Python-urllib` and `Java`, `Spider`, and those are flagged.
 
 A bot is redirected exactly like a visitor, so link previews and ad review
 keep working; only what is recorded differs. The click is stored with
@@ -66,8 +70,9 @@ clicks and cost and the "Real clicks" view. Clicks recorded before it keep
 the flags they were recorded with.
 
 To recognise another agent, add its token to `ClickBotDetector::TOKENS`
-(matched anywhere in the user agent) or `CLIENTS` (matched at its start, for
-HTTP libraries), and a real user agent carrying it to the `bots` list in
+(matched anywhere in the user agent) or `PREFIXES` (matched at its start, for
+a preview fetcher that names itself first), and a real user agent carrying
+it to the `bots` list in
 `tests/fixtures/click-bot/user-agents.json`; `ClickBotDetectorTest` fails
 for a signature no agent there exercises.
 
