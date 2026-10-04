@@ -331,4 +331,17 @@ class CrudCommandsTest extends TestCase
             $this->assertStringContainsString('Invalid --limit: a whole number of rows from 1 to 1000', $tester->getDisplay(), $limit);
         }
     }
+
+    public function testAttributionBreakdownOffsetMustBeAWholeNumber(): void
+    {
+        foreach (['-1', '1.5', 'abc', '01'] as $offset) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--offset' => $offset]);
+
+            $this->assertSame(Command::FAILURE, $status, $offset);
+            $this->assertStringContainsString('Invalid --offset: a whole number, 0 or more', $tester->getDisplay(), $offset);
+        }
+    }
 }

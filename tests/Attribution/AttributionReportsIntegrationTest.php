@@ -157,6 +157,24 @@ final class AttributionReportsIntegrationTest extends TestCase
         self::assertSame('15.00000', $out['totals']['compare_attributed_revenue']);
     }
 
+    public function testOffsetPagesThroughTheRowsInTheReportsOrder(): void
+    {
+        // Campaign 1 has $12 under the default (last touch), campaign 2 $3,
+        // so the order is 1 then 2. A reader past `limit` pages with offset.
+        $this->scenario();
+        $page = fn (string $offset): array => $this->api->breakdown(['group_by' => 'campaign', 'limit' => '1', 'offset' => $offset]);
+
+        $first = $page('0');
+        self::assertSame(['1'], array_column($first['data'], 'key'));
+        self::assertSame([2, 1, 0], [$first['meta']['groups'], $first['meta']['limit'], $first['meta']['offset']]);
+        $second = $page('1');
+        self::assertSame(['2'], array_column($second['data'], 'key'));
+        self::assertSame(1, $second['meta']['offset']);
+        self::assertSame($first['totals'], $second['totals'], 'totals cover every group on every page');
+        self::assertSame([], $page('2')['data'], 'past the last group: no rows, not an error');
+        self::assertSame(0, $this->api->breakdown(['group_by' => 'campaign'])['meta']['offset'], 'no offset reads from the top');
+    }
+
     public function testEveryDimensionRuns(): void
     {
         $this->scenario();
@@ -266,6 +284,9 @@ final class AttributionReportsIntegrationTest extends TestCase
             ['model_id' => 'abc'],
             ['model_id' => '99999'],
             ['limit' => '0'],
+            ['offset' => '-1'],
+            ['offset' => '1.5'],
+            ['offset' => 'abc'],
             ['time_from' => 'yesterday'],
             ['period' => 'last7', 'time_from' => '1'],
             ['groupby' => 'campaign'],
