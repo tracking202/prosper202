@@ -268,9 +268,7 @@ class ConversionsController
         );
 
         try {
-            $convId = $repo->create($this->userId, $data);
-        } catch (\Prosper202\Conversion\ClickNotFoundException $e) {
-            throw new NotFoundException('Click not found or not owned by user');
+            $recorded = $repo->record($this->userId, $data);
         } catch (\Prosper202\Conversion\Ledger\ReversalException $e) {
             if ($e->kind === \Prosper202\Conversion\Ledger\ReversalException::NO_TARGET) {
                 throw new NotFoundException($e->getMessage());
@@ -294,6 +292,11 @@ class ConversionsController
             // Preserve the underlying failure for server-side logs via getPrevious().
             throw new DatabaseException('Failed to create conversion: ' . $e->getMessage(), $e);
         }
+        if (!$recorded['clickFound']) {
+            throw new NotFoundException('Click not found or not owned by user');
+        }
+        $convId = (int) $recorded['convId'];
+        $duplicate = (bool) $recorded['duplicate'];
 
         // A customer_ref on an authenticated request is the operator's own
         // statement, so it links the click into the identity graph without
@@ -310,10 +313,17 @@ class ConversionsController
         // exists. Reading it back is the only step left, and its failure must
         // not read as a failed create.
         try {
-            return $this->get($convId);
+            $response = $this->get($convId);
         } catch (\Throwable $e) {
             throw new WriteCommittedException('conversion', $e);
         }
+        // Additive and only when true, like idempotent_replay: `data` stays
+        // the conversion as GET /conversions/{id} serves it.
+        if ($duplicate) {
+            $response['duplicate'] = true;
+        }
+
+        return $response;
     }
 
     /**

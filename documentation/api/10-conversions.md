@@ -57,10 +57,13 @@ back.
 | `conv_time` | integer | No | Unix timestamp (defaults to now) |
 
 Creates are idempotent on `transaction_id`: if a conversion with the same
-`transaction_id` already exists for the given `click_id`, the existing
-conversion is returned instead of recording a duplicate. Omitting
-`transaction_id` skips this check, so retried requests without one will
-record multiple conversions.
+`transaction_id` already exists for the given `click_id`, nothing is written
+and the existing conversion is returned, with `"duplicate": true` beside
+`data` (the field is absent on a new conversion; the status is `201` either
+way, as for an `Idempotency-Key` replay). Without a `transaction_id`, an
+`accumulate` campaign records one plain conversion per click (a repeat is a
+duplicate), and a `replace` campaign records a row on every request, so a
+retried request without one records another conversion there.
 
 ## Example
 

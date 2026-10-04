@@ -261,4 +261,19 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         $this->expectException(\Api\V3\Exception\NotFoundException::class);
         $controller->create(['click_id' => 888888, 'transaction_id' => 'V3-X']);
     }
+
+    public function testV3CreateSaysWhenItMatchedAnExistingConversion(): void
+    {
+        $this->insertClick(1200);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        $new = $controller->create(['click_id' => 1200, 'transaction_id' => 'V3-FLAG', 'payout' => 5.0]);
+        $again = $controller->create(['click_id' => 1200, 'transaction_id' => 'V3-FLAG', 'payout' => 5.0]);
+
+        self::assertArrayNotHasKey('duplicate', $new, 'a new conversion carries no duplicate flag');
+        self::assertTrue($again['duplicate'] ?? null, 'a repeat says it matched an existing conversion');
+        self::assertSame((int) $new['data']['conv_id'], (int) $again['data']['conv_id']);
+        self::assertSame($new['data'], $again['data'], 'and serves that conversion unchanged');
+        self::assertSame(1, $this->conversionCount(1200));
+    }
 }

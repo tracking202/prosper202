@@ -1205,10 +1205,13 @@ paths:
         (`replace`: the latest conversion is the value; `accumulate`: the
         conversions add up).
 
-        A repeated `transaction_id` on the same click is the same conversion
-        (the existing one is returned). With no `transaction_id`, an
-        `accumulate` campaign records one plain conversion per click, and a
-        `replace` campaign records a row each time.
+        A repeated `transaction_id` on the same click is the same conversion:
+        nothing is written, and the existing one is returned with
+        `duplicate: true` beside `data` (absent when the conversion is new;
+        the status stays `201`, as for an `idempotent_replay`). With no
+        `transaction_id`, an `accumulate` campaign records one plain
+        conversion per click (a repeat is a duplicate), and a `replace`
+        campaign records a row each time.
 
         `status: "reversed"` with the `transaction_id` of an earlier
         conversion records a reversal that nets against it (a $3 sale
@@ -1224,11 +1227,23 @@ paths:
               $ref: "#/components/schemas/ConversionCreate"
       responses:
         "201":
-          description: Conversion created
+          description: Conversion created, or the existing one it repeats (`duplicate`)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ConversionResponse"
+                allOf:
+                  - $ref: "#/components/schemas/ConversionResponse"
+                  - type: object
+                    properties:
+                      duplicate:
+                        type: boolean
+                        description: |
+                          Present (`true`) only when the click already had this
+                          conversion: `data` is that conversion and nothing was
+                          written.
+                      idempotent_replay:
+                        type: boolean
+                        description: Present (`true`) when the response is an `Idempotency-Key` replay.
         "422":
           $ref: "#/components/responses/ValidationError"
 
