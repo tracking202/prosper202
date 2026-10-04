@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use Api\V3\Controllers\ConversionsController;
+use Api\V3\Exception\ConflictException;
 use Api\V3\RequestContext;
 use Api\V3\Support\IdempotentCreate;
 use Api\V3\Support\ServerStateStore;
@@ -14,12 +15,15 @@ use Tests\Support\FakeMysqliConnection;
 /**
  * POST /conversions when the click's ledger already holds the request's key
  * (MysqlConversionRepository answers it as a duplicate and writes nothing):
- * the row is served as it is with `duplicate: true`.
+ * a live row is served as it is with `duplicate: true`, and a deleted row is
+ * refused with a 409 that leaves the request's Idempotency-Key free.
  *
  * The real controller and repository run over a fake connection, and the
- * key goes through the real IdempotentCreate wrapper and ServerStateStore.
- * A new row (no `duplicate`) needs a real insert id, so it is covered
- * against a real database in ConversionIdempotencyIntegrationTest.
+ * key goes through the real IdempotentCreate wrapper and ServerStateStore:
+ * whether a failure spends the key is decided by the exception class the
+ * controller throws, so that seam is exercised, not stubbed. A new row
+ * (no `duplicate`) needs a real insert id, so it is covered against a real
+ * database in ConversionIdempotencyIntegrationTest.
  */
 final class ConversionCreateDuplicateTest extends TestCase
 {
@@ -80,6 +84,18 @@ final class ConversionCreateDuplicateTest extends TestCase
         return ($this->wrapper())('conversions', $payload, static fn (): array => (new ConversionsController($db, 1))->create($payload));
     }
 
+    private function keyState(string $key, array $payload): string
+    {
+        $store = new ServerStateStore($this->stateDir);
+        $scope = ServerStateStore::idempotencyScopeForUser(1);
+        $state = $store->reserveIdempotent($scope, $key, ServerStateStore::idempotencyFingerprint('create:conversions', $payload))['state'];
+        if ($state === 'claimed') {
+            $store->releaseIdempotent($scope, $key);
+        }
+
+        return $state;
+    }
+
     public function testADuplicateOfALiveRowIsServedWithTheFlag(): void
     {
         $db = $this->ledgerWithRow(0);
@@ -106,5 +122,83 @@ final class ConversionCreateDuplicateTest extends TestCase
         self::assertArrayNotHasKey('idempotent_replay', $first);
         self::assertTrue($replay['duplicate'] ?? null, 'the recorded response keeps the flag');
         self::assertTrue($replay['idempotent_replay'] ?? null);
+    }
+
+    public function testADuplicateOfADeletedRowIsA409NamingIt(): void
+    {
+        $db = $this->ledgerWithRow(1);
+
+        try {
+            (new ConversionsController($db, 1))->create(['click_id' => 10, 'transaction_id' => 'T-1']);
+            self::fail('a conversion whose transaction id belongs to a deleted row must be refused');
+        } catch (ConflictException $e) {
+            self::assertSame(409, $e->getHttpStatus());
+            self::assertStringContainsString('Conversion 41 on click 10 had transaction id "T-1" and was deleted', $e->getMessage());
+            self::assertStringContainsString('nothing was written', $e->getMessage());
+            self::assertSame(['conv_id' => 41, 'click_id' => 10, 'deleted' => true], $e->getDetails());
+        }
+        self::assertCount(0, $db->statementsContaining('INSERT INTO 202_conversion_logs'));
+        self::assertCount(0, $db->statementsContaining('cl.deleted = 0'), 'the deleted row is never read back as the answer');
+    }
+
+    public function testADeletedPlainConversionIsNamedAsOne(): void
+    {
+        $db = $this->ledgerWithRow(1);
+        $db->whenQueryContainsReturnRows('FROM 202_aff_campaigns WHERE aff_campaign_id = ?', [['payout_mode' => 'accumulate', 'aff_campaign_payout' => '4.00']]);
+
+        try {
+            (new ConversionsController($db, 1))->create(['click_id' => 10]);
+            self::fail('an id-less conversion whose plain conversion was deleted must be refused');
+        } catch (ConflictException $e) {
+            self::assertStringContainsString("Conversion 41 was click 10's one conversion without a transaction id", $e->getMessage());
+        }
+        $lookup = $db->statementsContaining('AND dedupe_key = ?');
+        self::assertSame([10, 'conversion'], $lookup[0]->boundValues);
+    }
+
+    /**
+     * The duplicate's row was live under the click lock and is gone by the
+     * read-back (deleted in between). This request wrote nothing, so the
+     * failure must not claim a committed write and spend the key.
+     */
+    public function testADuplicateThatCannotBeReadBackSpendsNoKey(): void
+    {
+        $payload = ['click_id' => 10, 'transaction_id' => 'T-1'];
+        $db = $this->ledgerWithRow(0);
+        $db->whenQueryContainsReturnRows('WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0', []);
+        RequestContext::setHeaders(['Idempotency-Key' => 'dup-vanished-1']);
+
+        try {
+            $this->post($db, $payload);
+            self::fail('a duplicate that cannot be read back must fail');
+        } catch (\Throwable $e) {
+            self::assertNotInstanceOf(\Api\V3\Exception\WriteCommittedException::class, $e, 'nothing was written: ' . $e->getMessage());
+            self::assertInstanceOf(\Api\V3\Exception\DatabaseException::class, $e);
+        }
+        self::assertSame('claimed', $this->keyState('dup-vanished-1', $payload), 'a retry may run again');
+    }
+
+    public function testARefusedDuplicateLeavesTheIdempotencyKeyFree(): void
+    {
+        $payload = ['click_id' => 10, 'transaction_id' => 'T-1'];
+        RequestContext::setHeaders(['Idempotency-Key' => 'dup-deleted-1']);
+
+        $answers = [];
+        foreach ([1, 2] as $attempt) {
+            try {
+                $this->post($this->ledgerWithRow(1), $payload);
+                $answers[] = 'recorded';
+            } catch (\Throwable $e) {
+                $answers[] = $e::class . ': ' . $e->getMessage();
+            }
+        }
+
+        self::assertSame('claimed', $this->keyState('dup-deleted-1', $payload), 'nothing was written, so the key is not spent; answers: ' . implode(' | ', $answers));
+        // The retry gets the same answer, not "a previous request with this
+        // Idempotency-Key did not finish".
+        foreach ($answers as $i => $answer) {
+            self::assertStringStartsWith(ConflictException::class . ': Conversion 41', $answer, 'attempt ' . ($i + 1));
+            self::assertStringContainsString('was deleted', $answer, 'attempt ' . ($i + 1));
+        }
     }
 }

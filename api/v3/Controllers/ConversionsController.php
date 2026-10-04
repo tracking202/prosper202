@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
@@ -297,6 +298,17 @@ class ConversionsController
         }
         $convId = (int) $recorded['convId'];
         $duplicate = (bool) $recorded['duplicate'];
+        // The repository wrote nothing for a duplicate. One of a deleted row
+        // is refused: that row keeps its ledger key, so the conversion is
+        // not recorded again, and answering with the row would claim it
+        // counts. A 409 is not a committed write, so it never spends the
+        // request's Idempotency-Key.
+        if ($duplicate && !empty($recorded['deleted'])) {
+            throw new ConflictException(
+                self::deletedDuplicateMessage($convId, $clickId, (string) ($recorded['dedupeKey'] ?? '')),
+                ['conv_id' => $convId, 'click_id' => $clickId, 'deleted' => true]
+            );
+        }
 
         // A customer_ref on an authenticated request is the operator's own
         // statement, so it links the click into the identity graph without
@@ -311,11 +323,15 @@ class ConversionsController
 
         // The repository's transaction has committed, so the conversion
         // exists. Reading it back is the only step left, and its failure must
-        // not read as a failed create.
+        // not read as a failed create. A duplicate committed nothing, so its
+        // failed read is an ordinary failure a retry can repeat safely.
         try {
             $response = $this->get($convId);
         } catch (\Throwable $e) {
-            throw new WriteCommittedException('conversion', $e);
+            if (!$duplicate) {
+                throw new WriteCommittedException('conversion', $e);
+            }
+            throw new DatabaseException('Conversion ' . $convId . ' already records this conversion but could not be read back', $e);
         }
         // Additive and only when true, like idempotent_replay: `data` stays
         // the conversion as GET /conversions/{id} serves it.
@@ -324,6 +340,32 @@ class ConversionsController
         }
 
         return $response;
+    }
+
+    /**
+     * Why a conversion matching a deleted row is not recorded, in the terms
+     * of the ledger key the two share (DedupeKey: the API writes tx:<id>,
+     * the one plain conversion, or a reversal's rev:<sale>:<ref>).
+     */
+    private static function deletedDuplicateMessage(int $convId, int $clickId, string $dedupeKey): string
+    {
+        if (str_starts_with($dedupeKey, 'tx:')) {
+            $what = 'Conversion ' . $convId . ' on click ' . $clickId . ' had transaction id "' . substr($dedupeKey, 3) . '"';
+            $next = 'If this is a different sale, send it with its own transaction_id.';
+        } elseif ($dedupeKey === \Prosper202\Conversion\Ledger\DedupeKey::plainConversion()) {
+            $what = 'Conversion ' . $convId . ' was click ' . $clickId . '\'s one conversion without a transaction id (its campaign accumulates)';
+            $next = 'To record a sale on this click, send it with its transaction_id.';
+        } elseif (str_starts_with($dedupeKey, 'rev:')) {
+            $what = 'Conversion ' . $convId . ' was this reversal on click ' . $clickId;
+            $next = 'A different reversal of the sale needs its own reversal_id.';
+        } else {
+            $what = 'Conversion ' . $convId . ' on click ' . $clickId . ' matched this request';
+            $next = 'Send a conversion that does not repeat it.';
+        }
+
+        return $what . ' and was deleted. A deleted conversion keeps its place in the click\'s ledger, so it is not '
+            . 'recorded again (a network\'s repeat of it is ignored the same way); nothing was written. ' . $next
+            . ' GET /clicks/' . $clickId . '/conversions shows the deleted row.';
     }
 
     /**

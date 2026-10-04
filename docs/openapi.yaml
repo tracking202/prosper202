@@ -1213,6 +1213,13 @@ paths:
         conversion per click (a repeat is a duplicate), and a `replace`
         campaign records a row each time.
 
+        A deleted conversion keeps its place in the click's ledger, so a
+        conversion that repeats one — the same `transaction_id`, the same
+        reversal, or an `accumulate` click's plain conversion — is not
+        recorded again: it is a `409` naming the deleted conversion
+        (`details.conv_id`, `details.deleted: true`), nothing is written, and
+        an `Idempotency-Key` sent with it is not spent.
+
         `status: "reversed"` with the `transaction_id` of an earlier
         conversion records a reversal that nets against it (a $3 sale
         reversed is $0). A sale can be reversed once: a second reversal with a
@@ -1244,6 +1251,28 @@ paths:
                       idempotent_replay:
                         type: boolean
                         description: Present (`true`) when the response is an `Idempotency-Key` replay.
+        "409":
+          description: |
+            The conversion repeats one that was deleted (its ledger key stays
+            on the click), so it is not recorded again; nothing was written.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      details:
+                        type: object
+                        properties:
+                          conv_id:
+                            type: integer
+                            description: The deleted conversion.
+                          click_id:
+                            type: integer
+                          deleted:
+                            type: boolean
+                            enum: [true]
         "422":
           $ref: "#/components/responses/ValidationError"
 

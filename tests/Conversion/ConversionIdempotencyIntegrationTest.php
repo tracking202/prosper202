@@ -276,4 +276,102 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame($new['data'], $again['data'], 'and serves that conversion unchanged');
         self::assertSame(1, $this->conversionCount(1200));
     }
+
+    /**
+     * A conversion whose ledger key belongs to a deleted row is refused with
+     * a 409 naming that row, writes nothing, and leaves the request's
+     * Idempotency-Key free: it used to read the deleted row back, answer
+     * 500 "write completed" and spend the key.
+     */
+    public function testV3RepeatOfADeletedConversionIsRefusedAndSpendsNoKey(): void
+    {
+        $this->insertClick(1300);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $convId = (int) $controller->create(['click_id' => 1300, 'transaction_id' => 'V3-GONE', 'payout' => 5.0])['data']['conv_id'];
+        $controller->delete($convId);
+        $before = self::$db->query('SELECT click_lead, click_payout FROM 202_clicks WHERE click_id=1300')->fetch_assoc();
+
+        $stateDir = sys_get_temp_dir() . '/p202-conv-gone-' . bin2hex(random_bytes(4));
+        mkdir($stateDir, 0700, true);
+        $payload = ['click_id' => 1300, 'transaction_id' => 'V3-GONE', 'payout' => 5.0];
+        \Api\V3\RequestContext::setHeaders(['Idempotency-Key' => 'v3-gone-1']);
+        try {
+            $wrapped = new \Api\V3\Support\IdempotentCreate(new \Api\V3\Support\ServerStateStore($stateDir), 1);
+            $answers = [];
+            foreach ([1, 2] as $attempt) {
+                try {
+                    $wrapped('conversions', $payload, fn (): array => (new \Api\V3\Controllers\ConversionsController(self::$db, 1))->create($payload));
+                    $answers[] = 'recorded';
+                } catch (\Throwable $e) {
+                    $answers[] = $e;
+                }
+            }
+            $store = new \Api\V3\Support\ServerStateStore($stateDir);
+            $state = $store->reserveIdempotent(
+                \Api\V3\Support\ServerStateStore::idempotencyScopeForUser(1),
+                'v3-gone-1',
+                \Api\V3\Support\ServerStateStore::idempotencyFingerprint('create:conversions', $payload)
+            )['state'];
+        } finally {
+            \Api\V3\RequestContext::reset();
+            $files = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($stateDir, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($files as $file) {
+                $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
+            }
+            rmdir($stateDir);
+        }
+
+        foreach ($answers as $i => $answer) {
+            self::assertInstanceOf(\Api\V3\Exception\ConflictException::class, $answer, 'attempt ' . ($i + 1) . ' is a 409, the same each time');
+            self::assertStringContainsString('Conversion ' . $convId . ' on click 1300 had transaction id "V3-GONE" and was deleted', $answer->getMessage());
+            self::assertSame(['conv_id' => $convId, 'click_id' => 1300, 'deleted' => true], $answer->getDetails());
+        }
+        self::assertSame('claimed', $state, 'nothing was written, so the Idempotency-Key is not spent');
+        self::assertSame(1, $this->conversionCount(1300), 'no second row');
+        self::assertSame($before, self::$db->query('SELECT click_lead, click_payout FROM 202_clicks WHERE click_id=1300')->fetch_assoc(), 'the click is untouched');
+    }
+
+    public function testV3RepeatOfADeletedReversalOrPlainConversionIsRefused(): void
+    {
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+
+        // A reversal is its own row (rev:<sale>:<ref>); deleted, the same
+        // reversal is not recorded again.
+        $this->insertClick(1400);
+        $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'payout' => 5.0]);
+        $reversal = (int) $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'status' => 'reversed'])['data']['conv_id'];
+        $controller->delete($reversal);
+        try {
+            $controller->create(['click_id' => 1400, 'transaction_id' => 'V3-SALE', 'status' => 'reversed']);
+            self::fail('the deleted reversal must not be recorded again');
+        } catch (\Api\V3\Exception\ConflictException $e) {
+            self::assertStringContainsString('Conversion ' . $reversal . ' was this reversal on click 1400 and was deleted', $e->getMessage());
+        }
+
+        // An accumulating campaign's id-less conversion is its one plain
+        // conversion (key "conversion"); deleted, it is not recorded again.
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 9');
+        if (self::$db->query("INSERT INTO 202_aff_campaigns SET aff_campaign_id = 9, user_id = 1, aff_network_id = 1, aff_campaign_name = 'c9',
+                aff_campaign_url = 'http://x', aff_campaign_payout = 4, aff_campaign_time = 1, aff_campaign_foreign_payout = 4, payout_mode = 'accumulate'") !== true) {
+            self::fail('campaign 9 fixture: ' . self::$db->error);
+        }
+        try {
+            $this->insertClick(1500, 0.0, 9);
+            $plain = (int) $controller->create(['click_id' => 1500])['data']['conv_id'];
+            $controller->delete($plain);
+            try {
+                $controller->create(['click_id' => 1500]);
+                self::fail('the deleted plain conversion must not be recorded again');
+            } catch (\Api\V3\Exception\ConflictException $e) {
+                self::assertStringContainsString('Conversion ' . $plain . " was click 1500's one conversion without a transaction id", $e->getMessage());
+            }
+            self::assertSame(1, $this->conversionCount(1500));
+        } finally {
+            self::$db->query('DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = 9');
+        }
+        self::assertSame(2, $this->conversionCount(1400), 'the sale and the one reversal');
+    }
 }

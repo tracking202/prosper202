@@ -65,6 +65,13 @@ way, as for an `Idempotency-Key` replay). Without a `transaction_id`, an
 duplicate), and a `replace` campaign records a row on every request, so a
 retried request without one records another conversion there.
 
+A deleted conversion keeps its place in the click's ledger, so a request that
+repeats one (the same `transaction_id`, the same reversal, or an `accumulate`
+click's plain conversion) is refused with `409`, naming it in
+`details.conv_id` with `details.deleted: true`. Nothing is written, and an
+`Idempotency-Key` sent with it is not spent. A different sale needs its own
+`transaction_id`.
+
 ## Example
 
 ```bash
