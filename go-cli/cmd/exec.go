@@ -128,7 +128,10 @@ var execCmd = &cobra.Command{
 				}
 			}
 
-			data, _ := json.Marshal(payload)
+			data, err := json.Marshal(payload)
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			render(data)
 
 			if anyFailed {

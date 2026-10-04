@@ -15,19 +15,40 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// toFloat coerces an API value (number or numeric string) to float64.
+// toFloat coerces an API value (number or numeric string) to float64. Missing,
+// unparseable and non-finite values are 0, so NaN/Inf never reach json.Marshal.
 func toFloat(v interface{}) float64 {
-	switch x := v.(type) {
-	case float64:
-		return x
-	case int:
-		return float64(x)
-	case string:
-		f, _ := strconv.ParseFloat(x, 64)
-		return f
-	default:
+	f, err := parseFiniteFloat(v)
+	if err != nil {
 		return 0
 	}
+	return f
+}
+
+// parseFiniteFloat is toFloat for values that must be numbers: missing,
+// unparseable and non-finite (NaN, ±Inf) values are errors.
+func parseFiniteFloat(v interface{}) (float64, error) {
+	var f float64
+	switch x := v.(type) {
+	case float64:
+		f = x
+	case int:
+		f = float64(x)
+	case string:
+		p, err := strconv.ParseFloat(x, 64)
+		if err != nil {
+			return 0, fmt.Errorf("not a number: %q", x)
+		}
+		f = p
+	case nil:
+		return 0, errors.New("missing")
+	default:
+		return 0, fmt.Errorf("not a number: %v", v)
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("not a finite number: %v", v)
+	}
+	return f, nil
 }
 
 // fetchCampaignPayout returns the default payout for a campaign (internal id).

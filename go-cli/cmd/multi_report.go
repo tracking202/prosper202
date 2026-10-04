@@ -199,7 +199,7 @@ func parseFloat(v interface{}) (float64, bool) {
 	}
 }
 
-func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) []byte {
+func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) ([]byte, error) {
 	names := make([]string, 0, len(profileData))
 	for name := range profileData {
 		names = append(names, name)
@@ -219,13 +219,16 @@ func buildMultiProfilePayload(profileData map[string]map[string]interface{}, agg
 	totalRow["profile"] = "TOTAL"
 	rows = append(rows, totalRow)
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"data":       rows,
 		"profiles":   profiles,
 		"aggregated": aggregated,
 		"errors":     errorsOut,
 	})
-	return payload
+	if err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	return payload, nil
 }
 
 func addMultiProfileFlags(cmd *cobra.Command) {

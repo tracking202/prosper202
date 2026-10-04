@@ -113,23 +113,29 @@ var diffCmd = &cobra.Command{
 			}
 
 			done(true, "")
-			payload, _ := json.Marshal(map[string]interface{}{
+			payload, err := json.Marshal(map[string]interface{}{
 				"from":    fromProfile,
 				"to":      toProfile,
 				"summary": overall,
 				"data":    results,
 			})
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			render(payload)
 			return nil
 		}
 
 		result := diffEntity(target, fromData[target], toData[target], fromLookups, toLookups)
 		done(true, "")
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"from": fromProfile,
 			"to":   toProfile,
 			"data": result,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},

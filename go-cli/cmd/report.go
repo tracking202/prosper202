@@ -52,7 +52,10 @@ var reportSummaryCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			payload, err := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			if err != nil {
+				return err
+			}
 			render(payload)
 			return nil
 		}
@@ -121,7 +124,11 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(applyBreakdownFilters(cmd, data))
+		filtered, err := applyBreakdownFilters(cmd, data)
+		if err != nil {
+			return err
+		}
+		render(filtered)
 		return nil
 	},
 }

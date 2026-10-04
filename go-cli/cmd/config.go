@@ -131,7 +131,10 @@ var configShowCmd = &cobra.Command{
 				"output_format":   outputFormatName(),
 				"output_source":   outputSource,
 			}
-			data, _ := json.Marshal(obj)
+			data, err := json.Marshal(obj)
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			output.RenderWith(data, output.Opts{JSON: true, Compact: compactJSON})
 		} else {
 			fmt.Printf("Config file: %s\n", config.Path())
@@ -227,12 +230,15 @@ var configGetDefaultCmd = &cobra.Command{
 			if value == "" {
 				return validationError("default %q is not set", key).WithHint("Set it with `p202 config set-default %s <value>`.", key)
 			}
-			payload, _ := json.Marshal(map[string]interface{}{
+			payload, err := json.Marshal(map[string]interface{}{
 				"data": map[string]string{
 					"key":   key,
 					"value": value,
 				},
 			})
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			render(payload)
 			return nil
 		}
@@ -243,7 +249,10 @@ var configGetDefaultCmd = &cobra.Command{
 				rows = append(rows, map[string]string{"key": key, "value": val})
 			}
 		}
-		payload, _ := json.Marshal(map[string]interface{}{"data": rows})
+		payload, err := json.Marshal(map[string]interface{}{"data": rows})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},

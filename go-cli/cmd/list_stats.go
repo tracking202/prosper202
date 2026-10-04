@@ -84,9 +84,17 @@ func addListStats(c *api.Client, entity crudEntity, rows []map[string]interface{
 			s = byID[id]
 		}
 		for _, f := range listStatsFields {
-			row[f] = toFloat(s[f])
+			v := 0.0
+			if s != nil {
+				var perr error
+				if v, perr = parseFiniteFloat(s[f]); perr != nil {
+					return nil, withHint(fmt.Errorf("%s %s stats field %s: %w", entity.Name, scalarString(row[entity.IDField]), f, perr),
+						"The report breakdown returned a value that is not a finite number; `p202 report breakdown --breakdown %s --json` shows the raw row.", entity.StatsGroupBy)
+				}
+			}
+			row[f] = v
 		}
-		if minClicks > 0 && toFloat(s["total_clicks"]) < float64(minClicks) {
+		if minClicks > 0 && row["total_clicks"].(float64) < float64(minClicks) {
 			continue
 		}
 		out = append(out, row)

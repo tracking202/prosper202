@@ -23,7 +23,10 @@ var dashboardCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			payload, err := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			if err != nil {
+				return err
+			}
 			render(payload)
 			return nil
 		}

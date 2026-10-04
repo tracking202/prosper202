@@ -30,7 +30,7 @@ var rotatorListCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			encoded, _ := json.Marshal(map[string]interface{}{
+			encoded, err := json.Marshal(map[string]interface{}{
 				"data": rows,
 				"pagination": map[string]interface{}{
 					"total":  len(rows),
@@ -38,6 +38,9 @@ var rotatorListCmd = &cobra.Command{
 					"offset": 0,
 				},
 			})
+			if err != nil {
+				return fmt.Errorf("encoding output: %w", err)
+			}
 			render(encoded)
 			return nil
 		}
