@@ -108,15 +108,15 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) { die(); }
 
-if ($memcacheWorking) {  
-
-	$url = $tracker_row['aff_campaign_url']."&subid=p202";
-	$tid = $lpip;
-
-	$getKey = $memcache->get(md5('lp_'.$tid.systemHash()));
-	if($getKey === false){
-		$setUrl = setCache(md5('lp_'.$tid.systemHash()), $url, 0);
-	}
+// The URL a MySQL outage redirects to (read above): kept equal to the
+// campaign's current URL, not the one it had at its first click.
+if ($memcacheWorking) {
+	\Prosper202\Click\FallbackRedirectUrl::refresh(
+		md5('lp_'.$lpip.systemHash()),
+		$tracker_row['aff_campaign_url']."&subid=p202",
+		static fn(string $key): mixed => $memcache->get($key),
+		static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+	);
 }
 
 //grab the GET variables from the LANDING PAGE

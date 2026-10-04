@@ -32,6 +32,15 @@ Manage campaigns.
 
 Auto-generated on create: `aff_campaign_time` (unix timestamp), `aff_campaign_id_public` (random public ID).
 
+**Changing `aff_campaign_url`.** Links redirect to the new URL within three
+minutes (with memcached running, the redirect caches a link's row that long).
+While MySQL is down, direct links (`dl.php`), landing-page links (`lp.php`)
+and offer links (`off.php`) fall back to a URL kept in memcached; the first
+click that sees the new URL rewrites it, so an outage sends visitors to the
+current primary URL, not the one the link had at its first click. A link
+that gets no click between the change and an outage still falls back to its
+old URL.
+
 ## Example: Create Campaign
 
 ```bash

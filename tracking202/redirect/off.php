@@ -264,16 +264,15 @@ if (!$info_row || !isset($info_row['click_id'])) {
     die();
 }
 
-// cache the url for later use if db is down
+// The URL a MySQL outage redirects to (read above): kept equal to the
+// campaign's current URL, not the one it had at its first click.
 if ($memcacheWorking) {
-
-    $url = $info_row['aff_campaign_url'] . "&subid=p202";
-    $tid = $acip;
-
-    $getKey = $memcache->get(md5('ac_' . $tid . systemHash()));
-    if ($getKey === false) {
-        $setUrl = setCache(md5('ac_' . $tid . systemHash()), $url, 0);
-    }
+    \Prosper202\Click\FallbackRedirectUrl::refresh(
+        md5('ac_' . $acip . systemHash()),
+        $info_row['aff_campaign_url'] . "&subid=p202",
+        static fn(string $key): mixed => $memcache->get($key),
+        static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+    );
 }
 
 $click_id = $info_row['click_id'];

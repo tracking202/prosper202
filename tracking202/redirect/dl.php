@@ -248,15 +248,15 @@ if (!$tracker_row) {
 	);
 }
 
+// The URL a MySQL outage redirects to (read above): kept equal to the
+// campaign's current URL, not the one it had at its first click.
 if ($memcacheWorking) {
-
-	$url = $tracker_row['aff_campaign_url'];
-	$tid = $t202id;
-
-	$getKey = $memcache->get(md5('url_' . $tid . systemHash()));
-	if ($getKey === false) {
-		$setUrl = setCache(md5('url_' . $tid . systemHash()), $url, 0);
-	}
+	\Prosper202\Click\FallbackRedirectUrl::refresh(
+		md5('url_' . $t202id . systemHash()),
+		(string) ($tracker_row['aff_campaign_url'] ?? ''),
+		static fn(string $key): mixed => $memcache->get($key),
+		static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+	);
 }
 
 
