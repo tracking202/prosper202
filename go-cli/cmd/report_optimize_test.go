@@ -654,3 +654,44 @@ func TestBoundedRangesSayHowTheCohortsDiffer(t *testing.T) {
 		t.Errorf("an all-time run has no edges to note: %q", stderr)
 	}
 }
+
+// The classic report treats a bound of "0" as unset, so the attribution request must too: --time_to 0 is no upper bound
+// (not an empty [0, 0] window), and --period with --time_from 0 is not a mixed range.
+func TestZeroBoundsMeanUnsetAsInTheClassicReport(t *testing.T) {
+	_, _, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--time_to", "0")
+	if len(calls) != 1 || calls[0].Has("time_to") || calls[0].Get("time_from") != "0" {
+		t.Errorf("--time_to 0 should send all time (time_from 0, no time_to), got %v", calls)
+	}
+	_, stderr, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30", "--time_from", "0")
+	if len(calls) != 1 || calls[0].Get("period") != "last30" || strings.Contains(stderr, "both set") {
+		t.Errorf("--period with --time_from 0 is just the period: calls %v, stderr %q", calls, stderr)
+	}
+}
+
+// A bad --first-touch-model is refused before the payout or the classic report is read.
+func TestBadOverrideIsRefusedBeforeTheClassicReport(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
+			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
+		default:
+			w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--aff_campaign_id", "7", "--first-touch-model", "1")
+	if err == nil || !strings.Contains(err.Error(), "last_touch model") {
+		t.Fatalf("a last-touch override must be refused, got %v", err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "/campaigns/") || (strings.HasSuffix(p, "/reports/breakdown") && !strings.Contains(p, "attribution")) {
+			t.Errorf("%s was read before the override was refused", p)
+		}
+	}
+}

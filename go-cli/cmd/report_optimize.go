@@ -205,13 +205,26 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
 		return nil, nil, nil
 	}
+	// An explicit --first-touch-model is validated before anything else, so a bad one is refused even when the check
+	// would be skipped for another reason (a filter, a dimension, a mixed range).
+	override, err := firstTouchOverride(c, cmd)
+	if err != nil {
+		return nil, nil, err
+	}
 	groupBy, ok := attributionGroupBy[dimension]
 	if !ok {
 		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}, nil
 	}
+	// The classic report treats a bound of "0" as unset (PHP empty()), so the check does too.
+	bound := func(k string) string {
+		if params[k] == "0" {
+			return ""
+		}
+		return params[k]
+	}
 	// The classic report applies both a period and a time range (their overlap); the attribution report takes one,
 	// so a mixed range (often a configured default period plus explicit times) can't be mirrored.
-	if params["period"] != "" && (params["time_from"] != "" || params["time_to"] != "") {
+	if params["period"] != "" && (bound("time_from") != "" || bound("time_to") != "") {
 		return nil, []string{"attribution check skipped: --period and --time_from/--time_to are both set (perhaps a configured " +
 			"default period), and the attribution report takes one range. Pass only one to check attribution"}, nil
 	}
@@ -232,31 +245,9 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 		minAssists, _ = cmd.Flags().GetInt64("min-assists")
 	}
 	var notes []string
-	modelID, _ := cmd.Flags().GetString("first-touch-model")
-	modelName := ""
+	modelID, modelName := override.id, override.name
 	if modelID != "" {
-		// The ROI is reported as first-touch ROI, so the override must be a first-touch model.
-		data, err := c.Get("attribution/models/"+modelID, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		var resp struct {
-			Data map[string]interface{} `json:"data"`
-		}
-		if err := json.Unmarshal(data, &resp); err != nil {
-			return nil, nil, err
-		}
-		if t := fmt.Sprint(resp.Data["model_type"]); t != "first_touch" {
-			return nil, nil, validationError("--first-touch-model %s is a %s model; the starter check needs a first_touch model", modelID, t).
-				WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
-		}
-		if st := fmt.Sprint(resp.Data["status"]); st != "active" {
-			// An inactive model has no credits: the report would refuse it and the check would silently not run.
-			return nil, nil, validationError("--first-touch-model %s is %s; the check needs an active first_touch model", modelID, st).
-				WithHint("Activate it with `p202 attribution model update " + modelID + " --status active`, or omit the flag to use the first active First touch model.")
-		}
-		modelName = fmt.Sprint(resp.Data["model_name"])
-		if resp.Data["recompute_pending"] == true {
+		if override.pending {
 			notes = append(notes, fmt.Sprintf("First touch model %s (%s) is still being recomputed, so its ROI wasn't used", modelID, modelName))
 			modelID, modelName = "", ""
 		}
@@ -308,7 +299,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	// For a bounded range the populations differ at the edges: the classic report counts clicks made in the range, the
 	// attribution report sales converted in it (credited to clicks of any age), the same view as the Attribution page's
 	// Report. TEST and CLOSER only hold a row for a closer look, so the check runs and says so.
-	if params["period"] != "" || params["time_from"] != "" || params["time_to"] != "" {
+	if params["period"] != "" || bound("time_from") != "" || bound("time_to") != "" {
 		notes = append(notes, "attribution counts sales converted in the range (as the Attribution page's Report does); the classic "+
 			"rows count clicks made in it, so clicks near the range's edges can differ")
 	}
@@ -316,11 +307,11 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 		q["period"] = params["period"]
 	} else {
 		q["time_from"] = "0"
-		if params["time_from"] != "" {
-			q["time_from"] = params["time_from"]
+		if bound("time_from") != "" {
+			q["time_from"] = bound("time_from")
 		}
-		if params["time_to"] != "" {
-			q["time_to"] = params["time_to"]
+		if bound("time_to") != "" {
+			q["time_to"] = bound("time_to")
 		}
 	}
 	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
@@ -439,6 +430,40 @@ func applyStarterCheck(row map[string]interface{}, check *starterCheck) {
 	}
 }
 
+// overrideModel is a validated --first-touch-model: an active first_touch model, possibly still being recomputed.
+type overrideModel struct {
+	id, name string
+	pending  bool
+}
+
+// firstTouchOverride reads --first-touch-model and checks it names an active first_touch model. The ROI is reported as
+// first-touch ROI, and an inactive model has no credits, so either mistake would make the check wrong or silent.
+func firstTouchOverride(c *api.Client, cmd *cobra.Command) (overrideModel, error) {
+	id, _ := cmd.Flags().GetString("first-touch-model")
+	if id == "" {
+		return overrideModel{}, nil
+	}
+	data, err := c.Get("attribution/models/"+id, nil)
+	if err != nil {
+		return overrideModel{}, err
+	}
+	var resp struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return overrideModel{}, err
+	}
+	if t := fmt.Sprint(resp.Data["model_type"]); t != "first_touch" {
+		return overrideModel{}, validationError("--first-touch-model %s is a %s model; the check needs a first_touch model", id, t).
+			WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
+	}
+	if st := fmt.Sprint(resp.Data["status"]); st != "active" {
+		return overrideModel{}, validationError("--first-touch-model %s is %s; the check needs an active first_touch model", id, st).
+			WithHint("Activate it with `p202 attribution model update " + id + " --status active`, or omit the flag to use the first active First touch model.")
+	}
+	return overrideModel{id: id, name: fmt.Sprint(resp.Data["model_name"]), pending: resp.Data["recompute_pending"] == true}, nil
+}
+
 // applyCloserCheck adds first-touch ROI and assists to a SCALE row and moves it to CLOSER when it loses money under
 // first touch: last-click credits it with sales other rows started, so more budget won't bring more new buyers.
 func applyCloserCheck(row map[string]interface{}, check *starterCheck) {
@@ -490,11 +515,6 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			maxCPC, _ := cmd.Flags().GetFloat64("max-cpc")
 			campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 
-			var payout float64
-			if maxCPC <= 0 && campaignID != "" {
-				payout, _ = fetchCampaignPayout(client, campaignID)
-			}
-
 			params := collectReportParams(cmd)
 			breakdown, _ := cmd.Flags().GetString("breakdown")
 			if breakdown == "" {
@@ -502,12 +522,19 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			}
 			params["breakdown"] = resolveDimension(breakdown)
 
-			rows, err := fetchBreakdownRows(client, params)
+			// The attribution check runs first: it validates --first-touch-model, so a bad override is refused before
+			// the payout and the classic report are read.
+			check, notes, err := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners)
 			if err != nil {
 				return err
 			}
 
-			check, notes, err := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners)
+			var payout float64
+			if maxCPC <= 0 && campaignID != "" {
+				payout, _ = fetchCampaignPayout(client, campaignID)
+			}
+
+			rows, err := fetchBreakdownRows(client, params)
 			if err != nil {
 				return err
 			}
