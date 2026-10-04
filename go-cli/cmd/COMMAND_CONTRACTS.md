@@ -19,6 +19,14 @@ This file captures the API paths and payload/query expectations used by upcoming
   - Partial rule update (`rule_name`, `splittest`, `status`, `criteria`, `redirects`)
 - `GET /api/v3/reports/breakdown`
   - Also used by `analytics` shorthand command
+- `GET /api/v3/attribution/models` (`?type=first_touch`), `GET /api/v3/attribution/models/{id}`
+  - `attribution model list/get`; `report losers/winners` read them to pick, or check, the first-touch model (`model_type`, `status`)
+- `GET /api/v3/attribution/reports/breakdown`
+  - Query: `group_by` (campaign, traffic_source, landing_page, keyword, c1-c4, country, device, day), `model_id`, `compare_model_id`, `period` (today, yesterday, last7, last30, last90) or `time_from`/`time_to` (unix seconds), `limit` (1-1000, default 100), `offset` (0 or more, no leading zeros). No entity filters; unknown parameters are refused with 422
+  - Response: `data` rows (`key`, `name`, `clicks`, `cost`, `attributed_conversions`, `attributed_revenue`, `roi` (percent, null without cost), `assisted_conversions`, and `compare_*` with a compare model) in attributed-revenue order, then key; `totals` over every group; `meta.groups` (all groups), `meta.offset`, `meta.backfill` (null unless the pre-upgrade backfill is running)
+  - A server from before attribution paging refuses `offset` with 422 "Unknown parameter(s): offset"
+  - `attribution breakdown` maps `--group-by/--model/--compare-model/--limit/--offset` and the range flags one to one
+  - `report losers/winners` (the attribution check): first `GET /attribution/models/{id}` when `--first-touch-model` is given (validated before anything else), then the attribution requests, all before the campaign payout (`GET /campaigns/{id}`, with `--aff_campaign_id`) and the classic `reports/breakdown`, so a bad override is refused before any report is read. One attribution request per page with `limit=1000`, no `offset` on the first page and `offset=<rows read>` while rows < `meta.groups`. The classic dimension maps to `group_by` (campaign, ppc_account → traffic_source, landing_page, keyword, country), whose keys equal the classic `id`. The window is the classic report's: `period` as given, otherwise `time_from` (0 when absent, since the classic report has no lower bound and the attribution report would default to 30 days) and `time_to` when given; a mixed period plus time range skips the check. For a bounded range the cohorts differ at the edges by design: the classic rows are clicks made in the range, the attribution rows are sales converted in it (the Attribution page's Report view), and stderr says so. `--first-touch-model` must name an active `first_touch` model. Only a 422 refusing `offset` keeps a partial read (later rows get `attribution_checked: false`); any other error discards the check. An entity filter other than the breakdown itself skips it
 
 ## Planned feature contracts
 

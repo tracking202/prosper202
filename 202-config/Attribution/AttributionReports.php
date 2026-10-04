@@ -140,14 +140,17 @@ final class AttributionReports
      * @param int|null $modelId  null: each conversion under its campaign's
      *                           model override when that model is active,
      *                           else the account default ("effective")
+     * @param int      $offset   rows to skip in the report's order, to page
+     *                           past MAX_LIMIT: a reader looking for the rows
+     *                           with spend and little revenue needs the end
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>, groups: int}
      */
-    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit): array
+    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0): array
     {
         $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to);
 
         return [
-            'rows' => array_slice($all['rows'], 0, max(1, min(self::MAX_LIMIT, $limit))),
+            'rows' => array_slice($all['rows'], max(0, $offset), max(1, min(self::MAX_LIMIT, $limit))),
             'totals' => $all['totals'],
             'groups' => count($all['rows']),
         ];

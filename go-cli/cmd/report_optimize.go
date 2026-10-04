@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"p202/internal/api"
 
@@ -166,12 +168,345 @@ var reportBreakevenCmd = &cobra.Command{
 	},
 }
 
+// attributionGroupBy maps a classic breakdown dimension to the attribution report's group_by whose row keys are the
+// same ids (ReportsController's dimension id == AttributionReports' key). Device is left out: the classic report keys
+// it by device model, the attribution report by device type.
+var attributionGroupBy = map[string]string{
+	"campaign":     "campaign",
+	"ppc_account":  "traffic_source",
+	"landing_page": "landing_page",
+	"keyword":      "keyword",
+	"country":      "country",
+}
+
+// starterCheck is attribution credit per row id, for keeping rows that start sales out of `report losers`' CUT list.
+// The classic report counts a sale only for the click right before it, so a source that brings buyers in and rarely
+// gets that final click looks like a loser there.
+type starterCheck struct {
+	model      string // the first-touch model's name; empty when the account has none (assists only)
+	minAssists int64
+	byKey      map[string]map[string]interface{}
+	partial    bool // only the first rows could be read (a server without offset paging)
+}
+
+// filterDimension is the breakdown each entity filter narrows to. The attribution report takes no entity filters, so
+// its rows match the classic ones only when the filter is the breakdown itself (the same keys, account-wide either way).
+var filterDimension = map[string]string{
+	"aff_campaign_id": "campaign", "ppc_account_id": "ppc_account", "landing_page_id": "landing_page",
+	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
+}
+
+// loadAttributionCheck fetches the attribution breakdown for the same dimension and range, under a first-touch model when
+// there is a usable one, and pages through every row. It is shared by `losers` (needFirstTouch false: assists don't
+// depend on the model, so the check still runs without one) and `winners` (needFirstTouch true: a closer only shows as
+// a first-touch loss, so without a usable First touch model the check is skipped). It fails the command only for a
+// bad --first-touch-model; when the check can't run it returns nil and a note saying why.
+func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool) (*starterCheck, []string, error) {
+	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
+		return nil, nil, nil
+	}
+	// An explicit --first-touch-model is validated before anything else, so a bad one is refused even when the check
+	// would be skipped for another reason (a filter, a dimension, a mixed range).
+	override, err := firstTouchOverride(c, cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	groupBy, ok := attributionGroupBy[dimension]
+	if !ok {
+		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}, nil
+	}
+	// The classic report treats a bound of "0" as unset (PHP empty()), so the check does too.
+	bound := func(k string) string {
+		if params[k] == "0" {
+			return ""
+		}
+		return params[k]
+	}
+	// The classic report applies both a period and a time range (their overlap); the attribution report takes one,
+	// so a mixed range (often a configured default period plus explicit times) can't be mirrored.
+	if params["period"] != "" && (bound("time_from") != "" || bound("time_to") != "") {
+		return nil, []string{"attribution check skipped: --period and --time_from/--time_to are both set (perhaps a configured " +
+			"default period), and the attribution report takes one range. Pass only one to check attribution"}, nil
+	}
+	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
+	// could be rescued by sales elsewhere (or kept CUT by losses elsewhere): don't reclassify at all.
+	for _, f := range []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"} {
+		if params[f] != "" && filterDimension[f] != dimension {
+			hint := "Drop the filter to check attribution"
+			if filterDimension[f] != "" {
+				hint += ", or break down by " + filterDimension[f] + " instead"
+			}
+			return nil, []string{"attribution check skipped: the attribution report can't be filtered by --" + f +
+				", so its numbers wouldn't match these rows. " + hint}, nil
+		}
+	}
+	var minAssists int64
+	if cmd.Flags().Lookup("min-assists") != nil {
+		minAssists, _ = cmd.Flags().GetInt64("min-assists")
+	}
+	var notes []string
+	modelID, modelName := override.id, override.name
+	if modelID != "" {
+		if override.pending {
+			notes = append(notes, fmt.Sprintf("First touch model %s (%s) is still being recomputed, so its ROI wasn't used", modelID, modelName))
+			modelID, modelName = "", ""
+		}
+	} else {
+		data, err := c.Get("attribution/models", map[string]string{"type": "first_touch"})
+		if err != nil {
+			return nil, []string{"attribution check skipped: " + err.Error()}, nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
+		}
+		var resp struct {
+			Data []map[string]interface{} `json:"data"`
+		}
+		if json.Unmarshal(data, &resp) == nil {
+			pending := ""
+			for _, m := range resp.Data {
+				if fmt.Sprint(m["status"]) != "active" {
+					continue
+				}
+				// Credits are absent or stale until the worker finishes recomputing a new or edited model.
+				if m["recompute_pending"] == true {
+					pending = fmt.Sprint(m["model_name"])
+					continue
+				}
+				modelID, modelName = fmt.Sprint(m["model_id"]), fmt.Sprint(m["model_name"])
+				break
+			}
+			if modelID == "" && pending != "" {
+				notes = append(notes, "First touch model "+pending+" is still being recomputed, so its ROI wasn't used")
+			}
+		}
+	}
+	if modelID == "" && needFirstTouch {
+		if len(notes) > 0 { // a First touch model exists but is still being recomputed
+			return nil, append(notes, "closer check skipped until it finishes"), nil
+		}
+		return nil, []string{"closer check skipped: no active First touch model. Add one with " +
+			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}, nil
+	}
+	if modelID == "" && len(notes) == 0 {
+		notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
+			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` to check first-touch ROI too")
+	}
+	q := map[string]string{"group_by": groupBy, "limit": strconv.Itoa(attributionPage)}
+	if modelID != "" {
+		q["model_id"] = modelID
+	}
+	// The same window as the classic report. Without a lower bound the classic report runs from the first click, while
+	// the attribution report would default to the last 30 days, so a missing time_from is sent as 0 (all time); a
+	// missing time_to defaults to now on both.
+	// For a bounded range the populations differ at the edges: the classic report counts clicks made in the range, the
+	// attribution report sales converted in it (credited to clicks of any age), the same view as the Attribution page's
+	// Report. TEST and CLOSER only hold a row for a closer look, so the check runs and says so.
+	if params["period"] != "" || bound("time_from") != "" || bound("time_to") != "" {
+		notes = append(notes, "attribution counts sales converted in the range (as the Attribution page's Report does); the classic "+
+			"rows count clicks made in it, so clicks near the range's edges can differ")
+	}
+	if params["period"] != "" {
+		q["period"] = params["period"]
+	} else {
+		q["time_from"] = "0"
+		if bound("time_from") != "" {
+			q["time_from"] = bound("time_from")
+		}
+		if bound("time_to") != "" {
+			q["time_to"] = bound("time_to")
+		}
+	}
+	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
+	if err != nil {
+		return nil, append(notes, "attribution check skipped: "+err.Error()), nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
+	}
+	notes = append(notes, pageNotes...)
+	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial}
+	for _, r := range rows {
+		check.byKey[fmt.Sprint(r["key"])] = r
+	}
+	return check, notes, nil
+}
+
+// attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT).
+const attributionPage = 1000
+
+// fetchAllAttributionRows pages through the attribution breakdown (offset, while offset+rows < meta.groups). A server
+// from before offset existed refuses it (422); then the rows already read are kept and a note says how many of how
+// many were checked. A note also says when the pre-upgrade backfill is still running (meta.backfill not null).
+func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]interface{}, bool, []string, error) {
+	var all []map[string]interface{}
+	var notes []string
+	for offset := 0; ; {
+		page := map[string]string{}
+		for k, v := range q {
+			page[k] = v
+		}
+		if offset > 0 {
+			page["offset"] = strconv.Itoa(offset)
+		}
+		data, err := c.Get("attribution/reports/breakdown", page)
+		if err != nil {
+			// Only the server's refusal of offset itself means "no paging here"; any other failure (an expired key, a
+			// network error, a server error) leaves the check incomplete, so it is discarded.
+			if offset > 0 && refusesOffset(err) {
+				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server can't page the attribution report, so rows past them are marked unchecked", len(all)))
+				return all, true, notes, nil //nolint:nilerr // a server without offset paging: keep the first page, marked partial
+			}
+			return nil, false, nil, err
+		}
+		var resp struct {
+			Data []map[string]interface{} `json:"data"`
+			Meta struct {
+				Groups   *int        `json:"groups"`
+				Backfill interface{} `json:"backfill"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, false, nil, err
+		}
+		if offset == 0 && resp.Meta.Backfill != nil {
+			notes = append(notes, "attribution is incomplete for this range while older conversions are backfilled")
+		}
+		all = append(all, resp.Data...)
+		if resp.Meta.Groups == nil {
+			if len(resp.Data) == attributionPage {
+				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server doesn't say how many there are, so rows past them are marked unchecked", len(all)))
+				return all, true, notes, nil
+			}
+			return all, false, notes, nil
+		}
+		if len(resp.Data) == 0 || len(all) >= *resp.Meta.Groups {
+			return all, false, notes, nil
+		}
+		offset = len(all)
+	}
+}
+
+// refusesOffset says whether err is a server refusing the offset parameter (a server from before attribution paging:
+// 422 "Unknown parameter(s): offset").
+func refusesOffset(err error) bool {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return false
+	}
+	if _, ok := apiErr.FieldErrors["offset"]; ok {
+		return true
+	}
+	return strings.Contains(apiErr.Message, "offset")
+}
+
+// applyStarterCheck adds first-touch ROI and assists to a CUT row and moves it to TEST when it starts sales: it pays
+// for itself as a first click (first-touch ROI 0% or better), or it had a click in at least --min-assists sales that
+// another row closed. Cutting it on last-click numbers would likely lose those sales.
+func applyStarterCheck(row map[string]interface{}, check *starterCheck) {
+	if check == nil {
+		return
+	}
+	a, ok := check.byKey[fmt.Sprint(row["id"])]
+	if !ok {
+		if check.partial {
+			// Past the rows the server could return: it may start sales, but that couldn't be checked.
+			row["attribution_checked"] = false
+			row["reason"] = fmt.Sprintf("%s (attribution not checked: past the rows this server can return)", row["reason"])
+		}
+		return
+	}
+	assists := int64(toFloat(a["assisted_conversions"]))
+	row["assisted_conversions"] = assists
+	var why []string
+	if check.model != "" && a["roi"] != nil { // no ROI when the row had no cost in the attribution range
+		roi := toFloat(a["roi"])
+		row["first_touch_roi"] = roi
+		if roi >= 0 {
+			why = append(why, fmt.Sprintf("%s ROI %+.1f%%", check.model, roi))
+		}
+	}
+	if check.minAssists > 0 && assists >= check.minAssists {
+		why = append(why, fmt.Sprintf("%d assists", assists))
+	}
+	if len(why) > 0 {
+		row["bucket"] = "TEST"
+		row["reason"] = fmt.Sprintf("%s, but starts sales (%s). Test a cut on part of the traffic before making it",
+			row["reason"], strings.Join(why, ", "))
+	}
+}
+
+// overrideModel is a validated --first-touch-model: an active first_touch model, possibly still being recomputed.
+type overrideModel struct {
+	id, name string
+	pending  bool
+}
+
+// firstTouchOverride reads --first-touch-model and checks it names an active first_touch model. The ROI is reported as
+// first-touch ROI, and an inactive model has no credits, so either mistake would make the check wrong or silent.
+func firstTouchOverride(c *api.Client, cmd *cobra.Command) (overrideModel, error) {
+	id, _ := cmd.Flags().GetString("first-touch-model")
+	if id == "" {
+		return overrideModel{}, nil
+	}
+	data, err := c.Get("attribution/models/"+id, nil)
+	if err != nil {
+		return overrideModel{}, err
+	}
+	var resp struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return overrideModel{}, err
+	}
+	if t := fmt.Sprint(resp.Data["model_type"]); t != "first_touch" {
+		return overrideModel{}, validationError("--first-touch-model %s is a %s model; the check needs a first_touch model", id, t).
+			WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
+	}
+	if st := fmt.Sprint(resp.Data["status"]); st != "active" {
+		return overrideModel{}, validationError("--first-touch-model %s is %s; the check needs an active first_touch model", id, st).
+			WithHint("Activate it with `p202 attribution model update " + id + " --status active`, or omit the flag to use the first active First touch model.")
+	}
+	return overrideModel{id: id, name: fmt.Sprint(resp.Data["model_name"]), pending: resp.Data["recompute_pending"] == true}, nil
+}
+
+// applyCloserCheck adds first-touch ROI and assists to a SCALE row and moves it to CLOSER when it loses money under
+// first touch: last-click credits it with sales other rows started, so more budget won't bring more new buyers.
+func applyCloserCheck(row map[string]interface{}, check *starterCheck) {
+	if check == nil || check.model == "" {
+		return
+	}
+	a, ok := check.byKey[fmt.Sprint(row["id"])]
+	if !ok {
+		if check.partial {
+			row["attribution_checked"] = false
+			row["reason"] = fmt.Sprintf("%s (attribution not checked: past the rows this server can return)", row["reason"])
+		}
+		return
+	}
+	row["assisted_conversions"] = int64(toFloat(a["assisted_conversions"]))
+	if a["roi"] == nil {
+		return
+	}
+	roi := toFloat(a["roi"])
+	row["first_touch_roi"] = roi
+	if roi < 0 {
+		row["bucket"] = "CLOSER"
+		row["reason"] = fmt.Sprintf("%s, but loses money under %s (ROI %+.1f%%): it closes sales other rows start, so more budget "+
+			"won't bring more new buyers. Check what feeds it before scaling", row["reason"], check.model, roi)
+	}
+}
+
 // triageCmd builds `report losers` / `report winners`.
 func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if v, _ := cmd.Flags().GetString("first-touch-model"); v != "" && !positiveIntPattern.MatchString(v) {
+				return validationError("invalid --first-touch-model %q: a positive whole number", v).
+					WithHint("Run `p202 attribution model list` to find model ids.")
+			}
+			if cmd.Flags().Lookup("min-assists") != nil {
+				if n, _ := cmd.Flags().GetInt64("min-assists"); n < 0 {
+					return validationError("--min-assists must be 0 or more; got %d", n).
+						WithHint("0 turns the assists rule off; 1 (the default) holds back any row that had a click in a sale another row closed.")
+				}
+			}
 			client, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -180,11 +515,6 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			maxCPC, _ := cmd.Flags().GetFloat64("max-cpc")
 			campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 
-			var payout float64
-			if maxCPC <= 0 && campaignID != "" {
-				payout, _ = fetchCampaignPayout(client, campaignID)
-			}
-
 			params := collectReportParams(cmd)
 			breakdown, _ := cmd.Flags().GetString("breakdown")
 			if breakdown == "" {
@@ -192,9 +522,24 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			}
 			params["breakdown"] = resolveDimension(breakdown)
 
+			// The attribution check runs first: it validates --first-touch-model, so a bad override is refused before
+			// the payout and the classic report are read.
+			check, notes, err := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners)
+			if err != nil {
+				return err
+			}
+
+			var payout float64
+			if maxCPC <= 0 && campaignID != "" {
+				payout, _ = fetchCampaignPayout(client, campaignID)
+			}
+
 			rows, err := fetchBreakdownRows(client, params)
 			if err != nil {
 				return err
+			}
+			for _, n := range notes {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
 
 			out := make([]map[string]interface{}, 0, len(rows))
@@ -234,9 +579,20 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				if id, ok := r["id"]; ok {
 					row["id"] = id
 				}
+				if wantWinners {
+					applyCloserCheck(row, check)
+				} else {
+					applyStarterCheck(row, check)
+				}
 				out = append(out, row)
 			}
 			sortRowsBy(out, "total_net", !wantWinners) // losers: worst first; winners: best first
+			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
+			first := "CUT"
+			if wantWinners {
+				first = "SCALE"
+			}
+			sort.SliceStable(out, func(i, j int) bool { return out[i]["bucket"] == first && out[j]["bucket"] != first })
 			render(rowsToJSON(out))
 			return nil
 		},
@@ -283,8 +639,28 @@ func init() {
 	reportBreakevenCmd.Flags().Float64("max-cpc", 0, "Override the payout-derived break-even CPC target")
 	reportCmd.AddCommand(reportBreakevenCmd)
 
-	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend", false)
-	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos", true)
+	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
+	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n\n" +
+		"Each CUT row is then checked against the attribution report for the same dimension and range. A row that\n" +
+		"starts sales comes back as TEST, with its first-touch ROI and assists: it pays for itself as a first click\n" +
+		"(first-touch ROI 0% or better), or it had a click in at least --min-assists sales (default 1) that another row\n" +
+		"closed. Cutting it on last-click numbers would likely lose those sales, so test a cut on part of its traffic first.\n\n" +
+		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country. ROI comes from the\n" +
+		"first active First touch model (or --first-touch-model); without one, rows are checked on assists only. It needs\n" +
+		"an attribution:read key; when it can't run, the command still lists the classic losers and says why on stderr.\n" +
+		"An entity filter other than the breakdown itself turns the check off (the attribution report is account-wide).\n" +
+		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
+		"false. --no-attribution-check turns it off."
+	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
+	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting.\n\n" +
+		"Each SCALE row is then checked against the attribution report under a first-touch model, for the same dimension\n" +
+		"and range. A row that loses money under first touch comes back as CLOSER, with its first-touch ROI and assists:\n" +
+		"last-click credits it with sales other rows started (retargeting, brand search and email often look like this),\n" +
+		"so more budget won't bring more new buyers. Check what feeds it before scaling.\n\n" +
+		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country, and needs a First\n" +
+		"touch model (the first active one, or --first-touch-model) and an attribution:read key. When it can't run, the\n" +
+		"classic winners are still listed with the reason on stderr. An entity filter other than the breakdown itself\n" +
+		"turns it off; --no-attribution-check does too."
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
@@ -293,4 +669,9 @@ func init() {
 		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else derived from campaign payout × CVR)")
 		reportCmd.AddCommand(c)
 	}
+	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")
+	losers.Flags().Bool("no-attribution-check", false, "List classic last-click losers only, without the first-touch starter check")
+	winners.Flags().String("first-touch-model", "", "Attribution model id for the closer check (default: the first active First touch model)")
+	winners.Flags().Bool("no-attribution-check", false, "List classic last-click winners only, without the first-touch closer check")
+	losers.Flags().Int64("min-assists", 1, "A CUT row with at least this many assisted sales comes back as TEST (0 turns the assists rule off)")
 }

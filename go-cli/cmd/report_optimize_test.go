@@ -1,6 +1,14 @@
 package cmd
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
 
 func TestEnrichBreakevenComputesMarginAndVerdict(t *testing.T) {
 	rows := []map[string]interface{}{
@@ -88,5 +96,602 @@ func TestCompareNum(t *testing.T) {
 	}
 	if !compareNum(0, "=", 0) || !compareNum(3, ">=", 3) {
 		t.Error("=/>= comparison wrong")
+	}
+}
+
+func TestApplyStarterCheckMovesStartersToTest(t *testing.T) {
+	check := &starterCheck{model: "First touch", minAssists: 1, byKey: map[string]map[string]interface{}{
+		"7":  {"key": "7", "roi": 46.58, "assisted_conversions": 15.0},
+		"8":  {"key": "8", "roi": -61.2, "assisted_conversions": 0.0},
+		"9":  {"key": "9", "roi": nil, "assisted_conversions": 0.0},
+		"10": {"key": "10", "roi": -80.0, "assisted_conversions": 3.0},
+	}}
+	starter := map[string]interface{}{"id": "7", "bucket": "CUT", "reason": "spent $3171.62, 0 conversions"}
+	applyStarterCheck(starter, check)
+	if starter["bucket"] != "TEST" {
+		t.Errorf("a row with positive first-touch ROI should be TEST, got %v", starter["bucket"])
+	}
+	if r, _ := starter["reason"].(string); !strings.Contains(r, "First touch ROI +46.6%") || !strings.Contains(r, "15 assists") {
+		t.Errorf("reason should name the model, ROI and assists: %q", r)
+	}
+	loser := map[string]interface{}{"id": "8", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(loser, check)
+	if loser["bucket"] != "CUT" || toFloat(loser["first_touch_roi"]) != -61.2 || loser["assisted_conversions"] != int64(0) {
+		t.Errorf("a row that loses under first touch and assists nothing stays CUT with its numbers: %#v", loser)
+	}
+	noCost := map[string]interface{}{"id": "9", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(noCost, check)
+	if noCost["bucket"] != "CUT" {
+		t.Errorf("no first-touch ROI (no cost in range) and no assists must not rescue a row, got %v", noCost["bucket"])
+	}
+	assister := map[string]interface{}{"id": "10", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(assister, check)
+	if assister["bucket"] != "TEST" || !strings.Contains(assister["reason"].(string), "3 assists") || strings.Contains(assister["reason"].(string), "ROI") {
+		t.Errorf("a row with assists >= --min-assists is TEST on assists alone: %#v", assister)
+	}
+	unknown := map[string]interface{}{"id": "99", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(unknown, check)
+	if unknown["bucket"] != "CUT" {
+		t.Errorf("a row the attribution report doesn't have stays CUT")
+	}
+
+	// Without a first-touch model the ROI isn't first-touch, so only assists count; --min-assists 0 turns that off.
+	noModel := &starterCheck{model: "", minAssists: 1, byKey: check.byKey}
+	r := map[string]interface{}{"id": "7", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(r, noModel)
+	if r["bucket"] != "TEST" || r["first_touch_roi"] != nil {
+		t.Errorf("without a first-touch model: assists decide and no first_touch_roi is reported: %#v", r)
+	}
+	off := &starterCheck{model: "", minAssists: 0, byKey: check.byKey}
+	r = map[string]interface{}{"id": "10", "bucket": "CUT", "reason": "x"}
+	applyStarterCheck(r, off)
+	if r["bucket"] != "CUT" {
+		t.Errorf("--min-assists 0 turns the assists rule off: %#v", r)
+	}
+}
+
+// losersServer answers the classic breakdown with two zero-conversion sources and the attribution API with `models`;
+// attribution breakdown pages come from attr(offset), which returns the status and body for that request.
+func losersServer(t *testing.T, models string, attr func(q url.Values) (int, string), calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[
+				{"id":"7","name":"ChatGPT Ads","total_clicks":"1124","total_leads":"0","total_cost":"3171.62","total_net":"-3171.62"},
+				{"id":"8","name":"Display","total_clicks":"900","total_leads":"0","total_cost":"800.00","total_net":"-800.00"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.WriteHeader(200)
+			w.Write([]byte(models))
+		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff_campaign_id is set
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_payout":"0"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/6"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":6,"model_name":"First touch v2","model_type":"first_touch","status":"active","recompute_pending":true}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/9"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":9,"model_name":"Old first touch","model_type":"first_touch","status":"inactive"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			code, body := attr(r.URL.Query())
+			w.WriteHeader(code)
+			w.Write([]byte(body))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+const firstTouchModels = `{"data":[{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active","is_default":false}]}`
+
+// onePage answers every attribution request with both rows: source 7 starts sales, source 8 doesn't.
+func onePage(q url.Values) (int, string) {
+	return 200, `{"data":[
+		{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
+		{"key":"8","name":"Display","cost":"800.00","attributed_revenue":"120.00","roi":-85.0,"assisted_conversions":0}],
+		"totals":{},"meta":{"groups":2,"backfill":null}}`
+}
+
+func runLosers(t *testing.T, models string, attr func(url.Values) (int, string), args ...string) (map[string]string, string, []url.Values) {
+	t.Helper()
+	var calls []url.Values
+	srv := losersServer(t, models, attr, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, stderr, err := executeCommand(append([]string{"report", "losers", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("losers: %v", err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	buckets := map[string]string{}
+	for i, r := range resp.Data {
+		buckets[fmt.Sprint(r["name"])] = fmt.Sprint(r["bucket"])
+		if i > 0 && r["bucket"] == "CUT" && resp.Data[i-1]["bucket"] == "TEST" {
+			t.Errorf("CUT rows should come before TEST rows: %v", resp.Data)
+		}
+	}
+	return buckets, stderr, calls
+}
+
+func TestLosersHoldsBackSourcesThatStartSales(t *testing.T) {
+	buckets, _, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30")
+	if len(calls) != 1 {
+		t.Fatalf("attribution breakdown calls = %d, want 1", len(calls))
+	}
+	for k, want := range map[string]string{"group_by": "traffic_source", "model_id": "4", "period": "last30", "limit": "1000"} {
+		if got := calls[0].Get(k); got != want {
+			t.Errorf("attribution param %s = %q, want %q", k, got, want)
+		}
+	}
+	if calls[0].Has("offset") {
+		t.Errorf("the first page must not send offset (a server without it would refuse the whole check)")
+	}
+	if buckets["ChatGPT Ads"] != "TEST" || buckets["Display"] != "CUT" {
+		t.Errorf("buckets = %v, want ChatGPT Ads TEST (starts sales) and Display CUT", buckets)
+	}
+}
+
+func TestLosersPagesThroughTheAttributionReport(t *testing.T) {
+	// Two pages: the starter is on the second, so a check that read only the first would leave it CUT.
+	pages := func(q url.Values) (int, string) {
+		if q.Get("offset") == "1" {
+			return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":2,"backfill":null}}`
+		}
+		return 200, `{"data":[{"key":"8","roi":-85.0,"assisted_conversions":0}],"meta":{"groups":2,"backfill":null}}`
+	}
+	buckets, _, calls := runLosers(t, firstTouchModels, pages, "--breakdown", "source", "--period", "last30")
+	if len(calls) != 2 || calls[1].Get("offset") != "1" {
+		t.Fatalf("calls = %v, want a second page at offset 1", calls)
+	}
+	if buckets["ChatGPT Ads"] != "TEST" {
+		t.Errorf("the starter on page 2 should be TEST: %v", buckets)
+	}
+
+	// A server from before offset refuses it: keep page 1 and say how much was checked.
+	old := func(q url.Values) (int, string) {
+		if q.Has("offset") {
+			return 422, `{"error":true,"message":"Unknown parameter(s): offset","status":422}`
+		}
+		return 200, `{"data":[{"key":"8","roi":-85.0,"assisted_conversions":0}],"meta":{"groups":2,"backfill":null}}`
+	}
+	buckets, stderr, _ := runLosers(t, firstTouchModels, old, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "checked the top 1 attribution rows") {
+		t.Errorf("stderr = %q, want a note on the partial check", stderr)
+	}
+	if buckets["Display"] != "CUT" || buckets["ChatGPT Ads"] != "CUT" {
+		t.Errorf("rows the check never read stay CUT: %v", buckets)
+	}
+
+	// Any other failure on a later page (here a server error) discards the whole check: a starter on page 1 is
+	// not rescued by a half-read report.
+	broken := func(q url.Values) (int, string) {
+		if q.Has("offset") {
+			return 500, `{"error":true,"message":"Internal error","status":500}`
+		}
+		return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":2,"backfill":null}}`
+	}
+	buckets, stderr, _ = runLosers(t, firstTouchModels, broken, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "attribution check skipped") || buckets["ChatGPT Ads"] != "CUT" {
+		t.Errorf("a failed page 2 must discard the check: buckets %v, stderr %q", buckets, stderr)
+	}
+}
+
+func TestLosersMarksRowsPastAPartialCheckAsUnchecked(t *testing.T) {
+	old := func(q url.Values) (int, string) {
+		if q.Has("offset") {
+			return 422, `{"error":true,"message":"Unknown parameter(s): offset","status":422}`
+		}
+		return 200, `{"data":[{"key":"8","roi":-85.0,"assisted_conversions":0}],"meta":{"groups":2,"backfill":null}}`
+	}
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, old, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--period", "last30")
+	if err != nil {
+		t.Fatalf("losers: %v", err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	for _, r := range resp.Data {
+		checked, has := r["attribution_checked"]
+		switch r["name"] {
+		case "ChatGPT Ads":
+			if !has || checked != false || !strings.Contains(fmt.Sprint(r["reason"]), "not checked") {
+				t.Errorf("a row past the partial check is marked unchecked: %v", r)
+			}
+		case "Display":
+			if has {
+				t.Errorf("a row the check read carries no unchecked mark: %v", r)
+			}
+		}
+	}
+}
+
+func TestLosersRefusesAFirstTouchOverrideThatIsNot(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "1")
+	if err == nil || !strings.Contains(err.Error(), "last_touch model") {
+		t.Fatalf("a last-touch model as --first-touch-model must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no attribution report should be read for a refused override")
+	}
+	if _, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "4"); err != nil {
+		t.Errorf("a first_touch override is accepted: %v", err)
+	}
+}
+
+func TestLosersNotesAndFallbacks(t *testing.T) {
+	cases := []struct {
+		name, models string
+		attr         func(url.Values) (int, string)
+		args         []string
+		note         string
+		wantCalls    int
+		wantModel    bool
+		chatgpt      string
+	}{
+		{"no first-touch model: assists only", `{"data":[]}`, onePage, []string{"--breakdown", "source"}, "no active First touch model", 1, false, "TEST"},
+		{"dimension without an attribution equivalent", firstTouchModels, onePage, []string{"--breakdown", "browser"}, "no browser breakdown", 0, false, "CUT"},
+		{"turned off", firstTouchModels, onePage, []string{"--breakdown", "source", "--no-attribution-check"}, "", 0, false, "CUT"},
+		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "", 1, true, "TEST"},
+		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff_campaign_id", "7"}, "can't be filtered by --aff_campaign_id", 0, false, "CUT"},
+		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc_account_id", "7"}, "", 1, true, "TEST"},
+		{"backfill running", firstTouchModels, func(url.Values) (int, string) {
+			return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":1,"backfill":{"done":10,"total":100}}}`
+		}, []string{"--breakdown", "source", "--period", "last7"}, "backfilled", 1, true, "TEST"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buckets, stderr, calls := runLosers(t, tc.models, tc.attr, tc.args...)
+			if tc.note != "" && !strings.Contains(stderr, tc.note) {
+				t.Errorf("stderr = %q, want a note containing %q", stderr, tc.note)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Fatalf("attribution breakdown calls = %d, want %d", len(calls), tc.wantCalls)
+			}
+			if tc.wantCalls > 0 && calls[0].Has("model_id") != tc.wantModel {
+				t.Errorf("model_id sent = %v, want %v", calls[0].Has("model_id"), tc.wantModel)
+			}
+			if buckets["Display"] != "CUT" {
+				t.Errorf("the classic losers must still be listed, Display CUT: %v", buckets)
+			}
+			if buckets["ChatGPT Ads"] != tc.chatgpt {
+				t.Errorf("ChatGPT Ads = %q, want %q", buckets["ChatGPT Ads"], tc.chatgpt)
+			}
+		})
+	}
+}
+
+func TestLosersRefusesNegativeMinAssistsBeforeAnyRequest(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--min-assists", "-1")
+	if err == nil || !strings.Contains(err.Error(), "--min-assists must be 0 or more") {
+		t.Fatalf("a negative --min-assists must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no report should be read for a refused flag")
+	}
+}
+
+// winnersServer answers the classic breakdown with two profitable sources: Meta Retargeting (a closer: it loses
+// money under first touch) and Google Search (wins either way).
+func winnersServer(t *testing.T, models string, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.Write([]byte(`{"data":[
+				{"id":"3","name":"Meta Retargeting","total_clicks":"800","total_leads":"73","total_cost":"1234.00","total_net":"11028.00"},
+				{"id":"5","name":"Google Search","total_clicks":"2000","total_leads":"76","total_cost":"5964.00","total_net":"6451.00"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.Write([]byte(models))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.Write([]byte(`{"data":[
+				{"key":"3","roi":-12.4,"assisted_conversions":19},
+				{"key":"5","roi":111.52,"assisted_conversions":33}],"meta":{"groups":2,"backfill":null}}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+func TestWinnersFlagsClosers(t *testing.T) {
+	cases := []struct {
+		name, models string
+		args         []string
+		note         string
+		wantCalls    int
+		retargeting  string
+	}{
+		{"closer comes back as CLOSER", firstTouchModels, nil, "", 1, "CLOSER"},
+		{"no first-touch model: skipped", `{"data":[]}`, nil, "closer check skipped", 0, "SCALE"},
+		{"turned off", firstTouchModels, []string{"--no-attribution-check"}, "", 0, "SCALE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []url.Values
+			srv := winnersServer(t, tc.models, &calls)
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			out, stderr, err := executeCommand(append([]string{"report", "winners", "--json", "--breakdown", "source", "--period", "last30"}, tc.args...)...)
+			if err != nil {
+				t.Fatalf("winners: %v", err)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Fatalf("attribution calls = %d, want %d", len(calls), tc.wantCalls)
+			}
+			if tc.wantCalls > 0 && calls[0].Get("model_id") != "4" {
+				t.Errorf("the closer check must run under the first-touch model, got model_id %q", calls[0].Get("model_id"))
+			}
+			if tc.note != "" && !strings.Contains(stderr, tc.note) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.note)
+			}
+			var resp struct {
+				Data []map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("output is not JSON: %v", err)
+			}
+			buckets := map[string]string{}
+			for _, r := range resp.Data {
+				buckets[fmt.Sprint(r["name"])] = fmt.Sprint(r["bucket"])
+			}
+			if buckets["Meta Retargeting"] != tc.retargeting || buckets["Google Search"] != "SCALE" {
+				t.Errorf("buckets = %v, want Meta Retargeting %s and Google Search SCALE", buckets, tc.retargeting)
+			}
+			if len(resp.Data) == 2 && resp.Data[0]["bucket"] != "SCALE" {
+				t.Errorf("SCALE rows come before CLOSER rows: %v", resp.Data)
+			}
+		})
+	}
+}
+
+func TestAttributionBreakdownOffset(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"groups":0,"offset":1000}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	if _, _, err := executeCommand("attribution", "breakdown", "--limit", "1000", "--offset", "1000"); err != nil {
+		t.Fatalf("breakdown --offset: %v", err)
+	}
+	if got.Get("offset") != "1000" || got.Get("limit") != "1000" {
+		t.Errorf("params = %v, want offset 1000 and limit 1000", got)
+	}
+	if _, _, err := executeCommand("attribution", "breakdown", "--offset", "0"); err != nil {
+		t.Errorf("--offset 0 is valid: %v", err)
+	}
+	for _, bad := range []string{"-1", "01", "1.5", "x"} {
+		got = nil
+		_, _, err := executeCommand("attribution", "breakdown", "--offset", bad)
+		if err == nil || !strings.Contains(err.Error(), "invalid --offset") {
+			t.Errorf("--offset %s should be refused, got %v", bad, err)
+		}
+		if got != nil {
+			t.Errorf("--offset %s: no request should be made", bad)
+		}
+	}
+}
+
+const pendingModels = `{"data":[{"model_id":6,"model_name":"First touch v2","model_type":"first_touch","status":"active","recompute_pending":true}]}`
+
+func TestLosersReviewRoundTwo(t *testing.T) {
+	cases := []struct {
+		name, models string
+		args         []string
+		note         string
+		wantCalls    int
+		wantModel    bool
+		chatgpt      string
+	}{
+		// The classic report applies both; the attribution report takes one range, so don't compare different ranges.
+		{"mixed period and time range", firstTouchModels, []string{"--period", "last30", "--time_from", "1790000000"}, "--period and --time_from/--time_to are both set", 0, false, "CUT"},
+		// A model still being recomputed has absent or stale credits: no ROI, assists only.
+		{"auto-selected model still recomputing", pendingModels, nil, "still being recomputed", 1, false, "TEST"},
+		{"override still recomputing", firstTouchModels, []string{"--first-touch-model", "6"}, "still being recomputed", 1, false, "TEST"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buckets, stderr, calls := runLosers(t, tc.models, onePage, append([]string{"--breakdown", "source"}, tc.args...)...)
+			if !strings.Contains(stderr, tc.note) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.note)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Fatalf("attribution calls = %d, want %d", len(calls), tc.wantCalls)
+			}
+			if tc.wantCalls > 0 && calls[0].Has("model_id") != tc.wantModel {
+				t.Errorf("model_id sent = %v, want %v", calls[0].Has("model_id"), tc.wantModel)
+			}
+			if buckets["ChatGPT Ads"] != tc.chatgpt || buckets["Display"] != "CUT" {
+				t.Errorf("buckets = %v, want ChatGPT Ads %s, Display CUT", buckets, tc.chatgpt)
+			}
+		})
+	}
+}
+
+func TestWinnersSkipsWhileTheFirstTouchModelRecomputes(t *testing.T) {
+	var calls []url.Values
+	srv := winnersServer(t, pendingModels, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, stderr, err := executeCommand("report", "winners", "--json", "--breakdown", "source", "--period", "last30")
+	if err != nil {
+		t.Fatalf("winners: %v", err)
+	}
+	if len(calls) != 0 || !strings.Contains(stderr, "closer check skipped until it finishes") {
+		t.Errorf("calls %d, stderr %q: want the closer check skipped while the model recomputes", len(calls), stderr)
+	}
+	if !strings.Contains(out, `"SCALE"`) || strings.Contains(out, "CLOSER") {
+		t.Errorf("the classic winners still list, unchanged: %s", out)
+	}
+}
+
+func TestTriageRefusesAMalformedFirstTouchModelBeforeAnyRequest(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	for _, cmdName := range []string{"losers", "winners"} {
+		for _, bad := range []string{"abc", "0", "-3", "07"} {
+			requests = 0
+			_, _, err := executeCommand("report", cmdName, "--json", "--breakdown", "source", "--first-touch-model", bad)
+			if err == nil || !strings.Contains(err.Error(), "invalid --first-touch-model") {
+				t.Errorf("%s --first-touch-model %s should be refused, got %v", cmdName, bad, err)
+			}
+			if requests != 0 {
+				t.Errorf("%s --first-touch-model %s: %d requests made, want 0", cmdName, bad, requests)
+			}
+		}
+	}
+}
+
+// The attribution request must cover the classic report's window: all time when no range is given (the classic
+// report has no lower bound; the attribution report would default to 30 days), and all time up to --time_to.
+func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want map[string]string
+		none []string
+	}{
+		{"no range: all time", nil, map[string]string{"time_from": "0"}, []string{"period", "time_to"}},
+		{"period", []string{"--period", "last7"}, map[string]string{"period": "last7"}, []string{"time_from", "time_to"}},
+		{"time_from only", []string{"--time_from", "1790000000"}, map[string]string{"time_from": "1790000000"}, []string{"period", "time_to"}},
+		{"time_to only: from the start", []string{"--time_to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000"}, []string{"period"}},
+		{"both bounds", []string{"--time_from", "1790000000", "--time_to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000"}, []string{"period"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, calls := runLosers(t, firstTouchModels, onePage, append([]string{"--breakdown", "source"}, tc.args...)...)
+			if len(calls) != 1 {
+				t.Fatalf("attribution calls = %d, want 1 (stderr %q)", len(calls), stderr)
+			}
+			for k, v := range tc.want {
+				if got := calls[0].Get(k); got != v {
+					t.Errorf("%s = %q, want %q", k, got, v)
+				}
+			}
+			for _, k := range tc.none {
+				if calls[0].Has(k) {
+					t.Errorf("%s should not be sent, got %q", k, calls[0].Get(k))
+				}
+			}
+		})
+	}
+}
+
+func TestLosersRefusesAnInactiveFirstTouchOverride(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "9")
+	if err == nil || !strings.Contains(err.Error(), "is inactive") {
+		t.Fatalf("an inactive override must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no attribution report should be read for a refused override")
+	}
+}
+
+func TestBoundedRangesSayHowTheCohortsDiffer(t *testing.T) {
+	_, stderr, _ := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "sales converted in the range") {
+		t.Errorf("a bounded range should note the click vs conversion cohorts: %q", stderr)
+	}
+	_, stderr, _ = runLosers(t, firstTouchModels, onePage, "--breakdown", "source")
+	if strings.Contains(stderr, "sales converted in the range") {
+		t.Errorf("an all-time run has no edges to note: %q", stderr)
+	}
+}
+
+// The classic report treats a bound of "0" as unset, so the attribution request must too: --time_to 0 is no upper bound
+// (not an empty [0, 0] window), and --period with --time_from 0 is not a mixed range.
+func TestZeroBoundsMeanUnsetAsInTheClassicReport(t *testing.T) {
+	_, _, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--time_to", "0")
+	if len(calls) != 1 || calls[0].Has("time_to") || calls[0].Get("time_from") != "0" {
+		t.Errorf("--time_to 0 should send all time (time_from 0, no time_to), got %v", calls)
+	}
+	_, stderr, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30", "--time_from", "0")
+	if len(calls) != 1 || calls[0].Get("period") != "last30" || strings.Contains(stderr, "both set") {
+		t.Errorf("--period with --time_from 0 is just the period: calls %v, stderr %q", calls, stderr)
+	}
+}
+
+// A bad --first-touch-model is refused before the payout or the classic report is read.
+func TestBadOverrideIsRefusedBeforeTheClassicReport(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
+			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
+		default:
+			w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--aff_campaign_id", "7", "--first-touch-model", "1")
+	if err == nil || !strings.Contains(err.Error(), "last_touch model") {
+		t.Fatalf("a last-touch override must be refused, got %v", err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "/campaigns/") || (strings.HasSuffix(p, "/reports/breakdown") && !strings.Contains(p, "attribution")) {
+			t.Errorf("%s was read before the override was refused", p)
+		}
 	}
 }

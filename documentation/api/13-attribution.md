@@ -108,6 +108,7 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `period` | last 30 days | `today`, `yesterday`, `last7`, `last30`, `last90` |
 | `time_from`, `time_to` | | Unix seconds; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
+| `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
 
 Unknown parameters are refused (422), as is a model that is not the
 account's; an inactive or invalid model answers 409 with the reason.
