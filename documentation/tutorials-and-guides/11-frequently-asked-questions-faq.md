@@ -38,7 +38,7 @@ This could be due to a number of reasons. Have you checked to see if Prosper is 
 
  ## What's the difference between a filtered click and a real click?
 
-By default Prosper tries to detect whether or not a click is real (green) or fake but either way it records all clicks for the record. A filtered click (red), while recorded, does not count towards cost measurements in your Prosper analytics. An example of a filtered click could be bots crawling your ads. Another example might be a repeat IP that reloads your page but did not click on your ad again. 
+By default Prosper tries to detect whether or not a click is real (green) or fake but either way it records all clicks for the record. A filtered click (red), while recorded, does not count towards cost measurements in your Prosper analytics. An example of a filtered click could be bots crawling your ads. Another example might be a repeat IP that reloads your page but did not click on your ad again. Clicks from crawlers, ad reviewers (such as AdsBot-Google), link previews, headless browsers and uptime monitors are still redirected normally, but are recorded as bot clicks: they show under "Filtered out bot clicks", not under "Real clicks". See [Bot clicks](../api/09-clicks.md#bot-clicks). 
 
 ## I tried to analyze my campaign but the data is not showing, why?
 

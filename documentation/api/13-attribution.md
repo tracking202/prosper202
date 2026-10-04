@@ -84,9 +84,11 @@ deletes its credits in the same write.
 The clicks carrying the converting click's canonical visitor key (the
 identity graph: tracking-domain cookie, landing-page id, signed customer id —
 never IP or user agent), within the journey lookback before the conversion,
-across all campaigns, up to and including the converting click. Bot and
-filtered clicks are excluded; at most 25 touches, newest kept (`truncated`
-says so). A converting click with no visitor key is a one-touch journey
+across all campaigns, up to and including the converting click. Bot clicks
+(`click_bot = 1`, see [Bot clicks](09-clicks.md#bot-clicks)) are excluded,
+except the converting click itself; repeat-IP ("filtered") clicks are kept,
+since a person's second click of the day is one. At most 25 touches, newest
+kept (`truncated` says so). A converting click with no visitor key is a one-touch journey
 (`identified: false`).
 
 A conversion counts when its ledger row is payable, not deleted, not

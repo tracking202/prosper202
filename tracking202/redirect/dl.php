@@ -456,11 +456,9 @@ $mysql['platform_id'] = $db->real_escape_string((string)($device_id['platform'] 
 $mysql['browser_id'] = $db->real_escape_string((string)($device_id['browser'] ?? '0'));
 $mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '0'));
 
-// Initialize click_bot with default value
-$mysql['click_bot'] = '0';
-if (isset($device_id['type']) && $device_id['type'] == '4') {
-	$mysql['click_bot'] = '1';
-}
+// Bots are redirected like anyone else; only the recorded flags differ.
+$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detect->getUserAgent(), $device_id);
+$mysql['click_bot'] = $clickIsBot ? '1' : '0';
 
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 1;
@@ -477,7 +475,7 @@ $user_id = $tracker_row['user_id'];
 // GEO/ISP (MaxMind) lookups are deferred into $computeAndRecordClick so the slow
 // database reads stay off the redirect critical path for non-cloaked clicks.
 
-if ($device_id['type'] == '4') {
+if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
 	// Initialize click_id as 0 for the filter (will be updated after insert)

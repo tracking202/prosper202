@@ -762,7 +762,9 @@ class PLATFORMS
 
             $device_info = $memcache->get(md5("user-agent" . $ua . systemHash()));
 
-            if (! $device_info) {
+            // An entry cached before ua_device_family existed is a miss, so
+            // ClickBotDetector never has to parse the agent a second time.
+            if (! is_array($device_info) || ! array_key_exists('ua_device_family', $device_info)) {
 
                 $parse_info = PLATFORMS::parseUserAgentInfo($db, $detect);
                 setCache(md5("user-agent" . $ua . systemHash()), $parse_info);
@@ -795,6 +797,8 @@ class PLATFORMS
         $parser = Parser::create();
         $userAgent = $detect->getUserAgent() ?: '';
         $result = $parser->parse($userAgent);
+        // Before the rewrite to Desktop/Bot below; ClickBotDetector reads it.
+        $uaDeviceFamily = (string) $result->device->family;
 
         // Initialize type with default value
         $type = "1"; // Default to Desktop
@@ -884,7 +888,8 @@ class PLATFORMS
             'browser' => $browser_id,
             'platform' => $platform_id,
             'device' => $device_id,
-            'type' => $device_type
+            'type' => $device_type,
+            'ua_device_family' => $uaDeviceFamily,
         ];
 
         return $data;

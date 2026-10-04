@@ -545,10 +545,9 @@ $mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '
 $mysql['text_ad_id'] = $db->real_escape_string((string)($rule['text_ad_id'] ?? 0));
 $mysql['isp_id'] = $db->real_escape_string('0');
 
-$mysql['click_bot'] = '0';
-if (($device_id['type'] ?? '') == '4') {
-	$mysql['click_bot'] = '1';
-}
+// Bots are redirected like anyone else; only the recorded flags differ.
+$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detectInstance->getUserAgent(), $device_id);
+$mysql['click_bot'] = $clickIsBot ? '1' : '0';
 
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
@@ -574,7 +573,7 @@ if ($IspData != null) {
 	$mysql['isp_id'] = $db->real_escape_string((string)$isp_id);
 }
 
-if ($device_id['type'] == '4') {
+if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
 	// Initialize click_id as 0 for the filter (will be updated after insert)

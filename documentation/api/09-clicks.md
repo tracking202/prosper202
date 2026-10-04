@@ -28,6 +28,49 @@ Read-only access to click tracking data.
 
 `click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, `click_cpc`, `click_payout`, `click_lead`, `click_filtered`, `click_bot`, `click_alp`, `click_time`, `rotator_id`, `rule_id`, `click_id_public`, `click_cloaking`, `click_in`, `click_out`, `keyword_id`, `country_id`, `platform_id`, `browser_id`, `device_id`, plus resolved country, platform, and browser names. Resolved name fields derive from the visitor (user agent, IP) and are sanitized at serialization: control/bidirectional characters stripped, length capped.
 
+## Bot clicks
+
+`click_bot` is decided when the click is recorded, by one detector
+(`Prosper202\Click\ClickBotDetector`) that every click entry point uses:
+`dl.php`, `rtr.php`, `static/record_simple.php` and `static/record_adv.php`.
+A click is a bot when any of these holds:
+
+- its user agent carries a crawler, ad-reviewer, link-preview, automation,
+  HTTP-library or uptime-monitor signature (AdsBot-Google, Googlebot,
+  bingbot, Applebot, facebookexternalhit, Slackbot, WhatsApp, HeadlessChrome,
+  curl, python-requests, UptimeRobot and others; the list is
+  `ClickBotDetector::TOKENS` and `CLIENTS`);
+- ua-parser classifies its device as `Spider`;
+- the device lookup gave it device type 4 (Bot).
+
+A bot is redirected exactly like a visitor, so link previews and ad review
+keep working; only what is recorded differs. The click is stored with
+`click_bot = 1` **and** `click_filtered = 1` without running the click
+filter (owner IP, known network ranges, repeat IP), so a bot's address is not
+remembered against the next human visitor from it.
+
+| Where | Bot clicks |
+| ----- | ---------- |
+| Attribution breakdown: clicks and cost | not counted |
+| Attribution journeys | not touches (a converting bot click is still the converting touch) |
+| Reports and visitor log, "All clicks" | counted |
+| "Real clicks" | not counted |
+| "Filtered out clicks" | counted |
+| "Filtered out bot clicks" | the only clicks shown |
+| `GET /clicks?click_bot=1`, `p202 click list --click_bot 1` | the only clicks listed |
+
+Until this detector, `click_bot` was rarely set: the old rule waited for a
+ua-parser device family of `Bot`, and ua-parser calls crawlers `Spider`. From
+the upgrade on, crawler, preview and ad-review clicks leave the attribution
+clicks and cost and the "Real clicks" view. Clicks recorded before it keep
+the flags they were recorded with.
+
+To recognise another agent, add its token to `ClickBotDetector::TOKENS`
+(matched anywhere in the user agent) or `CLIENTS` (matched at its start, for
+HTTP libraries), and a real user agent carrying it to the `bots` list in
+`tests/fixtures/click-bot/user-agents.json`; `ClickBotDetectorTest` fails
+for a signature no agent there exercises.
+
 ## Detail Response (Additional Fields)
 
 The single-click endpoint adds: `text_ad_id`, `region_id`, `city_id`, `ip_id`, `isp_id`, tracking parameters (`c1`–`c4`), and resolved region/city/ISP names.
