@@ -113,7 +113,7 @@ if (!$tracker_row) { die(); }
 if ($memcacheWorking) {
 	\Prosper202\Click\FallbackRedirectUrl::refresh(
 		md5('lp_'.$lpip.systemHash()),
-		$tracker_row['aff_campaign_url']."&subid=p202",
+		\Prosper202\Click\FallbackRedirectUrl::withSubid($tracker_row['aff_campaign_url'] ?? ''),
 		static fn(string $key): mixed => $memcache->get($key),
 		static fn(string $key, string $url): mixed => setCache($key, $url, 0),
 	);

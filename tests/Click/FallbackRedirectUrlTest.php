@@ -56,6 +56,29 @@ final class FallbackRedirectUrlTest extends TestCase
         self::assertSame('', $this->store['k']);
     }
 
+    public function testTheSubidSuffixGoesOnlyOnAUrl(): void
+    {
+        self::assertSame(
+            'https://offer.example/a?x=1&subid=p202',
+            FallbackRedirectUrl::withSubid('https://offer.example/a?x=1')
+        );
+        foreach (['', '   ', null, false] as $none) {
+            self::assertSame('', FallbackRedirectUrl::withSubid($none), var_export($none, true));
+        }
+    }
+
+    /** lp.php and off.php for a campaign whose URL was cleared. */
+    public function testAnEmptyOfferUrlDisablesTheFallbackInsteadOfStoringTheSuffix(): void
+    {
+        $this->refresh('k', FallbackRedirectUrl::withSubid('https://retired.example/old'));
+
+        $this->refresh('k', FallbackRedirectUrl::withSubid(''));
+
+        // Stored as '&subid=p202' it is truthy, and the outage branch would
+        // redirect to it as a path on the tracking server.
+        self::assertSame('', $this->store['k']);
+    }
+
     public function testKeysAreIndependent(): void
     {
         $this->refresh('a', 'https://offer.example/a');
@@ -65,35 +88,58 @@ final class FallbackRedirectUrlTest extends TestCase
         self::assertSame(['a' => 'https://offer.example/a', 'b' => 'https://offer.example/b'], $this->store);
     }
 
-    /** @return array<string, array{string, string}> [script, key family] */
+    /**
+     * [script, key family, the URL argument of each refresh in order]. lp.php
+     * and off.php append a suffix, so theirs must go through withSubid().
+     *
+     * @return array<string, array{string, string, list<string>}>
+     */
     public static function writers(): array
     {
         return [
-            'dl.php' => ['tracking202/redirect/dl.php', 'url_'],
-            'lp.php' => ['tracking202/redirect/lp.php', 'lp_'],
-            'off.php' => ['tracking202/redirect/off.php', 'ac_'],
+            'dl.php' => [
+                'tracking202/redirect/dl.php',
+                'url_',
+                ['(string) ($tracker_row[\'aff_campaign_url\'] ?? \'\')'],
+            ],
+            'lp.php' => ['tracking202/redirect/lp.php', 'lp_', [self::withSubidOf('tracker_row')]],
+            // Both branches: a click without a public id, then one with.
+            'off.php' => [
+                'tracking202/redirect/off.php',
+                'ac_',
+                [self::withSubidOf('aff_campaign_row'), self::withSubidOf('info_row')],
+            ],
         ];
+    }
+
+    private static function withSubidOf(string $row): string
+    {
+        return '\\Prosper202\\Click\\FallbackRedirectUrl::withSubid($' . $row . '[\'aff_campaign_url\'] ?? \'\')';
     }
 
     /**
      * Each script refreshes the key it reads during an outage, and no longer
      * writes it any other way (the old write-once `getKey === false` block).
      *
+     * @param list<string> $urls
      * @dataProvider writers
      */
-    public function testTheScriptRefreshesTheKeyItFallsBackTo(string $script, string $family): void
+    public function testTheScriptRefreshesTheKeyItFallsBackTo(string $script, string $family, array $urls): void
     {
         $src = self::scriptSource($script);
         $quoted = preg_quote($family, '/');
 
         $readerPattern = "/->get\(md5\('$quoted'\s*\.\s*(\\$\w+)\s*\.\s*systemHash\(\)\)\)/";
         self::assertSame(1, preg_match($readerPattern, $src, $reader), "$script: no outage reader for $family");
-        $id = preg_quote($reader[1], '/');
-        self::assertMatchesRegularExpression(
-            "/FallbackRedirectUrl::refresh\(\s*md5\('$quoted'\s*\.\s*$id\s*\.\s*systemHash\(\)\),/",
-            $src,
-            "$script: the $family fallback the outage reads is not the one refreshed"
+        $refreshPattern = '/FallbackRedirectUrl::refresh\(\s*md5\(\'' . $quoted . '\''
+            . '\s*\.\s*(\$\w+)\s*\.\s*systemHash\(\)\),\s*(.+),\n/';
+        preg_match_all($refreshPattern, $src, $refreshes);
+        self::assertSame(
+            array_fill(0, count($urls), $reader[1]),
+            $refreshes[1],
+            "$script: the $family fallback the outage reads is not the one refreshed, or not on every path"
         );
+        self::assertSame($urls, array_map('trim', $refreshes[2]), "$script: refreshes the fallback with another URL");
         self::assertDoesNotMatchRegularExpression(
             "/setCache\(\s*md5\('$quoted'/",
             $src,

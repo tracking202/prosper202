@@ -23,6 +23,18 @@ final class FallbackRedirectUrl
     }
 
     /**
+     * lp.php's and off.php's fallback: the primary offer URL with `&subid=p202`,
+     * or '' when the campaign has none. The suffix alone is truthy, and the
+     * outage branch would redirect to it as a relative path; '' disables it.
+     */
+    public static function withSubid(mixed $primaryUrl): string
+    {
+        $url = is_string($primaryUrl) ? $primaryUrl : '';
+
+        return trim($url) === '' ? '' : $url . '&subid=p202';
+    }
+
+    /**
      * @param Closure(string): mixed         $cacheGet getCache($key); false when absent
      * @param Closure(string, string): mixed $cacheSet setCache($key, $url, 0)
      *
