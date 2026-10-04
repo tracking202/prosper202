@@ -196,16 +196,11 @@ var filterDimension = map[string]string{
 	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
 }
 
-// loadStarterCheck fetches the attribution breakdown for the same dimension and range, under a first-touch model when
-// the account has one (assists don't depend on the model, so the check still runs without one). It pages through
-// every row. It never fails the command: when the check can't run it returns nil and a note saying why.
-func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string) (*starterCheck, []string, error) {
-	return loadAttributionCheck(c, cmd, dimension, params, false)
-}
-
-// loadAttributionCheck is the shared loader for `losers` (needFirstTouch false: assists alone still decide) and
-// `winners` (needFirstTouch true: a closer is only visible as a first-touch loss, so without a First touch model the
-// check is skipped).
+// loadAttributionCheck fetches the attribution breakdown for the same dimension and range, under a first-touch model when
+// there is a usable one, and pages through every row. It is shared by `losers` (needFirstTouch false: assists don't
+// depend on the model, so the check still runs without one) and `winners` (needFirstTouch true: a closer only shows as
+// a first-touch loss, so without a usable First touch model the check is skipped). It fails the command only for a
+// bad --first-touch-model; when the check can't run it returns nil and a note saying why.
 func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool) (*starterCheck, []string, error) {
 	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
 		return nil, nil, nil
@@ -213,6 +208,12 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	groupBy, ok := attributionGroupBy[dimension]
 	if !ok {
 		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}, nil
+	}
+	// The classic report applies both a period and a time range (their overlap); the attribution report takes one,
+	// so a mixed range (often a configured default period plus explicit times) can't be mirrored.
+	if params["period"] != "" && (params["time_from"] != "" || params["time_to"] != "") {
+		return nil, []string{"attribution check skipped: --period and --time_from/--time_to are both set (perhaps a configured " +
+			"default period), and the attribution report takes one range. Pass only one to check attribution"}, nil
 	}
 	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
 	// could be rescued by sales elsewhere (or kept CUT by losses elsewhere): don't reclassify at all.
@@ -250,30 +251,47 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 				WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
 		}
 		modelName = fmt.Sprint(resp.Data["model_name"])
+		if resp.Data["recompute_pending"] == true {
+			notes = append(notes, fmt.Sprintf("First touch model %s (%s) is still being recomputed, so its ROI wasn't used", modelID, modelName))
+			modelID, modelName = "", ""
+		}
 	} else {
 		data, err := c.Get("attribution/models", map[string]string{"type": "first_touch"})
 		if err != nil {
-			return nil, []string{"attribution check skipped: " + err.Error()}, nil
+			return nil, []string{"attribution check skipped: " + err.Error()}, nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
 		}
 		var resp struct {
 			Data []map[string]interface{} `json:"data"`
 		}
 		if json.Unmarshal(data, &resp) == nil {
+			pending := ""
 			for _, m := range resp.Data {
-				if fmt.Sprint(m["status"]) == "active" {
-					modelID, modelName = fmt.Sprint(m["model_id"]), fmt.Sprint(m["model_name"])
-					break
+				if fmt.Sprint(m["status"]) != "active" {
+					continue
 				}
+				// Credits are absent or stale until the worker finishes recomputing a new or edited model.
+				if m["recompute_pending"] == true {
+					pending = fmt.Sprint(m["model_name"])
+					continue
+				}
+				modelID, modelName = fmt.Sprint(m["model_id"]), fmt.Sprint(m["model_name"])
+				break
+			}
+			if modelID == "" && pending != "" {
+				notes = append(notes, "First touch model "+pending+" is still being recomputed, so its ROI wasn't used")
 			}
 		}
-		if modelID == "" && needFirstTouch {
-			return nil, []string{"closer check skipped: no active First touch model. Add one with " +
-				"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}, nil
+	}
+	if modelID == "" && needFirstTouch {
+		if len(notes) > 0 { // a First touch model exists but is still being recomputed
+			return nil, append(notes, "closer check skipped until it finishes"), nil
 		}
-		if modelID == "" {
-			notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
-				"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` to check first-touch ROI too")
-		}
+		return nil, []string{"closer check skipped: no active First touch model. Add one with " +
+			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}, nil
+	}
+	if modelID == "" && len(notes) == 0 {
+		notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
+			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` to check first-touch ROI too")
 	}
 	q := map[string]string{"group_by": groupBy, "limit": strconv.Itoa(attributionPage)}
 	if modelID != "" {
@@ -293,7 +311,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	}
 	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
 	if err != nil {
-		return nil, append(notes, "attribution check skipped: "+err.Error()), nil
+		return nil, append(notes, "attribution check skipped: "+err.Error()), nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
 	}
 	notes = append(notes, pageNotes...)
 	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial}
@@ -326,7 +344,7 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 			// network error, a server error) leaves the check incomplete, so it is discarded.
 			if offset > 0 && refusesOffset(err) {
 				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server can't page the attribution report, so rows past them are marked unchecked", len(all)))
-				return all, true, notes, nil
+				return all, true, notes, nil //nolint:nilerr // a server without offset paging: keep the first page, marked partial
 			}
 			return nil, false, nil, err
 		}
@@ -440,6 +458,10 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if v, _ := cmd.Flags().GetString("first-touch-model"); v != "" && !positiveIntPattern.MatchString(v) {
+				return validationError("invalid --first-touch-model %q: a positive whole number", v).
+					WithHint("Run `p202 attribution model list` to find model ids.")
+			}
 			if cmd.Flags().Lookup("min-assists") != nil {
 				if n, _ := cmd.Flags().GetInt64("min-assists"); n < 0 {
 					return validationError("--min-assists must be 0 or more; got %d", n).

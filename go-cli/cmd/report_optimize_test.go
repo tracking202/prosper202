@@ -169,6 +169,9 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/6"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":6,"model_name":"First touch v2","model_type":"first_touch","status":"active","recompute_pending":true}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
@@ -503,6 +506,86 @@ func TestAttributionBreakdownOffset(t *testing.T) {
 		}
 		if got != nil {
 			t.Errorf("--offset %s: no request should be made", bad)
+		}
+	}
+}
+
+const pendingModels = `{"data":[{"model_id":6,"model_name":"First touch v2","model_type":"first_touch","status":"active","recompute_pending":true}]}`
+
+func TestLosersReviewRoundTwo(t *testing.T) {
+	cases := []struct {
+		name, models string
+		args         []string
+		note         string
+		wantCalls    int
+		wantModel    bool
+		chatgpt      string
+	}{
+		// The classic report applies both; the attribution report takes one range, so don't compare different ranges.
+		{"mixed period and time range", firstTouchModels, []string{"--period", "last30", "--time_from", "1790000000"}, "--period and --time_from/--time_to are both set", 0, false, "CUT"},
+		// A model still being recomputed has absent or stale credits: no ROI, assists only.
+		{"auto-selected model still recomputing", pendingModels, nil, "still being recomputed", 1, false, "TEST"},
+		{"override still recomputing", firstTouchModels, []string{"--first-touch-model", "6"}, "still being recomputed", 1, false, "TEST"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buckets, stderr, calls := runLosers(t, tc.models, onePage, append([]string{"--breakdown", "source"}, tc.args...)...)
+			if !strings.Contains(stderr, tc.note) {
+				t.Errorf("stderr = %q, want %q", stderr, tc.note)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Fatalf("attribution calls = %d, want %d", len(calls), tc.wantCalls)
+			}
+			if tc.wantCalls > 0 && calls[0].Has("model_id") != tc.wantModel {
+				t.Errorf("model_id sent = %v, want %v", calls[0].Has("model_id"), tc.wantModel)
+			}
+			if buckets["ChatGPT Ads"] != tc.chatgpt || buckets["Display"] != "CUT" {
+				t.Errorf("buckets = %v, want ChatGPT Ads %s, Display CUT", buckets, tc.chatgpt)
+			}
+		})
+	}
+}
+
+func TestWinnersSkipsWhileTheFirstTouchModelRecomputes(t *testing.T) {
+	var calls []url.Values
+	srv := winnersServer(t, pendingModels, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, stderr, err := executeCommand("report", "winners", "--json", "--breakdown", "source", "--period", "last30")
+	if err != nil {
+		t.Fatalf("winners: %v", err)
+	}
+	if len(calls) != 0 || !strings.Contains(stderr, "closer check skipped until it finishes") {
+		t.Errorf("calls %d, stderr %q: want the closer check skipped while the model recomputes", len(calls), stderr)
+	}
+	if !strings.Contains(out, `"SCALE"`) || strings.Contains(out, "CLOSER") {
+		t.Errorf("the classic winners still list, unchanged: %s", out)
+	}
+}
+
+func TestTriageRefusesAMalformedFirstTouchModelBeforeAnyRequest(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	for _, cmdName := range []string{"losers", "winners"} {
+		for _, bad := range []string{"abc", "0", "-3", "07"} {
+			requests = 0
+			_, _, err := executeCommand("report", cmdName, "--json", "--breakdown", "source", "--first-touch-model", bad)
+			if err == nil || !strings.Contains(err.Error(), "invalid --first-touch-model") {
+				t.Errorf("%s --first-touch-model %s should be refused, got %v", cmdName, bad, err)
+			}
+			if requests != 0 {
+				t.Errorf("%s --first-touch-model %s: %d requests made, want 0", cmdName, bad, requests)
+			}
 		}
 	}
 }
