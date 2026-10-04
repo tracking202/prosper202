@@ -90,6 +90,8 @@
         "axios": "axios/1.6.2",
         "node-fetch": "node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
         "PostmanRuntime": "PostmanRuntime/7.36.0",
-        "Guzzle": "GuzzleHttp/7 curl/8.4.0 PHP/8.3.12"
+        "Guzzle": "GuzzleHttp/7 curl/8.4.0 PHP/8.3.12",
+        "Python-urllib": "Python-urllib/3.11",
+        "Java": "Java/17.0.2"
     }
 }

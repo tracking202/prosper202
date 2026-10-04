@@ -78,6 +78,14 @@ final class ClickBotDetectorTest extends TestCase
         self::assertFalse(ClickBotDetector::isBot($userAgent, ['type' => '1']), $userAgent);
     }
 
+    public function testACrawlerFrameworkStaysFlaggedThroughTheSpiderFamily(): void
+    {
+        $ua = 'Scrapy/2.11.0 (+https://scrapy.org)';
+        $family = (string) Parser::create()->parse($ua)->device->family;
+        self::assertSame(ClickBotDetector::SPIDER_FAMILY, $family);
+        self::assertTrue(ClickBotDetector::isBot($ua, ['type' => '1', 'ua_device_family' => $family]));
+    }
+
     public function testCurlAndGoClicksAreRecordedAsHuman(): void
     {
         foreach (['curl/8.4.0', 'Go-http-client/1.1'] as $userAgent) {

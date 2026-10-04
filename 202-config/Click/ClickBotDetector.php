@@ -58,11 +58,22 @@ final class ClickBotDetector
      * records clicks a server makes: server-to-server setups and pass-through
      * redirects send the click with their library's agent, and the bots seen
      * on real installs were crawlers, headless browsers and Google proxies,
-     * never libraries. (ua-parser itself still calls a few, such as
-     * Python-urllib and Java, "Spider", and the Spider rule follows it.)
+     * never libraries.
      */
     private const PREFIXES = [
         'WhatsApp/',
+    ];
+
+    /**
+     * HTTP libraries, matched at the start of the user agent, ignoring case. Not
+     * bots on their own (see PREFIXES), even where ua-parser calls one "Spider"
+     * (it does for Python-urllib and Java). Crawler frameworks such as Scrapy are
+     * not in this list and stay flagged by the Spider rule.
+     */
+    private const LIBRARY_PREFIXES = [
+        'curl/', 'Wget/', 'python-requests/', 'Python-urllib/', 'Python/', 'Go-http-client/',
+        'okhttp/', 'Java/', 'Apache-HttpClient/', 'libwww-perl/', 'axios/', 'node-fetch/',
+        'PostmanRuntime/', 'GuzzleHttp/',
     ];
 
     private static ?string $pattern = null;
@@ -82,6 +93,9 @@ final class ClickBotDetector
         }
         if (self::matchesSignature($userAgent)) {
             return true;
+        }
+        if (self::isHttpLibrary($userAgent)) {
+            return false;
         }
 
         // get_device_info() carries the family ua-parser gave, from the parse it
@@ -107,6 +121,17 @@ final class ClickBotDetector
         }
 
         return preg_match(self::$pattern, $userAgent) === 1;
+    }
+
+    public static function isHttpLibrary(string $userAgent): bool
+    {
+        foreach (self::LIBRARY_PREFIXES as $prefix) {
+            if (stripos($userAgent, $prefix) === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** ua-parser's device family, or '' when the parser cannot run. */
