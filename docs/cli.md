@@ -625,6 +625,11 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
 
+A transaction id the click already has records nothing: the answer is that
+conversion, with `"duplicate": true` beside `data` under `--json`. One whose
+conversion was deleted is refused (exit 1) and never recorded again; a
+different sale needs its own transaction id.
+
 ### Import a network's conversions
 
 When a network's postback was never wired up, its conversion report still
@@ -707,7 +712,9 @@ click's conversions (`GET /clicks/{id}/conversions`, once per click). Rows the
 click already has are `duplicate` and are not sent. Every other row is sent as
 `POST /conversions` with an `Idempotency-Key` computed from its click,
 transaction id, payout and time, so the same row always has the same key and
-a retry replays instead of recording again. Rows with a negative payout go
+a retry replays instead of recording again. A row the server answers as a
+duplicate (`duplicate: true`, or a 409 for a deleted conversion's transaction
+id) is `duplicate` too, even when the read did not show it. Rows with a negative payout go
 after the sales, so a newest-first report reverses the right sale. After a
 partial failure (exit 5), fix the cause and run the same command again: only
 the rows not yet recorded are sent. The read needs a server with that endpoint

@@ -52,7 +52,7 @@ This file captures the API paths and payload/query expectations used by upcoming
   - one `GET /api/v3/clicks/{id}/conversions` per distinct click of the ready rows (read-only): a 404 whose message starts `Click not found` marks the click's rows `click_not_found`; a bare 404 (`Not found`, no such route) refuses the import before any write; 401/403 or a network failure stops it before any write
   - `data[].transaction_id`, `data[].reverses_conv_id`, `data[].amount` and `click.lead` decide which rows are already recorded; `data[].conv_id` is kept to recognise a create the server answered with an existing conversion
   - then one `POST /api/v3/conversions` per remaining row, sales before negative-payout rows: `{click_id: int, transaction_id?: string, payout?: "decimal string", conv_time?: int}` with `Idempotency-Key: conv-import-v1-<first 20 bytes of sha256("p202 conversion import v1\n" + click_id + "\n" + quoted transaction_id + "\n" + quoted payout + "\n" + conv_time), hex>`; under `--staged` with `staged=1`
-  - a `201` carrying `idempotent_replay: true`, or naming a `conv_id` the click already had, is a duplicate; a `202` staged envelope is `staged`; a 404 `Click not found...` is `click_not_found`
+  - a `201` carrying `idempotent_replay: true` or `duplicate: true`, or naming a `conv_id` the click already had (servers that do not send `duplicate`), is a duplicate; a 409 with `details.deleted: true` (a deleted conversion's key) is a duplicate naming `details.conv_id`; a `202` staged envelope is `staged`; a 404 `Click not found...` is `click_not_found`
 - `landing-page list --url-contains <text>`
   - paginated `GET /api/v3/landing-pages`, filtered client-side on `landing_page_url` and `leave_behind_page_url`
 - `campaign check-urls`

@@ -319,7 +319,11 @@ p202 campaign create \
 
 If the process dies before reading the response, re-running the identical
 command replays the recorded response (`idempotent_replay: true` in the
-body) instead of creating a duplicate. Requires
+body) instead of creating a duplicate. `conversion create` also says when the
+click already had the conversion (same transaction id): `duplicate: true`
+beside `data`, which is the existing conversion; a transaction id whose
+conversion was deleted is refused (409, exit 1, `details.conv_id`) and never
+recorded again. Requires
 `features.create_idempotency` in the server capabilities; older servers
 ignore the header and create normally, so retries there can still
 duplicate.
@@ -350,8 +354,10 @@ id. When both look plausible the command refuses with exit 1 and a hint naming
 is absent means the campaign's default payout, and an absent time column means
 the server's now. Pass `--timezone` when the network writes local times.
 
-Statuses after step 3: `created`, `duplicate` (already on the click; not sent
-or not re-recorded), `click_not_found`, `failed` (with the server's message),
+Statuses after step 3: `created`, `duplicate` (already on the click, or a
+deleted conversion's transaction id, which is never recorded again; not sent,
+or answered by the server with `duplicate: true` or a `409` naming the deleted
+conversion), `click_not_found`, `failed` (with the server's message),
 `staged` (under `--staged`), plus `invalid` and `duplicate_in_file` from the
 plan. Any `failed` row means exit 5 with every row still in `data`. Fix the
 cause and run the same command again: rows already recorded come back
