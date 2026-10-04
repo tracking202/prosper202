@@ -32,6 +32,9 @@ var attributionPeriods = []string{"today", "yesterday", "last7", "last30", "last
 var attributionModelStatuses = []string{"active", "inactive"}
 
 var positiveIntPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+
+// wholeNumberPattern is 0 or a positive whole number without leading zeros (what the server accepts for offset).
+var wholeNumberPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 var unixTimePattern = regexp.MustCompile(`^[0-9]{1,10}$`)
 
 func containsString(list []string, v string) bool {
@@ -268,6 +271,14 @@ when that model is active, otherwise the account default.`,
 		if params["model_id"] != "" && params["model_id"] == params["compare_model_id"] {
 			return validationError("--compare-model must differ from --model")
 		}
+		if v, _ := cmd.Flags().GetString("offset"); v != "" {
+			// The server refuses leading zeros, so the CLI does too.
+			if !wholeNumberPattern.MatchString(v) {
+				return validationError("invalid --offset %q: a whole number, 0 or more", v).
+					WithHint("Rows come in attributed-revenue order; page with --limit 1000 --offset 0, then 1000, 2000, ... while rows remain (meta.groups is the total).")
+			}
+			params["offset"] = v
+		}
 		if err := attributionRangeParams(cmd, params); err != nil {
 			return err
 		}
@@ -280,6 +291,9 @@ when that model is active, otherwise the account default.`,
 			var apiErr *api.APIError
 			if asAPIError(err, &apiErr) && apiErr.Status == 409 {
 				return withHint(err, "That model is inactive or invalid, so it has no credits. Check it with `p202 attribution model get <id>` and fix or activate it with `p202 attribution model update`.")
+			}
+			if params["offset"] != "" && refusesOffset(err) {
+				return withHint(err, "This server can't page the attribution report yet (it predates offset); drop --offset to get the first --limit rows.")
 			}
 			return err
 		}
@@ -394,6 +408,7 @@ func init() {
 	attrBreakdownCmd.Flags().String("model", "", "Model id (default: each campaign's override, else the account default)")
 	attrBreakdownCmd.Flags().String("compare-model", "", "A second model id, side by side")
 	attrBreakdownCmd.Flags().String("limit", "", "Rows, 1-1000 (default 100)")
+	attrBreakdownCmd.Flags().String("offset", "", "Rows to skip, for paging past --limit (meta.groups is the total; needs a server with attribution paging)")
 	registerAttributionRangeFlags(attrBreakdownCmd)
 	registerAttributionRangeFlags(attrJourneysCmd)
 	attrQueueCmd.Flags().Int("limit", 50, "Rows of the backlog to list, 1-500")
