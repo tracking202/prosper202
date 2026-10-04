@@ -250,6 +250,11 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 			return nil, nil, validationError("--first-touch-model %s is a %s model; the starter check needs a first_touch model", modelID, t).
 				WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
 		}
+		if st := fmt.Sprint(resp.Data["status"]); st != "active" {
+			// An inactive model has no credits: the report would refuse it and the check would silently not run.
+			return nil, nil, validationError("--first-touch-model %s is %s; the check needs an active first_touch model", modelID, st).
+				WithHint("Activate it with `p202 attribution model update " + modelID + " --status active`, or omit the flag to use the first active First touch model.")
+		}
 		modelName = fmt.Sprint(resp.Data["model_name"])
 		if resp.Data["recompute_pending"] == true {
 			notes = append(notes, fmt.Sprintf("First touch model %s (%s) is still being recomputed, so its ROI wasn't used", modelID, modelName))
@@ -300,6 +305,13 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	// The same window as the classic report. Without a lower bound the classic report runs from the first click, while
 	// the attribution report would default to the last 30 days, so a missing time_from is sent as 0 (all time); a
 	// missing time_to defaults to now on both.
+	// For a bounded range the populations differ at the edges: the classic report counts clicks made in the range, the
+	// attribution report sales converted in it (credited to clicks of any age), the same view as the Attribution page's
+	// Report. TEST and CLOSER only hold a row for a closer look, so the check runs and says so.
+	if params["period"] != "" || params["time_from"] != "" || params["time_to"] != "" {
+		notes = append(notes, "attribution counts sales converted in the range (as the Attribution page's Report does); the classic "+
+			"rows count clicks made in it, so clicks near the range's edges can differ")
+	}
 	if params["period"] != "" {
 		q["period"] = params["period"]
 	} else {

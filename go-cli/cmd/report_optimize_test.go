@@ -172,6 +172,9 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/6"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":6,"model_name":"First touch v2","model_type":"first_touch","status":"active","recompute_pending":true}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/9"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":9,"model_name":"Old first touch","model_type":"first_touch","status":"inactive"}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
@@ -622,5 +625,32 @@ func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLosersRefusesAnInactiveFirstTouchOverride(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "9")
+	if err == nil || !strings.Contains(err.Error(), "is inactive") {
+		t.Fatalf("an inactive override must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no attribution report should be read for a refused override")
+	}
+}
+
+func TestBoundedRangesSayHowTheCohortsDiffer(t *testing.T) {
+	_, stderr, _ := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "sales converted in the range") {
+		t.Errorf("a bounded range should note the click vs conversion cohorts: %q", stderr)
+	}
+	_, stderr, _ = runLosers(t, firstTouchModels, onePage, "--breakdown", "source")
+	if strings.Contains(stderr, "sales converted in the range") {
+		t.Errorf("an all-time run has no edges to note: %q", stderr)
 	}
 }
