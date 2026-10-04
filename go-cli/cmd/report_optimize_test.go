@@ -382,3 +382,19 @@ func TestLosersNotesAndFallbacks(t *testing.T) {
 		})
 	}
 }
+
+func TestLosersRefusesNegativeMinAssistsBeforeAnyRequest(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--min-assists", "-1")
+	if err == nil || !strings.Contains(err.Error(), "--min-assists must be 0 or more") {
+		t.Fatalf("a negative --min-assists must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no report should be read for a refused flag")
+	}
+}

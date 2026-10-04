@@ -399,6 +399,12 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Lookup("min-assists") != nil {
+				if n, _ := cmd.Flags().GetInt64("min-assists"); n < 0 {
+					return validationError("--min-assists must be 0 or more; got %d", n).
+						WithHint("0 turns the assists rule off; 1 (the default) holds back any row that had a click in a sale another row closed.")
+				}
+			}
 			client, err := api.NewFromConfig()
 			if err != nil {
 				return err
