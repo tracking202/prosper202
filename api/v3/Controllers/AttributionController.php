@@ -257,7 +257,7 @@ class AttributionController
      */
     public function breakdown(array $params): array
     {
-        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit']);
+        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit', 'offset']);
         $groupBy = (string) ($params['group_by'] ?? 'campaign');
         if (!in_array($groupBy, AttributionReports::dimensions(), true)) {
             throw new ValidationException('Invalid group_by', ['group_by' => 'Valid: ' . implode(', ', AttributionReports::dimensions())]);
@@ -267,6 +267,7 @@ class AttributionController
         if ($limit > AttributionReports::MAX_LIMIT) {
             throw new ValidationException('limit too large', ['limit' => 'At most ' . AttributionReports::MAX_LIMIT]);
         }
+        $offset = self::wholeNumber($params, 'offset') ?? 0;
 
         $default = $this->models->defaultRow($this->userId);
         if ($default === null) {
@@ -291,7 +292,8 @@ class AttributionController
             $groupBy,
             $from,
             $to,
-            $limit
+            $limit,
+            $offset
         );
 
         return [
@@ -301,10 +303,12 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
-                // How many groups the report has; more than `limit` means
-                // the rows above are the top `limit` by attributed revenue.
+                // How many groups the report has; more than `offset` + `limit`
+                // means more rows follow in the same order (attributed revenue,
+                // highest first), read with a larger `offset`.
                 'groups' => $result['groups'],
                 'limit' => $limit,
+                'offset' => $offset,
                 'model' => $model !== null ? self::present($model) : [
                     'mode' => 'effective',
                     'description' => "Each conversion under its campaign's model override when that model is active, otherwise the account default.",
@@ -856,6 +860,20 @@ class AttributionController
         $v = (string) $v;
         if (preg_match('/^[1-9][0-9]{0,17}$/D', $v) !== 1) {
             throw new ValidationException('Invalid ' . $field, [$field => 'A positive whole number']);
+        }
+
+        return (int) $v;
+    }
+
+    /** Like positiveInt(), but 0 is allowed. */
+    private static function wholeNumber(array $params, string $field): ?int
+    {
+        if (!array_key_exists($field, $params) || $params[$field] === '') {
+            return null;
+        }
+        $v = $params[$field];
+        if ((!is_string($v) && !is_int($v)) || preg_match('/^(0|[1-9][0-9]{0,17})$/D', (string) $v) !== 1) {
+            throw new ValidationException('Invalid ' . $field, [$field => 'A whole number, 0 or more']);
         }
 
         return (int) $v;

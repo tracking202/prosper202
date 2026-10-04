@@ -25,13 +25,14 @@ class AttributionBreakdownCommand extends BaseCommand
             ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'today, yesterday, last7, last30, last90')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Unix start time')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Unix end time')
-            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-1000 (default 100)');
+            ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-1000 (default 100)')
+            ->addOption('offset', null, InputOption::VALUE_REQUIRED, 'Rows to skip, for reading past --limit (default 0)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
         $params = [];
-        foreach (['group_by', 'model_id', 'compare_model_id', 'period', 'time_from', 'time_to', 'limit'] as $opt) {
+        foreach (['group_by', 'model_id', 'compare_model_id', 'period', 'time_from', 'time_to', 'limit', 'offset'] as $opt) {
             $v = $input->getOption($opt);
             if ($v !== null && $v !== '') {
                 $params[$opt] = (string) $v;
@@ -40,6 +41,10 @@ class AttributionBreakdownCommand extends BaseCommand
         if (isset($params['limit'])
             && (preg_match('/^[1-9][0-9]{0,3}$/D', $params['limit']) !== 1 || (int) $params['limit'] > 1000)) {
             $output->writeln('<error>Invalid --limit: a whole number of rows from 1 to 1000</error>');
+            return Command::FAILURE;
+        }
+        if (isset($params['offset']) && preg_match('/^(0|[1-9][0-9]{0,17})$/D', $params['offset']) !== 1) {
+            $output->writeln('<error>Invalid --offset: a whole number, 0 or more</error>');
             return Command::FAILURE;
         }
         $result = $this->client()->get('attribution/reports/breakdown', $params);

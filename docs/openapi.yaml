@@ -1872,6 +1872,16 @@ paths:
             minimum: 1
             maximum: 1000
             default: 100
+        - name: offset
+          in: query
+          description: >-
+            Rows to skip in the report's order (attributed revenue, then key), to read past
+            the first `limit` rows. A whole number written without leading zeros; an offset
+            past the end returns `data: []`. Page while offset + rows < meta.groups.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
       responses:
         "200":
           description: One row per dimension value, sorted by attributed revenue
@@ -9498,9 +9508,15 @@ components:
               nullable: true
             groups:
               type: integer
-              description: How many groups the report has; more than limit means data holds the top `limit` by attributed revenue.
+              description: >-
+                How many groups the report has in total. data holds rows offset to
+                offset + limit of them in attributed-revenue order; page while
+                offset + rows returned < groups.
             limit:
               type: integer
+            offset:
+              type: integer
+              description: The offset the rows start at (0 when none was sent).
 
     AttributionExportInput:
       type: object
