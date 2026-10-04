@@ -163,6 +163,15 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
 			w.WriteHeader(200)
 			w.Write([]byte(models))
+		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff_campaign_id is set
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_payout":"0"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models/1"):
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active"}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
 			*calls = append(*calls, r.URL.Query())
 			code, body := attr(r.URL.Query())
@@ -260,6 +269,76 @@ func TestLosersPagesThroughTheAttributionReport(t *testing.T) {
 	if buckets["Display"] != "CUT" || buckets["ChatGPT Ads"] != "CUT" {
 		t.Errorf("rows the check never read stay CUT: %v", buckets)
 	}
+
+	// Any other failure on a later page (here a server error) discards the whole check: a starter on page 1 is
+	// not rescued by a half-read report.
+	broken := func(q url.Values) (int, string) {
+		if q.Has("offset") {
+			return 500, `{"error":true,"message":"Internal error","status":500}`
+		}
+		return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":2,"backfill":null}}`
+	}
+	buckets, stderr, _ = runLosers(t, firstTouchModels, broken, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "attribution check skipped") || buckets["ChatGPT Ads"] != "CUT" {
+		t.Errorf("a failed page 2 must discard the check: buckets %v, stderr %q", buckets, stderr)
+	}
+}
+
+func TestLosersMarksRowsPastAPartialCheckAsUnchecked(t *testing.T) {
+	old := func(q url.Values) (int, string) {
+		if q.Has("offset") {
+			return 422, `{"error":true,"message":"Unknown parameter(s): offset","status":422}`
+		}
+		return 200, `{"data":[{"key":"8","roi":-85.0,"assisted_conversions":0}],"meta":{"groups":2,"backfill":null}}`
+	}
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, old, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--period", "last30")
+	if err != nil {
+		t.Fatalf("losers: %v", err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	for _, r := range resp.Data {
+		checked, has := r["attribution_checked"]
+		switch r["name"] {
+		case "ChatGPT Ads":
+			if !has || checked != false || !strings.Contains(fmt.Sprint(r["reason"]), "not checked") {
+				t.Errorf("a row past the partial check is marked unchecked: %v", r)
+			}
+		case "Display":
+			if has {
+				t.Errorf("a row the check read carries no unchecked mark: %v", r)
+			}
+		}
+	}
+}
+
+func TestLosersRefusesAFirstTouchOverrideThatIsNot(t *testing.T) {
+	var calls []url.Values
+	srv := losersServer(t, firstTouchModels, onePage, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "1")
+	if err == nil || !strings.Contains(err.Error(), "last_touch model") {
+		t.Fatalf("a last-touch model as --first-touch-model must be refused, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("no attribution report should be read for a refused override")
+	}
+	if _, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--first-touch-model", "4"); err != nil {
+		t.Errorf("a first_touch override is accepted: %v", err)
+	}
 }
 
 func TestLosersNotesAndFallbacks(t *testing.T) {
@@ -276,6 +355,8 @@ func TestLosersNotesAndFallbacks(t *testing.T) {
 		{"dimension without an attribution equivalent", firstTouchModels, onePage, []string{"--breakdown", "browser"}, "no browser breakdown", 0, false, "CUT"},
 		{"turned off", firstTouchModels, onePage, []string{"--breakdown", "source", "--no-attribution-check"}, "", 0, false, "CUT"},
 		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "last 30 days", 1, true, "TEST"},
+		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff_campaign_id", "7"}, "can't be filtered by --aff_campaign_id", 0, false, "CUT"},
+		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc_account_id", "7"}, "", 1, true, "TEST"},
 		{"backfill running", firstTouchModels, func(url.Values) (int, string) {
 			return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":1,"backfill":{"done":10,"total":100}}}`
 		}, []string{"--breakdown", "source", "--period", "last7"}, "backfilled", 1, true, "TEST"},

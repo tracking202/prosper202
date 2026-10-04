@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -185,27 +186,64 @@ type starterCheck struct {
 	model      string // the first-touch model's name; empty when the account has none (assists only)
 	minAssists int64
 	byKey      map[string]map[string]interface{}
+	partial    bool // only the first rows could be read (a server without offset paging)
+}
+
+// filterDimension is the breakdown each entity filter narrows to. The attribution report takes no entity filters, so
+// its rows match the classic ones only when the filter is the breakdown itself (the same keys, account-wide either way).
+var filterDimension = map[string]string{
+	"aff_campaign_id": "campaign", "ppc_account_id": "ppc_account", "landing_page_id": "landing_page",
+	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
 }
 
 // loadStarterCheck fetches the attribution breakdown for the same dimension and range, under a first-touch model when
 // the account has one (assists don't depend on the model, so the check still runs without one). It pages through
 // every row. It never fails the command: when the check can't run it returns nil and a note saying why.
-func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string) (*starterCheck, []string) {
+func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string) (*starterCheck, []string, error) {
 	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
-		return nil, nil
+		return nil, nil, nil
 	}
 	groupBy, ok := attributionGroupBy[dimension]
 	if !ok {
-		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}
+		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}, nil
+	}
+	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
+	// could be rescued by sales elsewhere (or kept CUT by losses elsewhere): don't reclassify at all.
+	for _, f := range []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"} {
+		if params[f] != "" && filterDimension[f] != dimension {
+			hint := "Drop the filter to check attribution"
+			if filterDimension[f] != "" {
+				hint += ", or break down by " + filterDimension[f] + " instead"
+			}
+			return nil, []string{"attribution check skipped: the attribution report can't be filtered by --" + f +
+				", so its numbers wouldn't match these rows. " + hint}, nil
+		}
 	}
 	minAssists, _ := cmd.Flags().GetInt64("min-assists")
 	var notes []string
 	modelID, _ := cmd.Flags().GetString("first-touch-model")
-	modelName := "model " + modelID
-	if modelID == "" {
+	modelName := ""
+	if modelID != "" {
+		// The ROI is reported as first-touch ROI, so the override must be a first-touch model.
+		data, err := c.Get("attribution/models/"+modelID, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		var resp struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, nil, err
+		}
+		if t := fmt.Sprint(resp.Data["model_type"]); t != "first_touch" {
+			return nil, nil, validationError("--first-touch-model %s is a %s model; the starter check needs a first_touch model", modelID, t).
+				WithHint("`p202 attribution model list` shows each model's type; omit the flag to use the first active First touch model.")
+		}
+		modelName = fmt.Sprint(resp.Data["model_name"])
+	} else {
 		data, err := c.Get("attribution/models", map[string]string{"type": "first_touch"})
 		if err != nil {
-			return nil, []string{"attribution check skipped: " + err.Error()}
+			return nil, []string{"attribution check skipped: " + err.Error()}, nil
 		}
 		var resp struct {
 			Data []map[string]interface{} `json:"data"`
@@ -219,7 +257,6 @@ func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, param
 			}
 		}
 		if modelID == "" {
-			modelName = ""
 			notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
 				"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` to check first-touch ROI too")
 		}
@@ -240,22 +277,16 @@ func loadStarterCheck(c *api.Client, cmd *cobra.Command, dimension string, param
 	default:
 		notes = append(notes, "attribution checked over the last 30 days (no --period or --time_from/--time_to was given)")
 	}
-	for _, f := range []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"} {
-		if params[f] != "" {
-			notes = append(notes, "attribution credit is account-wide: the attribution report has no --"+f+" filter")
-			break
-		}
-	}
-	rows, pageNotes, err := fetchAllAttributionRows(c, q)
+	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
 	if err != nil {
-		return nil, append(notes, "attribution check skipped: "+err.Error())
+		return nil, append(notes, "attribution check skipped: "+err.Error()), nil
 	}
 	notes = append(notes, pageNotes...)
-	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}}
+	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial}
 	for _, r := range rows {
 		check.byKey[fmt.Sprint(r["key"])] = r
 	}
-	return check, notes
+	return check, notes, nil
 }
 
 // attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT).
@@ -264,7 +295,7 @@ const attributionPage = 1000
 // fetchAllAttributionRows pages through the attribution breakdown (offset, while offset+rows < meta.groups). A server
 // from before offset existed refuses it (422); then the rows already read are kept and a note says how many of how
 // many were checked. A note also says when the pre-upgrade backfill is still running (meta.backfill not null).
-func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]interface{}, []string, error) {
+func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]interface{}, bool, []string, error) {
 	var all []map[string]interface{}
 	var notes []string
 	for offset := 0; ; {
@@ -277,11 +308,13 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 		}
 		data, err := c.Get("attribution/reports/breakdown", page)
 		if err != nil {
-			if offset > 0 {
-				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server can't page the attribution report (%v)", len(all), err))
-				return all, notes, nil
+			// Only the server's refusal of offset itself means "no paging here"; any other failure (an expired key, a
+			// network error, a server error) leaves the check incomplete, so it is discarded.
+			if offset > 0 && refusesOffset(err) {
+				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server can't page the attribution report, so rows past them are marked unchecked", len(all)))
+				return all, true, notes, nil
 			}
-			return nil, nil, err
+			return nil, false, nil, err
 		}
 		var resp struct {
 			Data []map[string]interface{} `json:"data"`
@@ -291,7 +324,7 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 			} `json:"meta"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return nil, nil, err
+			return nil, false, nil, err
 		}
 		if offset == 0 && resp.Meta.Backfill != nil {
 			notes = append(notes, "attribution is incomplete for this range while older conversions are backfilled")
@@ -299,15 +332,29 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 		all = append(all, resp.Data...)
 		if resp.Meta.Groups == nil {
 			if len(resp.Data) == attributionPage {
-				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server doesn't say how many there are", len(all)))
+				notes = append(notes, fmt.Sprintf("checked the top %d attribution rows; this server doesn't say how many there are, so rows past them are marked unchecked", len(all)))
+				return all, true, notes, nil
 			}
-			return all, notes, nil
+			return all, false, notes, nil
 		}
 		if len(resp.Data) == 0 || len(all) >= *resp.Meta.Groups {
-			return all, notes, nil
+			return all, false, notes, nil
 		}
 		offset = len(all)
 	}
+}
+
+// refusesOffset says whether err is a server refusing the offset parameter (a server from before attribution paging:
+// 422 "Unknown parameter(s): offset").
+func refusesOffset(err error) bool {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return false
+	}
+	if _, ok := apiErr.FieldErrors["offset"]; ok {
+		return true
+	}
+	return strings.Contains(apiErr.Message, "offset")
 }
 
 // applyStarterCheck adds first-touch ROI and assists to a CUT row and moves it to TEST when it starts sales: it pays
@@ -319,6 +366,11 @@ func applyStarterCheck(row map[string]interface{}, check *starterCheck) {
 	}
 	a, ok := check.byKey[fmt.Sprint(row["id"])]
 	if !ok {
+		if check.partial {
+			// Past the rows the server could return: it may start sales, but that couldn't be checked.
+			row["attribution_checked"] = false
+			row["reason"] = fmt.Sprintf("%s (attribution not checked: past the rows this server can return)", row["reason"])
+		}
 		return
 	}
 	assists := int64(toFloat(a["assisted_conversions"]))
@@ -375,7 +427,10 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			var check *starterCheck
 			if !wantWinners {
 				var notes []string
-				check, notes = loadStarterCheck(client, cmd, params["breakdown"], params)
+				check, notes, err = loadStarterCheck(client, cmd, params["breakdown"], params)
+				if err != nil {
+					return err
+				}
 				for _, n := range notes {
 					fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 				}
@@ -483,7 +538,9 @@ func init() {
 		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country. ROI comes from the\n" +
 		"first active First touch model (or --first-touch-model); without one, rows are checked on assists only. It needs\n" +
 		"an attribution:read key; when it can't run, the command still lists the classic losers and says why on stderr.\n" +
-		"--no-attribution-check turns it off."
+		"An entity filter other than the breakdown itself turns the check off (the attribution report is account-wide).\n" +
+		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
+		"false. --no-attribution-check turns it off."
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos", true)
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
