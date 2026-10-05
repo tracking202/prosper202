@@ -1253,8 +1253,13 @@ paths:
                         description: Present (`true`) when the response is an `Idempotency-Key` replay.
         "409":
           description: |
-            The conversion repeats one that was deleted (its ledger key stays
-            on the click), so it is not recorded again; nothing was written.
+            Either the conversion repeats one that was deleted (its ledger key
+            stays on the click), so it is not recorded again and nothing was
+            written; only this case carries `details.deleted: true`. Or the
+            `Idempotency-Key` is held by a request still in flight (retry once
+            it completes), or by one that did not finish (whether it wrote is
+            unknown: check, then retry with a new key). Those carry no
+            `details`.
           content:
             application/json:
               schema:
@@ -1343,8 +1348,10 @@ paths:
       description: >-
         Performance metrics grouped by a dimension. Rows are ordered by `sort`,
         then by `id` ascending, so rows tied on the sort column (many with 0
-        clicks) keep one order across requests and paging with `offset`
-        neither skips nor repeats a row.
+        clicks) keep one order across requests. Over unchanged data, paging
+        with `offset` neither skips nor repeats a row; a rolling `period`
+        moves with the clock and new traffic changes the sort values, so page
+        a fixed `time_from`/`time_to` window for a consistent read.
       operationId: reportBreakdown
       parameters:
         - name: breakdown

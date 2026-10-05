@@ -70,7 +70,8 @@ repeats one (the same `transaction_id`, the same reversal, or an `accumulate`
 click's plain conversion) is refused with `409`, naming it in
 `details.conv_id` with `details.deleted: true`. Nothing is written, and an
 `Idempotency-Key` sent with it is not spent. A different sale needs its own
-`transaction_id`.
+`transaction_id`. A `409` without `details` is about the `Idempotency-Key`
+instead: a request holding it is still in flight, or one did not finish.
 
 ## Example
 

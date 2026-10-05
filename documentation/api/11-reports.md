@@ -40,7 +40,7 @@ Use either `period` or `time_from`/`time_to`, not both.
 | `limit` | integer | 50 | Results per page (1-500) |
 | `offset` | integer | 0 | Pagination offset |
 
-Rows are ordered by `sort`, then by `id` ascending. Rows tied on the sort column (often many with 0 clicks) therefore come back in the same order on every request, so paging with `offset` neither skips nor repeats a row.
+Rows are ordered by `sort`, then by `id` ascending. Rows tied on the sort column (often many with 0 clicks) therefore come back in the same order on every request, so paging with `offset` over unchanged data neither skips nor repeats a row. A rolling `period` moves with the clock and new traffic changes the sort values between pages; page a fixed `time_from`/`time_to` window for a consistent read.
 
 **Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`.
 

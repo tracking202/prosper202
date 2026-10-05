@@ -43,7 +43,7 @@ final class ListOrderIsTotalTest extends TestCase
         }
 
         // Floor: ten subclasses exist today; finding few means discovery broke.
-        self::assertGreaterThanOrEqual(5, count($checked), 'expected the Controller subclasses in api/v3/Controllers');
+        self::assertGreaterThanOrEqual(10, count($checked), 'expected the Controller subclasses in api/v3/Controllers');
         self::assertSame([], $offenders, "listOrderBy() must end with the primary key:\n" . implode("\n", $offenders));
     }
 }
