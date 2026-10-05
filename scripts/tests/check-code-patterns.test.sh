@@ -522,6 +522,22 @@ XML
             if [ "$got" = "$want" ]; then printf '  ok    %-46s go=%s\n' "$name" "$got"; pass=$((pass + 1)); else printf '  FAIL  %-46s go=%s (wanted %s)\n' "$name" "$got" "$want"; fail=$((fail + 1)); fi
         }
         expect_go "go: healthy module PASSES" PASS
+        # A Go install without gofmt must not PASS. The shim hides gofmt
+        # from the local go only; a named GOTOOLCHAIN (go1.x.y, set by the
+        # switch) passes through. Not keyed on an unset GOTOOLCHAIN: CI's
+        # setup-go exports GOTOOLCHAIN=local. It execs GOROOT's go, not
+        # `command -v go`, which may be a wrapper that would recurse.
+        real_go="$(go env GOROOT)/bin/go"
+        mkdir -p "$REPO/nogofmt/bin" "$REPO/goshim"
+        printf '#!/bin/sh\ncase "${GOTOOLCHAIN:-}" in go*) ;; *) if [ "$1" = env ] && [ "$2" = GOROOT ]; then echo %s; exit 0; fi ;; esac\nexec %s "$@"\n' "$REPO/nogofmt" "$real_go" > "$REPO/goshim/go" && chmod +x "$REPO/goshim/go"
+        expect_go "go: a toolchain without gofmt is SKIP, not PASS" SKIP PATH="$REPO/goshim:$PATH"
+        # A failed empty-HOME allocation is SKIP, not an unisolated PASS.
+        # Only `mktemp -d` fails, so the gofmt gate's plain mktemp still
+        # works and the case reaches the empty-HOME check.
+        real_mktemp=$(command -v mktemp)
+        mkdir -p "$REPO/shim" && printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "-d" ] && exit 1; done\nexec %s "$@"\n' "$real_mktemp" > "$REPO/shim/mktemp" && chmod +x "$REPO/shim/mktemp"
+        expect_go "go: a failing mktemp -d is SKIP, not an unisolated PASS" SKIP PATH="$REPO/shim:$PATH"
+        rm -rf "$REPO/shim"
         printf 'package main\n\n// #cgo LDFLAGS: -lp202_no_such_lib_zz\nimport "C"\n\nfunc main() {}\n' > go-cli/cmd/x/main.go
         expect_go "go: a change with bad cgo is FAIL on a healthy host" FAIL
         expect_go "go: the same failure on a host that cannot build cgo is SKIP" SKIP CC=false
@@ -571,6 +587,30 @@ XML
         if [ -z "$(ci_go_toolchain)" ]; then printf '  ok    %-46s\n' "go: CI on the same Go needs no toolchain switch"; pass=$((pass + 1)); else printf '  FAIL  %-46s\n' "go: CI on the same Go needs no toolchain switch"; fail=$((fail + 1)); fi
         printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         expect_go "go: CI on a Go that cannot be fetched is SKIP, not PASS" SKIP
+        # gofmt reports before the fetch-dependent SKIP.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file is FAIL even when CI's Go cannot be fetched" FAIL
+        # A listing from another minor's gofmt says so in the FAIL note.
+        gap_out=$(./verify.sh --tier go 2>&1)
+        if printf '%s' "$gap_out" | grep -E '^  go +FAIL' | grep -q "CI pins 1.1.*the listing is the local gofmt's"; then
+            printf '  ok    %-46s\n' "go: a listing on another minor names the gap"; pass=$((pass + 1))
+        else
+            printf '  FAIL  %-46s\n' "go: a listing on another minor names the gap"; fail=$((fail + 1))
+            printf '%s\n' "$gap_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
+        fi
+        rm -f go-cli/cmd/x/ugly.go
+        # A syntax error is FAIL when CI's Go is older than local...
+        printf 'package main\n\nfunc main( {\n' > go-cli/cmd/x/broken.go
+        expect_go "go: a syntax error with CI on an older Go is FAIL" FAIL
+        # ...SKIP when CI's is newer and unfetchable (1.99)...
+        printf "          go-version: '1.99'\n" > .github/workflows/go-cli.yml
+        expect_go "go: a syntax error with CI on a newer, unfetchable Go is SKIP" SKIP
+        # ...but an unformatted file beside it is still FAIL.
+        printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+        expect_go "go: an unformatted file beside a deferred parse error is still FAIL" FAIL
+        rm -f go-cli/cmd/x/ugly.go
+        rm -f go-cli/cmd/x/broken.go
+        printf "          go-version: '1.1'\n" > .github/workflows/go-cli.yml
         # A real other minor: CI's toolchain is fetched and the tier runs
         # under it. Needs the toolchain module to be reachable; skip the
         # case, visibly, when it is not.
@@ -586,7 +626,22 @@ XML
                 printf '  FAIL  %-46s\n' "go: a different CI minor runs under CI's toolchain"; fail=$((fail + 1))
                 printf '%s\n' "$go_out" | grep -E "^--- go|^  go " | sed 's/^/        | /'
             fi
+            # The empty-HOME step reuses the toolchain cache; count
+            # downloads after its marker only.
+            dl=$(printf '%s\n' "$go_out" | sed -n '/^empty-HOME run:/,$p' | grep -c "downloading go1\.")
+            if [ "$dl" -eq 0 ]; then
+                printf '  ok    %-46s downloads=%s\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; pass=$((pass + 1))
+            else
+                printf '  FAIL  %-46s downloads=%s (wanted 0)\n' "go: the empty-HOME run keeps the toolchain cache" "$dl"; fail=$((fail + 1))
+            fi
+            # Without a local gofmt, CI's toolchain's gofmt runs after the
+            # switch.
+            printf 'package main\n\nfunc   ugly( ) {\n}\n' > go-cli/cmd/x/ugly.go
+            expect_go "go: without a local gofmt, CI's toolchain formats after the switch" FAIL PATH="$REPO/goshim:$PATH"
+            rm -f go-cli/cmd/x/ugly.go
+            expect_go "go: without a local gofmt, a clean tree PASSES under CI's toolchain" PASS PATH="$REPO/goshim:$PATH"
         fi
+        rm -rf "$REPO/goshim" "$REPO/nogofmt"
         rm -rf .github
         eval "$(sed -n '/^host_go_toolchain_broken() {/,/^}/p' ./verify.sh)"
         # Read by the sourced host_go_toolchain_broken, which shellcheck cannot see.
