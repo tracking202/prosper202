@@ -14,7 +14,7 @@ use Closure;
  * They were written once, without expiry, and never again, so after an offer
  * URL changed an outage still sent visitors to the URL of the link's first
  * click. refresh() rewrites the key whenever the normal path sees a different
- * URL, and only then; it costs the get the scripts already made, no query.
+ * URL, and only then. It costs one memcache get per request and no query.
  */
 final class FallbackRedirectUrl
 {
@@ -38,15 +38,15 @@ final class FallbackRedirectUrl
      * @param Closure(string): mixed         $cacheGet getCache($key); false when absent
      * @param Closure(string, string): mixed $cacheSet setCache($key, $url, 0)
      *
-     * @return bool whether the key was written
+     * @return bool whether the key was written: false when it was already
+     *              current, or when the write failed
      */
     public static function refresh(string $key, string $currentUrl, Closure $cacheGet, Closure $cacheSet): bool
     {
         if ($cacheGet($key) === $currentUrl) {
             return false;
         }
-        $cacheSet($key, $currentUrl);
 
-        return true;
+        return $cacheSet($key, $currentUrl) !== false;
     }
 }

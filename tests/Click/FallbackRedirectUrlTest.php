@@ -167,6 +167,18 @@ final class FallbackRedirectUrlTest extends TestCase
         self::assertSame([], $offenders, 'a fallback URL is written without FallbackRedirectUrl::refresh()');
     }
 
+    public function testAFailedWriteIsNotReportedAsWritten(): void
+    {
+        $written = FallbackRedirectUrl::refresh(
+            'k',
+            'https://offer.example/a',
+            static fn(string $k): mixed => false,
+            static fn(string $k, string $v): bool => false,
+        );
+
+        self::assertFalse($written);
+    }
+
     private function refresh(string $key, string $url): bool
     {
         return FallbackRedirectUrl::refresh(

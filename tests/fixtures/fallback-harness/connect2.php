@@ -1,6 +1,6 @@
 <?php
 
-// Stand-in for 202-config/connect2.php, copied beside a real lp.php or off.php
+// Stand-in for 202-config/connect2.php, copied beside a real dl.php, lp.php or off.php
 // by FallbackRedirectScriptsTest: just enough of the bootstrap for the script
 // to reach its fallback refresh, with every memcache read and write recorded.
 
@@ -40,18 +40,28 @@ $memcache = new class ($p202Harness['cache']) {
     }
 };
 
-$db = new class {
-    /** @param list<mixed> $args */
-    public function __call(string $name, array $args): mixed
+// A mysqli, because dl.php hands $db to code typed for one; never connected.
+final class P202HarnessDb extends mysqli
+{
+    public function real_escape_string(string $string): string
     {
-        return match ($name) {
-            'real_escape_string' => addslashes((string) $args[0]),
-            // Reads answer "nothing found"; a write fails, which ends the run.
-            'query' => str_starts_with(ltrim((string) $args[0]), 'SELECT'),
-            default => throw new \BadMethodCallException($name),
-        };
+        // dl.php escapes the tracker's user_id first thing after its refresh;
+        // its rows carry this as user_id so the run ends there.
+        if ($string === 'p202-harness-stop') {
+            exit;
+        }
+
+        return addslashes($string);
     }
-};
+
+    // Reads answer "nothing found"; a write fails, which ends the run.
+    public function query(string $query, int $resultMode = MYSQLI_STORE_RESULT): mysqli_result|bool
+    {
+        return str_starts_with(ltrim($query), 'SELECT');
+    }
+}
+
+$db = (new ReflectionClass(P202HarnessDb::class))->newInstanceWithoutConstructor();
 
 register_shutdown_function(static function () use ($p202Harness): void {
     global $memcache;

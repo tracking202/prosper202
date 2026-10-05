@@ -7,7 +7,7 @@ namespace Tests\Click;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The real lp.php and off.php, run in a child PHP against a stand-in for
+ * The real dl.php, lp.php and off.php, run in a child PHP against a stand-in for
  * connect2.php (tests/fixtures/fallback-harness/), to see what each writes to
  * its MySQL-down fallback key. connect2.php itself needs a database and
  * memcached, so it cannot be loaded here.
@@ -18,6 +18,7 @@ final class FallbackRedirectScriptsTest extends TestCase
     private const OLD_FALLBACK = 'https://retired.example/old&subid=p202';
     private const ACIP = '777';
     private const LPIP = '555';
+    private const T202ID = '42';
 
     private static string $tree = '';
 
@@ -27,7 +28,7 @@ final class FallbackRedirectScriptsTest extends TestCase
         self::$tree = sys_get_temp_dir() . '/p202-fallback-' . bin2hex(random_bytes(4));
         mkdir(self::$tree . '/tracking202/redirect', 0777, true);
         mkdir(self::$tree . '/202-config', 0777, true);
-        foreach (['lp.php', 'off.php'] as $script) {
+        foreach (['dl.php', 'lp.php', 'off.php'] as $script) {
             copy(self::script($repo, $script), self::$tree . '/tracking202/redirect/' . $script);
         }
         foreach (['connect2.php', 'harness-functions.php'] as $stub) {
@@ -39,7 +40,7 @@ final class FallbackRedirectScriptsTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         $files = [
-            'tracking202/redirect/lp.php', 'tracking202/redirect/off.php',
+            'tracking202/redirect/dl.php', 'tracking202/redirect/lp.php', 'tracking202/redirect/off.php',
             '202-config/connect2.php', '202-config/harness-functions.php', '202-config/class-dataengine-slim.php',
         ];
         foreach ($files as $file) {
@@ -105,6 +106,42 @@ final class FallbackRedirectScriptsTest extends TestCase
         self::assertSame([self::lpKey() => ''], $run['writes']);
     }
 
+    public function testDlRefreshesTheFallback(): void
+    {
+        $run = self::dl(url: self::NEW_URL, cached: 'https://retired.example/old');
+
+        self::assertSame([self::dlKey() => self::NEW_URL], $run['writes']);
+    }
+
+    public function testDlLeavesACurrentFallbackAlone(): void
+    {
+        $run = self::dl(url: self::NEW_URL, cached: self::NEW_URL);
+
+        self::assertContains(self::dlKey(), $run['reads'], 'the run never reached the refresh');
+        self::assertSame([], $run['writes']);
+    }
+
+    public function testDlWithNoUrlDisablesTheFallback(): void
+    {
+        foreach (['', null] as $url) {
+            $run = self::dl(url: $url, cached: 'https://retired.example/old');
+
+            self::assertSame([self::dlKey() => ''], $run['writes'], var_export($url, true));
+        }
+    }
+
+    public function testDlStoresTheFallbackOnACacheMiss(): void
+    {
+        $run = self::dl(url: self::NEW_URL, cached: null);
+
+        self::assertSame([self::dlKey() => self::NEW_URL], $run['writes']);
+    }
+
+    private static function dlKey(): string
+    {
+        return md5('url_' . self::T202ID . 'h');
+    }
+
     private static function offKey(): string
     {
         return md5('ac_' . self::ACIP . 'h');
@@ -113,6 +150,18 @@ final class FallbackRedirectScriptsTest extends TestCase
     private static function lpKey(): string
     {
         return md5('lp_' . self::LPIP . 'h');
+    }
+
+    /** @return array{reads: list<string>, writes: array<string, string>} */
+    private static function dl(?string $url, ?string $cached): array
+    {
+        return self::runScript('dl.php', [
+            'get' => ['t202id' => self::T202ID],
+            'cookie' => [],
+            // dl.php's next step escapes user_id; the harness ends the run there.
+            'row' => ['user_id' => 'p202-harness-stop', 'aff_campaign_id' => '3', 'aff_campaign_url' => $url],
+            'cache' => $cached === null ? [] : [self::dlKey() => $cached],
+        ]);
     }
 
     /** @return array{reads: list<string>, writes: array<string, string>} */
