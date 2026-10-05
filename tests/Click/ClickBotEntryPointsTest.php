@@ -29,10 +29,16 @@ final class ClickBotEntryPointsTest extends TestCase
         '202-config/connect2.php',
     ];
 
-    private const ALLOCATES = '/->allocateClickId\s*\(|\bgetClickId\s*\(|INSERT\s+INTO\s+`?202_clicks_counter`?/i';
+    /** recordClick() allocates the id itself when the record carries none. */
+    private const ALLOCATES = '/->allocateClickId\s*\(|\bgetClickId\s*\(|->recordClick\s*\('
+        . '|INSERT\s+INTO\s+`?202_clicks(?:_counter)?\b`?/i';
 
-    private const ASKS_THE_DETECTOR = '/\$clickIsBot\s*=\s*\\\\Prosper202\\\\Click\\\\ClickBotDetector::isBot\('
-        . '\s*\$\w+->getUserAgent\(\)\s*,\s*\$device_id\s*\)\s*;/';
+    /** Group 1 is the detector object whose agent is judged. */
+    private const ASKS_THE_DETECTOR = '/(?:^|[;{}])\s*\$clickIsBot\s*=\s*\\\\Prosper202\\\\Click\\\\ClickBotDetector::isBot\('
+        . '\s*\$(\w+)->getUserAgent\(\)\s*,\s*\$device_id\s*\)\s*;/';
+
+    /** Group 1 is the detector object get_device_info() parsed. */
+    private const PARSES_THE_DEVICE = '/\$device_id\s*=\s*PLATFORMS::get_device_info\(\s*\$db\s*,\s*\$(\w+)\s*[,)]/';
 
     private const FILTERS_ON_THE_VERDICT = '/if\s*\(\s*\$clickIsBot\s*\)\s*\{'
         . '\s*\$mysql\[\'click_filtered\'\]\s*=\s*\'1\';'
@@ -80,11 +86,43 @@ final class ClickBotEntryPointsTest extends TestCase
 
         preg_match_all('/ClickBotDetector::isBot\s*\(/', $code, $calls);
         self::assertCount(1, $calls[0], "$path: one verdict per click");
-        self::assertMatchesRegularExpression(
-            self::ASKS_THE_DETECTOR,
-            $code,
-            "$path: the verdict is for the agent get_device_info() parsed, with its result"
+        self::assertSame(
+            1,
+            preg_match(self::ASKS_THE_DETECTOR, $code, $asks),
+            "$path: the verdict is a statement of its own, assigned to \$clickIsBot"
         );
+        preg_match_all(self::PARSES_THE_DEVICE, $code, $parses);
+        self::assertCount(1, $parses[1], "$path: \$device_id comes from one get_device_info() call");
+        self::assertSame(
+            $parses[1][0],
+            $asks[1],
+            "$path: the verdict judges a different agent from the one get_device_info() parsed"
+        );
+    }
+
+    /**
+     * The verdict reaches click_bot unchanged: one assignment to $clickIsBot,
+     * made before click_bot is set. Anything else that writes it (a reset, a
+     * branch, a reference) is refused rather than read.
+     *
+     * @dataProvider entryPoints
+     */
+    public function testNothingRewritesTheVerdict(string $path): void
+    {
+        $code = self::code($path);
+
+        preg_match_all('/\$clickIsBot\b(?!\s*\?)(?!\s*\))/', $code, $uses, PREG_OFFSET_CAPTURE);
+        $writes = array_filter(
+            $uses[0],
+            static fn (array $use): bool => preg_match('/^\$clickIsBot\s*(?:=(?!=)|\+\+|--|[.+\-*\/|&^]=|\?\?=)/', substr($code, $use[1], 40)) === 1
+        );
+        self::assertCount(1, $writes, "$path: \$clickIsBot is written more than once");
+        self::assertDoesNotMatchRegularExpression('/&\s*\$clickIsBot\b/', $code, "$path: \$clickIsBot is taken by reference");
+
+        $verdictAt = array_values($writes)[0][1];
+        $clickBotAt = strpos($code, "\$mysql['click_bot']");
+        self::assertNotFalse($clickBotAt);
+        self::assertLessThan($clickBotAt, $verdictAt, "$path: click_bot is set before the verdict");
     }
 
     /** @dataProvider entryPoints */

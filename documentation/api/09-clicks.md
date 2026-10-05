@@ -39,13 +39,15 @@ A click is a bot when any of these holds:
   or uptime-monitor signature (AdsBot-Google, Googlebot, bingbot, Applebot,
   facebookexternalhit, Slackbot, WhatsApp, HeadlessChrome, UptimeRobot and
   others; the list is `ClickBotDetector::TOKENS` and `PREFIXES`);
-- ua-parser classifies its device as `Spider`;
+- ua-parser classifies its device as `Spider`, unless the agent is an HTTP
+  library (below);
 - the device lookup gave it device type 4 (Bot).
 
 HTTP libraries (curl, Wget, python-requests, Go-http-client, okhttp and the
-like) are not bots by signature: server-to-server setups and pass-through
-redirects record real clicks with them. ua-parser itself calls a few of
-them, such as `Python-urllib` and `Java`, `Spider`, and those are flagged.
+like) are not bots: server-to-server setups and pass-through redirects
+record real clicks with them. That holds even where ua-parser calls the
+library `Spider`, as it does `Python-urllib` and `Java`; the list is
+`ClickBotDetector::LIBRARY_PREFIXES`.
 
 A bot is redirected exactly like a visitor, so link previews and ad review
 keep working; only what is recorded differs. The click is stored with

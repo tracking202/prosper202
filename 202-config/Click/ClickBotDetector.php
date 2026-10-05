@@ -13,7 +13,8 @@ use UAParser\Parser;
  * redirected like anyone else; only what is recorded differs.
  *
  * Any one signal is enough: device type 4 from PLATFORMS::parseUserAgentInfo()
- * (the old per-file rule), a signature below, or ua-parser's "Spider" family.
+ * (the old per-file rule), a signature below, or ua-parser's "Spider" family
+ * unless the agent starts with an HTTP library's name (LIBRARY_PREFIXES).
  * The old rule alone missed nearly every bot: it looks for a family of "Bot",
  * which ua-parser never returns.
  */
