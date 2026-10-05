@@ -196,24 +196,16 @@ var filterDimension = map[string]string{
 	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
 }
 
-// loadAttributionCheck fetches the attribution breakdown for the same dimension and range, under a first-touch model when
-// there is a usable one, and pages through every row. It is shared by `losers` (needFirstTouch false: assists don't
-// depend on the model, so the check still runs without one) and `winners` (needFirstTouch true: a closer only shows as
-// a first-touch loss, so without a usable First touch model the check is skipped). It fails the command only for a
-// bad --first-touch-model; when the check can't run it returns nil and a note saying why.
-func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool) (*starterCheck, []string, error) {
-	if off, _ := cmd.Flags().GetBool("no-attribution-check"); off {
-		return nil, nil, nil
-	}
-	// An explicit --first-touch-model is validated before anything else, so a bad one is refused even when the check
-	// would be skipped for another reason (a filter, a dimension, a mixed range).
-	override, err := firstTouchOverride(c, cmd)
-	if err != nil {
-		return nil, nil, err
-	}
+// loadAttributionCheck fetches the attribution breakdown rows for keys (the ids of the classic rows being checked) over
+// the same dimension and range, under a first-touch model when there is a usable one. It is shared by `losers`
+// (needFirstTouch false: assists don't depend on the model, so the check still runs without one) and `winners`
+// (needFirstTouch true: a closer only shows as a first-touch loss, so without a usable First touch model the check is
+// skipped). override is the validated --first-touch-model (firstTouchOverride runs before any report is read). When
+// the check can't run it returns nil and a note saying why.
+func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool, override overrideModel, keys []string) (*starterCheck, []string) {
 	groupBy, ok := attributionGroupBy[dimension]
 	if !ok {
-		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}, nil
+		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}
 	}
 	// The classic report treats a bound of "0" as unset (PHP empty()), so the check does too.
 	bound := func(k string) string {
@@ -226,7 +218,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	// so a mixed range (often a configured default period plus explicit times) can't be mirrored.
 	if params["period"] != "" && (bound("time_from") != "" || bound("time_to") != "") {
 		return nil, []string{"attribution check skipped: --period and --time_from/--time_to are both set (perhaps a configured " +
-			"default period), and the attribution report takes one range. Pass only one to check attribution"}, nil
+			"default period), and the attribution report takes one range. Pass only one to check attribution"}
 	}
 	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
 	// could be rescued by sales elsewhere (or kept CUT by losses elsewhere): don't reclassify at all.
@@ -237,7 +229,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 				hint += ", or break down by " + filterDimension[f] + " instead"
 			}
 			return nil, []string{"attribution check skipped: the attribution report can't be filtered by --" + f +
-				", so its numbers wouldn't match these rows. " + hint}, nil
+				", so its numbers wouldn't match these rows. " + hint}
 		}
 	}
 	var minAssists int64
@@ -254,7 +246,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	} else {
 		data, err := c.Get("attribution/models", map[string]string{"type": "first_touch"})
 		if err != nil {
-			return nil, []string{"attribution check skipped: " + err.Error()}, nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
+			return nil, []string{"attribution check skipped: " + err.Error()}
 		}
 		var resp struct {
 			Data []map[string]interface{} `json:"data"`
@@ -280,10 +272,10 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	}
 	if modelID == "" && needFirstTouch {
 		if len(notes) > 0 { // a First touch model exists but is still being recomputed
-			return nil, append(notes, "closer check skipped until it finishes"), nil
+			return nil, append(notes, "closer check skipped until it finishes")
 		}
 		return nil, []string{"closer check skipped: no active First touch model. Add one with " +
-			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}, nil
+			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}
 	}
 	if modelID == "" && len(notes) == 0 {
 		notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
@@ -313,28 +305,68 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 			q["time_to"] = bound("time_to")
 		}
 	}
-	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
-	if err != nil && q["cohort"] != "" && refusesParam(err, "cohort") {
-		// A server from before the click cohort counts sales converted in the range (credited to clicks of any age),
-		// so the populations differ at the range's edges. TEST and CLOSER only hold a row for a closer look, so the
-		// check still runs, and says so.
-		delete(q, "cohort")
-		notes = append(notes, cohortEdgeNote)
-		rows, partial, pageNotes, err = fetchAllAttributionRows(c, q)
+	rows, partial, pageNotes, err := fetchCheckRows(c, q, keys)
+	if err != nil {
+		// A server from before keys and the click cohort (one change brought both) names what it refused; drop it and
+		// read again once. Without keys every row is paged through; without the click cohort attribution counts sales
+		// converted in the range (credited to clicks of any age), so the populations differ at the range's edges.
+		// TEST and CLOSER only hold a row for a closer look, so the check still runs, and says so.
+		retry := false
+		if len(keys) > 0 && refusesParam(err, "keys") {
+			keys, retry = nil, true
+		}
+		if q["cohort"] != "" && refusesParam(err, "cohort") {
+			delete(q, "cohort")
+			notes = append(notes, cohortEdgeNote)
+			retry = true
+		}
+		if retry {
+			rows, partial, pageNotes, err = fetchCheckRows(c, q, keys)
+		}
 	}
 	if err != nil {
-		return nil, append(notes, "attribution check skipped: "+err.Error()), nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
+		return nil, append(notes, "attribution check skipped: "+err.Error())
 	}
 	notes = append(notes, pageNotes...)
 	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial}
 	for _, r := range rows {
 		check.byKey[fmt.Sprint(r["key"])] = r
 	}
-	return check, notes, nil
+	return check, notes
 }
 
-// attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT).
+// attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT), and the most keys one
+// request takes.
 const attributionPage = 1000
+
+// fetchCheckRows reads the attribution rows for keys, 1000 keys a request: the server computes the whole report for
+// every request, so asking for the rows by key reads it once instead of once per page. Without keys it pages through
+// every row.
+func fetchCheckRows(c *api.Client, q map[string]string, keys []string) ([]map[string]interface{}, bool, []string, error) {
+	if len(keys) == 0 {
+		return fetchAllAttributionRows(c, q)
+	}
+	var all []map[string]interface{}
+	var notes []string
+	partial := false
+	for start := 0; start < len(keys); start += attributionPage {
+		chunk := keys[start:min(start+attributionPage, len(keys))]
+		page := map[string]string{"keys": strings.Join(chunk, ",")}
+		for k, v := range q {
+			page[k] = v
+		}
+		rows, p, n, err := fetchAllAttributionRows(c, page)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if start == 0 {
+			notes = n // the backfill and cohort notes describe the report, not the chunk
+		}
+		all = append(all, rows...)
+		partial = partial || p
+	}
+	return all, partial, notes, nil
+}
 
 // cohortEdgeNote is printed when a bounded range was read in the conversion cohort (a server without cohort=click).
 const cohortEdgeNote = "this server counts attribution by sale date (it predates cohort=click), while the classic rows count " +
@@ -403,10 +435,11 @@ func refusesOffset(err error) bool {
 	return refusesParam(err, "offset")
 }
 
-// refusesParam reports whether err is the server's 422 refusing the named parameter (a server that predates it).
+// refusesParam reports whether err is the server's 422 refusing the named parameter as unknown (a server that predates
+// it), not one refusing its value.
 func refusesParam(err error, name string) bool {
 	var apiErr *api.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 || !strings.Contains(apiErr.Message, "Unknown parameter") {
 		return false
 	}
 	if _, ok := apiErr.FieldErrors[name]; ok {
@@ -543,11 +576,14 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			}
 			params["breakdown"] = resolveDimension(breakdown)
 
-			// The attribution check runs first: it validates --first-touch-model, so a bad override is refused before
-			// the payout and the classic report are read.
-			check, notes, err := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners)
-			if err != nil {
-				return err
+			// An explicit --first-touch-model is validated before any report is read, so a bad one is refused even when
+			// the check would then be skipped for another reason (a filter, a dimension, a mixed range).
+			noCheck, _ := cmd.Flags().GetBool("no-attribution-check")
+			var override overrideModel
+			if !noCheck {
+				if override, err = firstTouchOverride(client, cmd); err != nil {
+					return err
+				}
 			}
 
 			var payout float64
@@ -558,9 +594,6 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			rows, err := fetchBreakdownRows(client, params)
 			if err != nil {
 				return err
-			}
-			for _, n := range notes {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
 			}
 
 			out := make([]map[string]interface{}, 0, len(rows))
@@ -600,12 +633,27 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				if id, ok := r["id"]; ok {
 					row["id"] = id
 				}
-				if wantWinners {
-					applyCloserCheck(row, check)
-				} else {
-					applyStarterCheck(row, check)
-				}
 				out = append(out, row)
+			}
+			// The attribution check reads only the rows kept, by id.
+			if !noCheck && len(out) > 0 {
+				var keys []string
+				for _, row := range out {
+					if id, ok := row["id"]; ok && id != nil {
+						keys = append(keys, fmt.Sprint(id))
+					}
+				}
+				check, notes := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners, override, keys)
+				for _, row := range out {
+					if wantWinners {
+						applyCloserCheck(row, check)
+					} else {
+						applyStarterCheck(row, check)
+					}
+				}
+				for _, n := range notes {
+					fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
+				}
 			}
 			sortRowsBy(out, "total_net", !wantWinners) // losers: worst first; winners: best first
 			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).

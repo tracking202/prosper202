@@ -165,16 +165,26 @@ final class AttributionReports
      *                           past MAX_LIMIT: a reader looking for the rows
      *                           with spend and little revenue needs the end
      * @param string   $cohort   COHORT_CONVERSION or COHORT_CLICK (see the class doc)
+     * @param list<string>|null $keys only these rows (by key), so a reader
+     *                           that wants a few rows gets them in one read
+     *                           instead of paging through the report, which
+     *                           computes every group for each page; groups
+     *                           then counts the matching rows
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>, groups: int}
      */
-    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0, string $cohort = self::COHORT_CONVERSION): array
+    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0, string $cohort = self::COHORT_CONVERSION, ?array $keys = null): array
     {
         $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $cohort);
+        $rows = $all['rows'];
+        if ($keys !== null) {
+            $wanted = array_flip($keys);
+            $rows = array_values(array_filter($rows, static fn (array $r): bool => isset($wanted[(string) $r['key']])));
+        }
 
         return [
-            'rows' => array_slice($all['rows'], max(0, $offset), max(1, min(self::MAX_LIMIT, $limit))),
+            'rows' => array_slice($rows, max(0, $offset), max(1, min(self::MAX_LIMIT, $limit))),
             'totals' => $all['totals'],
-            'groups' => count($all['rows']),
+            'groups' => count($rows),
         ];
     }
 

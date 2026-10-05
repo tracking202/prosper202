@@ -175,6 +175,25 @@ final class AttributionReportsIntegrationTest extends TestCase
         self::assertSame(0, $this->api->breakdown(['group_by' => 'campaign'])['meta']['offset'], 'no offset reads from the top');
     }
 
+    /**
+     * keys reads only the rows asked for, in one request: a reader that
+     * checks a few rows doesn't page through the report, which computes every
+     * group for each page.
+     */
+    public function testKeysReadOnlyTheRowsAskedFor(): void
+    {
+        $this->scenario();
+        foreach (AttributionReports::cohorts() as $cohort) {
+            $out = $this->api->breakdown(['group_by' => 'campaign', 'keys' => '2,99', 'cohort' => $cohort]);
+            self::assertSame(['2'], array_column($out['data'], 'key'), "$cohort: key 99 has no row");
+            self::assertSame(1, $out['meta']['groups'], 'groups counts the rows matched');
+            self::assertSame('15.00000', $out['totals']['attributed_revenue'], 'totals are still the whole report');
+        }
+        $both = $this->api->breakdown(['group_by' => 'campaign', 'keys' => '2,1']);
+        self::assertSame(['1', '2'], array_column($both['data'], 'key'), 'in the report\'s order, not the order asked');
+        self::assertSame(['2'], array_column($this->api->breakdown(['group_by' => 'campaign', 'keys' => '2,1', 'offset' => '1'])['data'], 'key'));
+    }
+
     public function testEveryDimensionRuns(): void
     {
         $this->scenario();
@@ -361,6 +380,10 @@ final class AttributionReportsIntegrationTest extends TestCase
             ['cohort' => 'clicks'],
             ['cohort' => 'Click'],
             ['cohort' => ''],
+            ['keys' => ''],
+            ['keys' => '1,,2'],
+            ['keys' => ' 1'],
+            ['keys' => implode(',', range(1, 1001))],
             ['time_from' => 'yesterday'],
             ['period' => 'last7', 'time_from' => '1'],
             ['groupby' => 'campaign'],

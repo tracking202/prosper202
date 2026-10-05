@@ -391,7 +391,7 @@ class CrudCommandsTest extends TestCase
 
     public function testAttributionBreakdownCohortIsConversionOrClick(): void
     {
-        foreach (['clicks', 'Click', 'conv'] as $cohort) {
+        foreach (['clicks', 'Click', 'conv', ''] as $cohort) {
             $app = new Application('test', '1.0');
             $app->add(new AttributionBreakdownCommand());
             $tester = new CommandTester($app->find('attribution:breakdown'));
@@ -430,11 +430,25 @@ class CrudCommandsTest extends TestCase
             $app = new Application('test', '1.0');
             $app->add($command);
             $tester = new CommandTester($app->find('attribution:breakdown'));
-            $status = $tester->execute(['--cohort' => $cohort, '--period' => 'last30', '--json' => true]);
+            $status = $tester->execute(['--cohort' => $cohort, '--keys' => '7,0,12', '--period' => 'last30', '--json' => true]);
 
             $this->assertSame(Command::SUCCESS, $status, $cohort);
             $this->assertCount(1, $client->calls, $cohort);
             $this->assertSame($cohort, $client->calls[0][1]['cohort'] ?? null, 'cohort reaches the query');
+            $this->assertSame('7,0,12', $client->calls[0][1]['keys'] ?? null, 'keys reach the query');
+        }
+    }
+
+    public function testAttributionBreakdownKeysAreAListOfUpToAThousand(): void
+    {
+        foreach (['', '7,,8', '7, 8', ',7', implode(',', range(1, 1001))] as $keys) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--keys' => $keys]);
+
+            $this->assertSame(Command::FAILURE, $status, $keys);
+            $this->assertStringContainsString('Invalid --keys', $tester->getDisplay(), $keys);
         }
     }
 }

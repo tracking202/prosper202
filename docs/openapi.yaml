@@ -1898,6 +1898,16 @@ paths:
             type: string
             enum: [conversion, click]
             default: conversion
+        - name: keys
+          in: query
+          description: >-
+            Only these rows: 1 to 1000 row keys as data[].key returns them (a dimension id, 0 for
+            none, a date under group_by=day), comma-separated, no spaces. Rows keep the report's
+            order, meta.groups counts the matches, and totals still cover the whole report. The
+            report is computed in full for every request (offset only slices it), so a reader
+            that needs a few rows asks for them here instead of paging.
+          schema:
+            type: string
       responses:
         "200":
           description: One row per dimension value, sorted by attributed revenue

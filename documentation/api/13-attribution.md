@@ -109,6 +109,7 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `time_from`, `time_to` | | Unix seconds; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
 | `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
+| `keys` | | Only these rows: 1–1000 row keys as `data[].key` returns them, comma-separated. Rows keep the report's order, `meta.groups` counts the matches and `totals` still cover the whole report. Every request computes the whole report, so asking for a few rows by key is one computation where paging is one per page |
 | `cohort` | `conversion` | `conversion`: the conversions made in the range, credited to clicks of any age. `click`: the credit and assists that land on clicks made in the range, whenever they converted (see below) |
 
 Unknown parameters are refused (422), as is a model that is not the
