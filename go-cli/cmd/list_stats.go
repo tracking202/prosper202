@@ -85,11 +85,13 @@ func addListStats(c *api.Client, entity crudEntity, rows []map[string]interface{
 		}
 		for _, f := range listStatsFields {
 			v := 0.0
-			if s != nil {
+			// A present null is SQL's SUM over no non-null rows: zero. An absent
+			// field, NaN or a non-number is an error.
+			if raw, present := s[f]; s != nil && (!present || raw != nil) {
 				var perr error
-				if v, perr = parseFiniteFloat(s[f]); perr != nil {
+				if v, perr = parseFiniteFloat(raw); perr != nil {
 					return nil, withHint(fmt.Errorf("%s %s stats field %s: %w", entity.Name, scalarString(row[entity.IDField]), f, perr),
-						"The report breakdown returned a value that is not a finite number; `p202 report breakdown --breakdown %s --json` shows the raw row.", entity.StatsGroupBy)
+						"The report breakdown returned a missing or non-finite value; `p202 report breakdown --breakdown %s --json` shows the raw row.", entity.StatsGroupBy)
 				}
 			}
 			row[f] = v

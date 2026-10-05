@@ -1050,3 +1050,27 @@ func TestParseImportClickIDMatchesClickIdParse(t *testing.T) {
 		}
 	}
 }
+
+func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing.T) {
+	f := newConvImportFake(107)
+	setupConvImportFake(t, f)
+
+	_, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if strings.Contains(stderr, "Note:") {
+		t.Errorf("a new conversion carries no note, got %q", stderr)
+	}
+
+	stdout, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if !strings.Contains(stderr, "Note: the click already has this conversion") || !strings.Contains(stderr, "recorded nothing new") {
+		t.Errorf("stderr = %q, want the duplicate note", stderr)
+	}
+	if strings.Contains(stdout, "Note:") {
+		t.Errorf("the note belongs on stderr, stdout = %q", stdout)
+	}
+}

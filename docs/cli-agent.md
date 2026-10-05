@@ -321,7 +321,8 @@ If the process dies before reading the response, re-running the identical
 command replays the recorded response (`idempotent_replay: true` in the
 body) instead of creating a duplicate. `conversion create` also says when the
 click already had the conversion (same transaction id): `duplicate: true`
-beside `data`, which is the existing conversion; a transaction id whose
+beside `data`, which is the existing conversion, and in every output mode a
+`Note:` on stderr (as for a replay); a transaction id whose
 conversion was deleted is refused (409, exit 1, `details.conv_id`) and never
 recorded again. Requires
 `features.create_idempotency` in the server capabilities; older servers

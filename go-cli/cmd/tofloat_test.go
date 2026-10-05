@@ -79,3 +79,31 @@ func TestCampaignListWithStatsStillZeroFillsCampaignsWithoutAStatsRow(t *testing
 	rows := decodeListRows(t, stdout)
 	assertStats(t, rows[281], 0, 0, 0, 0, 0)
 }
+
+func TestCampaignListWithStatsReadsANullStatAsZero(t *testing.T) {
+	f := newStatsFake()
+	// SUM() over rows whose nullable column is all NULL answers null, not 0.
+	row := statRow(279, "120", "4", "45.5000", "12.0000", "33.5000")
+	row["total_cost"] = nil
+	f.stats = []map[string]interface{}{row}
+	setupCampaignFake(t, f.campaignFake)
+
+	stdout, _, err := executeCommand("campaign", "list", "--with-stats", "--json")
+	if err != nil {
+		t.Fatalf("campaign list --with-stats: %v", err)
+	}
+	assertStats(t, decodeListRows(t, stdout)[279], 120, 4, 45.5, 0, 33.5)
+}
+
+func TestCampaignListWithStatsRefusesAnAbsentStat(t *testing.T) {
+	f := newStatsFake()
+	row := statRow(279, "120", "4", "45.5000", "12.0000", "33.5000")
+	delete(row, "total_cost")
+	f.stats = []map[string]interface{}{row}
+	setupCampaignFake(t, f.campaignFake)
+
+	stdout, _, err := executeCommand("campaign", "list", "--with-stats", "--json")
+	if err == nil || !strings.Contains(err.Error(), "total_cost: missing") {
+		t.Fatalf("want a missing-field error, got %v with output:\n%s", err, stdout)
+	}
+}

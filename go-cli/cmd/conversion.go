@@ -151,8 +151,37 @@ var conversionCreateCmd = &cobra.Command{
 			return err
 		}
 		render(data)
+		if n := conversionCreateNote(data); n != "" {
+			fmt.Fprintln(cmd.ErrOrStderr(), n)
+		}
 		return nil
 	},
+}
+
+// conversionCreateNote says when a 201 wrote nothing new: the server matched a
+// conversion already on the click, or replayed an earlier Idempotency-Key. The
+// row printed is then that existing conversion. "" otherwise, and for an older
+// server, which sends neither field.
+func conversionCreateNote(data []byte) string {
+	var resp struct {
+		Data      map[string]interface{} `json:"data"`
+		Replay    bool                   `json:"idempotent_replay"`
+		Duplicate bool                   `json:"duplicate"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return ""
+	}
+	which := "an existing conversion"
+	if id, ok := extractIntField(resp.Data, "conv_id"); ok {
+		which = fmt.Sprintf("conversion %d", id)
+	}
+	switch {
+	case resp.Replay:
+		return fmt.Sprintf("Note: this Idempotency-Key was already used; the server answered with %s and recorded nothing new.", which)
+	case resp.Duplicate:
+		return fmt.Sprintf("Note: the click already has this conversion; the server answered with %s and recorded nothing new.", which)
+	}
+	return ""
 }
 
 var conversionDeleteCmd = &cobra.Command{
