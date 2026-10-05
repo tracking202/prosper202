@@ -296,12 +296,11 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	// The same window as the classic report. Without a lower bound the classic report runs from the first click, while
 	// the attribution report would default to the last 30 days, so a missing time_from is sent as 0 (all time); a
 	// missing time_to defaults to now on both.
-	// For a bounded range the populations differ at the edges: the classic report counts clicks made in the range, the
-	// attribution report sales converted in it (credited to clicks of any age), the same view as the Attribution page's
-	// Report. TEST and CLOSER only hold a row for a closer look, so the check runs and says so.
+	// The classic report counts the clicks made in the range, so a bounded range asks for the click cohort: credits
+	// and assists landing on clicks made in the range, whenever they converted. All time is the same in both cohorts,
+	// so it reads the default (conversion) cohort, which the rollup serves.
 	if params["period"] != "" || bound("time_from") != "" || bound("time_to") != "" {
-		notes = append(notes, "attribution counts sales converted in the range (as the Attribution page's Report does); the classic "+
-			"rows count clicks made in it, so clicks near the range's edges can differ")
+		q["cohort"] = "click"
 	}
 	if params["period"] != "" {
 		q["period"] = params["period"]
@@ -315,6 +314,14 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 		}
 	}
 	rows, partial, pageNotes, err := fetchAllAttributionRows(c, q)
+	if err != nil && q["cohort"] != "" && refusesParam(err, "cohort") {
+		// A server from before the click cohort counts sales converted in the range (credited to clicks of any age),
+		// so the populations differ at the range's edges. TEST and CLOSER only hold a row for a closer look, so the
+		// check still runs, and says so.
+		delete(q, "cohort")
+		notes = append(notes, cohortEdgeNote)
+		rows, partial, pageNotes, err = fetchAllAttributionRows(c, q)
+	}
 	if err != nil {
 		return nil, append(notes, "attribution check skipped: "+err.Error()), nil //nolint:nilerr // the check is advisory: a failure becomes a note and the classic list still prints
 	}
@@ -328,6 +335,10 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 
 // attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT).
 const attributionPage = 1000
+
+// cohortEdgeNote is printed when a bounded range was read in the conversion cohort (a server without cohort=click).
+const cohortEdgeNote = "this server counts attribution by sale date (it predates cohort=click), while the classic rows count " +
+	"clicks made in the range, so clicks near the range's edges can differ"
 
 // fetchAllAttributionRows pages through the attribution breakdown (offset, while offset+rows < meta.groups). A server
 // from before offset existed refuses it (422); then the rows already read are kept and a note says how many of how
@@ -358,6 +369,7 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 			Meta struct {
 				Groups   *int        `json:"groups"`
 				Backfill interface{} `json:"backfill"`
+				Cohort   string      `json:"cohort"`
 			} `json:"meta"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
@@ -365,6 +377,10 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 		}
 		if offset == 0 && resp.Meta.Backfill != nil {
 			notes = append(notes, "attribution is incomplete for this range while older conversions are backfilled")
+		}
+		// A server that took cohort=click without applying it (none should: unknown parameters are refused).
+		if offset == 0 && q["cohort"] != "" && resp.Meta.Cohort != q["cohort"] {
+			notes = append(notes, cohortEdgeNote)
 		}
 		all = append(all, resp.Data...)
 		if resp.Meta.Groups == nil {
@@ -384,14 +400,19 @@ func fetchAllAttributionRows(c *api.Client, q map[string]string) ([]map[string]i
 // refusesOffset says whether err is a server refusing the offset parameter (a server from before attribution paging:
 // 422 "Unknown parameter(s): offset").
 func refusesOffset(err error) bool {
+	return refusesParam(err, "offset")
+}
+
+// refusesParam reports whether err is the server's 422 refusing the named parameter (a server that predates it).
+func refusesParam(err error, name string) bool {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
 		return false
 	}
-	if _, ok := apiErr.FieldErrors["offset"]; ok {
+	if _, ok := apiErr.FieldErrors[name]; ok {
 		return true
 	}
-	return strings.Contains(apiErr.Message, "offset")
+	return strings.Contains(apiErr.Message, name)
 }
 
 // applyStarterCheck adds first-touch ROI and assists to a CUT row and moves it to TEST when it starts sales: it pays

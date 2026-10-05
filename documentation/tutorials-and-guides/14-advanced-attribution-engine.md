@@ -58,6 +58,11 @@ The breakdown's revenue under every model adds up to the same total — the
 value of the conversions in the range; models differ in *where* it lands.
 Cost is each dimension's own click cost, so ROI per source is real.
 
+`--cohort click` counts by click date instead: each row is what its own
+clicks in the range earned, whenever they converted, against what they cost.
+That is how the classic reports count, so it is the one to put beside them
+(`p202 report losers` and `winners` read it for their attribution check).
+
 ## 5. The Attribution page
 
 **Attribution** in the header opens the same reports without a terminal:

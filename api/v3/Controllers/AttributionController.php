@@ -257,10 +257,14 @@ class AttributionController
      */
     public function breakdown(array $params): array
     {
-        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit', 'offset']);
+        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit', 'offset', 'cohort']);
         $groupBy = (string) ($params['group_by'] ?? 'campaign');
         if (!in_array($groupBy, AttributionReports::dimensions(), true)) {
             throw new ValidationException('Invalid group_by', ['group_by' => 'Valid: ' . implode(', ', AttributionReports::dimensions())]);
+        }
+        $cohort = $params['cohort'] ?? AttributionReports::COHORT_CONVERSION;
+        if (!is_string($cohort) || !in_array($cohort, AttributionReports::cohorts(), true)) {
+            throw new ValidationException('Invalid cohort', ['cohort' => 'Valid: ' . implode(', ', AttributionReports::cohorts())]);
         }
         [$from, $to] = self::range($params);
         $limit = self::positiveInt($params, 'limit') ?? 100;
@@ -293,7 +297,8 @@ class AttributionController
             $from,
             $to,
             $limit,
-            $offset
+            $offset,
+            $cohort
         );
 
         return [
@@ -303,6 +308,10 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
+                // conversion: credits and assists of the sales made in the
+                // range; click: of the clicks made in it, whenever they
+                // converted (the classic reports' population).
+                'cohort' => $cohort,
                 // How many groups the report has; more than `offset` + `limit`
                 // means more rows follow in the same order (attributed revenue,
                 // highest first), read with a larger `offset`.

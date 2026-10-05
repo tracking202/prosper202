@@ -25,6 +25,15 @@ use Prosper202\Database\Connection;
  *   the dimension that is not the converting click. Journey-wide, so the
  *   same under every model.
  *
+ * That is the conversion cohort, the default: the sales made in the range.
+ * The click cohort (COHORT_CLICK) reads credits and assists by the clock of
+ * the click each one lands on instead, so a row is the credit its own clicks
+ * in range earned (whenever they converted) against those clicks' cost. That
+ * is the population the classic reports count, so last-touch credit in the
+ * click cohort is the classic row's revenue; `p202 report losers/winners`
+ * compare against it. The rollup is bucketed by conversion hour, so a click
+ * cohort breakdown is always computed in full.
+ *
  * Every read is bounded by the account (a model id belongs to one account,
  * and each query names the account besides), and every money value is the
  * exact DECIMAL sum MySQL computes, returned as a string.
@@ -100,11 +109,17 @@ final class AttributionReports
         ],
         // Day: the conversion's day for credits and assists, the click's day
         // for clicks and cost (the {time} placeholder), in the database
-        // session's time zone like /reports/timeseries.
+        // session's time zone like /reports/timeseries. In the click cohort
+        // all of a row is the click's day.
         'day' => ['key' => "FROM_UNIXTIME({time}, '%Y-%m-%d')", 'name' => "FROM_UNIXTIME({time}, '%Y-%m-%d')", 'joins' => []],
     ];
 
     public const MAX_LIMIT = 1000;
+
+    /** Credits and assists counted by the conversion's time: the sales made in the range. */
+    public const COHORT_CONVERSION = 'conversion';
+    /** Credits and assists counted by the time of the click they land on: what the clicks made in the range earned. */
+    public const COHORT_CLICK = 'click';
 
     /** A plan whose guard fails (the rollup moved under it) is made again, this often. */
     private const ROLLUP_ATTEMPTS = 3;
@@ -134,6 +149,12 @@ final class AttributionReports
         return array_keys(self::DIMENSIONS);
     }
 
+    /** @return list<string> */
+    public static function cohorts(): array
+    {
+        return [self::COHORT_CONVERSION, self::COHORT_CLICK];
+    }
+
     /**
      * One row per dimension value.
      *
@@ -143,11 +164,12 @@ final class AttributionReports
      * @param int      $offset   rows to skip in the report's order, to page
      *                           past MAX_LIMIT: a reader looking for the rows
      *                           with spend and little revenue needs the end
+     * @param string   $cohort   COHORT_CONVERSION or COHORT_CLICK (see the class doc)
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>, groups: int}
      */
-    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0): array
+    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0, string $cohort = self::COHORT_CONVERSION): array
     {
-        $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to);
+        $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $cohort);
 
         return [
             'rows' => array_slice($all['rows'], max(0, $offset), max(1, min(self::MAX_LIMIT, $limit))),
@@ -163,24 +185,28 @@ final class AttributionReports
      *
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>}
      */
-    public function breakdownAll(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to): array
+    public function breakdownAll(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, string $cohort = self::COHORT_CONVERSION): array
     {
         if (!isset(self::DIMENSIONS[$groupBy])) {
             throw new \InvalidArgumentException('unknown dimension ' . $groupBy);
         }
+        if (!in_array($cohort, self::cohorts(), true)) {
+            throw new \InvalidArgumentException('unknown cohort ' . $cohort);
+        }
+        $byClick = $cohort === self::COHORT_CLICK;
 
         $this->servedHours = 0;
-        $parts = $this->useRollup ? $this->rolledParts($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to) : null;
+        $parts = $this->useRollup && !$byClick ? $this->rolledParts($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to) : null;
         if ($parts !== null) {
             ['primary' => $primary, 'compare' => $compare, 'cost' => $cost, 'assists' => $assists,
                 'totals' => $totals, 'compareTotals' => $compareTotals] = $parts;
         } else {
-            $primary = $this->creditsBy($userId, $modelId, $defaultModelId, $groupBy, $from, $to);
-            $compare = $compareModelId !== null ? $this->creditsBy($userId, $compareModelId, $defaultModelId, $groupBy, $from, $to) : null;
+            $primary = $this->creditsBy($userId, $modelId, $defaultModelId, $groupBy, $from, $to, $byClick);
+            $compare = $compareModelId !== null ? $this->creditsBy($userId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $byClick) : null;
             $cost = $this->costBy($userId, $groupBy, $from, $to);
-            $assists = $this->assistsBy($userId, $groupBy, $from, $to);
-            $totals = $this->totals($userId, $modelId, $defaultModelId, $from, $to);
-            $compareTotals = $compareModelId !== null ? $this->totals($userId, $compareModelId, $defaultModelId, $from, $to) : null;
+            $assists = $this->assistsBy($userId, $groupBy, $from, $to, $byClick);
+            $totals = $this->totals($userId, $modelId, $defaultModelId, $from, $to, $byClick);
+            $compareTotals = $compareModelId !== null ? $this->totals($userId, $compareModelId, $defaultModelId, $from, $to, $byClick) : null;
         }
 
         $keys = array_unique(array_merge(array_keys($primary), array_keys($cost), array_keys($assists), array_keys($compare ?? [])));
@@ -226,10 +252,11 @@ final class AttributionReports
     /**
      * @return array<string, array{name: string|null, conversions: string, revenue: string}>
      */
-    private function creditsBy(int $userId, ?int $modelId, int $defaultModelId, string $groupBy, int $from, int $to): array
+    private function creditsBy(int $userId, ?int $modelId, int $defaultModelId, string $groupBy, int $from, int $to, bool $byClick = false): array
     {
-        [$key, $name, $joins] = self::dimensionSql($groupBy, 'cr.conv_time');
-        [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to);
+        $time = $byClick ? 'c.click_time' : 'cr.conv_time';
+        [$key, $name, $joins] = self::dimensionSql($groupBy, $time);
+        [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to, $time);
 
         $stmt = $this->conn->prepareRead(
             "SELECT COALESCE($key, 0) AS k, MAX($name) AS n, SUM(cr.credit) AS conversions, SUM(cr.revenue) AS revenue
@@ -253,17 +280,20 @@ final class AttributionReports
      * The credit rows a report reads: one model's, or each conversion's
      * effective model's.
      *
+     * @param string $time the column the range applies to: cr.conv_time, or
+     *                     c.click_time for the click cohort (the caller joins
+     *                     202_clicks c on the credited click)
      * @return array{0: string, 1: string, 2: string, 3: list<int>}
      */
-    private function creditSource(int $userId, ?int $modelId, int $defaultModelId, int $from, int $to): array
+    private function creditSource(int $userId, ?int $modelId, int $defaultModelId, int $from, int $to, string $time = 'cr.conv_time'): array
     {
         if ($modelId !== null) {
             // Ownership is part of the query, not only the caller's check: a
             // model id of another account matches no credit row here.
             return [
                 '202_attribution_credits cr',
-                'cr.model_id = (SELECT om.model_id FROM 202_attribution_models om WHERE om.model_id = ? AND om.user_id = ?)
-                 AND cr.conv_time >= ? AND cr.conv_time <= ?',
+                "cr.model_id = (SELECT om.model_id FROM 202_attribution_models om WHERE om.model_id = ? AND om.user_id = ?)
+                 AND $time >= ? AND $time <= ?",
                 'iiii',
                 [$modelId, $userId, $from, $to],
             ];
@@ -275,7 +305,7 @@ final class AttributionReports
              LEFT JOIN 202_aff_campaigns oc ON oc.aff_campaign_id = cl.campaign_id
              LEFT JOIN 202_attribution_models om
                 ON om.model_id = oc.attribution_model_id AND om.user_id = cl.user_id AND om.status = 'active'",
-            'cl.user_id = ? AND cr.conv_time >= ? AND cr.conv_time <= ? AND cr.model_id = COALESCE(om.model_id, ?)',
+            "cl.user_id = ? AND $time >= ? AND $time <= ? AND cr.model_id = COALESCE(om.model_id, ?)",
             'iiii',
             [$userId, $from, $to, $defaultModelId],
         ];
@@ -302,17 +332,23 @@ final class AttributionReports
         return $out;
     }
 
-    /** @return array<string, array{name: string|null, assists: int}> */
-    private function assistsBy(int $userId, string $groupBy, int $from, int $to): array
+    /**
+     * In the click cohort an assist is an assisting touch made in the range,
+     * for a conversion at any time.
+     *
+     * @return array<string, array{name: string|null, assists: int}>
+     */
+    private function assistsBy(int $userId, string $groupBy, int $from, int $to, bool $byClick = false): array
     {
-        [$key, $name, $joins] = self::dimensionSql($groupBy, 'jm.conv_time');
+        $time = $byClick ? 'j.click_time' : 'jm.conv_time';
+        [$key, $name, $joins] = self::dimensionSql($groupBy, $time);
         $stmt = $this->conn->prepareRead(
             "SELECT COALESCE($key, 0) AS k, MAX($name) AS n, COUNT(DISTINCT j.conv_id) AS assists
              FROM 202_attribution_journey_meta jm
              JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
              JOIN 202_clicks c ON c.click_id = j.click_id
              $joins
-             WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
+             WHERE jm.user_id = ? AND $time >= ? AND $time <= ?
              GROUP BY k"
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
@@ -325,13 +361,19 @@ final class AttributionReports
         return $out;
     }
 
-    /** @return array{conversions: int, attributed_conversions: string, attributed_revenue: string} */
-    private function totals(int $userId, ?int $modelId, int $defaultModelId, int $from, int $to): array
+    /**
+     * In the click cohort `conversions` counts the conversions with credit on
+     * a click in range, each once.
+     *
+     * @return array{conversions: int, attributed_conversions: string, attributed_revenue: string}
+     */
+    private function totals(int $userId, ?int $modelId, int $defaultModelId, int $from, int $to, bool $byClick = false): array
     {
-        [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to);
+        [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to, $byClick ? 'c.click_time' : 'cr.conv_time');
+        $clicks = $byClick ? 'JOIN 202_clicks c ON c.click_id = cr.click_id' : '';
         $stmt = $this->conn->prepareRead(
             "SELECT COUNT(DISTINCT cr.conv_id) AS conversions, COALESCE(SUM(cr.credit), 0) AS credit, COALESCE(SUM(cr.revenue), 0) AS revenue
-             FROM $source WHERE $where"
+             FROM $source $clicks WHERE $where"
         );
         $this->conn->bind($stmt, $types, $binds);
         $r = $this->conn->fetchOne($stmt) ?? [];

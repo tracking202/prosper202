@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 func TestEnrichBreakevenComputesMarginAndVerdict(t *testing.T) {
@@ -191,12 +193,17 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 
 const firstTouchModels = `{"data":[{"model_id":4,"model_name":"First touch","model_type":"first_touch","status":"active","is_default":false}]}`
 
-// onePage answers every attribution request with both rows: source 7 starts sales, source 8 doesn't.
+// onePage answers every attribution request with both rows: source 7 starts sales, source 8 doesn't. Its meta.cohort
+// says which cohort was read, as the server's does.
 func onePage(q url.Values) (int, string) {
+	cohort := q.Get("cohort")
+	if cohort == "" {
+		cohort = "conversion"
+	}
 	return 200, `{"data":[
 		{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
 		{"key":"8","name":"Display","cost":"800.00","attributed_revenue":"120.00","roi":-85.0,"assisted_conversions":0}],
-		"totals":{},"meta":{"groups":2,"backfill":null}}`
+		"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"` + cohort + `"}}`
 }
 
 func runLosers(t *testing.T, models string, attr func(url.Values) (int, string), args ...string) (map[string]string, string, []url.Values) {
@@ -602,11 +609,13 @@ func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
 		want map[string]string
 		none []string
 	}{
-		{"no range: all time", nil, map[string]string{"time_from": "0"}, []string{"period", "time_to"}},
-		{"period", []string{"--period", "last7"}, map[string]string{"period": "last7"}, []string{"time_from", "time_to"}},
-		{"time_from only", []string{"--time_from", "1790000000"}, map[string]string{"time_from": "1790000000"}, []string{"period", "time_to"}},
-		{"time_to only: from the start", []string{"--time_to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000"}, []string{"period"}},
-		{"both bounds", []string{"--time_from", "1790000000", "--time_to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000"}, []string{"period"}},
+		// All time is the same in both cohorts, so it reads the default one (which the rollup serves); a bounded range
+		// reads the click cohort, the classic report's population.
+		{"no range: all time", nil, map[string]string{"time_from": "0"}, []string{"period", "time_to", "cohort"}},
+		{"period", []string{"--period", "last7"}, map[string]string{"period": "last7", "cohort": "click"}, []string{"time_from", "time_to"}},
+		{"time_from only", []string{"--time_from", "1790000000"}, map[string]string{"time_from": "1790000000", "cohort": "click"}, []string{"period", "time_to"}},
+		{"time_to only: from the start", []string{"--time_to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
+		{"both bounds", []string{"--time_from", "1790000000", "--time_to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -644,14 +653,94 @@ func TestLosersRefusesAnInactiveFirstTouchOverride(t *testing.T) {
 	}
 }
 
-func TestBoundedRangesSayHowTheCohortsDiffer(t *testing.T) {
-	_, stderr, _ := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30")
-	if !strings.Contains(stderr, "sales converted in the range") {
-		t.Errorf("a bounded range should note the click vs conversion cohorts: %q", stderr)
+// A bounded range reads the click cohort, so the attribution rows are the classic rows' clicks and there are no edges
+// to note. A server from before cohort=click refuses it: the check reads the sale-date cohort instead and says the edges
+// can differ, and a server that answers without applying it gets the same note.
+func TestBoundedRangesReadTheClickCohort(t *testing.T) {
+	buckets, stderr, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30")
+	if len(calls) != 1 || calls[0].Get("cohort") != "click" {
+		t.Fatalf("a bounded range should read the click cohort, got %v", calls)
 	}
-	_, stderr, _ = runLosers(t, firstTouchModels, onePage, "--breakdown", "source")
-	if strings.Contains(stderr, "sales converted in the range") {
-		t.Errorf("an all-time run has no edges to note: %q", stderr)
+	if strings.Contains(stderr, "edges") {
+		t.Errorf("the click cohort is the classic population, nothing to note: %q", stderr)
+	}
+	if buckets["ChatGPT Ads"] != "TEST" {
+		t.Errorf("the check still runs: %v", buckets)
+	}
+
+	old := func(q url.Values) (int, string) {
+		if q.Has("cohort") {
+			return 422, `{"message":"Unknown parameter(s): cohort","field_errors":{"cohort":"Valid parameters: group_by, model_id"}}`
+		}
+		return onePage(q)
+	}
+	buckets, stderr, calls = runLosers(t, firstTouchModels, old, "--breakdown", "source", "--period", "last30")
+	if len(calls) != 2 || calls[1].Has("cohort") || calls[1].Get("period") != "last30" {
+		t.Fatalf("a refused cohort is retried without it over the same range, got %v", calls)
+	}
+	if !strings.Contains(stderr, "predates cohort=click") || !strings.Contains(stderr, "edges can differ") {
+		t.Errorf("the fallback says the edges can differ: %q", stderr)
+	}
+	if buckets["ChatGPT Ads"] != "TEST" || buckets["Display"] != "CUT" {
+		t.Errorf("the fallback still checks the rows: %v", buckets)
+	}
+
+	ignores := func(q url.Values) (int, string) {
+		q.Del("cohort")
+		return onePage(q)
+	}
+	_, stderr, _ = runLosers(t, firstTouchModels, ignores, "--breakdown", "source", "--period", "last30")
+	if !strings.Contains(stderr, "edges can differ") {
+		t.Errorf("a server that read the sale-date cohort gets the note: %q", stderr)
+	}
+
+	_, stderr, calls = runLosers(t, firstTouchModels, onePage, "--breakdown", "source")
+	if calls[0].Has("cohort") || strings.Contains(stderr, "edges") {
+		t.Errorf("all time reads the default cohort with nothing to note: %v %q", calls, stderr)
+	}
+}
+
+func TestAttributionBreakdownCohort(t *testing.T) {
+	var got url.Values
+	refuse := false
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		if refuse {
+			w.WriteHeader(422)
+			w.Write([]byte(`{"message":"Unknown parameter(s): cohort","field_errors":{"cohort":"Valid parameters: group_by"}}`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"data":[],"meta":{"groups":0,"cohort":"click"}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	if _, _, err := executeCommand("attribution", "breakdown", "--cohort", "click", "--period", "last30"); err != nil {
+		t.Fatalf("breakdown --cohort click: %v", err)
+	}
+	if got.Get("cohort") != "click" {
+		t.Errorf("params = %v, want cohort click", got)
+	}
+	got = nil
+	if _, _, err := executeCommand("attribution", "breakdown"); err != nil || got.Has("cohort") {
+		t.Errorf("no --cohort sends none (the server's default): %v %v", err, got)
+	}
+	for _, bad := range []string{"clicks", "sale"} {
+		got = nil
+		_, _, err := executeCommand("attribution", "breakdown", "--cohort", bad)
+		if err == nil || !strings.Contains(err.Error(), "cohort") {
+			t.Errorf("--cohort %s should be refused, got %v", bad, err)
+		}
+		if got != nil {
+			t.Errorf("--cohort %s: no request should be made", bad)
+		}
+	}
+	refuse = true
+	_, _, err := executeCommand("attribution", "breakdown", "--cohort", "click")
+	if err == nil || !strings.Contains(api.HintFor(err), "predates --cohort") {
+		t.Errorf("an older server's refusal should say to drop --cohort, got %v (hint %q)", err, api.HintFor(err))
 	}
 }
 

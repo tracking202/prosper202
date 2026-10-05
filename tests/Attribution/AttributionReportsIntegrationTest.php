@@ -179,14 +179,84 @@ final class AttributionReportsIntegrationTest extends TestCase
     {
         $this->scenario();
         foreach (\Prosper202\Attribution\AttributionReports::dimensions() as $dim) {
-            $out = $this->api->breakdown(['group_by' => $dim, 'model_id' => (string) $this->first]);
-            self::assertSame('15.00000', $out['totals']['attributed_revenue'], $dim);
-            $sum = 0;
-            foreach ($out['data'] as $r) {
-                $sum += (int) round((float) $r['attributed_revenue'] * 100000);
+            foreach (AttributionReports::cohorts() as $cohort) {
+                // Every click and conversion is inside the default 30 days, so both cohorts hold all of it.
+                $out = $this->api->breakdown(['group_by' => $dim, 'model_id' => (string) $this->first, 'cohort' => $cohort]);
+                self::assertSame('15.00000', $out['totals']['attributed_revenue'], "$dim, $cohort");
+                $sum = 0;
+                foreach ($out['data'] as $r) {
+                    $sum += (int) round((float) $r['attributed_revenue'] * 100000);
+                }
+                self::assertSame(1500000, $sum, "$dim, $cohort: the rows add up to the total");
             }
-            self::assertSame(1500000, $sum, "$dim: the rows add up to the total");
         }
+    }
+
+    /**
+     * The click cohort reads credits and assists by the clock of the click
+     * they land on. A range holding only click 1 (A's first touch, three
+     * days before A converted) shows nothing in the conversion cohort and
+     * A's first-touch $12 and an assist in the click cohort; a range holding
+     * only the last hour shows the reverse.
+     */
+    public function testTheClickCohortCountsWhatTheRangesClicksEarned(): void
+    {
+        $this->scenario();
+        $now = time();
+        $read = fn (string $cohort, int $from, int $to, int $model): array => $this->api->breakdown([
+            'group_by' => 'campaign', 'model_id' => (string) $model, 'cohort' => $cohort,
+            'time_from' => (string) $from, 'time_to' => (string) $to,
+        ]);
+
+        // Click 1 alone.
+        $from = $now - 4 * 86400;
+        $to = $now - 60 * 3600;
+        $conv = $read('conversion', $from, $to, $this->first);
+        $rows = self::byKey($conv['data']);
+        self::assertSame('conversion', $conv['meta']['cohort']);
+        self::assertSame('0.00000', $rows['1']['attributed_revenue'], 'no sale was made in the range');
+        self::assertSame(0, $rows['1']['assisted_conversions']);
+        self::assertSame(1, $rows['1']['clicks'], 'clicks and cost are the range\'s clicks in both cohorts');
+
+        $click = $read('click', $from, $to, $this->first);
+        $rows = self::byKey($click['data']);
+        self::assertSame('click', $click['meta']['cohort']);
+        self::assertSame('12.00000', $rows['1']['attributed_revenue'], 'click 1 started A');
+        self::assertSame('1.00000000', $rows['1']['attributed_conversions']);
+        self::assertSame(2300.0, $rows['1']['roi'], '(12 - 0.50) / 0.50, revenue and cost of the same click');
+        self::assertSame(1, $rows['1']['assisted_conversions'], 'click 1 assisted A');
+        self::assertSame(['conversions' => 1, 'attributed_conversions' => '1.00000000', 'attributed_revenue' => '12.00000'], $click['totals']);
+        $last = self::byKey($read('click', $from, $to, $this->defaultModelId())['data']);
+        self::assertSame('0.00000', $last['1']['attributed_revenue'], 'last touch credits click 3, outside the range');
+
+        // The last two hours: clicks 3 and 4 and both sales.
+        $from = $now - 7200;
+        $to = $now;
+        $rows = self::byKey($read('conversion', $from, $to, $this->first)['data']);
+        self::assertSame('12.00000', $rows['1']['attributed_revenue'], 'A, credited to click 1 three days back');
+        self::assertSame(1, $rows['2']['assisted_conversions'], 'click 2 assisted A');
+        $rows = self::byKey($read('click', $from, $to, $this->first)['data']);
+        self::assertSame('0.00000', $rows['1']['attributed_revenue'], 'A started before the range');
+        self::assertSame('3.00000', $rows['2']['attributed_revenue']);
+        self::assertSame(0, $rows['2']['assisted_conversions'], 'click 2 is outside the range');
+
+        // Last touch in the click cohort is the classic population: each row is the payout of its own converting
+        // clicks in range.
+        $last = self::byKey($read('click', $from, $to, $this->defaultModelId())['data']);
+        $classic = self::all("SELECT aff_campaign_id AS k, SUM(click_payout) AS revenue FROM 202_clicks
+            WHERE user_id = 1 AND click_lead = 1 AND click_bot = 0 AND click_time BETWEEN $from AND $to GROUP BY aff_campaign_id");
+        self::assertCount(2, $classic);
+        foreach ($classic as $c) {
+            self::assertSame((string) $c['revenue'], $last[(string) $c['k']]['attributed_revenue'], 'campaign ' . $c['k']);
+        }
+
+        // The effective report (no model named: here every campaign reads the last-touch default) reads the same.
+        $effective = $this->api->breakdown(['group_by' => 'campaign', 'cohort' => 'click', 'time_from' => (string) $from, 'time_to' => (string) $to]);
+        foreach (self::byKey($effective['data']) as $k => $r) {
+            self::assertSame($last[$k]['attributed_revenue'], $r['attributed_revenue'], "campaign $k");
+        }
+        self::assertSame('15.00000', $effective['totals']['attributed_revenue']);
+        self::assertSame(2, $effective['totals']['conversions']);
     }
 
     public function testJourneyMetricsAndOneConversionExplained(): void
@@ -288,6 +358,9 @@ final class AttributionReportsIntegrationTest extends TestCase
             ['offset' => '1.5'],
             ['offset' => 'abc'],
             ['offset' => '01'], // the contract refuses leading zeros
+            ['cohort' => 'clicks'],
+            ['cohort' => 'Click'],
+            ['cohort' => ''],
             ['time_from' => 'yesterday'],
             ['period' => 'last7', 'time_from' => '1'],
             ['groupby' => 'campaign'],
