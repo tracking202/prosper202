@@ -319,11 +319,17 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 		}
 	}
 	if modelID == "" && needFirstTouch {
-		if len(notes) > 0 { // a First touch model exists but is still being recomputed
-			return nil, append(notes, "closer check skipped until it finishes")
-		}
-		return nil, []string{"closer check skipped: no active First touch model. Add one with " +
+		skipped := []string{"closer check skipped: no active First touch model. Add one with " +
 			"`p202 attribution model create --model-name \"First touch\" --model-type first_touch` so winners can tell new-buyer sources from closers"}
+		if len(notes) > 0 { // a First touch model exists but is still being recomputed
+			skipped = append(notes, "closer check skipped until it finishes")
+		}
+		if !countSales {
+			return nil, skipped
+		}
+		// --payout still needs each row's sales, which the Last touch model counts (every account has one by default):
+		// read them without a first-touch model, and the closer check (model "") stays off.
+		notes = skipped
 	}
 	if modelID == "" && len(notes) == 0 {
 		notes = append(notes, "no active First touch model, so rows were checked on assists only. Add one with "+
@@ -684,8 +690,8 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				return err
 			}
 
-			// Each listed row, with the raw figures it was classified on. With --payout, winners also keeps the converting
-			// rows that lose money per converted click (maybe): counted per sale, they may be profitable.
+			// Each listed row, with the raw figures it was classified on. With --payout, winners also keeps the other
+			// converting rows (maybe): counted per sale, they may be profitable.
 			var picked, maybe []*triageRow
 			for _, r := range rows {
 				clicks := toFloat(r["total_clicks"])
@@ -721,7 +727,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				switch {
 				case wantWinners && bucket == "SCALE", !wantWinners && bucket == "CUT":
 					picked = append(picked, t)
-				case wantWinners && payoutFlag > 0 && leads > 0 && net < 0:
+				case wantWinners && payoutFlag > 0 && leads > 0:
+					// Any converting row that isn't SCALE per converted click (a loss, break-even, or CUT by its
+					// break-even CPC) may be profitable once each of its sales counts.
 					maybe = append(maybe, t)
 				}
 			}

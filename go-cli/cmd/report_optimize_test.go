@@ -955,7 +955,7 @@ const lastTouchModels = `{"data":[{"model_id":1,"model_name":"Last touch","model
 
 // salesServer answers the classic breakdown with classic, the model lists with firstTouchModels and lastTouch, and
 // the attribution breakdown with attr, recording each attribution request.
-func salesServer(t *testing.T, classic, attr, lastTouch string, calls *[]url.Values) *httptest.Server {
+func salesServer(t *testing.T, classic, attr, firstTouch, lastTouch string, calls *[]url.Values) *httptest.Server {
 	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		switch {
@@ -964,7 +964,7 @@ func salesServer(t *testing.T, classic, attr, lastTouch string, calls *[]url.Val
 		case strings.HasSuffix(r.URL.Path, "/attribution/models") && r.URL.Query().Get("type") == "last_touch":
 			w.Write([]byte(lastTouch))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
-			w.Write([]byte(firstTouchModels))
+			w.Write([]byte(firstTouch))
 		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
 			*calls = append(*calls, r.URL.Query())
 			w.Write([]byte(attr))
@@ -976,8 +976,14 @@ func salesServer(t *testing.T, classic, attr, lastTouch string, calls *[]url.Val
 
 func runSales(t *testing.T, command, classic, attr, lastTouch string, args ...string) (map[string]map[string]interface{}, string, []url.Values) {
 	t.Helper()
+	return runSalesWith(t, command, classic, attr, firstTouchModels, lastTouch, args...)
+}
+
+// runSalesWith is runSales with the account's First touch model list given too.
+func runSalesWith(t *testing.T, command, classic, attr, firstTouch, lastTouch string, args ...string) (map[string]map[string]interface{}, string, []url.Values) {
+	t.Helper()
 	var calls []url.Values
-	srv := salesServer(t, classic, attr, lastTouch, &calls)
+	srv := salesServer(t, classic, attr, firstTouch, lastTouch, &calls)
 	defer srv.Close()
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
@@ -1043,6 +1049,41 @@ func TestPayoutCountsEverySaleWithTheLastTouchModel(t *testing.T) {
 	}
 	if _, listed := rows["One-Off"]; listed {
 		t.Errorf("One-Off loses money on its 6 sales too: %v", rows)
+	}
+}
+
+// A default account has a Last touch model and no First touch model. Winners can't run the closer check there, but
+// --payout still counts each row's sales with the Last touch model, so a source profitable only through repeat sales
+// is listed, and one at exactly break-even per converted click is read too.
+func TestWinnersCountSalesWithoutAFirstTouchModel(t *testing.T) {
+	const classic = `{"data":[
+	{"id":"21","name":"Repeat Buyers","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"},
+	{"id":"23","name":"Even","total_clicks":"100","total_leads":"5","total_cost":"300.00","total_net":"0.00"}]}`
+	const attr = `{"data":[
+	{"key":"21","cost":"500.00","attributed_conversions":"10.00000000","compare_attributed_conversions":"10.00000000"},
+	{"key":"23","cost":"300.00","attributed_conversions":"7.00000000","compare_attributed_conversions":"7.00000000"}],
+	"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`
+	rows, stderr, calls := runSalesWith(t, "winners", classic, attr, `{"data":[]}`, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || calls[0].Has("model_id") || calls[0].Get("compare_model_id") != "1" {
+		t.Fatalf("without a First touch model the request should still carry Last touch (1) as the compare model: %v", calls)
+	}
+	if keys := calls[0].Get("keys"); !strings.Contains(keys, "21") || !strings.Contains(keys, "23") {
+		t.Errorf("both converting rows that aren't SCALE per converted click are read, the break-even one too: %q", keys)
+	}
+	if r := rows["Repeat Buyers"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["sales"]) != 10 {
+		t.Errorf("Repeat Buyers: 10 sales × 60 − 500 = +100, SCALE; got %v", rows)
+	}
+	if r := rows["Even"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["total_net"]) != 120 {
+		t.Errorf("Even: break-even per converted click (5 × 60 = 300), 7 sales make +120, SCALE; got %v", rows)
+	}
+	if !strings.Contains(stderr, "closer check skipped: no active First touch model") {
+		t.Errorf("stderr should still say the closer check was skipped: %q", stderr)
+	}
+
+	// Without --payout nothing is counted, so the check is skipped as before.
+	_, _, calls = runSalesWith(t, "winners", classic, attr, `{"data":[]}`, lastTouchModels)
+	if len(calls) != 0 {
+		t.Errorf("without --payout or a First touch model winners reads no attribution: %v", calls)
 	}
 }
 
