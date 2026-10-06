@@ -918,3 +918,104 @@ func TestBadOverrideIsRefusedBeforeTheClassicReport(t *testing.T) {
 		}
 	}
 }
+
+// payoutServer answers the classic breakdown with the demo account's shape: two sources that sell at a loss and one
+// that profits. None has zero conversions, so without a payout nothing is CUT.
+func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.WriteHeader(200)
+			w.Write([]byte(classic))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.WriteHeader(200)
+			w.Write([]byte(firstTouchModels))
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			*campaigns++
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_payout":"160"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[
+				{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
+				{"key":"9","name":"Meta Prospecting","cost":"3201.65","attributed_revenue":"5473.00","roi":70.94,"assisted_conversions":24}],
+				"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+const sellingAtALoss = `{"data":[
+	{"id":"7","name":"ChatGPT Ads","total_clicks":"1124","total_leads":"12","total_cost":"3171.62","total_net":"-1244.62"},
+	{"id":"9","name":"Meta Prospecting","total_clicks":"2605","total_leads":"11","total_cost":"3201.65","total_net":"-1682.65"},
+	{"id":"5","name":"Google Search","total_clicks":"2480","total_leads":"76","total_cost":"5963.94","total_net":"6451.06"}]}`
+
+func runPayoutLosers(t *testing.T, args ...string) (map[string]string, []url.Values, int) {
+	t.Helper()
+	var calls []url.Values
+	campaigns := 0
+	srv := payoutServer(t, sellingAtALoss, &campaigns, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, _, err := executeCommand(append([]string{"report", "losers", "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
+	if err != nil {
+		t.Fatalf("losers: %v", err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	buckets := map[string]string{}
+	for _, r := range resp.Data {
+		buckets[fmt.Sprint(r["name"])] = fmt.Sprint(r["bucket"])
+	}
+	return buckets, calls, campaigns
+}
+
+// Sources that make some sales at a loss aren't CUT without a break-even to compare their CPC with; --payout gives each
+// row its own (payout × its conversion rate) without filtering the report, so the attribution check still runs on them.
+func TestLosersPayoutFindsSourcesThatSellAtALoss(t *testing.T) {
+	if buckets, calls, _ := runPayoutLosers(t); len(buckets) != 0 || len(calls) != 0 {
+		t.Errorf("without a payout nothing sells at zero, so nothing is CUT: got %v (%d attribution calls)", buckets, len(calls))
+	}
+
+	buckets, calls, campaigns := runPayoutLosers(t, "--payout", "160")
+	if buckets["ChatGPT Ads"] != "TEST" || buckets["Meta Prospecting"] != "TEST" {
+		t.Errorf("buckets = %v, want ChatGPT Ads and Meta Prospecting CUT by break-even, then TEST (they start sales)", buckets)
+	}
+	if _, listed := buckets["Google Search"]; listed {
+		t.Errorf("Google Search clears its break-even ($4.90 > $2.40 CPC) and must not be listed: %v", buckets)
+	}
+	if len(calls) != 1 || calls[0].Get("keys") != "7,9" {
+		t.Errorf("the check should read the two CUT rows by key, unfiltered: %v", calls)
+	}
+	if campaigns != 0 {
+		t.Errorf("--payout must not read a campaign's payout; read %d", campaigns)
+	}
+}
+
+func TestLosersRefusesANegativePayoutBeforeAnyRequest(t *testing.T) {
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, "http://127.0.0.1:1", "test-key")
+	_, _, err := executeCommand("report", "losers", "--payout", "-5")
+	if err == nil || !strings.Contains(err.Error(), "--payout must be more than 0") {
+		t.Fatalf("a negative --payout should be refused naming the flag, got %v", err)
+	}
+}
+
+func TestClassifyPrefersMaxCPCOverPayout(t *testing.T) {
+	// payout 160 at 1.07% CVR is a $1.71 break-even; --max-cpc 3 is the target when both are set.
+	if b, _ := classify(1124, 12, 3171.62, -1244.62, 2.82, 160, 3); b == "CUT" {
+		t.Errorf("CPC $2.82 is under the $3 --max-cpc target, so it isn't CUT; got %s", b)
+	}
+	if b, _ := classify(1124, 12, 3171.62, -1244.62, 2.82, 160, 0); b != "CUT" {
+		t.Errorf("CPC $2.82 is over the $1.71 payout break-even, so it is CUT; got %s", b)
+	}
+}

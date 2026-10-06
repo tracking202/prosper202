@@ -561,6 +561,11 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 						WithHint("0 turns the assists rule off; 1 (the default) holds back any row that had a click in a sale another row closed.")
 				}
 			}
+			payoutFlag, _ := cmd.Flags().GetFloat64("payout")
+			if payoutFlag < 0 || math.IsNaN(payoutFlag) || math.IsInf(payoutFlag, 0) {
+				return validationError("--payout must be more than 0; got %g", payoutFlag).
+					WithHint("Pass your revenue per conversion, like 160 for a $160 average order.")
+			}
 			client, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -586,8 +591,15 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				}
 			}
 
+			// The break-even CPC target: --max-cpc as given, else payout × each row's conversion rate (in classify).
+			// --payout sets the payout without filtering the report; --aff_campaign_id reads its campaign's payout but
+			// also filters the report to that campaign, which turns the attribution check off.
 			var payout float64
-			if maxCPC <= 0 && campaignID != "" {
+			switch {
+			case maxCPC > 0:
+			case payoutFlag > 0:
+				payout = payoutFlag
+			case campaignID != "":
 				payout, _ = fetchCampaignPayout(client, campaignID)
 			}
 
@@ -709,7 +721,10 @@ func init() {
 	reportCmd.AddCommand(reportBreakevenCmd)
 
 	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
-	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n\n" +
+	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n" +
+		"Break-even is --max-cpc, or a payout × the row's own conversion rate: --payout (your revenue per conversion) or\n" +
+		"the payout of --aff_campaign_id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
+		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs.\n\n" +
 		"Each CUT row is then checked against the attribution report for the same dimension and range. A row that\n" +
 		"starts sales comes back as TEST, with its first-touch ROI and assists: it pays for itself as a first click\n" +
 		"(first-touch ROI 0% or better), or it had a click in at least --min-assists sales (default 1) that another row\n" +
@@ -735,7 +750,8 @@ func init() {
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
 		enumFlag(c, "breakdown", dimensionEnum(breakdownDimensions))
 		c.Flags().Float64("min-clicks", 1, "Ignore rows with fewer than N clicks (significance floor)")
-		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else derived from campaign payout × CVR)")
+		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else payout × each row's CVR, from --payout or the campaign)")
+		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate. Unlike --aff_campaign_id it doesn't filter the report, so the attribution check still runs")
 		reportCmd.AddCommand(c)
 	}
 	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")
