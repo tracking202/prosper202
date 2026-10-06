@@ -26,7 +26,9 @@ func rejectMultiProfile(cmd *cobra.Command) error {
 
 // applyBreakdownFilters post-filters breakdown rows client-side by --min-clicks,
 // --min-cost, --zero-leads, and --having (FIELD OP VALUE). Returns the original
-// bytes unchanged when no filter is set or the payload can't be parsed.
+// bytes unchanged when no filter is set. A payload that can't be parsed came
+// from the server (a success status with a body that isn't a breakdown), so it
+// is a server error, not a flag problem.
 func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
 	minCost, _ := cmd.Flags().GetFloat64("min-cost")
@@ -39,7 +41,14 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 		Data []map[string]interface{} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("applying --min-clicks/--min-cost/--zero-leads/--having: parsing the breakdown: %w", err)
+		return nil, &CLIError{
+			Category: "server",
+			ExitCode: ExitServer,
+			Message:  fmt.Sprintf("applying --min-clicks/--min-cost/--zero-leads/--having: the server's breakdown response isn't valid JSON (%v)", err),
+			Hint: "The flags are fine: the server (or a proxy in front of it) answered with something other than a breakdown. " +
+				"Run the same command without the filter flags to see the raw response, and `p202 system health` to check the server.",
+			Cause: err,
+		}
 	}
 	field, op, want, hasHaving := parseHaving(having)
 
