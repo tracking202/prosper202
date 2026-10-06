@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,6 +32,10 @@ func TestBreakdownFiltersOnAMalformedPayloadAreAServerError(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "isn't valid JSON") {
 			t.Errorf("%.20q: the message should keep the parse cause: %v", body, err)
+		}
+		var syntaxErr *json.SyntaxError
+		if !errors.As(err, &syntaxErr) {
+			t.Errorf("%.20q: the json.SyntaxError should stay in the error chain: %#v", body, err)
 		}
 		if h := api.HintFor(err); !strings.Contains(h, "p202 system health") || !strings.Contains(h, "without the filter flags") {
 			t.Errorf("%.20q: hint = %q, want the raw-response and system health steps", body, h)

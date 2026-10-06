@@ -30,10 +30,19 @@ type CLIError struct {
 	// Hint is the recovery step an operator or agent should take next. It
 	// is printed after the message and carried in the JSON error envelope.
 	Hint string
+	// Cause is the underlying error, when there is one: errors.Is and
+	// errors.As reach it through Unwrap, while the category, exit code and
+	// hint stay this error's.
+	Cause error
 }
 
 func (e *CLIError) Error() string {
 	return e.Message
+}
+
+// Unwrap returns the underlying error (nil when there is none).
+func (e *CLIError) Unwrap() error {
+	return e.Cause
 }
 
 func (e *CLIError) CategoryName() string {

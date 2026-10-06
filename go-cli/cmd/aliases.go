@@ -47,6 +47,7 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 			Message:  fmt.Sprintf("applying --min-clicks/--min-cost/--zero-leads/--having: the server's breakdown response isn't valid JSON (%v)", err),
 			Hint: "The flags are fine: the server (or a proxy in front of it) answered with something other than a breakdown. " +
 				"Run the same command without the filter flags to see the raw response, and `p202 system health` to check the server.",
+			Cause: err,
 		}
 	}
 	field, op, want, hasHaving := parseHaving(having)
