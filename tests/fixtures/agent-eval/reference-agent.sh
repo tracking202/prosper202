@@ -294,6 +294,27 @@ case "$ask" in
         printf 'App %s has %s signature-verified SKAN installs. The report counts only postbacks whose Apple signature verifies (meta.trusted: %s): %s of its stored postbacks verify and %s do not, so those are excluded from the install count.\n' \
             "$app" "$installs" "$trusted" "$valid" "$invalid"
         ;;
+    *"sale is worth \$"*"losing money"*)
+        # A stated value per sale is the payout: each source's break-even CPC is
+        # that times its own conversion rate, and --payout adds no filter (a
+        # campaign filter would turn the attribution check off).
+        payout=$(printf '%s' "$ask" | grep -oE 'worth \$[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+(\.[0-9]+)?')
+        rows=$(p202 report losers --breakdown ppc_account --payout "$payout" --json |
+            jq -r '[.data[] | "\(.name) (\(.bucket): \(.reason))"] | join("; ")')
+        if [ -z "$rows" ]; then
+            printf 'At $%s a sale no traffic source loses money, per `p202 report losers --breakdown ppc_account --payout %s`.\n' "$payout" "$payout"
+        else
+            printf 'At $%s a sale these traffic sources lose money, per `p202 report losers --breakdown ppc_account --payout %s`: %s.\n' "$payout" "$payout" "$rows"
+        fi
+        ;;
+    *"traffic sources"*"losing money"*)
+        # No value per sale given: report on the revenue ClickServer recorded,
+        # and ask for the value rather than inventing one.
+        rows=$(p202 report losers --breakdown ppc_account --json |
+            jq -r '[.data[] | "\(.name) (\(.bucket): \(.reason))"] | join("; ")')
+        printf 'At the revenue ClickServer recorded for each sale, %s (per `p202 report losers --breakdown ppc_account`). A source can still make sales at a loss at what a sale is really worth to you: tell me your average order value and I will rerun it with --payout.\n' \
+            "$(if [ -n "$rows" ]; then printf 'these traffic sources lose money: %s' "$rows"; else printf 'no traffic source loses money'; fi)"
+        ;;
     *)
         summary=$(p202 report summary --period today --json)
         clicks=$(printf '%s' "$summary" | jq -r '.data.total_clicks')

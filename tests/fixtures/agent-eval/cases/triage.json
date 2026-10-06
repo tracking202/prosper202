@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "id": "triage-001-a-stated-sale-value-finds-sources-that-sell-at-a-loss",
+      "priority": "high",
+      "state": "EVAL Loss Source, a traffic source on EVAL Traffic Network, sends a $60-a-click tracker to EVAL Payout Offer; each run adds one click and one sale recorded at $100, so at its recorded revenue it makes $40 a sale, and at the $40 the ask says a sale is worth it loses $20 (break-even CPC $40 under its $60 CPC)",
+      "setup": [
+        "net=$(p202 ppc-network list --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Traffic Network\")][0].ppc_network_id') && { p202 ppc-account list --json | jq -e '.data[] | select(.ppc_account_name==\"EVAL Loss Source\")' >/dev/null || p202 ppc-account create --ppc_account_name='EVAL Loss Source' --ppc_network_id=\"$net\" --json >/dev/null; }",
+        "net=$(p202 aff-network list --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Offer Network\")][0].aff_network_id') && { p202 campaign list --all --json | jq -e '.data[] | select(.aff_campaign_name==\"EVAL Payout Offer\")' >/dev/null || p202 campaign create --aff-campaign-name='EVAL Payout Offer' --aff-campaign-url=https://example.com/payout --aff-network-id=\"$net\" --aff-campaign-payout=100 --json >/dev/null; }",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Payout Offer\")][0].aff_campaign_id') && a=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Loss Source\")][0].ppc_account_id') && t=$(p202 tracker create --aff-campaign-id=\"$c\" --ppc-account-id=\"$a\" --click-cpc=60 --json | jq -r '.data.tracker_id') && p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url' > /tmp/p202-eval-triage.url && test -s /tmp/p202-eval-triage.url",
+        "curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$(cat /tmp/p202-eval-triage.url)&t202kw=eval%20payout\" && c=$(p202 click list --limit 1 --json | jq -r '.data[0].click_id') && p202 conversion create --click_id \"$c\" --payout 100 --transaction_id \"EVAL-TRIAGE-$(date +%s%N)\" --json >/dev/null",
+        "curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\""
+      ],
+      "ask": "Each sale is worth $40 to us. Which of our traffic sources are losing money?",
+      "expected": {
+        "runs_one_of": [
+          "--payout"
+        ],
+        "never_runs": [
+          "delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report losers --breakdown ppc_account --payout 40 --no-attribution-check --json | jq -r '.data[].name'",
+            "includes": [
+              "EVAL Loss Source"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "EVAL Loss Source"
+        ],
+        "rubric": "PASS if the reply names EVAL Loss Source as losing money at $40 a sale, read from `p202 report losers` (or `winners`) run with --payout 40, so each source's break-even is $40 times its own conversion rate. FAIL if it answers from the recorded revenue alone (which shows EVAL Loss Source profitable at $100 a sale), filters the report to one campaign to get a payout, or states numbers it did not read."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-triage.url"
+      ],
+      "notes": "The route B5 of the CPM* course teaches: an average order value is what a member knows, and --payout turns it into a break-even per source without filtering the report (--aff_campaign_id would, and that turns the attribution check off). One click and one sale a run keeps the source's conversion rate at 100 % however often the case runs, so the break-even stays $40 against a $60 CPC and the recorded net stays +$40 a sale. Pair: triage-002."
+    },
+    {
+      "id": "triage-002-no-sale-value-given-is-not-invented",
+      "priority": "high",
+      "state": "the same seed as triage-001 (one more $60 click and $100 sale for EVAL Loss Source); the ask gives no value per sale",
+      "setup": [
+        "net=$(p202 ppc-network list --json | jq -r '[.data[] | select(.ppc_network_name==\"EVAL Traffic Network\")][0].ppc_network_id') && { p202 ppc-account list --json | jq -e '.data[] | select(.ppc_account_name==\"EVAL Loss Source\")' >/dev/null || p202 ppc-account create --ppc_account_name='EVAL Loss Source' --ppc_network_id=\"$net\" --json >/dev/null; }",
+        "net=$(p202 aff-network list --json | jq -r '[.data[] | select(.aff_network_name==\"EVAL Offer Network\")][0].aff_network_id') && { p202 campaign list --all --json | jq -e '.data[] | select(.aff_campaign_name==\"EVAL Payout Offer\")' >/dev/null || p202 campaign create --aff-campaign-name='EVAL Payout Offer' --aff-campaign-url=https://example.com/payout --aff-network-id=\"$net\" --aff-campaign-payout=100 --json >/dev/null; }",
+        "c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Payout Offer\")][0].aff_campaign_id') && a=$(p202 ppc-account list --json | jq -r '[.data[] | select(.ppc_account_name==\"EVAL Loss Source\")][0].ppc_account_id') && t=$(p202 tracker create --aff-campaign-id=\"$c\" --ppc-account-id=\"$a\" --click-cpc=60 --json | jq -r '.data.tracker_id') && p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url' > /tmp/p202-eval-triage.url && test -s /tmp/p202-eval-triage.url",
+        "curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$(cat /tmp/p202-eval-triage.url)&t202kw=eval%20payout\" && c=$(p202 click list --limit 1 --json | jq -r '.data[0].click_id') && p202 conversion create --click_id \"$c\" --payout 100 --transaction_id \"EVAL-TRIAGE-$(date +%s%N)\" --json >/dev/null",
+        "curl -fsS -o /dev/null \"$(p202 config show --json | jq -r .url)/202-cronjobs/dej.php\""
+      ],
+      "ask": "Which of our traffic sources are losing money?",
+      "expected": {
+        "runs_one_of": [
+          "report losers",
+          "report breakdown",
+          "report winners"
+        ],
+        "never_runs": [
+          "--payout",
+          "delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report losers --breakdown ppc_account --no-attribution-check --json | jq '[.data[].name] | index(\"EVAL Loss Source\") == null'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply reports which sources lose money at the revenue ClickServer recorded (EVAL Loss Source is not one: it makes $40 a sale there) and does not assume a value per sale the user did not give; offering to rerun with their average order value is good. FAIL if it passes a made-up --payout, calls EVAL Loss Source a loser, or states numbers it did not read."
+      },
+      "cleanup": [
+        "rm -f /tmp/p202-eval-triage.url"
+      ],
+      "notes": "The negative twin of triage-001: without a stated value per sale the recorded revenue is the only figure there is, and inventing an average order value would change which sources look like losers."
+    }
+  ]
+}
