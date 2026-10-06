@@ -1841,7 +1841,8 @@ paths:
         dimension of the credited clicks; clicks and cost from the
         dimension's own clicks whose click_time is in range; assisted
         conversions (journeys where the dimension had a touch before the
-        converting click). Money values are exact decimal strings. Without
+        converting click). With cohort=click, credits and assists are read
+        by the click_time of the click they land on instead. Money values are exact decimal strings. Without
         model_id the report is "effective": each conversion under its
         campaign's model override when that model is active, otherwise the
         account default. Unknown parameters are refused.
@@ -1882,6 +1883,31 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: cohort
+          in: query
+          description: >-
+            conversion (default): credits and assists of the conversions made in the range,
+            credited to clicks of any age (the Attribution page's view). click: credits and
+            assists that land on clicks made in the range, for conversions at any time, so each
+            row is what its own clicks in range earned against their cost. That is the
+            population the classic reports count: last-touch credit in the click cohort is the
+            classic row's revenue. A click cohort report is always computed in full (the
+            rollup is kept by conversion hour). With group_by=day, credits and assists fall on
+            the click's day.
+          schema:
+            type: string
+            enum: [conversion, click]
+            default: conversion
+        - name: keys
+          in: query
+          description: >-
+            Only these rows: 1 to 1000 row keys as data[].key returns them (a dimension id, 0 for
+            none, a date under group_by=day), comma-separated, no spaces. Rows keep the report's
+            order, meta.groups counts the matches, and totals still cover the whole report. The
+            report is computed in full for every request (offset only slices it), so a reader
+            that needs a few rows asks for them here instead of paging.
+          schema:
+            type: string
       responses:
         "200":
           description: One row per dimension value, sorted by attributed revenue
@@ -9500,6 +9526,10 @@ components:
               type: integer
             time_to:
               type: integer
+            cohort:
+              type: string
+              enum: [conversion, click]
+              description: The cohort the credits and assists were read in.
             model:
               type: object
               description: The model read, or {mode:"effective", default_model_id} when none was named.

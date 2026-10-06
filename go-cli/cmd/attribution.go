@@ -24,6 +24,8 @@ var attributionModelTypes = []string{"last_touch", "first_touch", "linear", "tim
 
 // attributionDimensions is the server's report dimension list
 // (Prosper202\Attribution\AttributionReports::dimensions), checked the same way.
+var attributionCohorts = []string{"conversion", "click"}
+
 var attributionDimensions = []string{"campaign", "traffic_source", "landing_page", "keyword", "c1", "c2", "c3", "c4", "country", "device", "day"}
 
 var attributionPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
@@ -32,6 +34,9 @@ var attributionPeriods = []string{"today", "yesterday", "last7", "last30", "last
 var attributionModelStatuses = []string{"active", "inactive"}
 
 var positiveIntPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+
+// keysPattern is a comma-separated list of row keys without spaces (what the server accepts for keys).
+var keysPattern = regexp.MustCompile(`^[^\s,]{1,64}(,[^\s,]{1,64})*$`)
 
 // wholeNumberPattern is 0 or a positive whole number without leading zeros (what the server accepts for offset).
 var wholeNumberPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
@@ -244,11 +249,14 @@ dimension of the credited clicks; clicks and cost from the dimension's own click
 conversions (journeys where the dimension had a touch before the converting click).
 
 Without --model the report is "effective": each conversion under its campaign's model override
-when that model is active, otherwise the account default.`,
+when that model is active, otherwise the account default.
+
+--cohort click reads credits and assists by the date of the click they land on instead of the
+sale's date: each row is what its own clicks in the range earned (whenever they converted) against
+their cost, the population the classic reports count.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
-		groupBy, _ := cmd.Flags().GetString("group-by")
-		params["group_by"] = groupBy
+		params["group_by"] = enumValue(cmd, "group-by")
 		for flag, param := range map[string]string{"model": "model_id", "compare-model": "compare_model_id", "limit": "limit"} {
 			v, _ := cmd.Flags().GetString(flag)
 			if v == "" {
@@ -279,6 +287,17 @@ when that model is active, otherwise the account default.`,
 			}
 			params["offset"] = v
 		}
+		if v := enumValue(cmd, "cohort"); v != "" {
+			params["cohort"] = v
+		}
+		if cmd.Flags().Changed("keys") {
+			v, _ := cmd.Flags().GetString("keys")
+			if !keysPattern.MatchString(v) || strings.Count(v, ",") >= attributionPage {
+				return validationError("invalid --keys %q: a comma-separated list of 1 to 1000 row keys, no spaces", v).
+					WithHint("Keys are data[].key from an earlier breakdown: dimension ids, 0 for none, a date under --group-by day.")
+			}
+			params["keys"] = v
+		}
 		if err := attributionRangeParams(cmd, params); err != nil {
 			return err
 		}
@@ -292,8 +311,22 @@ when that model is active, otherwise the account default.`,
 			if asAPIError(err, &apiErr) && apiErr.Status == 409 {
 				return withHint(err, "That model is inactive or invalid, so it has no credits. Check it with `p202 attribution model get <id>` and fix or activate it with `p202 attribution model update`.")
 			}
-			if params["offset"] != "" && refusesOffset(err) {
+			// Name every flag the server refused, so one read of the error is enough.
+			var refused []string
+			for _, p := range []string{"offset", "cohort", "keys"} {
+				if params[p] != "" && refusesParam(err, p) {
+					refused = append(refused, "--"+p)
+				}
+			}
+			switch {
+			case len(refused) > 1:
+				return withHint(err, "This server predates %s; drop them to read the report it has.", strings.Join(refused, " and "))
+			case len(refused) == 1 && refused[0] == "--offset":
 				return withHint(err, "This server can't page the attribution report yet (it predates offset); drop --offset to get the first --limit rows.")
+			case len(refused) == 1 && refused[0] == "--cohort":
+				return withHint(err, "This server can't count by click date yet (it predates --cohort); drop --cohort to read the sales made in the range.")
+			case len(refused) == 1:
+				return withHint(err, "This server can't pick rows by key yet (it predates --keys); drop --keys and page with --limit and --offset.")
 			}
 			return err
 		}
@@ -409,6 +442,9 @@ func init() {
 	attrBreakdownCmd.Flags().String("compare-model", "", "A second model id, side by side")
 	attrBreakdownCmd.Flags().String("limit", "", "Rows, 1-1000 (default 100)")
 	attrBreakdownCmd.Flags().String("offset", "", "Rows to skip, for paging past --limit (meta.groups is the total; needs a server with attribution paging)")
+	attrBreakdownCmd.Flags().String("cohort", "", "conversion: the sales made in the range (default); click: what the range's clicks earned, as the classic reports count. Values: {values}")
+	enumFlag(attrBreakdownCmd, "cohort", newEnum(attributionCohorts))
+	attrBreakdownCmd.Flags().String("keys", "", "Only these rows: up to 1000 row keys (data[].key), comma-separated")
 	registerAttributionRangeFlags(attrBreakdownCmd)
 	registerAttributionRangeFlags(attrJourneysCmd)
 	attrQueueCmd.Flags().Int("limit", 50, "Rows of the backlog to list, 1-500")

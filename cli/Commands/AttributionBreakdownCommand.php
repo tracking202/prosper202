@@ -26,7 +26,9 @@ class AttributionBreakdownCommand extends BaseCommand
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Unix start time')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Unix end time')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-1000 (default 100)')
-            ->addOption('offset', null, InputOption::VALUE_REQUIRED, 'Rows to skip, for reading past --limit (default 0)');
+            ->addOption('offset', null, InputOption::VALUE_REQUIRED, 'Rows to skip, for reading past --limit (default 0)')
+            ->addOption('cohort', null, InputOption::VALUE_REQUIRED, 'conversion: sales made in the range (default); click: what the clicks made in it earned, as the classic reports count')
+            ->addOption('keys', null, InputOption::VALUE_REQUIRED, 'Only these rows: a comma-separated list of up to 1000 row keys (data[].key)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
@@ -38,6 +40,14 @@ class AttributionBreakdownCommand extends BaseCommand
                 $params[$opt] = (string) $v;
             }
         }
+        // An explicitly empty --cohort or --keys is refused below rather than dropped, which would read the default
+        // cohort or every row instead.
+        foreach (['cohort', 'keys'] as $opt) {
+            $v = $input->getOption($opt);
+            if ($v !== null) {
+                $params[$opt] = (string) $v;
+            }
+        }
         if (isset($params['limit'])
             && (preg_match('/^[1-9][0-9]{0,3}$/D', $params['limit']) !== 1 || (int) $params['limit'] > 1000)) {
             $output->writeln('<error>Invalid --limit: a whole number of rows from 1 to 1000</error>');
@@ -45,6 +55,14 @@ class AttributionBreakdownCommand extends BaseCommand
         }
         if (isset($params['offset']) && preg_match('/^(0|[1-9][0-9]{0,17})$/D', $params['offset']) !== 1) {
             $output->writeln('<error>Invalid --offset: a whole number, 0 or more</error>');
+            return Command::FAILURE;
+        }
+        if (isset($params['cohort']) && !in_array($params['cohort'], AttributionReports::cohorts(), true)) {
+            $output->writeln('<error>Invalid --cohort: ' . implode(' or ', AttributionReports::cohorts()) . '</error>');
+            return Command::FAILURE;
+        }
+        if (isset($params['keys']) && preg_match('/^[^\s,]{1,64}(,[^\s,]{1,64}){0,999}$/D', $params['keys']) !== 1) {
+            $output->writeln('<error>Invalid --keys: a comma-separated list of 1 to 1000 row keys, no spaces</error>');
             return Command::FAILURE;
         }
         $result = $this->client()->get('attribution/reports/breakdown', $params);

@@ -388,4 +388,67 @@ class CrudCommandsTest extends TestCase
             $this->assertSame('1000', $params['limit'] ?? null);
         }
     }
+
+    public function testAttributionBreakdownCohortIsConversionOrClick(): void
+    {
+        foreach (['clicks', 'Click', 'conv', ''] as $cohort) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--cohort' => $cohort]);
+
+            $this->assertSame(Command::FAILURE, $status, $cohort);
+            $this->assertStringContainsString('Invalid --cohort: conversion or click', $tester->getDisplay(), $cohort);
+        }
+    }
+
+    public function testAttributionBreakdownForwardsTheCohort(): void
+    {
+        foreach (['conversion', 'click'] as $cohort) {
+            $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+                /** @var list<array{string, array<string, string>}> */
+                public array $calls = [];
+
+                public function get(string $path, array $params = []): array
+                {
+                    $this->calls[] = [$path, $params];
+
+                    return ['data' => [], 'meta' => ['groups' => 0, 'cohort' => $params['cohort'] ?? 'conversion']];
+                }
+            };
+            $command = new class ($client) extends AttributionBreakdownCommand {
+                public function __construct(private readonly \P202Cli\ApiClient $fake)
+                {
+                    parent::__construct('attribution:breakdown');
+                }
+
+                protected function client(): \P202Cli\ApiClient
+                {
+                    return $this->fake;
+                }
+            };
+            $app = new Application('test', '1.0');
+            $app->add($command);
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--cohort' => $cohort, '--keys' => '7,0,12', '--period' => 'last30', '--json' => true]);
+
+            $this->assertSame(Command::SUCCESS, $status, $cohort);
+            $this->assertCount(1, $client->calls, $cohort);
+            $this->assertSame($cohort, $client->calls[0][1]['cohort'] ?? null, 'cohort reaches the query');
+            $this->assertSame('7,0,12', $client->calls[0][1]['keys'] ?? null, 'keys reach the query');
+        }
+    }
+
+    public function testAttributionBreakdownKeysAreAListOfUpToAThousand(): void
+    {
+        foreach (['', '7,,8', '7, 8', ',7', implode(',', range(1, 1001))] as $keys) {
+            $app = new Application('test', '1.0');
+            $app->add(new AttributionBreakdownCommand());
+            $tester = new CommandTester($app->find('attribution:breakdown'));
+            $status = $tester->execute(['--keys' => $keys]);
+
+            $this->assertSame(Command::FAILURE, $status, $keys);
+            $this->assertStringContainsString('Invalid --keys', $tester->getDisplay(), $keys);
+        }
+    }
 }
