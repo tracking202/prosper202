@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -26,19 +27,19 @@ func rejectMultiProfile(cmd *cobra.Command) error {
 // applyBreakdownFilters post-filters breakdown rows client-side by --min-clicks,
 // --min-cost, --zero-leads, and --having (FIELD OP VALUE). Returns the original
 // bytes unchanged when no filter is set or the payload can't be parsed.
-func applyBreakdownFilters(cmd *cobra.Command, data []byte) []byte {
+func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
 	minCost, _ := cmd.Flags().GetFloat64("min-cost")
 	zeroLeads, _ := cmd.Flags().GetBool("zero-leads")
 	having, _ := cmd.Flags().GetString("having")
 	if minClicks == 0 && minCost == 0 && !zeroLeads && strings.TrimSpace(having) == "" {
-		return data
+		return data, nil
 	}
 	var resp struct {
 		Data []map[string]interface{} `json:"data"`
 	}
-	if json.Unmarshal(data, &resp) != nil {
-		return data
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("applying --min-clicks/--min-cost/--zero-leads/--having: parsing the breakdown: %w", err)
 	}
 	field, op, want, hasHaving := parseHaving(having)
 
@@ -58,8 +59,11 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) []byte {
 		}
 		out = append(out, r)
 	}
-	b, _ := json.Marshal(map[string]interface{}{"data": out})
-	return b
+	b, err := json.Marshal(map[string]interface{}{"data": out})
+	if err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	return b, nil
 }
 
 func parseHaving(s string) (field, op string, value float64, ok bool) {

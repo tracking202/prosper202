@@ -142,6 +142,29 @@ final class LtvGuardsTest extends TestCase
         self::assertSame([7, 1700000000, 1700086400, 7, 1700000000, 1700086400, 25, 0], $queries[0]->boundValues);
     }
 
+    public function testPagedBreakdownsBreakRevenueTiesByIdForStablePaging(): void
+    {
+        // total_revenue ties (often 0) have no defined order, so LIMIT/OFFSET
+        // pages could skip some rows and repeat others. The grouped id breaks it.
+        $cases = [
+            'campaign' => 'ORDER BY total_revenue DESC, ref.aff_campaign_id ASC',
+            'ppc_account' => 'ORDER BY total_revenue DESC, ref.ppc_account_id ASC',
+            'landing_page' => 'ORDER BY total_revenue DESC, ref.landing_page_id ASC',
+            'product' => 'ORDER BY total_revenue DESC, pc.product_id ASC',
+        ];
+        foreach ($cases as $breakdown => $order) {
+            $read = new FakeMysqliConnection();
+            $repo = new MysqlLtvRepository(new Connection(new FakeMysqliConnection(), $read));
+
+            $repo->breakdown(new LtvQuery(7), $breakdown, 50, 50);
+
+            $queries = $read->statementsContaining('LIMIT ? OFFSET ?');
+            self::assertCount(1, $queries, $breakdown);
+            $pattern = '/' . preg_quote($order, '/') . '\s+LIMIT \? OFFSET \?$/';
+            self::assertMatchesRegularExpression($pattern, $queries[0]->sql, $breakdown);
+        }
+    }
+
     public function testCohortsBucketByMonthsSinceAcquisition(): void
     {
         $read = new FakeMysqliConnection();

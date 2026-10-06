@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,14 +141,19 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 	return results, errorsOut, nil
 }
 
-func aggregateNumericFields(rows map[string]map[string]interface{}) map[string]interface{} {
+// aggregateNumericFields sums each numeric field across profiles. A NaN or
+// infinite value (or sum) is an error naming the profile: json.Marshal can't encode it.
+func aggregateNumericFields(rows map[string]map[string]interface{}) (map[string]interface{}, error) {
 	aggregate := map[string]interface{}{}
 	keys := map[string]bool{}
-	for _, row := range rows {
+	names := make([]string, 0, len(rows))
+	for name, row := range rows {
+		names = append(names, name)
 		for key := range row {
 			keys[key] = true
 		}
 	}
+	sort.Strings(names)
 
 	keyList := make([]string, 0, len(keys))
 	for key := range keys {
@@ -158,20 +164,28 @@ func aggregateNumericFields(rows map[string]map[string]interface{}) map[string]i
 	for _, key := range keyList {
 		total := 0.0
 		seenNumeric := false
-		for _, row := range rows {
-			val, ok := parseFloat(row[key])
+		for _, name := range names {
+			val, ok := parseFloat(rows[name][key])
 			if !ok {
 				continue
 			}
+			if math.IsNaN(val) || math.IsInf(val, 0) {
+				return nil, withHint(fmt.Errorf("profile %s field %s: not a finite number: %v", name, key, rows[name][key]),
+					"`p202 report summary --profile %s --json` shows that server's raw response.", name)
+			}
 			total += val
 			seenNumeric = true
+		}
+		if math.IsInf(total, 0) {
+			return nil, withHint(fmt.Errorf("field %s: the sum across profiles is not a finite number", key),
+				"Read each server separately with `p202 report summary --profile <name> --json`.")
 		}
 		if seenNumeric {
 			aggregate[key] = total
 		}
 	}
 
-	return aggregate
+	return aggregate, nil
 }
 
 func parseFloat(v interface{}) (float64, bool) {
@@ -199,7 +213,7 @@ func parseFloat(v interface{}) (float64, bool) {
 	}
 }
 
-func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) []byte {
+func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) ([]byte, error) {
 	names := make([]string, 0, len(profileData))
 	for name := range profileData {
 		names = append(names, name)
@@ -219,13 +233,16 @@ func buildMultiProfilePayload(profileData map[string]map[string]interface{}, agg
 	totalRow["profile"] = "TOTAL"
 	rows = append(rows, totalRow)
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"data":       rows,
 		"profiles":   profiles,
 		"aggregated": aggregated,
 		"errors":     errorsOut,
 	})
-	return payload
+	if err != nil {
+		return nil, fmt.Errorf("encoding output: %w", err)
+	}
+	return payload, nil
 }
 
 func addMultiProfileFlags(cmd *cobra.Command) {

@@ -507,7 +507,10 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			"config_update_skipped": configUpdateSkipped,
 			"config_profile":        configProfile,
 		}
-		encoded, _ := json.Marshal(out)
+		encoded, err := json.Marshal(out)
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(encoded)
 		return nil
 	},

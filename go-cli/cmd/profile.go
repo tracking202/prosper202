@@ -164,10 +164,13 @@ var configListProfilesCmd = &cobra.Command{
 			rows = append(rows, row)
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"active_profile": cfg.ActiveProfile,
 			"data":           rows,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},

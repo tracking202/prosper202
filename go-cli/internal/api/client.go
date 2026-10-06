@@ -130,6 +130,24 @@ func ErrorCategory(err error) string {
 	return ""
 }
 
+// DeletedConversionID returns the conversion a POST /conversions 409 names when the request
+// repeats a deleted conversion (details.deleted, details.conv_id), or 0 for any other error.
+func DeletedConversionID(err error) int64 {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 409 {
+		return 0
+	}
+	details, _ := apiErr.Raw["details"].(map[string]interface{})
+	if deleted, _ := details["deleted"].(bool); !deleted {
+		return 0
+	}
+	id, _ := details["conv_id"].(float64)
+	if id <= 0 || id != float64(int64(id)) {
+		return 0
+	}
+	return int64(id)
+}
+
 // Hinted is implemented by errors that carry their own recovery hint.
 type Hinted interface {
 	HintText() string
@@ -158,11 +176,14 @@ func HintFor(err error) string {
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
-		// A 409 has several unrelated causes -- a still-running idempotent
-		// retry, a spent Idempotency-Key, an interrupted apply, a staged
-		// change in the wrong state, an actual duplicate -- and "update it
+		// A 409 has several unrelated causes -- a repeat of a deleted
+		// conversion, a still-running idempotent retry, a spent
+		// Idempotency-Key, an interrupted apply, a staged change in the
+		// wrong state, an actual duplicate -- and "update it
 		// instead of creating" is wrong advice for all but the last. Match
 		// the specific causes first; the duplicate stays the fallback.
+		case apiErr.Status == 409 && DeletedConversionID(err) > 0:
+			return "The click's ledger keeps a deleted conversion's key, so the same conversion is never recorded again; nothing was written. `p202 click conversions <click_id>` shows the deleted row. A different sale needs its own --transaction_id."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "still in flight"):
 			return "The first request carrying this Idempotency-Key is still running. Wait, then retry the same command to receive its recorded response."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "idempotency-key"):

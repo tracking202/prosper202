@@ -660,7 +660,10 @@ func formatScalar(v interface{}, exact bool) string {
 		}
 		return "false"
 	case map[string]interface{}, []interface{}:
-		data, _ := json.Marshal(val)
+		data, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
 		return string(data)
 	default:
 		return fmt.Sprintf("%v", val)

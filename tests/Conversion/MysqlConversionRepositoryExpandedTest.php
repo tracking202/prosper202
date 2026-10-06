@@ -248,8 +248,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // (The dedup lookup also returns the LTV customer link since the
         // customer_id column was added.)
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id FROM 202_conversion_logs',
-            [['conv_id' => 99, 'customer_id' => null]]
+            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ?',
+            [['conv_id' => 99, 'customer_id' => null, 'deleted' => 0]]
         );
 
         [$repo] = $this->buildRepo($write);

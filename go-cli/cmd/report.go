@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
 	"p202/internal/api"
 
 	"github.com/spf13/cobra"
@@ -52,7 +56,14 @@ var reportSummaryCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			payload := buildMultiProfilePayload(profileData, aggregateNumericFields(profileData), errorsOut)
+			aggregated, err := aggregateNumericFields(profileData)
+			if err != nil {
+				return err
+			}
+			payload, err := buildMultiProfilePayload(profileData, aggregated, errorsOut)
+			if err != nil {
+				return err
+			}
 			render(payload)
 			return nil
 		}
@@ -121,7 +132,11 @@ var reportBreakdownCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		render(applyBreakdownFilters(cmd, data))
+		filtered, err := applyBreakdownFilters(cmd, data)
+		if err != nil {
+			return err
+		}
+		render(filtered)
 		return nil
 	},
 }
@@ -146,8 +161,69 @@ var reportTimeseriesCmd = &cobra.Command{
 			return err
 		}
 		render(data)
+		if w := timeseriesTruncationWarning(data, params["interval"]); w != "" {
+			fmt.Fprintln(cmd.ErrOrStderr(), w)
+		}
 		return nil
 	},
+}
+
+// timeseriesMaxRows is the bucket cap of servers that predate the
+// `truncated` flag: from one of those, exactly this many buckets may be a cut.
+const timeseriesMaxRows = 2000
+
+// timeseriesTruncationWarning returns a stderr warning when a timeseries
+// response was cut at the server's bucket cap (or, from a server too old to
+// say, may have been), else "". Buckets run oldest first, so a cut drops the
+// most recent ones.
+func timeseriesTruncationWarning(data []byte, interval string) string {
+	var resp struct {
+		Data      []map[string]interface{} `json:"data"`
+		Truncated *bool                    `json:"truncated"`
+		Limit     *int                     `json:"limit"`
+	}
+	if json.Unmarshal(data, &resp) != nil || len(resp.Data) == 0 {
+		return ""
+	}
+	limit := timeseriesMaxRows
+	if resp.Limit != nil && *resp.Limit > 0 {
+		limit = *resp.Limit
+	}
+	last := "the last bucket returned"
+	if p, ok := resp.Data[len(resp.Data)-1]["period"].(string); ok && p != "" {
+		last = p
+	}
+
+	var lead string
+	switch {
+	case resp.Truncated != nil && *resp.Truncated:
+		lead = fmt.Sprintf("Warning: the series was cut at the server's %d-bucket limit; buckets after %s are missing.", limit, last)
+	case resp.Truncated == nil && len(resp.Data) >= timeseriesMaxRows:
+		lead = fmt.Sprintf("Warning: %d buckets is this server's limit and it does not report truncation; buckets after %s may be missing.", len(resp.Data), last)
+	default:
+		return ""
+	}
+
+	hint := "Narrow --time_from/--time_to (or use a shorter --period)"
+	if coarser := coarserIntervals(interval); coarser != "" {
+		hint += ", or use --interval " + coarser + ", which the server buckets into fewer rows"
+	}
+	return lead + "\nHint: " + hint + "."
+}
+
+// coarserIntervals lists the intervals above interval (the server default is
+// day), joined for a hint; "" for month.
+func coarserIntervals(interval string) string {
+	order := []string{"hour", "day", "week", "month"}
+	if interval == "" {
+		interval = "day"
+	}
+	for i, name := range order {
+		if name == interval {
+			return strings.Join(order[i+1:], "|")
+		}
+	}
+	return "week|month"
 }
 
 var reportWeekpartCmd = &cobra.Command{

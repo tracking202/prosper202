@@ -1205,10 +1205,20 @@ paths:
         (`replace`: the latest conversion is the value; `accumulate`: the
         conversions add up).
 
-        A repeated `transaction_id` on the same click is the same conversion
-        (the existing one is returned). With no `transaction_id`, an
-        `accumulate` campaign records one plain conversion per click, and a
-        `replace` campaign records a row each time.
+        A repeated `transaction_id` on the same click is the same conversion:
+        nothing is written, and the existing one is returned with
+        `duplicate: true` beside `data` (absent when the conversion is new;
+        the status stays `201`, as for an `idempotent_replay`). With no
+        `transaction_id`, an `accumulate` campaign records one plain
+        conversion per click (a repeat is a duplicate), and a `replace`
+        campaign records a row each time.
+
+        A deleted conversion keeps its place in the click's ledger, so a
+        conversion that repeats one — the same `transaction_id`, the same
+        reversal, or an `accumulate` click's plain conversion — is not
+        recorded again: it is a `409` naming the deleted conversion
+        (`details.conv_id`, `details.deleted: true`), nothing is written, and
+        an `Idempotency-Key` sent with it is not spent.
 
         `status: "reversed"` with the `transaction_id` of an earlier
         conversion records a reversal that nets against it (a $3 sale
@@ -1224,11 +1234,50 @@ paths:
               $ref: "#/components/schemas/ConversionCreate"
       responses:
         "201":
-          description: Conversion created
+          description: Conversion created, or the existing one it repeats (`duplicate`)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ConversionResponse"
+                allOf:
+                  - $ref: "#/components/schemas/ConversionResponse"
+                  - type: object
+                    properties:
+                      duplicate:
+                        type: boolean
+                        description: |
+                          Present (`true`) only when the click already had this
+                          conversion: `data` is that conversion and nothing was
+                          written.
+                      idempotent_replay:
+                        type: boolean
+                        description: Present (`true`) when the response is an `Idempotency-Key` replay.
+        "409":
+          description: |
+            Either the conversion repeats one that was deleted (its ledger key
+            stays on the click), so it is not recorded again and nothing was
+            written; only this case carries `details.deleted: true`. Or the
+            `Idempotency-Key` is held by a request still in flight (retry once
+            it completes), or by one that did not finish (whether it wrote is
+            unknown: check, then retry with a new key). Those carry no
+            `details`.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      details:
+                        type: object
+                        properties:
+                          conv_id:
+                            type: integer
+                            description: The deleted conversion.
+                          click_id:
+                            type: integer
+                          deleted:
+                            type: boolean
+                            enum: [true]
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -1296,7 +1345,13 @@ paths:
     get:
       tags: [Reports]
       summary: Performance breakdown
-      description: Performance metrics grouped by a dimension.
+      description: >-
+        Performance metrics grouped by a dimension. Rows are ordered by `sort`,
+        then by `id` ascending, so rows tied on the sort column (many with 0
+        clicks) keep one order across requests. Over unchanged data, paging
+        with `offset` neither skips nor repeats a row; a rolling `period`
+        moves with the clock and new traffic changes the sort values, so page
+        a fixed `time_from`/`time_to` window for a consistent read.
       operationId: reportBreakdown
       parameters:
         - name: breakdown
@@ -1381,7 +1436,11 @@ paths:
     get:
       tags: [Reports]
       summary: Performance timeseries
-      description: Performance metrics aggregated by time interval.
+      description: >-
+        Performance metrics aggregated by time interval, oldest bucket first,
+        at most `limit` (2000) buckets per response. When the window holds
+        more, `truncated` is true and the newest buckets are the ones left
+        out: narrow `time_from`/`time_to`, or use a coarser `interval`.
       operationId: reportTimeseries
       parameters:
         - name: interval
@@ -1439,6 +1498,16 @@ paths:
                           type: number
                   interval:
                     type: string
+                  truncated:
+                    type: boolean
+                    description: >-
+                      True when more buckets matched than `limit`; `data` then
+                      holds the oldest `limit` of them. Absent from servers
+                      that predate it, which cut at 2000 without saying so.
+                  limit:
+                    type: integer
+                    description: The most buckets one response carries (2000).
+                    example: 2000
         "422":
           $ref: "#/components/responses/ValidationError"
 
