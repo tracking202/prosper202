@@ -583,7 +583,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				}
 			}
 			payoutFlag, _ := cmd.Flags().GetFloat64("payout")
-			if payoutFlag < 0 || math.IsNaN(payoutFlag) || math.IsInf(payoutFlag, 0) {
+			// An explicit 0 is refused too: every payout branch below needs a positive value, so 0 would silently
+			// read as no --payout at all (recorded revenue) rather than as zero revenue per conversion.
+			if (cmd.Flags().Changed("payout") && payoutFlag <= 0) || payoutFlag < 0 || math.IsNaN(payoutFlag) || math.IsInf(payoutFlag, 0) {
 				return validationError("--payout must be more than 0; got %g", payoutFlag).
 					WithHint("Pass your revenue per conversion, like 160 for a $160 average order.")
 			}

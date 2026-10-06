@@ -1017,7 +1017,8 @@ func TestLosersPayoutFindsSourcesThatSellAtALoss(t *testing.T) {
 func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
 	for _, command := range []string{"losers", "winners"} {
 		for v, want := range map[string]string{
-			"-5": "more than 0", "-0.01": "more than 0", "NaN": "more than 0", "Inf": "more than 0", "+Inf": "more than 0",
+			"0": "more than 0", "-5": "more than 0", "-0.01": "more than 0", "NaN": "more than 0", "Inf": "more than 0",
+			"+Inf": "more than 0",
 			"-Inf": "more than 0",
 			// Finite but large: 1e308 × 2 conversions would be +Inf, which JSON can't encode.
 			"1e308": "at most 1000000000", "1000000000.01": "at most 1000000000",
