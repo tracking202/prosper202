@@ -353,6 +353,10 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	return check, notes
 }
 
+// maxPayout bounds --payout: a billion per conversion is far past any real order value, and keeps
+// conversions × payout finite for any count a report can hold.
+const maxPayout = 1e9
+
 // attributionPage is the attribution report's largest page (AttributionReports::MAX_LIMIT), and the most keys one
 // request takes.
 const attributionPage = 1000
@@ -581,6 +585,11 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			payoutFlag, _ := cmd.Flags().GetFloat64("payout")
 			if payoutFlag < 0 || math.IsNaN(payoutFlag) || math.IsInf(payoutFlag, 0) {
 				return validationError("--payout must be more than 0; got %g", payoutFlag).
+					WithHint("Pass your revenue per conversion, like 160 for a $160 average order.")
+			}
+			// A finite but huge payout times a row's conversions overflows to +Inf, which JSON can't encode.
+			if payoutFlag > maxPayout {
+				return validationError("--payout must be at most %.0f; got %g", maxPayout, payoutFlag).
 					WithHint("Pass your revenue per conversion, like 160 for a $160 average order.")
 			}
 			client, err := api.NewFromConfig()

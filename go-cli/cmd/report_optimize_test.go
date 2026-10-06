@@ -1012,11 +1012,16 @@ func TestLosersPayoutFindsSourcesThatSellAtALoss(t *testing.T) {
 	}
 }
 
-// A negative or non-finite --payout is refused by both commands before any request, as a validation error (exit 1)
-// with a hint an agent can act on.
+// A negative, non-finite or overflowing --payout is refused by both commands before any request, as a validation error
+// (exit 1) with a hint an agent can act on.
 func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
 	for _, command := range []string{"losers", "winners"} {
-		for _, v := range []string{"-5", "-0.01", "NaN", "Inf", "+Inf", "-Inf"} {
+		for v, want := range map[string]string{
+			"-5": "more than 0", "-0.01": "more than 0", "NaN": "more than 0", "Inf": "more than 0", "+Inf": "more than 0",
+			"-Inf": "more than 0",
+			// Finite but large: 1e308 × 2 conversions would be +Inf, which JSON can't encode.
+			"1e308": "at most 1000000000", "1000000000.01": "at most 1000000000",
+		} {
 			t.Run(command+" "+v, func(t *testing.T) {
 				requests := 0
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
@@ -1025,8 +1030,9 @@ func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
 				setTestHome(t, tmp)
 				writeTestConfig(t, tmp, srv.URL, "test-key")
 				_, _, err := executeCommand("report", command, "--payout="+v)
-				if err == nil || !strings.Contains(err.Error(), "--payout must be more than 0") {
-					t.Fatalf("--payout %s should be refused naming the flag, got %v", v, err)
+				want := "--payout must be " + want
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("--payout %s should be refused with %q, got %v", v, want, err)
 				}
 				if code := exitCodeForError(err); code != ExitValidation {
 					t.Errorf("exit code = %d, want %d (validation)", code, ExitValidation)
