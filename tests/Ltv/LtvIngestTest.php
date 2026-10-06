@@ -146,8 +146,8 @@ final class LtvIngestTest extends TestCase
         $write = $this->fakeWithClick();
         $write->whenQueryContainsReturnRows(
             // The replay is found by its ledger key (tx:<transaction id>).
-            'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ?',
-            [['conv_id' => 9001, 'customer_id' => 501]]
+            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ?',
+            [['conv_id' => 9001, 'customer_id' => 501, 'deleted' => 0]]
         );
 
         $conn = new Connection($write, new FakeMysqliConnection());

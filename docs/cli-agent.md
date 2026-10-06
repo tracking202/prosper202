@@ -245,6 +245,16 @@ p202 report breakdown --breakdown country --period last7 --sort total_net --sort
 
 Available breakdowns: `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad` (aliases `lp`, `source`, `network`, `offer`, `geo`). The server lists its own dimensions in `/capabilities` as `features.report_breakdowns`. When a value is not on the CLI's built-in list, the CLI asks the server: a dimension the server lists is sent, and anything else fails with the server's list in the message.
 
+Rows tied on the sort column come back in id order, so paging with `--offset` (offset = rows read so far) neither skips nor repeats a row.
+
+### Read performance over time
+
+```bash
+p202 report timeseries --interval day --period last90 --json
+```
+
+One bucket per `period`, oldest first, at most 2000 per response. When the window holds more, the response carries `"truncated": true` and `"limit": 2000` beside `data` and `interval`, the newest buckets are the missing ones, and stderr has a `Warning:` naming the last bucket returned plus a `Hint:` — narrow `--time_from`/`--time_to`, or use a coarser `--interval` (`week`, `month`). Check `truncated` before treating the last bucket as the latest. A server from before the flag sends neither key and cuts at 2000 silently; 2000 buckets from one of those get the same warning, as "may be missing".
+
 ### Compare before and after a date
 
 ```bash
@@ -309,7 +319,12 @@ p202 campaign create \
 
 If the process dies before reading the response, re-running the identical
 command replays the recorded response (`idempotent_replay: true` in the
-body) instead of creating a duplicate. Requires
+body) instead of creating a duplicate. `conversion create` also says when the
+click already had the conversion (same transaction id): `duplicate: true`
+beside `data`, which is the existing conversion, and in every output mode a
+`Note:` on stderr (as for a replay); a transaction id whose
+conversion was deleted is refused (409, exit 1, `details.conv_id`) and never
+recorded again. Requires
 `features.create_idempotency` in the server capabilities; older servers
 ignore the header and create normally, so retries there can still
 duplicate.
@@ -340,8 +355,10 @@ id. When both look plausible the command refuses with exit 1 and a hint naming
 is absent means the campaign's default payout, and an absent time column means
 the server's now. Pass `--timezone` when the network writes local times.
 
-Statuses after step 3: `created`, `duplicate` (already on the click; not sent
-or not re-recorded), `click_not_found`, `failed` (with the server's message),
+Statuses after step 3: `created`, `duplicate` (already on the click, or a
+deleted conversion's transaction id, which is never recorded again; not sent,
+or answered by the server with `duplicate: true` or a `409` naming the deleted
+conversion), `click_not_found`, `failed` (with the server's message),
 `staged` (under `--staged`), plus `invalid` and `duplicate_in_file` from the
 plan. Any `failed` row means exit 5 with every row still in `data`. Fix the
 cause and run the same command again: rows already recorded come back

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"p202/internal/api"
 )
 
 // convImportFake serves GET /clicks/{id}/conversions and POST /conversions the way
@@ -32,6 +34,9 @@ type convImportFake struct {
 	ledgerHidden  map[int64]bool  // GET shows no conversions for the click
 	getStatus     map[int64]int   // GET answers this status
 	noLedgerRoute bool            // GET /clicks/{id}/conversions is not a route (older server)
+	// unflagged answers a duplicate as though it were new, and a repeat of a deleted
+	// conversion with the 500 that hid it (servers before the duplicate flag).
+	unflagged bool
 }
 
 type fakeImportClick struct {
@@ -133,7 +138,11 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				return
 			}
 			if prev, ok := f.keys[key]; ok && key != "" {
-				replay := map[string]interface{}{"data": prev["data"], "idempotent_replay": true}
+				// IdempotentCreate: the recorded response, as it was, plus the replay flag.
+				replay := map[string]interface{}{"idempotent_replay": true}
+				for k, v := range prev {
+					replay[k] = v
+				}
 				w.WriteHeader(201)
 				json.NewEncoder(w).Encode(replay)
 				return
@@ -161,8 +170,11 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 			if p, ok := body["payout"].(string); ok {
 				payout = p
 			}
-			answer := func(id int64) {
+			answer := func(id int64, duplicate bool) {
 				resp := map[string]interface{}{"data": map[string]interface{}{"conv_id": id, "click_id": click, "click_payout": payout, "transaction_id": txid, "source": "api"}}
+				if duplicate && !f.unflagged {
+					resp["duplicate"] = true
+				}
 				if key != "" {
 					f.keys[key] = resp
 				}
@@ -170,7 +182,7 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				json.NewEncoder(w).Encode(resp)
 			}
 			if id, ok := f.postReturns[click]; ok {
-				answer(id)
+				answer(id, true)
 				return
 			}
 			// MysqlConversionRepository::recordLocked: a negative payout with a transaction id
@@ -186,14 +198,25 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 			}
 			for _, cv := range c.convs {
 				if txid != "" && cv.txid == txid && cv.reverses == reverses {
-					answer(cv.id)
+					switch {
+					case cv.deleted && f.unflagged:
+						w.WriteHeader(500)
+						w.Write([]byte(`{"error":true,"message":"The write to conversion completed, but the request could not be finished afterwards.","status":500}`))
+					case cv.deleted:
+						// ConversionsController::create(): a deleted row keeps its ledger key.
+						w.WriteHeader(409)
+						fmt.Fprintf(w, `{"error":true,"message":"Conversion %d on click %d had transaction id \"%s\" and was deleted.","status":409,"details":{"conv_id":%d,"click_id":%d,"deleted":true}}`,
+							cv.id, click, txid, cv.id, click)
+					default:
+						answer(cv.id, true)
+					}
 					return
 				}
 			}
 			f.nextConv++
 			c.convs = append(c.convs, fakeImportConv{id: f.nextConv, txid: txid, reverses: reverses, amount: payout})
 			c.lead = true
-			answer(f.nextConv)
+			answer(f.nextConv, false)
 		default:
 			w.WriteHeader(404)
 			w.Write([]byte(`{"error":true,"message":"Not found","status":404}`))
@@ -584,7 +607,7 @@ func TestConversionImportMapsEveryOutcome(t *testing.T) {
 		5:  {importClickNotFound, "no click 999", 0},
 		6:  {importClickNotFound, "no click 103", 0},
 		7:  {importFailed, "Deadlock", 0},
-		8:  {importDuplicate, "matched conversion 77", 77},
+		8:  {importDuplicate, "answered with conversion 77", 77},
 		9:  {importDuplicate, "already reverses", 61},
 		10: {importDuplicate, "was deleted", 62},
 		11: {importInvalid, "not a Prosper202 click id", 0},
@@ -613,6 +636,83 @@ func TestConversionImportMapsEveryOutcome(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "10.00 recorded in payouts") {
 		t.Errorf("stderr = %s", stderr)
+	}
+}
+
+// The server's duplicate flag decides a row the read before the writes could not see: a
+// conversion recorded between the read and the write, or one the read missed.
+func TestConversionImportTrustsTheServersDuplicateFlag(t *testing.T) {
+	f := newConvImportFake(100, 101, 102)
+	f.clicks[100].convs = []fakeImportConv{{id: 55, txid: "T1"}}
+	f.clicks[101].convs = []fakeImportConv{{id: 56, txid: "T2", deleted: true}}
+	f.ledgerHidden[100], f.ledgerHidden[101] = true, true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n101,10,T2\n102,3,T3\n")
+
+	stdout, stderr, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("import: %v (a deleted conversion is not a failure)\n%s", err, stderr)
+	}
+	if len(f.posts) != 3 {
+		t.Fatalf("POSTed %d rows, want all 3 (the read saw none of them)", len(f.posts))
+	}
+	res := decodeImport(t, stdout)
+	rows := importByRow(res)
+	if r := rows[2]; r.Status != importDuplicate || r.ConvID != 55 || !strings.Contains(r.Reason, "answered with conversion 55") {
+		t.Errorf("row 2 = %+v, want duplicate of 55 by the server's flag", r)
+	}
+	if r := rows[3]; r.Status != importDuplicate || r.ConvID != 56 || !strings.Contains(r.Reason, "conversion 56 had this transaction id and was deleted") {
+		t.Errorf("row 3 = %+v, want duplicate of the deleted 56", r)
+	}
+	if r := rows[4]; r.Status != importCreated {
+		t.Errorf("row 4 = %+v, want created", r)
+	}
+	if s := res.Meta.Summary; s["created"] != float64(1) || s["duplicate"] != float64(2) || s["payout_imported"] != "3.00" {
+		t.Errorf("summary = %v, want only T3's 3.00 imported", s)
+	}
+}
+
+// Servers before the duplicate flag answer a duplicate as though it were new; the conversion
+// ids read before the writes still recognise it.
+func TestConversionImportFallsBackToTheReadOnUnflaggedServers(t *testing.T) {
+	f := newConvImportFake(105)
+	f.unflagged = true
+	f.clicks[105].convs = []fakeImportConv{{id: 77, txid: "OTHER"}}
+	f.postReturns[105] = 77
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout\n105,\n")
+
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(f.posts) != 1 {
+		t.Fatalf("POSTed %d rows, want 1", len(f.posts))
+	}
+	if r := importByRow(decodeImport(t, stdout))[2]; r.Status != importDuplicate || r.ConvID != 77 || !strings.Contains(r.Reason, "matched conversion 77, already recorded") {
+		t.Errorf("row 2 = %+v, want duplicate of 77 from the read", r)
+	}
+}
+
+// `conversion create` of a transaction id whose conversion was deleted is refused with a 409
+// whose hint says why, not "update it instead of creating" (there is no conversion update).
+func TestConversionCreateOfADeletedTransactionIDIsExplained(t *testing.T) {
+	f := newConvImportFake(107)
+	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", deleted: true}}
+	setupConvImportFake(t, f)
+
+	_, _, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T7")
+	if err == nil {
+		t.Fatal("a deleted conversion's transaction id must be refused")
+	}
+	if id := api.DeletedConversionID(err); id != 62 {
+		t.Errorf("DeletedConversionID = %d, want 62 (err %v)", id, err)
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code = %d, want %d", code, ExitValidation)
+	}
+	if h := hintFor(err); !strings.Contains(h, "never recorded again") || !strings.Contains(h, "p202 click conversions") || strings.Contains(h, "instead of creating") {
+		t.Errorf("hint = %q", h)
 	}
 }
 
@@ -948,5 +1048,29 @@ func TestParseImportClickIDMatchesClickIdParse(t *testing.T) {
 		if got, ok := parseImportClickID(raw); ok {
 			t.Errorf("parseImportClickID(%q) = %d, want refused", raw, got)
 		}
+	}
+}
+
+func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing.T) {
+	f := newConvImportFake(107)
+	setupConvImportFake(t, f)
+
+	_, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if strings.Contains(stderr, "Note:") {
+		t.Errorf("a new conversion carries no note, got %q", stderr)
+	}
+
+	stdout, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if !strings.Contains(stderr, "Note: the click already has this conversion") || !strings.Contains(stderr, "recorded nothing new") {
+		t.Errorf("stderr = %q, want the duplicate note", stderr)
+	}
+	if strings.Contains(stdout, "Note:") {
+		t.Errorf("the note belongs on stderr, stdout = %q", stdout)
 	}
 }

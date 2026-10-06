@@ -139,6 +139,16 @@ if ($pci == '') {
 						    WHERE 	aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
 						    AND 202_aff_campaigns.user_id=1";
     $aff_campaign_row = memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
+    // The outage fallback follows this path too (as below, for a click with
+    // a public id), including a campaign left without a URL.
+    if ($memcacheWorking && is_array($aff_campaign_row)) {
+        \Prosper202\Click\FallbackRedirectUrl::refresh(
+            md5('ac_' . $acip . systemHash()),
+            \Prosper202\Click\FallbackRedirectUrl::withSubid($aff_campaign_row['aff_campaign_url'] ?? ''),
+            static fn(string $key): mixed => $memcache->get($key),
+            static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+        );
+    }
     if (empty($aff_campaign_row['aff_campaign_url'])) {
         die();
     } // if there is no aff_url to redirect to DIE!
@@ -264,16 +274,15 @@ if (!$info_row || !isset($info_row['click_id'])) {
     die();
 }
 
-// cache the url for later use if db is down
+// The URL a MySQL outage redirects to (read above): kept equal to the
+// campaign's current URL, not the one it had at its first click.
 if ($memcacheWorking) {
-
-    $url = $info_row['aff_campaign_url'] . "&subid=p202";
-    $tid = $acip;
-
-    $getKey = $memcache->get(md5('ac_' . $tid . systemHash()));
-    if ($getKey === false) {
-        $setUrl = setCache(md5('ac_' . $tid . systemHash()), $url, 0);
-    }
+    \Prosper202\Click\FallbackRedirectUrl::refresh(
+        md5('ac_' . $acip . systemHash()),
+        \Prosper202\Click\FallbackRedirectUrl::withSubid($info_row['aff_campaign_url'] ?? ''),
+        static fn(string $key): mixed => $memcache->get($key),
+        static fn(string $key, string $url): mixed => setCache($key, $url, 0),
+    );
 }
 
 $click_id = $info_row['click_id'];

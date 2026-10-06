@@ -165,12 +165,15 @@ var syncStatusCmd = &cobra.Command{
 			}
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"source":    fromProfile,
 			"target":    toProfile,
 			"last_sync": manifest.LastSync,
 			"data":      perEntity,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},
@@ -196,12 +199,15 @@ var syncHistoryCmd = &cobra.Command{
 			return err
 		}
 
-		payload, _ := json.Marshal(map[string]interface{}{
+		payload, err := json.Marshal(map[string]interface{}{
 			"source":    fromProfile,
 			"target":    toProfile,
 			"last_sync": manifest.LastSync,
 			"data":      manifest.History,
 		})
+		if err != nil {
+			return fmt.Errorf("encoding output: %w", err)
+		}
 		render(payload)
 		return nil
 	},
@@ -291,7 +297,7 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 	}
 
 	done(true, "")
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"source":       fromProfile,
 		"target":       toProfile,
 		"dry_run":      opts.DryRun,
@@ -299,6 +305,9 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 		"incremental":  opts.Incremental,
 		"results":      runOutput.Results,
 	})
+	if err != nil {
+		return fmt.Errorf("encoding output: %w", err)
+	}
 	render(payload)
 	return nil
 }

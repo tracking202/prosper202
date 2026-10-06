@@ -783,6 +783,17 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 				r.Status, r.Reason = importClickNotFound, fmt.Sprintf("no click %d in this account", r.ClickID)
 				continue
 			}
+			// The row the click's read showed live was deleted before the write (or the read
+			// could not see it): the server refuses it as resolveImportRow would have.
+			if id := api.DeletedConversionID(err); id > 0 {
+				r.Status, r.ConvID = importDuplicate, id
+				what := fmt.Sprintf("conversion %d had this transaction id and", id)
+				if r.TransactionID == "" {
+					what = fmt.Sprintf("conversion %d, the click's one conversion without a transaction id,", id)
+				}
+				r.Reason = what + " was deleted; the ledger keeps its key, so it is not recorded again"
+				continue
+			}
 			r.Status, r.Reason = importFailed, oneLine(err)
 			if abortsImport(err) {
 				for j := range rows {
@@ -800,8 +811,9 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 			continue
 		}
 		var resp struct {
-			Data   map[string]interface{} `json:"data"`
-			Replay bool                   `json:"idempotent_replay"`
+			Data      map[string]interface{} `json:"data"`
+			Replay    bool                   `json:"idempotent_replay"`
+			Duplicate bool                   `json:"duplicate"` // absent before servers flagged duplicates
 		}
 		convID := 0
 		ok := json.Unmarshal(data, &resp) == nil
@@ -818,7 +830,12 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 		case resp.Replay:
 			r.Status = importDuplicate
 			r.Reason = fmt.Sprintf("already recorded as conversion %d by an earlier run (its Idempotency-Key was replayed)", convID)
+		case resp.Duplicate:
+			r.Status = importDuplicate
+			r.Reason = fmt.Sprintf("the server answered with conversion %d, already on the click (duplicate)", convID)
 		case before[r.ClickID][r.ConvID]:
+			// An older server answers a duplicate as though it were new; the read before the
+			// writes is what recognises it there.
 			r.Status = importDuplicate
 			r.Reason = fmt.Sprintf("the server matched conversion %d, already recorded", convID)
 		default:
@@ -1065,7 +1082,8 @@ func newConversionImportCmd() *cobra.Command {
 			"--staged records proposals instead), then each ready row is sent as POST /conversions\n" +
 			"with an Idempotency-Key derived from its click, transaction id, payout and time.\n\n" +
 			"Statuses: created, duplicate (the click already has it: same transaction id, or any\n" +
-			"conversion for an id-less row, or the key was replayed), click_not_found, failed (with\n" +
+			"conversion for an id-less row, or the key was replayed, or the server answered it as a\n" +
+			"duplicate or as a deleted conversion's transaction id), click_not_found, failed (with\n" +
 			"the server's message), staged, invalid, duplicate_in_file (ready in a dry run). Re-running\n" +
 			"the same file is safe: recorded rows come back as duplicate. Exit 5 if any row failed;\n" +
 			"re-running the same command then sends only the rows not yet recorded.",

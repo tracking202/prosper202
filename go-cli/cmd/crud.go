@@ -720,7 +720,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						return err
 					}
 				}
-				encoded, _ := json.Marshal(map[string]interface{}{
+				encoded, err := json.Marshal(map[string]interface{}{
 					"data": rows,
 					"pagination": map[string]interface{}{
 						"total":  len(rows),
@@ -728,6 +728,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						"offset": 0,
 					},
 				})
+				if err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 				render(encoded)
 				return nil
 			}
@@ -767,7 +770,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 						resp["pagination"] = pg
 					}
 				}
-				data, _ = json.Marshal(resp)
+				if data, err = json.Marshal(resp); err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 			}
 			render(data)
 			return nil
@@ -1233,7 +1238,10 @@ func init() {
 					"tracker":      createdObj,
 					"tracking_url": urlObj,
 				}
-				encoded, _ := json.Marshal(out)
+				encoded, err := json.Marshal(out)
+				if err != nil {
+					return fmt.Errorf("encoding output: %w", err)
+				}
 				render(encoded)
 				return nil
 			},

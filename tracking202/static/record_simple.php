@@ -299,10 +299,9 @@ $mysql['platform_id'] = $db->real_escape_string((string) $device_id['platform'])
 $mysql['browser_id'] = $db->real_escape_string((string) $device_id['browser']);
 $mysql['device_id'] = $db->real_escape_string((string) $device_id['device']);
 
-$mysql['click_bot'] = '0';
-if ($device_id['type'] == '4') {
-	$mysql['click_bot'] = '1';
-}
+// Bots are recorded like anyone else; only the flags differ.
+$clickIsBot = \Prosper202\Click\ClickBotDetector::isBot($detect->getUserAgent(), $device_id);
+$mysql['click_bot'] = $clickIsBot ? '1' : '0';
 
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 0;
@@ -372,7 +371,7 @@ if ($user_row['maxmind_isp'] == '1') {
 	$mysql['isp_id'] = '0';
 }
 
-if ($device_id['type'] == '4') {
+if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
 	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $ip_address, $user_id);

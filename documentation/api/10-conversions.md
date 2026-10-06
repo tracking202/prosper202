@@ -57,10 +57,21 @@ back.
 | `conv_time` | integer | No | Unix timestamp (defaults to now) |
 
 Creates are idempotent on `transaction_id`: if a conversion with the same
-`transaction_id` already exists for the given `click_id`, the existing
-conversion is returned instead of recording a duplicate. Omitting
-`transaction_id` skips this check, so retried requests without one will
-record multiple conversions.
+`transaction_id` already exists for the given `click_id`, nothing is written
+and the existing conversion is returned, with `"duplicate": true` beside
+`data` (the field is absent on a new conversion; the status is `201` either
+way, as for an `Idempotency-Key` replay). Without a `transaction_id`, an
+`accumulate` campaign records one plain conversion per click (a repeat is a
+duplicate), and a `replace` campaign records a row on every request, so a
+retried request without one records another conversion there.
+
+A deleted conversion keeps its place in the click's ledger, so a request that
+repeats one (the same `transaction_id`, the same reversal, or an `accumulate`
+click's plain conversion) is refused with `409`, naming it in
+`details.conv_id` with `details.deleted: true`. Nothing is written, and an
+`Idempotency-Key` sent with it is not spent. A different sale needs its own
+`transaction_id`. A `409` without `details` is about the `Idempotency-Key`
+instead: a request holding it is still in flight, or one did not finish.
 
 ## Example
 

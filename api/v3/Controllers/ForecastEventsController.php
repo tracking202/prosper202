@@ -11,7 +11,8 @@ class ForecastEventsController extends Controller
     protected function tableName(): string { return '202_forecast_events'; }
     protected function primaryKey(): string { return 'event_id'; }
 
-    protected function listOrderBy(): string { return 'event_date ASC'; }
+    // event_id breaks same-date ties so offset/cursor pages stay stable.
+    protected function listOrderBy(): string { return 'event_date ASC, event_id ASC'; }
 
     protected function fields(): array
     {

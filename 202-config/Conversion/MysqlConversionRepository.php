@@ -159,7 +159,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        Runs inside the transaction after the insert. It must not write
      *        click_lead or click_payout (ClickValueWritersTest enforces it):
      *        the recompute that follows owns both.
-     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, deleted?: bool, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     *         A duplicate of a keyed row names the row it matched (convId,
+     *         dedupeKey) and says whether it is deleted: a deleted row keeps
+     *         its key, so the same conversion is not recorded again.
      * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
      */
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
@@ -373,9 +376,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // Idempotency: a key already on this click is a replay. The lookup
         // ignores `deleted` so it matches UNIQUE (click_id, dedupe_key)
-        // and never collides on insert.
+        // and never collides on insert; `deleted` says whether the row it
+        // matched still counts, since a deleted row keeps its key.
         $dupStmt = $this->conn->prepareWrite(
-            'SELECT conv_id, customer_id FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1'
+            'SELECT conv_id, customer_id, deleted FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ? LIMIT 1'
         );
         $this->conn->bind($dupStmt, 'is', [$clickId, $dedupeKey]);
         $dup = $this->conn->fetchOne($dupStmt);
@@ -386,6 +390,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 'clickFound' => true,
                 'customerId' => $dup['customer_id'] !== null ? (int) $dup['customer_id'] : null,
                 'dedupeKey' => $dedupeKey,
+                'deleted' => (int) $dup['deleted'] === 1,
             ];
         }
 

@@ -625,6 +625,11 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
 
+A transaction id the click already has records nothing: the answer is that
+conversion, with `"duplicate": true` beside `data` under `--json`. One whose
+conversion was deleted is refused (exit 1) and never recorded again; a
+different sale needs its own transaction id.
+
 ### Import a network's conversions
 
 When a network's postback was never wired up, its conversion report still
@@ -707,7 +712,9 @@ click's conversions (`GET /clicks/{id}/conversions`, once per click). Rows the
 click already has are `duplicate` and are not sent. Every other row is sent as
 `POST /conversions` with an `Idempotency-Key` computed from its click,
 transaction id, payout and time, so the same row always has the same key and
-a retry replays instead of recording again. Rows with a negative payout go
+a retry replays instead of recording again. A row the server answers as a
+duplicate (`duplicate: true`, or a 409 for a deleted conversion's transaction
+id) is `duplicate` too, even when the read did not show it. Rows with a negative payout go
 after the sales, so a newest-first report reverses the right sale. After a
 partial failure (exit 5), fix the cause and run the same command again: only
 the rows not yet recorded are sent. The read needs a server with that endpoint
@@ -816,6 +823,8 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 
 **Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
 
+Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
+
 ### Analytics shorthand
 
 ```bash
@@ -879,6 +888,8 @@ p202 report timeseries --interval hour --time_from 1700000000
 | `-i, --interval` | day    | Interval: hour, day, week, month |
 
 Invalid `--interval` values now return a validation error from the API (`422`) instead of silently defaulting.
+
+Buckets come oldest first, at most 2000 per response. When the window holds more, the server cuts the newest ones and says so (`"truncated": true`, `"limit": 2000` in `--json` output), and the CLI prints a warning to stderr naming the last bucket returned, with a hint: narrow `--time_from`/`--time_to` (or use a shorter `--period`), or use a coarser `--interval` (`week` or `month`). A server from before the flag cuts at 2000 without saying so; 2000 buckets from one of those get the same warning, as "may be missing".
 
 ### Daypart
 
