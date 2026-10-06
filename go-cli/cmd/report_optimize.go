@@ -188,6 +188,36 @@ type starterCheck struct {
 	byKey      map[string]map[string]interface{}
 	partial    bool    // only the first rows could be read (a server without offset paging)
 	payout     float64 // --payout: values each attributed conversion at this instead of its recorded revenue
+	salesModel string  // the Last touch model whose credits (compare_attributed_conversions) count each row's sales
+}
+
+// salesNote is printed when --payout could only value each converted click as one sale.
+const salesNote = "--payout valued each converted click as one sale (the classic report's count), so a click with several sales was undervalued"
+
+// activeModelOfType returns the first active model of a type whose credits are current, or, when the only one is
+// still being recomputed, its name in pending.
+func activeModelOfType(c *api.Client, modelType string) (id, name, pending string, err error) {
+	data, err := c.Get("attribution/models", map[string]string{"type": modelType})
+	if err != nil {
+		return "", "", "", err
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", "", "", err
+	}
+	for _, m := range resp.Data {
+		if fmt.Sprint(m["status"]) != "active" || (m["model_type"] != nil && fmt.Sprint(m["model_type"]) != modelType) {
+			continue
+		}
+		if m["recompute_pending"] == true {
+			pending = fmt.Sprint(m["model_name"])
+			continue
+		}
+		return fmt.Sprint(m["model_id"]), fmt.Sprint(m["model_name"]), "", nil
+	}
+	return "", "", pending, nil
 }
 
 // firstTouchROI is a row's ROI under the first-touch model, in percent: the server's (recorded revenue against cost),
@@ -220,7 +250,7 @@ var filterDimension = map[string]string{
 // (needFirstTouch true: a closer only shows as a first-touch loss, so without a usable First touch model the check is
 // skipped). override is the validated --first-touch-model (firstTouchOverride runs before any report is read). When
 // the check can't run it returns nil and a note saying why.
-func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool, override overrideModel, keys []string) (*starterCheck, []string) {
+func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, params map[string]string, needFirstTouch bool, override overrideModel, keys []string, countSales bool) (*starterCheck, []string) {
 	groupBy, ok := attributionGroupBy[dimension]
 	if !ok {
 		return nil, []string{fmt.Sprintf("attribution check skipped: the attribution report has no %s breakdown", dimension)}
@@ -303,6 +333,24 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	if modelID != "" {
 		q["model_id"] = modelID
 	}
+	// With --payout (countSales) every sale is worth the payout, but the classic report counts a converted click once
+	// however many sales it had. Last-touch credit is one per sale on the converting click, so on the classic rows'
+	// own clicks it counts their sales: the same request carries it as the compare model.
+	salesModel := ""
+	if countSales {
+		id, name, pending, err := activeModelOfType(c, "last_touch")
+		switch {
+		case err != nil:
+			notes = append(notes, salesNote+": the Last touch model list couldn't be read ("+err.Error()+")")
+		case id != "":
+			q["compare_model_id"], salesModel = id, name
+		case pending != "":
+			notes = append(notes, salesNote+": Last touch model "+pending+" is still being recomputed")
+		default:
+			notes = append(notes, salesNote+": there is no active Last touch model to count sales with. Add one with "+
+				"`p202 attribution model create --model-name \"Last touch\" --model-type last_touch`")
+		}
+	}
 	// The same window as the classic report. Without a lower bound the classic report runs from the first click, while
 	// the attribution report would default to the last 30 days, so a missing time_from is sent as 0 (all time); a
 	// missing time_to defaults to now on both.
@@ -346,7 +394,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 		return nil, append(notes, "attribution check skipped: "+err.Error())
 	}
 	notes = append(notes, pageNotes...)
-	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial}
+	check := &starterCheck{model: modelName, minAssists: minAssists, byKey: map[string]map[string]interface{}{}, partial: partial, salesModel: salesModel}
 	for _, r := range rows {
 		check.byKey[fmt.Sprint(r["key"])] = r
 	}
@@ -636,7 +684,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				return err
 			}
 
-			out := make([]map[string]interface{}, 0, len(rows))
+			// Each listed row, with the raw figures it was classified on. With --payout, winners also keeps the converting
+			// rows that lose money per converted click (maybe): counted per sale, they may be profitable.
+			var picked, maybe []*triageRow
 			for _, r := range rows {
 				clicks := toFloat(r["total_clicks"])
 				leads := toFloat(r["total_leads"])
@@ -650,62 +700,74 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				if clicks < minClicks {
 					continue
 				}
-				avgCPC := 0.0
-				if clicks > 0 {
-					avgCPC = cost / clicks
-				}
-				bucket, reason := classify(clicks, leads, cost, net, avgCPC, payout, maxCPC)
-				keep := false
-				if wantWinners && bucket == "SCALE" {
-					keep = true
-				}
-				if !wantWinners && bucket == "CUT" {
-					keep = true
-				}
-				if !keep {
-					continue
-				}
-				row := map[string]interface{}{
+				t := &triageRow{clicks: clicks, leads: leads, cost: cost}
+				bucket, reason := t.classify(net, payout, maxCPC)
+				t.row = map[string]interface{}{
 					"name":         r["name"],
 					"total_clicks": clicks,
 					"total_leads":  leads,
 					"total_cost":   round(cost, 2),
 					"total_net":    round(net, 2),
-					"avg_cpc":      round(avgCPC, 4),
+					"avg_cpc":      round(t.avgCPC(), 4),
 					"bucket":       bucket,
 					"reason":       reason,
 				}
 				if id, ok := r["id"]; ok {
-					row["id"] = id
+					t.row["id"] = id
 				}
 				if payoutFlag > 0 {
-					row["payout"] = payoutFlag // total_net is total_leads × payout − total_cost
+					t.row["payout"] = payoutFlag // total_net is sales × payout − total_cost (sales: total_leads unless counted)
 				}
-				out = append(out, row)
+				switch {
+				case wantWinners && bucket == "SCALE", !wantWinners && bucket == "CUT":
+					picked = append(picked, t)
+				case wantWinners && payoutFlag > 0 && leads > 0 && net < 0:
+					maybe = append(maybe, t)
+				}
 			}
-			// The attribution check reads only the rows kept, by id.
-			if !noCheck && len(out) > 0 {
+			// The attribution check reads only the rows kept (and maybe), by id.
+			var notes []string
+			if !noCheck && len(picked)+len(maybe) > 0 {
 				var keys []string
-				for _, row := range out {
-					if id, ok := row["id"]; ok && id != nil {
+				for _, t := range append(append([]*triageRow{}, picked...), maybe...) {
+					if id, ok := t.row["id"]; ok && id != nil {
 						keys = append(keys, fmt.Sprint(id))
 					}
 				}
-				check, notes := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners, override, keys)
+				var check *starterCheck
+				check, notes = loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners, override, keys, payoutFlag > 0)
 				if check != nil {
 					check.payout = payoutFlag
-				}
-				for _, row := range out {
-					if wantWinners {
-						applyCloserCheck(row, check)
-					} else {
-						applyStarterCheck(row, check)
+					if check.salesModel != "" {
+						var dropped int
+						picked, dropped = check.revalueBySales(picked, maybe, wantWinners, payoutFlag, payout, maxCPC)
+						if dropped > 0 {
+							notes = append(notes, fmt.Sprintf("%d row(s) CUT on converted clicks cover their break-even once every sale counts "+
+								"(several sales on one click, counted by Last touch model %s), so they aren't listed", dropped, check.salesModel))
+						}
 					}
 				}
-				for _, n := range notes {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
+				for _, t := range picked {
+					if wantWinners {
+						applyCloserCheck(t.row, check)
+					} else {
+						applyStarterCheck(t.row, check)
+					}
 				}
+				if payoutFlag > 0 && (check == nil || check.salesModel == "") && !hasPrefix(notes, salesNote) {
+					notes = append(notes, salesNote)
+				}
+			} else if payoutFlag > 0 && len(picked) > 0 {
+				notes = append(notes, salesNote)
 			}
+			for _, n := range notes {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Note: "+n)
+			}
+			listed := make([]map[string]interface{}, 0, len(picked))
+			for _, t := range picked {
+				listed = append(listed, t.row)
+			}
+			out := listed
 			sortRowsBy(out, "total_net", !wantWinners) // losers: worst first; winners: best first
 			// The classic bucket first (CUT / SCALE), then the rows the attribution check held back (TEST / CLOSER).
 			first := "CUT"
@@ -718,6 +780,67 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 		},
 	}
 	return c
+}
+
+// triageRow is one classic row being triaged: its output row and the raw figures it is classified on.
+type triageRow struct {
+	row                 map[string]interface{}
+	clicks, leads, cost float64
+}
+
+func (t *triageRow) avgCPC() float64 {
+	if t.clicks > 0 {
+		return t.cost / t.clicks
+	}
+	return 0
+}
+
+// classify buckets the row with leads as its sale count; net is its profit.
+func (t *triageRow) classify(net, payout, maxCPC float64) (string, string) {
+	return classify(t.clicks, t.leads, t.cost, net, t.avgCPC(), payout, maxCPC)
+}
+
+// revalueBySales re-values the rows the check read at --payout per sale: Last-touch credit on a row's clicks counts its
+// sales, where the classic report counts each converted click once. A row keeps at least one sale per converted click
+// (the worker may not have credited the newest yet). Losers drops the rows that cover their break-even once every sale
+// counts (returned as dropped); winners adds the maybe rows that become profitable. Rows the check has no figure for
+// keep their converted-click valuation.
+func (c *starterCheck) revalueBySales(out, maybe []*triageRow, wantWinners bool, payoutFlag, payout, maxCPC float64) ([]*triageRow, int) {
+	kept := make([]*triageRow, 0, len(out)+len(maybe))
+	dropped := 0
+	for i, t := range append(append([]*triageRow{}, out...), maybe...) {
+		listed := i < len(out)
+		a, ok := c.byKey[fmt.Sprint(t.row["id"])]
+		if !ok || a["compare_attributed_conversions"] == nil {
+			if listed {
+				kept = append(kept, t)
+			}
+			continue
+		}
+		sales := math.Max(toFloat(a["compare_attributed_conversions"]), t.leads)
+		net := sales*payoutFlag - t.cost
+		bucket, reason := classify(t.clicks, sales, t.cost, net, t.avgCPC(), payout, maxCPC)
+		t.row["sales"] = sales
+		t.row["total_net"] = round(net, 2)
+		t.row["bucket"], t.row["reason"] = bucket, reason
+		switch {
+		case wantWinners && bucket == "SCALE", !wantWinners && bucket == "CUT":
+			kept = append(kept, t)
+		case listed:
+			dropped++
+		}
+	}
+	return kept, dropped
+}
+
+// hasPrefix reports whether any note starts with prefix.
+func hasPrefix(notes []string, prefix string) bool {
+	for _, n := range notes {
+		if strings.HasPrefix(n, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // classify buckets a row into SCALE / WATCH / CUT with a human reason.
@@ -764,7 +887,9 @@ func init() {
 		"Break-even is --max-cpc, or a payout × the row's own conversion rate: --payout (your revenue per conversion) or\n" +
 		"the payout of --aff_campaign_id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
 		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
-		"values every sale the command reports at that payout: total_net, and the first-touch ROI below.\n\n" +
+		"values every sale the command reports at that payout: total_net, and the first-touch ROI below. The classic report\n" +
+		"counts a converted click once however many sales it had, so the check also reads the Last touch model, whose\n" +
+		"credits count each row's sales, and values the rows it reads per sale (a stderr note says when it can't).\n\n" +
 		"Each CUT row is then checked against the attribution report for the same dimension and range. A row that\n" +
 		"starts sales comes back as TEST, with its first-touch ROI and assists: it pays for itself as a first click\n" +
 		"(first-touch ROI 0% or better), or it had a click in at least --min-assists sales (default 1) that another row\n" +
@@ -777,8 +902,9 @@ func init() {
 		"false. --no-attribution-check turns it off."
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
 	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting. Profit is the campaign's\n" +
-		"recorded income less cost, or with --payout (your revenue per conversion) conversions × payout less cost, the\n" +
-		"value the first-touch ROI below then uses too.\n\n" +
+		"recorded income less cost, or with --payout (your revenue per conversion) sales × payout less cost, the value the\n" +
+		"first-touch ROI below then uses too. Sales are counted with the Last touch model where the check can read it\n" +
+		"(a converted click can have several), so a source profitable only through repeat sales is listed too.\n\n" +
 		"Each SCALE row is then checked against the attribution report under a first-touch model, for the same dimension\n" +
 		"and range. A row that loses money under first touch comes back as CLOSER, with its first-touch ROI and assists:\n" +
 		"last-click credits it with sales other rows started (retargeting, brand search and email often look like this),\n" +

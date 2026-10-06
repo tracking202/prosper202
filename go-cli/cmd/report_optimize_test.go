@@ -929,6 +929,10 @@ func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Val
 			w.Write([]byte(classic))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
 			w.WriteHeader(200)
+			if r.URL.Query().Get("type") == "last_touch" {
+				w.Write([]byte(lastTouchModels))
+				return
+			}
 			w.Write([]byte(firstTouchModels))
 		case strings.Contains(r.URL.Path, "/campaigns/"):
 			*campaigns++
@@ -945,6 +949,125 @@ func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Val
 			t.Errorf("unexpected request %s", r.URL.Path)
 		}
 	}))
+}
+
+const lastTouchModels = `{"data":[{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active","is_default":true}]}`
+
+// salesServer answers the classic breakdown with classic, the model lists with firstTouchModels and lastTouch, and
+// the attribution breakdown with attr, recording each attribution request.
+func salesServer(t *testing.T, classic, attr, lastTouch string, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.Write([]byte(classic))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models") && r.URL.Query().Get("type") == "last_touch":
+			w.Write([]byte(lastTouch))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.Write([]byte(firstTouchModels))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.Write([]byte(attr))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+func runSales(t *testing.T, command, classic, attr, lastTouch string, args ...string) (map[string]map[string]interface{}, string, []url.Values) {
+	t.Helper()
+	var calls []url.Values
+	srv := salesServer(t, classic, attr, lastTouch, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, stderr, err := executeCommand(append([]string{"report", command, "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
+	if err != nil {
+		t.Fatalf("%s: %v", command, err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	rows := map[string]map[string]interface{}{}
+	for _, r := range resp.Data {
+		rows[fmt.Sprint(r["name"])] = r
+	}
+	return rows, stderr, calls
+}
+
+// Two converting sources at --payout 60, each with 5 converted clicks out of 100 at a $5 CPC: per converted click both
+// make $300 against $500. Repeat Buyers had 10 sales on those clicks (Last touch credits one per sale), so it makes
+// $600 and covers its $6 break-even; One-Off had 6 and still loses money.
+const repeatSales = `{"data":[
+	{"id":"21","name":"Repeat Buyers","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"},
+	{"id":"22","name":"One-Off","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"}]}`
+
+const repeatSalesAttr = `{"data":[
+	{"key":"21","cost":"500.00","attributed_conversions":"1.00000000","roi":-88.0,"assisted_conversions":0,"compare_attributed_conversions":"10.00000000"},
+	{"key":"22","cost":"500.00","attributed_conversions":"1.00000000","roi":-88.0,"assisted_conversions":0,"compare_attributed_conversions":"6.00000000"}],
+	"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`
+
+// With --payout the classic report's converted-click count undervalues a click with several sales, so the check's
+// request carries the Last touch model, whose credits count each row's sales, and the rows are valued per sale.
+func TestPayoutCountsEverySaleWithTheLastTouchModel(t *testing.T) {
+	rows, stderr, calls := runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || calls[0].Get("compare_model_id") != "1" || calls[0].Get("model_id") != "4" {
+		t.Fatalf("the check should read first touch with Last touch (1) as the compare model: %v", calls)
+	}
+	if _, listed := rows["Repeat Buyers"]; listed {
+		t.Errorf("Repeat Buyers makes $600 on its 10 sales against $500, so it isn't a loser: %v", rows)
+	}
+	if !strings.Contains(stderr, "1 row(s) CUT on converted clicks cover their break-even once every sale counts") {
+		t.Errorf("stderr should say a row was dropped once its sales were counted: %q", stderr)
+	}
+	r := rows["One-Off"]
+	if r == nil || r["bucket"] != "CUT" || toFloat(r["sales"]) != 6 || toFloat(r["total_net"]) != -140 {
+		t.Errorf("One-Off: want CUT on 6 sales, total_net 6 × 60 − 500 = -140; got %v", r)
+	}
+	if !strings.Contains(fmt.Sprint(r["reason"]), "breakeven $3.60") {
+		t.Errorf("break-even is 60 × 6/100 = $3.60: %v", r["reason"])
+	}
+
+	// Winners: Repeat Buyers loses money per converted click, so it isn't SCALE there, but it is once its sales count.
+	rows, _, calls = runSales(t, "winners", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || !strings.Contains(calls[0].Get("keys"), "21") {
+		t.Fatalf("winners should read the converting rows that lose per converted click too: %v", calls)
+	}
+	r = rows["Repeat Buyers"]
+	if r == nil || toFloat(r["sales"]) != 10 || toFloat(r["total_net"]) != 100 {
+		t.Errorf("Repeat Buyers: want a winner on 10 sales, total_net +100; got %v", rows)
+	}
+	if _, listed := rows["One-Off"]; listed {
+		t.Errorf("One-Off loses money on its 6 sales too: %v", rows)
+	}
+}
+
+// Without a Last touch model, or with the check off, --payout counts each converted click as one sale and says so.
+func TestPayoutWithoutSalesCountsSaysSo(t *testing.T) {
+	rows, stderr, calls := runSales(t, "losers", repeatSales, repeatSalesAttr, `{"data":[]}`, "--payout", "60")
+	if len(calls) != 1 || calls[0].Has("compare_model_id") {
+		t.Fatalf("no compare model without a Last touch model: %v", calls)
+	}
+	if rows["Repeat Buyers"] == nil || rows["Repeat Buyers"]["sales"] != nil {
+		t.Errorf("Repeat Buyers stays CUT per converted click, with no sales count: %v", rows)
+	}
+	if !strings.Contains(stderr, "valued each converted click as one sale") || !strings.Contains(stderr, "no active Last touch model") {
+		t.Errorf("stderr should say clicks were counted once and why: %q", stderr)
+	}
+
+	_, stderr, calls = runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60", "--no-attribution-check")
+	if len(calls) != 0 || !strings.Contains(stderr, "valued each converted click as one sale") {
+		t.Errorf("with the check off: no attribution request and the note, got %d calls, stderr %q", len(calls), stderr)
+	}
+
+	_, stderr, _ = runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels)
+	if strings.Contains(stderr, "one sale") {
+		t.Errorf("without --payout there is nothing to count: %q", stderr)
+	}
 }
 
 const sellingAtALoss = `{"data":[
