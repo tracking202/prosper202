@@ -186,7 +186,25 @@ type starterCheck struct {
 	model      string // the first-touch model's name; empty when the account has none (assists only)
 	minAssists int64
 	byKey      map[string]map[string]interface{}
-	partial    bool // only the first rows could be read (a server without offset paging)
+	partial    bool    // only the first rows could be read (a server without offset paging)
+	payout     float64 // --payout: values each attributed conversion at this instead of its recorded revenue
+}
+
+// firstTouchROI is a row's ROI under the first-touch model, in percent: the server's (recorded revenue against cost),
+// or with --payout, attributed conversions × payout against cost, so it values a sale as the classic rows do. ok is
+// false when the row had no cost in the range (the server sends roi null).
+func (c *starterCheck) firstTouchROI(a map[string]interface{}) (roi float64, ok bool) {
+	if c.payout > 0 {
+		cost := toFloat(a["cost"])
+		if cost <= 0 {
+			return 0, false
+		}
+		return round((toFloat(a["attributed_conversions"])*c.payout-cost)/cost*100, 2), true
+	}
+	if a["roi"] == nil {
+		return 0, false
+	}
+	return toFloat(a["roi"]), true
 }
 
 // filterDimension is the breakdown each entity filter narrows to. The attribution report takes no entity filters, so
@@ -467,8 +485,7 @@ func applyStarterCheck(row map[string]interface{}, check *starterCheck) {
 	assists := int64(toFloat(a["assisted_conversions"]))
 	row["assisted_conversions"] = assists
 	var why []string
-	if check.model != "" && a["roi"] != nil { // no ROI when the row had no cost in the attribution range
-		roi := toFloat(a["roi"])
+	if roi, ok := check.firstTouchROI(a); check.model != "" && ok { // no ROI when the row had no cost in the attribution range
 		row["first_touch_roi"] = roi
 		if roi >= 0 {
 			why = append(why, fmt.Sprintf("%s ROI %+.1f%%", check.model, roi))
@@ -533,10 +550,10 @@ func applyCloserCheck(row map[string]interface{}, check *starterCheck) {
 		return
 	}
 	row["assisted_conversions"] = int64(toFloat(a["assisted_conversions"]))
-	if a["roi"] == nil {
+	roi, ok := check.firstTouchROI(a)
+	if !ok {
 		return
 	}
-	roi := toFloat(a["roi"])
 	row["first_touch_roi"] = roi
 	if roi < 0 {
 		row["bucket"] = "CLOSER"
@@ -614,6 +631,11 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				leads := toFloat(r["total_leads"])
 				cost := toFloat(r["total_cost"])
 				net := toFloat(r["total_net"])
+				if payoutFlag > 0 {
+					// The stated revenue per conversion values every row's sales, so a row profitable at that payout is
+					// a winner (and one that isn't, a loser) whatever the campaign's recorded income says.
+					net = leads*payoutFlag - cost
+				}
 				if clicks < minClicks {
 					continue
 				}
@@ -645,6 +667,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				if id, ok := r["id"]; ok {
 					row["id"] = id
 				}
+				if payoutFlag > 0 {
+					row["payout"] = payoutFlag // total_net is total_leads × payout − total_cost
+				}
 				out = append(out, row)
 			}
 			// The attribution check reads only the rows kept, by id.
@@ -656,6 +681,9 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 					}
 				}
 				check, notes := loadAttributionCheck(client, cmd, params["breakdown"], params, wantWinners, override, keys)
+				if check != nil {
+					check.payout = payoutFlag
+				}
 				for _, row := range out {
 					if wantWinners {
 						applyCloserCheck(row, check)
@@ -724,7 +752,8 @@ func init() {
 	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n" +
 		"Break-even is --max-cpc, or a payout × the row's own conversion rate: --payout (your revenue per conversion) or\n" +
 		"the payout of --aff_campaign_id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
-		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs.\n\n" +
+		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
+		"values every sale the command reports at that payout: total_net, and the first-touch ROI below.\n\n" +
 		"Each CUT row is then checked against the attribution report for the same dimension and range. A row that\n" +
 		"starts sales comes back as TEST, with its first-touch ROI and assists: it pays for itself as a first click\n" +
 		"(first-touch ROI 0% or better), or it had a click in at least --min-assists sales (default 1) that another row\n" +
@@ -736,7 +765,9 @@ func init() {
 		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
 		"false. --no-attribution-check turns it off."
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
-	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting.\n\n" +
+	winners.Long = "Rows to SCALE from the classic (last-click) report: profitable and converting. Profit is the campaign's\n" +
+		"recorded income less cost, or with --payout (your revenue per conversion) conversions × payout less cost, the\n" +
+		"value the first-touch ROI below then uses too.\n\n" +
 		"Each SCALE row is then checked against the attribution report under a first-touch model, for the same dimension\n" +
 		"and range. A row that loses money under first touch comes back as CLOSER, with its first-touch ROI and assists:\n" +
 		"last-click credits it with sales other rows started (retargeting, brand search and email often look like this),\n" +
@@ -751,7 +782,7 @@ func init() {
 		enumFlag(c, "breakdown", dimensionEnum(breakdownDimensions))
 		c.Flags().Float64("min-clicks", 1, "Ignore rows with fewer than N clicks (significance floor)")
 		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else payout × each row's CVR, from --payout or the campaign)")
-		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate. Unlike --aff_campaign_id it doesn't filter the report, so the attribution check still runs")
+		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate, and its profit (total_net) and first-touch ROI value each sale at this. Unlike --aff_campaign_id it doesn't filter the report, so the attribution check still runs")
 		reportCmd.AddCommand(c)
 	}
 	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")

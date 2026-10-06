@@ -938,8 +938,8 @@ func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Val
 			*calls = append(*calls, r.URL.Query())
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":[
-				{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
-				{"key":"9","name":"Meta Prospecting","cost":"3201.65","attributed_revenue":"5473.00","roi":70.94,"assisted_conversions":24}],
+				{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_conversions":"29.05625000","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
+				{"key":"9","name":"Meta Prospecting","cost":"3201.65","attributed_conversions":"34.20625000","attributed_revenue":"5473.00","roi":70.94,"assisted_conversions":24}],
 				"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`))
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
@@ -954,16 +954,28 @@ const sellingAtALoss = `{"data":[
 
 func runPayoutLosers(t *testing.T, args ...string) (map[string]string, []url.Values, int) {
 	t.Helper()
+	rows, calls, campaigns := runPayoutTriage(t, "losers", sellingAtALoss, args...)
+	buckets := map[string]string{}
+	for name, r := range rows {
+		buckets[name] = fmt.Sprint(r["bucket"])
+	}
+	return buckets, calls, campaigns
+}
+
+// runPayoutTriage runs `report <cmd>` against payoutServer with the given classic rows and returns the listed rows by
+// name.
+func runPayoutTriage(t *testing.T, command, classic string, args ...string) (map[string]map[string]interface{}, []url.Values, int) {
+	t.Helper()
 	var calls []url.Values
 	campaigns := 0
-	srv := payoutServer(t, sellingAtALoss, &campaigns, &calls)
+	srv := payoutServer(t, classic, &campaigns, &calls)
 	defer srv.Close()
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
-	out, _, err := executeCommand(append([]string{"report", "losers", "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
+	out, _, err := executeCommand(append([]string{"report", command, "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
 	if err != nil {
-		t.Fatalf("losers: %v", err)
+		t.Fatalf("%s: %v", command, err)
 	}
 	var resp struct {
 		Data []map[string]interface{} `json:"data"`
@@ -971,11 +983,11 @@ func runPayoutLosers(t *testing.T, args ...string) (map[string]string, []url.Val
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
-	buckets := map[string]string{}
+	rows := map[string]map[string]interface{}{}
 	for _, r := range resp.Data {
-		buckets[fmt.Sprint(r["name"])] = fmt.Sprint(r["bucket"])
+		rows[fmt.Sprint(r["name"])] = r
 	}
-	return buckets, calls, campaigns
+	return rows, calls, campaigns
 }
 
 // Sources that make some sales at a loss aren't CUT without a break-even to compare their CPC with; --payout gives each
@@ -1000,13 +1012,74 @@ func TestLosersPayoutFindsSourcesThatSellAtALoss(t *testing.T) {
 	}
 }
 
-func TestLosersRefusesANegativePayoutBeforeAnyRequest(t *testing.T) {
-	tmp := t.TempDir()
-	setTestHome(t, tmp)
-	writeTestConfig(t, tmp, "http://127.0.0.1:1", "test-key")
-	_, _, err := executeCommand("report", "losers", "--payout", "-5")
-	if err == nil || !strings.Contains(err.Error(), "--payout must be more than 0") {
-		t.Fatalf("a negative --payout should be refused naming the flag, got %v", err)
+// A negative or non-finite --payout is refused by both commands before any request, as a validation error (exit 1)
+// with a hint an agent can act on.
+func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
+	for _, command := range []string{"losers", "winners"} {
+		for _, v := range []string{"-5", "-0.01", "NaN", "Inf", "+Inf", "-Inf"} {
+			t.Run(command+" "+v, func(t *testing.T) {
+				requests := 0
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+				defer srv.Close()
+				tmp := t.TempDir()
+				setTestHome(t, tmp)
+				writeTestConfig(t, tmp, srv.URL, "test-key")
+				_, _, err := executeCommand("report", command, "--payout="+v)
+				if err == nil || !strings.Contains(err.Error(), "--payout must be more than 0") {
+					t.Fatalf("--payout %s should be refused naming the flag, got %v", v, err)
+				}
+				if code := exitCodeForError(err); code != ExitValidation {
+					t.Errorf("exit code = %d, want %d (validation)", code, ExitValidation)
+				}
+				if h := api.HintFor(err); !strings.Contains(h, "revenue per conversion") {
+					t.Errorf("hint = %q, want one naming revenue per conversion", h)
+				}
+				if requests != 0 {
+					t.Errorf("%d requests were made before the refusal", requests)
+				}
+			})
+		}
+	}
+}
+
+// --payout values every sale the command reports: a row profitable at that payout is a winner even when the
+// campaign's recorded income puts it at a loss, and its total_net is conversions × payout − cost.
+func TestWinnersPayoutValuesEachSaleAtThePayout(t *testing.T) {
+	const newsletter = `{"data":[
+	{"id":"11","name":"Newsletter","total_clicks":"400","total_leads":"10","total_cost":"300.00","total_net":"-50.00"}]}`
+	rows, _, _ := runPayoutTriage(t, "winners", newsletter, "--no-attribution-check")
+	if len(rows) != 0 {
+		t.Errorf("at its recorded income Newsletter loses $50, so it isn't a winner: %v", rows)
+	}
+	rows, _, campaigns := runPayoutTriage(t, "winners", newsletter, "--payout", "60", "--no-attribution-check")
+	r, ok := rows["Newsletter"]
+	if !ok || r["bucket"] != "SCALE" {
+		t.Fatalf("at $60 a sale Newsletter makes $300, so it is SCALE: %v", rows)
+	}
+	if toFloat(r["total_net"]) != 300 || toFloat(r["payout"]) != 60 {
+		t.Errorf("total_net = %v, payout = %v; want 10 × 60 − 300 = 300 and the payout it was valued at", r["total_net"], r["payout"])
+	}
+	if campaigns != 0 {
+		t.Errorf("--payout must not read a campaign's payout; read %d", campaigns)
+	}
+}
+
+// With --payout the starter check's first-touch ROI values attributed conversions at the payout too, not at their
+// recorded revenue: at $100 a sale ChatGPT Ads' 29.06 first-touch conversions don't cover its $3,171.62.
+func TestLosersFirstTouchROIUsesThePayout(t *testing.T) {
+	rows, _, _ := runPayoutTriage(t, "losers", sellingAtALoss, "--payout", "100")
+	r := rows["ChatGPT Ads"]
+	if r == nil {
+		t.Fatalf("ChatGPT Ads should be listed: %v", rows)
+	}
+	if roi := toFloat(r["first_touch_roi"]); roi != -8.39 {
+		t.Errorf("first_touch_roi = %v, want (29.05625 × 100 − 3171.62) / 3171.62 = -8.39%%", r["first_touch_roi"])
+	}
+	if reason := fmt.Sprint(r["reason"]); strings.Contains(reason, "ROI") || !strings.Contains(reason, "15 assists") {
+		t.Errorf("held as TEST on its assists only, not on its recorded-revenue ROI: %q", reason)
+	}
+	if r["bucket"] != "TEST" {
+		t.Errorf("bucket = %v, want TEST (15 assists)", r["bucket"])
 	}
 }
 
