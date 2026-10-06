@@ -257,10 +257,23 @@ class AttributionController
      */
     public function breakdown(array $params): array
     {
-        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit', 'offset']);
+        self::rejectUnknown($params, ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'limit', 'offset', 'cohort', 'keys']);
         $groupBy = (string) ($params['group_by'] ?? 'campaign');
         if (!in_array($groupBy, AttributionReports::dimensions(), true)) {
             throw new ValidationException('Invalid group_by', ['group_by' => 'Valid: ' . implode(', ', AttributionReports::dimensions())]);
+        }
+        $cohort = $params['cohort'] ?? AttributionReports::COHORT_CONVERSION;
+        if (!is_string($cohort) || !in_array($cohort, AttributionReports::cohorts(), true)) {
+            throw new ValidationException('Invalid cohort', ['cohort' => 'Valid: ' . implode(', ', AttributionReports::cohorts())]);
+        }
+        $keys = null;
+        if (array_key_exists('keys', $params)) {
+            // Row keys as the report returns them (a dimension id, 0 for none, a date for day), comma-separated.
+            $keys = is_string($params['keys']) ? explode(',', $params['keys']) : [];
+            $bad = array_filter($keys, static fn (string $k): bool => preg_match('/^[^\s,]{1,64}$/D', $k) !== 1);
+            if ($keys === [] || $bad !== [] || count($keys) > AttributionReports::MAX_LIMIT) {
+                throw new ValidationException('Invalid keys', ['keys' => 'A comma-separated list of 1 to ' . AttributionReports::MAX_LIMIT . ' row keys, as data[].key returns them']);
+            }
         }
         [$from, $to] = self::range($params);
         $limit = self::positiveInt($params, 'limit') ?? 100;
@@ -293,7 +306,9 @@ class AttributionController
             $from,
             $to,
             $limit,
-            $offset
+            $offset,
+            $cohort,
+            $keys
         );
 
         return [
@@ -303,9 +318,14 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
-                // How many groups the report has; more than `offset` + `limit`
-                // means more rows follow in the same order (attributed revenue,
-                // highest first), read with a larger `offset`.
+                // conversion: credits and assists of the sales made in the
+                // range; click: of the clicks made in it, whenever they
+                // converted (the classic reports' population).
+                'cohort' => $cohort,
+                // How many groups the report has (with `keys`, how many of
+                // those keys it has); more than `offset` + `limit` means more
+                // rows follow in the same order (attributed revenue, highest
+                // first), read with a larger `offset`.
                 'groups' => $result['groups'],
                 'limit' => $limit,
                 'offset' => $offset,

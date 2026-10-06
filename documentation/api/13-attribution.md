@@ -109,6 +109,8 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `time_from`, `time_to` | | Unix seconds; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
 | `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
+| `keys` | | Only these rows: 1–1000 row keys as `data[].key` returns them, comma-separated. Rows keep the report's order, `meta.groups` counts the matches and `totals` still cover the whole report. Every request computes the whole report, so asking for a few rows by key is one computation where paging is one per page |
+| `cohort` | `conversion` | `conversion`: the conversions made in the range, credited to clicks of any age. `click`: the credit and assists that land on clicks made in the range, whenever they converted (see below) |
 
 Unknown parameters are refused (422), as is a model that is not the
 account's; an inactive or invalid model answers 409 with the reason.
@@ -120,6 +122,17 @@ dimension before the converting click). Money is an exact decimal string. The
 credited range is the conversions' `conv_time`; the cost range is the clicks'
 `click_time`. `totals.attributed_revenue` is the counted value of the
 conversions in range, the same under every model.
+
+With `cohort=click` the credited range is the `click_time` of the click each
+credit lands on, and an assist is an assisting touch made in the range, for a
+conversion at any time. A row is then what its own clicks in the range earned
+against what they cost, which is how the classic reports count: last-touch
+credit in the click cohort is the classic row's revenue. Under `group_by=day`
+credit falls on the click's day. `totals` covers the credit on clicks in range
+(`conversions` counts each conversion with any such credit once), so it
+differs by model. A click cohort report is always computed in full, since the
+report rollup is kept by conversion hour. `meta.cohort` says which cohort was
+read.
 
 ## Exports
 
