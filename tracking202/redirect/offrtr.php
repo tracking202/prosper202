@@ -251,6 +251,14 @@ foreach ($rule_row as $rule) {
 	}
 }	
 
+// No rule matched: the click is the rotator's default, which every report
+// reads as rule 0, as rtr.php records it. The loop above leaves
+// $mysql['rule_id'] at the last rule it tried (unset when the rotator has
+// none), and that rule was credited with every default click.
+if ($default) {
+	$mysql['rule_id'] = '0';
+}
+
 $mysql['click_out'] = 1;
 
 // rule_redirect_id is resolved later (after the redirect lookup) and updated then
@@ -262,6 +270,22 @@ $click_sql = "
 		rotator_id='".$mysql['rotator_id']."',
 		rule_id='".$mysql['rule_id']."',
 		rule_redirect_id = '0'";
+$click_result = $db->query($click_sql) or record_mysql_error($db);
+
+// The click row names its rotator as rtr.php's does: 202_clicks.rotator_id is
+// what GET /clicks serves, and this left it 0, so a click a landing page sent
+// through its offer rotator read as one that never met a rotator. In
+// rtr.php's rows 202_clicks.rule_id is the chosen redirect's id (the rule is
+// 202_clicks_rotator.rule_id); it is set to that below, once one is chosen.
+// The attribution rollup reads neither column, so the rewrite needs no mark.
+$click_sql = "
+	UPDATE
+		202_clicks
+	SET
+		rotator_id='".$mysql['rotator_id']."',
+		rule_id='0'
+	WHERE
+		click_id='".$mysql['click_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 if ($default == false) {
@@ -312,7 +336,21 @@ if ($default == false) {
 					WHERE
 						click_id='".$mysql['click_id']."'";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				$update_sql = "
+					UPDATE
+						202_clicks
+					SET
+						rule_id = '".$mysql['rule_redirect_id']."'
+					WHERE
+						click_id='".$mysql['click_id']."'";
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 			}
+
+			// The reports read a click's rotator and rule from its rollup row,
+			// which only the campaign branch below refreshed: a rule that sends
+			// to a landing page or a URL left the click out of every rotator
+			// report until the dataengine job next covered its hour.
+			(new DataEngine())->setDirtyHour($mysql['click_id']);
 
 			if (!empty($rule_redirect_row['redirect_campaign'])) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
@@ -445,6 +483,10 @@ if ($default == false) {
 				die();
 			}
 } else {
+
+		// As in the rule branch: the click's rollup row carries its rotator
+		// now, whichever kind of default the rotator sends it to.
+		(new DataEngine())->setDirtyHour($mysql['click_id']);
 
 		if (!empty($rotator_row['default_campaign'])) {
 				$click_sql = "SELECT
