@@ -141,13 +141,13 @@ the innermost level has none):
 ```json
 {
   "data": [
-    {"breakdown": "ppc_network", "id": 3, "name": "Facebook", "total_clicks": "40", "total_income": "61.50000", "...": "...",
+    {"breakdown": "ppc_network", "id": 3, "name": "Facebook", "total_clicks": 40, "total_income": 61.5, "...": "...",
      "children": [
-       {"breakdown": "campaign", "id": 12, "name": "Shoes", "total_clicks": "31", "...": "...", "children": ["..."]},
-       {"breakdown": "campaign", "id": null, "name": null, "total_clicks": "9", "...": "..."}
+       {"breakdown": "campaign", "id": 12, "name": "Shoes", "total_clicks": 31, "...": "...", "children": ["..."]},
+       {"breakdown": "campaign", "id": null, "name": null, "total_clicks": 9, "...": "..."}
      ]}
   ],
-  "totals": {"total_clicks": "52", "...": "..."},
+  "totals": {"total_clicks": 52, "...": "..."},
   "by": ["ppc_network", "campaign", "keyword"]
 }
 ```
@@ -157,8 +157,8 @@ clicks with no value for its dimension, a group keeps them as a child with
 `id` and `name` null (the page's "[No keyword]" row), listed last. Children
 come in name order, or by `sort` (`name` or any metric) and `sort_dir`.
 Amounts are summed exactly at five decimals; ratios are each group's own,
-computed from its sums, to five decimals. Metrics come as strings, as a
-breakdown's do. Names the visitor wrote are cleaned as a breakdown's are.
+computed from its sums. Metrics are numbers, as every report's are (see
+[Metrics Returned](#metrics-returned)). Names the visitor wrote are cleaned as a breakdown's are.
 More than 5,000 groups at the innermost level is a `422` naming `by` — fewer
 levels, a shorter window or a filter — never a cut list.
 
@@ -195,7 +195,12 @@ on `reports`.
 
 ## Metrics Returned
 
-All report endpoints return these aggregate metrics:
+All report endpoints return these aggregate metrics, as JSON numbers: the
+counts as integers, the amounts and ratios as numbers (`28.5`, not
+`"28.50000"`). A window with no traffic is `0`, not `null`. Summary,
+breakdown, timeseries and groups used to send MySQL's numeric strings
+(`"total_clicks": "6"`) while daypart, weekpart and rotator stats sent
+numbers; every report now sends numbers, as this table always said.
 
 | Metric | Type | Description |
 | ------ | ---- | ----------- |

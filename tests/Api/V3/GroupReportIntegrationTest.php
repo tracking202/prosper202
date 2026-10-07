@@ -146,23 +146,24 @@ final class GroupReportIntegrationTest extends TestCase
 
         [$alpha, $beta] = $r['data'];
         self::assertSame($i['a'], $alpha['id']);
-        self::assertSame(['4', '8.60000', '1.50000', '7.10000'], [$alpha['total_clicks'], $alpha['total_income'], $alpha['total_cost'], $alpha['total_net']]);
+        self::assertSame([4, 8.6, 1.5, 7.1], [$alpha['total_clicks'], $alpha['total_income'], $alpha['total_cost'], $alpha['total_net']]);
         self::assertSame([$i['hats'], $i['shoes'], null], array_column($alpha['children'], 'id'), 'keywords by name, then the clicks with none');
         [$hats, $shoes, $none] = $alpha['children'];
-        self::assertSame(['2', '3.30000', '1'], [$shoes['total_clicks'], $shoes['total_income'], $shoes['total_leads']], '1.1 + 2.2 summed exactly');
-        self::assertSame('1.65000', $shoes['epc']);
-        self::assertSame('50.00000', $shoes['conv_rate']);
-        self::assertSame(['1', '5.00000', null], [$none['total_clicks'], $none['total_income'], $none['name']]);
+        // 1.1 + 2.2 as floats is 3.3000000000000003; summed exactly it is 3.3.
+        self::assertSame([2, 3.3, 1], [$shoes['total_clicks'], $shoes['total_income'], $shoes['total_leads']], '1.1 + 2.2 summed exactly');
+        self::assertSame(1.65, $shoes['epc']);
+        self::assertSame(50.0, $shoes['conv_rate']);
+        self::assertSame([1, 5.0, null], [$none['total_clicks'], $none['total_income'], $none['name']]);
         self::assertStringNotContainsString("\u{202E}", (string) $hats['name'], 'a keyword the visitor wrote is cleaned');
         self::assertArrayNotHasKey('children', $hats, 'the innermost level has no children');
 
         $sum = 0;
         foreach ($alpha['children'] as $child) {
-            $sum += (int) $child['total_clicks'];
+            $sum += $child['total_clicks'];
         }
-        self::assertSame((int) $alpha['total_clicks'], $sum, 'a group is the sum of its children');
-        self::assertSame(['5', '8.70000'], [$r['totals']['total_clicks'], $r['totals']['total_income']]);
-        self::assertSame('1', $beta['total_clicks']);
+        self::assertSame($alpha['total_clicks'], $sum, 'a group is the sum of its children');
+        self::assertSame([5, 8.7], [$r['totals']['total_clicks'], $r['totals']['total_income']]);
+        self::assertSame(1, $beta['total_clicks']);
     }
 
     public function testOneLevelAgreesWithTheBreakdown(): void
@@ -185,7 +186,7 @@ final class GroupReportIntegrationTest extends TestCase
 
         $filtered = $this->groups(['by' => 'campaign,keyword', 'keyword' => 'gr shoes']);
         self::assertSame(['Alpha'], array_column($filtered['data'], 'name'));
-        self::assertSame('2', $filtered['totals']['total_clicks']);
+        self::assertSame(2, $filtered['totals']['total_clicks']);
 
         foreach ([
             [[], 'by'],
@@ -218,7 +219,7 @@ final class GroupReportIntegrationTest extends TestCase
                     continue;
                 }
                 $r = $this->groups(['by' => $by]);
-                self::assertSame('5', $r['totals']['total_clicks'], "by=$by keeps every click in the totals");
+                self::assertSame(5, $r['totals']['total_clicks'], "by=$by keeps every click in the totals");
             }
         }
     }
@@ -237,8 +238,46 @@ final class GroupReportIntegrationTest extends TestCase
         $groups = $controller->groups(['by' => 'campaign']);
         self::assertNotContains('Theirs', array_column($groups['data'], 'name'));
         $none = end($groups['data']);
-        self::assertSame([null, '1'], [$none['id'], $none['total_clicks']], 'the click is counted, under no campaign');
-        self::assertSame('6', $groups['totals']['total_clicks']);
+        self::assertSame([null, 1], [$none['id'], $none['total_clicks']], 'the click is counted, under no campaign');
+        self::assertSame(6, $groups['totals']['total_clicks']);
+    }
+
+    /**
+     * Every report serves its metrics as numbers: counts as integers, money
+     * and ratios as numbers. Summary, breakdown, timeseries and groups served
+     * MySQL's numeric strings ("total_clicks":"6") while day- and
+     * week-parting served numbers, so a client had to know which was which.
+     */
+    public function testEveryReportServesNumbers(): void
+    {
+        $controller = new ReportsController(self::$db, self::USER);
+        $metricRows = [
+            'summary' => [$controller->summary([])['data']],
+            'breakdown' => $controller->breakdown(['breakdown' => 'keyword'])['data'],
+            'timeseries' => $controller->timeseries(['interval' => 'day'])['data'],
+            'groups' => [...$controller->groups(['by' => 'campaign'])['data'], $controller->groups(['by' => 'campaign'])['totals']],
+            'daypart' => $controller->daypart([])['data'],
+            'weekpart' => $controller->weekpart([])['data'],
+        ];
+        $counts = ['total_clicks', 'total_click_throughs', 'total_leads'];
+        $amounts = ['total_income', 'total_cost', 'total_net', 'epc', 'avg_cpc', 'conv_rate', 'roi', 'cpa'];
+        foreach ($metricRows as $report => $rows) {
+            self::assertNotSame([], $rows, "$report has rows");
+            foreach ($rows as $row) {
+                foreach ($counts as $field) {
+                    self::assertIsInt($row[$field], "$report $field");
+                }
+                foreach ($amounts as $field) {
+                    self::assertIsFloat($row[$field], "$report $field");
+                }
+            }
+        }
+        $shoes = array_column($metricRows['breakdown'], null, 'id')[self::$ids['shoes']];
+        self::assertSame(3.3, $shoes['total_income'], 'a breakdown amount is the column\'s exact sum');
+
+        $empty = (new ReportsController(self::$db, 6099))->summary([])['data'];
+        self::assertSame(0, $empty['total_clicks'], 'no traffic is 0, not null');
+        self::assertSame(0.0, $empty['total_income']);
     }
 
     public function testTooManyGroupsIsRefusedNotCut(): void

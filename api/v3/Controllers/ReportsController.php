@@ -317,7 +317,7 @@ class ReportsController
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        return ['data' => $row];
+        return ['data' => self::typedMetrics($row ?? [])];
     }
 
     public function breakdown(array $params): array
@@ -400,7 +400,7 @@ class ReportsController
             if ($sanitizeNames) {
                 $row = ResponseSanitizer::cleanRowFields($row, ['name']);
             }
-            $rows[] = $row;
+            $rows[] = array_merge($row, self::typedMetrics($row));
         }
         $stmt->close();
 
@@ -422,8 +422,9 @@ class ReportsController
      * (id and name null), as the page's "[No keyword]" row, so a group's
      * totals are the sum of its children's. Children are sorted by name, or
      * by `sort`; the `none` child comes last. Money is summed exactly at
-     * five decimals, as the columns hold it, and each group's ratios are
-     * computed from its own sums.
+     * five decimals, as the columns hold it, each group's ratios are
+     * computed from its own sums, and every metric is served as a number,
+     * as a breakdown serves it.
      *
      * @param array<string, mixed> $params
      * @return array<string, mixed>
@@ -593,36 +594,29 @@ class ReportsController
         return $m[1] === '-' ? -$units : $units;
     }
 
-    /** 1/100000ths back to the five-decimal string a breakdown serves. */
-    private static function decimal(int $units): string
-    {
-        $sign = $units < 0 ? '-' : '';
-        $units = abs($units);
-
-        return $sign . intdiv($units, 100000) . '.' . str_pad((string) ($units % 100000), 5, '0', STR_PAD_LEFT);
-    }
-
     /**
-     * A group's metrics from its sums, as breakdown() computes them in SQL:
-     * counts and amounts as the strings a breakdown serves, ratios to five
-     * decimals.
+     * A group's metrics from its sums, as breakdown() computes them in SQL
+     * and serves them (typedMetrics()): counts as integers, amounts and
+     * ratios as numbers. The sums are exact (whole 1/100000ths); an amount
+     * becomes a number only here, once.
      *
      * @param array<string, int> $g
-     * @return array<string, string>
+     * @return array<string, int|float>
      */
     private static function groupMetrics(array $g): array
     {
-        $ratio = static fn (float $num, float $den, float $scale = 1.0): string => sprintf('%.5F', $den > 0 ? $num / $den * $scale : 0);
-        $income = $g['income'] / 100000;
-        $cost = $g['cost'] / 100000;
+        $ratio = static fn (float $num, float $den, float $scale = 1.0): float => $den > 0 ? $num / $den * $scale : 0.0;
+        // A float divisor: an int one answers an int when it divides evenly.
+        $income = $g['income'] / 100000.0;
+        $cost = $g['cost'] / 100000.0;
 
         return [
-            'total_clicks' => (string) $g['clicks'],
-            'total_click_throughs' => (string) $g['click_out'],
-            'total_leads' => (string) $g['leads'],
-            'total_income' => self::decimal($g['income']),
-            'total_cost' => self::decimal($g['cost']),
-            'total_net' => self::decimal($g['income'] - $g['cost']),
+            'total_clicks' => $g['clicks'],
+            'total_click_throughs' => $g['click_out'],
+            'total_leads' => $g['leads'],
+            'total_income' => $income,
+            'total_cost' => $cost,
+            'total_net' => ($g['income'] - $g['cost']) / 100000.0,
             'epc' => $ratio($income, $g['clicks']),
             'avg_cpc' => $ratio($cost, $g['clicks']),
             'conv_rate' => $ratio($g['leads'], $g['click_out'], 100.0),
@@ -727,7 +721,7 @@ class ReportsController
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
+            $rows[] = array_merge($row, self::typedMetrics($row));
         }
         $stmt->close();
 
@@ -996,9 +990,12 @@ class ReportsController
     }
 
     /**
-     * The metric columns, typed: counts as int, money and ratios as float,
-     * 0 when the row has none.
+     * The metric columns as every report serves them: counts as integers,
+     * money and ratios as numbers, never the numeric strings MySQL hands
+     * back for a SUM or a DECIMAL. A missing or NULL metric is 0 (a SUM over
+     * no rows); anything that is not a number is an error, not a 0.
      *
+     * @param array<string, mixed> $row
      * @return array<string, int|float>
      */
     private static function typedMetrics(array $row): array
@@ -1006,6 +1003,9 @@ class ReportsController
         $out = [];
         foreach (self::METRIC_FIELDS as $field) {
             $value = $row[$field] ?? 0;
+            if (!is_int($value) && !is_float($value) && !(is_string($value) && is_numeric($value))) {
+                throw new DatabaseException("Report metric $field is not a number");
+            }
             $out[$field] = in_array($field, self::INTEGER_METRIC_FIELDS, true) ? (int) $value : (float) $value;
         }
 
@@ -1099,24 +1099,12 @@ class ReportsController
 
     private function zeroPartRow(string $keyName, int $keyValue): array
     {
-        $row = [$keyName => $keyValue];
-        foreach (self::METRIC_FIELDS as $field) {
-            $row[$field] = 0;
-        }
-        return $row;
+        return [$keyName => $keyValue] + self::typedMetrics([]);
     }
 
     private function hydratePartRow(string $keyName, int $keyValue, array $row): array
     {
-        $out = $this->zeroPartRow($keyName, $keyValue);
-        foreach (self::METRIC_FIELDS as $field) {
-            if (array_key_exists($field, $row)) {
-                $out[$field] = in_array($field, self::INTEGER_METRIC_FIELDS, true)
-                    ? (int)$row[$field]
-                    : (float)$row[$field];
-            }
-        }
-        return $out;
+        return [$keyName => $keyValue] + self::typedMetrics($row);
     }
 
     private function sortPartRows(array &$rows, string $keyName, string $sortBy, string $sortDir): void
