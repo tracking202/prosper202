@@ -23,6 +23,9 @@ class ClicksController
      * keyword, device and location, and the referrer, landing and outbound
      * URLs. The list and the single click share it, so the two cannot drift.
      * A name is joined only when the record is the click's own account's.
+     * An IPv6 address is decoded from its 202_ips_v6 row, as
+     * Prosper202\DataEngine\IpAddressSql reads it for the Visitors page:
+     * served raw it was that row's id ("1").
      */
     private const DETAIL_COLUMNS = '
                 c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
@@ -33,7 +36,8 @@ class ClicksController
                 ca.platform_id, ca.browser_id, ca.device_id, ca.isp_id,
                 ac.aff_campaign_name, pa.ppc_account_name, pn.ppc_network_name,
                 lp.landing_page_nickname, ta.text_ad_name,
-                ip.ip_address, kw.keyword,
+                CASE WHEN ip.ip_address REGEXP \'^[0-9]+$\' THEN INET6_NTOA(ip6.ip_address) ELSE ip.ip_address END AS ip_address,
+                kw.keyword,
                 lc.country_name, lc.country_code, lr.region_name, lci.city_name, li.isp_name,
                 p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
                 su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
@@ -49,6 +53,7 @@ class ClicksController
             LEFT JOIN 202_landing_pages lp ON c.landing_page_id = lp.landing_page_id AND lp.user_id = c.user_id
             LEFT JOIN 202_text_ads ta ON ca.text_ad_id = ta.text_ad_id AND ta.user_id = c.user_id
             LEFT JOIN 202_ips ip ON ca.ip_id = ip.ip_id
+            LEFT JOIN 202_ips_v6 ip6 ON (ip.ip_address REGEXP \'^[0-9]+$\' AND ip6.ip_id = CAST(ip.ip_address AS UNSIGNED))
             LEFT JOIN 202_keywords kw ON ca.keyword_id = kw.keyword_id
             LEFT JOIN 202_locations_country lc ON ca.country_id = lc.country_id
             LEFT JOIN 202_locations_region lr ON ca.region_id = lr.region_id
