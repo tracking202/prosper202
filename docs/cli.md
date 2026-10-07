@@ -577,6 +577,24 @@ click's value and says so if the counted rows do not add up to it. `--json`
 prints the API's answer unchanged (`GET /clicks/{id}/conversions`). The PHP
 CLI's `click:conversions <id>` prints the same.
 
+### Set what past clicks cost
+
+```bash
+p202 click update-cpc --from 2026-10-01 --to 2026-10-07 --cpc 0.25 --aff-campaign-id 12 --dry-run
+p202 click update-cpc --from 2026-10-01 --to 2026-10-07 --cpc 0.25 --aff-campaign-id 12
+p202 click update-cpc --from 2026-10-07 --to 2026-10-07 --cpc 0.00125 --ppc-account-id 3 --method-of-promotion directlink --force
+```
+
+The UI's Update CPC. The clicks are the account's between `--from` 00:00:00
+and `--to` 23:59:59 in the account's time zone, narrowed by `--aff-network-id`,
+`--aff-campaign-id`, `--ppc-network-id`, `--ppc-account-id`,
+`--landing-page-id`, `--text-ad-id` (0 = every one) and
+`--method-of-promotion`. It counts them first and asks (`--force` skips the
+question, `--dry-run` stops after the count); the update changes only the
+clicks it counted, and writes nothing if they changed in between (run it
+again). Needs the `access_to_update_section` role permission; cannot be
+staged. Reports show the new cost once the data engine rebuilds the hours.
+
 ## Conversions
 
 ### List conversions
@@ -747,6 +765,32 @@ p202 conversion delete --ids 789,790,791 --force
 ```
 
 `--ids` performs bulk delete in one CLI command and returns non-zero when any ID fails.
+
+### Update subids and upload revenue reports
+
+```bash
+p202 conversion mark-subids subids.txt --dry-run      # Update Subids: one subid per line (- reads stdin)
+p202 conversion mark-subids subids.txt
+p202 conversion delete-subids wrong.txt               # Delete Subids: previews, then asks
+p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12   # Reset Campaign Subids
+p202 conversion upload-revenue march.csv --dry-run    # Upload Revenue Reports
+p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-column Commission --force
+```
+
+The rest of the UI's Update section, over the same code the pages run.
+`mark-subids` records each subid's click as converted at its campaign's payout,
+once per click; `delete-subids` clears each subid's conversions (the clicks
+stay); `reset-subids` clears every converted click of a category or one of
+its campaigns. Each answers every line of the list with its line number and a
+status (`marked`/`cleared`, `already_converted`, `not_found`, `not_a_subid`,
+`duplicate_in_list`). `upload-revenue` records a commission report as one
+batch: a click's lines are summed and the newest report replaces earlier
+uploads' values (unlike `conversion import`, which records each sale with its
+transaction id); its table lists the lines not recorded, with the reason.
+`delete-subids`, `reset-subids` and `upload-revenue` ask before writing
+(`--force` skips). All need the `access_to_update_section` role permission
+(`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are
+safe to run again.
 
 ## Reports
 

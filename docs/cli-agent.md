@@ -373,6 +373,43 @@ cause and run the same command again: rows already recorded come back
 nothing was written. A server without `GET /clicks/{id}/conversions` (older
 than 1.9.76) is refused before any write.
 
+### Correct past clicks' cost, mark or clear subids, upload a revenue report
+
+The UI's Update section. Each command checks with the endpoint's own
+`?dry_run=1` first; the writes that change or remove what is recorded then ask
+(`--force` answers yes; with no terminal the question fails, exit 1, and
+nothing is written). None can be staged (exit 1 before any request).
+
+```bash
+# Set what last week's clicks of campaign 12 really cost.
+p202 click update-cpc --from 2026-10-01 --to 2026-10-07 --cpc 0.25 --aff-campaign-id 12 --dry-run --json
+# => {"data":{"dry_run":true,"matching":418,"through_click_id":940418,"cpc":"0.25000",
+#             "timezone":"America/New_York","filters":{...}}}
+p202 click update-cpc --from 2026-10-01 --to 2026-10-07 --cpc 0.25 --aff-campaign-id 12 --force --json
+# => {"data":{"dry_run":false,"updated":418,"matching":418,...}}
+
+# Subids the network reported converted, one per line.
+p202 conversion mark-subids subids.txt --json
+# => {"data":{"dry_run":false,"marked":2,"already_converted":0,"not_found":1,"not_a_subid":0,
+#             "duplicate_in_list":0,"lines":[{"line":1,"subid":"940001","click_id":940001,"status":"marked"},...]}}
+p202 conversion delete-subids wrong.txt --dry-run --json      # would_clear per line, conversions in all
+p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12 --dry-run --json   # matching
+
+# A commission report (one batch; the newest report replaces earlier uploads' values).
+p202 conversion upload-revenue march.csv --dry-run --json
+# => {"data":{"would_record":2,"skipped":1,"columns":{"subid":{"index":0,"header":"Sub ID"},...},
+#             "totals":[{"click_id":940001,"total":"3.75000"}],"lines":[...the lines not recorded...]}}
+```
+
+`update-cpc` writes only the clicks the check counted: a click recorded later
+is never changed, and if the selection changed in between nothing is written
+(exit 1 with a hint) — run the same command again. A role without
+`access_to_update_section` (or `delete_individual_subids` for `delete-subids`)
+is exit 2, and the hint says how an admin grants it. Repeating any of these is
+safe: a marked subid is not marked again, a cleared one clears nothing more,
+and a report uploaded again becomes the newest batch. A list or report that
+stops part-way exits 4 (or 3) and the message says how much stands.
+
 ### Mint a least-privilege API key for an agent
 
 ```bash
@@ -626,7 +663,7 @@ p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
 | `--landing_page_id` | optional | string |
 | `--text_ad_type` | optional | integer |
 
-### Clicks (read-only)
+### Clicks
 
 ```
 p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
@@ -634,6 +671,10 @@ p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
                 [--click_lead 0|1] [--click_bot 0|1] [--json]
 p202 click get <id> [--json]
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
+p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D
+                [--aff-network-id N] [--aff-campaign-id N] [--ppc-network-id N] [--ppc-account-id N]
+                [--landing-page-id N] [--text-ad-id N] [--method-of-promotion directlink|landingpage]
+                [--dry-run] [--force] [--json]   # the only click write: what past clicks cost
 ```
 
 ### Conversions
@@ -650,6 +691,11 @@ p202 conversion import <file.csv|file.json> [--dry-run [--check-clicks]] [--forc
                        [--time-format LAYOUT] [--timezone TZ] [--json]
 p202 conversion delete <id> [--force] [--dry-run] [--json]
 p202 conversion delete --ids N1,N2,... [--force] [--dry-run] [--json]
+p202 conversion mark-subids <file|-> [--dry-run] [--json]                 # Update Subids
+p202 conversion delete-subids <file|-> [--dry-run] [--force] [--json]     # Delete Subids
+p202 conversion reset-subids --aff-network-id N [--aff-campaign-id N] [--dry-run] [--force] [--json]
+p202 conversion upload-revenue <file.csv> [--subid-column H|N] [--amount-column H|N]
+                       [--file-name S] [--dry-run] [--force] [--json]     # Upload Revenue Reports
 ```
 
 ### Reports
@@ -923,6 +969,10 @@ Rules:
 | create | With `--idempotency-key` | Without a key, creates a new resource each call |
 | delete --dry-run | Yes | None (read-only preview) |
 | conversion import | Yes (same file) | Records each row not already on its click; rows already recorded come back `duplicate` (each row has a fixed `Idempotency-Key` and the clicks are read first) |
+| click update-cpc | Yes | Sets the same CPC on the clicks counted; a moved count writes nothing (exit 1) |
+| conversion mark-subids / delete-subids / reset-subids | Yes | A marked subid is answered `already_converted`; a cleared one clears nothing more |
+| conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
+| --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
 | any write --staged | No (each staging records a new proposal) | Records a staged change; nothing changes until `change apply` |
 | change apply | No | First call performs the write; a second gets 409 |
 | update | Yes | Same input produces same state |
