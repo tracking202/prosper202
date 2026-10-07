@@ -176,6 +176,10 @@ func HintFor(err error) string {
 			// Auth::requirePermission(): the key is fine; its user's role
 			// lacks a permission the pages ask for too.
 			return "The key is valid, but its user's role lacks the permission named above (the UI's pages ask for the same one). An admin can grant a role that has it: `p202 user role list` shows the roles, `p202 user role assign <user_id> <role_id>` grants one; or use the key of a user whose role has it."
+		case apiErr.Status == 403 && strings.Contains(apiErr.Message, "Admin access required"):
+			// Auth::requireAdmin(): the key is fine; its user is not an
+			// Admin or the Super user, which the route asks for.
+			return "The key is valid, but its user holds neither the Admin nor the Super user role, which this needs. `p202 whoami` shows the key's user and roles; use an admin's key, or have an admin grant the Admin role: `p202 user role assign <user_id> 2`."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:

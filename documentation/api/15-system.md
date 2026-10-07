@@ -178,6 +178,16 @@ deletion: a whole number of days from 0 (keep every click) to 36500, as a
 JSON integer or a string of digits. The answer adds
 `previous_auto_delete_days`.
 
+> **Known issue.** The cron job's automatic deletion
+> (`AutoOptimizeDatabase()` in `202-cronjobs/index.php`) currently deletes
+> no clicks: it takes `MIN(click_id)` of the clicks older than the cutoff
+> and deletes the rows *below* that id. Measured on a local instance with
+> `auto_delete_days` 30 and a click 36 days old: a cron run that logged
+> "Processing Auto DB Delete" left it in place. The setting is stored and
+> read exactly as the page stores it. The one-off deletion below works: on
+> the same instance, the next cron run deleted the click below the marker
+> from every click table.
+
 `POST /system/retention/delete-before` schedules the page's one-off "Delete
 click data from before". It is irreversible, so it has two steps:
 
