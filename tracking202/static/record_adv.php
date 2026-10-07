@@ -441,9 +441,14 @@ header('Content-Type: application/javascript; charset=UTF-8');
 
 function t202initB() {
 
+var subid =<?php echo json_encode((string) $click_id); ?>;
+var pci = <?php echo json_encode((string) $click_id_public); ?>;
+
 <?php
 // The click cookies on the landing page's own site: none for a visitor the
-// privacy setting holds back (p202ClickCookieJs()).
+// privacy setting holds back (p202ClickCookieJs()). The variables above are
+// what the script has always answered with (the live passes read the click
+// id from them); they set nothing.
 echo p202ClickCookieJs(['tracking202subid' => (string) $click_id, 'tracking202pci' => (string) $click_id_public]);
 $p13nOwner = (int) ($tracker_row['user_id'] ?? 0);
 echo p202MintPersonalizationCookieJs($db, $p13nOwner, $_GET, (int) $click_id, trackingEnabled());

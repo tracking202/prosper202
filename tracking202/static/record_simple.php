@@ -503,9 +503,14 @@ header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 (function () {
 
+var subid =<?php echo json_encode((string) $click_id); ?>;
+var outbound = <?php echo json_encode((string) $outbound_site_url); ?>;
+
 <?php
 // The click cookies on the landing page's own site: none for a visitor the
-// privacy setting holds back (p202ClickCookieJs()).
+// privacy setting holds back (p202ClickCookieJs()). The variables above are
+// what the script has always answered with (the live passes read the click
+// id from them); they set nothing.
 echo p202ClickCookieJs([
     'tracking202subid' => (string) $click_id,
     'tracking202outbound' => (string) $outbound_site_url,
