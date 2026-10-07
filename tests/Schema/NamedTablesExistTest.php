@@ -36,18 +36,15 @@ final class NamedTablesExistTest extends TestCase
     private const EXEMPT = ['202-config/functions-upgrade.php'];
 
     /**
-     * Unknown tables a file may still name, with the reason.
+     * Unknown tables a file may still name, with the reason. Empty: the one
+     * entry it held, class-indexes.php's INDEXES::get_c1_id()..get_c4_id()
+     * on 202_clicks_c1..c4, was dead code (reached only through
+     * functions-indexes.php's get_cN_id() wrappers, which nothing called) and
+     * is gone with them.
      *
      * @var array<string, array{list<string>, string}>
      */
-    private const KNOWN_UNKNOWN = [
-        '202-config/class-indexes.php' => [
-            ['202_clicks_c1', '202_clicks_c2', '202_clicks_c3', '202_clicks_c4'],
-            'an open finding: this INDEXES::get_cN_id() is reached only through functions-indexes.php\'s'
-            . ' get_cN_id() wrappers, which nothing calls (the click path uses connect2.php\'s INDEXES and'
-            . ' 202_tracking_cN); dead code naming tables an older schema had',
-        ],
-    ];
+    private const KNOWN_UNKNOWN = [];
 
     private const REFERENCE = '/\b(?:FROM|JOIN|INTO|UPDATE|TRUNCATE(?:\s+TABLE)?|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)'
         . '\s+`?(202_[a-z0-9_]+)`?/i';
