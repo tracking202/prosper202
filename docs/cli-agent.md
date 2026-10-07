@@ -1045,11 +1045,11 @@ Visitor-authored (or visitor-derived) fields returned by this CLI:
 
 | Field(s) | Where the value comes from | Where it surfaces |
 |----------|----------------------------|-------------------|
-| Keyword names | `t202kw` query parameter / cookie on the tracking or landing URL | `report breakdown --breakdown keyword`, `analytics --group-by keyword` |
+| Keyword names | `t202kw` query parameter / cookie on the tracking or landing URL | `click list`/`click get` (`keyword`), `report breakdown --breakdown keyword`, `analytics --group-by keyword` |
+| Referrer, landing and outbound URLs | The visitor's browser (`Referer`) and the tracking link's query | `click list`/`click get` (`referer`, `landing`, `outbound`) |
+| SubIDs `c1`--`c4` | Query parameters on the tracking link | `click get` (`c1`..`c4`) |
 | Browser, platform, device names | Parsed from the visitor's user-agent string | `click list`/`click get` resolved names, `report breakdown`/`analytics` by `browser`/`platform`/`device` |
-| City, ISP names | GeoIP resolution of the visitor's IP | `report breakdown`/`analytics` by `city`/`isp` |
-
-The platform also stores other visitor-authored strings (SubIDs `c1`--`c4`, referrer URLs) that the v3 API does not currently return; if you read them through the web UI, the database, or a future endpoint, the same rules apply.
+| Region, city, ISP names | GeoIP resolution of the visitor's IP | `click list`/`click get`, `report breakdown`/`analytics` by `region`/`city`/`isp` |
 
 Servers with `features.response_sanitization` sanitize these fields before serving them: Unicode is NFKC-normalized, invisible and bidirectional characters are stripped, control characters become spaces, text shaped like model protocol markup (`<|...|>` special tokens, transcript/tool-call tags) is replaced with `[removed]`, and values cap at 512 characters (a cut value ends in `…[truncated]`). The stored value is unchanged, and the CLI's human table view additionally strips terminal escape sequences from every cell. Sanitization closes off hidden-character and markup tricks, not instruction-shaped *visible* text -- the handling rules below apply in full either way:
 

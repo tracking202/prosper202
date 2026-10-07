@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Api\V3\Controllers;
 
+use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\StatementHelpers;
@@ -13,6 +14,62 @@ class ClicksController
 {
     use StatementHelpers;
     use AccountTimezone;
+
+    /**
+     * What a click is served with: its ids, and the values the Visitors page
+     * (tracking202/ajax/click_history.php) shows for them — the campaign,
+     * traffic source, landing page and text ad by name, the visitor's IP,
+     * keyword, device and location, and the referrer, landing and outbound
+     * URLs. The list and the single click share it, so the two cannot drift.
+     * A name is joined only when the record is the click's own account's.
+     */
+    private const DETAIL_COLUMNS = '
+                c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
+                c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
+                c.click_bot, c.click_alp, c.click_time, c.rotator_id, c.rule_id,
+                cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out,
+                ca.text_ad_id, ca.keyword_id, ca.ip_id, ca.country_id, ca.region_id, ca.city_id,
+                ca.platform_id, ca.browser_id, ca.device_id, ca.isp_id,
+                ac.aff_campaign_name, pa.ppc_account_name, pn.ppc_network_name,
+                lp.landing_page_nickname, ta.text_ad_name,
+                ip.ip_address, kw.keyword,
+                lc.country_name, lc.country_code, lr.region_name, lci.city_name, li.isp_name,
+                p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
+                su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
+                su_out.site_url_address AS outbound';
+
+    private const DETAIL_JOINS = '
+            LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
+            LEFT JOIN 202_clicks_advance ca ON c.click_id = ca.click_id
+            LEFT JOIN 202_clicks_site cs ON c.click_id = cs.click_id
+            LEFT JOIN 202_aff_campaigns ac ON c.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = c.user_id
+            LEFT JOIN 202_ppc_accounts pa ON c.ppc_account_id = pa.ppc_account_id AND pa.user_id = c.user_id
+            LEFT JOIN 202_ppc_networks pn ON pa.ppc_network_id = pn.ppc_network_id
+            LEFT JOIN 202_landing_pages lp ON c.landing_page_id = lp.landing_page_id AND lp.user_id = c.user_id
+            LEFT JOIN 202_text_ads ta ON ca.text_ad_id = ta.text_ad_id AND ta.user_id = c.user_id
+            LEFT JOIN 202_ips ip ON ca.ip_id = ip.ip_id
+            LEFT JOIN 202_keywords kw ON ca.keyword_id = kw.keyword_id
+            LEFT JOIN 202_locations_country lc ON ca.country_id = lc.country_id
+            LEFT JOIN 202_locations_region lr ON ca.region_id = lr.region_id
+            LEFT JOIN 202_locations_city lci ON ca.city_id = lci.city_id
+            LEFT JOIN 202_locations_isp li ON ca.isp_id = li.isp_id
+            LEFT JOIN 202_platforms p ON ca.platform_id = p.platform_id
+            LEFT JOIN 202_browsers b ON ca.browser_id = b.browser_id
+            LEFT JOIN 202_device_models dm ON ca.device_id = dm.device_id
+            LEFT JOIN 202_device_types dt ON dm.device_type = dt.type_id
+            LEFT JOIN 202_site_urls su_ref ON cs.click_referer_site_url_id = su_ref.site_url_id
+            LEFT JOIN 202_site_urls su_lp ON cs.click_landing_site_url_id = su_lp.site_url_id
+            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id';
+
+    /**
+     * Values the visitor (or the visitor's browser) wrote: stripped of
+     * control and bidi characters and capped before they are served.
+     */
+    private const VISITOR_FIELDS = [
+        'keyword', 'ip_address', 'referer', 'landing', 'outbound',
+        'country_name', 'region_name', 'city_name', 'isp_name',
+        'platform_name', 'browser_name', 'device_name', 'device_type',
+    ];
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -67,20 +124,8 @@ class ClicksController
         $total = (int)$stmt->get_result()->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = "SELECT
-                c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
-                c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
-                c.click_bot, c.click_alp, c.click_time, c.rotator_id, c.rule_id,
-                cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out,
-                ca.keyword_id, ca.country_id, ca.platform_id, ca.browser_id, ca.device_id,
-                lc.country_name, lc.country_code,
-                p.platform_name, b.browser_name
-            FROM 202_clicks c
-            LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
-            LEFT JOIN 202_clicks_advance ca ON c.click_id = ca.click_id
-            LEFT JOIN 202_locations_country lc ON ca.country_id = lc.country_id
-            LEFT JOIN 202_platforms p ON ca.platform_id = p.platform_id
-            LEFT JOIN 202_browsers b ON ca.browser_id = b.browser_id
+        $sql = 'SELECT ' . self::DETAIL_COLUMNS . '
+            FROM 202_clicks c ' . self::DETAIL_JOINS . "
             $whereClause
             ORDER BY c.click_time DESC, c.click_id DESC
             LIMIT ? OFFSET ?";
@@ -99,10 +144,7 @@ class ClicksController
         while ($row = $result->fetch_assoc()) {
             // Resolved names derive from the visitor (user agent, IP): strip
             // control/bidi characters and cap length before serving them.
-            $rows[] = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
-                $row,
-                ['country_name', 'platform_name', 'browser_name']
-            );
+            $rows[] = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS);
         }
         $stmt->close();
 
@@ -114,29 +156,17 @@ class ClicksController
 
     public function get(int $id): array
     {
-        $sql = "SELECT
-                c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
-                c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
-                c.click_bot, c.click_alp, c.click_time, c.rotator_id, c.rule_id, c.user_id,
-                cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out, cr.click_reviewed,
-                ca.text_ad_id, ca.keyword_id, ca.ip_id, ca.country_id, ca.region_id,
-                ca.city_id, ca.platform_id, ca.browser_id, ca.device_id, ca.isp_id,
-                ct.c1_id, ct.c2_id, ct.c3_id, ct.c4_id,
-                lc.country_name, lc.country_code,
-                lr.region_name, lci.city_name, li.isp_name,
-                p.platform_name, b.browser_name
-            FROM 202_clicks c
-            LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
-            LEFT JOIN 202_clicks_advance ca ON c.click_id = ca.click_id
+        $sql = 'SELECT ' . self::DETAIL_COLUMNS . ',
+                c.user_id, cr.click_reviewed, ct.c1_id, ct.c2_id, ct.c3_id, ct.c4_id,
+                t1.c1, t2.c2, t3.c3, t4.c4
+            FROM 202_clicks c ' . self::DETAIL_JOINS . '
             LEFT JOIN 202_clicks_tracking ct ON c.click_id = ct.click_id
-            LEFT JOIN 202_locations_country lc ON ca.country_id = lc.country_id
-            LEFT JOIN 202_locations_region lr ON ca.region_id = lr.region_id
-            LEFT JOIN 202_locations_city lci ON ca.city_id = lci.city_id
-            LEFT JOIN 202_locations_isp li ON ca.isp_id = li.isp_id
-            LEFT JOIN 202_platforms p ON ca.platform_id = p.platform_id
-            LEFT JOIN 202_browsers b ON ca.browser_id = b.browser_id
+            LEFT JOIN 202_tracking_c1 t1 ON ct.c1_id = t1.c1_id
+            LEFT JOIN 202_tracking_c2 t2 ON ct.c2_id = t2.c2_id
+            LEFT JOIN 202_tracking_c3 t3 ON ct.c3_id = t3.c3_id
+            LEFT JOIN 202_tracking_c4 t4 ON ct.c4_id = t4.c4_id
             WHERE c.click_id = ? AND c.user_id = ?
-            LIMIT 1";
+            LIMIT 1';
 
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'ii', $id, $this->userId);
@@ -150,10 +180,7 @@ class ClicksController
 
         // Resolved names derive from the visitor (user agent, IP): strip
         // control/bidi characters and cap length before serving them.
-        $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
-            $row,
-            ['country_name', 'region_name', 'city_name', 'isp_name', 'platform_name', 'browser_name']
-        );
+        $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, [...self::VISITOR_FIELDS, 'c1', 'c2', 'c3', 'c4']);
 
         return ['data' => $row];
     }

@@ -9136,6 +9136,63 @@ components:
           type: string
         browser_name:
           type: string
+        text_ad_id:
+          type: integer
+        ip_id:
+          type: integer
+        region_id:
+          type: integer
+        city_id:
+          type: integer
+        isp_id:
+          type: integer
+        aff_campaign_name:
+          type: string
+          nullable: true
+          description: Named only when the campaign is the click's own account's; likewise the other names.
+        ppc_account_name:
+          type: string
+          nullable: true
+        ppc_network_name:
+          type: string
+          nullable: true
+        landing_page_nickname:
+          type: string
+          nullable: true
+        text_ad_name:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        keyword:
+          type: string
+          nullable: true
+          description: Visitor-authored, like the URLs and location and device names; cleaned of control and bidi characters and capped.
+        region_name:
+          type: string
+          nullable: true
+        city_name:
+          type: string
+          nullable: true
+        isp_name:
+          type: string
+          nullable: true
+        device_name:
+          type: string
+          nullable: true
+        device_type:
+          type: string
+          nullable: true
+        referer:
+          type: string
+          nullable: true
+        landing:
+          type: string
+          nullable: true
+        outbound:
+          type: string
+          nullable: true
 
     ClickDetail:
       allOf:
@@ -9146,16 +9203,18 @@ components:
               type: integer
             click_reviewed:
               type: integer
-            text_ad_id:
-              type: integer
-            ip_id:
-              type: integer
-            region_id:
-              type: integer
-            city_id:
-              type: integer
-            isp_id:
-              type: integer
+            c1:
+              type: string
+              nullable: true
+            c2:
+              type: string
+              nullable: true
+            c3:
+              type: string
+              nullable: true
+            c4:
+              type: string
+              nullable: true
             c1_id:
               type: integer
             c2_id:
@@ -9164,12 +9223,6 @@ components:
               type: integer
             c4_id:
               type: integer
-            region_name:
-              type: string
-            city_name:
-              type: string
-            isp_name:
-              type: string
 
     ClickResponse:
       type: object
