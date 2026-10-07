@@ -626,6 +626,23 @@ When two implementations of one protection exist, a test that pins them to
 the same option set is what stops one from quietly lacking a line the other
 learned; `OutboundUrlGuardTest` does that for the two webhook senders.
 
+### 25. A writer's "none" must be the reader's "none"
+The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
+null`. The setup page writes NULL in the parts a redirect does not use; the
+API wrote `0`. MySQL hands the row back as strings, and in PHP 8 `'0' != null`
+is **true** (null compares as `''`), so every URL or landing-page redirect made
+through the API read as a campaign with no campaign, and each visitor its rule
+matched got `302` with an empty `Location`. Every unit test was green: the
+writer stored what it meant, and the reader read what it was written for —
+the defect was the sentinel each side assumed the other used. Two writers of
+one table is the tell. Before adding a writer, find every reader of the
+columns it leaves unused and check which value they test for "absent" (`!=
+null`, `empty()`, `> 0`, `=== ''`), and write that one; when the readers
+disagree, make the reader accept every "none" the writers produce, since rows
+already written will not change. An end-to-end request through the real
+reader (here, a click that matches the rule) is what finds it; reading either
+file alone cannot.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
