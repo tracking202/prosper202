@@ -304,6 +304,7 @@ Bulk delete (`--ids`) processes each ID individually and reports a summary. If a
 | `--payout_mode` | No | How conversions set a click's value: `replace` (default) or `accumulate` |
 | `--identity_signals` | No | Link this campaign's clicks into multi-touch journeys (1, default) or not (0) |
 | `--app_registration_id` | No | The Android app registration the campaign's store links install (0 unlinks) |
+| `--attribution_model_id` | No | The attribution model its conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default) |
 
 Campaign utility subcommand:
 

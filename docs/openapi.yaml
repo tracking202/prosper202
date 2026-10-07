@@ -8401,6 +8401,14 @@ components:
             (`GET /apps`; null or 0 unlinks). An install of another app on one
             of its clicks is `foreign_click`. Read raw: `"1e0"` or `1.5` is
             `422`, never cast, and an iOS registration is refused.
+        attribution_model_id:
+          type: integer
+          nullable: true
+          description: >-
+            The attribution model this campaign's conversions are credited
+            with, overriding the account's default (`GET /attribution/models`;
+            null or 0 returns it to the default). One of the caller's own
+            models; read raw, so `"1e0"` or `1.5` is `422`, never cast.
         aff_campaign_time:
           type: integer
           readOnly: true
@@ -8486,6 +8494,14 @@ components:
             p202lpid, and customer ids signed with the account's linking key —
             so multi-touch attribution can join them into one journey. "0":
             none are read or set, and every click is its own journey.
+        attribution_model_id:
+          type: integer
+          nullable: true
+          description: >-
+            The attribution model this campaign's conversions are credited
+            with, overriding the account's default (`GET /attribution/models`;
+            null or 0 returns it to the default). One of the caller's own
+            models; read raw, so `"1e0"` or `1.5` is `422`, never cast.
 
     CampaignUpdate:
       type: object
@@ -8537,6 +8553,14 @@ components:
             p202lpid, and customer ids signed with the account's linking key —
             so multi-touch attribution can join them into one journey. "0":
             none are read or set, and every click is its own journey.
+        attribution_model_id:
+          type: integer
+          nullable: true
+          description: >-
+            The attribution model this campaign's conversions are credited
+            with, overriding the account's default (`GET /attribution/models`;
+            null or 0 returns it to the default). One of the caller's own
+            models; read raw, so `"1e0"` or `1.5` is `422`, never cast.
 
     CampaignResponse:
       type: object

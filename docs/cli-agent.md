@@ -557,6 +557,7 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 | `--payout_mode` | optional | replace/accumulate |
 | `--identity_signals` | optional | 0/1 |
 | `--app_registration_id` | optional | integer |
+| `--attribution_model_id` | optional | integer, one of `attribution model list`; 0 = account default |
 
 #### Aff-network fields
 

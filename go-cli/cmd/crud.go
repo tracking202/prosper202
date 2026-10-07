@@ -1050,6 +1050,7 @@ var crudEntities = []crudEntity{
 			{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
 			{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
 			{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
+			{Name: "attribution_model_id", Desc: "The attribution model this campaign's conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default)"},
 		},
 		ListParams: []crudField{
 			{

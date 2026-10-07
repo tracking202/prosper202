@@ -29,6 +29,7 @@ Manage campaigns.
 | `aff_network_id` | integer | Yes | Associated network ID |
 | `aff_campaign_cloaking` | integer | No | Cloaking enabled (0/1) |
 | `aff_campaign_rotate` | integer | No | Rotation enabled (0/1) |
+| `attribution_model_id` | integer | No | The attribution model its conversions are credited with, overriding the account default: one of your models (`GET /attribution/models`); `null` or `0` returns it to the default. Anything else, including another account's model, is a `422` |
 
 Auto-generated on create: `aff_campaign_time` (unix timestamp) and `aff_campaign_id_public`,
 the id advanced landing-page code and `go.php?acip=` carry: a random digit, the

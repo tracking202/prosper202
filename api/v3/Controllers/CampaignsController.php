@@ -40,26 +40,52 @@ class CampaignsController extends Controller
             // foreign_click. Written only through create()/update() below,
             // which read the raw value; null or 0 unlinks.
             'app_registration_id'          => ['type' => 'i', 'readonly' => true],
+            // The campaign's attribution model, overriding the account's
+            // default (Setup > Campaigns > Attribution model): one of the
+            // caller's own models, or null/0 for the default. Written, like
+            // the app link, only through create()/update() below.
+            'attribution_model_id'         => ['type' => 'i', 'readonly' => true],
             // The id advanced landing-page code and go.php carry (acip=…),
             // set by afterCreate() the way the setup page sets it.
             'aff_campaign_id_public'       => ['type' => 'i', 'readonly' => true],
         ];
     }
 
-    /** The validated link a create or an update is carrying to beforeCreate()/beforeUpdate(), when it sent one. */
-    private ?array $pendingRegistrationLink = null;
+    /**
+     * The validated links a create or an update is carrying to
+     * beforeCreate()/beforeUpdate(): column => id, or null to unlink.
+     *
+     * @var array<string, ?int>
+     */
+    private array $pendingLinks = [];
+
+    /**
+     * The links in a payload, each read from its raw value and checked.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, ?int>
+     */
+    private function linksIn(array $payload): array
+    {
+        $links = [];
+        if (array_key_exists('app_registration_id', $payload)) {
+            $links['app_registration_id'] = $this->registrationLink($payload['app_registration_id']);
+        }
+        if (array_key_exists('attribution_model_id', $payload)) {
+            $links['attribution_model_id'] = $this->attributionModelLink($payload['attribution_model_id']);
+        }
+
+        return $links;
+    }
 
     #[\Override]
     public function create(array $payload): array
     {
-        $this->pendingRegistrationLink = null;
-        if (array_key_exists('app_registration_id', $payload)) {
-            $this->pendingRegistrationLink = ['value' => $this->registrationLink($payload['app_registration_id'])];
-        }
+        $this->pendingLinks = $this->linksIn($payload);
         try {
             return parent::create($payload);
         } finally {
-            $this->pendingRegistrationLink = null;
+            $this->pendingLinks = [];
         }
     }
 
@@ -69,8 +95,8 @@ class CampaignsController extends Controller
         $extras = [
             'aff_campaign_time'      => ['type' => 'i', 'value' => time()],
         ];
-        if ($this->pendingRegistrationLink !== null) {
-            $extras['app_registration_id'] = ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']];
+        foreach ($this->pendingLinks as $column => $value) {
+            $extras[$column] = ['type' => 'i', 'value' => $value];
         }
 
         return $extras;
@@ -90,38 +116,42 @@ class CampaignsController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
-        if (!array_key_exists('app_registration_id', $payload)) {
+        $links = $this->linksIn($payload);
+        if ($links === []) {
             return parent::update($id, $payload);
         }
-        $link = ['value' => $this->registrationLink($payload['app_registration_id'])];
-        unset($payload['app_registration_id']);
+        foreach (array_keys($links) as $column) {
+            unset($payload[$column]);
+        }
 
         if ($payload !== []) {
-            // One UPDATE: the other fields and the link together, through
+            // One UPDATE: the other fields and the links together, through
             // beforeUpdate(). The base records the change after it, so the
-            // change feed's record carries the link as written — a separate
+            // change feed's record carries the links as written — a separate
             // link UPDATE after parent::update() left the feed holding the
             // old link for good. A payload the base refuses changes nothing.
-            $this->pendingRegistrationLink = $link;
+            $this->pendingLinks = $links;
             try {
                 return parent::update($id, $payload);
             } finally {
-                $this->pendingRegistrationLink = null;
+                $this->pendingLinks = [];
             }
         }
 
-        // The link alone: the base refuses a payload with no writable field,
-        // so the link is its own UPDATE — with the base's preconditions
+        // The links alone: the base refuses a payload with no writable field,
+        // so they are their own UPDATE — with the base's preconditions
         // (ownership, If-Match) and its change record. No transaction of its
         // own: bulk-upsert already wraps this call in one, and mysqli's
         // begin_transaction() inside it would commit the outer (CLAUDE.md
         // #13).
         $current = $this->get($id);
         $this->assertIfMatchSatisfied((array)$current['data']);
-        $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = ? WHERE aff_campaign_id = ? AND user_id = ?');
+        // The column names come from linksIn(), never from the request.
+        $sets = implode(', ', array_map(static fn (string $column): string => "$column = ?", array_keys($links)));
+        $stmt = $this->prepare("UPDATE 202_aff_campaigns SET $sets WHERE aff_campaign_id = ? AND user_id = ?");
         $campaignId = (int)$id;
-        $this->bind($stmt, 'iii', $link['value'], $campaignId, $this->userId);
-        $this->execute($stmt, 'Campaign app link failed');
+        $this->bind($stmt, str_repeat('i', count($links)) . 'ii', ...[...array_values($links), $campaignId, $this->userId]);
+        $this->execute($stmt, 'Campaign link failed');
         $stmt->close();
 
         // As in the base update(): the write has landed, so a later failure
@@ -139,11 +169,12 @@ class CampaignsController extends Controller
     #[\Override]
     protected function beforeUpdate(int|string $id, array $payload): array
     {
-        if ($this->pendingRegistrationLink === null) {
-            return [];
+        $extras = [];
+        foreach ($this->pendingLinks as $column => $value) {
+            $extras[$column] = ['type' => 'i', 'value' => $value];
         }
 
-        return ['app_registration_id' => ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']]];
+        return $extras;
     }
 
     /**
@@ -166,6 +197,35 @@ class CampaignsController extends Controller
             }
             $this->recordChange('update', $record);
         }
+    }
+
+    /**
+     * The attribution model a campaign may name, read from the RAW value as
+     * the setup page reads it: null, 0 or '' is the account's default model;
+     * otherwise a canonical positive id naming one of the caller's own
+     * models (ModelRepository::row, which the page uses). Anything else is a
+     * 422, never a cast to some other id.
+     */
+    private function attributionModelLink(mixed $raw): ?int
+    {
+        if ($raw === null || $raw === 0 || $raw === '0' || $raw === '') {
+            return null;
+        }
+        $text = is_int($raw) ? (string)$raw : (is_string($raw) ? $raw : null);
+        if ($text === null || preg_match('/^[1-9][0-9]{0,9}$/D', $text) !== 1 || (int)$text > 2147483647) {
+            throw new \Api\V3\Exception\ValidationException('Invalid attribution_model_id', [
+                'attribution_model_id' => 'must be one of your attribution model ids (GET /attribution/models), or null for the account default',
+            ]);
+        }
+        $modelId = (int)$text;
+        $model = (new \Prosper202\Attribution\ModelRepository(new \Prosper202\Database\Connection($this->db)))->row($this->userId, $modelId);
+        if ($model === null) {
+            throw new \Api\V3\Exception\ValidationException('Unknown attribution model', [
+                'attribution_model_id' => 'model ' . $modelId . ' is not one of yours (GET /attribution/models lists them)',
+            ]);
+        }
+
+        return $modelId;
     }
 
     /**

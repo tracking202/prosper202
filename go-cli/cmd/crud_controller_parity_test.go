@@ -14,7 +14,8 @@ import (
 // a write. Each needs the reason, because "readonly" otherwise means the
 // API drops the value.
 var controllerFieldsRaw = map[string]string{
-	"campaigns.app_registration_id": "CampaignsController::create()/update() read it raw (registrationLink) before the readonly field list drops it",
+	"campaigns.app_registration_id":  "CampaignsController::create()/update() read it raw (registrationLink) before the readonly field list drops it",
+	"campaigns.attribution_model_id": "CampaignsController::create()/update() read it raw (attributionModelLink) before the readonly field list drops it",
 }
 
 type controllerField struct {
