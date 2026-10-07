@@ -405,6 +405,24 @@ Empty response body.
 - Sync operations: **30 requests per minute** (per user)
 - Bulk-upsert operations: **60 requests per minute** (per user)
 
+## Server-Side State
+
+Idempotency records, staged changes, sync jobs and their audit, sync
+manifests, rate-limit buckets and metrics live in a directory on the server,
+not in the database: `P202_SERVER_STATE_DIR` when it is set, otherwise
+`p202-api-v3-state-<hash>` in the system temp directory, where the hash is of
+the database host and name, so two instances on one host keep their own. A
+process that runs without the configuration in scope uses
+`p202-api-v3-state-unscoped` and logs that it does; it used to use the
+pre-1.9.75 shared directory, which the next instance installed on the host
+then adopted as its own.
+
+**Reinstalling into a database of the same name on the same host keeps that
+directory**, and with it the previous install's state: a retried
+`Idempotency-Key` it recorded replays the old response, and its staged
+changes are listed to the new install's users. Before reinstalling that
+way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
+
 ## Resource Endpoints Overview
 
 | Resource | Endpoints | Documentation |

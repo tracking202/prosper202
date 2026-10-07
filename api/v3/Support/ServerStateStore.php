@@ -1336,19 +1336,30 @@ class ServerStateStore implements QuotaStore
             // idempotency and rate-limit store than the web tier — with no
             // error at all. Say so once per process rather than diverging in
             // silence (error pattern #3).
+            //
+            // The unscoped path is NOT $legacy. It was, and $legacy is what a
+            // new instance adopts below when it has no directory of its own:
+            // every process without an identity (a test run, a script that
+            // loads the configuration inside a function) kept writing the
+            // directory the next instance installed on the host would take as
+            // its own — its idempotency records replayed to that instance's
+            // users, its staged changes listed for them to apply. Measured:
+            // an identity-less store's create replayed, and its staged DELETE
+            // listed, in a brand-new instance on another database.
             global $dbname, $dbhost;
             if (!is_string($dbname) || trim($dbname) === '') {
+                $unscoped = $legacy . '-unscoped';
                 static $warned = false;
                 if (!$warned) {
                     $warned = true;
                     error_log(
                         'p202: no database identity in scope when resolving the v3 API state directory; '
-                        . 'using the unscoped path ' . $legacy . '. A process that reaches this reads '
+                        . 'using the unscoped path ' . $unscoped . '. A process that reaches this reads '
                         . 'different state than the web tier — load 202-config.php at file scope, or pass '
                         . 'the identity to ServerStateStore, or set P202_SERVER_STATE_DIR.'
                     );
                 }
-                return $legacy;
+                return $unscoped;
             }
             $identity = (is_string($dbhost) ? $dbhost : '') . '|' . $dbname;
         }
@@ -1357,7 +1368,19 @@ class ServerStateStore implements QuotaStore
         // One-time adoption of the pre-scoping directory so in-flight sync
         // jobs and staged changes survive the upgrade. On a host that really
         // does run several instances, the first one upgraded adopts the
-        // shared history — no worse than the sharing that preceded it.
+        // shared history — no worse than the sharing that preceded it. No
+        // process of this version writes $legacy (an identity-less one uses
+        // the -unscoped path above), so what is adopted is only what a
+        // version before the scoping left there.
+        //
+        // Not covered, by design of the key: an instance reinstalled into a
+        // database of the same name on the same host has the same identity,
+        // and so takes over the state its predecessor left (an idempotency
+        // key replays the old install's response; its staged changes list).
+        // Telling the two installs apart needs something the reinstall
+        // changes (202_users.install_hash), read from the database on every
+        // construction; until then, a reinstall should set
+        // P202_SERVER_STATE_DIR or remove the directory this resolves to.
         if (!is_dir($scoped) && is_dir($legacy)) {
             // A failed adoption must not silently strand the old directory's
             // staged changes, sync jobs, and idempotency records: keep using
