@@ -50,8 +50,9 @@ final class PostbackIntake
 
         try {
             // The stored remote_ip is display/forensic data, so the validated
-            // XFF-aware helper is right for it; the rate-limit key above is
-            // not derived from it.
+            // XFF-aware helper is right for it — masked under privacy by the
+            // receiver, as a click's is; the rate-limit key above is not
+            // derived from it.
             $receiver = new PostbackReceiver($db, $protocol);
             $result = $receiver->receive($rawBody, \AUTH::client_ip());
         } catch (\Throwable $e) {

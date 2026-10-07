@@ -36,7 +36,7 @@ final class LastClickFromAddress
      */
     public static function find(Connection $conn, string $address, int $userId, int $since): ?array
     {
-        $ipIds = self::ipIds($conn, $address);
+        $ipIds = StoredAddressIds::of($conn, $address);
         if ($ipIds === []) {
             return null;
         }
@@ -62,33 +62,5 @@ final class LastClickFromAddress
             'click_id_public' => (string) ($row['click_id_public'] ?? ''),
             'keyword_id' => (int) ($row['keyword_id'] ?? 0),
         ];
-    }
-
-    /**
-     * Every 202_ips row stored for $address: an IPv4 address by its text, an
-     * IPv6 one through 202_ips_v6 (its packed bytes), as findOrCreateIp()
-     * and INDEXES::get_ip_id() write them. More than one row can exist for
-     * one address (the two writers did not always find each other's rows).
-     *
-     * @return list<int>
-     */
-    private static function ipIds(Connection $conn, string $address): array
-    {
-        if ($address === '' || filter_var($address, FILTER_VALIDATE_IP) === false) {
-            return [];
-        }
-        if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-            $stmt = $conn->prepareRead(
-                'SELECT 202_ips.ip_id FROM 202_ips_v6'
-                . ' INNER JOIN 202_ips ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)'
-                . ' WHERE 202_ips_v6.ip_address = ?'
-            );
-            $conn->bind($stmt, 's', [(string) inet_pton($address)]);
-        } else {
-            $stmt = $conn->prepareRead('SELECT ip_id FROM 202_ips WHERE ip_address = ?');
-            $conn->bind($stmt, 's', [$address]);
-        }
-
-        return array_map(static fn (array $row): int => (int) $row['ip_id'], $conn->fetchAll($stmt));
     }
 }

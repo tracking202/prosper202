@@ -13605,7 +13605,11 @@ components:
           description: The signing key the postback named (AdAttributionKit JWS `kid`); `null` for SKAdNetwork
         remote_ip:
           type: string
-          description: Display value (proxy-header aware); not the rate-limit identity
+          description: >-
+            The sending device's address (proxy-header aware), masked to its /24
+            (IPv6 /48) when the privacy setting holds back for it — the install's,
+            or the owning account's (user_pref_privacy). Display only; not the
+            rate-limit identity
 
     AppPostbackDetail:
       allOf:
@@ -13780,6 +13784,11 @@ components:
           description: When the state became final; null while pending
         remote_ip:
           type: string
+          description: >-
+            The installing device's address (proxy-header aware), masked to its
+            /24 (IPv6 /48) when the privacy setting holds back for it — the
+            install's, or the owning account's (user_pref_privacy). Display only;
+            not the rate-limit identity
 
     AppInstallResponse:
       type: object

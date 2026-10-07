@@ -131,25 +131,6 @@ if (!isset($db)) {
     }
 }
 
-//determine privacy mode
-if ($memcacheWorking) {
-    // Try to determine tracker/user ID from various possible sources
-    $tid = '';
-    if (isset($_GET['t202id'])) {
-        $tid = $_GET['t202id'];
-    } elseif (isset($_GET['pci'])) {
-        $tid = $_GET['pci'];
-    } elseif (isset($_GET['lpip'])) {
-        $tid = $_GET['lpip'];
-    } elseif (isset($_SESSION['user_id'])) {
-        $tid = $_SESSION['user_id'];
-    } else {
-        // Default to user 1 if no ID is found
-        $tid = '1';
-    }
-    $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
-}
-
 //set sql mode - only if db connection is available
 if ($db) {
     // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
@@ -167,6 +148,21 @@ if ($db) {
 }
 
 
+// The privacy mode: the install's setting, user 1's row, read through
+// memcache_mysql_fetch_assoc(), which caches it for three minutes when
+// memcache works. Every account has a setting of its own on Personal
+// settings, and this does not read it: the click's account is known only
+// after this runs, in each endpoint. The app intakes, which know theirs,
+// apply the stricter of the two (PrivacySetting).
+//
+// With memcache working this used to read account.php's per-account key,
+// user_pref_privacy_<id>, under the request's t202id, pci or lpip instead —
+// ids account.php never writes a key under. The miss came back false, false
+// counted as set, and the database was never asked: every visitor of a
+// tracking link was tracked in full, cookies and unmasked address, whatever
+// the owner had chosen (executed against the old block with a Memcached
+// stand-in; PrivacyBootstrapTest). A pixel's request, which fell back to
+// user 1's key, read a value the API's preference update never refreshes.
 if (!isset($_SESSION['privacy'])) {
 
     $user_sql = "	SELECT 	user_pref_privacy
@@ -175,7 +171,12 @@ if (!isset($_SESSION['privacy'])) {
 
     $privacy = memcache_mysql_fetch_assoc($user_sql);
     if (isset($privacy['user_pref_privacy'])) {
-        $_SESSION['privacy'] = $privacy['user_pref_privacy'];
+        // A stored value that is not a setting holds back rather than
+        // tracking in full (CLAUDE.md #11), as the app intakes read it
+        // (PrivacySetting).
+        $_SESSION['privacy'] = in_array($privacy['user_pref_privacy'], \Prosper202\Http\PrivacySetting::SETTINGS, true)
+            ? $privacy['user_pref_privacy']
+            : 'all';
     } else {
         $_SESSION['privacy'] = 'disabled'; //default to disabled
     }
@@ -210,25 +211,23 @@ function trackingEnabled(): bool
 
 /**
  * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
- * their address places them outside the European Union, it does.
+ * their address places them outside Europe and outside the European Union,
+ * it does (EuropeanVisitor, which the app intakes ask too).
  *
  * The check used to read $_SESSION['is_european_union'], which nothing ever
  * set: every request under 'eu' raised an undefined-key warning and tracked
  * EU visitors in full — cookies set, the address stored — which is what the
- * setting promises not to do. Only a positive "not in the EU" lifts privacy:
- * an address GeoIP cannot place, or one in a European country outside the
- * EU (getGeoData() reports those as "Unknown"), is treated as possibly EU,
- * and so is everyone when the GeoIP library is missing (getGeoData() then
- * answers false for every address without looking). Asked once per request.
+ * setting promises not to do. Only a positive "outside Europe, not in the
+ * EU" lifts privacy: an address GeoIP cannot place, one in a European
+ * country outside the EU, and everyone when the GeoIP library or database
+ * is missing are held back (PrivacyMode::mayBeEuropean() says why). Asked
+ * once per request.
  */
 function p202VisitorMayBeInEu(): bool
 {
     static $mayBe = null;
     if ($mayBe === null) {
-        $answer = class_exists(\GeoIp2\Database\Reader::class)
-            ? (getGeoData(\Prosper202\Http\VisitorIp::fromServer($_SERVER))['is_european_union'] ?? null)
-            : null;
-        $mayBe = \Prosper202\Http\PrivacyMode::mayBeInEu($answer);
+        $mayBe = \Prosper202\Http\EuropeanVisitor::mayBe(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     }
 
     return $mayBe;
@@ -290,19 +289,32 @@ function delay_sql($db, $delayed_sql): void
 class FILTER
 {
 
-    public static function startFilter($db, $click_id, $ip_id, $ip_address, $user_id)
+    /**
+     * Whether to record this click as filtered (1) or not (0).
+     *
+     * The sign-in and netrange checks compare the address the click arrived
+     * from (VisitorIp), read here rather than handed in: a caller that
+     * passed the address the click path stores — masked under privacy —
+     * would match no sign-in and no netrange. Every caller passed one
+     * argument more before; StoredVisitorIpSourceTest holds them to four.
+     *
+     * @param int|string $ip_id the click's stored address row (masked under
+     *        privacy): what the duplicate check keeps, the only one it may
+     */
+    public static function startFilter($db, $click_id, $ip_id, $user_id)
     {
+        $arrived = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
         // we only do the other checks, if the first ones have failed.
         // we will return the variable filter, if the $filter returns TRUE, when the click is inserted and recorded we will insert the new click already inserted,
         // what was lagign this query is before it would insert a click, then scan it and then update the click, the updating later on was lagging, now we will just insert and it will not stop the clicks from being redirected becuase of a slow update.
 
         // check the user
-        $filter = FILTER::checkUserIP($db, $click_id, $ip_id, $user_id);
+        $filter = FILTER::checkUserIP($db, $arrived);
         if ($filter == false) {
 
             // check the netrange
-            $filter = FILTER::checkNetrange($click_id, $ip_address);
+            $filter = FILTER::checkNetrange($click_id, $arrived);
             if ($filter == false) {
 
                 $filter = FILTER::checkLastIps($db, $user_id, $ip_id);
@@ -316,24 +328,22 @@ class FILTER
         }
     }
 
-    public static function checkUserIP($db, $click_id, $ip_id, $user_id)
+    /**
+     * Whether a user last signed in from the address this click arrived from
+     * (SignedInFromAddress): the owner's own clicks are filtered.
+     *
+     * It compares the address as it arrived, not the click's stored ip_id.
+     * The sign-in address is stored unmasked under every privacy setting, the
+     * click's masked under privacy, so the ip_id comparison this replaced
+     * never matched there and the owner's clicks were counted.
+     *
+     * @param string|object $arrived VisitorIp's address (or ipAddress()'s object of it)
+     */
+    public static function checkUserIP($db, $arrived)
     {
-        // $user_id no longer needed
+        $address = is_object($arrived) ? (string) ($arrived->address ?? '') : (string) $arrived;
 
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-
-        $count_sql = "SELECT    user_id
-					  FROM      202_users 
-					  WHERE     user_last_login_ip_id='" . $mysql['ip_id'] . "'";
-        $count_result = _mysqli_query($db, $count_sql); // ($count_sql);
-
-        // if the click_id's ip address, is the same ip adddress of the click_id's owner's last logged in ip, filter this. 
-        if ($count_result->num_rows > 0) {
-
-            return true;
-        }
-        return false;
+        return \Prosper202\Click\SignedInFromAddress::any(new \Prosper202\Database\Connection($db), $address);
     }
 
     public static function checkNetrange($click_id, $ip)
@@ -406,6 +416,16 @@ class FILTER
     }
 
     // this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
+    //
+    // It keys on the click's stored ip_id, both when it looks and when it
+    // records (202_last_ips keeps it for a day), so under privacy both sides
+    // are the masked address and every visitor in one /24 (/48) is one
+    // visitor: the second of two neighbours within the day is filtered.
+    // Measured live. That is the price of the setting rather than a mismatch
+    // — this check needs a memory of earlier visitors, and the masked address
+    // is the only one privacy lets it keep. Unlike checkUserIP, whose other
+    // side is an operator's unmasked record, there is nothing unmasked here
+    // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
 

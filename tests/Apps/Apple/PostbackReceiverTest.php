@@ -274,6 +274,48 @@ final class PostbackReceiverTest extends TestCase
         $this->assertNull($this->insertedRow()['registration_id'], 'no registration claimed it');
     }
 
+    /**
+     * The device's address is stored as the click path stores a visitor's:
+     * masked when the install's (user 1's) or the owning account's privacy
+     * setting holds back. It was stored as it arrived whatever the setting.
+     *
+     * @return iterable<string, array{list<array{user_id: int, user_pref_privacy: string}>, bool, string}>
+     */
+    public static function privacySettings(): iterable
+    {
+        $install = static fn (string $s): array => ['user_id' => 1, 'user_pref_privacy' => $s];
+        $owner = static fn (string $s): array => ['user_id' => 7, 'user_pref_privacy' => $s];
+        yield 'privacy off' => [[$install('disabled'), $owner('disabled')], true, '203.0.113.9'];
+        yield 'the install holds back for all' => [[$install('all'), $owner('disabled')], true, '203.0.113.0'];
+        yield 'the owner holds back for all' => [[$install('disabled'), $owner('all')], true, '203.0.113.0'];
+        yield 'an unclaimed postback answers to the install' => [[$install('all')], false, '203.0.113.0'];
+        // GeoIP cannot place a documentation address: held back under eu.
+        yield 'eu, an address GeoIP cannot place' => [[$install('eu')], true, '203.0.113.0'];
+    }
+
+    /**
+     * @dataProvider privacySettings
+     * @param list<array{user_id: int, user_pref_privacy: string}> $prefs
+     */
+    public function testTheDevicesAddressIsStoredUnderThePrivacySetting(
+        array $prefs,
+        bool $registered,
+        string $stored
+    ): void {
+        $rawBody = json_encode($this->signedV4Postback());
+        $this->assertNotFalse($rawBody);
+        $registry = $registered
+            ? [[
+                'registration_id' => 11, 'user_id' => 7, 'platform' => 'ios',
+                'app_key' => '525463029', 'accept_test_signals' => 0,
+            ]]
+            : [];
+        $db = $this->capturingDb(['FROM 202_app_registrations' => $registry, 'FROM 202_users_pref' => $prefs]);
+
+        $this->assertSame(200, $this->receiver($db)->receive($rawBody, '203.0.113.9')['status']);
+        $this->assertSame($stored, $this->insertedRow()['remote_ip']);
+    }
+
     public function testAPostbackNamingAppZeroNeverAsksTheRegistry(): void
     {
         // The protocols accept any non-negative app id; 0 can belong to no
@@ -287,7 +329,13 @@ final class PostbackReceiverTest extends TestCase
         $result = $this->receiver($db)->receive($rawBody, '1.2.3.4');
 
         $this->assertSame(200, $result['status']);
-        $this->assertSame([], $this->capturedStatements('SELECT'), 'no registry lookup for app 0');
+        // The privacy setting is read (it governs the stored address); the
+        // registry is not.
+        $registryLookups = array_filter(
+            $this->capturedStatements('SELECT'),
+            static fn (array $c): bool => !str_contains($c['sql'], 'FROM 202_users_pref')
+        );
+        $this->assertSame([], array_values($registryLookups), 'no registry lookup for app 0');
         $this->assertSame(0, $this->insertedRow()['user_id']);
         $this->assertNull($this->insertedRow()['registration_id']);
     }

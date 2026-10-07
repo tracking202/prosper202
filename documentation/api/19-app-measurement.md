@@ -383,7 +383,9 @@ record), `postback_sequence_index`
 `coarse_conversion_value` (`low`/`medium`/`high`), `source_app_id` (the
 publisher app), `country_code`, `signature_state`, `trusted`,
 `key_id` (the signing key the postback named, AdAttributionKit only), plus
-`received_at` and `remote_ip`. The SKAdNetwork-specific columns mirror
+`received_at` and `remote_ip` (the device's address, masked to its /24 or
+/48 when the privacy setting holds back for it, as a click's is — see
+[Privacy](14-users.md#privacy-user_pref_privacy)). The SKAdNetwork-specific columns mirror
 Apple's parameters (hyphens become underscores) and are `NULL` on other
 protocols' rows: `version`, `source_identifier` (SKAN 4; 1–4 digits,
 hierarchical), `campaign_id` (SKAN ≤ 3), `redownload` and `fidelity_type`

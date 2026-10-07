@@ -917,6 +917,35 @@ offset in force at its own instant (`LocalTime::secondsSql()` /
 it cannot see PHP that does the same with one offset, which is this entry's
 job.
 
+### 30. A transform applied where a value is stored moves every comparison with it
+Privacy mode stores a click's address masked (/24, /48). The click filter's
+"don't count my own clicks" check compared the click's stored address row
+with the sign-in's — and the sign-in address is an operator's record, kept
+as it arrived under every setting. Under privacy the two could never be
+equal: a click from the very address the owner had just signed in from was
+counted, measured live. Nothing failed; a comparison simply stopped matching,
+which is the silent direction. Masking the other side would have made them
+equal and wrong: a mask is many-to-one (#17), so every visitor in the
+owner's /24 — an office, a carrier's block — would have read as the owner
+and been filtered. Where the untransformed value is still in hand (the click
+path holds the arrived address in memory), compare before the transform;
+where it is not (the duplicate-click check, whose day of memory privacy
+lets keep only the masked address, so a /24 is one visitor), the comparison
+is on the transformed key, and that is a decision to write down where the
+check lives, not something to find in a report.
+
+The same change shipped the second shape of this: the mask governed the
+click path because that is where it was written, and the two app intakes,
+which store a device's address too, kept it as it arrived under every
+setting. Nothing listed where an address is written, so nothing could ask.
+`StoredAddressWritesTest` now holds every SQL write of an address column to
+the storage helper or a listed reason, and `StoredVisitorIpSourceTest` every
+call into the address index, tree-wide. Whenever a value is masked, hashed,
+case-folded, truncated or canonicalized on its way into storage, find every
+comparison against the stored value and ask which side of the transform the
+other operand is on — and every other writer of the same kind of value, and
+whether it was given the transform at all.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

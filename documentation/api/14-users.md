@@ -89,7 +89,7 @@ row.
 | `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
 | `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
 | `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter) | Personal settings |
-| `user_pref_privacy` | `disabled`, `eu`, `all` | Personal settings |
+| `user_pref_privacy` | `disabled`, `eu`, `all` (see [Privacy](#privacy-user_pref_privacy) below) | Personal settings |
 | `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
 | `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
 | `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
@@ -107,6 +107,42 @@ row.
 Not covered here: the daily email's send time is registered with the hosted
 mail scheduler when Personal settings saves it; a change made here is stored
 but not re-registered, so set the hour on that page if the email must move.
+
+### Privacy (`user_pref_privacy`)
+
+Which visitors are held back: no tracking cookies, and their address stored
+masked — an IPv4 address keeps its /24 (`203.0.113.0`), an IPv6 one its /48.
+That covers every row that keeps a visitor's address: the click, the
+conversion's `ip`, the app intakes' `remote_ip` (Android installs and Apple
+postbacks), and the error log the click path writes.
+
+- `disabled`: nobody.
+- `all`: every visitor.
+- `eu` ("Enabled for European Traffic"): every visitor GeoIP does not place
+  outside Europe and outside the European Union. That is the EU, the EEA
+  (Norway, Iceland, Liechtenstein), Switzerland, the United Kingdom and the
+  rest of Europe, France's overseas departments — and anyone GeoIP cannot
+  place at all: a private or reserved address, a block allocated after the
+  bundled database was built (it is GeoLite2 of 2018-07-03), or every visitor
+  when the GeoIP library is missing. Holding back for more visitors than the
+  EU's is deliberate: the GDPR applies across the EEA, the UK and Switzerland
+  have laws of the same shape, and masking more costs a report precision,
+  never a visitor privacy.
+
+Which setting applies: tracking links read the first account's setting (the
+install's, user 1). The app intakes apply the stricter of the install's and
+the setting of the account that owns the app — an unregistered app's postback
+answers to the install's alone — and a value they cannot read counts as
+`all`.
+
+What the mask changes downstream. The duplicate-click filter remembers
+addresses for a day, and under privacy it can only remember the masked one,
+so two visitors in one /24 within a day count as one and the second click is
+filtered. The "don't count my own clicks" filter compares the address a click
+arrived from with the address you signed in from (stored as it arrived; it is
+an operator's record, like the sign-in log), so your own clicks are filtered
+under every setting and nobody else in your /24 is. Rate limits on the public
+endpoints key on the connection's address as it arrived and are not affected.
 
 ## Examples
 
