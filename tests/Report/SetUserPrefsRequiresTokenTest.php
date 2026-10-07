@@ -30,7 +30,7 @@ final class SetUserPrefsRequiresTokenTest extends TestCase
         . "include_once(substr(__DIR__,0,-17).'/202-config/connect.php');"
         . "require_once(substr(__DIR__,0,-17).'/202-config/functions-report-prefs.php');"
         . "AUTH::require_user();"
-        . "if(!hash_equals((string)(\$_SESSION['token']??''),(string)(\$_POST['token']??''))){http_response_code(403);die('Invalid token');}";
+        . "if(!AUTH::check_csrf_token()){http_response_code(403);die('Invalid token');}";
 
     private const FIELD = '<input type="hidden" name="token" value="<?php echo htmlspecialchars((string) ($_SESSION[\'token\'] ?? \'\'), ENT_QUOTES, \'UTF-8\'); ?>">';
 
@@ -56,11 +56,27 @@ final class SetUserPrefsRequiresTokenTest extends TestCase
     {
         $code = self::code((string) file_get_contents(self::root() . '/' . self::ENDPOINT));
         self::assertStringStartsWith(self::PREAMBLE, $code, self::ENDPOINT . ' opens with its includes, the login check and the token comparison, and nothing else');
-        // The comparison is decided by the session's own token and nothing
-        // rebinds either side after it (#22: the range is not the scope).
-        self::assertSame(1, substr_count($code, "\$_SESSION['token']"), 'the session token is read once, by the guard');
+        // The comparison is AUTH's (executed in AuthClassTest and
+        // PreLoginPostRequiresTokenTest, and failing closed on an empty
+        // session token, which the inline hash_equals() this replaced did
+        // not): the endpoint reads neither token itself, and nothing in it
+        // can rebind either side (#22: the range is not the scope).
+        foreach (["\$_SESSION['token']", "\$_POST['token']", '$_SESSION["token"]', '$_POST["token"]', 'hash_equals('] as $own) {
+            self::assertStringNotContainsString($own, $code, self::ENDPOINT . " reads $own itself; the token is compared by AUTH::check_csrf_token() and nothing else");
+        }
         foreach (['$$', 'extract(', 'eval(', 'parse_str(', '$GLOBALS', '=&'] as $alias) {
             self::assertStringNotContainsString($alias, $code, self::ENDPOINT . " uses $alias, which the guard cannot be read past");
+        }
+        // And the AUTH the preamble calls is the global class: no namespace
+        // (the preamble would not match one anyway) and no import of the name.
+        $tokens = array_values(array_filter(
+            \PhpToken::tokenize((string) file_get_contents(self::root() . '/' . self::ENDPOINT)),
+            static fn (\PhpToken $t): bool => !$t->isIgnorable()
+        ));
+        foreach ($tokens as $i => $token) {
+            // A closure's `) use (` imports nothing; any other `use` may.
+            $import = $token->is(T_USE) && ($tokens[$i - 1]->text ?? '') !== ')';
+            self::assertFalse($token->is(T_NAMESPACE) || $import, self::ENDPOINT . " has `{$token->text}` at line {$token->line}, which can make AUTH another class");
         }
     }
 

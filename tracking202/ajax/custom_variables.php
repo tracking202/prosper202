@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die('POST only');
 }
 
-if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+if (!AUTH::check_csrf_token()) {
     http_response_code(403);
     die('Invalid token, please reload the page and try again.');
 }

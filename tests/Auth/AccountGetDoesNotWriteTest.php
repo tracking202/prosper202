@@ -25,7 +25,12 @@ use PHPUnit\Framework\TestCase;
  * body contains a database write (an UPDATE / INSERT INTO / DELETE FROM /
  * REPLACE INTO in any string, executeUpdate()/executeInsert(), UserDataPurge)
  * or the outbound key validation (validateCustomersApiKey()), the body must
- * also call AUTH::check_csrf_token() or hash_equals().
+ * also call AUTH::check_csrf_token() or AUTH::csrf_token_matches() (a GET
+ * carries its token in the query string), read as calls: the class named
+ * exactly AUTH before `::`, not `MyAUTH::`, outside comments. An inline
+ * hash_equals() used to count as well; with an empty session token it
+ * compared '' with '' and passed, and SessionTokenComparedOnlyByAuthTest
+ * now refuses it anywhere in the tree.
  *
  * What it does not check, stated so nobody reads more into a green run:
  *   - It tests for the token call's presence in the body, not that it runs
@@ -118,6 +123,28 @@ final class AccountGetDoesNotWriteTest extends TestCase
         return $files;
     }
 
+    /**
+     * Whether code calls AUTH::check_csrf_token() or AUTH::csrf_token_matches(),
+     * by token: `AUTH` (or `\AUTH`) exactly, then `::`, the name and `(`.
+     * A substring would credit `MyAUTH::check_csrf_token(` and a comment that
+     * quotes the call (CLAUDE.md #21: a name is not a call site).
+     */
+    private static function callsATokenCheck(string $code): bool
+    {
+        $tokens = array_values(array_filter(\PhpToken::tokenize('<?php ' . $code), static fn (\PhpToken $t): bool => !$t->isIgnorable()));
+        foreach ($tokens as $i => $token) {
+            if (!$token->is([T_STRING, T_NAME_FULLY_QUALIFIED]) || ltrim($token->text, '\\') !== 'AUTH') {
+                continue;
+            }
+            if (($tokens[$i + 1]->text ?? '') === '::'
+                && in_array($tokens[$i + 2]->text ?? '', ['check_csrf_token', 'csrf_token_matches'], true)
+                && ($tokens[$i + 3]->text ?? '') === '(') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** @return list<string> one line per GET-guarded block that writes without a token check */
     private static function violations(string $file, string $source): array
     {
@@ -130,7 +157,7 @@ final class AccountGetDoesNotWriteTest extends TestCase
             if (preg_match(self::WRITE, $block['body']) !== 1) {
                 continue;
             }
-            if (str_contains($block['body'], 'check_csrf_token(') || str_contains($block['body'], 'hash_equals(')) {
+            if (self::callsATokenCheck($block['body'])) {
                 continue;
             }
             $out[] = sprintf('%s:%d writes on a GET without checking the session token: if %s', $file, $block['line'], preg_replace('/\s+/', ' ', $block['condition']));
@@ -191,6 +218,19 @@ final class AccountGetDoesNotWriteTest extends TestCase
             self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { $write }\n"), $write);
             self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_REQUEST['x'])) { $write }\n"), "\$_REQUEST: $write");
             self::assertSame([], self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { if (!AUTH::check_csrf_token()) { exit; } $write }\n"), "guarded: $write");
+            self::assertSame([], self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { if (!AUTH::csrf_token_matches(\$_GET['token'] ?? null)) { exit; } $write }\n"), "guarded by the query-string token: $write");
+            self::assertSame([], self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { if (!\\AUTH::csrf_token_matches(\$_REQUEST['token'] ?? null)) { exit; } $write }\n"), "guarded through \\AUTH: $write");
+            // Not a guard: the inline comparison that passed '' against '',
+            // another class whose name ends the same way, and a comment.
+            foreach ([
+                "if (!hash_equals((string) (\$_SESSION['token'] ?? ''), (string) (\$_GET['token'] ?? ''))) { exit; }",
+                'if (!MyAUTH::check_csrf_token()) { exit; }',
+                'if (!Other\\AUTH::csrf_token_matches($_GET[\'token\'] ?? null)) { exit; }',
+                '// AUTH::check_csrf_token() is called by the page that links here',
+                '/* AUTH::csrf_token_matches($_GET[\'token\']) */',
+            ] as $notAGuard) {
+                self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { $notAGuard\n $write }\n"), "not a guard ($notAGuard): $write");
+            }
         }
         self::assertSame([], self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { \$y = \$db->query('SELECT 1'); }\n"));
         self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) \$db->query('UPDATE t SET a = 1');\n"), 'a braceless body is refused, not skipped');

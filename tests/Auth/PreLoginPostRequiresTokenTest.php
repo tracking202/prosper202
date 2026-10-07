@@ -44,11 +44,24 @@ final class PreLoginPostRequiresTokenTest extends TestCase
 {
     /**
      * The guard spellings the tree uses: the call as a page writes it =>
-     * [defining file, function, the superglobal each argument must read, in order].
+     * [defining file, function, the superglobal each argument must read, in
+     * order, the function whose returns hold the hash_equals() comparison].
+     * The last is the guard itself, or the one comparison it delegates to:
+     * AUTH::check_csrf_token() is AUTH::csrf_token_matches() on the posted
+     * token, and nothing else (testEveryGuardReturnsTheHashEqualsComparison
+     * pins that body exactly).
      */
     private const GUARDS = [
-        'install_csrf_ok(' => ['202-config/functions-install-helpers.php', 'install_csrf_ok', ['$_SESSION', '$_POST']],
-        'AUTH::check_csrf_token(' => ['202-config/functions-auth.php', 'check_csrf_token', []],
+        'install_csrf_ok(' => ['202-config/functions-install-helpers.php', 'install_csrf_ok', ['$_SESSION', '$_POST'], 'install_csrf_ok'],
+        'AUTH::check_csrf_token(' => ['202-config/functions-auth.php', 'check_csrf_token', [], 'csrf_token_matches'],
+    ];
+
+    /**
+     * What a guard that delegates is, exactly, as significant tokens of its
+     * body: the guard name => its body.
+     */
+    private const DELEGATIONS = [
+        'check_csrf_token' => ['{', 'return', 'self', '::', 'csrf_token_matches', '(', '$_POST', '[', "'token'", ']', '??', 'null', ')', ';', '}'],
     ];
 
     /** Assignment operators other than `=`; each rewrites the variable on its left. */
@@ -506,6 +519,11 @@ final class PreLoginPostRequiresTokenTest extends TestCase
             $_SESSION = ['token' => 'abc'];
             $_POST = [];
             $this->assertFalse(\AUTH::check_csrf_token(), 'AUTH::check_csrf_token() with no posted token at all');
+            $_POST = ['token' => ['abc']];
+            $this->assertFalse(\AUTH::check_csrf_token(), 'AUTH::check_csrf_token() with token[] posted');
+            $_SESSION = ['token' => false];
+            $_POST = [];
+            $this->assertFalse(\AUTH::check_csrf_token(), 'AUTH::check_csrf_token() with a session token of false, which (string) makes empty');
         } finally {
             $_SESSION = $session;
             $_POST = $post;
@@ -523,11 +541,29 @@ final class PreLoginPostRequiresTokenTest extends TestCase
      */
     public function testEveryGuardReturnsTheHashEqualsComparison(): void
     {
-        foreach (self::GUARDS as [$file, $name]) {
+        foreach (self::GUARDS as [$file, $guard, , $name]) {
             $tokens = $this->tokensOf($file);
             $pairs = $this->pairs($tokens, $file);
-            [$from, $to] = $this->functionRange($tokens, $pairs, $file, $name);
             $this->assertNamesResolveGlobally($tokens, $file);
+            if ($name !== $guard) {
+                // A guard that delegates returns the comparison's answer on
+                // the posted token and does nothing else: its body, read as
+                // significant tokens, is exactly that one return.
+                [$from, $to] = $this->functionRange($tokens, $pairs, $file, $guard);
+                $body = [];
+                for ($i = $from; $i <= $to; $i++) {
+                    if ($tokens[$i]['id'] !== T_WHITESPACE) {
+                        $body[] = $tokens[$i]['text'];
+                    }
+                }
+                $this->assertSame(
+                    self::DELEGATIONS[$guard],
+                    $body,
+                    "$guard() in $file is not exactly `" . implode(' ', self::DELEGATIONS[$guard]) . '`; a guard that'
+                    . " delegates must return $name()'s answer on the posted token and nothing else"
+                );
+            }
+            [$from, $to] = $this->functionRange($tokens, $pairs, $file, $name);
 
             $compared = 0;
             for ($i = $from; $i <= $to; $i++) {

@@ -165,7 +165,7 @@ if (!empty($_GET['customers_api_key'])) {
 
 //if they want to remove their stats202 app key on file, do so
 if (!empty($_GET['remove_user_stats202_app_key'])) {
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_REQUEST['token'] ?? null)) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
@@ -183,7 +183,7 @@ if (!empty($_GET['remove_user_stats202_app_key'])) {
 
 //if they want to remove their user api key on file, do so
 if (!empty($_GET['remove_user_api_key'])) {
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_REQUEST['token'] ?? null)) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
