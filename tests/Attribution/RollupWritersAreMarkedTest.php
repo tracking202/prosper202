@@ -120,7 +120,7 @@ final class RollupWritersAreMarkedTest extends TestCase
     private static function writers(): array
     {
         $found = [];
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT));
         foreach ($it as $file) {
             $path = $file->getPathname();
             $rel = substr($path, strlen(self::ROOT));

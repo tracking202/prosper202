@@ -34,7 +34,7 @@ final class StrictTypesMktimeArgumentsTest extends TestCase
         $files = 0;
         $calls = 0;
         $found = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($iterator as $file) {
             $path = substr($file->getPathname(), strlen($root) + 1);
             if (!str_ends_with($path, '.php') || preg_match('#^(vendor|node_modules|tests|\.git|\.claude)/#', $path) === 1) {

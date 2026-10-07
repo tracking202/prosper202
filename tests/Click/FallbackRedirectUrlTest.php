@@ -150,7 +150,7 @@ final class FallbackRedirectUrlTest extends TestCase
     public function testNoOtherFileWritesTheseKeys(): void
     {
         $root = dirname(__DIR__, 2);
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         $offenders = [];
         foreach ($it as $file) {
             $path = substr((string) $file->getPathname(), strlen($root) + 1);

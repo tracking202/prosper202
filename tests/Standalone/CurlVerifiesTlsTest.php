@@ -34,7 +34,7 @@ final class CurlVerifiesTlsTest extends TestCase
         $found = [];
         $files = 0;
         $calls = 0;
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($iterator as $file) {
             $relative = substr($file->getPathname(), strlen($root) + 1);
             if ($file->getExtension() !== 'php' || preg_match('#^(vendor|tests|node_modules|\.git|\.claude)/#', $relative) === 1) {

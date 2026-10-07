@@ -41,7 +41,7 @@ final class SetupAjaxRequiresPermissionTest extends TestCase
     private static function endpoints(): array
     {
         $names = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT . 'tracking202/setup', \FilesystemIterator::SKIP_DOTS));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT . 'tracking202/setup'));
         foreach ($files as $file) {
             if (!$file->isFile() || !in_array($file->getExtension(), ['php', 'js'], true)) {
                 continue;

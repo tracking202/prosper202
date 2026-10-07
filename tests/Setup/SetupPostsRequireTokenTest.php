@@ -56,7 +56,7 @@ final class SetupPostsRequireTokenTest extends TestCase
     {
         $root = self::root();
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/tracking202/setup', \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/tracking202/setup'));
         foreach ($iterator as $file) {
             /** @var \SplFileInfo $file */
             if ($file->isFile() && $file->getExtension() === 'php') {

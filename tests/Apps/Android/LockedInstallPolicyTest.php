@@ -86,7 +86,7 @@ final class LockedInstallPolicyTest extends TestCase
             self::assertStringNotContainsString('AppPolicy::fromRow', $src, $path . ' builds no policy of its own');
         }
         $offenders = [];
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($it as $file) {
             $path = substr((string) $file->getPathname(), strlen($root) + 1);
             if (!str_ends_with($path, '.php') || preg_match('#^(vendor|tests|\.git|\.claude|sdk|go-cli|node_modules)/#', $path) === 1) {

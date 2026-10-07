@@ -75,7 +75,7 @@ final class SetUserPrefsRequiresTokenTest extends TestCase
         $skip = '#^(vendor|tests|node_modules|go-cli|sdk|documentation|docs)/|^\.#';
         $posters = [];
         $seen = 0;
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root(), \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::root()));
         foreach ($iterator as $file) {
             $path = substr($file->getPathname(), strlen(self::root()) + 1);
             if (!$file->isFile() || !in_array($file->getExtension(), ['php', 'js', 'html'], true)

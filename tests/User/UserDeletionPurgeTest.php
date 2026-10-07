@@ -30,7 +30,7 @@ final class UserDeletionPurgeTest extends TestCase
         $root = dirname(__DIR__, 2);
         $found = [];
         $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree($root)
         );
         foreach ($iterator as $file) {
             $path = str_replace($root . '/', '', $file->getPathname());

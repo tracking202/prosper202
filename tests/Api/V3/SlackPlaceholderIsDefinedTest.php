@@ -128,7 +128,7 @@ final class SlackPlaceholderIsDefinedTest extends TestCase
         $root = $this->repoRoot();
         $files = [];
         $walk = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree($root)
         );
         foreach ($walk as $entry) {
             $path = $entry->getPathname();

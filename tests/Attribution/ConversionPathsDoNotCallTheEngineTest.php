@@ -31,7 +31,7 @@ final class ConversionPathsDoNotCallTheEngineTest extends TestCase
                 continue;
             }
             self::assertDirectoryExists($full);
-            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($full, \FilesystemIterator::SKIP_DOTS)) as $f) {
+            foreach (new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($full)) as $f) {
                 if ($f->getExtension() === 'php') {
                     $files[] = $f->getPathname();
                 }

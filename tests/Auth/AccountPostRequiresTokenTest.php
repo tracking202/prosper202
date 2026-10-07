@@ -63,7 +63,7 @@ final class AccountPostRequiresTokenTest extends TestCase
     {
         $root = self::root();
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/202-account', \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/202-account'));
         foreach ($iterator as $file) {
             if ($file->isFile() && $file->getExtension() === 'php') {
                 $files[] = substr($file->getPathname(), strlen($root) + 1);

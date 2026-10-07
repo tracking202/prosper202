@@ -60,7 +60,7 @@ final class ReportFiltersBuildNoListsTest extends TestCase
                 continue;
             }
             self::assertDirectoryExists($full, "$path is listed as report code and is gone; update the list");
-            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($full, \FilesystemIterator::SKIP_DOTS));
+            $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($full));
             foreach ($it as $file) {
                 if ($file->isFile() && $file->getExtension() === 'php') {
                     $files[] = substr($file->getPathname(), strlen(self::ROOT));

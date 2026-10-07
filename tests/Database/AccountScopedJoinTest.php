@@ -575,7 +575,7 @@ final class AccountScopedJoinTest extends TestCase
         }
         $root = dirname(__DIR__, 2);
         $iterator = new \RecursiveIteratorIterator(new \RecursiveCallbackFilterIterator(
-            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+            \Tests\Support\SourceScan::tree($root),
             static fn (\SplFileInfo $f): bool => !in_array($f->getFilename(), self::PRUNED, true)
         ));
         $files = [];

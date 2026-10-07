@@ -150,7 +150,7 @@ HTML;
         $root = dirname(__DIR__, 2);
         $bare = [];
         $calls = 0;
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($iterator as $file) {
             $relative = substr($file->getPathname(), strlen($root) + 1);
             if ($file->getExtension() !== 'php' || preg_match('#^(vendor|tests|\.git|\.claude)/#', $relative) === 1) {

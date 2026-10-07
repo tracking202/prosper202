@@ -36,7 +36,7 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         $root = self::root();
         $found = [];
         $calls = 0;
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/202-account', \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/202-account'));
         foreach ($iterator as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'php') {
                 continue;
