@@ -2345,6 +2345,8 @@ paths:
         at most `limit` (2000) buckets per response. When the window holds
         more, `truncated` is true and the newest buckets are the ones left
         out: narrow `time_from`/`time_to`, or use a coarser `interval`.
+        Buckets are the account's hours, days, ISO weeks and months, in the
+        zone `timezone` names.
       operationId: reportTimeseries
       parameters:
         - name: interval
@@ -2413,6 +2415,12 @@ paths:
                           type: number
                   interval:
                     type: string
+                  timezone:
+                    type: string
+                    description: >-
+                      The zone the buckets are in: the account's
+                      (202_users.user_timezone), or UTC when it has none.
+                    example: America/New_York
                   truncated:
                     type: boolean
                     description: >-
@@ -9649,8 +9657,15 @@ components:
     filterPpcNetwork:
       name: ppc_network_id
       in: query
+      description: >-
+        A traffic source's id, or `none` for the clicks with no traffic
+        source (the Analyze pages' "No traffic source", which they send as
+        16777215; that is accepted too).
       schema:
-        type: integer
+        oneOf:
+          - type: integer
+          - type: string
+            enum: [none]
     filterLandingPage:
       name: landing_page_id
       in: query

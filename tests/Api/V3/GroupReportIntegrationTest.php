@@ -280,6 +280,23 @@ final class GroupReportIntegrationTest extends TestCase
         self::assertSame(0.0, $empty['total_income']);
     }
 
+    /**
+     * ppc_network_id=none (the pages' 16777215) is the clicks with no
+     * traffic source, which the data engine stores as a NULL network; as an
+     * id it matched no row and the report answered nothing.
+     */
+    public function testNoTrafficSourceIsTheClicksWithoutOne(): void
+    {
+        self::q('UPDATE 202_dataengine SET ppc_network_id = 7 WHERE user_id = ' . self::USER);
+        self::q('UPDATE 202_dataengine SET ppc_network_id = NULL WHERE user_id = ' . self::USER . ' AND keyword_id = 0');
+        $controller = new ReportsController(self::$db, self::USER);
+        foreach (['none', '16777215'] as $value) {
+            $summary = $controller->summary(['ppc_network_id' => $value])['data'];
+            self::assertSame([1, 5.0], [$summary['total_clicks'], $summary['total_income']], "ppc_network_id=$value");
+        }
+        self::assertSame(4, $controller->summary(['ppc_network_id' => '7'])['data']['total_clicks']);
+    }
+
     public function testTooManyGroupsIsRefusedNotCut(): void
     {
         $u = self::USER;

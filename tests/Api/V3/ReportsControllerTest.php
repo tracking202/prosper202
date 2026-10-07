@@ -222,7 +222,7 @@ final class ReportsControllerTest extends TestCase
         // Oldest first: the cut drops the newest bucket, never an earlier one.
         self::assertSame('p0000', $result['data'][0]['period']);
         self::assertSame('p1999', $result['data'][1999]['period']);
-        self::assertSame(['data', 'interval', 'truncated', 'limit'], array_keys($result));
+        self::assertSame(['data', 'interval', 'timezone', 'truncated', 'limit'], array_keys($result));
     }
 
     public function testTimeseriesReadsOnlyOneRowPastTheCap(): void

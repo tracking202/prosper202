@@ -67,7 +67,7 @@ func addReportFilterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
-	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
+	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID, or none for the clicks with no traffic source")
 	cmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
 	cmd.Flags().String("country_id", "", "Filter by country ID")
 	cmd.Flags().String("text_ad_id", "", "Filter by text ad ID")

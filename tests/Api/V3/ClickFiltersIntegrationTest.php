@@ -157,6 +157,8 @@ final class ClickFiltersIntegrationTest extends TestCase
             'device type'                 => [['device_type' => (string) $i['mobileType']], [970001, 970004]],
             'category'                    => [['aff_network_id' => (string) $i['netB']], [970003, 970004, 970006]],
             'traffic source'              => [['ppc_network_id' => (string) $i['source']], [970001, 970002, 970005]],
+            'no traffic source'           => [['ppc_network_id' => 'none'], [970003, 970004, 970006]],
+            'the pages\' no traffic source' => [['ppc_network_id' => '16777215'], [970003, 970004, 970006]],
             'direct link'                 => [['method_of_promotion' => 'directlink'], [970001, 970003, 970005, 970006]],
             'landing page'                => [['method_of_promotion' => 'landingpage'], [970002, 970004]],
             'show real'                   => [['show' => 'real'], [970001, 970002, 970005, 970006]],

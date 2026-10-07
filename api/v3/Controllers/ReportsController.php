@@ -11,6 +11,7 @@ use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\ReportFilter;
 use Api\V3\Support\ResponseSanitizer;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Report\LocalTime;
 
 class ReportsController
 {
@@ -680,15 +681,20 @@ class ReportsController
             );
         }
 
-        [$where, $binds, $types] = $this->filtered($params);
+        $timezone = $this->accountTimezone();
+        [$where, $binds, $types] = $this->filtered($params, $timezone);
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
+        // Buckets are the account's hours, days, weeks and months, as its
+        // periods are (LocalTime); FROM_UNIXTIME() bucketed in whatever zone
+        // the database connection happened to be in.
+        $local = LocalTime::datetimeSql('de.click_time', $timezone);
         $groupExpr = match ($interval) {
-            'hour'  => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d %H:00')",
-            'day'   => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d')",
-            'week'  => "FROM_UNIXTIME(de.click_time, '%x-W%v')",
-            'month' => "FROM_UNIXTIME(de.click_time, '%Y-%m')",
+            'hour'  => "DATE_FORMAT($local, '%Y-%m-%d %H:00')",
+            'day'   => "DATE_FORMAT($local, '%Y-%m-%d')",
+            'week'  => "DATE_FORMAT($local, '%x-W%v')",
+            'month' => "DATE_FORMAT($local, '%Y-%m')",
         };
 
         $sql = "SELECT
@@ -735,6 +741,7 @@ class ReportsController
         return [
             'data' => $rows,
             'interval' => $interval,
+            'timezone' => $timezone,
             'truncated' => $truncated,
             'limit' => self::TIMESERIES_MAX_ROWS,
         ];
@@ -752,11 +759,10 @@ class ReportsController
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
+        // The account's hour (LocalTime). CONVERT_TZ() was NULL on a server
+        // without MySQL's zone tables, and the fallback then counted UTC hours.
         $sql = "SELECT
-                COALESCE(
-                    HOUR(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
-                    MOD(FLOOR(de.click_time / 3600), 24)
-                ) as hour_of_day,
+                HOUR(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as hour_of_day,
                 SUM(de.clicks) as total_clicks,
                 SUM(de.click_out) as total_click_throughs,
                 SUM(de.leads) as total_leads,
@@ -773,9 +779,7 @@ class ReportsController
             GROUP BY hour_of_day";
 
         $stmt = $this->prepare($sql);
-        $daypartBinds = array_merge([$timezone], $binds);
-        $daypartTypes = 's' . $types;
-        $this->bind($stmt, $daypartTypes, ...$daypartBinds);
+        $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Daypart query failed');
         $result = $stmt->get_result();
         if ($result === false) {
@@ -818,12 +822,9 @@ class ReportsController
 
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
-        // WEEKDAY() returns 0=Monday .. 6=Sunday
+        // The account's weekday (LocalTime); WEEKDAY() returns 0=Monday .. 6=Sunday.
         $sql = "SELECT
-                COALESCE(
-                    WEEKDAY(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
-                    MOD(FLOOR(de.click_time / 86400) + 3, 7)
-                ) as day_of_week,
+                WEEKDAY(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as day_of_week,
                 SUM(de.clicks) as total_clicks,
                 SUM(de.click_out) as total_click_throughs,
                 SUM(de.leads) as total_leads,
@@ -840,9 +841,7 @@ class ReportsController
             GROUP BY day_of_week";
 
         $stmt = $this->prepare($sql);
-        $weekpartBinds = array_merge([$timezone], $binds);
-        $weekpartTypes = 's' . $types;
-        $this->bind($stmt, $weekpartTypes, ...$weekpartBinds);
+        $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Weekpart query failed');
         $result = $stmt->get_result();
         if ($result === false) {

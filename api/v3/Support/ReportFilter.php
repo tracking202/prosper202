@@ -16,7 +16,11 @@ use Api\V3\Exception\ValidationException;
  * ReportFilterInput and DataEngine's UserPrefFilters), with their meaning:
  *
  *  - the id filters narrow to one row of their table; '' or 0 is "not
- *    filtering", as the pages' menus send it;
+ *    filtering", as the pages' menus send it. ppc_network_id also takes
+ *    `none`, the clicks with no traffic source (no account, or an account
+ *    without one), and the pages' own spelling of it, 16777215 (the
+ *    column's maximum, since 0 already meant "all"). As an id that matched
+ *    no row, so the API answered nothing where the page showed the clicks;
  *  - device_type is a 202_device_types id, applied as the pages apply their
  *    device menu: to every device model of that type;
  *  - keyword and referer are "contains", case-insensitive (the columns'
@@ -115,6 +119,9 @@ final class ReportFilter
         'directlink'  => ['landing_page_id', '= 0'],
         'landingpage' => ['landing_page_id', '!= 0'],
     ];
+
+    /** The pages' ppc_network_id for "no traffic source" (UserPrefFilters). */
+    public const NO_TRAFFIC_SOURCE = '16777215';
 
     /** Longest keyword / referer text accepted. */
     public const MAX_TEXT = 255;
@@ -269,6 +276,10 @@ final class ReportFilter
         }
 
         foreach (self::ID_FILTERS as $param => $column) {
+            if ($param === 'ppc_network_id' && self::isNoTrafficSource($params[$param] ?? null)) {
+                $where[] = $col($column) . ' IS NULL';
+                continue;
+            }
             $id = self::id($params, $param);
             if ($id !== null) {
                 $where[] = $col($column) . ' = ?';
@@ -333,6 +344,12 @@ final class ReportFilter
         }
     }
 
+    /** `none`, or the pages' 16777215: the clicks with no traffic source. */
+    private static function isNoTrafficSource(mixed $value): bool
+    {
+        return $value === 'none' || $value === self::NO_TRAFFIC_SOURCE || $value === (int) self::NO_TRAFFIC_SOURCE;
+    }
+
     /**
      * An id filter's value: null when absent, '' or 0 (not filtering).
      *
@@ -345,8 +362,9 @@ final class ReportFilter
             return null;
         }
         if ((!is_string($value) && !is_int($value)) || preg_match('/^[1-9][0-9]{0,17}$/D', (string) $value) !== 1) {
+            $none = $name === 'ppc_network_id' ? ', or none for the clicks with no traffic source' : '';
             throw new ValidationException('Invalid ' . $name, [
-                $name => 'A positive whole number (an id), or 0 for no filter; got ' . self::shown($value),
+                $name => 'A positive whole number (an id), or 0 for no filter' . $none . '; got ' . self::shown($value),
             ]);
         }
 

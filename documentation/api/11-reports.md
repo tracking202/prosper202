@@ -26,7 +26,7 @@ All report endpoints accept the window and the filters the Analyze pages offer:
 | `aff_campaign_id` | integer | Filter by campaign |
 | `aff_network_id` | integer | Filter by network |
 | `ppc_account_id` | integer | Filter by PPC account |
-| `ppc_network_id` | integer | Filter by PPC network |
+| `ppc_network_id` | integer or `none` | Filter by PPC network; `none` is the clicks with no traffic source (the pages' "No traffic source", which they send as `16777215`, also accepted) |
 | `landing_page_id` | integer | Filter by landing page |
 | `country_id` | integer | Filter by country |
 | `text_ad_id` | integer | Filter by text ad |
@@ -118,7 +118,9 @@ rule; [`/rotators/{id}/stats`](#rotator-stats) has it.
 | --------- | ---- | ------- | ----------- |
 | `interval` | string | `day` | Grouping interval: `hour`, `day`, `week`, `month` |
 
-Buckets come oldest first, at most 2000 per response. Next to `data` and `interval` the response carries `limit` (2000) and `truncated`: `true` when the window held more buckets than that, in which case the newest ones are missing. Narrow `time_from`/`time_to`, or use a coarser `interval` (`week` and `month` give far fewer buckets). Servers from before `truncated` was added cut at 2000 without saying so.
+Buckets are the account's own hours, days, ISO weeks and months: a click at 04:30 UTC on 8 March is on 7 March for an account in New York. The response's `timezone` names the zone (the account's, or `UTC` when it has none), as daypart's and weekpart's do; all three convert in PHP, so they are right whether or not the database server has time-zone tables and whatever zone its connection is in. (Timeseries used to bucket in the database connection's zone, and daypart/weekpart fell back to UTC hours on a server without time-zone tables.)
+
+Buckets come oldest first, at most 2000 per response. Next to `data`, `interval` and `timezone` the response carries `limit` (2000) and `truncated`: `true` when the window held more buckets than that, in which case the newest ones are missing. Narrow `time_from`/`time_to`, or use a coarser `interval` (`week` and `month` give far fewer buckets). Servers from before `truncated` was added cut at 2000 without saying so.
 
 ## Daypart / Weekpart Parameters
 

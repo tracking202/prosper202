@@ -81,6 +81,33 @@ final class ReportFilterTest extends TestCase
         );
     }
 
+    /**
+     * The pages offer "No traffic source" as ppc_network_id 16777215; it
+     * reached SQL as an id no row has, so the API answered nothing where the
+     * page listed the clicks. It and `none` are the clicks with no source.
+     */
+    public function testNoTrafficSourceIsTheClicksWithoutOne(): void
+    {
+        foreach (['none', '16777215', 16777215] as $value) {
+            self::assertSame([['de.ppc_network_id IS NULL'], [], ''], self::applied(['ppc_network_id' => $value]), var_export($value, true));
+        }
+        self::assertSame([['de.ppc_network_id = ?'], [16777214], 'i'], self::applied(['ppc_network_id' => '16777214']));
+        foreach (['None', 'nil', '-1', '16777215 '] as $bad) {
+            try {
+                self::applied(['ppc_network_id' => $bad]);
+                self::fail("ppc_network_id=$bad was accepted");
+            } catch (ValidationException $e) {
+                self::assertStringContainsString('or none for the clicks with no traffic source', $e->getFieldErrors()['ppc_network_id']);
+            }
+        }
+        try {
+            self::applied(['aff_network_id' => 'none']);
+            self::fail('only the traffic source has a none');
+        } catch (ValidationException $e) {
+            self::assertStringNotContainsString('no traffic source', $e->getFieldErrors()['aff_network_id']);
+        }
+    }
+
     public function testDeviceTypeIsEveryModelOfThatType(): void
     {
         self::assertSame(
