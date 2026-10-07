@@ -490,10 +490,21 @@ Tracker utility subcommands:
 
 ```bash
 p202 tracker get-url 56
+p202 tracker get-url 56 --t202kw '{keyword}' --c1 '{placement}'
 p202 tracker create-with-url --aff_campaign_id 42
 p202 tracker bulk-urls --aff_campaign_id 42 --concurrency 5
 p202 tracker list --all --resolve-names
 ```
+
+The link is the one **Get Links** builds: the tracking domain from Settings
+(or this server's own address when none is set) and the install directory,
+then the traffic source's custom variables, then the built-in tokens.
+`get-url`, `create-with-url` and `bulk-urls` take a flag per built-in token —
+`--c1` … `--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`,
+`--utm_term`, `--utm_content`, `--t202ref`, `--t202b`, `--t202kw` — whose value
+is written into the link as given, so pass the traffic source's macro. A value
+containing `&`, `#`, `?`, whitespace or control characters is refused before
+anything is sent; with `create-with-url` that means no tracker is created.
 
 `tracker list` supports:
 - `--all` fetches all pages.

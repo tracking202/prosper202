@@ -92,11 +92,7 @@ var conversionSimulateCmd = &cobra.Command{
 		}
 
 		// 2. Fire a click and capture the subid from the redirect.
-		sep := "?"
-		if strings.Contains(link, "?") {
-			sep = "&"
-		}
-		clickRes, err := probeClient().Get(link + sep + "t202kw=simulate")
+		clickRes, err := probeClient().Get(withLinkParam(link, "t202kw", "simulate"))
 		if err != nil {
 			return withHint(fmt.Errorf("click request failed: %w", err), "The tracking link itself could not be fetched; check that the configured URL is reachable from here and that the tracker is active.")
 		}

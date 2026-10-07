@@ -86,6 +86,7 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
+| `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`, `--utm_term`, `--utm_content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |

@@ -596,11 +596,21 @@ Tracker utility commands:
 
 ```
 p202 tracker list [--all] [--resolve-names] [filters...] [--json]
-p202 tracker get-url <id> [--json]
-p202 tracker create-with-url --aff_campaign_id N [tracker flags...] [--json]
+p202 tracker get-url <id> [token flags...] [--json]
+p202 tracker create-with-url --aff_campaign_id N [tracker flags...] [token flags...] [--json]
 p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
-                       [--landing_page_id N] [--concurrency N] [--json]
+                       [--landing_page_id N] [--concurrency N] [token flags...] [--json]
 ```
+
+Token flags fill the link's built-in tokens, written into the link as given:
+`--c1`..`--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`, `--utm_term`,
+`--utm_content`, `--t202ref`, `--t202b`, `--t202kw` (e.g. `--t202kw '{keyword}'`).
+Unset, a token takes the traffic source's own variable, and `t202kw=` is always
+in the link. `&`, `#`, `?`, whitespace and control characters are refused
+(exit 1) before any request — `create-with-url` creates nothing then. If
+`create-with-url` creates the tracker but cannot fetch its link, the error's
+hint names the new `tracker_id`: run `tracker get-url` for it, never
+`create-with-url` again.
 
 #### Landing page fields
 

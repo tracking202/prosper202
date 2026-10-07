@@ -495,15 +495,18 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if ((($_POST['method_of_promotion'] ?? '') == 'landingpage') or (($_POST['tracker_type'] ?? '') == 1)) {
 		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' .
 		                   ($parsed_url['host'] ?? '') .
+		                   (!empty($parsed_url['port']) ? ':' . $parsed_url['port'] : '') .
 		                   ($parsed_url['path'] ?? '') . '?';
 		if (!empty($parsed_url['query'])) {
 			$destination_url .= $parsed_url['query'] . '&';
 		}
-		$destination_url .= 't202id=' . $tracker_id_public;
+		// The variables go before the page's #fragment: after it, a browser
+		// never sends them, and the click arrives with no keyword or c1-c4.
+		// GET /trackers/{id}/url builds the same link.
+		$destination_url .= 't202id=' . $tracker_id_public . $tracking_variable_string;
 		if (!empty($parsed_url['fragment'])) {
 			$destination_url .= '#' . $parsed_url['fragment'];
 		}
-		$destination_url .= $tracking_variable_string;
 		$trackingLinkParts[] = $destination_url;
 	}
 

@@ -42,7 +42,9 @@ Each supports `create` and `--json`. Required flags in **bold**.
 | `tracker` | **`--aff_campaign_id`**, `--ppc_account_id`, `--landing_page_id`, `--text_ad_id`, `--rotator_id`, `--click_cpc`, `--click_cpa` |
 
 ## Tracker URL
-- `p202 tracker get-url <id>` — tracking URL for an existing tracker.
+- `p202 tracker get-url <id>` — tracking URL for an existing tracker. Add
+  `--t202kw '{keyword}'` (and `--c1`..`--c4`, `--utm_*`, `--t202ref`, `--t202b`)
+  with the traffic source's macros, as the Get Links boxes take them.
 - `p202 tracker create-with-url [tracker flags]` — create and return the URL in one call.
 
 ## Reporting

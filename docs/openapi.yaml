@@ -818,8 +818,104 @@ paths:
     get:
       tags: [Trackers]
       summary: Get tracking URL
-      description: Returns the tracking URL and parameter template for this tracker.
+      description: |
+        The link to put in the traffic source, built as Setup > Get Links builds it.
+        A landing-page tracker links to the landing page's URL with t202id added
+        (before any #fragment); a rotator tracker to tracking202/redirect/rtr.php;
+        any other to tracking202/redirect/dl.php. The base is user 1's tracking
+        domain, or this server's name and port when none is set, plus the install
+        directory; a domain stored with a scheme keeps it, otherwise the request's
+        scheme is used. After t202id come the traffic source's custom variables
+        (parameter=placeholder), then each built-in token that has a value, and
+        t202kw always. Values are written into the link as given and may not
+        contain &, #, ?, whitespace or control characters; any other query
+        parameter is refused with 422.
       operationId: getTrackerUrl
+      parameters:
+        - name: c1
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for c1, written into the link as given (usually the traffic source's macro).
+        - name: c2
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for c2.
+        - name: c3
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for c3.
+        - name: c4
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for c4.
+        - name: utm_source
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for utm_source.
+        - name: utm_medium
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for utm_medium.
+        - name: utm_campaign
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for utm_campaign.
+        - name: utm_term
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for utm_term.
+        - name: utm_content
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: Value for utm_content.
+        - name: t202ref
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: The referring page, when the traffic source passes it.
+        - name: t202b
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: The bid, when the traffic source passes it.
+        - name: t202kw
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: The keyword, e.g. the traffic source's {keyword} macro.
       responses:
         "200":
           description: Tracking URL
@@ -837,12 +933,16 @@ paths:
                         type: integer
                       direct_url:
                         type: string
-                        description: Full tracking URL with t202id parameter
+                        description: The full tracking link
+                        example: "https://track.example.com/tracking202/redirect/dl.php?t202id=8837291&adid={ad_id}&t202kw={keyword}"
                       tracking_params:
                         type: string
-                        description: Query parameter template
+                        description: The link's query from t202id on, for appending to a URL of your own
+                        example: "?t202id=8837291&adid={ad_id}&t202kw={keyword}"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ─── Landing Pages ──────────────────────────────────────────────────
 

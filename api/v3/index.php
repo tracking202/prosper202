@@ -289,8 +289,8 @@ try {
         }
 
         // Tracker sub-resource
-        $router->get('/trackers/{id}/url', function ($ctx) use ($crud) {
-            return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id']);
+        $router->get('/trackers/{id}/url', function ($ctx) use ($crud, $queryParams) {
+            return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams);
         });
 
         // ── Clicks (read-only) ───────────────────────────────────────────

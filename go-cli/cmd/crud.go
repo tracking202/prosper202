@@ -378,6 +378,49 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 	return nil
 }
 
+// linkTokens are the tokens a tracking link carries after t202id
+// (Prosper202\Click\TrackingLinkVariables::BUILT_IN), in its order.
+var linkTokens = []string{"c1", "c2", "c3", "c4", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "t202ref", "t202b", "t202kw"}
+
+// registerLinkTokenFlags gives a command that prints tracking links a flag
+// per token, as Get Links has a box per token: the value (usually the
+// traffic source's macro, e.g. --t202kw '{keyword}') is written into the
+// link as given.
+func registerLinkTokenFlags(cmd *cobra.Command) {
+	for _, token := range linkTokens {
+		cmd.Flags().String(token, "", "Value for "+token+" in the link, as given (e.g. your traffic source's macro); default: the traffic source's own variable")
+	}
+}
+
+// linkTokenParams are the token flags the caller set, as query parameters,
+// held to the server's rule (TrackingLinkVariables::problem) before any
+// request: create-with-url would otherwise create the tracker and then fail
+// on its link, and a retry of that creates a second one. The value is trimmed
+// as the server trims it; a flag left unset is the token's default.
+func linkTokenParams(cmd *cobra.Command) (map[string]string, error) {
+	params := map[string]string{}
+	for _, token := range linkTokens {
+		raw, _ := cmd.Flags().GetString(token)
+		if raw == "" {
+			continue
+		}
+		v := strings.Trim(raw, " \t\n\r\x00\x0b")
+		if v == "" {
+			return nil, validationError("--%s was given no value", token).
+				WithHint("Omit --%s for the traffic source's own variable, or give the value to write into the link.", token)
+		}
+		if strings.ContainsAny(v, "&#?") || strings.IndexFunc(v, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+			return nil, validationError("--%s %q cannot go into a link: it must not contain &, #, ?, spaces or control characters, because it is written into the link as given", token, raw).
+				WithHint("Give the traffic source's macro itself, e.g. --t202kw '{keyword}'; the source substitutes it when it sends the click.")
+		}
+		if len(v) > 255 {
+			return nil, validationError("--%s is %d bytes; a link token takes at most 255", token, len(v))
+		}
+		params[token] = v
+	}
+	return params, nil
+}
+
 // requireCRUDFields refuses a create missing a field the controller
 // requires, before any request: the server would answer 422 for it anyway,
 // after a round trip, and the hint here can say where the value comes from.
@@ -1207,15 +1250,19 @@ func init() {
 				"automatically.",
 			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
+				tokens, err := linkTokenParams(cmd)
+				if err != nil {
+					return err
+				}
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
 				}
 				id := args[0]
-				data, err := c.Get("trackers/"+id+"/url", nil)
+				data, err := c.Get("trackers/"+id+"/url", tokens)
 				if err != nil && isNotFoundErr(err) {
 					if internal := resolvePublicID(c, trackerEntity, id); internal != "" {
-						data, err = c.Get("trackers/"+internal+"/url", nil)
+						data, err = c.Get("trackers/"+internal+"/url", tokens)
 					}
 				}
 				if err != nil {
@@ -1236,6 +1283,10 @@ func init() {
 					}
 				}
 				if err := requireCRUDFields(trackerEntity, body); err != nil {
+					return err
+				}
+				tokens, err := linkTokenParams(cmd)
+				if err != nil {
 					return err
 				}
 				c, err := api.NewFromConfig()
@@ -1269,9 +1320,11 @@ func init() {
 						WithHint("Run `p202 tracker create` and `p202 tracker get-url <id>` separately to see which step fails.")
 				}
 
-				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), nil)
+				urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
 				if err != nil {
-					return err
+					// The tracker exists now: running create-with-url again
+					// would make a second one.
+					return withHint(err, "The tracker was created (tracker_id %d); do not re-run create-with-url. Run `p202 tracker get-url %d` for its link.", trackerID, trackerID)
 				}
 				urlObj, err := parseDataObject(urlData)
 				if err != nil {
@@ -1297,11 +1350,21 @@ func init() {
 			}
 		}
 		registerIdempotencyKeyFlag(createWithURLCmd)
+		registerLinkTokenFlags(createWithURLCmd)
+		registerLinkTokenFlags(getURLCmd)
 
 		bulkURLsCmd := &cobra.Command{
 			Use:   "bulk-urls",
 			Short: "Fetch tracking URLs for multiple trackers",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				tokens, err := linkTokenParams(cmd)
+				if err != nil {
+					return err
+				}
+				concurrency, _ := cmd.Flags().GetInt("concurrency")
+				if concurrency < 1 {
+					return validationError("--concurrency must be at least 1")
+				}
 				c, err := api.NewFromConfig()
 				if err != nil {
 					return err
@@ -1336,10 +1399,6 @@ func init() {
 					return nil
 				}
 
-				concurrency, _ := cmd.Flags().GetInt("concurrency")
-				if concurrency < 1 {
-					return validationError("--concurrency must be at least 1")
-				}
 				if concurrency > len(trackers) {
 					concurrency = len(trackers)
 				}
@@ -1364,7 +1423,7 @@ func init() {
 							continue
 						}
 
-						urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), nil)
+						urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
 						if err != nil {
 							results <- bulkResult{index: index, err: err}
 							continue
@@ -1440,6 +1499,7 @@ func init() {
 		bulkURLsCmd.Flags().StringP("limit", "l", "", "Max results")
 		bulkURLsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 		bulkURLsCmd.Flags().Int("concurrency", 5, "Number of concurrent URL fetches")
+		registerLinkTokenFlags(bulkURLsCmd)
 
 		trackerCmd.AddCommand(getURLCmd, createWithURLCmd, bulkURLsCmd)
 	}
