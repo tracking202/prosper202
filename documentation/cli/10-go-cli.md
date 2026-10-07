@@ -28,7 +28,8 @@ Note that this Go binary is distinct from the PHP/Symfony Console CLI entrypoint
 ```bash
 p202 config set-url https://your-domain.com
 p202 config set-key YOUR_API_KEY
-p202 config test
+p202 config test        # the instance answers AND accepts the key
+p202 whoami             # which user the key acts as, its roles and scopes
 p202 config show
 ```
 

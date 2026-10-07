@@ -154,7 +154,20 @@ use and why: `flag`, `P202_OUTPUT`, `config`, `agent:<VARIABLE>` or `default`.
 
 ### `p202 config test`
 
-Test the connection by calling the system health endpoint.
+Checks that the instance answers (the health endpoint, which needs no key) and
+then that it accepts the configured key, printing the user the key acts as. A
+refused key exits 2 (`auth`). The health check alone used to be the whole test,
+so any key passed.
+
+### `p202 whoami`
+
+The user, roles and scopes the configured key acts as, with the username and
+email, the profile and the URL:
+
+```bash
+p202 whoami --json
+p202 --profile staging whoami
+```
 
 ### Multi-profile config commands
 

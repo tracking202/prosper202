@@ -116,6 +116,37 @@ final class UserManagementRulesInstanceTest extends TestCase
         $this->assertStringContainsString($wantMessage, (string) ($response['message'] ?? ''), "$method $path refused for the wrong reason");
     }
 
+    /**
+     * A rename is the Users page's (user-management.php), not Personal
+     * settings': an Admin without add_edit_delete_admin may change its own
+     * first name but not its username. The Super user may rename it, but not
+     * onto another account's name; the profile fields are held to the pages'
+     * rules, so a bad value is refused rather than cast and written.
+     */
+    public function testRenamesAndProfileFieldsFollowThePages(): void
+    {
+        $self = '/users/' . self::$adminId;
+        [$status] = self::call(self::$adminKey, 'PUT', $self, ['user_fname' => 'Renamed']);
+        $this->assertSame(200, $status, 'an Admin edits its own first name');
+        $this->assertRefused(403, 'add_edit_delete_admin', 'PUT', $self, ['user_name' => 'admin-takes-a-new-name']);
+
+        [, $before] = self::call(self::$superKey, 'GET', $self);
+        $name = (string) $before['data']['user_name'];
+        [$status, $body] = self::call(self::$superKey, 'PUT', $self, ['user_name' => $name . 'x']);
+        $this->assertSame(200, $status, 'the Super user renames it: ' . json_encode($body));
+        $this->assertSame($name . 'x', $body['data']['user_name']);
+        [, $super] = self::call(self::$superKey, 'GET', '/users/1');
+        $this->assertRefused(409, 'Username already exists', 'PUT', $self, ['user_name' => strtoupper((string) $super['data']['user_name'])], self::$superKey);
+        $this->assertRefused(422, 'Validation failed', 'PUT', $self, ['user_email' => (string) $super['data']['user_email']], self::$superKey);
+
+        foreach ([['user_active' => 'abc'], ['user_active' => '1.0'], ['user_timezone' => 'Mars/Phobos'], ['user_fname' => ['x']]] as $bad) {
+            $this->assertRefused(422, 'Validation failed', 'PUT', $self, $bad, self::$superKey);
+        }
+        [, $after] = self::call(self::$superKey, 'GET', $self);
+        $this->assertSame(1, (int) $after['data']['user_active'], '"abc" did not deactivate the account');
+        $this->assertSame($name . 'x', $after['data']['user_name']);
+    }
+
     public function testAnAdminCannotGrantItselfSuperUser(): void
     {
         $this->assertRefused(403, 'add_edit_delete_admin', 'POST', '/users/' . self::$adminId . '/roles', ['role_id' => 1]);

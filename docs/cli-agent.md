@@ -108,12 +108,19 @@ Expected response on success:
   "data": {
     "status": "healthy",
     "timestamp": 1700000000,
-    "api_version": "v3"
+    "api_version": "v3",
+    "user_id": 1,
+    "roles": ["super user"],
+    "scopes": ["*"]
   }
 }
 ```
 
-If this fails, the URL or API key is wrong. Check `p202 config show --json` to inspect the stored values.
+It checks the key as well as the URL: exit 3 (`network`) means the URL is wrong
+or unreachable, exit 2 (`auth`) that the instance refused the key. Check
+`p202 config show --json` to inspect the stored values. `p202 whoami --json`
+says which user the key acts as and its scopes — read it before acting, so a
+narrowed key's 403 is expected rather than a surprise.
 
 ## JSON output structure
 
@@ -492,7 +499,8 @@ Below is every command with its required and optional flags. Flags marked `(R)` 
 p202 config set-url <url>
 p202 config set-key <api-key>
 p202 config show [--json]
-p202 config test [--json]
+p202 config test [--json]                 # reachability AND the key; exit 2 if the key is refused
+p202 whoami [--json]                      # user_id, user_name, roles, scopes, profile, url
 p202 config set-default <key> <value>     # output.format json|table|ndjson|csv sets the default format
 p202 config get-default [key]
 p202 config unset-default <key>
@@ -878,7 +886,7 @@ p202 user list   [--json]
 p202 user get    <id> [--json]
 p202 user create --user_name S --user_email S [--user_pass S]   # password: piped stdin line, or prompt
                  [--user_fname S] [--user_lname S] [--user_timezone S] [--user_active 0|1] [--idempotency-key S] [--json]
-p202 user update <id> [--user_fname S] [--user_lname S] [--user_email S]
+p202 user update <id> [--user_name S] [--user_fname S] [--user_lname S] [--user_email S]
                  [--set-password | --user_pass S] [--current-password] [--user_timezone S] [--user_active 0|1] [--json]
 p202 user delete <id> [--force] [--dry-run] [--json]
 

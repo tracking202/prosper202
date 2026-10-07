@@ -70,6 +70,11 @@ API version and feature detection.
       "commit": "abc1234",
       "environment": "production",
       "timezone_support": "named-timezone"
+    },
+    "principal": {
+      "user_id": 1,
+      "roles": ["super user"],
+      "scopes": ["*"]
     }
   }
 }
@@ -99,6 +104,14 @@ API version and feature detection.
 | `server.commit` | string | Git commit the server was built from. |
 | `server.environment` | string | Deployment environment (e.g. `production`). |
 | `server.timezone_support` | string | Timezone capability, e.g. `named-timezone` or `fallback-only`. |
+| `principal.user_id` | integer | The user the calling key acts as. |
+| `principal.roles` | array | That user's role names (`super user`, `admin`, …). |
+| `principal.scopes` | array | The key's scopes: `*` is full access; `read`, `write`, `stage` and `<area>:<action>` narrow it (see [API Key Scopes](00-api-integrations.md#api-key-scopes)). |
+
+`principal` is the calling key's own facts, so any valid key reads it whatever
+its scope. It is how a key holder learns which account it is and what it may
+do without already knowing its user id; `p202 whoami` and `p202 config test`
+show it. A server without the block predates it.
 
 ## Use Cases
 

@@ -140,38 +140,36 @@ class UsersController
 
     public function create(array $payload): array
     {
-        $username = trim((string)($payload['user_name'] ?? ''));
-        $email = trim((string)($payload['user_email'] ?? ''));
-        $password = (string)($payload['user_pass'] ?? '');
+        $password = $payload['user_pass'] ?? '';
 
         $errors = [];
-        if ($username === '') { $errors['user_name'] = 'Required'; }
-        if ($email === '') { $errors['user_email'] = 'Required'; }
-        if ($password === '') { $errors['user_pass'] = 'Required'; }
-        if ($password !== '' && (strlen($password) < self::PASSWORD_MIN || strlen($password) > self::PASSWORD_MAX)) {
+        foreach (['user_name', 'user_email'] as $required) {
+            if (!isset($payload[$required]) || (is_string($payload[$required]) && trim($payload[$required]) === '')) {
+                $errors[$required] = 'Required';
+            }
+        }
+        if (!is_string($password) || $password === '') {
+            $errors['user_pass'] = 'Required';
+        } elseif (strlen($password) < self::PASSWORD_MIN || strlen($password) > self::PASSWORD_MAX) {
             $errors['user_pass'] = 'Must be between ' . self::PASSWORD_MIN . ' and ' . self::PASSWORD_MAX . ' characters';
         }
-        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) { $errors['user_email'] = 'Invalid email format'; }
         if ($errors) {
             throw new ValidationException('Validation failed', $errors);
         }
-
-        $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_name = ? LIMIT 1');
-        $this->bind($stmt, 's', $username);
-        $this->execute($stmt, 'Query failed');
-        if ($stmt->get_result()->num_rows > 0) {
-            $stmt->close();
-            throw new ConflictException('Username already exists');
-        }
-        $stmt->close();
+        // The same rules as an update; the name and email are no account's yet.
+        $fields = $this->profileFields(array_intersect_key($payload, array_flip(
+            ['user_name', 'user_email', 'user_fname', 'user_lname', 'user_timezone', 'user_active']
+        )), null);
 
         $hashedPass = \hash_user_pass($password);
 
-        $fname = trim((string)($payload['user_fname'] ?? ''));
-        $lname = trim((string)($payload['user_lname'] ?? ''));
-        $tz = trim((string)($payload['user_timezone'] ?? 'UTC'));
+        $username = (string) $fields['user_name'][1];
+        $email = (string) $fields['user_email'][1];
+        $fname = (string) ($fields['user_fname'][1] ?? '');
+        $lname = (string) ($fields['user_lname'][1] ?? '');
+        $tz = (string) ($fields['user_timezone'][1] ?? 'UTC');
         $now = time();
-        $active = (int)($payload['user_active'] ?? 1);
+        $active = (int) ($fields['user_active'][1] ?? 1);
 
         // user_dash_email, install_hash and user_hash are NOT NULL with no default; the
         // V3 connection runs under MySQL strict mode, so they must be supplied explicitly.
@@ -236,16 +234,10 @@ class UsersController
         $binds = [];
         $types = '';
 
-        foreach (['user_fname' => 's', 'user_lname' => 's', 'user_email' => 's', 'user_timezone' => 's', 'user_active' => 'i'] as $f => $t) {
-            if (array_key_exists($f, $payload)) {
-                $sets[] = "$f = ?";
-                $binds[] = $payload[$f];
-                $types .= $t;
-            }
-        }
-
-        if (array_key_exists('user_email', $payload) && !filter_var($payload['user_email'], FILTER_VALIDATE_EMAIL)) {
-            throw new ValidationException('Invalid email', ['user_email' => 'Invalid email format']);
+        foreach ($this->profileFields($payload, $id) as $f => [$t, $value]) {
+            $sets[] = "$f = ?";
+            $binds[] = $value;
+            $types .= $t;
         }
 
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
@@ -275,6 +267,112 @@ class UsersController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * The profile fields a create or an update carries, held to the rules of
+     * the pages that write them (user-management.php, account.php), read
+     * from the request as sent:
+     *
+     * - user_name: 1-50 characters, no other account's (the UNIQUE key would
+     *   otherwise answer a rename with a database error);
+     * - user_email: a valid address of at most 100 characters, no other
+     *   account's;
+     * - user_fname, user_lname: text of at most 50 characters;
+     * - user_timezone: one of DateTimeZone::listIdentifiers(), as Personal
+     *   settings offers them (any other string was stored, and every report
+     *   then fell back to UTC without a word);
+     * - user_active: 0 or 1 ("abc" was bound as an integer, 0, and
+     *   deactivated the account).
+     *
+     * Only the fields present are returned. $selfId is the account being
+     * updated, whose own name and email are not "another account's".
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, array{0: string, 1: string|int}>
+     */
+    private function profileFields(array $payload, ?int $selfId): array
+    {
+        $out = [];
+        $errors = [];
+        $text = static function (string $field, int $max) use ($payload, &$errors): ?string {
+            $value = $payload[$field];
+            if (!is_string($value)) {
+                $errors[$field] = 'Must be text';
+                return null;
+            }
+            $value = trim($value);
+            if (mb_strlen($value) > $max) {
+                $errors[$field] = "At most $max characters";
+                return null;
+            }
+
+            return $value;
+        };
+        foreach (['user_fname' => 50, 'user_lname' => 50] as $field => $max) {
+            if (array_key_exists($field, $payload) && ($v = $text($field, $max)) !== null) {
+                $out[$field] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_name', $payload) && ($v = $text('user_name', 50)) !== null) {
+            if ($v === '') {
+                $errors['user_name'] = 'Required';
+            } elseif ($this->takenByAnother('user_name', $v, $selfId)) {
+                throw new ConflictException('Username already exists');
+            } else {
+                $out['user_name'] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_email', $payload) && ($v = $text('user_email', 100)) !== null) {
+            if (!filter_var($v, FILTER_VALIDATE_EMAIL)) {
+                $errors['user_email'] = 'Invalid email format';
+            } elseif ($this->takenByAnother('user_email', $v, $selfId)) {
+                $errors['user_email'] = 'Another account has this email';
+            } else {
+                $out['user_email'] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_timezone', $payload)) {
+            $tz = $payload['user_timezone'];
+            if (!is_string($tz) || !in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+                $errors['user_timezone'] = 'A time zone such as America/New_York (PHP\'s list, as Personal settings offers it)';
+            } else {
+                $out['user_timezone'] = ['s', $tz];
+            }
+        }
+        if (array_key_exists('user_active', $payload)) {
+            $active = $payload['user_active'];
+            if (!in_array($active, [0, 1, '0', '1'], true)) {
+                $errors['user_active'] = 'Must be 1 (can sign in) or 0 (cannot)';
+            } else {
+                $out['user_active'] = ['i', (int) $active];
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Validation failed', $errors);
+        }
+
+        return $out;
+    }
+
+    /** Whether an account other than $selfId holds $value in $column (user_name or user_email). */
+    private function takenByAnother(string $column, string $value, ?int $selfId): bool
+    {
+        $stmt = $this->prepare("SELECT user_id FROM 202_users WHERE $column = ? AND user_id <> ? LIMIT 1");
+        $self = $selfId ?? 0;
+        $this->bind($stmt, 'si', $value, $self);
+        $this->execute($stmt, 'Lookup failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            // "Free" would let the write reach the UNIQUE key, or a second
+            // account take the email.
+            $stmt->close();
+            throw new DatabaseException('Lookup failed');
+        }
+        $taken = $result->fetch_row() !== null;
+        $stmt->close();
+
+        return $taken;
     }
 
     private static function checkPasswordLength(string $password): void

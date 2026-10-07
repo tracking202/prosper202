@@ -62,6 +62,11 @@ var searchSynonymGroups = [][]string{
 	{"cost", "spend"},
 	{"delete", "remove"},
 	{"create", "add", "new"},
+	// "change my timezone", "edit a campaign": the words people use for an
+	// update. "change" is also the staged-changes command's name, which a
+	// direct match still ranks above a synonym.
+	{"update", "edit", "modify", "change", "set"},
+	{"server", "instance", "install"},
 	{"breakdown", "group", "dimension"},
 	{"geo", "country"},
 	{"lp", "landing"},

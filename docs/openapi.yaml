@@ -4667,7 +4667,7 @@ paths:
       responses:
         '200':
           description: Entity support, sync features and the `features` flags clients check (`api_key_scopes`, `create_idempotency`,
-            `delete_dry_run`, `staged_writes`, `app_platforms`, `app_postbacks`, …)
+            `delete_dry_run`, `staged_writes`, `app_platforms`, `app_postbacks`, …), and the `principal` the calling key acts as.
           content:
             application/json:
               schema:
@@ -4676,6 +4676,22 @@ paths:
                   data:
                     type: object
                     additionalProperties: true
+                    properties:
+                      principal:
+                        type: object
+                        description: The calling key's own facts.
+                        properties:
+                          user_id:
+                            type: integer
+                          roles:
+                            type: array
+                            items:
+                              type: string
+                          scopes:
+                            type: array
+                            items:
+                              type: string
+                            description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -10198,13 +10214,24 @@ components:
     UserUpdate:
       type: object
       properties:
+        user_name:
+          type: string
+          maxLength: 50
+          description: >-
+            Renames the account (the sign-in name), as the Users page does: it
+            needs a user you may manage, even when that is you. Another
+            account's name, in any case, is a 409.
         user_fname:
           type: string
+          maxLength: 50
         user_lname:
           type: string
+          maxLength: 50
         user_email:
           type: string
           format: email
+          maxLength: 100
+          description: Another account's email is a 422.
         user_pass:
           type: string
           minLength: 8
@@ -10216,8 +10243,10 @@ components:
             not sent when resetting another user's.
         user_timezone:
           type: string
+          description: A PHP time zone name such as America/New_York; anything else is a 422.
         user_active:
           type: integer
+          enum: [0, 1]
 
     Role:
       type: object

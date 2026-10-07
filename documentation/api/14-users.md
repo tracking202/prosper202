@@ -65,14 +65,14 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `user_name` | string | Yes | Username (unique) |
-| `user_email` | string | Yes | Email address (validated) |
+| `user_name` | string | Yes | Username, 1-50 characters; another account's (in any case) is `409`. Changing it on `PUT` renames the account, as the Users page does: it needs a user you may manage, even when that is you |
+| `user_email` | string | Yes | Email address, at most 100 characters; another account's is `422` |
 | `user_pass` | string | Yes (create) | Password, 8-72 characters (bcrypt reads only the first 72 bytes), hashed server-side |
 | `current_password` | string | When you change your **own** `user_pass` | Your present password, as Personal settings asks for it: a key that is not the password must not be enough to take over the sign-in. Missing or wrong is `422` naming `current_password`. A Super user or Admin resetting another user's password does not send it |
-| `user_fname` | string | No | First name |
-| `user_lname` | string | No | Last name |
-| `user_timezone` | string | No | Timezone (default: UTC) |
-| `user_active` | integer | No | Active status (1 = active, 0 = inactive, default: 1) |
+| `user_fname` | string | No | First name, at most 50 characters |
+| `user_lname` | string | No | Last name, at most 50 characters |
+| `user_timezone` | string | No | A PHP time zone name such as `America/New_York`, as Personal settings offers them (default: UTC); anything else is `422` |
+| `user_active` | integer | No | `1` can sign in (default), `0` cannot; any other value is `422` rather than read as `0` |
 
 ## Preference Fields
 

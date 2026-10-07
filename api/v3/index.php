@@ -382,7 +382,20 @@ try {
         ]);
 
         // ── API capabilities ────────────────────────────────────────────
-        $router->get('/capabilities', fn() => (new \Api\V3\Controllers\CapabilitiesController($db, $actorUserId))->capabilities());
+        // The principal is who the key acts as and what it may do: the probe
+        // an agent makes first, and the only way a key holder learns its own
+        // user id and scopes without already knowing them. The key's own
+        // facts only, so it needs no scope (Auth::isScopeExemptPath()).
+        $router->get('/capabilities', function () use ($db, $actorUserId, $auth) {
+            $answer = (new \Api\V3\Controllers\CapabilitiesController($db, $actorUserId))->capabilities();
+            $answer['data']['principal'] = [
+                'user_id' => $auth->userId(),
+                'roles' => $auth->roles(),
+                'scopes' => $auth->scopes(),
+            ];
+
+            return $answer;
+        });
 
         // ── Server-side sync planning (admin + read scope) ─────────────
         $router->group('/sync', function (Router $r) use ($crud, $queryParams, $payload) {
@@ -710,6 +723,11 @@ try {
             // requireSelfOrMayManageUser() and its siblings in Auth say how.
             $r->put('/{id}', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                // A rename is the Users page's, not Personal settings': it
+                // needs a user you may manage, even when that is you.
+                if (array_key_exists('user_name', $payload)) {
+                    $auth->requireMayManageUser($db, (int)$ctx['id']);
+                }
                 return $make()->update((int)$ctx['id'], $payload, $auth->userId());
             });
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {

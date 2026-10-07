@@ -108,11 +108,11 @@ var userCreateCmd = &cobra.Command{
 
 var userUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update a user",
+	Short: "Update a user: rename, name, email, timezone, active, password",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body := map[string]interface{}{}
-		for _, f := range []string{"user_fname", "user_lname", "user_email", "user_timezone", "user_active"} {
+		for _, f := range []string{"user_name", "user_fname", "user_lname", "user_email", "user_timezone", "user_active"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
@@ -700,13 +700,14 @@ func init() {
 	userCreateCmd.Flags().String("user_lname", "", "Last name")
 	userCreateCmd.Flags().String("user_timezone", "", "Timezone (default: UTC)")
 
+	userUpdateCmd.Flags().String("user_name", "", "New username (the sign-in name): renames the account, as the Users page does; needs a user you may manage, even yourself")
 	userUpdateCmd.Flags().String("user_fname", "", "First name")
 	userUpdateCmd.Flags().String("user_lname", "", "Last name")
 	userUpdateCmd.Flags().String("user_email", "", "Email")
 	userUpdateCmd.Flags().String("user_pass", "", "New password, 8-72 characters (prefer --set-password: a value here stays in shell history)")
 	userUpdateCmd.Flags().Bool("set-password", false, "Set a new password, read without echo: asked twice at a terminal, or one line of piped stdin")
 	userUpdateCmd.Flags().Bool("current-password", false, "Send your current password, which changing your OWN password needs (asked without echo, or the first line of piped stdin)")
-	userUpdateCmd.Flags().String("user_timezone", "", "Timezone")
+	userUpdateCmd.Flags().String("user_timezone", "", "Time zone, e.g. America/New_York (a PHP time zone name)")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 	enumFlag(userUpdateCmd, "user_active", newEnum(binaryValues))
 

@@ -125,3 +125,30 @@ func TestSearchNormalisesPluralsAndSynonyms(t *testing.T) {
 		t.Error("synonym groups are not symmetric")
 	}
 }
+
+// The words people use for an update find the update, not the staged-change
+// commands (named "change") or the create; and the commands named "change"
+// still win when they are what was asked for.
+func TestSearchReadsEditVerbsAsUpdate(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for query, want := range map[string]string{
+		"change my timezone":         "p202 user update",
+		"rename a user":              "p202 user update",
+		"edit campaign payout":       "p202 campaign update",
+		"modify a tracker":           "p202 tracker update",
+		"set default url on rotator": "p202 rotator update",
+		"set the api url":            "p202 config set-url",
+		"set the server url":         "p202 config set-url",
+		"list staged changes":        "p202 change list",
+		"apply a change":             "p202 change apply",
+	} {
+		a := searchJSON(t, strings.Fields(query)...)
+		if rankOf(a, want) != 1 {
+			var got []string
+			for _, r := range a.Results {
+				got = append(got, r.Command)
+			}
+			t.Errorf("%q: want %s first, got %v", query, want, got)
+		}
+	}
+}
