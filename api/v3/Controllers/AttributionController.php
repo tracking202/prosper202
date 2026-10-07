@@ -301,6 +301,8 @@ class AttributionController
             }
         }
 
+        // The account's zone: group_by=day's days are its calendar days.
+        $timezone = $this->accountTimezone();
         $result = (new AttributionReports($this->conn))->breakdown(
             $this->userId,
             $modelId,
@@ -312,7 +314,8 @@ class AttributionController
             $limit,
             $offset,
             $cohort,
-            $keys
+            $keys,
+            $timezone
         );
 
         return [
@@ -322,6 +325,7 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
+                'timezone' => $timezone,
                 // conversion: credits and assists of the sales made in the
                 // range; click: of the clicks made in it, whenever they
                 // converted (the classic reports' population).

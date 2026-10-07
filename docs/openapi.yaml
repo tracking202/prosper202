@@ -2943,7 +2943,9 @@ paths:
         by the click_time of the click they land on instead. Money values are exact decimal strings. Without
         model_id the report is "effective": each conversion under its
         campaign's model override when that model is active, otherwise the
-        account default. Unknown parameters are refused.
+        account default. With group_by=day a row's key is a date
+        (YYYY-MM-DD) in the account's time zone, which meta.timezone names.
+        Unknown parameters are refused.
       operationId: attributionBreakdown
       parameters:
         - name: group_by
@@ -11977,6 +11979,12 @@ components:
               type: integer
             time_to:
               type: integer
+            timezone:
+              type: string
+              description: >-
+                The account's time zone (user_timezone; UTC when unset): the zone group_by=day's
+                dates are in, and the one a date-valued time_from/time_to was read in.
+              example: America/New_York
             cohort:
               type: string
               enum: [conversion, click]

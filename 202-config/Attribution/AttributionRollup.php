@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use Prosper202\Database\Connection;
+use Prosper202\Report\LocalTime;
 use Prosper202\Report\RollupDirty;
 
 /**
@@ -656,7 +657,7 @@ final class AttributionRollup
 
     /**
      * A UTC day's rows, summed from its hours. The day dimension has none:
-     * a report groups it by the local date of each hour. A key's NULL and
+     * a report groups it by each hour's date in the account's zone. A key's NULL and
      * its value stay apart as they are in the hours (the journey browsers
      * need that; a breakdown sums both into one group either way).
      */
@@ -722,7 +723,7 @@ final class AttributionRollup
     public static function keySql(string $dimension, string $timeColumn): array
     {
         if ($dimension === 'day') {
-            // One key per hour: the report turns the hour into a local date.
+            // One key per hour: the report turns the hour into the account's date.
             return ['0', ''];
         }
         [$key, , $joins] = AttributionReports::dimensionSql($dimension, $timeColumn);
@@ -736,14 +737,14 @@ final class AttributionRollup
 
     /**
      * The dimension key over rows (not hours): keySql() with the day
-     * dimension's real key, the local date of $timeColumn.
+     * dimension's real key, $timeColumn's date in $timezone (the account's).
      *
      * @return array{0: string, 1: null, 2: string}
      */
-    public static function keySqlWithTime(string $dimension, string $timeColumn): array
+    public static function keySqlWithTime(string $dimension, string $timeColumn, ?string $timezone = null): array
     {
         if ($dimension === 'day') {
-            [$key] = AttributionReports::dimensionSql($dimension, $timeColumn);
+            [$key] = AttributionReports::dimensionSql($dimension, $timeColumn, $timezone);
 
             return [$key, null, ''];
         }
@@ -807,20 +808,57 @@ final class AttributionRollup
     }
 
     /**
-     * 1 when every instant of hour $hourExpr falls on one local date in the
-     * session's time zone: the date at its first and last second agree and
-     * the UTC offset did not change inside it (TO_SECONDS of the local
-     * wall-clock time minus the instant is the offset plus a constant). With
-     * one offset for the whole hour the wall clock runs forward without a
-     * jump, so two equal end dates mean one date throughout.
+     * The UTC hours of [$firstHour, $lastHour] that do not fall on one date
+     * in $timezone: those holding a local midnight that is not on the hour
+     * (every day in a zone whose offset is not a whole number of hours —
+     * India's +05:30, Nepal's +05:45, St John's −03:30), and those holding a
+     * change of offset that is not on the hour (Lord Howe's half-hour DST;
+     * Moncton's changes at 00:01 until 2006). Every other hour has one
+     * offset throughout, so its wall clock runs forward without a jump and
+     * never passes midnight. In a zone that is always a whole number of
+     * hours from UTC and changes on the hour there are none, and the day
+     * dimension is served from the rollup's hours as the other dimensions
+     * are.
+     *
+     * Read from PHP's zone database (LocalTime::offsets()), the account's
+     * zone, not the connection's: this was SQL over FROM_UNIXTIME(), in
+     * whatever zone the connection happened to be in.
+     *
+     * @return list<int> hour numbers (seconds / 3600), ascending
      */
-    public static function hourIsOneLocalDateSql(string $hourExpr): string
+    public static function hoursAcrossLocalDates(string $timezone, int $firstHour, int $lastHour, ?int $now = null): array
     {
-        $start = "($hourExpr) * 3600";
-        $end = "($hourExpr) * 3600 + 3599";
+        if ($firstHour > $lastHour) {
+            return [];
+        }
+        $lo = $firstHour * 3600;
+        $hi = $lastHour * 3600 + 3599;
+        $offsets = LocalTime::offsets($timezone, $now ?? time());
+        $hours = [];
+        foreach ($offsets as $i => [$from, $offset]) {
+            // The last second this offset holds.
+            $until = isset($offsets[$i + 1]) ? $offsets[$i + 1][0] - 1 : PHP_INT_MAX;
+            if ($until < $lo || $from > $hi) {
+                continue;
+            }
+            if ($i > 0 && $from % 3600 !== 0 && $from >= $lo) {
+                $hours[intdiv($from, 3600)] = true;
+            }
+            if ($offset % 3600 === 0) {
+                continue; // its midnights are on the hour
+            }
+            $start = max($from, $lo);
+            $end = min($until, $hi);
+            // The first local midnight at or after $start: (m + offset) % 86400 = 0.
+            $m = $start + ((-($start + $offset)) % 86400 + 86400) % 86400;
+            for (; $m <= $end; $m += 86400) {
+                $hours[intdiv($m, 3600)] = true;
+            }
+        }
+        $list = array_keys($hours);
+        sort($list);
 
-        return "(DATE(FROM_UNIXTIME($start)) = DATE(FROM_UNIXTIME($end))
-                 AND TO_SECONDS(FROM_UNIXTIME($start)) - $start = TO_SECONDS(FROM_UNIXTIME($end)) - ($end))";
+        return $list;
     }
 
     /**
