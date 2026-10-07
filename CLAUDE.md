@@ -829,6 +829,28 @@ When two implementations of one protection exist, a test that pins them to
 the same option set is what stops one from quietly lacking a line the other
 learned; `OutboundUrlGuardTest` does that for the two webhook senders.
 
+And a third way, by the caller. The report rebuild's call to this server was
+pinned to the listener's own address (`DataEngine\SelfCall`), and the cron
+merged its own defaults in front of the pin — `[FOLLOWLOCATION => true,
+MAXREDIRS => 5] + $pin`, where the left side of `+` wins. A pin covers one
+name and port; a redirect to any other is resolved by DNS. Measured: an
+app answering with a redirect built from the claimed Host sent the call to
+the outside listener, whose `200` marked the hour processed with nothing
+aggregated. The pin now returns every option the call is made with, and the
+test holds its caller to setting nothing but the URL. Ask of any pin what
+else is merged into its options, and in which order.
+
+Making a read fail loudly changes every caller of it, including the ones
+that run *because something already failed*. 1acfd84 made the account
+time-zone read throw instead of answering null (right: CLAUDE.md #11), and
+`record_mysql_error()` — the database error page — called it first thing, so
+a failing database turned the error page into an uncaught fatal and the
+error was never recorded. CI's fresh database found it; locally the suite
+passed because a reused database still had the table. An error path must not
+ask the failing dependency again, and its test should not depend on whether
+the dependency happens to be healthy: the runner now records every statement
+the page asks the connection, and the page may ask none.
+
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
 null`. The setup page writes NULL in the parts a redirect does not use; the

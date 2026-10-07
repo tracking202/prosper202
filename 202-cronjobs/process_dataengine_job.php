@@ -45,6 +45,8 @@ try {
             // name the request claimed (SelfCall says why).
             $storedDomain = p202StoredTrackingDomain();
             $base = \Prosper202\DataEngine\SelfCall::base($storedDomain, $_SERVER, dirname(__DIR__));
+            // Every option the calls are made with: nothing here may add to
+            // or override them (a redirect followed would leave the pin).
             $selfCallOptions = \Prosper202\DataEngine\SelfCall::curlOptions($storedDomain, $_SERVER);
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
@@ -54,9 +56,6 @@ try {
 
 
 
-            $callback = null;
-            $custom_options = null;
-
             // make sure the rolling window isn't greater than the # of urls
             $rolling_window = 7;
             $rolling_window = (count($urls) < $rolling_window) ? count($urls) : $rolling_window;
@@ -64,13 +63,7 @@ try {
             $master = curl_multi_init();
             $curl_arr = [];
 
-            // add additional curl options here
-            $std_options = [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 5
-            ] + $selfCallOptions;
-            $options = ($custom_options) ? ($std_options + $custom_options) : $std_options;
+            $options = $selfCallOptions;
 
             // start the first batch of requests
             for ($i = 0; $i < $rolling_window; $i++) {
@@ -81,6 +74,7 @@ try {
             }
 
             $failed = 0;
+            $firstFailure = '';
             do {
                 while (($execrun = curl_multi_exec($master, $running)) == CURLM_CALL_MULTI_PERFORM);
                 if ($execrun != CURLM_OK)
@@ -92,6 +86,15 @@ try {
                         // request failed -- record it so the job is NOT marked processed
                         // and this hour's aggregation is retried on the next run.
                         $failed++;
+                        if ($firstFailure === '') {
+                            $redirect = (string) ($info['redirect_url'] ?? '');
+                            $firstFailure = ' The first: ' . $info['url'] . ' answered HTTP ' . (int) $info['http_code']
+                                . ($redirect === '' ? '' : ', redirecting to ' . $redirect
+                                    . (\Prosper202\DataEngine\SelfCall::followsRedirects($options)
+                                        ? ' (beyond the redirects followed)'
+                                        : ' (a call pinned to this server follows no redirect; store a tracking domain)'))
+                                . '.';
+                        }
                     }
 
                     // start a new request (it's important to do this before removing the old
@@ -118,7 +121,7 @@ try {
                 // Release the processing lock but leave processed = '0' so the next run
                 // retries this window instead of permanently losing the aggregation.
                 $sql = "UPDATE 202_dataengine_job SET processing = '0' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
-                error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry.");
+                error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry." . $firstFailure);
             }
             $db->query($sql);
         }

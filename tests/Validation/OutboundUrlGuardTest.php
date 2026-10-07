@@ -147,10 +147,21 @@ final class OutboundUrlGuardTest extends TestCase
      * because it was the drift: the sender had it and this guard did not, and
      * without it a proxy in the environment resolves the host and the pin is
      * ignored.
+     *
+     * DataEngine\SelfCall is the one pin of another kind: the report rebuild's
+     * call to this server's own listener, which no SSRF guard would approve
+     * and which may be plain http. It names the same set (its values are in
+     * tests/DataEngine/SelfCallTest), and its caller sets nothing but the
+     * URL: the cron's own defaults were merged in front of the pin and turned
+     * redirects on, and a redirect to another name or port leaves the pin.
      */
     public function testEveryPinnedDispatcherCarriesTheWholeHardeningSet(): void
     {
-        $sanctioned = ['202-config/Validation/OutboundUrlGuard.php', '202-config/Attribution/WebhookSender.php'];
+        $sanctioned = [
+            '202-config/Validation/OutboundUrlGuard.php',
+            '202-config/Attribution/WebhookSender.php',
+            '202-config/DataEngine/SelfCall.php',
+        ];
         $files = \Tests\Support\SourceScan::phpFiles();
 
         // Matched as a code token, not text: a docblock that names an option
@@ -184,5 +195,15 @@ final class OutboundUrlGuardTest extends TestCase
             $files['202-cronjobs/ltv_webhooks.php'],
             '202-cronjobs/ltv_webhooks.php must apply OutboundUrlGuard::curlOptions()'
         );
+        $cron = '202-cronjobs/process_dataengine_job.php';
+        self::assertArrayHasKey($cron, $files, "$cron is gone; update this test");
+        self::assertStringContainsString('SelfCall::curlOptions(', $files[$cron], "$cron must call with SelfCall::curlOptions()");
+        $set = [];
+        foreach (token_get_all($files[$cron]) as $t) {
+            if (is_array($t) && $t[0] === T_STRING && str_starts_with($t[1], 'CURLOPT_')) {
+                $set[$t[1]] = true;
+            }
+        }
+        self::assertSame(['CURLOPT_URL'], array_keys($set), "$cron sets curl options beside SelfCall's; they can override the pin");
     }
 }

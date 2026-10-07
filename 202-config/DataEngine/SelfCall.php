@@ -29,9 +29,20 @@ use Prosper202\Click\TrackingDomain;
  * (CLAUDE.md #24), so the call takes none. A run with no listener (the
  * PHP CLI) builds the base as before.
  *
+ * A pin covers one name and port. A redirect to any other — an
+ * http-to-https rule built from the claimed Host, say — is resolved by DNS
+ * and leaves this machine, so the pinned call follows none: the hour
+ * answers 3xx, is left unprocessed and retried, and the cron's log line
+ * names where it was sent. (A call on the stored domain follows redirects
+ * as it always did; that address is the operator's.)
+ *
  * Both get timeouts: the call had none, so a rebuild whose call could not
  * be answered — a single-worker `php -S` calling itself — held the cron run
  * for good.
+ *
+ * curlOptions() is the whole set the cron hands curl, so nothing at the
+ * call site can override the pin (the cron's own defaults used to be merged
+ * in front of it, and set redirects on).
  */
 final class SelfCall
 {
@@ -63,18 +74,30 @@ final class SelfCall
     }
 
     /**
-     * The curl options for a call on base()'s URL: the timeouts, and with no
-     * domain stored, the pin to this listener and no proxy.
+     * Every curl option for a call on base()'s URL: http(s) only, TLS
+     * verified, the timeouts, and with no domain stored, the pin to this
+     * listener, no proxy and no redirects.
      *
      * @param array<string, mixed> $server normally $_SERVER
      * @return array<int, mixed>
      */
     public static function curlOptions(string $storedDomain, array $server): array
     {
-        $options = [CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT, CURLOPT_TIMEOUT => self::TIMEOUT];
+        $options = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            // curl's defaults, said here: a pinned https call is verified
+            // against the name the request claimed, so a name this server
+            // holds no certificate for fails rather than connects.
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
+            CURLOPT_TIMEOUT => self::TIMEOUT,
+        ];
         $listener = self::listener($server);
         if (TrackingDomain::normalize($storedDomain) !== '' || $listener === null) {
-            return $options;
+            return $options + [CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5];
         }
         [, $name, $port] = $listener;
         $address = self::listeningAddress($server);
@@ -83,34 +106,82 @@ final class SelfCall
         ];
         $options[CURLOPT_PROXY] = '';
         $options[CURLOPT_NOPROXY] = '*';
+        $options[CURLOPT_FOLLOWLOCATION] = false;
+        $options[CURLOPT_MAXREDIRS] = 0;
 
         return $options;
     }
 
     /**
+     * Whether a call made with curlOptions()'s $options follows redirects:
+     * for the cron's log line, which sets and reads no option itself.
+     *
+     * @param array<int, mixed> $options
+     */
+    public static function followsRedirects(array $options): bool
+    {
+        return ($options[CURLOPT_FOLLOWLOCATION] ?? false) === true;
+    }
+
+    /**
      * The listener that served this request: [scheme, name, port], or null
-     * when there is none (the PHP CLI) or it cannot be read.
+     * when this process serves no request (the PHP CLI: no request method,
+     * no server name, no server port).
+     *
+     * A request whose name or port cannot be read is still pinned — under
+     * the listening address as its name, on its scheme's default port —
+     * because answering null there would build the old, unpinned URL from
+     * the same request.
      *
      * @param array<string, mixed> $server
      * @return array{string, string, int}|null
      */
     private static function listener(array $server): ?array
     {
-        $name = is_scalar($server['SERVER_NAME'] ?? null) ? (string) $server['SERVER_NAME'] : '';
-        // Host characters only, as the server's name is read everywhere else
-        // (TrackingBaseUrl's fallback); an IPv6 literal keeps its brackets'
-        // contents.
-        $name = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', trim($name, '[]'));
-        $port = is_scalar($server['SERVER_PORT'] ?? null) ? (string) $server['SERVER_PORT'] : '';
-        if ($name === '' || preg_match('/^[0-9]{1,5}$/D', $port) !== 1 || (int) $port < 1 || (int) $port > 65535) {
+        $given = static fn (string $key): bool => is_scalar($server[$key] ?? null) && (string) $server[$key] !== '';
+        $serverName = $given('SERVER_NAME') ? (string) $server['SERVER_NAME'] : '';
+        if ($serverName === '' && !$given('REQUEST_METHOD') && !$given('SERVER_PORT')) {
             return null;
         }
         // The connection's own scheme: HTTPS is the web server's, set for a
         // TLS connection it terminated. A proxy's X-Forwarded-Proto describes
         // the proxy's side, not this listener's.
         $https = is_scalar($server['HTTPS'] ?? null) && !in_array(strtolower((string) $server['HTTPS']), ['', 'off', '0'], true);
+        $port = $given('SERVER_PORT') ? (string) $server['SERVER_PORT'] : '';
+        $port = preg_match('/^[0-9]{1,5}$/D', $port) === 1 && (int) $port >= 1 && (int) $port <= 65535
+            ? (int) $port
+            : ($https ? 443 : 80);
+        $name = self::hostOf($serverName);
+        if ($name === '') {
+            $name = self::listeningAddress($server);
+        }
 
-        return [$https ? 'https' : 'http', $name, (int) $port];
+        return [$https ? 'https' : 'http', $name, $port];
+    }
+
+    /**
+     * The host in a server name, or '' when it cannot be read. Under nginx's
+     * catch-all the name is the Host header (connect.php), port and all:
+     * `name:8080` is `name` (the call takes the listener's own port), and an
+     * IPv6 literal loses its brackets. Host characters only, as the server's
+     * name is read everywhere else (TrackingBaseUrl's fallback); a name left
+     * with a colon that is not an IPv6 address cannot be written in a URL.
+     */
+    private static function hostOf(string $name): string
+    {
+        $name = trim($name);
+        if (str_starts_with($name, '[')) {
+            $end = strpos($name, ']');
+            $name = $end === false ? '' : substr($name, 1, $end - 1);
+        } elseif (filter_var($name, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            $name = (string) preg_replace('/:[0-9]*$/D', '', $name);
+        }
+        $name = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', $name);
+        if (str_contains($name, ':') && filter_var($name, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+            return '';
+        }
+
+        return $name;
     }
 
     /** The address this request was accepted on, or loopback when it is unknown or a wildcard. */
