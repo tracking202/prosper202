@@ -469,6 +469,15 @@ class ReportSummaryForm extends ReportBasicForm
 		if ($gb === 'transaction_key' || $gb === 'goal_source_key') {
 			return $gb;
 		}
+		// c1-c4 group by the value itself, which is text: a value of "0" is
+		// a value. The fold below (NULL or '0' read as none) is for ids,
+		// where 0 means none; applied to a c1 it put every click with c1=0
+		// under "[No c1]" with the clicks that carried no c1 at all. Only
+		// NULL (no tracking row) joins '' (an empty c1) as none, as the
+		// SELECT shows them.
+		if (in_array($gb, ['c1', 'c2', 'c3', 'c4'], true)) {
+			return "IFNULL(2t" . $gb . "." . $gb . ", '')";
+		}
 		switch ($gb) {
 			case 'ppc_network_id':
 				$gb = '2pn.' . $gb;
@@ -486,22 +495,6 @@ class ReportSummaryForm extends ReportBasicForm
 			case 'platform_id':
 			case 'ip_id':
 				$gb = '2c.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c1':
-				$gb = '2tc1.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c2':
-				$gb = '2tc2.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c3':
-				$gb = '2tc3.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c4':
-				$gb = '2tc4.' . $gb;
 				$groupby_null = '0';
 				break;
 			case 'utm_campaign_id':
@@ -744,14 +737,14 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
 			$info_sql .= "
-            2c.c3_id,
-			IF(c3 is null or c3 = '0', '', c3) AS c3,
+			IF(2tc3.c3 is null, '', 2tc3.c3) AS c3,
+			IF(2c.c3_id is null or 2c.c3_id= '0', '', 2c.c3_id) AS c3_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			$info_sql .= "
-			2c.c4_id,
-			IF(c4 is null or c4 = '0', '', c4) AS c4,
+			IF(2tc4.c4 is null, '', 2tc4.c4) AS c4,
+			IF(2c.c4_id is null or 2c.c4_id= '0', '', 2c.c4_id) AS c4_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
@@ -804,7 +797,6 @@ class ReportSummaryForm extends ReportBasicForm
 				SUM(IF($whole, 2c.clicks, 0)) AS clicks,
 				SUM(IF($whole, 2c.click_out, 0)) AS click_out,
 				SUM(IF($whole, 2c.leads, 0)) AS leads,
-				2ac.aff_campaign_payout AS payout,
 				SUM(IF(lcp.conv_id IS NULL, 2c.income, lcp.amount)) AS income,
 				SUM(IF($whole, 2c.cost, 0)) AS cost
 			";
@@ -813,7 +805,6 @@ class ReportSummaryForm extends ReportBasicForm
 				SUM(2c.clicks) AS clicks,
 				SUM(2c.click_out) AS click_out,
 				SUM(2c.leads) AS leads,
-				2ac.aff_campaign_payout AS payout,
 				SUM(2c.income) AS income,
 				SUM(2c.cost) AS cost
 			";
@@ -3719,15 +3710,20 @@ class ReportSummaryTotalForm
 	}
 
 	/**
-	 * Returns the payout
-	 * @return integer
+	 * The payout: income per lead, from this group's own sums, as the Analyze
+	 * reports compute it. The query selected one campaign's payout outside
+	 * its GROUP BY, which is whichever row the server read first, and a
+	 * parent group kept whatever its last child row set.
+	 *
+	 * @return float|int
 	 */
 	function getPayout()
 	{
-		if (is_null($this->payout)) {
-			$this->payout = 0;
+		$leads = (float) $this->getLeads();
+		if ($leads != 0) {
+			return (float) $this->getIncome() / $leads;
 		}
-		return $this->payout;
+		return 0;
 	}
 
 	/**
@@ -4797,6 +4793,46 @@ class ReportSummaryTotalForm
 	function setC2($arg0)
 	{
 		$this->c2 = htmlspecialchars((string) $arg0, ENT_QUOTES);
+	}
+
+	/**
+	 * Returns the c3_id
+	 * @return integer
+	 */
+	function getC3Id()
+	{
+		if (is_null($this->c3_id) || $this->c3_id == '') {
+			$this->c3_id = 0;
+		}
+		return $this->c3_id;
+	}
+
+	/**
+	 * Sets the c3_id
+	 */
+	function setC3Id($arg0)
+	{
+		$this->c3_id = $arg0;
+	}
+
+	/**
+	 * Returns the c4_id
+	 * @return integer
+	 */
+	function getC4Id()
+	{
+		if (is_null($this->c4_id) || $this->c4_id == '') {
+			$this->c4_id = 0;
+		}
+		return $this->c4_id;
+	}
+
+	/**
+	 * Sets the c4_id
+	 */
+	function setC4Id($arg0)
+	{
+		$this->c4_id = $arg0;
 	}
 
 	/**
