@@ -123,8 +123,13 @@ function grab_timeframe($unused = null): array
 
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $user_result = _mysqli_query($user_sql);; // ($user_sql);
-    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    // A read that failed is not an account without preferences: that row
+    // gave every report the window 0 to 0, which holds no clicks.
+    $user_result = _mysqli_query($user_sql);
+    if (!$user_result instanceof mysqli_result) {
+        record_mysql_error($user_sql);
+    }
+    $user_row = $user_result->fetch_assoc() ?? [];
     $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
@@ -242,8 +247,13 @@ function query(
     // grab user preferences
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $user_result = _mysqli_query($user_sql); // ($user_sql);
-    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    // A read that failed is not an account without preferences: that row
+    // dropped every filter the user had set.
+    $user_result = _mysqli_query($user_sql);
+    if (!$user_result instanceof mysqli_result) {
+        record_mysql_error($user_sql);
+    }
+    $user_row = $user_result->fetch_assoc() ?? [];
     $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
@@ -545,9 +555,15 @@ function query(
         if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
             $count_sql_to_run .= " AND 2c.click_id='" . $mysql['user_landing_subid'] . "'";
         }
+        // A count that failed is not a count of 0, which the Visitors page
+        // showed as "0-0 of 0" above the rows it listed, with no pages to
+        // reach the rest.
         $count_result = _mysqli_query($count_sql_to_run);
-        $count_row = $count_result ? $count_result->fetch_assoc() : null;
-        $rows = (int)($count_row !== null ? ($count_row['count'] ?? 0) : 0);
+        if (!$count_result instanceof mysqli_result) {
+            record_mysql_error($count_sql_to_run);
+        }
+        $count_row = $count_result->fetch_assoc();
+        $rows = (int) ($count_row['count'] ?? 0);
     }
 
     if ($count == true) {
