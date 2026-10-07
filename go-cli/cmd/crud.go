@@ -19,10 +19,14 @@ import (
 type crudField struct {
 	Name     string
 	Desc     string
-	Required bool
+	Required bool // the controller requires it on create (TestCRUDFlagsMatchTheirControllers holds the two together)
 	QueryKey string
 	Aliases  []string
 	Enum     []string // the values the field takes (the controller's 'allowed'); nil: not a fixed set
+	// Clearable: `update --<name> ""` sends the empty value, which clears
+	// the field (what the setup page does when the box is emptied). Any
+	// other field refuses an empty value (empty_flags.go).
+	Clearable bool
 }
 
 // forecastEventRecurrences are ForecastEventsController's recurrence values.
@@ -366,6 +370,19 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		return err
 	}
 	output.Success("%s %s deleted%s.", capitalize(spec.noun), id, spec.context)
+	return nil
+}
+
+// requireCRUDFields refuses a create missing a field the controller
+// requires, before any request: the server would answer 422 for it anyway,
+// after a round trip, and the hint here can say where the value comes from.
+func requireCRUDFields(entity crudEntity, body map[string]string) error {
+	for _, f := range entity.Fields {
+		if f.Required && body[f.Name] == "" {
+			return validationError("required flag --%s is missing", f.Name).
+				WithHint("`p202 %s create --help` lists every flag; the required ones say so.", entity.Name)
+		}
+	}
 	return nil
 }
 
@@ -849,20 +866,18 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("create", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
 			body := map[string]string{}
 			for _, f := range entity.Fields {
 				if v := getStringFlagOrDefault(cmd, "crud", f.Name); v != "" {
 					body[f.Name] = v
 				}
 			}
-			for _, f := range entity.Fields {
-				if f.Required && body[f.Name] == "" {
-					return validationError("required flag --%s is missing", f.Name)
-				}
+			if err := requireCRUDFields(entity, body); err != nil {
+				return err
+			}
+			c, err := api.NewFromConfig()
+			if err != nil {
+				return err
 			}
 			idemKey, _ := cmd.Flags().GetString("idempotency-key")
 			data, err := c.PostIdempotent(entity.Endpoint, body, idemKey)
@@ -893,20 +908,23 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("update", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			c, err := api.NewFromConfig()
-			if err != nil {
-				return err
-			}
 			body := map[string]string{}
 			for _, f := range entity.Fields {
-				if v, _ := cmd.Flags().GetString(f.Name); v != "" {
-					body[f.Name] = v
+				// Changed, not "non-empty": a Clearable field given "" is a
+				// deliberate clear, and every other field refuses "" before
+				// this runs (refuseEmptyStringFlags).
+				if cmd.Flags().Changed(f.Name) {
+					body[f.Name], _ = cmd.Flags().GetString(f.Name)
 				}
 			}
 			if len(body) == 0 {
 				return validationError("no fields specified; pass at least one flag to update")
 			}
 			id, err := validateID(args[0])
+			if err != nil {
+				return err
+			}
+			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
 			}
@@ -919,9 +937,16 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		updateCmd.Flags().String(f.Name, "", f.Desc)
+		desc := f.Desc
+		if f.Clearable {
+			desc += " (\"\" clears it)"
+		}
+		updateCmd.Flags().String(f.Name, "", desc)
 		if f.Enum != nil {
 			enumFlag(updateCmd, f.Name, newEnum(f.Enum))
+		}
+		if f.Clearable {
+			allowEmpty(updateCmd, f.Name)
 		}
 	}
 
@@ -947,162 +972,164 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 	return parentCmd
 }
 
+// crudEntities are the entities registerCRUD builds commands for.
+// TestCRUDFlagsMatchTheirControllers reads each one's API controller:
+// every flag must be a field the controller writes, and Required must be
+// what the controller requires, because the API drops an unknown field
+// without a word — five flags here once reported success and saved nothing.
+var crudEntities = []crudEntity{
+	{
+		Name:         "campaign",
+		Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+		Endpoint:     "campaigns",
+		IDField:      "aff_campaign_id",
+		URLFields:    campaignURLFields,
+		StatsGroupBy: "campaign",
+		Fields: []crudField{
+			{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
+			{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
+			{Name: "aff_campaign_url_2", Desc: "Offer URL 2 (used with --aff_campaign_rotate 1)", Clearable: true},
+			{Name: "aff_campaign_url_3", Desc: "Offer URL 3", Clearable: true},
+			{Name: "aff_campaign_url_4", Desc: "Offer URL 4", Clearable: true},
+			{Name: "aff_campaign_url_5", Desc: "Offer URL 5", Clearable: true},
+			{Name: "aff_campaign_payout", Desc: "Default payout", Required: true},
+			{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
+			{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
+			{Name: "aff_network_id", Desc: "Category (affiliate network) id, from `p202 aff-network list`", Required: true},
+			{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
+			{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
+			{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
+			{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
+			{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
+		},
+		ListParams: []crudField{
+			{
+				Name:     "aff_network_id",
+				QueryKey: "filter[aff_network_id]",
+				Desc:     "Filter by affiliate network ID",
+				Aliases:  []string{"filter[aff_network_id]"},
+			},
+		},
+	},
+	{
+		Name:     "aff-network",
+		Aliases:  []string{"category"},
+		Plural:   "categories (affiliate networks)",
+		Endpoint: "aff-networks",
+		Fields: []crudField{
+			{Name: "aff_network_name", Desc: "Network name", Required: true},
+			{Name: "dni_network_id", Desc: "DNI network ID"},
+		},
+	},
+	{
+		Name:     "ppc-network",
+		Aliases:  []string{"traffic-network"},
+		Plural:   "traffic source networks (PPC networks)",
+		Endpoint: "ppc-networks",
+		Fields: []crudField{
+			{Name: "ppc_network_name", Desc: "Network name", Required: true},
+		},
+	},
+	{
+		Name:     "ppc-account",
+		Aliases:  []string{"traffic-source"},
+		Plural:   "traffic sources (PPC accounts)",
+		Endpoint: "ppc-accounts",
+		Fields: []crudField{
+			{Name: "ppc_account_name", Desc: "Account name", Required: true},
+			{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
+			{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
+		},
+		ListParams: []crudField{
+			{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
+		},
+	},
+	{
+		Name:          "tracker",
+		Plural:        "trackers (tracking links that tie a traffic source to a campaign and landing page)",
+		Endpoint:      "trackers",
+		IDField:       "tracker_id",
+		PublicIDField: "tracker_id_public",
+		Fields: []crudField{
+			{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
+			{Name: "ppc_account_id", Desc: "PPC account ID"},
+			{Name: "text_ad_id", Desc: "Text ad ID"},
+			{Name: "landing_page_id", Desc: "Landing page ID"},
+			{Name: "rotator_id", Desc: "Rotator ID"},
+			{Name: "click_cpc", Desc: "Cost per click"},
+			{Name: "click_cpa", Desc: "Cost per action"},
+			{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
+			{Name: "tracker_id_public", Desc: "Public tracker ID"},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+			{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
+			{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
+			{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
+		},
+	},
+	{
+		Name:      "landing-page",
+		Plural:    "landing pages (pre-sell pages visitors see before the offer)",
+		Endpoint:  "landing-pages",
+		URLFields: []string{"landing_page_url", "leave_behind_page_url"},
+		Fields: []crudField{
+			{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
+			{Name: "landing_page_nickname", Desc: "Landing page nickname", Required: true},
+			{Name: "leave_behind_page_url", Desc: "Leave-behind page URL", Clearable: true},
+			{Name: "landing_page_type", Desc: "Landing page type (integer)"},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+		},
+	},
+	{
+		Name:     "text-ad",
+		Plural:   "text ads (ad creatives with headline, description, and display URL)",
+		Endpoint: "text-ads",
+		Fields: []crudField{
+			{Name: "text_ad_name", Desc: "Text ad name", Required: true},
+			{Name: "text_ad_headline", Desc: "Headline", Required: true},
+			{Name: "text_ad_description", Desc: "Description text", Required: true},
+			{Name: "text_ad_display_url", Desc: "Display URL", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID"},
+			{Name: "landing_page_id", Desc: "Landing page ID"},
+			{Name: "text_ad_type", Desc: "Text ad type (integer)"},
+		},
+		ListParams: []crudField{
+			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
+		},
+	},
+	{
+		Name: "forecast-event",
+		// No "event" alias: `p202 event` is the web-events command, which
+		// shadowed it, so the alias the help advertised never resolved
+		// here (TestEveryAliasResolvesToItsOwnCommand).
+		Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
+		Endpoint: "forecast-events",
+		Fields: []crudField{
+			{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
+			{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
+			{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)", Clearable: true},
+			{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
+			{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
+			{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
+			{Name: "lead_days", Desc: "Days before event that impact ramps up"},
+			{Name: "lag_days", Desc: "Days after event that impact decays"},
+			{Name: "tags", Desc: "Comma-separated tags (e.g. 'us-holidays,retail')", Clearable: true},
+			{Name: "notes", Desc: "Freeform notes", Clearable: true},
+		},
+		ListParams: []crudField{
+			{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
+			{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
+			{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
+		},
+	},
+}
+
 func init() {
-	entities := []crudEntity{
-		{
-			Name:         "campaign",
-			Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-			Endpoint:     "campaigns",
-			IDField:      "aff_campaign_id",
-			URLFields:    campaignURLFields,
-			StatsGroupBy: "campaign",
-			Fields: []crudField{
-				{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
-				{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
-				{Name: "aff_campaign_url_2", Desc: "Offer URL 2"},
-				{Name: "aff_campaign_url_3", Desc: "Offer URL 3"},
-				{Name: "aff_campaign_url_4", Desc: "Offer URL 4"},
-				{Name: "aff_campaign_url_5", Desc: "Offer URL 5"},
-				{Name: "aff_campaign_cpc", Desc: "Cost per click"},
-				{Name: "aff_campaign_payout", Desc: "Default payout"},
-				{Name: "aff_campaign_currency", Desc: "Currency code (e.g. USD)"},
-				{Name: "aff_campaign_foreign_payout", Desc: "Foreign currency payout"},
-				{Name: "aff_network_id", Desc: "Affiliate network ID"},
-				{Name: "aff_campaign_cloaking", Desc: "Enable cloaking (1) or not (0)", Enum: binaryValues},
-				{Name: "aff_campaign_rotate", Desc: "Enable rotation (1) or not (0)", Enum: binaryValues},
-				{Name: "payout_mode", Desc: "How conversions set a click's value, replace (latest payout, default) or accumulate (sum)", Enum: []string{"replace", "accumulate"}},
-				{Name: "identity_signals", Desc: "Link this campaign's clicks into multi-touch journeys (1, default) or not (0)", Enum: binaryValues},
-				{Name: "app_registration_id", Desc: "The Android app registration this campaign's store links install (`p202 app list --platform android`; 0 unlinks). An install of another app on its click is foreign_click"},
-				{Name: "aff_campaign_postback_url", Desc: "Postback URL"},
-				{Name: "aff_campaign_postback_append", Desc: "Postback append string"},
-			},
-			ListParams: []crudField{
-				{
-					Name:     "aff_network_id",
-					QueryKey: "filter[aff_network_id]",
-					Desc:     "Filter by affiliate network ID",
-					Aliases:  []string{"filter[aff_network_id]"},
-				},
-			},
-		},
-		{
-			Name:     "aff-network",
-			Aliases:  []string{"category"},
-			Plural:   "categories (affiliate networks)",
-			Endpoint: "aff-networks",
-			Fields: []crudField{
-				{Name: "aff_network_name", Desc: "Network name", Required: true},
-				{Name: "dni_network_id", Desc: "DNI network ID"},
-				{Name: "aff_network_postback_url", Desc: "Postback URL"},
-				{Name: "aff_network_postback_append", Desc: "Postback append string"},
-			},
-		},
-		{
-			Name:     "ppc-network",
-			Aliases:  []string{"traffic-network"},
-			Plural:   "traffic source networks (PPC networks)",
-			Endpoint: "ppc-networks",
-			Fields: []crudField{
-				{Name: "ppc_network_name", Desc: "Network name", Required: true},
-			},
-		},
-		{
-			Name:     "ppc-account",
-			Aliases:  []string{"traffic-source"},
-			Plural:   "traffic sources (PPC accounts)",
-			Endpoint: "ppc-accounts",
-			Fields: []crudField{
-				{Name: "ppc_account_name", Desc: "Account name", Required: true},
-				{Name: "ppc_network_id", Desc: "PPC network ID", Required: true},
-				{Name: "ppc_account_default", Desc: "Set as default account (1) or not (0)", Enum: binaryValues},
-			},
-			ListParams: []crudField{
-				{Name: "ppc_network_id", QueryKey: "filter[ppc_network_id]", Desc: "Filter by PPC network ID"},
-			},
-		},
-		{
-			Name:          "tracker",
-			Plural:        "trackers (tracking links that tie a traffic source to a campaign and landing page)",
-			Endpoint:      "trackers",
-			IDField:       "tracker_id",
-			PublicIDField: "tracker_id_public",
-			Fields: []crudField{
-				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
-				{Name: "ppc_account_id", Desc: "PPC account ID"},
-				{Name: "text_ad_id", Desc: "Text ad ID"},
-				{Name: "landing_page_id", Desc: "Landing page ID"},
-				{Name: "rotator_id", Desc: "Rotator ID"},
-				{Name: "click_cpc", Desc: "Cost per click"},
-				{Name: "click_cpa", Desc: "Cost per action"},
-				{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
-				{Name: "tracker_id_public", Desc: "Public tracker ID"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-				{Name: "ppc_account_id", QueryKey: "filter[ppc_account_id]", Desc: "Filter by PPC account ID"},
-				{Name: "landing_page_id", QueryKey: "filter[landing_page_id]", Desc: "Filter by landing page ID"},
-				{Name: "rotator_id", QueryKey: "filter[rotator_id]", Desc: "Filter by rotator ID"},
-			},
-		},
-		{
-			Name:      "landing-page",
-			Plural:    "landing pages (pre-sell pages visitors see before the offer)",
-			Endpoint:  "landing-pages",
-			URLFields: []string{"landing_page_url", "leave_behind_page_url"},
-			Fields: []crudField{
-				{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
-				{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
-				{Name: "landing_page_nickname", Desc: "Landing page nickname"},
-				{Name: "leave_behind_page_url", Desc: "Leave-behind page URL"},
-				{Name: "landing_page_type", Desc: "Landing page type (integer)"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-			},
-		},
-		{
-			Name:     "text-ad",
-			Plural:   "text ads (ad creatives with headline, description, and display URL)",
-			Endpoint: "text-ads",
-			Fields: []crudField{
-				{Name: "text_ad_name", Desc: "Text ad name", Required: true},
-				{Name: "text_ad_headline", Desc: "Headline"},
-				{Name: "text_ad_description", Desc: "Description text"},
-				{Name: "text_ad_display_url", Desc: "Display URL"},
-				{Name: "aff_campaign_id", Desc: "Campaign ID"},
-				{Name: "landing_page_id", Desc: "Landing page ID"},
-				{Name: "text_ad_type", Desc: "Text ad type (integer)"},
-			},
-			ListParams: []crudField{
-				{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
-			},
-		},
-		{
-			Name: "forecast-event",
-			// No "event" alias: `p202 event` is the web-events command, which
-			// shadowed it, so the alias the help advertised never resolved
-			// here (TestEveryAliasResolvesToItsOwnCommand).
-			Plural:   "forecast events (holidays, promotions, anomalies that affect forecasting)",
-			Endpoint: "forecast-events",
-			Fields: []crudField{
-				{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
-				{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
-				{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)"},
-				{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
-				{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
-				{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},
-				{Name: "lead_days", Desc: "Days before event that impact ramps up"},
-				{Name: "lag_days", Desc: "Days after event that impact decays"},
-				{Name: "tags", Desc: "Comma-separated tags (e.g. 'us-holidays,retail')"},
-				{Name: "notes", Desc: "Freeform notes"},
-			},
-			ListParams: []crudField{
-				{Name: "event_name", QueryKey: "filter[event_name]", Desc: "Filter by event name"},
-				{Name: "recurrence", QueryKey: "filter[recurrence]", Desc: "Filter by recurrence type", Enum: forecastEventRecurrences},
-				{Name: "tags", QueryKey: "filter[tags]", Desc: "Filter by tag"},
-			},
-		},
-	}
+	entities := crudEntities
 
 	var trackerCmd *cobra.Command
 	var campaignCmd *cobra.Command
@@ -1194,21 +1221,18 @@ func init() {
 			Use:   "create-with-url",
 			Short: "Create a tracker and return its tracking URL",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				c, err := api.NewFromConfig()
-				if err != nil {
-					return err
-				}
-
 				body := map[string]string{}
 				for _, f := range trackerEntity.Fields {
 					if v, _ := cmd.Flags().GetString(f.Name); v != "" {
 						body[f.Name] = v
 					}
 				}
-				for _, f := range trackerEntity.Fields {
-					if f.Required && body[f.Name] == "" {
-						return validationError("required flag --%s is missing", f.Name)
-					}
+				if err := requireCRUDFields(trackerEntity, body); err != nil {
+					return err
+				}
+				c, err := api.NewFromConfig()
+				if err != nil {
+					return err
 				}
 
 				idemKey, _ := cmd.Flags().GetString("idempotency-key")
@@ -1260,6 +1284,9 @@ func init() {
 		}
 		for _, f := range trackerEntity.Fields {
 			createWithURLCmd.Flags().String(f.Name, "", f.Desc)
+			if f.Enum != nil {
+				enumFlag(createWithURLCmd, f.Name, newEnum(f.Enum))
+			}
 		}
 		registerIdempotencyKeyFlag(createWithURLCmd)
 

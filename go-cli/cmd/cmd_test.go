@@ -2129,6 +2129,8 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 		"--aff_campaign_name=Campaign A",
 		"--aff_campaign_url=https://offer.example.com",
 		"--aff_campaign_url_2=https://offer2.example.com",
+		"--aff_campaign_payout=5",
+		"--aff_network_id=3",
 		"--aff_campaign_currency=USD",
 		"--aff_campaign_foreign_payout=12.34",
 		"--aff_campaign_cloaking=1",
@@ -2271,7 +2273,9 @@ func TestTextAdCreateUsesDescriptionField(t *testing.T) {
 	_, _, err := executeCommand(
 		"text-ad", "create",
 		"--text_ad_name=Ad Name",
+		"--text_ad_headline=Ad headline",
 		"--text_ad_description=Ad description",
+		"--text_ad_display_url=example.com",
 		"--aff_campaign_id=9",
 		"--landing_page_id=10",
 		"--text_ad_type=1",
@@ -4191,7 +4195,8 @@ func TestAPI422ErrorShowsFieldErrors(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("campaign", "create", "--aff_campaign_name=test", "--aff_campaign_url=http://example.com")
+	_, _, err := executeCommand("campaign", "create", "--aff_campaign_name=test", "--aff_campaign_url=http://example.com",
+		"--aff_campaign_payout=1", "--aff_network_id=1")
 	if err == nil {
 		t.Fatal("expected error for 422 response")
 	}

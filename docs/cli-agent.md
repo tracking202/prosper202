@@ -547,16 +547,16 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 |------|--------|------|
 | `--aff_campaign_name` | (R) | string |
 | `--aff_campaign_url` | (R) | string |
-| `--aff_campaign_url_2..5` | optional | string |
-| `--aff_campaign_cpc` | optional | string |
-| `--aff_campaign_payout` | optional | string |
+| `--aff_campaign_url_2..5` | optional | string (`update --aff_campaign_url_2 ""` clears it) |
+| `--aff_campaign_payout` | (R) | string |
 | `--aff_campaign_currency` | optional | string |
 | `--aff_campaign_foreign_payout` | optional | string |
-| `--aff_network_id` | optional | string |
+| `--aff_network_id` | (R) | string (`p202 aff-network list`) |
 | `--aff_campaign_cloaking` | optional | 0/1 |
 | `--aff_campaign_rotate` | optional | 0/1 |
-| `--aff_campaign_postback_url` | optional | string |
-| `--aff_campaign_postback_append` | optional | string |
+| `--payout_mode` | optional | replace/accumulate |
+| `--identity_signals` | optional | 0/1 |
+| `--app_registration_id` | optional | integer |
 
 #### Aff-network fields
 
@@ -564,8 +564,6 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 |------|--------|------|
 | `--aff_network_name` | (R) | string |
 | `--dni_network_id` | optional | integer |
-| `--aff_network_postback_url` | optional | string |
-| `--aff_network_postback_append` | optional | string |
 
 #### PPC network fields
 
@@ -610,8 +608,8 @@ p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
 |------|--------|------|
 | `--landing_page_url` | (R) | string |
 | `--aff_campaign_id` | (R) | string |
-| `--landing_page_nickname` | optional | string |
-| `--leave_behind_page_url` | optional | string |
+| `--landing_page_nickname` | (R) | string |
+| `--leave_behind_page_url` | optional | string (`update --leave_behind_page_url ""` clears it) |
 | `--landing_page_type` | optional | integer |
 
 #### Text ad fields
@@ -619,9 +617,9 @@ p202 tracker bulk-urls [--aff_campaign_id N] [--ppc_account_id N]
 | Flag | Create | Type |
 |------|--------|------|
 | `--text_ad_name` | (R) | string |
-| `--text_ad_headline` | optional | string |
-| `--text_ad_description` | optional | string |
-| `--text_ad_display_url` | optional | string |
+| `--text_ad_headline` | (R) | string |
+| `--text_ad_description` | (R) | string |
+| `--text_ad_display_url` | (R) | string |
 | `--aff_campaign_id` | optional | string |
 | `--landing_page_id` | optional | string |
 | `--text_ad_type` | optional | integer |

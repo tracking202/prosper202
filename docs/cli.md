@@ -291,19 +291,19 @@ Bulk delete (`--ids`) processes each ID individually and reports a summary. If a
 |------|----------|-------------|
 | `--aff_campaign_name` | Yes | Campaign name |
 | `--aff_campaign_url` | Yes | Primary offer URL |
-| `--aff_campaign_url_2` | No | Offer URL 2 |
-| `--aff_campaign_url_3` | No | Offer URL 3 |
-| `--aff_campaign_url_4` | No | Offer URL 4 |
-| `--aff_campaign_url_5` | No | Offer URL 5 |
-| `--aff_campaign_cpc` | No | Cost per click |
-| `--aff_campaign_payout` | No | Default payout |
+| `--aff_campaign_url_2` | No | Offer URL 2 (on update, `""` clears it) |
+| `--aff_campaign_url_3` | No | Offer URL 3 (on update, `""` clears it) |
+| `--aff_campaign_url_4` | No | Offer URL 4 (on update, `""` clears it) |
+| `--aff_campaign_url_5` | No | Offer URL 5 (on update, `""` clears it) |
+| `--aff_campaign_payout` | Yes | Default payout |
 | `--aff_campaign_currency` | No | Currency code |
 | `--aff_campaign_foreign_payout` | No | Foreign currency payout |
-| `--aff_network_id` | No | Affiliate network ID |
+| `--aff_network_id` | Yes | Category (affiliate network) id, from `p202 aff-network list` |
 | `--aff_campaign_cloaking` | No | Enable cloaking (0/1) |
 | `--aff_campaign_rotate` | No | Enable rotation (0/1) |
-| `--aff_campaign_postback_url` | No | Postback URL |
-| `--aff_campaign_postback_append` | No | Postback append string |
+| `--payout_mode` | No | How conversions set a click's value: `replace` (default) or `accumulate` |
+| `--identity_signals` | No | Link this campaign's clicks into multi-touch journeys (1, default) or not (0) |
+| `--app_registration_id` | No | The Android app registration the campaign's store links install (0 unlinks) |
 
 Campaign utility subcommand:
 
@@ -458,8 +458,6 @@ returns one per campaign without a request per campaign.
 |------|----------|-------------|
 | `--aff_network_name` | Yes | Network name |
 | `--dni_network_id` | No | DNI network ID |
-| `--aff_network_postback_url` | No | Postback URL |
-| `--aff_network_postback_append` | No | Postback append string |
 
 ### PPC network (`p202 ppc-network`)
 
@@ -511,8 +509,8 @@ not combinable with `--page`/`--limit`/`--offset`).
 |------|----------|-------------|
 | `--landing_page_url` | Yes | Landing page URL |
 | `--aff_campaign_id` | Yes | Campaign ID |
-| `--landing_page_nickname` | No | Landing page nickname |
-| `--leave_behind_page_url` | No | Leave-behind page URL |
+| `--landing_page_nickname` | Yes | Landing page nickname |
+| `--leave_behind_page_url` | No | Leave-behind page URL (on update, `""` clears it) |
 | `--landing_page_type` | No | Landing page type |
 
 ### Text ad (`p202 text-ad`)
@@ -520,9 +518,9 @@ not combinable with `--page`/`--limit`/`--offset`).
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--text_ad_name` | Yes | Text ad name |
-| `--text_ad_headline` | No | Headline |
-| `--text_ad_description` | No | Description text |
-| `--text_ad_display_url` | No | Display URL |
+| `--text_ad_headline` | Yes | Headline |
+| `--text_ad_description` | Yes | Description text |
+| `--text_ad_display_url` | Yes | Display URL |
 | `--aff_campaign_id` | No | Campaign ID |
 | `--landing_page_id` | No | Landing page ID |
 | `--text_ad_type` | No | Text ad type |
