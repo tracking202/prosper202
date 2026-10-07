@@ -213,11 +213,10 @@ $mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', (string) $tracker_row['parameters']);
-
-foreach ($parameters as $key => $value) {
-	if ($value === '' || !isset($_GET[$value])) {
+// The traffic source's variables; none for a click with no tracker (no
+// t202id, or one that names none), as for a source that has none.
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
+	if (!isset($_GET[$value])) {
 		continue;
 	}
 
@@ -225,7 +224,7 @@ foreach ($parameters as $key => $value) {
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) $ppc_variable_ids[$key]);
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -390,12 +389,10 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = '0';
 }
 
-// Determine cloaking
-if (!$tracker_row['click_cloaking']) {
-	$mysql['click_cloaking'] = -1;
-} else {
-	$mysql['click_cloaking'] = (int) $tracker_row['click_cloaking'];
-}
+// Cloaking is decided when the visitor leaves for the offer (off.php): the
+// click keeps the tracker's setting, -1 (the campaign decides) when there is
+// no tracker, and 0 when the link turns it off (ClickCloaking).
+$mysql['click_cloaking'] = \Prosper202\Click\ClickCloaking::trackerSetting($tracker_row);
 
 // Compute site URLs
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? ''));

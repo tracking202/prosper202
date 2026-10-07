@@ -385,15 +385,12 @@ $mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', (string) $tracker_row['ppc_variable_ids']) : [];
-$parameters = !empty($tracker_row['parameters']) ? explode(',', (string) $tracker_row['parameters']) : [];
-
-foreach ($parameters as $key => $value) {
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
 	$variable = (string)($_GET[$value] ?? '');
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) ($ppc_variable_ids[$key] ?? 0));
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -508,10 +505,7 @@ $mysql['click_id_public'] = '';
 
 // Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
-if (($tracker_row['click_cloaking'] == 1) or
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
-) {
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);

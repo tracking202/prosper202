@@ -153,23 +153,19 @@ if (!empty($_GET['t202id'])) {
 //get mysql variables 
 $mysql['user_id'] = $db->real_escape_string((string) $tracker_row['user_id']);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) $tracker_row['aff_campaign_id']);
-$mysql['ppc_account_id'] = $db->real_escape_string((string) $tracker_row['ppc_account_id']);
-$mysql['click_cpc'] = $db->real_escape_string((string) $tracker_row['click_cpc']);
 $mysql['click_payout'] = $db->real_escape_string((string) $tracker_row['aff_campaign_payout']);
 $mysql['click_time'] = time();
 
 $mysql['landing_page_id'] = $db->real_escape_string((string) $tracker_row['landing_page_id']);
-$mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id']);
 
 //now gather variables for the clicks record db
 //click_id is needed to build click_id_public below, so resolve it first
 $click_id = getCookie202('tracking202subid_a_'.$tracker_row['aff_campaign_id']) ?? '';
 //lets determine if cloaking is on
 $cloaking_on = false;
-if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1)) //if no tracker but but by default campaign has cloaking on
-) {
+// The tracker's setting, or the campaign's when the landing page was reached
+// without one or it leaves the decision to the campaign (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link

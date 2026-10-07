@@ -324,9 +324,9 @@ $mysql['click_out'] = 1;
 // Initialize before the branch so the non-cloaked path doesn't read an
 // undefined variable at the $cloaking_on checks further down (matches dl.php/lp.php).
 $cloaking_on = false;
-if (($info_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-(($info_row['click_cloaking'] == - 1) and ($info_row['aff_campaign_cloaking'] == 1)) or ((! isset($info_row['click_cloaking'])) and ($info_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-{
+// The setting the click keeps (record_adv.php: the tracker's, -1 when it
+// leaves the decision to the campaign), or the campaign's (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($info_row)) {
     $cloaking_on = true;
     $mysql['click_cloaking'] = 1;
     // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link

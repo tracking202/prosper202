@@ -2367,7 +2367,10 @@ function getGeoData($ip)
             'city' => '',
             'region' => '',
             'region_code' => '',
-            'postal' => ''
+            // The key every other answer carries (landing.php reads it): this
+            // one said 'postal', so without the GeoIP library every landing
+            // page script warned "Undefined array key".
+            'postal_code' => ''
         ];
     }
 
