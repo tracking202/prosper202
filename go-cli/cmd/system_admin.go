@@ -430,7 +430,7 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 		output.Success("No click is %s any more, so nothing was scheduled.", where)
 		return nil
 	}
-	output.Success("Scheduled: the cron job deletes the %d click(s) %s in batches (5,000 rows a table each run). `p202 system retention show` counts what remains.", *done.Data.Clicks, where)
+	output.Success("Scheduled: the cron job deletes the %d click(s) %s in batches, from every click table at once, over its next runs. `p202 system retention show` counts what remains.", *done.Data.Clicks, where)
 	return nil
 }
 

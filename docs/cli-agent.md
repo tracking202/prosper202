@@ -1140,10 +1140,10 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   job does the deleting, for every account, in batches; it cannot be undone.
 - `system retention set` asks only when the new value keeps less click data
   than the current one (turning deletion on, or fewer days); with no terminal
-  that question fails (exit 1) unless `--force` is given. Known issue: the
-  cron job's automatic deletion currently deletes no clicks (it deletes below
-  `MIN(click_id)` of the old clicks), so do not tell a user that setting it
-  deleted data; `delete-before` does delete.
+  that question fails (exit 1) unless `--force` is given. With N days the
+  cron job deletes every click recorded before midnight that began the day N
+  days ago (server time), in batches over its next runs; the command itself
+  deletes nothing, so say the deletion is set, not done.
 - None of the `system` writes can be staged; `--staged` is refused before any
   request. AutoCron and "update available" are not exposed (they call a remote
   Prosper202 service).

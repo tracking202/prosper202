@@ -1608,19 +1608,17 @@ Retention applies to every account's clicks on the install (the cron job
 reads it from user 1's preferences). `delete-before` deletes nothing itself:
 it schedules the cron job to delete, in batches, every click below the
 newest click at or before midnight that begins `--date` (the account's time
-zone), from the ten click tables; setup data is kept, and it cannot be
-undone. It always previews first (counts per table) and asks before
+zone), from every click table; conversions and setup data are kept, and it
+cannot be undone. It always previews first (counts per table) and asks before
 scheduling; `--force` skips the question, never the preview, and the write
 carries the click id the preview named, so it never schedules more than was
 shown. None of these writes can be staged: `--staged` is refused before any
 request. AutoCron and "update available" are not here: the page reaches a
 remote Prosper202 service for both.
 
-Known issue: the cron job's automatic deletion (`AutoOptimizeDatabase()` in
-`202-cronjobs/index.php`) currently deletes no clicks — it deletes the rows
-below `MIN(click_id)` of the old clicks — so `retention set` stores the
-setting as the page does without anything being deleted. `delete-before`
-works.
+`retention set --days N` makes the cron job delete every click recorded
+before midnight that began the day N days ago (server time), from every
+click table, in batches over its next runs; N whole days and today are kept.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,

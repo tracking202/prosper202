@@ -11,6 +11,7 @@ use Prosper202\Attribution\AttributionWorker;
 use Prosper202\Attribution\DefaultModel;
 use Prosper202\Attribution\ModelRepository;
 use Prosper202\Attribution\ModelType;
+use Prosper202\Click\ClickRetention;
 use Prosper202\Report\RollupDirty;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Attribution\Support\AttributionDatabase;
@@ -382,6 +383,121 @@ final class RollupMatchesFullComputationTest extends TestCase
         (new ModelRepository($this->conn))->update(1, $linear, 'Linear', 'linear', ModelType::TIME_DECAY, ['half_life_hours' => 5.0], 30, 'inactive', false, false);
         self::assertSame(0, (int) self::scalar("SELECT COUNT(*) FROM 202_attribution_rollup WHERE model_id = $linear"));
         $this->compareAll('a model switched off', $window, $default, $first, true);
+    }
+
+    /**
+     * Click-data retention (ClickRetention, the cron job's two deletions)
+     * deletes clicks with every row keyed by them while their conversions,
+     * journeys and credits stay — and the rollup had summed those clicks
+     * into the hours of their own rows and of the conversions whose journeys
+     * hold them. The deletion marks those hours in its transactions: while
+     * they are marked the reports compute them exactly, and once re-summed
+     * the rollup is the full computation over the clicks that remain. The
+     * tenant's ids are not in time order (a conversion's clicks are created
+     * together), so the scheduled deletion — by id — takes clicks from all
+     * over the span, and the automatic one — by time — leaves some small ids.
+     */
+    public function testClickRetentionLeavesTheRollupExact(): void
+    {
+        $seed = 23;
+        $t = $this->generate($seed, ['conversions' => 300, 'span' => 45 * 86400, 'campaigns' => 8]);
+        $this->buildRollup($t['now']);
+        $built = (int) self::scalar('SELECT built_through_hour FROM 202_attribution_rollup_state WHERE user_id = 1');
+        $all = $this->ranges($seed, $t['first'], $t['last'], $built);
+        $ranges = array_intersect_key($all, array_flip(['everything', 'UTC days', 'across the summed frontier', 'random 0', 'random 1', 'random 2']));
+        $models = $t['models'];
+        $variants = [
+            'effective' => [null, null],
+            'first touch' => [$models['first'], null],
+            'linear vs default' => [$models['linear'], $models['default']],
+        ];
+        $compare = function (string $label) use ($ranges, $variants, $models): array {
+            $served = 0;
+            $journeysServed = 0;
+            foreach ($ranges as $rangeLabel => [$from, $to]) {
+                $journeysServed += $this->assertSameJourneys("$label, $rangeLabel, journey metrics", 1, $from, $to);
+                foreach (AttributionReports::dimensions() as $dim) {
+                    foreach ($variants as $variant => [$m, $c]) {
+                        $served += $this->assertSameAnswer("$label, $rangeLabel, $dim, $variant", 1, $m, $c, $models['default'], $dim, $from, $to);
+                    }
+                }
+                self::$db->query("SET time_zone = '+05:30'");
+                $served += $this->assertSameAnswer("$label, $rangeLabel, day in +05:30", 1, null, $models['first'], $models['default'], 'day', $from, $to);
+                self::$db->query("SET time_zone = '+00:00'");
+            }
+            $served += $this->assertSameAnswer("$label, the other account", 2, null, null, $models['other'], 'campaign', $ranges['everything'][0], $ranges['everything'][1]);
+
+            return [$served, $journeysServed];
+        };
+        $window = $ranges['everything'];
+        $full = fn (): array => [
+            (new AttributionReports($this->conn, false))->breakdownAll(1, null, null, $models['default'], 'campaign', ...$window),
+            (new AttributionReports($this->conn, false))->journeyMetrics(1, ...$window),
+        ];
+
+        $maxId = (int) self::scalar('SELECT MAX(click_id) FROM 202_clicks');
+        $deletions = [
+            'the automatic deletion' => fn (ClickRetention $r): array => $r->deleteOlderThan($t['first'] + intdiv($t['last'] - $t['first'], 3), PHP_INT_MAX),
+            'the scheduled deletion' => fn (ClickRetention $r): array => $r->deleteBelow(intdiv($maxId, 2), PHP_INT_MAX),
+        ];
+        foreach ($deletions as $label => $delete) {
+            $before = $full();
+            $clicksBefore = (int) self::scalar('SELECT COUNT(DISTINCT click_id) FROM 202_clicks');
+            $marksBefore = (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1');
+            $report = $delete(new ClickRetention($this->conn, 37));
+            self::assertTrue($report['complete'], "$label ran to the end");
+            self::assertGreaterThan(1, $report['batches'], "$label went in batches");
+            self::assertSame($clicksBefore - $report['clicks'], (int) self::scalar('SELECT COUNT(DISTINCT click_id) FROM 202_clicks'));
+            self::assertGreaterThan(30, $report['clicks'], "$label deleted clicks");
+            self::assertNotSame($before, $full(), "$label changes what the reports answer, or comparing after it proves nothing");
+            self::assertGreaterThan($marksBefore, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1'), "$label marked the rollup");
+
+            [$served] = $compare("$label (marked)");
+            self::assertGreaterThan(0, $served, "$label: the rollup still served the hours it was not marked in");
+
+            $this->buildRollup($t['now']);
+            [$served, $journeysServed] = $compare("$label (summed again)");
+            self::assertGreaterThan(0, $served, "$label: the rollup served hours once summed again");
+            self::assertGreaterThan(0, $journeysServed, "$label: and journey hours");
+        }
+        self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_clicks_advance ca LEFT JOIN 202_clicks c ON c.click_id = ca.click_id WHERE c.click_id IS NULL AND ca.click_id < ' . intdiv($maxId, 2)), 'no clicks_advance row outlived its click below the marker');
+    }
+
+    /**
+     * An account with only its default, last-touch model: the touches before
+     * the converting click are credited by nothing, and the rollup counts
+     * them only as assists, in the conversion's hour — days after their own.
+     * Deleting them changes that hour, which only the journey says.
+     */
+    public function testClickRetentionMarksTheHourOfAnAssistNothingCredits(): void
+    {
+        $base = 1_700_000_000;
+        $this->campaign(1);
+        $this->campaign(2);
+        $default = $this->defaultModelId();
+        for ($i = 1; $i <= 6; $i++) {
+            $time = $base + $i * 86_400;
+            // Campaign 2's clicks are the three deleted: its only assists.
+            $this->click($i, $i <= 3 ? 2 : 1, $time, '0.25');
+            $this->visit($i, $time, self::cookie('one person'));
+        }
+        $this->convert(6, '40', 'T6', $base + 6 * 86_400 + 3_600);
+        $this->work();
+        self::assertSame([1, 2, 3, 4, 5, 6], self::journeyClicks((int) self::scalar('SELECT MAX(conv_id) FROM 202_conversion_logs')));
+        self::assertSame(1, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_credits'), 'last touch credits the converting click alone');
+        $window = [$base, $base + 8 * 86_400];
+        $this->compareAll('summed', $window, $default, $default, true);
+        $before = $this->fullComputation($window, $default, $default);
+
+        $assists = static fn (array $full): array => array_column($full['breakdowns'][0]['rows'], 'assisted_conversions', 'key');
+        self::assertSame(1, $assists($before)['2'] ?? null, 'campaign 2 assisted the conversion');
+        $report = (new ClickRetention($this->conn))->deleteBelow(4, PHP_INT_MAX);
+        self::assertSame(3, $report['clicks']);
+        self::assertArrayNotHasKey('2', $assists($this->fullComputation($window, $default, $default)), 'and with its clicks gone it assists nothing');
+        $this->compareAll('three assists deleted (marked)', $window, $default, $default, false);
+        (new AttributionRollup($this->conn))->run(60);
+        self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1'), 'every marked hour was summed again');
+        $this->compareAll('three assists deleted (summed again)', $window, $default, $default, true);
     }
 
     // --- comparison ---

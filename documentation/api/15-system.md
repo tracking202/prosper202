@@ -178,15 +178,29 @@ deletion: a whole number of days from 0 (keep every click) to 36500, as a
 JSON integer or a string of digits. The answer adds
 `previous_auto_delete_days`.
 
-> **Known issue.** The cron job's automatic deletion
-> (`AutoOptimizeDatabase()` in `202-cronjobs/index.php`) currently deletes
-> no clicks: it takes `MIN(click_id)` of the clicks older than the cutoff
-> and deletes the rows *below* that id. Measured on a local instance with
-> `auto_delete_days` 30 and a click 36 days old: a cron run that logged
-> "Processing Auto DB Delete" left it in place. The setting is stored and
-> read exactly as the page stores it. The one-off deletion below works: on
-> the same instance, the next cron run deleted the click below the marker
-> from every click table.
+With `auto_delete_days` N, the cron job deletes every click recorded before
+midnight that began the day N days ago (the server's time zone): N whole
+days and today are kept. A click is deleted when all of its rows are that
+old — one a rotator re-click gave a newer row is kept whole until that row
+ages out. Click ids are not in time order, so the job selects the old
+clicks themselves rather than an id boundary. (It used to delete the ids
+below the oldest old click — in practice nothing.)
+
+Both deletions (this one and the one-off below) go through
+`Prosper202\Click\ClickRetention`: a batch of 1,000 clicks is deleted from
+every click table in one transaction, for up to 20 seconds each cron run,
+so a backlog drains over the following runs and no table keeps a row of a
+click another has lost. The click tables are `202_clicks`,
+`202_clicks_advance`, `202_clicks_record`, `202_clicks_site`,
+`202_clicks_spy`, `202_clicks_tracking`, `202_clicks_variable`,
+`202_clicks_rotator`, `202_cpa_trackers`, `202_google`, `202_bing`,
+`202_facebook`, `202_dataengine` (the Overview's aggregate), and the
+identity graph's per-click `202_identity_observations` and
+`202_clicks_visitor`. Conversions, their attribution journeys and credits,
+the LTV and app records and setup data are kept (`ClickRetention::KEPT`
+gives the reason for each). The attribution reports' rollup is marked in
+the same transaction, so it is summed again from the clicks that remain
+and agrees with the Overview.
 
 `POST /system/retention/delete-before` schedules the page's one-off "Delete
 click data from before". It is irreversible, so it has two steps:
@@ -203,10 +217,11 @@ click data from before". It is irreversible, so it has two steps:
 
 `before` must be a calendar day written `YYYY-MM-DD`, not after today. A
 time zone the server does not know is a `409`, never read as UTC. The cron
-job deletes 5,000 rows a table each run, from `202_clicks`,
-`202_clicks_advance`, `202_clicks_record`, `202_clicks_site`,
-`202_clicks_spy`, `202_clicks_tracking`, `202_dataengine`, `202_google`,
-`202_bing` and `202_clicks_variable`. Setup data is kept.
+job deletes every click below `through_click_id`, and then whatever rows the
+other click tables still hold below it, in the batches described above;
+`rows` counts each of those tables. Setup data is kept. The marker stays
+set when the deletion is done (`clicks_remaining` reads 0), and a Slack
+webhook, if set, hears once, from the run that deletes the last of it.
 
 ### ISP and carrier lookup
 

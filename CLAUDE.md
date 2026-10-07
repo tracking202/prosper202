@@ -652,6 +652,22 @@ already written will not change. An end-to-end request through the real
 reader (here, a click that matches the rule) is what finds it; reading either
 file alone cannot.
 
+### 26. A boundary stands in for a predicate only where its order holds
+Automatic click deletion was to delete clicks older than N days. It took
+`MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
+below the *oldest* expired click — so it deleted almost nothing it promised,
+and, since a redirect reads `click_time` before it allocates the id and a
+rotator re-click gives an old id a new row, it could take a newer click with
+a smaller id. Measured live with a 30-day setting: the old job deleted two
+clicks recorded that day and kept all fourteen expired ones. An id range is a
+cheap stand-in for a time range only where ids are allocated in time order,
+and nothing here guarantees that: select the rows the predicate names, by an
+index on the predicate's own column, and act on their keys. The same job's
+hand-kept list of click tables had drifted five tables behind the schema;
+`ClickRetentionCoversEveryClickTableTest` now holds it to the table
+definitions. And a delete is a write the derived sums must hear about —
+`RollupDirty::clicksDeleted()` marks them in the deleting transaction.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

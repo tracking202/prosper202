@@ -110,16 +110,23 @@ final class AdministrationRoutesPermissionTest extends TestCase
 
     /**
      * The tables the one-off deletion previews are the tables the cron job
-     * deletes from (ClearOldClicks() in 202-cronjobs/index.php): a preview that
-     * counts other tables answers a question nobody asked.
+     * deletes from: ClearOldClicks() in 202-cronjobs/index.php runs
+     * ClickRetention, which deletes from ClickRetention::TABLES. A preview
+     * that counts other tables answers a question nobody asked.
      */
     public function testTheDeletionPreviewCountsTheTablesTheCronJobDeletesFrom(): void
     {
+        self::assertSame(\Prosper202\Click\ClickRetention::TABLES, AdministrationController::CLICK_DATA_TABLES);
         $cron = (string) file_get_contents(dirname(__DIR__, 3) . '/202-cronjobs/index.php');
-        $start = strpos($cron, 'function ClearOldClicks(');
-        self::assertNotFalse($start, 'ClearOldClicks() is in the cron job');
-        self::assertSame(1, preg_match("/explode\\(',', '([^']+)'\\)/", substr($cron, $start), $m), 'ClearOldClicks() names its tables in one list');
-        self::assertSame(explode(',', $m[1]), AdministrationController::CLICK_DATA_TABLES);
+        foreach (['ClearOldClicks' => '->runScheduled(', 'AutoOptimizeDatabase' => '->runAutomatic('] as $function => $call) {
+            $start = strpos($cron, 'function ' . $function . '(');
+            self::assertNotFalse($start, "$function() is in the cron job");
+            $end = strpos($cron, "\n}\n", $start);
+            self::assertNotFalse($end);
+            $body = substr($cron, $start, $end - $start);
+            self::assertStringContainsString('new \\Prosper202\\Click\\ClickRetention(', $body, "$function() deletes through ClickRetention");
+            self::assertStringContainsString($call, $body, "$function() runs its deletion");
+        }
     }
 
     public function testTheScanSeesAMissingPermission(): void

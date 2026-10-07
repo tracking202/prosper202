@@ -496,7 +496,8 @@ paths:
       description: |
         For the whole install (every account's clicks), as the cron job reads
         it from user 1's preferences: `auto_delete_days` — click data older
-        than this many days is deleted each night (0 keeps it all) — and the
+        than this many days is deleted, in batches, by the cron job's runs
+        (0 keeps it all) — and the
         one-off deletion `POST /system/retention/delete-before` scheduled, if
         any (`scheduled_deletion`: the cron job deletes every click whose id
         is below `through_click_id`; `before` is the day of that click and
@@ -523,6 +524,11 @@ paths:
         number. Written to user 1's preferences, the row the cron job reads,
         whoever calls. The answer is the new state with
         `previous_auto_delete_days`.
+
+        With N days, the cron job deletes every click recorded before
+        midnight that began the day N days ago (server time): N whole days
+        and today are kept. A click with a newer row (a rotator re-click) is
+        kept whole until that row ages out.
 
         Admin (or Super user) with `access_to_settings`, and `system:write`.
         Not stageable (`?staged=1` is a `422`).
@@ -559,9 +565,10 @@ paths:
       description: |
         The page's Advanced › "Delete click data from before". It deletes
         nothing itself: it stores a click id on user 1's preferences, and the
-        cron job deletes every click below it — every account's — from the
-        ten click tables, 5,000 rows a table each run. Setup data is kept. It
-        cannot be undone.
+        cron job deletes every click below it — every account's — from every
+        click table (the `rows` the preview counts), a batch of clicks from
+        all of them in one transaction, over its next runs. Conversions and
+        setup data are kept. It cannot be undone.
 
         The id is the page's: the newest click recorded at or before midnight
         that begins `before`, in the caller's time zone (`user_timezone`; a

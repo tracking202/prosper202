@@ -59,6 +59,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         'tracking202/redirect/offrtr.php' => self::MARKS,
         // The Update CPC write, behind the page and POST /api/v3/clicks/cpc.
         '202-config/Update/CpcUpdate.php' => self::MARKS,
+        // Click-data retention: both of the cron job's deletions.
+        '202-config/Click/ClickRetention.php' => self::MARKS,
         '202-config/Attribution/ModelRepository.php' => self::ROLLUP,
         '202-config/User/UserDataPurge.php' => self::ROLLUP,
         '202-config/Report/RollupDirty.php' => 'the marks themselves: they read the click rows they mark',
@@ -135,7 +137,7 @@ final class RollupWritersAreMarkedTest extends TestCase
         foreach (self::WRITERS as $file => $kind) {
             $src = (string) file_get_contents(self::ROOT . $file);
             if ($kind === self::MARKS) {
-                self::assertMatchesRegularExpression('/\\\\?(Prosper202\\\\Report\\\\)?RollupDirty::(hours|timeRange|click|clickCost|clickOfAnyAccount|conversion)\(/', $src, "$file is classified as marking and calls no RollupDirty mark");
+                self::assertMatchesRegularExpression('/\\\\?(Prosper202\\\\Report\\\\)?RollupDirty::(hours|timeRange|hourRuns|click|clickCost|clickOfAnyAccount|clicksDeleted|conversion)\(/', $src, "$file is classified as marking and calls no RollupDirty mark");
             } elseif ($kind === self::ROLLUP) {
                 self::assertStringContainsString('202_attribution_rollup', $src, "$file is classified as deleting the rollup's rows and names none");
             }
