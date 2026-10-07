@@ -1360,7 +1360,7 @@ class ServerStateStore implements QuotaStore
                         . 'the identity to ServerStateStore, or set P202_SERVER_STATE_DIR.'
                     );
                 }
-                return $unscoped;
+                return self::privateTempDirectory($unscoped);
             }
             $identity = (is_string($dbhost) ? $dbhost : '') . '|' . $dbname;
         }
@@ -1403,7 +1403,158 @@ class ServerStateStore implements QuotaStore
         // changes (202_users.install_hash), read from the database on every
         // construction; until then, a reinstall should set
         // P202_SERVER_STATE_DIR or remove the directory this resolves to.
-        return $scoped;
+        return self::privateTempDirectory($scoped);
+    }
+
+    /**
+     * How many numbered alternatives (`<dir>.1` ...) privateTempDirectory()
+     * tries after the directory it was asked for.
+     */
+    private const PRIVATE_DIR_ALTERNATIVES = 3;
+
+    /**
+     * $preferred, a directory in the machine-wide temp dir, if this process
+     * can trust it: made here, or already there as a real directory (not a
+     * symbolic link) owned by this process's effective user that neither its
+     * group nor anyone else can write. Otherwise the first numbered
+     * alternative that is, made if absent; the refusal is logged once a
+     * process (a request, under a web server), naming the directory and why.
+     *
+     * The path is predictable -- a hash of the database host and name -- and
+     * the temp dir is anyone's, so another local user could make it first and
+     * fill it: an idempotency record there replayed its response to this
+     * install's caller and created nothing, and a staged change there was
+     * listed for this install's users to apply against this database
+     * (measured on a live instance: a POST /aff-networks answered 201 with
+     * the planted body, and GET /staged-changes listed the planted DELETE).
+     * Its owner could also read every response this install recorded there.
+     *
+     * A process running as root never takes an alternative: it cannot tell
+     * the web server's user, who owns the store the web tier writes, from
+     * anyone else, and a directory of its own would be a store the web tier
+     * never reads. It refuses instead, saying to run as the web server's
+     * user. When every candidate is refused the store refuses to start;
+     * P202_SERVER_STATE_DIR names a directory the operator vouches for, and
+     * is used as named.
+     */
+    private static function privateTempDirectory(string $preferred): string
+    {
+        $euid = self::effectiveUid();
+        $refused = [];
+        for ($n = 0; $n <= self::PRIVATE_DIR_ALTERNATIVES; $n++) {
+            $candidate = $n === 0 ? $preferred : $preferred . '.' . $n;
+            if (@lstat($candidate) === false) {
+                // Nothing there: make it ours. A mkdir that loses a race to
+                // someone else's falls through to the same checks.
+                @mkdir($candidate, 0700);
+            }
+            $stat = @lstat($candidate);
+            $why = self::untrustedBecause($stat, $euid);
+            if ($why === null) {
+                if ($refused !== []) {
+                    self::logRefusedOnce($preferred, $refused, $candidate);
+                }
+                return $candidate;
+            }
+            $refused[$candidate] = $why;
+            if ($euid === 0 && is_array($stat) && (int) $stat['uid'] !== 0) {
+                break;
+            }
+        }
+
+        $list = implode('; ', array_map(
+            static fn (string $dir, string $why): string => $dir . ' (' . $why . ')',
+            array_keys($refused),
+            $refused
+        ));
+        $remedy = $euid === 0
+            ? 'This process runs as root: if the owner is the web server\'s user, run it as that user;'
+                . ' if not, remove the directory. Or set P202_SERVER_STATE_DIR.'
+            : 'Remove the directories that are not this install\'s, or set P202_SERVER_STATE_DIR to a directory'
+                . ' only this server\'s user can write.';
+        error_log('p202: no API state directory this process can trust: ' . $list . '. ' . $remedy);
+
+        throw new DatabaseException('No API state directory this process can trust: ' . $list . '. ' . $remedy);
+    }
+
+    /**
+     * Why a directory's lstat() says it is not this user's alone, or null
+     * when it is.
+     *
+     * @param array<int|string, int>|false $stat
+     */
+    private static function untrustedBecause(array|false $stat, int $euid): ?string
+    {
+        if ($stat === false) {
+            return 'it could not be created';
+        }
+        $type = $stat['mode'] & 0170000;
+        if ($type === 0120000) {
+            return 'it is a symbolic link';
+        }
+        if ($type !== 0040000) {
+            return 'it is not a directory';
+        }
+        if ((int) $stat['uid'] !== $euid) {
+            return 'it is owned by uid ' . $stat['uid'] . ', not this process\'s uid ' . $euid;
+        }
+        if (($stat['mode'] & 0022) !== 0) {
+            return sprintf('its group or others can write it (mode %04o)', $stat['mode'] & 07777);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, string> $refused directory => why
+     */
+    private static function logRefusedOnce(string $preferred, array $refused, string $used): void
+    {
+        static $logged = [];
+        if (isset($logged[$preferred])) {
+            return;
+        }
+        $logged[$preferred] = true;
+        foreach ($refused as $dir => $why) {
+            error_log(sprintf(
+                'p202: the API state directory %s is not used: %s, so another user may have made it or may'
+                . ' change what is in it. This process uses %s. Remove %s if it is not this install\'s, or set'
+                . ' P202_SERVER_STATE_DIR.',
+                $dir,
+                $why,
+                $used,
+                $dir
+            ));
+        }
+    }
+
+    /**
+     * This process's effective uid: posix_geteuid(), else the owner of a
+     * file it has just made (getmyuid() is the owner of the script, which
+     * is not the same thing).
+     */
+    private static function effectiveUid(): int
+    {
+        if (function_exists('posix_geteuid')) {
+            return posix_geteuid();
+        }
+        static $uid = null;
+        if ($uid === null) {
+            $probe = @tempnam(sys_get_temp_dir(), 'p202-uid-');
+            $owner = is_string($probe) ? @fileowner($probe) : false;
+            if (is_string($probe)) {
+                @unlink($probe);
+            }
+            if ($owner === false) {
+                throw new DatabaseException(
+                    'Cannot tell which user this process runs as, so no API state directory in the temp dir'
+                    . ' can be trusted: set P202_SERVER_STATE_DIR.'
+                );
+            }
+            $uid = $owner;
+        }
+
+        return $uid;
     }
 
     /**

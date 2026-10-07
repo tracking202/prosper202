@@ -102,7 +102,8 @@ final class MysqlEngagementRepository
         $normalized = (string) preg_replace('/\s+/', '_', $normalized);
         if ($normalized === '' || strlen($normalized) > 64
             || preg_match('/^[a-z0-9_.\-]+$/', $normalized) !== 1) {
-            throw new \RuntimeException(
+            throw new LtvInputException(
+                'event',
                 'Invalid event name; use 1-64 chars of a-z, 0-9, underscore, dot or dash'
             );
         }

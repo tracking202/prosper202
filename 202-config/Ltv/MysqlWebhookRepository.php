@@ -129,7 +129,10 @@ final class MysqlWebhookRepository
     private static function assertEventName(string $event): void
     {
         if (preg_match('/^[a-z0-9_]+(\.[a-z0-9_-]+)+$/', $event) !== 1) {
-            throw new RuntimeException('Event name must be namespaced lowercase slug, e.g. conversion.recorded');
+            throw new LtvInputException(
+                'events',
+                'Event name must be namespaced lowercase slug, e.g. conversion.recorded'
+            );
         }
     }
 
@@ -169,7 +172,10 @@ final class MysqlWebhookRepository
         }
         if (in_array('*', $events, true)) {
             if ($events !== ['*']) {
-                throw new RuntimeException("The '*' wildcard cannot be combined with individual event names");
+                throw new LtvInputException(
+                    'events',
+                    "The '*' wildcard cannot be combined with individual event names"
+                );
             }
             $subscribedEvents = '';
         } else {
@@ -177,7 +183,7 @@ final class MysqlWebhookRepository
                 self::assertEventName($event);
                 $unknown = self::unknownEventReason($event);
                 if ($unknown !== null) {
-                    throw new RuntimeException($unknown);
+                    throw new LtvInputException('events', $unknown);
                 }
             }
             $subscribedEvents = implode(',', $events);
@@ -300,7 +306,10 @@ final class MysqlWebhookRepository
     public function deliveries(int $userId, int $webhookId, int $limit, ?string $status = null): array
     {
         if ($status !== null && !in_array($status, self::DELIVERY_STATUSES, true)) {
-            throw new RuntimeException('Delivery status must be one of: ' . implode(', ', self::DELIVERY_STATUSES));
+            throw new LtvInputException(
+                'status',
+                'Delivery status must be one of: ' . implode(', ', self::DELIVERY_STATUSES)
+            );
         }
         $sql = 'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
                        next_attempt_at, created_at, updated_at

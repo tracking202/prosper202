@@ -334,6 +334,21 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+The same failure without a hash: a key that *locates* a record nobody then
+compares the request with. `POST /ltv/revenue` found the event its
+`idempotency_key` had recorded, a subscription renewal the event under its key
+or transaction id, `POST /conversions` the row its transaction id names — and
+each answered the first record (`duplicate: true`, `changed: false`) to a
+request stating another amount, customer or line items. A second charge sent
+under the first one's key, or a corrected payout under the same transaction
+id, was dropped with a 2xx. Where the stored record holds what the request
+stated, the record is the fingerprint: compare the request with it
+(`RevenueReplay`), refuse a difference naming the key and what differs, and
+decide field by field what absence means — a fixed default (no items, a
+purchase) is compared, a moving one (now, the account's currency, the
+campaign's payout) only when sent. A client that pre-reads to skip duplicates
+(`p202 conversion import`) makes the same lookup and owes the same comparison.
+
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Every value a security decision keys on must be split into what the peer
 proved and what the request merely *claimed*. Two instances shipped in one
@@ -375,6 +390,18 @@ handed back to the requester takes the host the requester used
 on takes the stored domain or the server's own name
 (`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
 `getTrackingDomain()` caller with why its URL goes back to the requester.
+
+A path in a directory anyone can write is a claim of the same kind: the
+name says whose it is, and anyone could have made it. The API state store's
+default directory is a hash of the database host and name in the system temp
+dir, and it was used whoever made it — another local user who made it first
+decided what the install read (measured: a planted `Idempotency-Key` record
+replayed its response, a planted staged DELETE was listed to apply). What is
+proved is the directory's owner and mode, read with `lstat()` so a symbolic
+link is not followed into someone else's choice; `ServerStateStore` now uses
+the directory only when this process's user owns it alone.
+`TempDirPathsTest` lists every path the served tree builds in the temp dir
+with what makes it safe there.
 
 ### 17. A key derived from an identity must be injective
 When a value exists to tell two things apart, every transform between the
@@ -1017,6 +1044,19 @@ offset in force at its own instant (`LocalTime::secondsSql()` /
 `SessionZoneSqlTest` refuses SQL that sets or reads the connection's zone;
 it cannot see PHP that does the same with one offset, which is this entry's
 job.
+
+The zone itself was read two ways. The pages took only a name PHP lists;
+the API took anything `new DateTimeZone()` accepts, so a stored `+05:30` was
+UTC on every report page and a fixed +05:30 in GET /reports/* and the LTV
+cohorts (measured live: `"timezone":"+05:30"`) -- the offset this entry
+forbids, let in by a parser. `AccountZone::normalize()` is the one rule now
+(a listed name, spelled as listed; anything else is UTC), AUTH asks it, and
+`SetTimezoneReadsTheAccountIntegrationTest` holds the pages and the API to
+one answer per stored value. A reader that parses the column itself is not
+seen: `dl.php` hands a row's zone straight to `date_default_timezone_set()`
+and the data engine the session's copy. When one stored value is parsed in
+more than one place, the parsers are one function, or they disagree on the
+inputs nobody tried.
 
 ### 30. A transform applied where a value is stored moves every comparison with it
 Privacy mode stores a click's address masked (/24, /48). The click filter's

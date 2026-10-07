@@ -88,7 +88,7 @@ final class MysqlIntegrationRepository
     {
         $provider = strtolower(trim($provider));
         if ($provider === '' || preg_match('/^[a-z0-9_\-]{1,50}$/', $provider) !== 1) {
-            throw new RuntimeException('provider is required (a-z, 0-9, dash/underscore, max 50 chars)');
+            throw new LtvInputException('provider', 'provider is required (a-z, 0-9, dash/underscore, max 50 chars)');
         }
         $name = trim($name);
         if ($name === '') {

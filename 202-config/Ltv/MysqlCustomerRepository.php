@@ -110,16 +110,16 @@ final class MysqlCustomerRepository
     ): int {
         $aliasValue = trim($aliasValue);
         if ($aliasValue === '') {
-            throw new RuntimeException('Customer reference must not be empty');
+            throw new LtvInputException('customer_ref', 'Customer reference must not be empty');
         }
         if (strlen($aliasValue) > 255) {
-            throw new RuntimeException('Customer reference exceeds 255 characters');
+            throw new LtvInputException('customer_ref', 'Customer reference exceeds 255 characters');
         }
         // Every resolution path funnels through here, so the allowlist is
         // enforced once for all of them: a type stored as 'Merchant_ID' would
         // never match conversion/personalization lookups again.
-        $aliasType = $this->normalizeAliasType($aliasType);
-        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
+        $aliasType = $this->normalizeAliasType($aliasType, 'customer_ref_type');
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, 'customer_ref');
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $existing = $this->aliasCustomerId($userId, $aliasType, $aliasHash);
@@ -172,10 +172,10 @@ final class MysqlCustomerRepository
     {
         $aliasValue = trim($aliasValue);
         if ($aliasValue === '') {
-            throw new RuntimeException('Alias value must not be empty');
+            throw new LtvInputException('value', 'Alias value must not be empty');
         }
-        $aliasType = $this->normalizeAliasType($aliasType);
-        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
+        $aliasType = $this->normalizeAliasType($aliasType, 'type');
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, 'value');
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $stmt = $this->conn->prepareWrite(
@@ -229,25 +229,124 @@ final class MysqlCustomerRepository
     }
 
     /**
-     * The existing ledger event for a caller idempotency key, if any —
-     * checked BEFORE resolving identity on API ingest, so a replay carrying
-     * a new customer_ref returns the original event's owner instead of
-     * minting an orphan customer.
+     * The existing ledger event for a caller idempotency key, if any, with
+     * what it recorded — checked BEFORE resolving identity on API ingest, so
+     * a replay never creates a customer, and compared with the request
+     * (RevenueReplay): the key only locates the event, and a retry is the
+     * same request only when what it states is what the event recorded.
      *
-     * @return array{event_id: int, customer_id: int}|null
+     * @return array{event_id: int, customer_id: int, event_type: string, amount: string, currency: string,
+     *               occurred_at: int, external_ref: ?string, transaction_id: ?string}|null
      */
     public function findEventByIdempotencyKey(int $userId, string $idempotencyKey): ?array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT event_id, customer_id FROM 202_revenue_events
+            'SELECT event_id, customer_id, event_type, amount, currency, occurred_at, external_ref, transaction_id
+             FROM 202_revenue_events
              WHERE user_id = ? AND idempotency_key = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'is', [$userId, $idempotencyKey]);
         $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
 
-        return $row !== null
-            ? ['event_id' => (int) $row['event_id'], 'customer_id' => (int) $row['customer_id']]
-            : null;
+        return [
+            'event_id' => (int) $row['event_id'],
+            'customer_id' => (int) $row['customer_id'],
+            'event_type' => (string) $row['event_type'],
+            'amount' => (string) $row['amount'],
+            'currency' => (string) $row['currency'],
+            'occurred_at' => (int) $row['occurred_at'],
+            'external_ref' => $row['external_ref'] !== null ? (string) $row['external_ref'] : null,
+            'transaction_id' => $row['transaction_id'] !== null ? (string) $row['transaction_id'] : null,
+        ];
+    }
+
+    /**
+     * A ledger event's line items as stored, in the order they were written,
+     * each with its product's external id (`sku:<sku>` for a product keyed
+     * by its sku, as upsertProduct() keys it).
+     *
+     * @return list<array{external_product_id: ?string, sku: ?string, name: ?string, quantity: string,
+     *                    unit_price: ?string, amount: string}>
+     */
+    public function lineItemsOfEvent(int $userId, int $eventId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT p.external_product_id, li.sku, li.product_name, li.quantity, li.unit_price, li.amount
+             FROM 202_revenue_line_items li
+             LEFT JOIN 202_products p ON p.product_id = li.product_id AND p.user_id = li.user_id
+             WHERE li.user_id = ? AND li.event_id = ?
+             ORDER BY li.line_item_id'
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, $eventId]);
+
+        return array_map(static fn (array $row): array => [
+            'external_product_id' => $row['external_product_id'] !== null ? (string) $row['external_product_id'] : null,
+            'sku' => $row['sku'] !== null ? (string) $row['sku'] : null,
+            'name' => $row['product_name'] !== null ? (string) $row['product_name'] : null,
+            'quantity' => (string) $row['quantity'],
+            'unit_price' => $row['unit_price'] !== null ? (string) $row['unit_price'] : null,
+            'amount' => (string) $row['amount'],
+        ], $this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * What the ledger's columns store for these numbers: an event or line
+     * amount (decimal(16,5)), a quantity (decimal(12,3)) and a unit price
+     * (decimal(14,5)), as MySQL converts the bound double -- the conversion
+     * insertRevenueEvent() and insertLineItems() make, so a number sent again
+     * reads exactly as it was stored. PHP's round() is not that conversion:
+     * measured over 20,000 values, it disagreed with the stored decimal on
+     * 100 (a double just below a half rounds down in MySQL), where this
+     * disagreed on none.
+     *
+     * @return array{amount: string, quantity: string, unit_price: string}
+     */
+    public function ledgerDecimals(float $amount, float $quantity = 0.0, float $unitPrice = 0.0): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT CAST(? AS DECIMAL(16,5)) AS amount, CAST(? AS DECIMAL(12,3)) AS quantity,
+                    CAST(? AS DECIMAL(14,5)) AS unit_price'
+        );
+        $this->conn->bind($stmt, 'ddd', [$amount, $quantity, $unitPrice]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new RuntimeException('A SELECT of three casts returned no row');
+        }
+
+        return [
+            'amount' => (string) $row['amount'],
+            'quantity' => (string) $row['quantity'],
+            'unit_price' => (string) $row['unit_price'],
+        ];
+    }
+
+    /**
+     * The customer an alias names now (merges followed), or null when none
+     * does. Creates nothing: a replay compares the customer it names with the
+     * one its key recorded before anything is resolved.
+     *
+     * @param string $typeField the body field that holds the type, which a refusal names
+     * @param string $valueField the body field that holds the value
+     */
+    public function findCustomerByAlias(
+        int $userId,
+        ?string $aliasType,
+        string $aliasValue,
+        string $typeField = 'customer_ref_type',
+        string $valueField = 'customer_ref'
+    ): ?int {
+        $aliasValue = trim($aliasValue);
+        if ($aliasValue === '') {
+            return null;
+        }
+        $aliasType = $this->normalizeAliasType($aliasType, $typeField);
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, $valueField);
+        $owner = $this->aliasCustomerId($userId, $aliasType, hash('sha256', $aliasValue, true));
+
+        return $owner !== null ? $this->followMergePointer($owner) : null;
     }
 
     /**
@@ -259,9 +358,12 @@ final class MysqlCustomerRepository
     public static function assertAmountSignMatchesType(string $eventType, float $amount): void
     {
         if ($amount < 0 && in_array($eventType, ['purchase', 'renewal', 'one_time'], true)) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                'amount',
                 'amount must not be negative for ' . $eventType
-                . ' events; use refund, chargeback or adjustment for negative money'
+                    . ' events; use refund, chargeback or adjustment for negative money',
+                'Must not be negative for ' . $eventType . ': send money back as event_type refund or chargeback'
+                    . ' (with a positive amount), or a correction as adjustment'
             );
         }
     }
@@ -417,7 +519,7 @@ final class MysqlCustomerRepository
         $externalId = trim((string) ($product['external_product_id'] ?? ''));
         $sku = trim((string) ($product['sku'] ?? ''));
         if ($externalId === '' && $sku === '') {
-            throw new RuntimeException('Product requires an external_product_id or sku');
+            throw new LtvInputException('external_product_id', 'Product requires an external_product_id or sku');
         }
         if ($externalId === '') {
             $externalId = 'sku:' . $sku;
@@ -470,11 +572,14 @@ final class MysqlCustomerRepository
     {
         foreach ($items as $index => $item) {
             if (!is_array($item)) {
-                throw new RuntimeException("Line item #{$index} is not an object");
+                throw new LtvInputException("items.{$index}", "Line item #{$index} is not an object");
             }
             $quantity = isset($item['quantity']) ? (float) $item['quantity'] : 1.0;
             if ($quantity <= 0) {
-                throw new RuntimeException("Line item #{$index} has a non-positive quantity");
+                throw new LtvInputException(
+                    "items.{$index}.quantity",
+                    "Line item #{$index} has a non-positive quantity"
+                );
             }
             $unitPrice = isset($item['unit_price']) && $item['unit_price'] !== null ? (float) $item['unit_price'] : null;
             $amount = isset($item['amount']) && $item['amount'] !== null
@@ -485,7 +590,12 @@ final class MysqlCustomerRepository
                 $quantity = -$quantity;
             }
 
-            $productId = $this->upsertProduct($userId, $item, $currency, $now);
+            try {
+                $productId = $this->upsertProduct($userId, $item, $currency, $now);
+            } catch (LtvInputException $e) {
+                // The product's field, at the line item's place in the body.
+                throw new LtvInputException("items.{$index}." . $e->field, "Line item #{$index}: " . $e->getMessage());
+            }
             $sku = trim((string) ($item['sku'] ?? ''));
             $name = trim((string) ($item['name'] ?? ''));
 
@@ -724,8 +834,11 @@ final class MysqlCustomerRepository
     {
         foreach (self::RESERVED_IDEMPOTENCY_PREFIXES as $prefix) {
             if (str_starts_with($key, $prefix)) {
-                throw new RuntimeException(
-                    'idempotency_key prefix "' . $prefix . '" is reserved for internal events; choose a different key'
+                throw new LtvInputException(
+                    'idempotency_key',
+                    'idempotency_key prefix "' . $prefix . '" is reserved for internal events; choose a different key',
+                    'Must not start with "' . $prefix . '" (reserved for the events this install records itself);'
+                        . ' use your own id for the event, e.g. an order or charge id'
                 );
             }
         }
@@ -740,14 +853,17 @@ final class MysqlCustomerRepository
      * (esp_id/merchant_id/subid/custom) pass through untouched. Malformed
      * digests are rejected explicitly rather than stored as an unmatched
      * identity.
+     *
+     * @param string $field the body field that holds the value, which a refusal names
      */
-    public static function canonicalizeAliasValue(string $type, string $value): string
+    public static function canonicalizeAliasValue(string $type, string $value, string $field = 'value'): string
     {
         if ($type === 'email_md5' || $type === 'email_sha256') {
             $value = strtolower($value);
             $length = $type === 'email_md5' ? 32 : 64;
             if (preg_match('/^[0-9a-f]{' . $length . '}$/', $value) !== 1) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    $field,
                     $type . ' alias value must be a ' . $length . '-character hex digest'
                 );
             }
@@ -756,15 +872,17 @@ final class MysqlCustomerRepository
         return $value;
     }
 
-    private function normalizeAliasType(?string $type): string
+    /** @param string $field the body field that holds the type, which a refusal names */
+    private function normalizeAliasType(?string $type, string $field): string
     {
         $type = strtolower(trim((string) $type));
         if ($type === '') {
             return 'custom';
         }
         if (!in_array($type, self::ALIAS_TYPES, true)) {
-            throw new RuntimeException(
-                'Unknown customer_ref_type "' . $type . '"; expected one of: ' . implode(', ', self::ALIAS_TYPES)
+            throw new LtvInputException(
+                $field,
+                'Unknown ' . $field . ' "' . $type . '"; expected one of: ' . implode(', ', self::ALIAS_TYPES)
             );
         }
 

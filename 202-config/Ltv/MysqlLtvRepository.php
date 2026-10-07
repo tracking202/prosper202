@@ -152,13 +152,14 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         // revenue-the-default and read as the order asked for (CLAUDE.md #4).
         // LtvController refuses both first, naming the parameter.
         if (!in_array($sortBy, self::CUSTOMER_SORTS, true)) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                'sort',
                 'Invalid sort: ' . $sortBy . ' (expected ' . implode(', ', self::CUSTOMER_SORTS) . ')'
             );
         }
         $sortDir = strtoupper($sortDir);
         if (!in_array($sortDir, self::SORT_DIRECTIONS, true)) {
-            throw new RuntimeException('Invalid dir: ' . $sortDir . ' (expected ASC or DESC)');
+            throw new LtvInputException('dir', 'Invalid dir: ' . $sortDir . ' (expected ASC or DESC)');
         }
 
         [$joins, $where, $types, $binds] = $this->buildCustomerScope($query);
@@ -177,7 +178,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $segment = $segment !== null ? trim($segment) : '';
         if ($segment !== '') {
             if (!isset(self::CUSTOMER_SEGMENTS[$segment])) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    'segment',
                     'Invalid segment: ' . $segment . ' (expected ' . implode(', ', array_keys(self::CUSTOMER_SEGMENTS)) . ')'
                 );
             }
@@ -216,7 +218,8 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
             return $this->productBreakdown($query, $limit, $offset);
         }
         if (!isset(self::ACQUISITION_BREAKDOWNS[$breakdownType])) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                'by',
                 'Invalid breakdown type: ' . $breakdownType . ' (expected campaign, ppc_account, landing_page or product)'
             );
         }

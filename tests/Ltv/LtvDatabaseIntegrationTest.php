@@ -499,7 +499,12 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertTrue($upper['inserted']);
         self::assertTrue($lower['inserted'], 'order-a is not a replay of Order-A');
         self::assertNotSame($upper['eventId'], $lower['eventId']);
-        self::assertSame(['event_id' => $lower['eventId'], 'customer_id' => $customerId], $customers->findEventByIdempotencyKey(1, 'order-a'));
+        $found = $customers->findEventByIdempotencyKey(1, 'order-a');
+        self::assertNotNull($found);
+        self::assertSame(
+            ['event_id' => $lower['eventId'], 'customer_id' => $customerId, 'amount' => '7.00000'],
+            array_intersect_key($found, ['event_id' => true, 'customer_id' => true, 'amount' => true])
+        );
         self::assertSame(17.0, (float) $this->scalar("SELECT SUM(amount) FROM 202_revenue_events WHERE user_id=1 AND idempotency_key IN ('Order-A', 'order-a')"));
 
         $replay = $customers->insertRevenueEvent(1, $customerId, $event('order-a', 7.0), 1700000000);
@@ -1039,15 +1044,27 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $first = $controller->recordRevenue(['customer_ref' => 'idem-a', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']);
         self::assertSame(201, $first['_status']);
 
-        // Same key, DIFFERENT brand-new ref: the replay must return the
-        // original event and its owner, and must not create a customer for
-        // a write that never happens.
-        $replay = $controller->recordRevenue(['customer_ref' => 'idem-b', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']);
+        // The same request again is a replay: the original event and owner.
+        $replay = $controller->recordRevenue(
+            ['customer_ref' => 'idem-a', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']
+        );
         self::assertSame(200, $replay['_status']);
         self::assertTrue($replay['data']['duplicate']);
         self::assertSame($first['data']['event_id'], $replay['data']['event_id']);
         self::assertSame($first['data']['customer_id'], $replay['data']['customer_id'], 'the ORIGINAL owner is reported');
-        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_customers'), 'a replay must not mint identity');
+
+        // Same key, a DIFFERENT brand-new ref: a different request, refused
+        // before anything resolves, so no customer is created for it.
+        try {
+            $controller->recordRevenue(['customer_ref' => 'idem-b', 'amount' => 10.0, 'idempotency_key' => 'IDEM-1']);
+            self::fail('a key reused for another customer must be refused');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertArrayHasKey('idempotency_key', $e->getFieldErrors());
+            self::assertStringContainsString('customer', $e->getMessage());
+        }
+        $customers = (int) $this->scalar('SELECT COUNT(*) FROM 202_customers');
+        self::assertSame(1, $customers, 'a refused replay must not mint identity');
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'));
     }
 
     public function testConcurrentIdempotencyRaceLoserRollsBackIdentity(): void
@@ -1055,10 +1072,67 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $customers = new MysqlCustomerRepository(self::$conn);
         $winnerId = $customers->resolveOrCreateByAlias(1, 'custom', 'race-winner', [], null, 1700000000);
 
-        // A second PROCESS plays the concurrent winner: it inserts the RACE-1
-        // event and holds its transaction open, so the loser's precheck can't
-        // see the row while the unique-key insert must wait behind its lock —
-        // the only ordering that reaches the lost-race branch.
+        // The loser carries a BRAND-NEW ref: precheck misses (winner is
+        // uncommitted), identity gets resolved, the insert blocks, loses,
+        // and the whole transaction must roll back. Its body is not the
+        // winner's (another customer, another amount), so it is refused
+        // rather than answered with the winner's event.
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $refused = null;
+        $this->whileAnotherProcessHoldsAnEvent($winnerId, 'RACE-1', function () use ($controller, &$refused): void {
+            try {
+                $controller->recordRevenue(
+                    ['customer_ref' => 'race-loser', 'amount' => 5.0, 'idempotency_key' => 'RACE-1']
+                );
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                $refused = $e;
+            }
+        });
+
+        self::assertNotNull($refused, 'the loser of the race sent a different request: it is refused');
+        self::assertArrayHasKey('idempotency_key', $refused->getFieldErrors());
+        self::assertStringContainsString('amount', $refused->getMessage());
+        $count = fn (string $sql): int => (int) $this->scalar($sql);
+        self::assertSame(
+            0,
+            $count("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'race-loser'"),
+            'the losing identity must roll back'
+        );
+        self::assertSame(0, $count("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'race-loser'"));
+        self::assertSame(1, $count("SELECT COUNT(*) FROM 202_revenue_events WHERE idempotency_key = 'RACE-1'"));
+    }
+
+    /** The loser of the race sent the winner's request: a replay, answered with the winner's event. */
+    public function testConcurrentIdempotencyRaceLoserWithTheSameRequestReplays(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $winnerId = $customers->resolveOrCreateByAlias(1, 'custom', 'race-winner', [], null, 1700000000);
+
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $result = null;
+        $this->whileAnotherProcessHoldsAnEvent($winnerId, 'RACE-2', function () use ($controller, &$result): void {
+            $result = $controller->recordRevenue(
+                ['customer_ref' => 'race-winner', 'amount' => 20.0, 'idempotency_key' => 'RACE-2']
+            );
+        });
+
+        self::assertIsArray($result);
+        self::assertSame(200, $result['_status']);
+        self::assertTrue($result['data']['duplicate']);
+        self::assertSame($winnerId, $result['data']['customer_id'], 'the loser must report the winner as the owner');
+        $events = (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE idempotency_key = 'RACE-2'");
+        self::assertSame(1, $events);
+    }
+
+    /**
+     * Run $loser while a second PROCESS plays the concurrent winner: it
+     * inserts a 20.00 purchase under $key for $winnerId and holds its
+     * transaction open, so the loser's precheck can't see the row while the
+     * unique-key insert must wait behind its lock — the only ordering that
+     * reaches the lost-race branch.
+     */
+    private function whileAnotherProcessHoldsAnEvent(int $winnerId, string $key, callable $loser): void
+    {
         $script = tempnam(sys_get_temp_dir(), 'p202race');
         $marker = $script . '.lock';
         $child = <<<'CHILD'
@@ -1075,12 +1149,12 @@ $db->query("SET SESSION sql_mode=''");
 $db->begin_transaction();
 $db->query("INSERT INTO 202_revenue_events
     (user_id, customer_id, event_type, amount, currency, occurred_at, source, idempotency_key, created_at)
-    VALUES (1, WINNER_ID, 'purchase', 20, 'USD', 1700000000, 'api', 'RACE-1', 1700000000)");
+    VALUES (1, WINNER_ID, 'purchase', 20, 'USD', 1700000000, 'api', 'RACE_KEY', 1700000000)");
 touch($argv[1]); // signal the parent: the row lock is held
 usleep(1500000); // hold it long enough for the loser to block on the key
 $db->commit();
 CHILD;
-        file_put_contents($script, str_replace('WINNER_ID', (string) $winnerId, $child));
+        file_put_contents($script, str_replace(['WINNER_ID', 'RACE_KEY'], [(string) $winnerId, $key], $child));
 
         $proc = proc_open(PHP_BINARY . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($marker), [], $pipes);
         if ($proc === false) {
@@ -1094,21 +1168,211 @@ CHILD;
             self::fail('the winner process never took the row lock');
         }
 
-        // The loser carries a BRAND-NEW ref: precheck misses (winner is
-        // uncommitted), identity gets resolved, the insert blocks, loses,
-        // and the whole transaction must roll back — reporting the winner.
-        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
-        $result = $controller->recordRevenue(['customer_ref' => 'race-loser', 'amount' => 5.0, 'idempotency_key' => 'RACE-1']);
-        proc_close($proc);
-        @unlink($script);
-        @unlink($marker);
+        try {
+            $loser();
+        } finally {
+            proc_close($proc);
+            @unlink($script);
+            @unlink($marker);
+        }
+    }
 
-        self::assertSame(200, $result['_status']);
-        self::assertTrue($result['data']['duplicate']);
-        self::assertSame($winnerId, $result['data']['customer_id'], 'the loser must report the winner as the owner');
-        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customers WHERE primary_ref = 'race-loser'"), 'the losing identity must roll back');
-        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'race-loser'"));
-        self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM 202_revenue_events WHERE idempotency_key = 'RACE-1'"));
+    /**
+     * An idempotency key makes a retry safe; it does not make a different
+     * event under the same key the first one. Each request below differs
+     * from the recorded one in one thing and is refused naming the key,
+     * with nothing written; the ones that state the same event replay it.
+     */
+    public function testRevenueKeyReplaysOnlyTheSameRequest(): void
+    {
+        $controller = new \Api\V3\Controllers\LtvController(self::$db, 1);
+        $otherCustomer = (new MysqlCustomerRepository(self::$conn))
+            ->resolveOrCreateByAlias(1, 'custom', 'rr-other', [], null, 1700000000);
+        $original = [
+            'customer_ref' => 'rr-a', 'amount' => 10.0, 'idempotency_key' => 'RR-1', 'external_ref' => 'order-1',
+            'occurred_at' => 1700000000, 'currency' => 'USD',
+            'items' => [['sku' => 'SKU-R', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 5.0]],
+            'customer_crm' => ['first_name' => 'Ada'],
+        ];
+        $first = $controller->recordRevenue($original);
+        self::assertSame(201, $first['_status']);
+        $eventId = $first['data']['event_id'];
+        $customerId = $first['data']['customer_id'];
+
+        $same = [
+            'the same body' => $original,
+            'the amount as a string with zeros' => ['amount' => '10.000'] + $original,
+            'currency left out (the account\'s)' => array_diff_key($original, ['currency' => true]),
+            'occurred_at left out (now)' => array_diff_key($original, ['occurred_at' => true]),
+            'customer_crm left out (it describes a customer the write creates)' =>
+                array_diff_key($original, ['customer_crm' => true]),
+            'the customer by its id' =>
+                ['customer_id' => $customerId] + array_diff_key($original, ['customer_ref' => true]),
+            'quantity as a string' => [
+                'items' => [['sku' => 'SKU-R', 'name' => 'Widget', 'quantity' => '2', 'unit_price' => 5.0]],
+            ] + $original,
+        ];
+        foreach ($same as $case => $body) {
+            $replay = $controller->recordRevenue($body);
+            self::assertSame(200, $replay['_status'], $case);
+            self::assertTrue($replay['data']['duplicate'], $case);
+            self::assertSame($eventId, $replay['data']['event_id'], $case);
+            self::assertSame($customerId, $replay['data']['customer_id'], $case);
+        }
+
+        $different = [
+            'amount' => ['amount' => 99.5] + $original,
+            'event_type' => ['event_type' => 'one_time'] + $original,
+            'customer' => ['customer_ref' => 'rr-b'] + $original,
+            'customer by id' => ['customer_id' => $otherCustomer] + array_diff_key($original, ['customer_ref' => true]),
+            'items' =>
+                ['items' => [['sku' => 'SKU-R', 'name' => 'Widget', 'quantity' => 3, 'unit_price' => 5.0]]] + $original,
+            'items left out' => array_diff_key($original, ['items' => true]),
+            'external_ref' => ['external_ref' => 'order-2'] + $original,
+            'external_ref left out' => array_diff_key($original, ['external_ref' => true]),
+            'transaction_id' => ['transaction_id' => 'ch_9'] + $original,
+            'occurred_at' => ['occurred_at' => 1700000001] + $original,
+        ];
+        foreach ($different as $case => $body) {
+            try {
+                $controller->recordRevenue($body);
+                self::fail($case . ': a different request under a used key must be refused');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                $errors = $e->getFieldErrors();
+                self::assertArrayHasKey('idempotency_key', $errors, $case);
+                self::assertStringContainsString('revenue event ' . $eventId, $errors['idempotency_key'], $case);
+                self::assertStringContainsString(explode(' ', $case)[0], $e->getMessage(), $case);
+            }
+        }
+
+        $count = fn (string $sql): int => (int) $this->scalar($sql);
+        self::assertSame(1, $count('SELECT COUNT(*) FROM 202_revenue_events'), 'nothing was recorded');
+        self::assertSame(1, $count('SELECT COUNT(*) FROM 202_revenue_line_items'));
+        self::assertSame(
+            10.0,
+            (float) $this->scalar('SELECT amount FROM 202_revenue_events WHERE event_id = ' . (int) $eventId)
+        );
+        self::assertSame(
+            0,
+            $count("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'rr-b'"),
+            'no customer was created'
+        );
+        self::assertSame(
+            10.0,
+            (float) $this->scalar('SELECT total_revenue FROM 202_customers WHERE customer_id = ' . (int) $customerId)
+        );
+    }
+
+    /** A renewal's key (its idempotency_key, else its transaction id) replays only the same renewal. */
+    public function testSubscriptionEventKeyReplaysOnlyTheSameEvent(): void
+    {
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
+        $subs = new \Prosper202\Ltv\MysqlSubscriptionRepository(self::$conn, $customers);
+        $customerId = $crm->upsert(1, ['customer_ref' => 'sub-rr']);
+        $subs->upsert(
+            1,
+            ['external_sub_id' => 'SUB-RR', 'amount' => 25.0, 'status' => 'active', 'customer_id' => $customerId]
+        );
+        $events = fn (): int => (int) $this->scalar(
+            "SELECT COUNT(*) FROM 202_revenue_events WHERE source = 'subscription'"
+        );
+        $renewal = ['idempotency_key' => 'inv-1', 'amount' => 25.0, 'occurred_at' => 1700000100];
+
+        $first = $subs->recordEvent(1, 'SUB-RR', 'renewal', $renewal);
+        self::assertTrue($first['inserted']);
+        $replay = $subs->recordEvent(1, 'SUB-RR', 'renewal', $renewal);
+        self::assertFalse($replay['inserted']);
+        self::assertSame($first['eventId'], $replay['eventId']);
+        $omitted = $subs->recordEvent(1, 'SUB-RR', 'renewal', ['idempotency_key' => 'inv-1']);
+        self::assertFalse($omitted['inserted'], 'left out, the amount and time are not compared');
+
+        $different = [
+            'amount' => ['idempotency_key' => 'inv-1', 'amount' => 30.0],
+            'occurred_at' => ['idempotency_key' => 'inv-1', 'occurred_at' => 1700000200],
+            'transaction_id' => ['idempotency_key' => 'inv-1', 'transaction_id' => 'ch_1'],
+        ];
+        foreach ($different as $case => $payload) {
+            try {
+                $subs->recordEvent(1, 'SUB-RR', 'renewal', $payload);
+                self::fail($case . ': a different renewal under a used key must be refused');
+            } catch (\Prosper202\Ltv\LtvInputException $e) {
+                self::assertSame('idempotency_key', $e->field, $case);
+                self::assertStringContainsString($case, $e->getMessage(), $case);
+            }
+        }
+
+        $byTransaction = $subs->recordEvent(1, 'SUB-RR', 'renewal', ['transaction_id' => 'ch_2', 'amount' => 25.0]);
+        self::assertTrue($byTransaction['inserted']);
+        try {
+            $subs->recordEvent(1, 'SUB-RR', 'renewal', ['transaction_id' => 'ch_2', 'amount' => 30.0]);
+            self::fail('a different renewal under a used transaction id must be refused');
+        } catch (\Prosper202\Ltv\LtvInputException $e) {
+            self::assertSame('transaction_id', $e->field);
+        }
+
+        self::assertSame(2, $events(), 'nothing was recorded for the refused renewals');
+    }
+
+    /**
+     * A transaction id locates a recorded conversion; a request carrying it
+     * is that sale again only when what it states is what was recorded.
+     */
+    public function testConversionDuplicateReplaysOnlyTheSameSale(): void
+    {
+        $this->insertClick(6100);
+        self::$db->query('INSERT INTO 202_clicks_tracking SET click_id=6100, c1_id=0, c2_id=0, c3_id=0, c4_id=0');
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $original = [
+            'click_id' => 6100, 'transaction_id' => 'TX-RR', 'payout' => 10, 'conv_time' => 1700000100,
+            'customer_ref' => 'cv-a', 'items' => [['sku' => 'SKU-C', 'quantity' => 1, 'unit_price' => 10.0]],
+        ];
+        $first = $controller->create($original);
+        self::assertArrayNotHasKey('duplicate', $first);
+        $convId = (int) $this->scalar('SELECT conv_id FROM 202_conversion_logs WHERE click_id = 6100');
+
+        $same = [
+            'the same body' => $original,
+            'the payout as text' => ['payout' => '10.00'] + $original,
+            'payout left out' => array_diff_key($original, ['payout' => true]),
+            'conv_time left out' => array_diff_key($original, ['conv_time' => true]),
+        ];
+        foreach ($same as $case => $body) {
+            $again = $controller->create($body);
+            self::assertTrue($again['duplicate'] ?? false, $case);
+        }
+
+        $different = [
+            'payout' => ['payout' => 20] + $original,
+            'customer' => ['customer_ref' => 'cv-b'] + $original,
+            'items' => ['items' => [['sku' => 'SKU-C', 'quantity' => 2, 'unit_price' => 10.0]]] + $original,
+            'conv_time' => ['conv_time' => 1700000200] + $original,
+        ];
+        foreach ($different as $case => $body) {
+            try {
+                $controller->create($body);
+                self::fail($case . ': a different sale under a recorded transaction id must be refused');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                $errors = $e->getFieldErrors();
+                self::assertArrayHasKey('transaction_id', $errors, $case);
+                self::assertStringContainsString('conversion ' . $convId, $errors['transaction_id'], $case);
+                self::assertStringContainsString($case, $e->getMessage(), $case);
+            }
+        }
+
+        // The repository refuses an unknown type on a new conversion; a
+        // duplicate never reaches it, and the comparison refuses it the same.
+        try {
+            $controller->create(['customer_ref_type' => 'nonsense'] + $original);
+            self::fail('an unknown customer_ref_type on a duplicate must be refused, as on a new conversion');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertArrayHasKey('customer_ref_type', $e->getFieldErrors());
+        }
+
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_conversion_logs'), 'nothing was recorded');
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_line_items'));
+        $aliases = (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_aliases WHERE alias_value = 'cv-b'");
+        self::assertSame(0, $aliases);
     }
 
     public function testRejectedCustomerUpsertRollsBackFreshIdentity(): void

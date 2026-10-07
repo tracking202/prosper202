@@ -58,7 +58,11 @@ final class SetTimezoneReadsTheAccountIntegrationTest extends TestCase
         }
         self::$db = $db;
         self::cleanUp();
-        foreach (['Asia/Tokyo', '', 'Not/AZone'] as $n => $zone) {
+        // 0-2 the accounts below; 5-8 the shapes the pages and the API must
+        // agree on (3 and 4 are the failed reads', 9 has no row).
+        $zones = [0 => 'Asia/Tokyo', 1 => '', 2 => 'Not/AZone']
+            + [5 => '+05:30', 6 => 'america/new_york', 7 => 'GMT+5', 8 => 'Asia/Kolkata'];
+        foreach ($zones as $n => $zone) {
             $id = self::FIRST_USER + $n;
             $db->query("INSERT INTO 202_users SET user_id = $id, user_name = 'tz$id', user_email = 'tz$id@example.com',"
                 . " user_dash_email = '', user_pass = 'x', user_timezone = '" . $db->real_escape_string($zone) . "',"
@@ -162,6 +166,36 @@ final class SetTimezoneReadsTheAccountIntegrationTest extends TestCase
         self::assertStringContainsString('time zone of account ' . $userId, $thrown->getMessage(), 'naming whose');
         self::assertSame('UTC', date_default_timezone_get(), 'no zone was set from a read that failed');
         self::assertSame('America/New_York', $_SESSION['user_timezone'], 'and the session copy is untouched');
+    }
+
+    /** @return iterable<string, array{int, string}> */
+    public static function storedShapes(): iterable
+    {
+        yield 'an offset' => [self::FIRST_USER + 5, 'UTC'];
+        yield 'a listed name in another case' => [self::FIRST_USER + 6, 'UTC'];
+        yield 'GMT plus hours' => [self::FIRST_USER + 7, 'UTC'];
+        yield 'a zone' => [self::FIRST_USER + 8, 'Asia/Kolkata'];
+        yield 'not a zone at all' => [self::FIRST_USER + 2, 'UTC'];
+    }
+
+    /**
+     * One stored value, one zone: the pages and the API (AccountZone::read(),
+     * which GET /reports/* and the LTV cohorts use) read it the same way. A
+     * stored +05:30 was UTC here and +05:30 there (measured on a live
+     * instance), so the same day was two different spans of time.
+     *
+     * @dataProvider storedShapes
+     */
+    public function testThePagesAndTheApiReadOneStoredValueAsOneZone(int $userId, string $expected): void
+    {
+        $_SESSION['user_id'] = $userId;
+        $_SESSION['user_timezone'] = 'America/New_York';
+
+        AUTH::set_timezone($_SESSION['user_timezone']);
+        $api = \Prosper202\Report\AccountZone::read(new \Prosper202\Database\Connection(self::$db), $userId);
+
+        self::assertSame($expected, date_default_timezone_get(), 'the pages');
+        self::assertSame($expected, $api, 'the API');
     }
 
     public function testWithoutASignedInUserTheArgumentStands(): void

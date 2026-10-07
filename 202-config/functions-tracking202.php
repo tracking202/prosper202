@@ -186,9 +186,16 @@ function grab_timeframe($unused = null): array
  * The tracking domain as stored for the signed-in user, or for the primary
  * account without a session (CLI cron workers), like the connect2.php
  * variant — otherwise CLI could never resolve a configured domain and URL
- * builders would degrade to 'localhost'. '' when none is set, and when the
- * schema does not exist yet (_mysqli_query() answers false during install).
+ * builders would degrade to 'localhost'. '' when none is set.
  * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
+ *
+ * A read that fails throws, naming the account. It answered '' -- "none
+ * stored" -- for a failed query too, and every caller builds on that: one
+ * transient database error moved every link getTrackingDomain() builds to
+ * the request's host, and the address p202TrackingBaseUrl() registers with
+ * the hosted service to the server's own name, with nothing to say so
+ * (CLAUDE.md #11: a lookup that cannot answer must not answer). The
+ * connect2.php twin, getTrackingDomain(), throws the same way.
  *
  * $userId names the account instead. Whatever the server itself calls must
  * name one: every signed-in user sets their own domain on Personal
@@ -203,6 +210,7 @@ function p202StoredTrackingDomain(?int $userId = null): string
 
     $database = DB::getInstance();
     $db = $database->getConnection();
+    $failed = 'Unable to read the tracking domain of account ' . $lookup_user_id;
     $tracking_domain_sql = "
 		SELECT
 			`user_tracking_domain`
@@ -211,8 +219,21 @@ function p202StoredTrackingDomain(?int $userId = null): string
 		WHERE
 			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
 	";
-    $tracking_domain_result = _mysqli_query($tracking_domain_sql);
-    $row = $tracking_domain_result ? $tracking_domain_result->fetch_assoc() : null;
+    try {
+        $tracking_domain_result = _mysqli_query($tracking_domain_sql);
+    } catch (\mysqli_sql_exception $e) {
+        // Strict reporting throws MySQL's sentence; name whose read it was.
+        throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
+    }
+    if (!$tracking_domain_result instanceof \mysqli_result) {
+        try {
+            $error = (string) $db->error;
+        } catch (\Error) {
+            $error = '';
+        }
+        throw new \RuntimeException($failed . ($error !== '' ? ': ' . $error : ''));
+    }
+    $row = $tracking_domain_result->fetch_assoc();
 
     return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
 }
@@ -245,6 +266,31 @@ function p202TrackingBaseUrl(): string
 function getTrackingDomain(): string
 {
     return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+}
+
+/**
+ * The statement in every signed-in page's footer script (template.php) that
+ * has the user's own browser ping this install's cron endpoint:
+ * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/");`.
+ *
+ * The ping is optional and the page above it has rendered, so a tracking
+ * domain that cannot be read -- getTrackingDomain() throws rather than guess
+ * -- skips the ping, logged, instead of cutting the page off mid-footer; the
+ * statement is then a comment saying so.
+ */
+function p202CronBeaconStatement(): string
+{
+    try {
+        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/';
+        $flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_THROW_ON_ERROR;
+
+        return 'navigator.sendBeacon(' . json_encode($url, $flags) . ');';
+    } catch (\Throwable $e) {
+        error_log('p202: the cron ping was skipped: ' . $e->getMessage());
+
+        return '/* the cron ping was skipped: the tracking domain could not be read */';
+    }
 }
 
 // the above, if true, are options to turn on specific filtering techniques.

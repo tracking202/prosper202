@@ -10,7 +10,6 @@ use Prosper202\Identity\CustomerId;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentitySignal;
 use Prosper202\Identity\SignalType;
-use RuntimeException;
 
 /**
  * API-side customer CRUD: detail reads, CRM upserts, aliasing, merge and
@@ -179,24 +178,31 @@ final class MysqlCustomerCrmRepository
 
             if (isset($payload['aliases'])) {
                 if (!is_array($payload['aliases'])) {
-                    throw new RuntimeException('aliases must be an array of {type, value}');
+                    throw new LtvInputException('aliases', 'aliases must be an array of {type, value}');
                 }
-                foreach ($payload['aliases'] as $alias) {
+                foreach ($payload['aliases'] as $index => $alias) {
                     if (!is_array($alias) || trim((string) ($alias['value'] ?? '')) === '') {
-                        throw new RuntimeException('Each alias requires a non-empty value');
+                        throw new LtvInputException("aliases.{$index}.value", 'Each alias requires a non-empty value');
                     }
-                    $owner = $this->customers->addAlias(
-                        $userId,
-                        $customerId,
-                        (string) ($alias['type'] ?? 'custom'),
-                        (string) $alias['value'],
-                        $now
-                    );
+                    try {
+                        $owner = $this->customers->addAlias(
+                            $userId,
+                            $customerId,
+                            (string) ($alias['type'] ?? 'custom'),
+                            (string) $alias['value'],
+                            $now
+                        );
+                    } catch (LtvInputException $e) {
+                        // The alias's field, at its place in the body.
+                        throw new LtvInputException("aliases.{$index}." . $e->field, $e->getMessage());
+                    }
                     if ($owner !== $customerId) {
                         // First-writer-wins: surfacing beats silent re-pointing.
-                        throw new RuntimeException(
+                        throw new LtvInputException(
+                            "aliases.{$index}.value",
                             'Alias "' . $alias['value'] . '" already belongs to customer ' . $owner
-                            . '; use POST /ltv/customers/' . $customerId . '/merge to combine records'
+                                . '; use POST /ltv/customers/' . $customerId . '/merge to combine records',
+                            'Already mapped to customer ' . $owner
                         );
                     }
                 }
@@ -217,15 +223,24 @@ final class MysqlCustomerCrmRepository
     public function merge(int $userId, int $sourceId, int $targetId): void
     {
         if ($sourceId === $targetId) {
-            throw new RuntimeException('Cannot merge a customer into itself');
+            throw new LtvInputException('source_customer_id', 'Cannot merge a customer into itself');
         }
-        if (!$this->customers->customerBelongsToUser($sourceId, $userId)
-            || !$this->customers->customerBelongsToUser($targetId, $userId)) {
-            throw new RuntimeException('Both customers must exist and belong to this account');
+        if (!$this->customers->customerBelongsToUser($targetId, $userId)) {
+            throw new RecordNotFoundException('Customer not found');
+        }
+        if (!$this->customers->customerBelongsToUser($sourceId, $userId)) {
+            throw new LtvInputException(
+                'source_customer_id',
+                'source_customer_id ' . $sourceId . ' not found for this account',
+                'No such customer in this account (see `p202 ltv customers`)'
+            );
         }
         $terminalTarget = $this->customers->followMergePointer($targetId);
         if ($terminalTarget === $sourceId) {
-            throw new RuntimeException('Target already merges into source; merge the other way around');
+            throw new LtvInputException(
+                'source_customer_id',
+                'Target already merges into source; merge the other way around'
+            );
         }
 
         $now = time();
@@ -249,13 +264,15 @@ final class MysqlCustomerCrmRepository
                 $locked[(int) $row['customer_id']] = $row;
             }
             if (!isset($locked[$sourceId], $locked[$terminalTarget])) {
-                throw new RuntimeException('Both customers must exist and belong to this account');
+                throw new LtvConflictException(
+                    'A customer of this merge was removed by a concurrent request; nothing was merged'
+                );
             }
             if ($locked[$sourceId]['merged_into_customer_id'] !== null) {
-                throw new RuntimeException('Source customer was already merged by a concurrent request');
+                throw new LtvConflictException('Source customer was already merged by a concurrent request');
             }
             if ($locked[$terminalTarget]['merged_into_customer_id'] !== null) {
-                throw new RuntimeException('Target customer was merged concurrently; retry the merge');
+                throw new LtvConflictException('Target customer was merged concurrently; retry the merge');
             }
 
             // Custom-field values first: target's existing value wins on
@@ -376,7 +393,7 @@ final class MysqlCustomerCrmRepository
     public function erase(int $userId, int $customerId): void
     {
         if (!$this->customers->customerBelongsToUser($customerId, $userId)) {
-            throw new RuntimeException('Customer not found for this account');
+            throw new RecordNotFoundException('Customer not found for this account');
         }
 
         $now = time();
@@ -548,14 +565,22 @@ final class MysqlCustomerCrmRepository
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
             if (!$this->customers->customerBelongsToUser($explicitId, $userId)) {
-                throw new RuntimeException('customer_id ' . $explicitId . ' not found for this account');
+                throw new LtvInputException(
+                    'customer_id',
+                    'customer_id ' . $explicitId . ' not found for this account',
+                    'No such customer in this account (see `p202 ltv customers`)'
+                );
             }
             return $this->customers->followMergePointer($explicitId);
         }
 
         $ref = trim((string) ($payload['customer_ref'] ?? ''));
         if ($ref === '') {
-            throw new RuntimeException('customer_id or customer_ref is required');
+            throw new LtvInputException(
+                'customer_ref',
+                'customer_id or customer_ref is required',
+                'Identify the customer: your id for them (customer_ref), or customer_id'
+            );
         }
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
         $crm = [];
@@ -609,7 +634,7 @@ final class MysqlCustomerCrmRepository
         if (array_key_exists('email', $payload)) {
             $email = $payload['email'] !== null ? trim((string) $payload['email']) : '';
             if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-                throw new RuntimeException('email is not a valid address');
+                throw new LtvInputException('email', 'email is not a valid address');
             }
             $sets[] = 'email = ?';
             $types .= 's';
@@ -700,7 +725,7 @@ final class MysqlCustomerCrmRepository
         $customFields = null;
         if (isset($payload['custom_fields'])) {
             if (!is_array($payload['custom_fields'])) {
-                throw new RuntimeException('custom_fields must be an object of field_key => value');
+                throw new LtvInputException('custom_fields', 'custom_fields must be an object of field_key => value');
             }
             $customFields = $payload['custom_fields'];
         }
@@ -718,19 +743,27 @@ final class MysqlCustomerCrmRepository
             foreach ($customFields as $key => $value) {
                 $field = $this->fields->findByKey($userId, (string) $key);
                 if ($field === null) {
-                    throw new RuntimeException(
-                        'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields'
+                    throw new LtvInputException(
+                        'custom_fields.' . $key,
+                        'Unknown custom field "' . $key . '"; define it first via POST /ltv/fields',
+                        'No such field: `p202 ltv fields list` lists them, POST /ltv/fields defines one'
                     );
                 }
                 // setValue() deletes blank values, so a blank on a required
                 // field would silently clear it — reject before that happens.
                 if (!empty($field['is_required'])
                     && ($value === null || (is_string($value) && trim($value) === ''))) {
-                    throw new RuntimeException(
+                    throw new LtvInputException(
+                        'custom_fields.' . $key,
                         'Custom field "' . (string) $field['field_key'] . '" is required and cannot be cleared'
                     );
                 }
-                $this->fields->setValue($userId, $customerId, $field, $value);
+                try {
+                    $this->fields->setValue($userId, $customerId, $field, $value);
+                } catch (LtvInputException $e) {
+                    // The value's place in the body.
+                    throw new LtvInputException('custom_fields.' . $key, $e->getMessage());
+                }
             }
         }
 
@@ -746,9 +779,10 @@ final class MysqlCustomerCrmRepository
         $stored = $this->fields->fieldIdsWithValue($userId, $customerId);
         foreach ($required as $field) {
             if (!in_array((int) $field['field_id'], $stored, true)) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    'custom_fields.' . (string) $field['field_key'],
                     'Custom field "' . (string) $field['field_key']
-                    . '" is required; supply it in custom_fields'
+                        . '" is required; supply it in custom_fields'
                 );
             }
         }

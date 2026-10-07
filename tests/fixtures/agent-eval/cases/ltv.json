@@ -118,6 +118,59 @@
         ]
       },
       "notes": "Line items hang off a customer's revenue event. The server used to record such a conversion and drop the items with a 201, so an agent reported a sale \"with its line item\" that had none; it now refuses with a 422 naming items before anything is written. The check fails on an agent that invents a customer reference to push the item through (the EVAL-WIDGET product appears in the catalog)."
+    },
+    {
+      "id": "ltv-005-a-second-charge-on-one-order-gets-its-own-key",
+      "priority": "high",
+      "state": "seeded fixture; setup makes the LTV customer EVAL-LTV-CUST2 and records its 49.00 purchase for order EVAL-LTV-ORD-9 under the idempotency key EVAL-LTV-ORD-9",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST2 --email eval-ltv2@example.com --first-name Ivy --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-CUST2 --amount 49.00 --idempotency-key EVAL-LTV-ORD-9 --external-ref EVAL-LTV-ORD-9 --json >/dev/null"
+      ],
+      "ask": "Order EVAL-LTV-ORD-9 for customer EVAL-LTV-CUST2 is already on their ledger at $49.00. The billing system has just charged the same order a further $15.00 for an add-on. Record the $15.00 charge on the customer.",
+      "expected": {
+        "runs_one_of": [
+          "ltv revenue record"
+        ],
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST2 --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '([.data.recent_events[] | select((.amount|tonumber)==49)] | length) == 1 and ([.data.recent_events[] | select((.amount|tonumber)==15)] | length) == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if customer EVAL-LTV-CUST2's ledger holds the 49.00 purchase once and a 15.00 charge once, the add-on recorded under a key of its own, and the reply says it was recorded. FAIL if the 15.00 charge is missing (sent under the order's key EVAL-LTV-ORD-9, which the server refuses naming idempotency_key) while the reply says it was recorded, or if either amount is on the ledger twice.",
+        "reply_includes": [
+          "15"
+        ]
+      },
+      "notes": "The order's key belongs to the 49.00 event. The server used to answer a different charge under it with 200 duplicate: true and the first event, so an agent reusing the order number as its key reported the add-on recorded while nothing was written. It now refuses with a 422 naming idempotency_key and what differs (amount recorded 49.00000, sent 15.00000), and the hint says a different event needs its own key. Re-running on the same instance stays green when the agent keys the add-on deterministically (EVAL-LTV-ORD-9-ADDON, say): the server then replays it."
+    },
+    {
+      "id": "ltv-006-a-resent-charge-records-nothing",
+      "priority": "high",
+      "state": "seeded fixture; the same setup as ltv-005: EVAL-LTV-CUST2 has its 49.00 purchase for order EVAL-LTV-ORD-9 under the idempotency key EVAL-LTV-ORD-9",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST2 --email eval-ltv2@example.com --first-name Ivy --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-CUST2 --amount 49.00 --idempotency-key EVAL-LTV-ORD-9 --external-ref EVAL-LTV-ORD-9 --json >/dev/null"
+      ],
+      "ask": "Our billing system re-sent the $49.00 charge for order EVAL-LTV-ORD-9 on customer EVAL-LTV-CUST2 after a timeout. Make sure the customer's ledger reflects that charge, and only once.",
+      "expected": {
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST2 --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '[.data.recent_events[] | select((.amount|tonumber)==49)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the 49.00 purchase is on EVAL-LTV-CUST2's ledger exactly once afterwards (the agent read the ledger, or re-sent the charge under its key EVAL-LTV-ORD-9 and got duplicate: true) and the reply says it is recorded once. FAIL if a second 49.00 event exists, or if the reply says the charge was recorded again.",
+        "reply_includes": [
+          "EVAL-LTV-CUST2"
+        ]
+      },
+      "notes": "The pair of ltv-005: the same request under the same key is a replay, answered with the first event and nothing written; only a different request under it is refused. An agent that re-records the charge under a new key, or with no key, doubles the customer's revenue."
     }
   ]
 }

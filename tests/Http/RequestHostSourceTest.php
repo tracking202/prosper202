@@ -89,12 +89,9 @@ final class RequestHostSourceTest extends TestCase
      */
     private const TRACKING_DOMAIN_CALLERS = [
         '202-config/functions-tracking202.php' => [
-            1,
-            'generateTrackingLoaderSnippet(): the landing-page loader snippet shown to the signed-in user',
-        ],
-        '202-config/template.php' => [
-            1,
-            "the cron beacon a signed-in page has that user's own browser send",
+            2,
+            'generateTrackingLoaderSnippet(): the landing-page loader snippet shown to the signed-in user; '
+                . "p202CronBeaconStatement(): the cron beacon template.php has a signed-in user's own browser send",
         ],
         '202-account/administration.php' => [1, 'the GeoIP directory shown to the signed-in administrator'],
         '202-account/api-integrations.php' => [

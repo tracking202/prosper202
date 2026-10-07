@@ -213,8 +213,10 @@ final class LtvBodyValuesIntegrationTest extends TestCase
             ]),
             'an 81-year interval'
         );
-        self::assertStringContainsString('2106-02-07', $errors['']);
-        self::assertStringContainsString('lower billing_interval_count', $errors['']);
+        // Named by its field, as every LTV 422 is (LtvFieldErrorsTest).
+        self::assertSame(['billing_interval_count'], array_keys($errors));
+        self::assertStringContainsString('2106-02-07', $errors['billing_interval_count']);
+        self::assertStringContainsString('lower billing_interval_count', $errors['billing_interval_count']);
     }
 
     public function testARenewalWhoseValuesCannotBeReadWritesNothingAndOneThatCanIsStored(): void
@@ -252,7 +254,8 @@ final class LtvBodyValuesIntegrationTest extends TestCase
             fn () => $this->ltv()->subscriptionEvent('sub_edge', ['event_type' => 'renewal', 'occurred_at' => 4290000000]),
             'a renewal into 2107'
         );
-        self::assertStringContainsString('2106-02-07', $errors['']);
+        self::assertSame(['current_period_end'], array_keys($errors));
+        self::assertStringContainsString('2106-02-07', $errors['current_period_end']);
         self::assertSame('4294000000', (string) self::subscription('sub_edge')['current_period_end']);
     }
 
@@ -272,7 +275,8 @@ final class LtvBodyValuesIntegrationTest extends TestCase
 
         // null or '' is not given: the label stays, and a body of nothing else says what it takes.
         $errors = self::refusedWritingNothing(fn () => $ltv->updateField($required, ['label' => null, 'is_required' => '']), 'a PATCH of nulls');
-        self::assertStringContainsString('No updatable properties', $errors['']);
+        self::assertSame(['label'], array_keys($errors));
+        self::assertStringContainsString('Send label, options, is_required or sort_order', $errors['label']);
         self::assertSame('plan', (string) $stored($required)['label']);
 
         $errors = self::refusedWritingNothing(fn () => $ltv->createField(['field_key' => 'x', 'is_required' => 'no']), 'is_required "no"');

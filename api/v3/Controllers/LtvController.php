@@ -17,19 +17,22 @@ use Api\V3\Support\RequestFlag;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Database\Connection;
-use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
 use Prosper202\Ltv\CompanyConflictException;
+use Prosper202\Ltv\LtvConflictException;
+use Prosper202\Ltv\LtvInputException;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlIntegrationRepository;
 use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Ltv\RevenueReplay;
 use Prosper202\Ltv\SubscriptionNotFoundException;
+use Prosper202\Validation\OutboundUrlException;
 
 /**
  * /ltv endpoints: realized + predictive LTV reads, customer CRM management,
@@ -217,6 +220,7 @@ class LtvController
         PayloadKeys::refuseUnknown($payload, ['event', 'event_name', 'value', 'occurred_at', ...self::IDENTITY_KEYS], 'an engagement event');
         PayloadKeys::refuse(
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + LtvBody::identity($payload)
         );
         $eventName = trim((string) ($payload['event'] ?? $payload['event_name'] ?? ''));
         if ($eventName === '') {
@@ -389,6 +393,7 @@ class LtvController
         // each alias as POST /ltv/customers/{id}/aliases reads one: a
         // misspelled `tpye` made the alias a custom one.
         PayloadKeys::refuse(LtvBody::crm($payload)
+            + LtvBody::identity($payload)
             + PayloadKeys::listErrors($payload, 'aliases', LtvBody::ALIAS_KEYS, 'an alias', LtvBody::alias(...)));
         $customerId = $this->wrap(fn (): int => $this->crm->upsert($this->userId, $payload));
         $this->enqueueEvent('customer.updated', ['customer_id' => $customerId]);
@@ -480,7 +485,9 @@ class LtvController
     /**
      * Record a clickless revenue event (ESP order, membership charge,
      * Shopify order pushed server-side). source='api'; idempotent on the
-     * caller-supplied idempotency_key.
+     * caller-supplied idempotency_key: the same request again answers the
+     * event it recorded, and a different request under that key is refused
+     * (RevenueReplay says what is compared).
      */
     public function recordRevenue(array $payload): array
     {
@@ -493,9 +500,21 @@ class LtvController
         PayloadKeys::refuse(
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
             + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+            + LtvBody::identity($payload)
+            + LtvBody::revenueReferences($payload)
+        );
+        // Read before anything is written or replayed: a replay compares the
+        // customer it names with the one its key recorded.
+        $customerIdSent = QueryInt::param(
+            $payload,
+            'customer_id',
+            0,
+            1,
+            PHP_INT_MAX,
+            'an LTV customer id (see `p202 ltv customers`)'
         );
 
-        return $this->wrap(function () use ($payload): array {
+        return $this->wrap(function () use ($payload, $customerIdSent): array {
             $eventType = strtolower(trim((string) ($payload['event_type'] ?? 'purchase')));
             if (!in_array($eventType, ['purchase', 'one_time', 'refund', 'chargeback', 'adjustment'], true)) {
                 throw new ValidationException(
@@ -538,15 +557,57 @@ class LtvController
                 MysqlCustomerRepository::assertExternalIdempotencyKey($idempotencyKey);
             }
 
+            // What this request states, as the event would store it, for a
+            // replay to be compared with (RevenueReplay): a key located the
+            // event and nothing compared the request to it, so a key reused
+            // for a different sale answered 200 `duplicate: true` and the
+            // sale was dropped (CLAUDE.md #15).
+            $stated = [
+                'event_type' => $eventType,
+                'amount' => $amount,
+                'external_ref' => isset($payload['external_ref']) ? (string) $payload['external_ref'] : null,
+                'transaction_id' => isset($payload['transaction_id']) ? (string) $payload['transaction_id'] : null,
+                'customer' => $customerIdSent > 0
+                    ? ['id' => $customerIdSent]
+                    : [
+                        'ref' => trim((string) ($payload['customer_ref'] ?? '')),
+                        'type' => isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : null,
+                    ],
+                'items' => $items,
+            ];
+            if (isset($payload['currency'])) {
+                $stated['currency'] = $currency;
+            }
+            if (isset($payload['occurred_at'])) {
+                $stated['occurred_at'] = $occurredAt;
+            }
+            if ($customerIdSent <= 0 && $stated['customer']['ref'] === '') {
+                // Named no one: refused as a new event would be, replay or not.
+                throw new ValidationException(
+                    'customer_id or customer_ref is required',
+                    ['customer_ref' => 'Identify the customer this revenue belongs to']
+                );
+            }
+
             try {
-                $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {
-                    // Idempotent replay FIRST: a replay carrying a different
-                    // (or brand-new) customer_ref must return the original
-                    // event and its owner, not resolve/create a customer for
-                    // a write that will never happen.
+                $result = $this->conn->transaction(function () use (
+                    $eventType,
+                    $amount,
+                    $currency,
+                    $occurredAt,
+                    $payload,
+                    $items,
+                    $now,
+                    $idempotencyKey,
+                    $stated
+                ): array {
+                    // Idempotent replay FIRST: a replay must not resolve or
+                    // create a customer for a write that will never happen.
+                    // It is a replay only when it is the same request.
                     if ($idempotencyKey !== null) {
                         $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
                         if ($existing !== null) {
+                            $this->refuseADifferentRequest($idempotencyKey, $existing, $stated);
                             return ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
                         }
                     }
@@ -595,6 +656,9 @@ class LtvController
                         ['idempotency_key' => 'Duplicate in flight']
                     );
                 }
+                // The winner was a different request: this one is refused,
+                // not answered with the winner's event.
+                $this->refuseADifferentRequest((string) $idempotencyKey, $existing, $stated);
                 $result = ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
             }
 
@@ -619,6 +683,36 @@ class LtvController
         });
     }
 
+    /**
+     * Refuse a request whose idempotency_key recorded a different one,
+     * naming what differs. Nothing is written: the event stands as it was
+     * recorded, and the caller either resends that body to replay it or
+     * sends a new key for a different event.
+     *
+     * @param array{event_id: int, customer_id: int, event_type: string, amount: string, currency: string,
+     *              occurred_at: int, external_ref: ?string, transaction_id: ?string} $existing
+     * @param array<string, mixed> $stated
+     */
+    private function refuseADifferentRequest(string $key, array $existing, array $stated): void
+    {
+        $differences = (new RevenueReplay($this->customers))->differences($this->userId, $existing, $stated);
+        if ($differences === []) {
+            return;
+        }
+        $what = implode('; ', array_map(
+            static fn (string $field, string $difference): string => $field . ' ' . $difference,
+            array_keys($differences),
+            $differences
+        ));
+        throw new ValidationException(
+            'idempotency_key "' . $key . '" already recorded revenue event ' . $existing['event_id']
+                . ' for a different request (' . $what . '). Nothing was recorded: resend the original request to'
+                . ' replay that event, or send a new idempotency_key to record a different one.',
+            ['idempotency_key' => 'Already used for revenue event ' . $existing['event_id'] . ' with a different '
+                . implode(', ', array_keys($differences)) . '; send a new key for a different event']
+        );
+    }
+
     public function upsertSubscription(array $payload): array
     {
         // MysqlSubscriptionRepository::upsert() reads these, and the customer keys.
@@ -633,6 +727,7 @@ class LtvController
         PayloadKeys::refuse(
             LtvBody::subscription($payload)
             + PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + LtvBody::identity($payload)
         );
         $result = $this->wrap(fn (): array => $this->subscriptions->upsert($this->userId, $payload));
         $this->enqueueEvent('subscription.changed', [
@@ -661,18 +756,12 @@ class LtvController
         // renewal 2026 seconds into 1970, and an amount of "abc" renewed for 0.
         PayloadKeys::refuse(LtvBody::subscriptionEvent($payload));
 
-        try {
-            $result = $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload);
-        } catch (SubscriptionNotFoundException $e) {
-            throw new NotFoundException($e->getMessage());
-        } catch (QueryException | \mysqli_sql_exception $e) {
-            // Database-layer failure → 500, not a 422 (see wrap()).
-            throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
-        } catch (\Throwable $e) {
-            throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
-        }
+        // wrap()'s mapping: a refusal names its field, a missing
+        // subscription is a 404, anything else the server's failure. This
+        // caught every RuntimeException as a 422 with no field.
+        $result = $this->wrap(
+            fn (): array => $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload)
+        );
 
         // Idempotent replays (duplicate renewal/refund keys, repeat cancels)
         // change nothing — notifying downstream would duplicate side effects.
@@ -995,7 +1084,17 @@ class LtvController
         }
         $events = $payload['events'] ?? [];
 
-        $result = $this->wrap(fn (): array => $this->webhooks->create($this->userId, $url, $events));
+        $result = $this->wrap(function () use ($url, $events, $payload): array {
+            try {
+                return $this->webhooks->create($this->userId, $url, $events);
+            } catch (OutboundUrlException $e) {
+                // The URL guard's refusal is the caller's to fix, named by
+                // the field it was sent in; wrap() takes an exception it does
+                // not know for the server's.
+                $field = array_key_exists('url', $payload) ? 'url' : 'webhook_url';
+                throw new ValidationException($e->getMessage(), [$field => $e->getMessage()]);
+            }
+        });
 
         // The secret is returned exactly once, at creation.
         return ['data' => ['webhook_id' => $result['webhookId'], 'secret' => $result['secret']]];
@@ -1128,7 +1227,9 @@ class LtvController
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['name', 'domain'], 'a company update');
         if (!array_key_exists('name', $payload) && !array_key_exists('domain', $payload)) {
-            throw new ValidationException('Nothing to update — supply name and/or domain', []);
+            throw new ValidationException('Nothing to update — supply name and/or domain', [
+                'name' => 'Send name, domain or both',
+            ]);
         }
 
         $companies = new MysqlCompanyRepository($this->conn);
@@ -1538,7 +1639,16 @@ class LtvController
         }
 
         $filters = [];
-        foreach ($this->customFieldFilterParams($params) as $key => $value) {
+        $cfParams = $this->customFieldFilterParams($params);
+        if (count($cfParams) > LtvQuery::MAX_CUSTOM_FIELD_FILTERS) {
+            $extra = array_slice(array_keys($cfParams), LtvQuery::MAX_CUSTOM_FIELD_FILTERS);
+            $most = LtvQuery::MAX_CUSTOM_FIELD_FILTERS;
+            throw new ValidationException(
+                'At most ' . $most . ' custom-field filters are supported per query',
+                array_fill_keys($extra, 'One filter too many: at most ' . $most . ' cf.* filters per query')
+            );
+        }
+        foreach ($cfParams as $key => $value) {
             $parts = explode('.', $key);
             $fieldKey = $parts[1] ?? '';
             $bound = $parts[2] ?? '';
@@ -1572,11 +1682,10 @@ class LtvController
             ];
         }
 
-        try {
-            return new LtvQuery($this->userId, $timeFrom, $timeTo, $filters);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
-        }
+        // Every filter above was built here from a checked parameter, so
+        // what LtvQuery refuses is this code's mistake, not the caller's: it
+        // is not a 422 with no field to fix, it is a 500 (wrap()).
+        return new LtvQuery($this->userId, $timeFrom, $timeTo, $filters);
     }
 
     /**
@@ -1720,8 +1829,18 @@ class LtvController
     }
 
     /**
-     * Run a repository call, translating RuntimeExceptions (validation-shaped
-     * messages from the Ltv repos) to 422s and everything else to 500s.
+     * Run a repository call, translating what it throws into the API's
+     * answers: a refusal of what was sent (LtvInputException) is a 422
+     * naming its field, a missing record a 404, a write a concurrent one got
+     * to first a 409, and everything else the server's failure, a 500.
+     *
+     * Every RuntimeException used to be a 422 carrying only its message --
+     * "amount must not be negative for purchase events", an unknown custom
+     * field, a reused idempotency key -- so an agent had a sentence and no
+     * field to fix, and a repository's own failure ("did not yield a
+     * customer_id", an identity-graph error) read as the caller's mistake.
+     * A refusal now says which field (LtvFieldErrorsTest holds every 422
+     * this controller answers to one).
      *
      * @template T
      * @param callable(): T $fn
@@ -1733,17 +1852,19 @@ class LtvController
             return $fn();
         } catch (ValidationException | NotFoundException | ConflictException | DatabaseException $e) {
             throw $e;
-        } catch (QueryException | \mysqli_sql_exception $e) {
-            // A database-LAYER failure (missing table on a code-before-migration
-            // deploy, a failed statement) is a 500, NOT a client-correctable
-            // 422 — under MYSQLI_REPORT_STRICT a failed query surfaces as
-            // Connection's QueryException (a RuntimeException subclass), so it
-            // must be caught before the validation branch or raw MySQL detail
-            // would leak to the client with a 422.
-            throw new DatabaseException('LTV operation failed: ' . $e->getMessage(), $e);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
+        } catch (LtvInputException $e) {
+            throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
+        } catch (RecordNotFoundException | SubscriptionNotFoundException $e) {
+            throw new NotFoundException($e->getMessage(), $e);
+        } catch (LtvConflictException | CompanyConflictException $e) {
+            throw new ConflictException($e->getMessage(), [], $e);
         } catch (\Throwable $e) {
+            // A database-LAYER failure (missing table on a code-before-migration
+            // deploy, a failed statement) and anything else a repository
+            // throws that is not a refusal: a 500, NOT a client-correctable
+            // 422 — under MYSQLI_REPORT_STRICT a failed query surfaces as
+            // Connection's QueryException (a RuntimeException subclass), and
+            // raw MySQL detail must not reach the client.
             throw new DatabaseException('LTV operation failed: ' . $e->getMessage(), $e);
         }
     }

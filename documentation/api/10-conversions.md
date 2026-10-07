@@ -78,6 +78,19 @@ way, as for an `Idempotency-Key` replay). Without a `transaction_id`, an
 duplicate), and a `replace` campaign records a row on every request, so a
 retried request without one records another conversion there.
 
+A request that matches a recorded conversion this way is that sale again
+only when it states what was recorded: the `payout` (compared as the ledger
+stores it, so `"10.00"` is `10`), `conv_time`, the customer it names and its
+`items`, each compared when the request sends it. A different one is a
+`422` naming `transaction_id`, with what differs in the message (`payout
+recorded 10.00000, sent 20.00000`); nothing is written and an
+`Idempotency-Key` sent with it is not spent. It used to answer `201
+duplicate` with the first conversion, so a corrected payout sent under the
+same transaction id was dropped. Send it as recorded to get the conversion
+back, a different sale with its own `transaction_id`, or take the recorded
+one back with `"status": "reversed"`. A postback or pixel keeps the first
+statement of a sale, as networks resend theirs.
+
 A deleted conversion keeps its place in the click's ledger, so a request that
 repeats one (the same `transaction_id`, the same reversal, or an `accumulate`
 click's plain conversion) is refused with `409`, naming it in

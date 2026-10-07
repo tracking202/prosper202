@@ -509,12 +509,16 @@ func TestLtvCompanyWrites(t *testing.T) {
 		t.Errorf("a duplicate company should point at update/merge: %v / %q", err, hintFor(err))
 	}
 
-	newLtvServer(t, func(ltvRequest) (int, string) {
-		return 422, `{"message":"Company still has 2 attached customer(s); merge it into another company instead"}`
-	})
-	_, _, err = executeCommand("ltv", "company", "delete", "3", "--force")
-	if err == nil || !strings.Contains(hintFor(err), "p202 ltv company merge") {
-		t.Errorf("a company with customers should point at merge: %v / %q", err, hintFor(err))
+	// The server answers the refusal 409 (a company's state, no field to
+	// fix); servers before answered 422. Both point at merge.
+	for _, status := range []int{409, 422} {
+		newLtvServer(t, func(ltvRequest) (int, string) {
+			return status, `{"message":"Company still has 2 attached customer(s); merge it into another company instead"}`
+		})
+		_, _, err = executeCommand("ltv", "company", "delete", "3", "--force")
+		if err == nil || !strings.Contains(hintFor(err), "p202 ltv company merge") {
+			t.Errorf("%d: a company with customers should point at merge: %v / %q", status, err, hintFor(err))
+		}
 	}
 
 	for _, args := range [][]string{
@@ -567,6 +571,33 @@ func TestLtvRevenueRecordSendsExactNumbersAndItems(t *testing.T) {
 	_, stderr, err = executeCommand("ltv", "revenue", "record", "--customer-id", "42", "--amount", "5", "--idempotency-key", "ORD-1001")
 	if err != nil || !strings.Contains(stderr, "already recorded") || !strings.Contains(stderr, "event 9") {
 		t.Errorf("a replayed key must say nothing new was recorded: %v / %q", err, stderr)
+	}
+}
+
+// The server refuses a different request under a used key (422 naming
+// idempotency_key); the command exits as a validation error with a hint that
+// says what a retry and a different event each need, not "retry".
+func TestLtvKeyReusedForADifferentEventIsExplained(t *testing.T) {
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"idempotency_key \"ORD-1\" already recorded revenue event 9 for a different request (amount recorded 10.00000, sent 99.50000).","field_errors":{"idempotency_key":"Already used for revenue event 9 with a different amount; send a new key for a different event"}}`
+	})
+	_, _, err := executeCommand("ltv", "revenue", "record", "--customer-ref", "CUST-77", "--amount", "99.50", "--idempotency-key", "ORD-1")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("revenue: %v, exit %d", err, exitCodeForError(err))
+	}
+	if h := hintFor(err); !strings.Contains(h, "exactly what the first request sent") || !strings.Contains(h, "--idempotency-key") {
+		t.Errorf("revenue hint = %q", h)
+	}
+
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"This transaction_id already recorded event 4 on this subscription for a different request (amount recorded 25.00000, sent 30.00000).","field_errors":{"transaction_id":"Already used for event 4 with a different amount; send a new transaction_id for a different one"}}`
+	})
+	_, _, err = executeCommand("ltv", "subscription", "event", "sub_1", "--type", "renewal", "--transaction-id", "ch_1", "--amount", "30")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("subscription event: %v, exit %d", err, exitCodeForError(err))
+	}
+	if h := hintFor(err); !strings.Contains(h, "--transaction-id") || !strings.Contains(h, "Nothing was written") {
+		t.Errorf("subscription event hint = %q", h)
 	}
 }
 

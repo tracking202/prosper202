@@ -68,7 +68,13 @@ the forms above is a `422` too, as is a `time_from` after `time_to`.
 | `lastyear` | The whole previous year |
 | `alltime` | Every click; no bound |
 
-The account's timezone is the user's `user_timezone` (UTC when unset).
+The account's timezone is the user's `user_timezone` (UTC when unset). It is
+a zone name PHP lists, spelled as listed (`America/New_York`), which is all
+Personal settings and `PUT /users/{id}` store; a stored value that is not one
+-- an offset such as `+05:30`, a name in another case -- is read as UTC, by the
+report pages and the API alike. An offset is one moment of a zone, not the
+zone: the API used to apply a stored offset as a fixed offset while the pages
+counted the same account's days in UTC.
 `today` and `yesterday` used to start at the **server's** midnight; on a UTC
 server a New York account asking at 23:30 its time saw tomorrow's 30 minutes as
 "today". The LTV and attribution reports take the same periods, computed the

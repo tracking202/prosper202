@@ -31,6 +31,7 @@ const (
 	importInvalid         = "invalid"
 	importDuplicateInFile = "duplicate_in_file"
 	importDuplicate       = "duplicate"
+	importConflict        = "conflict"
 	importClickNotFound   = "click_not_found"
 	importCreated         = "created"
 	importStaged          = "staged"
@@ -39,7 +40,7 @@ const (
 
 // importStatusOrder is the order statuses are counted and summarised in.
 var importStatusOrder = []string{importCreated, importStaged, importReady, importDuplicate,
-	importClickNotFound, importDuplicateInFile, importInvalid, importFailed}
+	importConflict, importClickNotFound, importDuplicateInFile, importInvalid, importFailed}
 
 // conversionImportColumns keeps the key fields first in tables; --fields overrides.
 var conversionImportColumns = []string{"row", "subid", "click_id", "transaction_id", "payout", "conv_time",
@@ -638,6 +639,7 @@ type clickLedgerAnswer struct {
 	Data []struct {
 		ConvID         int64       `json:"conv_id"`
 		Amount         json.Number `json:"amount"` // a number; older servers sent a numeric string, which json.Number also reads
+		ConvTime       int64       `json:"conv_time"`
 		Deleted        bool        `json:"deleted"`
 		TransactionID  *string     `json:"transaction_id"`
 		ReversesConvID *int64      `json:"reverses_conv_id"`
@@ -722,7 +724,10 @@ func checkImportClicks(c *api.Client, rows []conversionImportRow) (map[int64]map
 // resolveImportRow marks a row duplicate when the click's ledger already holds it: the same
 // transaction id, or any conversion for an id-less row. A negative row matches a reversal of
 // that id or a negative row with it (what a reversal with no sale on file is recorded as), since
-// the server would reverse that row again.
+// the server would reverse that row again. A row whose transaction id is on a live conversion
+// with another payout or time is that sale only if it states what was recorded: it is a
+// conflict and is not sent, as the server would refuse it (422 naming transaction_id). The id
+// located the conversion; comparing nothing made a corrected amount read as recorded.
 func resolveImportRow(r *conversionImportRow, ans clickLedgerAnswer) {
 	if r.TransactionID == "" {
 		if ans.Click.Lead {
@@ -740,6 +745,20 @@ func resolveImportRow(r *conversionImportRow, ans clickLedgerAnswer) {
 		if reversal != negative {
 			continue
 		}
+		if !conv.Deleted {
+			differs, known := importRowDifference(r, conv.Amount, conv.ConvTime)
+			if !known {
+				// The recorded amount could not be read here: the server compares it.
+				return
+			}
+			if differs != "" {
+				r.Status, r.ConvID = importConflict, conv.ConvID
+				r.Reason = fmt.Sprintf("transaction id %q is already conversion %d, and this row states a different sale (%s); "+
+					"nothing was sent. If the row is right, the recorded sale is not: reverse it and record this one under its own "+
+					"transaction id; if it is a re-send, correct the row", r.TransactionID, conv.ConvID, differs)
+				return
+			}
+		}
 		r.Status, r.ConvID = importDuplicate, conv.ConvID
 		switch {
 		case reversal:
@@ -751,6 +770,34 @@ func resolveImportRow(r *conversionImportRow, ans clickLedgerAnswer) {
 		}
 		return
 	}
+}
+
+// importRowDifference says how a row differs from the conversion its transaction id names, as
+// ConversionsController compares a duplicate: the payout when the row has one, and the time when
+// both have one. known is false when the recorded amount cannot be read.
+func importRowDifference(r *conversionImportRow, amount json.Number, convTime int64) (differs string, known bool) {
+	var parts []string
+	if r.hasPayout {
+		units, canon, ok := parseImportAmount(amount.String())
+		if !ok {
+			return "", false
+		}
+		if units != r.payoutUnits {
+			parts = append(parts, fmt.Sprintf("payout recorded %s, this row %s", canon, formatImportUnits(r.payoutUnits)))
+		}
+	}
+	if r.ConvTime != 0 && convTime != 0 && r.ConvTime != convTime {
+		parts = append(parts, fmt.Sprintf("conv_time recorded %d, this row %d", convTime, r.ConvTime))
+	}
+	return strings.Join(parts, "; "), true
+}
+
+// isDifferentSale matches the 422 ConversionsController gives a request whose transaction id
+// is already a conversion on the click with another payout, time, customer or items.
+func isDifferentSale(err error) bool {
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == 422 &&
+		strings.HasPrefix(apiErr.FieldErrors["transaction_id"], "Already recorded as conversion")
 }
 
 // sendConversionImport posts every ready row, sales before negative rows so a reversal finds its
@@ -792,6 +839,12 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 					what = fmt.Sprintf("conversion %d, the click's one conversion without a transaction id,", id)
 				}
 				r.Reason = what + " was deleted; the ledger keeps its key, so it is not recorded again"
+				continue
+			}
+			// The click's read could not see the conversion the server matched, and the server
+			// refused the row as resolveImportRow would have.
+			if isDifferentSale(err) {
+				r.Status, r.Reason = importConflict, oneLine(err)
 				continue
 			}
 			r.Status, r.Reason = importFailed, oneLine(err)
@@ -1054,8 +1107,14 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 		total, _ := importPayoutTotal(rows, importCreated)
 		output.Success("Imported %d of %d row(s) (%s); %s recorded in payouts.", counts[importCreated], len(rows), describeImportCounts(counts), total)
 	}
-	if counts[importFailed] == 0 {
+	if counts[importFailed] == 0 && counts[importConflict] == 0 {
 		return nil
+	}
+	if counts[importFailed] == 0 {
+		return partialFailureError("%d of %d row(s) state a sale the click already has with a different payout or time; they were not sent", counts[importConflict], len(rows)).
+			WithHint("Each conflict row's reason names the recorded conversion and what differs (`p202 click conversions <click_id>` shows it). " +
+				"If the file is right, reverse the recorded sale (`p202 conversion create --click-id <id> --status reversed --transaction-id <id>`) " +
+				"and record the row under its own transaction id; if the recorded sale is right, correct the row. Re-running the file as it is changes nothing.")
 	}
 	retry := "Rows with status failed carry the server's error. Fix the cause and re-run the same command: rows already recorded come back as duplicate (each row keeps its Idempotency-Key and transaction id, and each click's conversions are read first), so only the failures are sent again."
 	if stoppedAt > 0 {
@@ -1091,10 +1150,11 @@ func newConversionImportCmd() *cobra.Command {
 			"with an Idempotency-Key derived from its click, transaction id, payout and time.\n\n" +
 			"Statuses: created, duplicate (the click already has it: same transaction id, or any\n" +
 			"conversion for an id-less row, or the key was replayed, or the server answered it as a\n" +
-			"duplicate or as a deleted conversion's transaction id), click_not_found, failed (with\n" +
+			"duplicate or as a deleted conversion's transaction id), conflict (the click has the\n" +
+			"transaction id with another payout or time; not sent), click_not_found, failed (with\n" +
 			"the server's message), staged, invalid, duplicate_in_file (ready in a dry run). Re-running\n" +
-			"the same file is safe: recorded rows come back as duplicate. Exit 5 if any row failed;\n" +
-			"re-running the same command then sends only the rows not yet recorded.",
+			"the same file is safe: recorded rows come back as duplicate. Exit 5 if any row failed or\n" +
+			"conflicts; re-running the same command then sends only the rows not yet recorded.",
 		Example: "  p202 conversion import a2hosting-feb.csv --dry-run\n" +
 			"  p202 conversion import a2hosting-feb.csv --dry-run --check-clicks\n" +
 			"  p202 conversion import export.csv --subid-column 'Sub ID 2' --time-column 'Sale Date' --timezone America/New_York\n" +

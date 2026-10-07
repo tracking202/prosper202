@@ -446,6 +446,23 @@ directory**, and with it the previous install's state: a retried
 changes are listed to the new install's users. Before reinstalling that
 way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
 
+**The temp-dir default is used only when the server's own user owns it
+alone.** Its name can be worked out from the database host and name, and the
+temp dir is anyone's, so another local user could make it first and put
+records in it: a planted `Idempotency-Key` record replayed its response (and
+created nothing), and a planted staged change was listed to apply. The
+directory is now used only when it is a real directory (not a symbolic link)
+owned by the process's own user that its group and others cannot write.
+Otherwise the server uses the first of `<directory>.1` to `<directory>.3` that
+is (making it, mode `0700`, when absent), and the server log names the
+refused directory and why ("… is not used: it is owned by uid …"). When none
+can be used the API answers `500` and the log says so; a process running as
+root never takes an alternative (it cannot tell the web server's user from
+anyone else, and a directory of its own would be one the web tier never
+reads), so run CLI workers such as `202-cronjobs/sync-worker.php` as the web
+server's user. `P202_SERVER_STATE_DIR` is used as named: put it where only
+the server's user can write.
+
 ## Resource Endpoints Overview
 
 | Resource | Endpoints | Documentation |
