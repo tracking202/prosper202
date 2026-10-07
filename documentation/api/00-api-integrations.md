@@ -287,6 +287,7 @@ Empty response body.
 | Text Ads | CRUD | [Text Ads](08-text-ads.md) |
 | Clicks | Read-only (list + detail) | [Clicks](09-clicks.md) |
 | Conversions | List, get, create, delete | [Conversions](10-conversions.md) |
+| Update | Past clicks' CPC, mark/delete/reset subids, revenue report upload (with `?dry_run=1`) | [Update](26-update.md) |
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |

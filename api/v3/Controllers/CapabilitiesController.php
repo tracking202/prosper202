@@ -69,6 +69,14 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
+                    // The UI's Update section as REST, behind the same
+                    // role permissions (access_to_update_section, and
+                    // delete_individual_subids to delete subids):
+                    // POST /clicks/cpc, /conversions/subids,
+                    // /conversions/subids/delete, /conversions/subids/reset
+                    // and /conversions/uploads, each with ?dry_run=1. Not
+                    // stageable.
+                    'update_section' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the

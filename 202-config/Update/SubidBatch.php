@@ -242,14 +242,18 @@ final class SubidBatch
             // After the clear has committed: a failure here leaves the
             // conversions cleared and only the filtered flag behind, which
             // the next write to the click corrects, so it is logged and the
-            // list goes on (as delete-subids.php always did).
+            // list goes on (as delete-subids.php always did). Both failure
+            // shapes are caught: Connection's QueryException where mysqli
+            // reports by return value (the pages), mysqli_sql_exception
+            // where it throws (the API) — escaping here would report a
+            // committed clear as a failure (CLAUDE.md #13).
             foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',
                 'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ? AND user_id = ?'] as $sql) {
                 try {
                     $stmt = $this->conn->prepareWrite($sql);
                     $this->conn->bind($stmt, 'ii', [$clickId, $userId]);
                     $this->conn->executeUpdate($stmt);
-                } catch (QueryException $e) {
+                } catch (QueryException | \mysqli_sql_exception $e) {
                     error_log('delete subids: clearing the filtered flag failed for click ' . $clickId . ': ' . $e->getMessage());
                 }
             }
@@ -298,13 +302,18 @@ final class SubidBatch
      * (required), and optionally one of its campaigns. The sentences are the
      * page's; each surface may say them its own way, keyed by field.
      *
+     * `problems` names which check each error failed (missing, not_owned,
+     * other_category), so a caller can say it in its own words without
+     * reading the sentence.
+     *
      * @param string $rawNetwork the category id as given ('' or '0' = none)
      * @param string $rawCampaign the campaign id as given ('' or '0' = every campaign in the category)
-     * @return array{network_id: int, campaign_id: int, network: array<string, mixed>|null, campaign: array<string, mixed>|null, errors: array<string, string>}
+     * @return array{network_id: int, campaign_id: int, network: array<string, mixed>|null, campaign: array<string, mixed>|null, errors: array<string, string>, problems: array<string, string>}
      */
     public function resetScope(int $userId, string $rawNetwork, string $rawCampaign): array
     {
         $errors = [];
+        $problems = [];
         $network = null;
         $campaign = null;
         $networkId = 0;
@@ -314,9 +323,11 @@ final class SubidBatch
 
         if ($rawNetwork === '' || $rawNetwork === '0') {
             $errors['aff_network_id'] = 'You have to at least select an affiliate network to clear out.';
+            $problems['aff_network_id'] = 'missing';
         } elseif (!ctype_digit($rawNetwork) || strlen($rawNetwork) > 18
             || ($network = OwnedRow::find($this->conn, '202_aff_networks', 'aff_network_id', (int) $rawNetwork, $userId)) === null) {
             $errors['aff_network_id'] = 'Choose one of your categories from the list.';
+            $problems['aff_network_id'] = 'not_owned';
         } else {
             $networkId = (int) $rawNetwork;
         }
@@ -327,17 +338,19 @@ final class SubidBatch
                 : null;
             if ($campaign === null) {
                 $errors['aff_campaign_id'] = 'Choose one of your campaigns from the list.';
+                $problems['aff_campaign_id'] = 'not_owned';
             } elseif ($networkId > 0 && (int) $campaign['aff_network_id'] !== $networkId) {
                 // Without the page script the campaign list is not narrowed to
                 // the category; a campaign from another one is refused rather
                 // than cleared under a category it is not in.
                 $errors['aff_campaign_id'] = 'That campaign is not in the category you chose.';
+                $problems['aff_campaign_id'] = 'other_category';
             } else {
                 $campaignId = (int) $campaign['aff_campaign_id'];
             }
         }
 
-        return ['network_id' => $networkId, 'campaign_id' => $campaignId, 'network' => $network, 'campaign' => $campaign, 'errors' => $errors];
+        return ['network_id' => $networkId, 'campaign_id' => $campaignId, 'network' => $network, 'campaign' => $campaign, 'errors' => $errors, 'problems' => $problems];
     }
 
     /**
@@ -412,8 +425,14 @@ final class SubidBatch
             // The data engine rebuilds the hours these clicks fall in. The
             // window starts at the earliest cleared click; the page used to
             // take whichever click the database returned first, which could
-            // leave earlier hours showing the income just cleared.
-            $this->markDirtyHours($userId, $networkId, $campaignId, $earliest);
+            // leave earlier hours showing the income just cleared. Every
+            // clear has committed by now, so a failure here is reported as
+            // what it is: the clicks cleared, their hours not marked.
+            try {
+                $this->markDirtyHours($userId, $networkId, $campaignId, $earliest);
+            } catch (\Throwable $e) {
+                throw new BatchInterrupted('marking the report hours of the cleared clicks', $cleared, null, $e);
+            }
         }
 
         return $cleared;

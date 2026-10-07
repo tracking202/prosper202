@@ -39,6 +39,7 @@
 - [Text Ads](api/08-text-ads.md)
 - [Clicks](api/09-clicks.md)
 - [Conversions](api/10-conversions.md)
+- [Update: past clicks' CPC, subids, revenue reports](api/26-update.md)
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)

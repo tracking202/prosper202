@@ -108,7 +108,11 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
 
 $payload = [];
 if (in_array($method, ['POST', 'PUT', 'PATCH'])) {
-    $maxBody = 1_048_576; // 1 MB limit
+    // 1 MB, except for a revenue report upload, whose body carries the
+    // report itself (UpdateController::UPLOAD_MAX_BYTES).
+    $maxBody = $method === 'POST' && $path === '/conversions/uploads'
+        ? \Api\V3\Controllers\UpdateController::UPLOAD_MAX_BYTES
+        : 1_048_576;
     $raw = file_get_contents('php://input', false, null, 0, $maxBody + 1);
     if ($raw !== false && strlen($raw) > $maxBody) {
         Bootstrap::errorResponse('Request body too large', 413, ['max_bytes' => $maxBody]);
@@ -312,6 +316,35 @@ try {
             $r->post('',       fn() => ['_status' => 201] + $idempotent('conversions', $payload, fn() => $crud($cls)->create($payload)));
             $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
         });
+
+        // ── Update (the UI's Update section, tracking202/update/) ────────
+        // Update CPC, Update Subids, Delete Subids, Reset Campaign Subids and
+        // Upload Revenue Reports, through the pages' own domain code
+        // (Prosper202\Update, RevenueUploadImporter). Gated by the pages' role
+        // permissions (one permission check per operation on every surface,
+        // CLAUDE.md #5): access_to_update_section on every route, and
+        // delete_individual_subids as well to delete subids by list, as
+        // delete-subids.php asks. `?dry_run=1` previews through the same
+        // handler, after the same checks, and writes nothing. None is
+        // stageable: a report travels in the body (up to 8 MB), and a CPC
+        // write confirms a count taken moments before.
+        // UpdateRoutesPermissionTest holds all of this.
+        $updateSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_update_section');
+        };
+        $router->group('/clicks', function (Router $r) use ($crud, $payload, $queryParams) {
+            $r->post('/cpc', fn() => $crud(\Api\V3\Controllers\UpdateController::class)->cpc($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
+        $router->group('/conversions', function (Router $r) use ($crud, $payload, $queryParams, $auth, $db) {
+            $cls = \Api\V3\Controllers\UpdateController::class;
+            $r->post('/subids',        fn() => $crud($cls)->markSubids($payload, writeDryRunRequested($queryParams)));
+            $r->post('/subids/delete', function () use ($crud, $cls, $payload, $queryParams, $auth, $db) {
+                $auth->requirePermission($db, 'delete_individual_subids');
+                return $crud($cls)->deleteSubids($payload, writeDryRunRequested($queryParams));
+            });
+            $r->post('/subids/reset',  fn() => $crud($cls)->resetSubids($payload, writeDryRunRequested($queryParams)));
+            $r->post('/uploads',       fn() => $crud($cls)->uploadRevenue($payload, writeDryRunRequested($queryParams)));
+        }, [$updateSection]);
 
         // ── Reports ──────────────────────────────────────────────────────
         $router->group('/reports', function (Router $r) use ($crud, $queryParams) {
@@ -800,6 +833,7 @@ try {
                 'forecast_events' => '/forecast-events',
                 'clicks'        => '/clicks',
                 'conversions'   => '/conversions',
+                'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
                 'rotators'      => '/rotators',
@@ -1207,6 +1241,31 @@ function deleteDryRunRequested(string $method, array $queryParams): bool
     }
     throw new ValidationException('Invalid dry_run value', [
         'dry_run' => "Use dry_run=1 to preview the delete, or omit the parameter to perform it (got '$flag').",
+    ]);
+}
+
+/**
+ * Whether a POST write that has a preview (the Update routes) asked for it
+ * with `?dry_run=1`. Read by the handler itself, which previews instead of
+ * writing; the strict values are deleteDryRunRequested()'s, so a typo like
+ * dry_run=tru is an error and never the write.
+ */
+function writeDryRunRequested(array $queryParams): bool
+{
+    if (!array_key_exists('dry_run', $queryParams)) {
+        return false;
+    }
+    $raw = $queryParams['dry_run'];
+    $flag = is_string($raw) ? strtolower(trim($raw)) : null;
+    if (in_array($flag, ['1', 'true', 'yes', ''], true)) {
+        return true;
+    }
+    if (in_array($flag, ['0', 'false', 'no'], true)) {
+        return false;
+    }
+    throw new ValidationException('Invalid dry_run value', [
+        'dry_run' => 'Use dry_run=1 to preview without writing, or omit the parameter to write (got '
+            . ($flag === null ? 'a list' : "'$flag'") . ').',
     ]);
 }
 

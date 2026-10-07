@@ -11,6 +11,10 @@ List, inspect, manually create, and delete conversions.
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 
+Marking or deleting subids in bulk, resetting a campaign's subids and
+uploading a revenue report — the UI's Update section — are in the
+[Update API](26-update.md).
+
 ## Query Parameters (List)
 
 | Parameter | Type | Default | Description |
