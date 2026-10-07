@@ -20,7 +20,7 @@ $reportView = p202_report_view_begin();
 		
 	
 //get stuff
-	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
+	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
@@ -37,6 +37,7 @@ LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id)
 LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id) 
 LEFT JOIN 202_text_ads ON (202_text_ads.text_ad_id = 2c.text_ad_id) 
 LEFT JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id) 
+" . \Prosper202\DataEngine\IpAddressSql::join('2i', '2i6') . "
 LEFT JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id) 
 LEFT JOIN 202_browsers AS 2b ON (2c.browser_id = 2b.browser_id) 
 LEFT JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id) 

@@ -377,13 +377,76 @@ class AUTH
     }
 
 
+    /** @var array<int, string> the account zone read this request, by user id */
+    private static array $accountTimezones = [];
+
+    /**
+     * Set the request's zone: the signed-in user's, read from their account
+     * (202_users.user_timezone), else $user_timezone.
+     *
+     * The session keeps the zone it had at sign-in, and every report page
+     * counts its days from this: when the account's zone changed elsewhere
+     * (Personal Settings in another session, `p202 user update`, a
+     * colleague's User Management), "today" on every page stayed the old
+     * zone's today until the user signed in again, while GET /reports/*
+     * (api/v3 AccountTimezone) used the new one. The account's row is read
+     * once a request and the session's copy refreshed with it; a zone that
+     * is empty or that PHP does not know is UTC, as the API reads it, and a
+     * failed read keeps the session's zone rather than failing the page.
+     */
     public static function set_timezone($user_timezone)
     {
         if (isset($_SESSION['user_timezone'])) {
             $user_timezone = $_SESSION['user_timezone'];
+            $userId = (int) ($_SESSION['user_id'] ?? 0);
+            $accountZone = $userId > 0 ? self::accountTimezone($userId) : null;
+            if ($accountZone !== null) {
+                $user_timezone = $accountZone;
+                $_SESSION['user_timezone'] = $accountZone;
+            }
         }
 
         date_default_timezone_set($user_timezone);
+    }
+
+    /** The account's zone (UTC when unset or unknown), or null when it could not be read. */
+    private static function accountTimezone(int $userId): ?string
+    {
+        if (isset(self::$accountTimezones[$userId])) {
+            return self::$accountTimezones[$userId];
+        }
+        try {
+            if (!class_exists('DB', false)) {
+                return null;
+            }
+            $db = DB::getInstance()->getConnection();
+            if (!$db instanceof \mysqli) {
+                return null;
+            }
+            $stmt = $db->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
+            if ($stmt === false) {
+                return null;
+            }
+            self::bind($stmt, 'i', $userId);
+            self::execute($stmt, 'Unable to read the account time zone');
+            $result = $stmt->get_result();
+            $row = $result === false ? null : $result->fetch_assoc();
+            $stmt->close();
+            if ($result === false) {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+        if ($row === null) {
+            return null;
+        }
+        $zone = trim((string) ($row['user_timezone'] ?? ''));
+        if ($zone === '' || !in_array($zone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+            $zone = 'UTC';
+        }
+
+        return self::$accountTimezones[$userId] = $zone;
     }
 
     public static function remember_me_on_logged_out()

@@ -212,8 +212,8 @@ class DataEngine
             throw new Exception('Database connection not available');
         }
 
-        // Fix #4: resolve IPv6 globals before get_ip_id is called below, so
-        // every report sees consistent SQL function names regardless of type.
+        // Fix #4: resolve the IPv6 globals once per filter build, so every
+        // report sees consistent SQL function names regardless of type.
         $this->resolveIpv6Functions();
 
         $userId = self::$db->real_escape_string((string) $_SESSION['user_id']);
@@ -231,23 +231,19 @@ class DataEngine
         // gracefully, not 500.  Build filters from an empty row → all defaults.
         $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
-        // Stored prefs are still attacker-influenced input: escape the free
-        // text value before it is interpolated into a LIKE clause.
-        if (!empty($user_row['user_pref_keyword'])) {
-            $user_row['user_pref_keyword'] = self::$db->real_escape_string((string) $user_row['user_pref_keyword']);
-        }
+        // The keyword, referer and IP filters are subqueries over the stored
+        // values (TextFilterSql); their text is quoted through this
+        // connection. They used to be resolved here first: the referer to a
+        // GROUP_CONCAT id list the server cut at group_concat_max_len, the
+        // address to the first of its 202_ips rows.
+        $db = self::$db;
 
-        $ipIdList = null;
-        if (!empty($user_row['user_pref_ip'])) {
-            $ipIdList = (string) $this->get_ip_id($this->ipAddress($user_row['user_pref_ip']));
-        }
-
-        $refererIdList = null;
-        if (!empty($user_row['user_pref_referer'])) {
-            $refererIdList = (string) $this->get_site_url_id($user_row['user_pref_referer']);
-        }
-
-        return UserPrefFilters::build($user_row, $offset, $this->forDownload === 1, $ipIdList, $refererIdList);
+        return UserPrefFilters::build(
+            $user_row,
+            $offset,
+            $this->forDownload === 1,
+            static fn (string $text): string => $db->real_escape_string($text)
+        );
     }
 
     public function getAccountOverviewFilters(): string
@@ -266,130 +262,6 @@ class DataEngine
         $user_row = ReportView::apply($user_result->fetch_assoc() ?: [], $_SESSION['user_id']);
 
         return UserPrefFilters::showFilter((string) ($user_row['user_pref_show'] ?? 'all'));
-    }
-
-    /**
-     * Resolve a keyword search to a comma separated keyword_id list.
-     */
-    public function get_keyword_id($keyword)
-    {
-        if (!self::$db instanceof mysqli) {
-            return null;
-        }
-
-        $escaped = self::$db->real_escape_string((string) $keyword);
-        $keyword_sql = "SELECT group_concat(keyword_id) as keyword_id FROM 202_keywords WHERE keyword like '%" . $escaped . "%'";
-        $keyword_row = memcache_mysql_fetch_assoc($keyword_sql);
-
-        return $keyword_row['keyword_id'] ?? null;
-    }
-
-    public function get_ip_id($ip)
-    {
-        if (!self::$db instanceof mysqli) {
-            return null;
-        }
-
-        global $memcacheWorking, $memcache, $inet6_ntoa, $inet6_aton;
-
-        if (!isset($inet6_ntoa)) {
-            $inet6_ntoa = '';
-            $inet6_aton = 'INET6_ATON';
-        }
-
-        $escaped = self::$db->real_escape_string((string) $ip->address);
-
-        if ($inet6_ntoa == '' && $ip->type == 'ipv6') {
-            $escaped = inet6_aton($escaped); // encode for db check
-        }
-
-        if ($ip->type === 'ipv6') {
-            $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= ' . $inet6_aton . '("' . $escaped . '")';
-        } else {
-            $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $escaped . "'";
-        }
-
-        $cacheKey = md5("ip-id" . $escaped . systemHash());
-        if ($memcacheWorking) {
-            $cached = $memcache->get($cacheKey);
-            if ($cached) {
-                return $cached;
-            }
-        }
-
-        $ip_result = _mysqli_query($ip_sql);
-        $ip_row = $ip_result ? $ip_result->fetch_assoc() : null;
-
-        if ($ip_row) {
-            $ip_id = $ip_row['ip_id'];
-            if ($memcacheWorking) {
-                setCache($cacheKey, $ip_id, 2592000); // 30 days
-            }
-            return $ip_id;
-        }
-
-        INDEXES::insert_ip(self::$db);
-        return null;
-    }
-
-    public function ipAddress($ip_address): stdClass
-    {
-        global $inet6_ntoa, $inet6_aton;
-
-        if (!isset($inet6_ntoa)) {
-            $inet6_ntoa = '';
-            $inet6_aton = 'INET6_ATON';
-        }
-
-        $ip = new stdClass();
-
-        if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-            $ip->address = $ip_address;
-            $ip->type = filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 'ipv4' : 'ipv6';
-        } else {
-            // Fix #10: always set ->address so get_ip_id never reads an unset
-            // property regardless of which branch was taken.
-            $ip->address = '';
-            $ip->type = 'invalid';
-        }
-
-        return $ip;
-    }
-
-    /**
-     * Resolve a referer search to a comma separated site_url_id list.
-     */
-    public function get_site_url_id($site_url_address)
-    {
-        if (!self::$db instanceof mysqli) {
-            return null;
-        }
-
-        global $memcacheWorking, $memcache;
-
-        $escaped = self::$db->real_escape_string((string) $site_url_address);
-
-        $cacheKey = md5("url-id" . $site_url_address . systemHash());
-        if ($memcacheWorking) {
-            $cached = $memcache->get($cacheKey);
-            if ($cached) {
-                return $cached;
-            }
-        }
-
-        $site_url_sql = "SELECT GROUP_CONCAT(distinct 2de.click_referer_site_url_id) AS site_url_id FROM 202_dataengine as 2de LEFT JOIN 202_site_urls ON (2de.click_referer_site_url_id = site_url_id)  WHERE site_url_address LIKE '%" . $escaped . "%'";
-        $site_url_result = _mysqli_query($site_url_sql);
-        $site_url_row = $site_url_result ? $site_url_result->fetch_assoc() : null;
-
-        if ($site_url_row) {
-            $site_url_id = $site_url_row['site_url_id'];
-            if ($memcacheWorking) {
-                setCache($cacheKey, $site_url_id, 604800); // 7 days
-            }
-            return $site_url_id;
-        }
-
-        return null;
     }
 
     /**
@@ -672,8 +544,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         // 202_ppc_networks has no income/cost/clicks, so 2st. prefix is safe.
         $click_sql = " SELECT 2st.user_id,
         2st.ppc_network_id,
-        ppc_network_name," . MetricsSql::GROUPED_SELECT . ",
-        GROUP_CONCAT(DISTINCT(2st.variable_set_id)) as variable_set_ids
+        ppc_network_name," . MetricsSql::GROUPED_SELECT . "
         FROM 202_dataengine as 2st
         JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)"
             . $filters['join']

@@ -133,70 +133,24 @@ function grab_timeframe($unused = null): array
         'to' => time(),
     ];
 
-    if (($pref_time == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'yesterday') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-    }
-
-    if ($pref_time == 'last7') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 7), (int)date('d', time() - 86400 * 7), (int)date('Y', time() - 86400 * 7));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last14') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 14), (int)date('d', time() - 86400 * 14), (int)date('Y', time() - 86400 * 14));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last30') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 30), (int)date('d', time() - 86400 * 30), (int)date('Y', time() - 86400 * 30));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'thismonth') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastmonth') {
-        // Anchor to the last day of the previous month (first of this month minus one day)
-        // so the range is correct regardless of month length or today's date.
-        $last_month_day = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time())) - 86400;
-        $time['from'] = mktime(0, 0, 0, (int)date('m', $last_month_day), 1, (int)date('Y', $last_month_day));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', $last_month_day), (int)date('d', $last_month_day), (int)date('Y', $last_month_day));
-    }
-
-    if ($pref_time == 'thisyear') {
-        $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastyear') {
-        $last_year = (int)date('Y', time()) - 1;
-        $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
-        $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
-    }
-
-    if ($pref_time == 'alltime') {
-
-        // for the time from, do something special select the exact date this user was registered and use that :)
-        if (isset($_SESSION['user_id'])) {
+    // A named window, in the account's zone (AUTH::set_timezone() above
+    // reads it from the account), with calendar days rather than 86400-second
+    // strides: ReportWindow says what each one is and what this got wrong.
+    if (in_array($pref_time, \Tracking202\Report\ReportWindow::PRESETS, true)) {
+        $registeredAt = null;
+        if ($pref_time === 'alltime' && isset($_SESSION['user_id'])) {
             $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
             $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
             $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
             $user2_row = $user2_result->fetch_assoc();
-            if ($user2_row !== null) {
-                $time['from'] = $user2_row['user_time_register'];
+            if ($user2_row !== null && is_numeric($user2_row['user_time_register'] ?? null)) {
+                $registeredAt = (int) $user2_row['user_time_register'];
             }
         }
-
-        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+        $time = \Tracking202\Report\ReportWindow::preset($pref_time, date_default_timezone_get(), time(), $registeredAt);
+    } elseif (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '') {
+        // A custom window: today until the stored bounds are read below.
+        $time = \Tracking202\Report\ReportWindow::preset('today', date_default_timezone_get(), time());
     }
 
     if ($pref_time == '') {
@@ -347,38 +301,8 @@ function query(
             }
         }
 
-        // if domain lookup
-        if ($user_row['user_pref_referer']) {
-
-            if (! preg_match('/202_clicks_site/', (string) $command)) {
-                $command .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
-            }
-
-            if (! preg_match('/202_site_urls/', (string) $command)) {
-                $command .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
-            }
-
-            if (! preg_match('/202_site_domains/', (string) $command)) {
-                $command .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
-            }
-            // Count query: no JOINs needed — use subquery (see count_where below)
-        }
-
-        // if there is a keyword lookup, and we have not joined the 202 keywords table. do so now
-        if ($user_row['user_pref_keyword']) {
-            if (! preg_match('/202_keywords/', (string) $command)) {
-                $command .= " LEFT JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id) ";
-            }
-            // Count query: no JOIN needed — use subquery (see count_where below)
-        }
-
-        // if there is a ip lookup, and we have not joined the 202 ip table. do so now
-        if ($user_row['user_pref_ip']) {
-            if (! preg_match('/202_ips/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
-            }
-            // Count query: no JOIN needed — use subquery (see count_where below)
-        }
+        // The referer, keyword and IP filters need no join: they are
+        // subqueries over the click row's ids (TextFilterSql, below).
 
         // if there is a country lookup, and we have not joined the 202 country table. do so now
         if ($user_row['user_pref_country_id'] and ! preg_match('/202_locations_country/', (string) $command)) {
@@ -520,25 +444,17 @@ function query(
             $count_where .= " AND      2c.isp_id=" . $mysql['user_pref_isp_id'];
         }
 
-        if ($user_row['user_pref_referer']) {
-            $mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-            $click_sql .= " AND 2sd.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%'";
-            $count_where .= " AND EXISTS (SELECT 1 FROM 202_clicks_site AS 2cs2 JOIN 202_site_urls AS 2su2 ON (2cs2.click_referer_site_url_id = 2su2.site_url_id) JOIN 202_site_domains AS 2sd2 ON (2su2.site_domain_id = 2sd2.site_domain_id) WHERE 2cs2.click_id = 2c.click_id AND 2sd2.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%')";
-        }
-
-        if ($user_row['user_pref_keyword']) {
-            $mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-            $click_sql .= " AND 2k.keyword_id in (SELECT keyword_id from 202_keywords where keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
-							COLLATE utf8_general_ci) ";
-            $count_where .= " AND 2c.keyword_id IN (SELECT keyword_id FROM 202_keywords WHERE keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
-							COLLATE utf8_general_ci) ";
-        }
-
-        if ($user_row['user_pref_ip']) {
-            $mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-            $click_sql .= " AND 2i.ip_address LIKE '%" . $mysql['user_pref_ip'] . "%'";
-            $count_where .= " AND 2c.ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_address LIKE '%" . $mysql['user_pref_ip'] . "%')";
-        }
+        // Referer, keyword and IP, as every report and GET /clicks read them
+        // (TextFilterSql): this list matched the referer's domain only, the
+        // text as a LIKE pattern (`50%` matched "500 off"), and the address
+        // as a substring (10.0.0.1 matched 10.0.0.12).
+        $textFilters = \Prosper202\DataEngine\TextFilterSql::where(
+            $user_row,
+            $db_table,
+            static fn (string $text): string => $db->real_escape_string($text)
+        );
+        $click_sql .= $textFilters;
+        $count_where .= $textFilters;
 
         if ($user_row['user_pref_device_id']) {
             $mysql['user_pref_device_id'] = (int) $user_row['user_pref_device_id'];
@@ -565,13 +481,16 @@ function query(
 
         $mysql['from'] = $db->real_escape_string((string)$time['from']);
         $mysql['to'] = $db->real_escape_string((string)$time['to']);
+        // Both bounds are inclusive, as every report and GET /clicks read a
+        // window: a day ends at 23:59:59 and the next begins at 00:00:00, so
+        // `>` and `<` dropped the clicks of those two seconds from the list.
         if ($mysql['from'] != '') {
-            $click_sql .= " AND click_time > " . $mysql['from'] . " ";
-            $count_where .= " AND click_time > " . $mysql['from'] . " ";
+            $click_sql .= " AND click_time >= " . $mysql['from'] . " ";
+            $count_where .= " AND click_time >= " . $mysql['from'] . " ";
         }
         if ($mysql['to'] != '') {
-            $click_sql .= " AND click_time < " . $mysql['to'] . " ";
-            $count_where .= " AND click_time < " . $mysql['to'] . " ";
+            $click_sql .= " AND click_time <= " . $mysql['to'] . " ";
+            $count_where .= " AND click_time <= " . $mysql['to'] . " ";
         }
     }
 
