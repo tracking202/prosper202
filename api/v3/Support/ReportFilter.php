@@ -24,22 +24,23 @@ use Api\V3\Exception\ValidationException;
  *  - device_type is a 202_device_types id, applied as the pages apply their
  *    device menu: to every device model of that type;
  *  - keyword and referer are "contains", case-insensitive (the columns'
- *    collation), over the keyword and the referring URL. Unlike the pages,
- *    % and _ in the text are matched literally: the pages pasted the text
- *    into LIKE, so `50%` matched every keyword containing "50";
+ *    collation), over the keyword and the referring URL, with % and _ in
+ *    the text matched literally (the pages used to paste the text into
+ *    LIKE, so `50%` matched every keyword containing "50");
  *  - ip is one address, exactly; an IPv6 address matches however it is
  *    written (it is compared packed, as it is stored);
  *  - show is the pages' "show" menu: all, real (not filtered), filtered,
  *    filtered_bot, leads (clicks that converted);
  *  - method_of_promotion is directlink (no landing page) or landingpage.
  *
- * What the pages did that this does not: their referer filter resolved the
- * matching URLs to an id list with GROUP_CONCAT, which is cut at
- * group_concat_max_len (1024 bytes by default on MySQL 8; MariaDB's default
- * is 1 MB), so on MySQL a common word matched a truncated list, the last id
- * possibly cut mid-number; their IP filter took the first of several stored
- * rows for one address (202_ips has no unique key on it). Both are
- * subqueries here, over every matching row.
+ * The pages' keyword, referer and IP filters are now these very terms
+ * (Prosper202\DataEngine\TextFilterSql builds them through this class).
+ * They used to resolve the referer to an id list with GROUP_CONCAT, which
+ * is cut at group_concat_max_len (1024 bytes by default on MySQL 8;
+ * MariaDB's default is 1 MB), so on MySQL a common word matched a truncated
+ * list, the last id possibly cut mid-number, and the IP to the first of
+ * several stored rows for one address (202_ips has no unique key on it).
+ * Both are subqueries here, over every matching row.
  *
  * A parameter the report does not know, a list where one value goes, and a
  * value outside a filter's form are each a 422 naming the parameter

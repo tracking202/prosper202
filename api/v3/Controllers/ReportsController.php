@@ -46,11 +46,12 @@ class ReportsController
      *    Tablet, Bot), through the click's device model.
      *  - c1..c4, utm_*: the group overview's levels.
      *  - rotator, rotator_rule: the group overview's levels, from the
-     *    click's 202_clicks_rotator row (the rule that matched). The
-     *    Overview's Rotator Breakdown counted a rule from 202_clicks.rule_id,
-     *    which rtr.php fills with the redirect's id, not the rule's; see
-     *    rotatorStats(). A rotator's default (no rule matched) is no rule
-     *    and in no rotator_rule row; rotatorStats() has it.
+     *    click's 202_clicks_rotator row (the rule that matched), as the
+     *    Overview's Rotator Breakdown now reads it too (it used to count a
+     *    rule from 202_clicks.rule_id, which rtr.php fills with the
+     *    redirect's id, not the rule's). A rotator's default (no rule
+     *    matched) is no rule and in no rotator_rule row; rotatorStats() has
+     *    it.
      */
     private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
@@ -882,16 +883,12 @@ class ReportsController
      *
      * Read from 202_dataengine, whose rotator_id and rule_id are the click's
      * 202_clicks_rotator row: the rotator that routed it and the rule that
-     * matched. The Overview page counted from 202_clicks instead, which
-     * differs in two ways this does not copy:
-     *  - it found a rule's clicks by 202_clicks.rule_id, which rtr.php fills
-     *    with the chosen REDIRECT's id (rule_redirect_id). A rule's row
-     *    counted the clicks whose redirect id happened to equal the rule id:
-     *    another rule's clicks, or none;
-     *  - it found a rotator's clicks by 202_clicks.rotator_id, which only
-     *    rtr.php sets; a landing page's offer rotator (offrtr.php) records
-     *    its clicks in 202_clicks_rotator alone, so they were missing.
-     * Its money is this one's: income is the payout of the clicks that
+     * matched. The Overview page (Tracking202\Report\RotatorBreakdown) reads
+     * the same row; it used to count from 202_clicks, which found a rule's
+     * clicks by 202_clicks.rule_id -- the chosen REDIRECT's id, so another
+     * rule's clicks or none -- and a rotator's by 202_clicks.rotator_id,
+     * which offrtr.php does not set. RotatorBreakdownIntegrationTest holds
+     * the page to these figures. Income is the payout of the clicks that
      * converted, cost their CPC. Every rule is listed, a rule without clicks
      * at zero; a rule since deleted that still has clicks in the window is
      * listed after them with `deleted: true`, so the rules and the default
