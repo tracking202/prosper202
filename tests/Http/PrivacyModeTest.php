@@ -9,7 +9,8 @@ use Prosper202\Http\PrivacyMode;
 
 /**
  * The owner's privacy setting applied to one visitor. 'eu' used to read a
- * session key nothing set, so it never held back for anyone.
+ * session key nothing set, so it never held back for anyone; it holds back
+ * for every visitor GeoIP does not place outside Europe and the EU.
  */
 final class PrivacyModeTest extends TestCase
 {
@@ -45,18 +46,27 @@ final class PrivacyModeTest extends TestCase
         self::assertSame(1, $asked);
     }
 
-    /** @return iterable<string, array{mixed, bool}> getGeoData()'s is_european_union, may be in the EU */
-    public static function geoAnswers(): iterable
+    /**
+     * A placed address's record: the country's EU flag and the continent's
+     * code. Only outside Europe and outside the EU lifts 'eu' privacy; an
+     * address nobody can place never reaches this (EuropeanVisitorTest).
+     *
+     * @return iterable<string, array{bool, ?string, bool}>
+     */
+    public static function placedRecords(): iterable
     {
-        yield 'in the EU' => [true, true];
-        yield 'outside the EU' => [false, false];
-        yield 'GeoIP cannot place the address' => ['Unknown', true];
-        yield 'no GeoIP library' => [null, true];
+        yield 'an EU member (Germany)' => [true, 'EU', true];
+        yield 'Europe outside the EU (Norway, Switzerland)' => [false, 'EU', true];
+        yield 'the EU outside Europe (Reunion)' => [true, 'AF', true];
+        yield 'outside Europe and the EU (United States)' => [false, 'NA', false];
+        yield 'outside Europe and the EU (Japan)' => [false, 'AS', false];
+        yield 'a country with no continent' => [false, null, true];
+        yield 'an empty continent code' => [false, '', true];
     }
 
-    /** @dataProvider geoAnswers */
-    public function testOnlyAPositiveOutsideLiftsEuPrivacy(mixed $answer, bool $expected): void
+    /** @dataProvider placedRecords */
+    public function testOnlyOutsideEuropeAndTheEuLiftsEuPrivacy(bool $inEu, ?string $continent, bool $expected): void
     {
-        self::assertSame($expected, PrivacyMode::mayBeInEu($answer));
+        self::assertSame($expected, PrivacyMode::mayBeEuropean($inEu, $continent));
     }
 }

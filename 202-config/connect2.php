@@ -210,25 +210,23 @@ function trackingEnabled(): bool
 
 /**
  * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
- * their address places them outside the European Union, it does.
+ * their address places them outside Europe and outside the European Union,
+ * it does (EuropeanVisitor, which the app intakes ask too).
  *
  * The check used to read $_SESSION['is_european_union'], which nothing ever
  * set: every request under 'eu' raised an undefined-key warning and tracked
  * EU visitors in full — cookies set, the address stored — which is what the
- * setting promises not to do. Only a positive "not in the EU" lifts privacy:
- * an address GeoIP cannot place, or one in a European country outside the
- * EU (getGeoData() reports those as "Unknown"), is treated as possibly EU,
- * and so is everyone when the GeoIP library is missing (getGeoData() then
- * answers false for every address without looking). Asked once per request.
+ * setting promises not to do. Only a positive "outside Europe, not in the
+ * EU" lifts privacy: an address GeoIP cannot place, one in a European
+ * country outside the EU, and everyone when the GeoIP library or database
+ * is missing are held back (PrivacyMode::mayBeEuropean() says why). Asked
+ * once per request.
  */
 function p202VisitorMayBeInEu(): bool
 {
     static $mayBe = null;
     if ($mayBe === null) {
-        $answer = class_exists(\GeoIp2\Database\Reader::class)
-            ? (getGeoData(\Prosper202\Http\VisitorIp::fromServer($_SERVER))['is_european_union'] ?? null)
-            : null;
-        $mayBe = \Prosper202\Http\PrivacyMode::mayBeInEu($answer);
+        $mayBe = \Prosper202\Http\EuropeanVisitor::mayBe(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     }
 
     return $mayBe;

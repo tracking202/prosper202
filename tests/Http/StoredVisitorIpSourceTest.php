@@ -15,17 +15,20 @@ use Tests\Support\SourceScan;
  * none of the storage read — dl.php, rtr.php and the landing-page recorders
  * stored the address as it arrived whatever the setting said.
  *
- * What it reads, in tracking202/ and connect2.php (the click path; the
- * admin pages' own uses of an address — the login log, a report filtered
- * by an IP the owner typed — are not a visitor's): every call to
- * findOrCreateIp() and get_ip_id(), whose address is the last argument, and
- * the 'ip' entry of the array handed to p202RecordConversion() and
- * p202RecordLegacyConversion(), and the address LastClickFromAddress::find()
- * looks a visitor's last click up by. Each must be exactly
- * `p202StoredVisitorIp()` unless ALLOWED names the site and why. And no file
- * there writes its own by-address lookup in SQL: the five that did matched
- * REMOTE_ADDR — a proxy's address, under which no click is stored — and never
- * an IPv6 click.
+ * What it reads, in every served file: every call to findOrCreateIp(),
+ * get_ip_id() and insert_ip() (the address index), whose address is the
+ * last argument, the 'ip' entry of the array handed to
+ * p202RecordConversion() and p202RecordLegacyConversion(), and the address
+ * LastClickFromAddress::find() looks a visitor's last click up by. Each
+ * must be exactly `p202StoredVisitorIp()` unless ALLOWED names the site and
+ * why — the sign-in's own address, the index's internals — and an ALLOWED
+ * site that is gone fails too, so the list cannot rot. It used to read only
+ * tracking202/ and connect2.php, so an address stored anywhere else was
+ * never asked about; StoredAddressWritesTest now asks the same question of
+ * every SQL write of an address column. And no file in tracking202/ writes
+ * its own by-address lookup in SQL: the five that did matched REMOTE_ADDR —
+ * a proxy's address, under which no click is stored — and never an IPv6
+ * click.
  *
  * The other direction too: the click filter compares the address a click
  * ARRIVED from with the operator's sign-in address, which is stored as it
@@ -42,12 +45,37 @@ final class StoredVisitorIpSourceTest extends TestCase
     /** An address compared in SQL: `202_ips.ip_address = …`, any table alias. */
     private const ADDRESS_MATCH = '/\\bip_address\\s*=/i';
 
-    /** @var array<string, array{string, string}> file => [allowed value, why] */
+    /** @var array<string, array<string, string>> file => allowed value => why */
     private const ALLOWED = [
         'tracking202/static/cb202.php' => [
-            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)',
-            'ClickBank\'s INS notification: the address is ClickBank\'s server, never a visitor\'s,'
-                . ' and connect.php (this endpoint\'s bootstrap) has no privacy state',
+            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'ClickBank\'s INS notification: the address is'
+                . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
+                . ' has no privacy state',
+        ],
+        '202-login.php' => [
+            '$login_ip' => 'the signed-in user\'s own address, an operator\'s record kept as it arrived:'
+                . ' the click filter compares a click\'s arrived address with it (FILTER::checkUserIP)',
+        ],
+        '202-config/functions-tracking202.php' => [
+            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() on connect.php\'s pages:'
+                . ' the signed-in pages, the sign-in page and the cron jobs, and ClickBank\'s server;'
+                . ' no tracking-link visitor reaches connect.php',
+            '$ip' => 'INDEXES::get_ip_id() handing its own argument to insert_ip(): checked at get_ip_id()\'s callers',
+        ],
+        '202-config/connect2.php' => [
+            '$ip_object' => 'INDEXES::get_ip_id() handing its own argument to insert_ip():'
+                . ' checked at get_ip_id()\'s callers',
+        ],
+        '202-config/static-endpoint-helpers.php' => [
+            '(string)($opts[\'ip\']??\'\')' => 'p202RecordLegacyConversion() handing its own \'ip\''
+                . ' to p202RecordConversion(): checked at its callers',
+        ],
+        '202-config/functions-indexes.php' => [
+            '$ip_address' => 'the get_ip_id() wrapper, which no file calls, handing its argument through',
+        ],
+        '202-config/Repository/Cached/CachedLocationRepository.php' => [
+            '$address' => 'the caching decorator handing its argument to the repository it wraps:'
+                . ' checked at its callers',
         ],
     ];
 
@@ -55,23 +83,40 @@ final class StoredVisitorIpSourceTest extends TestCase
     {
         $problems = [];
         $read = 0;
+        $used = [];
         foreach (self::sites() as [$path, $line, $what, $value]) {
             $read++;
-            $allowed = self::ALLOWED[$path][0] ?? null;
-            if ($value !== self::STORED && $value !== $allowed) {
-                $shown = $value === '' ? '(nothing readable)' : $value;
-                $problems[] = sprintf('%s:%d  %s takes %s', $path, $line, $what, $shown);
+            if ($value === self::STORED) {
+                continue;
             }
+            if (isset(self::ALLOWED[$path][$value])) {
+                $used[$path][$value] = true;
+                continue;
+            }
+            $shown = $value === '' ? '(nothing readable)' : $value;
+            $problems[] = sprintf('%s:%d  %s takes %s', $path, $line, $what, $shown);
         }
 
         // dl.php, rtr.php, the two landing-page recorders and the error log
         // store a click address; gpb, gpx, upx, pb, px and cb202 a
         // conversion's; off.php, px.php, gpx.php, upx.php and rtr.php look
-        // a visitor's last click up by it.
-        self::assertGreaterThanOrEqual(16, $read, 'the scan finds the storage and lookup sites');
+        // a visitor's last click up by it; the sign-in, the operator pages'
+        // error log and the index's internals are listed.
+        self::assertGreaterThanOrEqual(24, $read, 'the scan finds the storage and lookup sites');
         self::assertSame([], $problems, "A visitor address is stored or looked up without the privacy mask:\n  "
             . implode("\n  ", $problems)
-            . "\nPass p202StoredVisitorIp(): the VisitorIp address, masked when trackingEnabled() is false.");
+            . "\nPass p202StoredVisitorIp(): the VisitorIp address, masked when trackingEnabled() is false"
+            . ' (StoredVisitorIp::forAccount() where connect2.php is not loaded).');
+
+        $stale = [];
+        foreach (self::ALLOWED as $path => $values) {
+            foreach (array_keys($values) as $value) {
+                if (!isset($used[$path][$value])) {
+                    $stale[] = $path . '  ' . $value;
+                }
+            }
+        }
+        self::assertSame([], $stale, "Listed sites the scan no longer finds; drop them:\n  " . implode("\n  ", $stale));
     }
 
     public function testTheClickFilterIsCalledWithTheArgumentsItTakes(): void
@@ -136,6 +181,7 @@ final class StoredVisitorIpSourceTest extends TestCase
     {
         yield 'a repository store' => ['<?php $id = $repo->findOrCreateIp($ip);', 1];
         yield 'a static store with the connection' => ['<?php $id = INDEXES::get_ip_id($db, $ip_address);', 1];
+        yield 'the index\'s own insert' => ['<?php $id = INDEXES::insert_ip($db, $ip);', 1];
         yield 'a conversion row' => ['<?php p202RecordConversion($db, ["click_id" => 1, "ip" => $ip]);', 1];
         yield 'a legacy conversion row' => ['<?php p202RecordLegacyConversion($db, 1, 2, ["ip" => $ip]);', 1];
         yield 'a conversion row joined to more fields' => [
@@ -170,9 +216,6 @@ final class StoredVisitorIpSourceTest extends TestCase
     {
         $sites = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (!str_starts_with($path, 'tracking202/') && $path !== '202-config/connect2.php') {
-                continue;
-            }
             array_push($sites, ...self::sitesIn($path, $source));
         }
 
@@ -183,7 +226,7 @@ final class StoredVisitorIpSourceTest extends TestCase
     private static function sitesIn(string $path, string $source): array
     {
         $sites = [];
-        foreach (CallArgs::calls($source, ['findOrCreateIp', 'get_ip_id']) as $call) {
+        foreach (CallArgs::calls($source, ['findOrCreateIp', 'get_ip_id', 'insert_ip']) as $call) {
             $last = $call['args'] === [] ? [] : $call['args'][count($call['args']) - 1];
             $sites[] = [$path, $call['line'], $call['name'] . '()', CallArgs::text($last)];
         }

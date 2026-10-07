@@ -227,6 +227,8 @@ $keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup 
 $bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
 $refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pickup Referer from t202ref variable'];
 $privacyChoices = ['disabled' => 'Disabled', 'eu' => 'Enabled for European Traffic', 'all' => 'Enabled for All Traffic'];
+$privacyHelp = 'Which visitors get no tracking cookies and a masked address. European traffic is anyone'
+    . ' the location lookup does not place outside Europe.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
@@ -911,7 +913,7 @@ echo p202_account_render_flashes($extraFlashes);
 										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_privacy'); ?>" name="user_pref_privacy" id="user_pref_privacy">
 											<?php echo $renderOptions($privacyChoices, $profileValue('user_pref_privacy', 'user_pref_privacy')); ?>
 										</select>
-										<div class="form-text">Which visitors get privacy handling of their data.</div>
+										<div class="form-text"><?php echo $e($privacyHelp); ?></div>
 										<?php echo p202_account_field_error($profileErrors, 'user_pref_privacy'); ?>
 									</div>
 									<div class="col-md-6">

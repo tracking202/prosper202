@@ -19,6 +19,7 @@ use Api\V3\Support\ServerStateStore;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\MysqlGoalRepository;
+use Prosper202\Http\StoredVisitorIp;
 use Throwable;
 
 /**
@@ -164,7 +165,13 @@ final class InstallIntake
                 return self::error(503, 'This server cannot verify install tokens right now; retry later.', [], ['Retry-After' => '300']);
             }
 
-            $work = fn (): array => $this->record($registration, $payload, $parsed, $first, $remoteIp);
+            // The device's address as the click path stores a visitor's:
+            // masked when the install's or the owner's privacy setting holds
+            // back for it (StoredVisitorIp::forAccount()). Resolved before
+            // the transaction, so the 'eu' answer's GeoIP read holds no lock.
+            // The per-peer rate limit keyed on REMOTE_ADDR, in index.php.
+            $storedIp = StoredVisitorIp::forAccount($this->conn, $remoteIp, $registration->userId);
+            $work = fn (): array => $this->record($registration, $payload, $parsed, $first, $storedIp);
             try {
                 try {
                     $done = $this->conn->transaction($work);
@@ -309,12 +316,12 @@ final class InstallIntake
      * @param array{state: MatchState|null, reason: string, click_id: int|null} $first
      * @return array{row: array<string, mixed>, post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>}}
      */
-    private function record(AppRegistration $registration, InstallPayload $payload, ?array $parsed, array $first, string $remoteIp): array
+    private function record(AppRegistration $registration, InstallPayload $payload, ?array $parsed, array $first, string $storedIp): array
     {
         $now = $this->now();
         $state = $first['state'] ?? MatchState::PENDING_CLICK;
         $reason = $first['state'] !== null ? $first['reason'] : 'Classifying.';
-        $rowId = $this->insert($registration, $payload, $parsed, $state, $reason, $remoteIp, $now);
+        $rowId = $this->insert($registration, $payload, $parsed, $state, $reason, $storedIp, $now);
 
         $clickId = null;
         if ($first['state'] === null) {
@@ -603,7 +610,7 @@ final class InstallIntake
     /**
      * @param array{class: string, tokens: list<string>, fields: array<string, string|null>, raw: string, truncated: bool, meta_envelope: bool}|null $parsed
      */
-    private function insert(AppRegistration $registration, InstallPayload $payload, ?array $parsed, MatchState $state, string $reason, string $remoteIp, int $now): int
+    private function insert(AppRegistration $registration, InstallPayload $payload, ?array $parsed, MatchState $state, string $reason, string $storedIp, int $now): int
     {
         $fields = $parsed['fields'] ?? array_fill_keys([...ReferrerParser::UTM, 'gclid'], null);
         $stmt = $this->conn->prepareWrite(
@@ -642,7 +649,7 @@ final class InstallIntake
             $mode->value, $integrity->value,
             $payload->integrityToken === null ? null : IntegrityBinding::tokenHash($payload->integrityToken),
             $queued ? $now : null,
-            $payload->firstOpenAt, $now, $payload->raw(), self::ip($remoteIp),
+            $payload->firstOpenAt, $now, $payload->raw(), $storedIp,
         ]);
         $id = $this->conn->executeInsert($stmt);
         if ($id <= 0) {
@@ -765,11 +772,6 @@ final class InstallIntake
             'integrity' => (string) $row['integrity_state'],
             'duplicate' => $duplicate,
         ];
-    }
-
-    private static function ip(string $ip): string
-    {
-        return filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
     }
 
     /**
