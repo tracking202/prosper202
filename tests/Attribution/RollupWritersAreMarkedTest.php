@@ -77,6 +77,9 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Report/MysqlReportRepository.php' => 'reads',
         'api/v3/Controllers/ReportsController.php' => 'reads',
         'api/v3/Controllers/SystemController.php' => 'counts rows',
+        // POST /system/retention/delete-before: names the click tables to count
+        // what the cron job's one-off deletion (ClearOldClicks) would remove.
+        'api/v3/Controllers/AdministrationController.php' => 'reads: counts click rows and stores the deletion marker on 202_users_pref; the cron job deletes',
         // The subid writes behind the Update pages and the /conversions/subids API.
         '202-config/Update/SubidBatch.php' => 'writes click_filtered, which no sum reads',
     ];

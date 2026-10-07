@@ -375,6 +375,7 @@ try {
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries((int)$ctx['id'], $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
         }, [
             static function () use ($auth): void {
@@ -401,6 +402,8 @@ try {
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
             $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct((int)$ctx['id'], $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct((int)$ctx['id'])));
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField((int)$ctx['id'])));
@@ -835,6 +838,34 @@ try {
             $r->get('/metrics',    fn() => $make()->metrics());
         }, [$auth->requireAdmin(...)]);
 
+        // ── Administration (202-account/administration.php, api-integrations.php) ──
+        // What Account › Settings shows and changes for this install, and the
+        // URLs Account › API integrations hands out. Admin, as the rest of
+        // /system, and the pages' own permission on top (CLAUDE.md #5):
+        // access_to_settings for Settings, access_to_api_integrations for the
+        // integrations. Not stageable; the one-off deletion previews with
+        // `?dry_run=1` through the same handler, so it is gated identically.
+        // AdministrationRoutesPermissionTest holds all of this.
+        $settingsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_settings');
+        };
+        $integrationsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_api_integrations');
+        };
+        $router->group('/system', function (Router $r) use ($crud, $payload, $queryParams) {
+            $cls = \Api\V3\Controllers\AdministrationController::class;
+            $r->get('/info',                     fn() => $crud($cls)->info(isset($GLOBALS['mchost']) && is_string($GLOBALS['mchost']) ? $GLOBALS['mchost'] : null));
+            $r->get('/login-log',                fn() => $crud($cls)->loginLog($queryParams));
+            $r->get('/retention',                fn() => $crud($cls)->retention());
+            $r->put('/retention',                fn() => $crud($cls)->setRetention($payload));
+            $r->post('/retention/delete-before', fn() => $crud($cls)->scheduleDeletion($payload, writeDryRunRequested($queryParams)));
+            $r->get('/isp-lookup',               fn() => $crud($cls)->ispLookup());
+            $r->put('/isp-lookup',               fn() => $crud($cls)->setIspLookup($payload));
+        }, [$auth->requireAdmin(...), $settingsPage]);
+        $router->group('/system', function (Router $r) use ($crud) {
+            $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
+        }, [$auth->requireAdmin(...), $integrationsPage]);
+
         // ── API root ─────────────────────────────────────────────────────
         $router->get('/', fn() => [
             'api' => 'Prosper202 API v3',
@@ -853,14 +884,14 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
-                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',
@@ -917,6 +948,7 @@ try {
             $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview((int)$ctx['id'], (int)$ctx['aliasId']));
             $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview((int)$ctx['id']));
             $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview((int)$ctx['id']));
+            $r->delete('/products/{id}',                    fn($ctx) => $crud($cls)->deleteProductPreview((int)$ctx['id']));
             $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview((int)$ctx['id']));
             $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview((int)$ctx['id']));
         });

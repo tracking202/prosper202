@@ -318,6 +318,424 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /system/info:
+    get:
+      tags: [System]
+      summary: What Account › Settings shows for this install
+      description: |
+        The Administration page's tiles and its System and PHP limits panels:
+        the code version and the database's (`database_upgrade_needed` when
+        they differ — `202-config/upgrade.php` runs then), PHP and MySQL
+        versions, memcache (installed, and whether its server answers), the
+        PHP limits, clicks recorded to date, database size, when the cron job
+        last ran, the DataEngine's progress, and the caller's keyword
+        preference. Whether a newer release exists is not reported: the page
+        asks a remote service for that, and this endpoint makes no network
+        request.
+
+        Admin (or Super user) with the role permission `access_to_settings`,
+        as the page asks, and `system:read`.
+      operationId: systemInfo
+      responses:
+        "200":
+          description: Install details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: string
+                        description: The code's version (202-config/version.php)
+                      schema_version:
+                        type: string
+                        nullable: true
+                        description: The database's (202_version)
+                      database_upgrade_needed:
+                        type: boolean
+                      php_version:
+                        type: string
+                      mysql_version:
+                        type: string
+                      php_safe_mode:
+                        type: boolean
+                      memcache:
+                        type: object
+                        properties:
+                          installed:
+                            type: boolean
+                          running:
+                            type: boolean
+                      php_limits:
+                        type: object
+                        properties:
+                          post_max_size:
+                            type: string
+                          upload_max_filesize:
+                            type: string
+                          max_input_time:
+                            type: string
+                          max_execution_time:
+                            type: string
+                      clicks_recorded:
+                        type: integer
+                        nullable: true
+                      database_size_bytes:
+                        type: integer
+                      cron_last_ran_at:
+                        type: integer
+                        nullable: true
+                        description: Unix seconds; null when the cron job never ran
+                      cron_last_ran_seconds_ago:
+                        type: integer
+                        nullable: true
+                      dataengine:
+                        type: object
+                        properties:
+                          tasks_total:
+                            type: integer
+                          tasks_done:
+                            type: integer
+                          percent_done:
+                            type: number
+                          minutes_left:
+                            type: integer
+                            description: One task a minute
+                      keyword_preference:
+                        type: string
+                        nullable: true
+                        enum: [searched, bidded]
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /system/login-log:
+    get:
+      tags: [System]
+      summary: Sign-in attempts to this install
+      description: |
+        The attempts Account › Settings lists, newest first: the user name
+        typed, the time, the IP address and whether it passed. Only those
+        columns — the table also holds each attempt's request snapshot and,
+        on installs from before the password was filtered, the password typed;
+        neither is ever served. Throttled and token-refused attempts are not
+        recorded. Unknown parameters are refused.
+
+        Admin (or Super user) with `access_to_settings`, and `system:read`.
+      operationId: systemLoginLog
+      parameters:
+        - name: limit
+          in: query
+          description: How many attempts (1-500); the page shows 50. Anything else is a `422`.
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Attempts, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        login_id:
+                          type: integer
+                        user_name:
+                          type: string
+                        ip_address:
+                          type: string
+                        login_time:
+                          type: integer
+                        login_success:
+                          type: boolean
+                  meta:
+                    type: object
+                    properties:
+                      limit:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /system/retention:
+    get:
+      tags: [System]
+      summary: Click-data retention
+      description: |
+        For the whole install (every account's clicks), as the cron job reads
+        it from user 1's preferences: `auto_delete_days` — click data older
+        than this many days is deleted each night (0 keeps it all) — and the
+        one-off deletion `POST /system/retention/delete-before` scheduled, if
+        any (`scheduled_deletion`: the cron job deletes every click whose id
+        is below `through_click_id`; `before` is the day of that click and
+        `clicks_remaining` counts those still there).
+
+        Admin (or Super user) with `access_to_settings`, and `system:read`.
+      operationId: systemRetention
+      responses:
+        "200":
+          description: Retention settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemRetention"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [System]
+      summary: Set automatic click-data deletion
+      description: |
+        What the page's "Delete click data older than … days" saves: a whole
+        number of days from 0 (keep every click) to 36500, as a JSON integer
+        or a string of digits; anything else is a `422`, never read as another
+        number. Written to user 1's preferences, the row the cron job reads,
+        whoever calls. The answer is the new state with
+        `previous_auto_delete_days`.
+
+        Admin (or Super user) with `access_to_settings`, and `system:write`.
+        Not stageable (`?staged=1` is a `422`).
+      operationId: systemSetRetention
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auto_delete_days]
+              additionalProperties: false
+              properties:
+                auto_delete_days:
+                  type: integer
+                  minimum: 0
+                  maximum: 36500
+      responses:
+        "200":
+          description: The new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemRetention"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /system/retention/delete-before:
+    post:
+      tags: [System]
+      summary: Schedule the deletion of click data from before a day
+      description: |
+        The page's Advanced › "Delete click data from before". It deletes
+        nothing itself: it stores a click id on user 1's preferences, and the
+        cron job deletes every click below it — every account's — from the
+        ten click tables, 5,000 rows a table each run. Setup data is kept. It
+        cannot be undone.
+
+        The id is the page's: the newest click recorded at or before midnight
+        that begins `before`, in the caller's time zone (`user_timezone`; a
+        zone the server does not know is a `409`, never read as UTC).
+        `before` is a calendar day written `YYYY-MM-DD`, not after today.
+
+        **Preview** with `?dry_run=1`: nothing is written, and the answer
+        names the id (`through_click_id`, null when no click is that old) and
+        counts what the cron job would delete, per table (`rows`; `clicks` is
+        `202_clicks`). **Schedule** by sending `before` with that
+        `through_click_id`: it is stored only if the day still names that
+        click, otherwise nothing is written and the answer is a `409` whose
+        `details` carry `current_through_click_id`. A write without
+        `through_click_id` is a `422`. When no click is from before the day,
+        nothing is written (`scheduled: false`).
+
+        Admin (or Super user) with `access_to_settings`, and `system:write`,
+        for the preview too. Not stageable (`?staged=1` is a `422`).
+      operationId: systemScheduleDeletion
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [before]
+              additionalProperties: false
+              properties:
+                before:
+                  type: string
+                  format: date
+                  example: "2026-01-01"
+                through_click_id:
+                  type: integer
+                  nullable: true
+                  description: The preview's `through_click_id`; required to schedule
+      responses:
+        "200":
+          description: "The preview (`dry_run: true`), or what was scheduled"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      dry_run:
+                        type: boolean
+                      scheduled:
+                        type: boolean
+                      before:
+                        type: string
+                        format: date
+                      timezone:
+                        type: string
+                      cutoff_time:
+                        type: integer
+                        description: Midnight that begins `before`, unix seconds
+                      through_click_id:
+                        type: integer
+                        nullable: true
+                      clicks:
+                        type: integer
+                        description: 202_clicks rows the cron job deletes
+                      rows:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                        description: Rows the cron job deletes, per click table
+                      current:
+                        description: The deletion scheduled before this request (`scheduled_deletion` of `GET /system/retention`)
+                        type: object
+                        nullable: true
+                        additionalProperties: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The day names another click than the preview did, or the account's time zone is unknown; nothing was scheduled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /system/isp-lookup:
+    get:
+      tags: [System]
+      summary: MaxMind ISP and carrier lookup
+      description: |
+        Whether the redirects look up each visitor's ISP and carrier — the
+        caller's own switch (`maxmind_isp`), which the redirects read for the
+        trackers the caller owns — and whether the ISP database it needs
+        (`GeoIP2-ISP.mmdb`, or legacy `GeoIPISP.dat`) is in `database_dir`
+        (`P202_GEO_DIR`, or `202-config/geo`).
+
+        Admin (or Super user) with `access_to_settings`, and `system:read`.
+      operationId: systemIspLookup
+      responses:
+        "200":
+          description: The switch and the database
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemIspLookup"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [System]
+      summary: Turn ISP and carrier lookup on or off
+      description: |
+        As the page's switch: `enabled` is JSON `true` or `false`. Turning it
+        on while no ISP database file is in place is a `422` that names the
+        directory. Live traffic picks a change up within five minutes.
+
+        Admin (or Super user) with `access_to_settings`, and `system:write`.
+        Not stageable.
+      operationId: systemSetIspLookup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: The new state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemIspLookup"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /system/integrations:
+    get:
+      tags: [System]
+      summary: The notification URLs Account › API integrations hands out
+      description: |
+        The URL to paste into ClickBank (INS), JVZoo (IPN), Zaxaa (ZPN),
+        Slack and PayKickstart (IPN), on this install's tracking base (user
+        1's tracking domain or this server's name, and the install's path —
+        the base tracker links use), and whether the caller has stored the
+        secret each is checked with (`secret_stored`; null when it needs
+        none). The secrets are never served.
+
+        Admin (or Super user) with the role permission
+        `access_to_api_integrations`, as the page asks, and `system:read`.
+      operationId: systemIntegrations
+      responses:
+        "200":
+          description: The integrations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      base_url:
+                        type: string
+                      integrations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            integration:
+                              type: string
+                              enum: [clickbank, jvzoo, zaxaa, slack, paykickstart]
+                            name:
+                              type: string
+                            label:
+                              type: string
+                              description: What the page calls the URL (INS URL, IPN URL, …)
+                            url:
+                              type: string
+                            secret_stored:
+                              type: boolean
+                              nullable: true
+                            verified:
+                              type: boolean
+                              description: ClickBank only
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /system/dataengine:
     get:
       tags: [System]
@@ -4935,7 +5353,8 @@ paths:
       tags:
       - System
       summary: Server metrics
-      description: Admin only.
+      description: Sync counters, the sync job queue (queued, running, lag), recent spans and the active alerts
+        (failure spike, queue lag). Admin only. `p202 system metrics` prints it.
       operationId: systemMetrics
       responses:
         '200':
@@ -6840,6 +7259,84 @@ paths:
         '422':
           $ref: '#/components/responses/ValidationError'
 
+  /ltv/products/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Product id
+    patch:
+      tags:
+      - LTV
+      summary: Edit a product
+      description: Needs the `ltv:write` scope. The LTV Products tab's Edit. Changes only the fields sent; `name`
+        cannot be blank (at most 255 characters), `sku` (at most 191) and `price` (a number from 0) are cleared by
+        null or "". Past order line items keep the name they were sold under; `external_product_id` is the key and
+        does not change. Unknown fields are refused. Not stageable.
+      operationId: ltvUpdateProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                sku:
+                  type: string
+                  nullable: true
+                price:
+                  type: number
+                  nullable: true
+                  minimum: 0
+      responses:
+        '200':
+          description: The product
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags:
+      - LTV
+      summary: Delete a product
+      description: Needs the `ltv:write` scope. Allowed only while no order line item names the product, as on the
+        Products tab; otherwise a `409` naming how many do (`details.line_items`). The check and the delete are one
+        statement. `dry_run=1` returns the product and, as `refused`, the message the delete would answer (null when
+        it would go ahead). Not stageable.
+      operationId: ltvDeleteProduct
+      parameters:
+      - $ref: '#/components/parameters/dryRun'
+      responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order line items name the product; nothing was deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /ltv/companies:
     get:
       tags:
@@ -7512,6 +8009,101 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /ltv/webhooks/{id}/deliveries:
+    get:
+      tags:
+      - LTV
+      summary: A webhook's delivery log
+      description: |
+        Needs the `ltv:read` scope. Newest first, as the LTV Settings tab's Log shows it, with the last
+        attempt's response body or error (`last_response_body`, e.g. "curl: …" or "blocked: …", stored cut to 1,000
+        bytes). `next_attempt_at` is set while a delivery is pending. A delivery is retried with backoff and fails
+        after `meta.max_attempts`, which marks the webhook dead. Never the webhook's secret, and not the payload. An
+        unknown webhook is a `404`; unknown parameters are refused.
+      operationId: ltvWebhookDeliveries
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Webhook id
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 25
+          minimum: 1
+          maximum: 100
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending
+          - delivered
+          - failed
+      responses:
+        '200':
+          description: Deliveries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        delivery_id:
+                          type: integer
+                        event_name:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                          - pending
+                          - delivered
+                          - failed
+                        attempts:
+                          type: integer
+                        next_attempt_at:
+                          type: integer
+                          nullable: true
+                        last_status_code:
+                          type: integer
+                          nullable: true
+                        last_response_body:
+                          type: string
+                          nullable: true
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+                  meta:
+                    type: object
+                    properties:
+                      webhook_id:
+                        type: integer
+                      webhook_url:
+                        type: string
+                      webhook_status:
+                        type: string
+                      limit:
+                        type: integer
+                      status:
+                        type: string
+                        nullable: true
+                      max_attempts:
+                        type: integer
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
 
   /ltv/integrations:
     get:
@@ -8620,6 +9212,48 @@ components:
             type: string
           example:
             aff_campaign_name: required
+
+    SystemRetention:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            auto_delete_days:
+              type: integer
+              description: Click data older than this many days is deleted each night; 0 keeps it all
+            previous_auto_delete_days:
+              type: integer
+              description: In the answer to PUT only
+            scheduled_deletion:
+              type: object
+              nullable: true
+              properties:
+                through_click_id:
+                  type: integer
+                before:
+                  type: string
+                  format: date
+                  nullable: true
+                clicks_remaining:
+                  type: integer
+
+    SystemIspLookup:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            database_file:
+              type: string
+              nullable: true
+              enum: [GeoIP2-ISP.mmdb, GeoIPISP.dat, null]
+            database_dir:
+              type: string
+            takes_effect:
+              type: string
 
     Pagination:
       type: object
