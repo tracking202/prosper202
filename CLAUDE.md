@@ -819,6 +819,21 @@ hand-kept list of click tables had drifted five tables behind the schema;
 definitions. And a delete is a write the derived sums must hear about —
 `RollupDirty::clicksDeleted()` marks them in the deleting transaction.
 
+The fix moved one of the class's two deletions and left the other: the
+scheduled "delete click data from before <date>" still stored `MAX(click_id)`
+of the clicks at or before the day and deleted the ids below it, in the same
+file, under a docblock that explained why ids are not time. Measured live: a
+deletion "from before Oct 7" deleted a click re-clicked on Oct 7 and kept one
+from Oct 4. It stores the day's time now (`user_delete_data_before`), deletes
+and previews by the automatic deletion's own query, and honours an id an
+install already stored — rows already written will not change (#25). A fix
+to one consumer of a stand-in is a sweep of every consumer of it, starting
+with the ones beside it. The same form computed the day's midnight with
+`strtotime($day . ' ' . date('T'))`, today's abbreviation: "IST" is Israel's
+to PHP, so India and Ireland were cut hours off, and any day across a DST
+change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
+$day, $zone)`.
+
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
 conversion takes its click's campaign id; a landing page names a campaign, a

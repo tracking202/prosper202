@@ -105,7 +105,7 @@ hasnt "$OUT/account.html" 'name="user_name"' "session established (no login form
 OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 
 # What the pass changes, so it can be put back.
-ORIG_PREFS=$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_daily_email, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, IFNULL(p.user_tracking_domain,''), p.user_account_currency, IFNULL(p.ipqs_api_key,''), p.user_auto_database_optimization_days, IFNULL(p.user_delete_data_clickid,'NULL')) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")
+ORIG_PREFS=$(Q "SELECT CONCAT_WS('|', u.user_timezone, p.user_daily_email, p.user_keyword_searched_or_bidded, p.user_pref_dynamic_bid, p.user_pref_referer_data, p.user_pref_privacy, p.user_pref_cloak_referer, p.user_pref_ad_settings, IFNULL(p.user_tracking_domain,''), p.user_account_currency, IFNULL(p.ipqs_api_key,''), p.user_auto_database_optimization_days, IFNULL(p.user_delete_data_clickid,'NULL'), IFNULL(p.user_delete_data_before,'NULL')) FROM 202_users u JOIN 202_users_pref p USING (user_id) WHERE u.user_id=$OWNER")
 ORIG_HASH=$(Q "SELECT user_pass FROM 202_users WHERE user_id=$OWNER")
 printf '    owner=%s prefs=%s\n' "$OWNER" "$ORIG_PREFS"
 
@@ -490,6 +490,14 @@ submit "$OUT/ad.html" database_management "202-account/administration.php" "$OUT
 msgs "$OUT/ad-blank.html"
 has "$OUT/ad-blank.html" 'Pick the date: click data from before it is deleted.' "a blank date is refused (it used to mean today)"
 eq "$(Q "SELECT IFNULL(user_delete_data_clickid,'NULL') FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f13)" "nothing scheduled"
+eq "$(Q "SELECT IFNULL(user_delete_data_before,'NULL') FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f14)" "no time stored"
+# A day before every click: the page says so and schedules nothing (the
+# deletion itself, by the time it stores, is tests/live/scheduled-deletion.sh).
+get "202-account/administration.php" "$OUT/ad.html"
+submit "$OUT/ad.html" database_management "202-account/administration.php" "$OUT/ad-early.html" database_management=2000-01-01
+msgs "$OUT/ad-early.html"
+has "$OUT/ad-early.html" 'There are no clicks from before Jan 1, 2000, so nothing is deleted.' "a day before every click schedules nothing, and says so"
+eq "$(Q "SELECT CONCAT_WS('|', IFNULL(user_delete_data_clickid,'NULL'), IFNULL(user_delete_data_before,'NULL')) FROM 202_users_pref WHERE user_id=$OWNER")" "$(echo "$ORIG_PREFS" | cut -d'|' -f13-14)" "nothing written"
 
 say "settings: the page asks for access_to_settings, as the menu does"
 ROLE=$(Q "SELECT role_id FROM 202_user_role WHERE user_id=$OWNER")
@@ -553,9 +561,10 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────
 say "put the account back"
-# The 13th field, user_delete_data_clickid, is only asserted unchanged above
-# (the pass never schedules a deletion), so there is nothing to put back.
-IFS='|' read -r TZ DE KW BID REF PRIV CLOAK ADS DOM CUR IPQS DAYS _ <<< "$ORIG_PREFS"
+# The 13th and 14th fields, user_delete_data_clickid and
+# user_delete_data_before, are only asserted unchanged above (the pass never
+# schedules a deletion), so there is nothing to put back.
+IFS='|' read -r TZ DE KW BID REF PRIV CLOAK ADS DOM CUR IPQS DAYS _ _ <<< "$ORIG_PREFS"
 mysql_q "$DB" -e "UPDATE 202_users SET user_timezone='$TZ' WHERE user_id=$OWNER; UPDATE 202_users_pref SET user_daily_email='$DE', user_keyword_searched_or_bidded='$KW', user_pref_dynamic_bid='$BID', user_pref_referer_data='$REF', user_pref_privacy='$PRIV', user_pref_cloak_referer='$CLOAK', user_pref_ad_settings='$ADS', user_tracking_domain='$DOM', user_account_currency='$CUR', ipqs_api_key='$IPQS', user_auto_database_optimization_days='$DAYS' WHERE user_id=$OWNER"
 drop_probe_users
 J3=$(mktemp)

@@ -509,9 +509,13 @@ paths:
         than this many days is deleted, in batches, by the cron job's runs
         (0 keeps it all) — and the
         one-off deletion `POST /system/retention/delete-before` scheduled, if
-        any (`scheduled_deletion`: the cron job deletes every click whose id
-        is below `through_click_id`; `before` is the day of that click and
-        `clicks_remaining` counts those still there).
+        any (`scheduled_deletion`: the cron job deletes every click all of
+        whose rows were recorded before `cutoff_time`; `before` is the day it
+        falls on in the caller's zone, and `clicks_remaining` counts those
+        still there). An install that scheduled one before this field existed
+        shows `through_click_id` instead, with `cutoff_time` null: the clicks
+        below that id are deleted, `before` is the day of the click it names,
+        and `clicks_remaining` counts the clicks below it.
 
         Admin (or Super user) with `access_to_settings`, and `system:read`.
       operationId: systemRetention
@@ -574,26 +578,35 @@ paths:
       summary: Schedule the deletion of click data from before a day
       description: |
         The page's Advanced › "Delete click data from before". It deletes
-        nothing itself: it stores a click id on user 1's preferences, and the
-        cron job deletes every click below it — every account's — from every
-        click table (the `rows` the preview counts), a batch of clicks from
-        all of them in one transaction, over its next runs. Conversions and
-        setup data are kept. It cannot be undone.
+        nothing itself: it stores a time on user 1's preferences, and the
+        cron job deletes every click all of whose rows were recorded before
+        it — every account's — from every click table (the `rows` the
+        preview counts), a batch of clicks from all of them in one
+        transaction, over its next runs. A click visited again on or after
+        the day (a rotator re-click gives an old click a new row) is kept
+        whole. Conversions and setup data are kept. It cannot be undone.
 
-        The id is the page's: the newest click recorded at or before midnight
-        that begins `before`, in the caller's time zone (`user_timezone`; a
-        zone the server does not know is a `409`, never read as UTC).
-        `before` is a calendar day written `YYYY-MM-DD`, not after today.
+        The time is midnight that begins `before` in the caller's time zone
+        (`user_timezone`; a zone the server does not know is a `409`, never
+        read as UTC), answered as `cutoff_time`. `before` is a calendar day
+        written `YYYY-MM-DD`, not after today.
 
         **Preview** with `?dry_run=1`: nothing is written, and the answer
-        names the id (`through_click_id`, null when no click is that old) and
-        counts what the cron job would delete, per table (`rows`; `clicks` is
-        `202_clicks`). **Schedule** by sending `before` with that
-        `through_click_id`: it is stored only if the day still names that
-        click, otherwise nothing is written and the answer is a `409` whose
-        `details` carry `current_through_click_id`. A write without
-        `through_click_id` is a `422`. When no click is from before the day,
-        nothing is written (`scheduled: false`).
+        counts what the cron job would delete now, by the selection it
+        deletes by: `clicks`, and their rows per table (`rows`). **Schedule**
+        by sending `before` with that `cutoff_time`: it is stored only if it
+        is still the time the day begins in the caller's zone, otherwise
+        nothing is written and the answer is a `409` whose `details` carry
+        `current_cutoff_time`. A write without `cutoff_time` is a `422`.
+        When no click is from before the day, nothing is written
+        (`scheduled: false`). A schedule replaces the one before it.
+
+        This used to store an id, the newest click at or before the day, and
+        delete the clicks below it — which, since ids are not in time order,
+        deleted a click re-clicked after the day and kept the newest one
+        from before it. `through_click_id` is no longer a field of the
+        request or of this answer; an id scheduled that way is still carried
+        out, and `GET /system/retention` shows it.
 
         Admin (or Super user) with `access_to_settings`, and `system:write`,
         for the preview too. Not stageable (`?staged=1` is a `422`).
@@ -613,10 +626,9 @@ paths:
                   type: string
                   format: date
                   example: "2026-01-01"
-                through_click_id:
+                cutoff_time:
                   type: integer
-                  nullable: true
-                  description: The preview's `through_click_id`; required to schedule
+                  description: The preview's `cutoff_time`; required to schedule
       responses:
         "200":
           description: "The preview (`dry_run: true`), or what was scheduled"
@@ -639,13 +651,10 @@ paths:
                         type: string
                       cutoff_time:
                         type: integer
-                        description: Midnight that begins `before`, unix seconds
-                      through_click_id:
-                        type: integer
-                        nullable: true
+                        description: Midnight that begins `before` in `timezone`, unix seconds; the clicks all of whose rows are older are deleted
                       clicks:
                         type: integer
-                        description: 202_clicks rows the cron job deletes
+                        description: The clicks the cron job deletes (a click's rows in `202_clicks` are counted in `rows`)
                       rows:
                         type: object
                         additionalProperties:
@@ -659,7 +668,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          description: The day names another click than the preview did, or the account's time zone is unknown; nothing was scheduled
+          description: The day begins at another time than the preview's `cutoff_time` (the account's time zone changed), or the account's time zone is unknown; nothing was scheduled
           content:
             application/json:
               schema:
@@ -10355,12 +10364,19 @@ components:
               type: object
               nullable: true
               properties:
-                through_click_id:
-                  type: integer
                 before:
                   type: string
                   format: date
                   nullable: true
+                  description: The day `cutoff_time` falls on in the caller's zone; for an id, the day of the click it names
+                cutoff_time:
+                  type: integer
+                  nullable: true
+                  description: The clicks all of whose rows are older are deleted; null for an id an earlier version scheduled
+                through_click_id:
+                  type: integer
+                  nullable: true
+                  description: An id an earlier version scheduled (the clicks below it are deleted); null for a time
                 clicks_remaining:
                   type: integer
 

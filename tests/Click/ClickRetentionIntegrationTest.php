@@ -278,6 +278,126 @@ final class ClickRetentionIntegrationTest extends TestCase
         self::assertEveryTableHolds([31], 'when drained');
     }
 
+    /**
+     * The scheduled deletion by its stored time: every click all of whose
+     * rows are older than it goes, from every table, whatever its id — and
+     * the preview (countOlderThan()) counted exactly that beforehand.
+     *
+     * It used to store MAX(click_id) of the clicks at or before the day and
+     * delete the ids below it. Here the newest click from before the day
+     * (20) has the largest id there, so that kept it; a click re-clicked
+     * after the day (8) and one recorded after it with a smaller id (5) sat
+     * below it, so that deleted them.
+     */
+    public function testTheScheduledDeletionDeletesEveryClickOlderThanItsTimeAndThePreviewCountedIt(): void
+    {
+        $before = gmmktime(0, 0, 0, 5, 1, 2026);
+        $expired = [];
+        $kept = [];
+        $clicks = [
+            5 => $before + 500,    // kept: a small id, recorded after the day began
+            7 => $before - 200,
+            11 => $before - 1,     // the last second before it
+            12 => $before,         // at it: kept
+            20 => $before - 5000,  // the newest id from before it
+            21 => $before + 10,
+        ];
+        foreach ($clicks as $id => $time) {
+            self::click($id, $time);
+            if ($time < $before) {
+                $expired[] = $id;
+            } else {
+                $kept[] = $id;
+            }
+        }
+        self::click(40, $before - 10, 2);
+        $expired[] = 40;
+        self::click(41, $before + 10, 2);
+        $kept[] = 41;
+        // A rotator re-click after the day on a click from before it: its
+        // other rows are the re-click's, so it is kept whole.
+        self::click(8, $before - 90_000);
+        self::q('INSERT INTO 202_clicks SET click_id = 8, user_id = 1, click_time = ' . ($before + 60));
+        $kept[] = 8;
+        // Rows whose 202_clicks row is gone are not reached by time (an id
+        // marker took them); the preview does not count them either.
+        self::click(3, $before - 700, 1, true);
+        self::keptRows(7, $before - 200);
+        $keptTables = array_keys(self::KEPT_ROWS);
+        $keptCounts = array_combine(
+            $keptTables,
+            array_map(static fn (string $t): int => self::rowCount($t), $keptTables)
+        );
+        // An id beside the time — which no writer leaves — is not read.
+        self::q('UPDATE 202_users_pref SET user_delete_data_before = ' . $before
+            . ', user_delete_data_clickid = 1000 WHERE user_id = 1');
+
+        $preview = $this->retention()->countOlderThan($before);
+        self::assertSame(count($expired), $preview['clicks']);
+        self::assertSame(count($expired), $this->retention()->clicksOlderThan($before));
+        self::assertTrue($this->retention()->anyOlderThan($before));
+        self::assertFalse($this->retention()->anyOlderThan($before - 100_000), 'nothing is entirely older than that');
+
+        $report = $this->retention(2)->runScheduled(PHP_INT_MAX);
+
+        self::assertSame($before, $report['before']);
+        self::assertNull($report['marker']);
+        self::assertTrue($report['complete']);
+        self::assertSame(count($expired), $report['clicks']);
+        self::assertSame($preview['rows'], $report['rows'], 'the preview counted, table by table, what went');
+        sort($kept);
+        $left = array_merge($kept, [3]);
+        sort($left);
+        foreach (ClickRetention::TABLES as $table) {
+            self::assertSame($table === '202_clicks' ? $kept : $left, self::ids($table), "the clicks left in $table");
+        }
+        $rows = self::$db->query('SELECT click_time FROM 202_clicks WHERE click_id = 8 ORDER BY click_time');
+        self::assertSame(
+            [$before - 90_000, $before + 60],
+            array_map('intval', array_column($rows->fetch_all(MYSQLI_ASSOC), 'click_time')),
+            'the re-clicked click keeps both rows'
+        );
+        foreach ($keptCounts as $table => $n) {
+            self::assertSame($n, self::rowCount($table), "$table keeps its rows");
+        }
+        $stored = self::$db->query('SELECT user_delete_data_before FROM 202_users_pref WHERE user_id = 1')
+            ->fetch_row()[0];
+        self::assertSame((string) $before, (string) $stored, 'the time stays, as the API reports it');
+
+        $again = $this->retention(2)->runScheduled(PHP_INT_MAX);
+        self::assertSame(0, $again['batches'], 'a finished deletion deletes nothing more');
+        self::assertTrue($again['complete']);
+        self::assertSame(
+            ['clicks' => 0, 'rows' => array_fill_keys(ClickRetention::TABLES, 0)],
+            $this->retention()->countOlderThan($before)
+        );
+    }
+
+    /**
+     * What the stored settings schedule, read strictly: a value that is not
+     * a time is an error the cron job logs, never "nothing scheduled" and
+     * never some other time. The column cannot hold most of these, so they
+     * go to the reader directly.
+     */
+    public function testTheStoredScheduleIsReadStrictly(): void
+    {
+        foreach (['-5', '1.5', 'yesterday', '99999999999', ''] as $bad) {
+            try {
+                ClickRetention::scheduled(['user_delete_data_before' => $bad, 'user_delete_data_clickid' => null]);
+                self::fail("'$bad' read as a time");
+            } catch (\UnexpectedValueException $e) {
+                self::assertStringContainsString('user_delete_data_before', $e->getMessage());
+            }
+        }
+        $read = static fn (?string $before, ?string $marker): array => ClickRetention::scheduled(
+            ['user_delete_data_before' => $before, 'user_delete_data_clickid' => $marker]
+        );
+        self::assertSame(['before' => null, 'marker' => null], ClickRetention::scheduled([]));
+        self::assertSame(['before' => null, 'marker' => null], $read('0', null));
+        self::assertSame(['before' => null, 'marker' => 9], $read(null, '9'));
+        self::assertSame(['before' => 1700000000, 'marker' => null], $read('1700000000', '9'), 'the time wins');
+    }
+
     public function testTheScheduledDeletionDeletesEveryRowBelowTheMarkerFromEveryTable(): void
     {
         foreach ([3 => 1000, 9 => 900, 14 => 5000, 15 => 4000, 16 => 100, 40 => 50] as $id => $time) {
@@ -293,6 +413,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         $report = $this->retention(2)->runScheduled(PHP_INT_MAX);
 
         self::assertSame(15, $report['marker']);
+        self::assertNull($report['before'], 'an id an earlier version stored, with no time beside it');
         self::assertTrue($report['complete']);
         self::assertSame(3, $report['clicks'], 'clicks 3, 9 and 14');
         self::assertEveryTableHolds([15, 16, 40], 'below the marker nothing is left; the marker\'s own click stays');
@@ -313,6 +434,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         $once = $this->retention()->runScheduled(PHP_INT_MAX);
         self::assertSame(0, $auto['days']);
         self::assertNull($once['marker']);
+        self::assertNull($once['before']);
         self::assertSame(0, $auto['batches'] + $once['batches']);
         self::assertEveryTableHolds([1], 'with both deletions off');
     }

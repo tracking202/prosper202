@@ -1145,12 +1145,14 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
   `Admin access required.`; the hint names the role and `p202 whoami`. An
   Admin whose role lacks the page's permission gets exit 2 naming it.
 - `system retention delete-before` previews first (`POST
-  /system/retention/delete-before?dry_run=1`: `through_click_id`, `clicks`,
+  /system/retention/delete-before?dry_run=1`: `cutoff_time`, `clicks`,
   `rows` per table), then asks; `--force` skips the question, not the
-  preview. The write carries the preview's `through_click_id`; if the day now
-  names another click the server answers 409 and nothing is scheduled (run the
-  command again). With no click before the day nothing is written. The cron
-  job does the deleting, for every account, in batches; it cannot be undone.
+  preview. The write carries the preview's `cutoff_time`; if the day now
+  begins at another time (the account's time zone changed) the server answers
+  409 and nothing is scheduled (run the command again). With no click before
+  the day nothing is written. The cron job does the deleting, for every
+  account, in batches: every click all of whose visits were before the day (a
+  click visited again on or after it is kept); it cannot be undone.
 - `system retention set` asks only when the new value keeps less click data
   than the current one (turning deletion on, or fewer days); with no terminal
   that question fails (exit 1) unless `--force` is given. With N days the

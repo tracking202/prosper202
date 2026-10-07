@@ -210,8 +210,10 @@ var systemRetentionShowCmd = &cobra.Command{
 	Short: "Show the automatic deletion (auto_delete_days; 0 keeps everything) and any scheduled one-off deletion",
 	Long: "auto_delete_days: click data older than this many days is deleted each night (0 keeps it).\n" +
 		"scheduled_deletion: a one-off deletion `delete-before` scheduled — the cron job deletes every\n" +
-		"click below through_click_id (from before the day `before`); clicks_remaining counts those\n" +
-		"still there. null when none was scheduled.",
+		"click all of whose visits were recorded before cutoff_time (midnight that begins `before`);\n" +
+		"clicks_remaining counts those still there. An install that scheduled one before cutoff_time\n" +
+		"existed shows through_click_id instead (cutoff_time null): the clicks below that id go. null\n" +
+		"when none was scheduled.",
 	Example: "  p202 system retention show --json",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -233,8 +235,6 @@ var systemRetentionSetCmd = &cobra.Command{
 		"everything), for the whole install. When the new value keeps less than the current one (turning\n" +
 		"deletion on, or a shorter period) it asks first, because what the cron job deletes cannot be\n" +
 		"recovered; --force skips the question. Cannot be staged.\n\n" +
-		"Known issue: the cron job's automatic deletion (AutoOptimizeDatabase in 202-cronjobs/index.php)\n" +
-		"currently deletes no clicks; the setting is stored as the page stores it. `delete-before` works.\n\n" +
 		systemSettingsNeeds + ", and system:write.",
 	Example: "  p202 system retention set --days 180\n  p202 system retention set --days 0",
 	Args:    cobra.NoArgs,
@@ -310,13 +310,13 @@ func retentionWords(days int) string {
 // read strictly: a count that is missing is a malformed answer, never 0.
 type deleteBeforeAnswer struct {
 	Data struct {
-		DryRun         bool             `json:"dry_run"`
-		Scheduled      bool             `json:"scheduled"`
-		Before         string           `json:"before"`
-		Timezone       string           `json:"timezone"`
-		ThroughClickID *int64           `json:"through_click_id"`
-		Clicks         *int64           `json:"clicks"`
-		Rows           map[string]int64 `json:"rows"`
+		DryRun     bool             `json:"dry_run"`
+		Scheduled  bool             `json:"scheduled"`
+		Before     string           `json:"before"`
+		Timezone   string           `json:"timezone"`
+		CutoffTime *int64           `json:"cutoff_time"`
+		Clicks     *int64           `json:"clicks"`
+		Rows       map[string]int64 `json:"rows"`
 	} `json:"data"`
 }
 
@@ -325,8 +325,8 @@ func readDeleteBeforeAnswer(data []byte, what string) (deleteBeforeAnswer, error
 	if err := json.Unmarshal(data, &a); err != nil {
 		return a, systemMalformed(what, err)
 	}
-	if a.Data.Clicks == nil || a.Data.Rows == nil || a.Data.Before == "" {
-		return a, systemMalformed(what, errors.New("before, clicks or rows is missing"))
+	if a.Data.Clicks == nil || a.Data.Rows == nil || a.Data.Before == "" || a.Data.CutoffTime == nil {
+		return a, systemMalformed(what, errors.New("before, cutoff_time, clicks or rows is missing"))
 	}
 	return a, nil
 }
@@ -374,7 +374,7 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 	}
 
 	// The preview always runs first: what the deletion would remove, and the
-	// click id the write must carry back.
+	// cutoff time the write must carry back.
 	data, err := c.PostUpdate("system/retention/delete-before", map[string]string{"dry_run": "1"}, map[string]interface{}{"before": date})
 	if err != nil {
 		return systemAdminError(err)
@@ -386,7 +386,7 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 	where := fmt.Sprintf("from before %s (%s)", check.Data.Before, check.Data.Timezone)
 	if dryRun {
 		render(data)
-		if check.Data.ThroughClickID == nil {
+		if *check.Data.Clicks == 0 {
 			output.Success("Dry run: no click is %s, so there is nothing to delete. Nothing was scheduled.", where)
 		} else {
 			output.Success("Dry run: %d click(s) %s would be deleted by the cron job, for every account on this install (rows: %s). Nothing was scheduled; drop --dry-run to schedule it (it asks first).",
@@ -394,15 +394,15 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 		}
 		return nil
 	}
-	if check.Data.ThroughClickID == nil {
+	if *check.Data.Clicks == 0 {
 		render(data)
 		output.Success("No click is %s, so there is nothing to delete. Nothing was scheduled.", where)
 		return nil
 	}
-	through := *check.Data.ThroughClickID
+	cutoff := *check.Data.CutoffTime
 	if !force {
-		fmt.Fprintf(os.Stderr, "%d click(s) %s, of every account on this install, will be deleted by the cron job in batches: every click below id %d (rows: %s). Setup data is kept. This cannot be undone.\n",
-			*check.Data.Clicks, where, through, rowsInWords(check.Data.Rows))
+		fmt.Fprintf(os.Stderr, "%d click(s) %s, of every account on this install, will be deleted by the cron job in batches: every click all of whose visits were recorded before then (rows: %s); a click visited again on or after the day is kept. Setup data is kept. This cannot be undone.\n",
+			*check.Data.Clicks, where, rowsInWords(check.Data.Rows))
 		ok, err := confirmAction(cmd, "Delete the click data from before %s?", check.Data.Before)
 		if err != nil {
 			return err
@@ -413,11 +413,11 @@ func runSystemRetentionDeleteBefore(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	data, err = c.PostUpdate("system/retention/delete-before", nil, map[string]interface{}{"before": date, "through_click_id": through})
+	data, err = c.PostUpdate("system/retention/delete-before", nil, map[string]interface{}{"before": date, "cutoff_time": cutoff})
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 409 {
-			return withHint(err, "The clicks before that day changed between the preview and the write, so nothing was scheduled. Run the same command again: it previews again and asks again.")
+			return withHint(err, "The time that day begins changed between the preview and the write (the account's time zone), so nothing was scheduled. Run the same command again: it previews again and asks again.")
 		}
 		return systemAdminError(err)
 	}
@@ -438,13 +438,14 @@ var systemRetentionDeleteBeforeCmd = &cobra.Command{
 	Use:   "delete-before --date YYYY-MM-DD",
 	Short: "Schedule the deletion of all click data from before a day (irreversible; previews and asks first)",
 	Long: "Schedules what Account › Settings › Advanced › \"Delete click data from before\" does: the\n" +
-		"cron job deletes, in batches, every click of every account on this install recorded before\n" +
-		"the newest click at or before midnight that begins --date (the account's time zone), from\n" +
-		"the ten click tables. Setup data is kept. It cannot be undone.\n\n" +
+		"cron job deletes, in batches, every click of every account on this install all of whose\n" +
+		"visits were recorded before midnight that begins --date (the account's time zone), from\n" +
+		"every click table. A click visited again that day or later is kept whole. Setup data is\n" +
+		"kept. It cannot be undone.\n\n" +
 		"It always previews first (POST …/delete-before?dry_run=1) and says how many clicks and rows\n" +
-		"would go, then asks (--force skips the question, never the preview; --dry-run ends with\n" +
-		"the preview). The write carries the click id the preview named and the server schedules only\n" +
-		"that, so it never schedules more than was shown. Cannot be staged.\n\n" + systemSettingsNeeds + ", and system:write.",
+		"would go now, then asks (--force skips the question, never the preview; --dry-run ends with\n" +
+		"the preview). The write carries the cutoff_time the preview named and the server schedules\n" +
+		"only that, so it never schedules a different cutoff than was shown. Cannot be staged.\n\n" + systemSettingsNeeds + ", and system:write.",
 	Example: "  p202 system retention delete-before --date 2026-01-01 --dry-run\n" +
 		"  p202 system retention delete-before --date 2026-01-01",
 	Args: cobra.NoArgs,

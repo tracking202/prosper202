@@ -141,9 +141,9 @@ func TestRetentionSetRefusesBadDaysBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-const deleteBeforePreview = `{"data":{"dry_run":true,"scheduled":false,"before":"2026-01-01","timezone":"America/New_York","cutoff_time":1767243600,"through_click_id":940102,"clicks":1500,"rows":{"202_clicks":1500,"202_clicks_advance":1500,"202_bing":0},"current":null}}`
+const deleteBeforePreview = `{"data":{"dry_run":true,"scheduled":false,"before":"2026-01-01","timezone":"America/New_York","cutoff_time":1767243600,"clicks":1500,"rows":{"202_clicks":1500,"202_clicks_advance":1500,"202_bing":0},"current":null}}`
 
-const deleteBeforeDone = `{"data":{"dry_run":false,"scheduled":true,"before":"2026-01-01","timezone":"America/New_York","cutoff_time":1767243600,"through_click_id":940102,"clicks":1500,"rows":{"202_clicks":1500},"current":{"through_click_id":940102,"before":"2025-12-31","clicks_remaining":1500}}}`
+const deleteBeforeDone = `{"data":{"dry_run":false,"scheduled":true,"before":"2026-01-01","timezone":"America/New_York","cutoff_time":1767243600,"clicks":1500,"rows":{"202_clicks":1500},"current":{"before":"2025-12-31","cutoff_time":1767157200,"through_click_id":null,"clicks_remaining":1400}}}`
 
 func deleteBeforeResponder(write func() (int, string)) func(updateRequest) (int, string) {
 	return func(r updateRequest) (int, string) {
@@ -169,11 +169,11 @@ func TestDeleteBeforePreviewsThenSchedulesWhatThePreviewNamed(t *testing.T) {
 	if preview.Method != "POST" || preview.Path != "/system/retention/delete-before" || !preview.dryRun() || preview.Body["before"] != "2026-01-01" {
 		t.Errorf("preview = %+v, want POST /system/retention/delete-before?dry_run=1 {before}", preview)
 	}
-	if _, ok := preview.Body["through_click_id"]; ok {
-		t.Errorf("the preview sent through_click_id: %v", preview.Body)
+	if _, ok := preview.Body["cutoff_time"]; ok {
+		t.Errorf("the preview sent cutoff_time: %v", preview.Body)
 	}
-	if write.Query != "" || write.Body["before"] != "2026-01-01" || write.Body["through_click_id"] != float64(940102) {
-		t.Errorf("write = %+v, want no query and the preview's through_click_id", write)
+	if write.Query != "" || write.Body["before"] != "2026-01-01" || write.Body["cutoff_time"] != float64(1767243600) || len(write.Body) != 2 {
+		t.Errorf("write = %+v, want no query, the day and the preview's cutoff_time, nothing else", write)
 	}
 	if !strings.Contains(stderr, "Scheduled") || !strings.Contains(stderr, "1500 click(s)") {
 		t.Errorf("stderr = %q", stderr)
@@ -196,8 +196,8 @@ func TestDeleteBeforeAlwaysPreviewsAndAsks(t *testing.T) {
 		if hint := hintFor(err); !strings.Contains(hint, "--force") || !strings.Contains(hint, "--dry-run") {
 			t.Errorf("hint = %q, want --force and --dry-run", hint)
 		}
-		if len(*seen) != 1 || !strings.Contains(stderr, "cannot be undone") || !strings.Contains(stderr, "every account") {
-			t.Errorf("requests %d, stderr %q: want only the preview, and a warning that says it is final and install-wide", len(*seen), stderr)
+		if len(*seen) != 1 || !strings.Contains(stderr, "cannot be undone") || !strings.Contains(stderr, "every account") || !strings.Contains(stderr, "visited again on or after the day is kept") {
+			t.Errorf("requests %d, stderr %q: want only the preview, and a warning that says it is final, install-wide and what is kept", len(*seen), stderr)
 		}
 	})
 	t.Run("no cancels", func(t *testing.T) {
@@ -210,25 +210,35 @@ func TestDeleteBeforeAlwaysPreviewsAndAsks(t *testing.T) {
 	})
 	t.Run("nothing before the day writes nothing", func(t *testing.T) {
 		seen := updateServer(t, func(updateRequest) (int, string) {
-			return 200, strings.Replace(strings.Replace(deleteBeforePreview, `"through_click_id":940102`, `"through_click_id":null`, 1), `"clicks":1500`, `"clicks":0`, 1)
+			return 200, strings.Replace(deleteBeforePreview, `"clicks":1500`, `"clicks":0`, 1)
 		})
 		_, stderr, err := executeCommand(append(deleteBeforeArgs, "--force")...)
 		if err != nil || len(*seen) != 1 || !strings.Contains(stderr, "nothing to delete") {
 			t.Errorf("err %v, requests %d, stderr %q", err, len(*seen), stderr)
 		}
 	})
-	t.Run("a moved marker says to run it again", func(t *testing.T) {
+	t.Run("a moved cutoff says to run it again", func(t *testing.T) {
 		updateServer(t, deleteBeforeResponder(func() (int, string) {
-			return 409, `{"error":true,"status":409,"message":"through_click_id 940102 is not what this day names now (click 940150). Nothing was scheduled.","details":{"through_click_id":940102,"current_through_click_id":940150}}`
+			return 409, `{"error":true,"status":409,"message":"cutoff_time 1767243600 is not the time 2026-01-01 begins now (1767225600 in UTC). Nothing was scheduled.","details":{"cutoff_time":1767243600,"current_cutoff_time":1767225600}}`
 		}))
 		_, _, err := executeCommand(append(deleteBeforeArgs, "--force")...)
 		if code := exitCodeForError(err); code != ExitValidation || !strings.Contains(hintFor(err), "Run the same command again") {
 			t.Errorf("exit %d, hint %q", code, hintFor(err))
 		}
 	})
+	t.Run("a preview without its cutoff is the server's failure, never a write without one", func(t *testing.T) {
+		seen := updateServer(t, func(updateRequest) (int, string) {
+			// An older server's answer: an id, no cutoff_time.
+			return 200, strings.Replace(deleteBeforePreview, `"cutoff_time":1767243600`, `"through_click_id":940102`, 1)
+		})
+		_, _, err := executeCommand(append(deleteBeforeArgs, "--force")...)
+		if code := exitCodeForError(err); code != ExitServer || len(*seen) != 1 {
+			t.Errorf("exit %d (%v), requests %d: want the server's failure, and no write", code, err, len(*seen))
+		}
+	})
 	t.Run("a preview without its counts is the server's failure", func(t *testing.T) {
 		seen := updateServer(t, func(updateRequest) (int, string) {
-			return 200, `{"data":{"before":"2026-01-01","through_click_id":940102}}`
+			return 200, `{"data":{"before":"2026-01-01","cutoff_time":1767243600}}`
 		})
 		_, _, err := executeCommand(append(deleteBeforeArgs, "--force")...)
 		if code := exitCodeForError(err); code != ExitServer || len(*seen) != 1 {

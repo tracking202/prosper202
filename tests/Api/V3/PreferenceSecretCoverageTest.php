@@ -74,7 +74,7 @@ final class PreferenceSecretCoverageTest extends TestCase
         'revcontent_user_id', 'facebook_ads_linked', 'user_pref_ad_settings',
         'user_ltv_customer_cparam', 'user_ltv_personalization_fields',
         'user_ltv_score_weights', 'user_ltv_rec_fatigue', 'lpo_status',
-        'lpo_ctx_kw',
+        'lpo_ctx_kw', 'user_delete_data_before',
     ];
 
     public function testEveryCredentialColumnOfUsersPrefIsRedactedOnApply(): void

@@ -595,9 +595,10 @@ function AutoOptimizeDatabase()
 }
 
 /**
- * The one-off deletion scheduled on user 1's preferences
- * (user_delete_data_clickid, by the page or POST
- * /system/retention/delete-before): every click below the marker, through
+ * The one-off deletion scheduled on user 1's preferences (by the page or
+ * POST /system/retention/delete-before): every click all of whose rows are
+ * older than user_delete_data_before — or, for an id an earlier version
+ * stored in user_delete_data_clickid, every click below it — through
  * ClickRetention as above. Slack hears once, from the run that deletes the
  * last of it.
  */
@@ -607,10 +608,13 @@ function ClearOldClicks()
         $db = getDatabaseConnection();
         $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection($db));
         $report = $retention->runScheduled(time() + \Prosper202\Click\ClickRetention::RUN_SECONDS);
-        if ($report['marker'] === null || $report['batches'] === 0) {
+        if (($report['before'] === null && $report['marker'] === null) || $report['batches'] === 0) {
             return;
         }
-        echo ' Clear Old Clicks: ' . (int) $report['clicks'] . ' click(s) below click ' . (int) $report['marker'] . ' deleted'
+        $what = $report['before'] !== null
+            ? 'from before ' . date('Y-m-d H:i T', (int) $report['before'])
+            : 'below click ' . (int) $report['marker'];
+        echo ' Clear Old Clicks: ' . (int) $report['clicks'] . ' click(s) ' . $what . ' deleted'
             . ($report['complete'] ? '' : ', more next run') . '<br>';
         flushOutput();
         if (!$report['complete']) {
@@ -629,14 +633,19 @@ function ClearOldClicks()
         }
         $slack_row = $slack_result->fetch_assoc();
         if (!empty($slack_row['user_slack_incoming_webhook']) && class_exists('Slack')) {
-            // The day the deletion was scheduled from: the marker's click,
-            // which the deletion keeps.
-            $day = $db->query('SELECT click_time FROM 202_clicks WHERE click_id = ' . (int) $report['marker'] . ' LIMIT 1');
-            $dayRow = $day === false ? null : $day->fetch_assoc();
+            if ($report['before'] !== null) {
+                $date = date('Y-m-d', (int) $report['before']);
+            } else {
+                // The day an id was scheduled from: the marker's click,
+                // which that deletion keeps.
+                $day = $db->query('SELECT click_time FROM 202_clicks WHERE click_id = ' . (int) $report['marker'] . ' LIMIT 1');
+                $dayRow = $day === false ? null : $day->fetch_assoc();
+                $date = is_array($dayRow) ? date('Y-m-d', (int) $dayRow['click_time']) : 'click ' . (int) $report['marker'];
+            }
             $slack = new Slack($slack_row['user_slack_incoming_webhook']);
             $slack->push('click_data_deleted', [
                 'user' => 'cron',
-                'date' => is_array($dayRow) ? date('Y-m-d', (int) $dayRow['click_time']) : 'click ' . (int) $report['marker'],
+                'date' => $date,
             ]);
         }
     } catch (\Throwable $e) {

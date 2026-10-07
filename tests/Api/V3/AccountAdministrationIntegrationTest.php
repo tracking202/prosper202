@@ -25,7 +25,8 @@ use Prosper202\Database\SchemaInstaller;
  * database has none) and removes the rows it created afterwards, changes
  * user 1's retention settings and puts them back, and — because the
  * one-off deletion is install-wide — removes every click below id 1000 and
- * every click recorded before 2002 from the click tables first. Point it at
+ * every click recorded before 2002 from the click tables first (and runs
+ * the cron job's scheduled deletion over what it then wrote). Point it at
  * a scratch database, never one an instance is using.
  *
  * @group integration
@@ -119,7 +120,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
             }
         }
         self::q("UPDATE 202_users SET user_timezone = 'UTC' WHERE user_id = " . self::ADMIN);
-        $this->ownerBefore = self::row('SELECT user_auto_database_optimization_days, user_delete_data_clickid, maxmind_isp, user_tracking_domain FROM 202_users_pref WHERE user_id = 1');
+        $this->ownerBefore = self::row('SELECT user_auto_database_optimization_days, user_delete_data_before, user_delete_data_clickid, maxmind_isp, user_tracking_domain FROM 202_users_pref WHERE user_id = 1');
 
         foreach (AdministrationController::CLICK_DATA_TABLES as $table) {
             self::q("DELETE FROM `$table` WHERE click_id < 1000");
@@ -136,7 +137,7 @@ final class AccountAdministrationIntegrationTest extends TestCase
             self::q("INSERT INTO 202_clicks SET click_id = $id, user_id = " . self::ADMIN . ", ppc_account_id = 0, click_cpc = 0, click_time = $at");
             self::q("INSERT INTO 202_clicks_advance SET click_id = $id, keyword_id = 0, ip_id = 0, country_id = 0, region_id = 0, city_id = 0, platform_id = 0, browser_id = 0, device_id = 0");
         }
-        self::q('UPDATE 202_users_pref SET user_delete_data_clickid = NULL, user_auto_database_optimization_days = 0 WHERE user_id = 1');
+        self::q('UPDATE 202_users_pref SET user_delete_data_before = NULL, user_delete_data_clickid = NULL, user_auto_database_optimization_days = 0 WHERE user_id = 1');
 
         self::q('DELETE FROM 202_products WHERE user_id IN (' . self::LTV_USER . ', ' . self::OTHER . ')');
         self::q('DELETE FROM 202_revenue_line_items WHERE user_id IN (' . self::LTV_USER . ', ' . self::OTHER . ')');
@@ -150,15 +151,16 @@ final class AccountAdministrationIntegrationTest extends TestCase
             return;
         }
         foreach (AdministrationController::CLICK_DATA_TABLES as $table) {
-            self::q("DELETE FROM `$table` WHERE click_id IN (101, 102, 103)");
+            self::q("DELETE FROM `$table` WHERE click_id IN (101, 102, 103, 104)");
         }
         if ($this->ownerBefore !== null) {
-            $stmt = self::$db->prepare('UPDATE 202_users_pref SET user_auto_database_optimization_days = ?, user_delete_data_clickid = ?, maxmind_isp = ?, user_tracking_domain = ? WHERE user_id = 1');
+            $stmt = self::$db->prepare('UPDATE 202_users_pref SET user_auto_database_optimization_days = ?, user_delete_data_before = ?, user_delete_data_clickid = ?, maxmind_isp = ?, user_tracking_domain = ? WHERE user_id = 1');
             $days = (int) $this->ownerBefore['user_auto_database_optimization_days'];
+            $cutoff = $this->ownerBefore['user_delete_data_before'] === null ? null : (int) $this->ownerBefore['user_delete_data_before'];
             $marker = $this->ownerBefore['user_delete_data_clickid'] === null ? null : (int) $this->ownerBefore['user_delete_data_clickid'];
             $isp = (int) $this->ownerBefore['maxmind_isp'];
             $domain = (string) $this->ownerBefore['user_tracking_domain'];
-            $stmt->bind_param('iiis', $days, $marker, $isp, $domain);
+            $stmt->bind_param('iiiis', $days, $cutoff, $marker, $isp, $domain);
             self::assertTrue($stmt->execute());
             $stmt->close();
         }
@@ -185,41 +187,115 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::fail('expected ' . $exception);
     }
 
-    public function testTheDeletionPreviewCountsWhatTheCronJobDeletesAndTheWriteSchedulesExactlyThat(): void
+    /**
+     * The preview counts what the cron job deletes, by the cron job's own
+     * selection, and the write schedules that day's time — and then the
+     * cron job's deletion removes exactly the clicks the preview counted.
+     *
+     * The day is 2001-03-01. 104 is the newest id recorded before it, 101
+     * was visited again after it (a rotator re-click's second row), and 103
+     * is after it. The id marker this replaced was MAX(click_id) at or
+     * before the day — 104 — and the clicks below it went: 101 and 103
+     * with 102, while 104 stayed.
+     */
+    public function testTheDeletionPreviewCountsWhatTheCronJobDeletesAndTheWriteSchedulesThatDay(): void
     {
+        $click = 'INSERT INTO 202_clicks SET user_id = ' . self::ADMIN . ', ppc_account_id = 0, click_cpc = 0, ';
+        self::q($click . 'click_id = 101, click_time = ' . gmmktime(9, 0, 0, 3, 5, 2001));
+        self::q($click . 'click_id = 104, click_time = ' . gmmktime(12, 0, 0, 1, 20, 2001));
+        self::q('INSERT INTO 202_clicks_advance SET click_id = 104, keyword_id = 0, ip_id = 0, country_id = 0,'
+            . ' region_id = 0, city_id = 0, platform_id = 0, browser_id = 0, device_id = 0');
+        $stored = static fn (): ?array => self::row(
+            'SELECT user_delete_data_clickid AS m, user_delete_data_before AS b FROM 202_users_pref WHERE user_id = 1'
+        );
+        // An id an earlier version scheduled: the state shows it, and the
+        // write replaces it.
+        self::q('UPDATE 202_users_pref SET user_delete_data_clickid = 103 WHERE user_id = 1');
+        $legacy = ['before' => '2001-03-10', 'cutoff_time' => null, 'through_click_id' => 103, 'clicks_remaining' => 3];
+        self::assertSame(
+            $legacy,
+            $this->admin()->retention()['data']['scheduled_deletion'],
+            'the clicks below 103, and the day of the click the id names'
+        );
+
+        $cutoff = gmmktime(0, 0, 0, 3, 1, 2001);
         $preview = $this->admin()->scheduleDeletion(['before' => '2001-03-01'], true)['data'];
-        // The page's marker: the newest click at or before midnight that
-        // begins 2001-03-01 (102, on 02-10). The cron job deletes below it.
         self::assertTrue($preview['dry_run']);
         self::assertFalse($preview['scheduled']);
-        self::assertSame(102, $preview['through_click_id']);
-        self::assertSame(1, $preview['clicks']);
-        self::assertSame(1, $preview['rows']->{'202_clicks_advance'});
-        self::assertSame(0, $preview['rows']->{'202_clicks_spy'});
         self::assertSame('UTC', $preview['timezone']);
-        self::assertSame(gmmktime(0, 0, 0, 3, 1, 2001), $preview['cutoff_time']);
-        self::assertNull(self::row('SELECT user_delete_data_clickid AS m FROM 202_users_pref WHERE user_id = 1')['m'], 'a dry run writes nothing');
+        self::assertSame($cutoff, $preview['cutoff_time']);
+        self::assertSame(2, $preview['clicks'], '102 and 104: 101 was visited again after the day, 103 is after it');
+        self::assertSame(2, $preview['rows']->{'202_clicks'});
+        self::assertSame(2, $preview['rows']->{'202_clicks_advance'});
+        self::assertSame(0, $preview['rows']->{'202_clicks_spy'});
+        self::assertArrayNotHasKey('through_click_id', $preview);
+        self::assertSame($legacy, $preview['current']);
+        self::assertSame(['m' => '103', 'b' => null], $stored(), 'a dry run writes nothing');
 
-        self::refused(ValidationException::class, fn () => $this->admin()->scheduleDeletion(['before' => '2001-03-01'], false), 'through_click_id');
-        self::refused(ConflictException::class, fn () => $this->admin()->scheduleDeletion(['before' => '2001-03-01', 'through_click_id' => 103], false));
-        self::refused(ValidationException::class, fn () => $this->admin()->scheduleDeletion(['before' => '2001-03-01', 'through_click_id' => '102'], false), 'through_click_id');
-        self::assertNull(self::row('SELECT user_delete_data_clickid AS m FROM 202_users_pref WHERE user_id = 1')['m'], 'a refused write schedules nothing');
+        $write = fn (array $body): array => $this->admin()->scheduleDeletion(['before' => '2001-03-01'] + $body, false);
+        self::refused(ValidationException::class, fn () => $write([]), 'cutoff_time');
+        self::refused(ConflictException::class, fn () => $write(['cutoff_time' => $cutoff + 3600]));
+        self::refused(ValidationException::class, fn () => $write(['cutoff_time' => (string) $cutoff]), 'cutoff_time');
+        self::refused(ValidationException::class, fn () => $write(['cutoff_time' => null]), 'cutoff_time');
+        self::refused(ValidationException::class, fn () => $write(['through_click_id' => 104]), 'through_click_id');
+        self::assertSame(['m' => '103', 'b' => null], $stored(), 'a refused write schedules nothing');
 
-        $done = $this->admin()->scheduleDeletion(['before' => '2001-03-01', 'through_click_id' => 102], false)['data'];
+        $done = $write(['cutoff_time' => $cutoff])['data'];
         self::assertTrue($done['scheduled']);
-        self::assertSame(102, $done['through_click_id']);
-        // On user 1's row, which the cron job reads — not the caller's.
-        self::assertSame('102', self::row('SELECT user_delete_data_clickid AS m FROM 202_users_pref WHERE user_id = 1')['m']);
-        self::assertNull(self::row('SELECT user_delete_data_clickid AS m FROM 202_users_pref WHERE user_id = ' . self::ADMIN)['m']);
+        self::assertSame(2, $done['clicks']);
+        self::assertSame($legacy, $done['current'], 'what was scheduled before this request');
+        // On user 1's row, which the cron job reads — not the caller's — and
+        // the earlier version's id is gone with it.
+        self::assertSame(['m' => null, 'b' => (string) $cutoff], $stored());
+        self::assertSame(
+            ['b' => null],
+            self::row('SELECT user_delete_data_before AS b FROM 202_users_pref WHERE user_id = ' . self::ADMIN)
+        );
 
-        $state = $this->admin()->retention()['data']['scheduled_deletion'];
-        self::assertSame(['through_click_id' => 102, 'before' => '2001-02-10', 'clicks_remaining' => 1], $state);
+        self::assertSame(
+            ['before' => '2001-03-01', 'cutoff_time' => $cutoff, 'through_click_id' => null, 'clicks_remaining' => 2],
+            $this->admin()->retention()['data']['scheduled_deletion']
+        );
+
+        // The cron job's deletion removes what the preview counted, and
+        // nothing else.
+        $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection(self::$db));
+        $report = $retention->runScheduled(PHP_INT_MAX);
+        self::assertSame($cutoff, $report['before']);
+        self::assertSame($preview['clicks'], $report['clicks']);
+        self::assertSame((array) $preview['rows'], $report['rows']);
+        $left = self::$db->query(
+            'SELECT DISTINCT click_id FROM 202_clicks WHERE click_id IN (101, 102, 103, 104) ORDER BY click_id'
+        );
+        self::assertSame([['101'], ['103']], $left->fetch_all());
+        self::assertSame(0, $this->admin()->retention()['data']['scheduled_deletion']['clicks_remaining']);
 
         // A day before every click: nothing to delete, nothing written.
-        $none = $this->admin()->scheduleDeletion(['before' => '2000-01-01', 'through_click_id' => null], false)['data'];
+        $early = gmmktime(0, 0, 0, 1, 1, 2000);
+        self::assertSame(0, $this->admin()->scheduleDeletion(['before' => '2000-01-01'], true)['data']['clicks']);
+        $none = $this->admin()->scheduleDeletion(['before' => '2000-01-01', 'cutoff_time' => $early], false)['data'];
         self::assertFalse($none['scheduled']);
-        self::assertNull($none['through_click_id']);
-        self::assertSame('102', self::row('SELECT user_delete_data_clickid AS m FROM 202_users_pref WHERE user_id = 1')['m']);
+        self::assertSame(0, $none['clicks']);
+        self::assertSame(['m' => null, 'b' => (string) $cutoff], $stored());
+    }
+
+    /**
+     * The cutoff is the caller's midnight: the same day in another zone is
+     * another time, and a write carrying the time a dry run answered before
+     * the account's zone changed is refused rather than scheduling a cutoff
+     * nobody previewed.
+     */
+    public function testTheCutoffIsMidnightInTheCallersZone(): void
+    {
+        self::q("UPDATE 202_users SET user_timezone = 'Asia/Kolkata' WHERE user_id = " . self::ADMIN);
+        $kolkata = $this->admin()->scheduleDeletion(['before' => '2001-03-01'], true)['data'];
+        self::assertSame('Asia/Kolkata', $kolkata['timezone']);
+        self::assertSame(gmmktime(18, 30, 0, 2, 28, 2001), $kolkata['cutoff_time']);
+
+        self::q("UPDATE 202_users SET user_timezone = 'UTC' WHERE user_id = " . self::ADMIN);
+        $body = ['before' => '2001-03-01', 'cutoff_time' => $kolkata['cutoff_time']];
+        self::refused(ConflictException::class, fn () => $this->admin()->scheduleDeletion($body, false));
+        self::assertSame(['b' => null], self::row('SELECT user_delete_data_before AS b FROM 202_users_pref WHERE user_id = 1'));
     }
 
     public function testTheDayIsReadStrictly(): void

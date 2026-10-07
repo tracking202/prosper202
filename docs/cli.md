@@ -1608,13 +1608,14 @@ p202 system isp-lookup disable
 
 Retention applies to every account's clicks on the install (the cron job
 reads it from user 1's preferences). `delete-before` deletes nothing itself:
-it schedules the cron job to delete, in batches, every click below the
-newest click at or before midnight that begins `--date` (the account's time
-zone), from every click table; conversions and setup data are kept, and it
-cannot be undone. It always previews first (counts per table) and asks before
-scheduling; `--force` skips the question, never the preview, and the write
-carries the click id the preview named, so it never schedules more than was
-shown. None of these writes can be staged: `--staged` is refused before any
+it schedules the cron job to delete, in batches, every click all of whose
+visits were recorded before midnight that begins `--date` (the account's time
+zone), from every click table; a click visited again on or after the day is
+kept whole, conversions and setup data are kept, and it cannot be undone. It
+always previews first (counts per table) and asks before scheduling;
+`--force` skips the question, never the preview, and the write carries the
+cutoff time the preview named, so it never schedules a different cutoff than
+was shown. None of these writes can be staged: `--staged` is refused before any
 request. AutoCron and "update available" are not here: the page reaches a
 remote Prosper202 service for both.
 
