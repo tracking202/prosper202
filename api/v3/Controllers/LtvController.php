@@ -230,7 +230,7 @@ class LtvController
                     $eventName,
                     'api',
                     null,
-                    isset($payload['occurred_at']) ? (int) $payload['occurred_at'] : null,
+                    isset($payload['occurred_at']) ? QueryInt::param($payload, 'occurred_at', 0, 0, 4294967295, 'a unix time') : null,
                     $eventValue
                 );
 
@@ -269,7 +269,7 @@ class LtvController
         return $this->wrap(function () use ($customerId, $payload): array {
             $recommendations = new \Prosper202\Ltv\MysqlRecommendationRepository($this->conn);
 
-            $campaignId = (int) ($payload['campaign_id'] ?? 0);
+            $campaignId = QueryInt::param($payload, 'campaign_id', 0, 1, PHP_INT_MAX, 'the offer shown; leave it out to show the recommended one');
             $basis = 'api';
             if ($campaignId <= 0) {
                 $offer = $recommendations->nextOffer($this->userId, $customerId);
@@ -393,7 +393,7 @@ class LtvController
     public function mergeCustomer(int $targetId, array $payload): array
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source_customer_id'], 'a customer merge');
-        $sourceId = (int) ($payload['source_customer_id'] ?? 0);
+        $sourceId = QueryInt::param($payload, 'source_customer_id', 0, 1, PHP_INT_MAX, 'the customer to merge INTO this one');
         if ($sourceId <= 0) {
             throw new ValidationException(
                 'source_customer_id is required',
@@ -492,7 +492,7 @@ class LtvController
             }
 
             $now = time();
-            $occurredAt = (int) ($payload['occurred_at'] ?? $now);
+            $occurredAt = QueryInt::param($payload, 'occurred_at', $now, 0, 4294967295, 'a unix time; leave it out for now');
             $items = $payload['items'] ?? [];
             if (!is_array($items)) {
                 throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
@@ -1042,7 +1042,7 @@ class LtvController
     public function mergeCompany(int $companyId, array $payload): array
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source_company_id'], 'a company merge');
-        $sourceId = (int) ($payload['source_company_id'] ?? 0);
+        $sourceId = QueryInt::param($payload, 'source_company_id', 0, 1, PHP_INT_MAX, 'the company to merge INTO this one');
         if ($sourceId <= 0) {
             throw new ValidationException('source_company_id is required', ['source_company_id' => 'Required']);
         }
@@ -1502,7 +1502,7 @@ class LtvController
      */
     private function resolveCustomerFromPayload(array $payload, int $now, bool $inTransaction = false): int
     {
-        $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
+        $explicitId = QueryInt::param($payload, 'customer_id', 0, 1, PHP_INT_MAX, 'an LTV customer id (see `p202 ltv customers`)');
         if ($explicitId > 0) {
             if (!$this->customers->customerBelongsToUser($explicitId, $this->userId)) {
                 throw new NotFoundException('customer_id ' . $explicitId . ' not found for this account');

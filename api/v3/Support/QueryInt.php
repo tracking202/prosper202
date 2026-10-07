@@ -7,7 +7,8 @@ namespace Api\V3\Support;
 use Api\V3\Exception\ValidationException;
 
 /**
- * A whole-number query parameter, read strictly.
+ * A whole number a request names, read strictly: a query parameter, or a
+ * field of a hand-read body (the CRUD base reads its fields' own way).
  *
  * The controllers used to read these as `max(1, min(500, (int)
  * ($params['limit'] ?? 50)))`. The cast turns anything that is not a number
@@ -46,5 +47,21 @@ final class QueryInt
         }
 
         return (int) $text;
+    }
+
+    /**
+     * $name from $params as a whole number from $min to $max, which must be
+     * given: absent, '' or null is a 422 saying it is required.
+     *
+     * @param array<string, mixed> $params
+     */
+    public static function required(array $params, string $name, int $min, int $max, string $what = ''): int
+    {
+        if (!array_key_exists($name, $params) || $params[$name] === '' || $params[$name] === null) {
+            $range = $max === PHP_INT_MAX ? "$min or more" : "$min to $max";
+            throw new ValidationException("$name is required", [$name => "Required: a whole number, $range" . ($what !== '' ? ": $what" : '')]);
+        }
+
+        return self::param($params, $name, 0, $min, $max, $what);
     }
 }

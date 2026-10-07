@@ -66,6 +66,21 @@ back whole, so they are accepted with the record's own value and refused with
 any other — and every client that builds a body from *another* record
 (`p202 import`, `sync`, `SyncEngine`) has to leave them out.
 
+A cast is the same fallback spelled as a conversion. `(int) "12abc"` is 12 and
+`(int) "2026-10-07"` is 2026, so `click_id: "12abc"` recorded a conversion on
+click 12, `conv_time: "2026-10-07"` dated it in 1970, `source_customer_id:
+"12abc"` merged customer 12, and the lists' `max(1, min(500, (int) …))` made
+`limit=abc` one row and `limit=1000` 500 rows that read as all of them.
+`Api\V3\Support\QueryInt::param()`/`required()` read a whole number or
+answer a 422 naming it and its range; `ForbidNumericCastOfRequestParamRule`
+reports `(int)`, `(float)`, `intval()` and `floatval()` of an element of
+`$params`, `$queryParams` or a request superglobal in `api/` (35 sites before
+the sweep, 0 after). It does not look at `$payload`: the CRUD hooks receive
+the body under that name after the base class validated it, so the name
+cannot say whether a value was read — a hand-read body field is still the
+author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
+ones that exist).
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 

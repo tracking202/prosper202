@@ -76,6 +76,9 @@ rules:
     # LTV's period=0 answered over the default window and GET
     # /conversions?campaign_id=0 with every campaign's conversions.
     - Prosper202\PHPStan\Rules\ForbidFalsyRequestParamTestRule
+    # …and a query parameter cast to a number: (int) 'abc' is 0, and a clamp
+    # made limit=abc one row and limit=1000 500 that read as all of them.
+    - Prosper202\PHPStan\Rules\ForbidNumericCastOfRequestParamRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
     - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
     # CLAUDE.md #7 — bind_param type string mismatches.

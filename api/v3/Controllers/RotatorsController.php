@@ -176,8 +176,9 @@ class RotatorsController
         // target foreign key".
         $publicId = 0;
         if (isset($payload['public_id']) && $payload['public_id'] !== '') {
-            $requested = (int)$payload['public_id'];
-            if ($requested > 0 && $this->publicIdIsFree($requested)) {
+            // A value that is not one is refused; a taken one is replaced.
+            $requested = QueryInt::param($payload, 'public_id', 0, 1, 2147483647, "the rotator's public id; leave it out and one is chosen");
+            if ($this->publicIdIsFree($requested)) {
                 $publicId = $requested;
             }
         }

@@ -61,12 +61,17 @@ class SyncController
         $options = $this->resolveSyncOptions($payload);
         $this->validatePruneToken($source, $target, $options);
         $idempotencyKey = (string)(\Api\V3\RequestContext::header('idempotency-key') ?? '');
+        // Read before anything is stored, so a refused value queues nothing,
+        // and fingerprinted with the rest, so a key reused with another
+        // max_attempts is a different request, not a replay.
+        $maxAttempts = QueryInt::param($payload, 'max_attempts', 3, 1, 10, 'tries before the job fails');
 
         $jobPayload = [
             'entity' => $entity,
             'source' => $source,
             'target' => $target,
             'options' => $options,
+            'max_attempts' => $maxAttempts,
             'idempotency_key' => $idempotencyKey,
         ];
         // The request hash is a fingerprint recorded beside the response,
@@ -97,7 +102,7 @@ class SyncController
         $jobPayload['request_hash'] = $requestHash;
         $job = $this->store->createJob($jobPayload, $this->userId);
         $job['attempts'] = 0;
-        $job['max_attempts'] = max(1, min(10, (int)($payload['max_attempts'] ?? 3)));
+        $job['max_attempts'] = $maxAttempts;
         $job['next_run_at'] = time();
         $job['status'] = 'queued';
         $this->store->saveJob($job);
@@ -169,7 +174,7 @@ class SyncController
     public function runWorker(array $payload): array
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['limit'], 'a worker run');
-        $limit = max(1, min(100, (int)($payload['limit'] ?? 10)));
+        $limit = QueryInt::param($payload, 'limit', 10, 1, 100, 'queued jobs to run');
         $jobs = $this->store->listJobs(['queued'], $limit);
 
         $processed = 0;

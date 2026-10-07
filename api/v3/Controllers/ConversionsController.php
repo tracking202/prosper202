@@ -221,15 +221,14 @@ class ConversionsController
             'click_id', 'transaction_id', 'conv_time', 'payout', 'status', 'reversal_id',
             'customer_id', 'customer_ref', 'customer_ref_type', 'customer_crm', 'items',
         ], 'a conversion');
-        $clickId = (int)($payload['click_id'] ?? 0);
-        if ($clickId <= 0) {
-            throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);
-        }
+        // Read strictly: (int) made "12abc" click 12 and "abc" no click, and
+        // a conv_time of "2026-10-07" the 2026th second of 1970.
+        $clickId = QueryInt::required($payload, 'click_id', 1, PHP_INT_MAX, 'the click the conversion is recorded on');
 
         $data = [
             'click_id' => $clickId,
             'transaction_id' => (string)($payload['transaction_id'] ?? ''),
-            'conv_time' => (int)($payload['conv_time'] ?? time()),
+            'conv_time' => QueryInt::param($payload, 'conv_time', time(), 0, 2147483647, 'a unix time; leave it out for now'),
             // Provenance: written through the API, by this key (a digest of
             // it; the breakdown names the key from it).
             'source' => \Prosper202\Conversion\Ledger\ConversionSource::API->value,
