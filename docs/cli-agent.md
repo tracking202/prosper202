@@ -428,12 +428,13 @@ ROTATOR_ID=$(echo "$ROTATOR" | jq -r '.data.id')
 # Add a rule with criteria and redirects
 p202 rotator rule-create "$ROTATOR_ID" \
   --rule_name "US Traffic" \
-  --criteria_json '[{"type":"country","statement":"is","value":"US"}]' \
+  --criteria_json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
   --redirects_json '[{"redirect_url":"https://us.example.com","weight":"100","name":"US Offer"}]' \
   --json
 ```
 
-JSON fields (`--criteria_json`, `--redirects_json`, `--weighting_config`) are validated locally before the API call. Malformed JSON produces an immediate error.
+JSON fields (`--criteria_json`, `--redirects_json`, `--weighting_config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
+A rotator's default is one destination (`--default_url`, `--default_campaign` or `--default_lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, city, isp, ip, platform, device, browser, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches.
 
 ### Forecast next week and flag today as normal or anomalous
 
@@ -733,7 +734,7 @@ p202 rotator update <id> [--name S] [--default_url S] [--default_campaign N] [--
 p202 rotator delete <id> [--force] [--dry-run] [--json]
 p202 rotator delete --ids N1,N2,... [--force] [--dry-run] [--json]
 
-p202 rotator rule-create <rotator_id> --rule_name S [--splittest 0|1]
+p202 rotator rule-create <rotator_id> --rule_name S [--splittest 0|1] [--status 0|1]
                          [--criteria_json JSON] [--redirects_json JSON] [--idempotency-key S] [--json]
 p202 rotator rule-delete <rotator_id> <rule_id> [--force] [--dry-run] [--json]
 p202 rotator rule-delete <rotator_id> --ids N1,N2,... [--force] [--dry-run] [--json]

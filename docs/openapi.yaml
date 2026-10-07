@@ -9443,10 +9443,20 @@ components:
           type: string
         default_url:
           type: string
+          nullable: true
+          description: "An http(s) URL. One destination: send at most one of default_url, default_campaign, default_lp."
         default_campaign:
           type: integer
+          nullable: true
+          description: One of your live campaigns.
         default_lp:
           type: integer
+          nullable: true
+          description: One of your live landing pages.
+        auto_monetizer:
+          type: string
+          nullable: true
+          description: '"true" when the default is the auto-monetizer.'
 
     RotatorCreate:
       type: object
@@ -9456,22 +9466,35 @@ components:
           type: string
         default_url:
           type: string
+          nullable: true
+          description: "An http(s) URL. One destination: send at most one of default_url, default_campaign, default_lp."
         default_campaign:
           type: integer
+          nullable: true
+          description: One of your live campaigns.
         default_lp:
           type: integer
+          nullable: true
+          description: One of your live landing pages.
 
     RotatorUpdate:
       type: object
+      description: Naming any of default_url, default_campaign, default_lp replaces the whole default and clears the others (and the auto-monetizer).
       properties:
         name:
           type: string
         default_url:
           type: string
+          nullable: true
+          description: "An http(s) URL. One destination: send at most one of default_url, default_campaign, default_lp."
         default_campaign:
           type: integer
+          nullable: true
+          description: One of your live campaigns.
         default_lp:
           type: integer
+          nullable: true
+          description: One of your live landing pages.
 
     RotatorRule:
       type: object
@@ -9499,10 +9522,10 @@ components:
                 type: integer
               type:
                 type: string
-                description: Criteria type (e.g. country, device, browser)
+                enum: [country, region, city, isp, ip, platform, device, browser]
               statement:
                 type: string
-                description: Comparison operator (e.g. is, is_not, contains)
+                enum: [is, is_not]
               value:
                 type: string
         redirects:
@@ -9541,26 +9564,38 @@ components:
           type: array
           items:
             type: object
+            required: [type, value]
             properties:
               type:
                 type: string
+                enum: [country, region, city, isp, ip, platform, device, browser]
               statement:
                 type: string
+                enum: [is, is_not]
+                default: is
               value:
                 type: string
+                description: Comma-separated; countries as Name(CC), e.g. "United States(US)".
         redirects:
           type: array
           items:
             type: object
+            description: Exactly one of redirect_url, redirect_campaign, redirect_lp.
             properties:
               redirect_url:
                 type: string
+                description: An http(s) URL.
               redirect_campaign:
                 type: integer
+                description: One of your live campaigns.
               redirect_lp:
                 type: integer
+                description: One of your live landing pages.
               weight:
                 type: integer
+                minimum: 0
+                maximum: 100
+                default: 100
               name:
                 type: string
 

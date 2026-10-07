@@ -82,19 +82,19 @@ var rotatorCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new redirector/rotator for rule-based traffic splitting",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
-			return fmt.Errorf("required flag --name is missing")
+			return validationError("required flag --name is missing").WithHint("Name the redirector, e.g. --name \"Geo split\".")
 		}
 		body := map[string]interface{}{"name": name}
 		for _, f := range []string{"default_url", "default_campaign", "default_lp"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("rotators", body, idemKey)
@@ -111,10 +111,6 @@ var rotatorUpdateCmd = &cobra.Command{
 	Short: "Update a redirector/rotator's name or defaults",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		body := map[string]interface{}{}
 		for _, f := range []string{"name", "default_url", "default_campaign", "default_lp"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
@@ -122,7 +118,12 @@ var rotatorUpdateCmd = &cobra.Command{
 			}
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update").
+				WithHint("--name, or one of --default_url, --default_campaign, --default_lp (the default is one of them; setting one clears the others).")
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		data, err := c.Put("rotators/"+args[0], body)
 		if err != nil {
@@ -148,29 +149,34 @@ var rotatorDeleteCmd = &cobra.Command{
 	},
 }
 
+// criteriaJSONHint and redirectsJSONHint say what the server takes for a
+// rule's criteria and redirects (RotatorsController::ruleParts).
+const (
+	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `).`
+	redirectsJSONHint = `A JSON array of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight" (0-100), "name"}: one destination each.`
+)
+
 var rotatorRuleCreateCmd = &cobra.Command{
 	Use:   "rule-create <rotator_id>",
 	Short: "Add a routing rule to a redirector/rotator (criteria + redirect targets)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		ruleName, _ := cmd.Flags().GetString("rule_name")
 		if ruleName == "" {
-			return fmt.Errorf("required flag --rule_name is missing")
+			return validationError("required flag --rule_name is missing")
 		}
 		body := map[string]interface{}{
 			"rule_name": ruleName,
 		}
-		if v, _ := cmd.Flags().GetString("splittest"); v != "" {
-			body["splittest"] = v
+		for _, f := range []string{"splittest", "status"} {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				body[f] = v
+			}
 		}
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return fmt.Errorf("invalid --criteria_json: %w", err)
+				return validationError("invalid --criteria_json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
 			body["criteria"] = criteria
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
@@ -185,12 +191,16 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return fmt.Errorf("invalid --redirects_json: %w", err)
+				return validationError("invalid --redirects_json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
 			}
 			body["redirects"] = redirects
 		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
 			// Sugar: a single-campaign redirect at full weight.
 			body["redirects"] = []map[string]string{{"redirect_campaign": camp, "weight": "100", "name": "to campaign " + camp}}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("rotators/"+args[0]+"/rules", body, idemKey)
@@ -229,11 +239,6 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 	// (and both together); the positional wins and is resolved in RunE.
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-
 		ruleID := ""
 		if len(args) >= 2 {
 			ruleID = args[1]
@@ -242,7 +247,8 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		}
 		ruleID = strings.TrimSpace(ruleID)
 		if ruleID == "" {
-			return fmt.Errorf("rule id is required (pass it as the second argument or via --rule_id)")
+			return validationError("rule id is required (pass it as the second argument or via --rule_id)").
+				WithHint("`p202 rotator get <rotator_id>` lists its rules and their ids.")
 		}
 
 		body := map[string]interface{}{}
@@ -258,19 +264,23 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return fmt.Errorf("invalid --criteria_json: %w", err)
+				return validationError("invalid --criteria_json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
 			body["criteria"] = criteria
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return fmt.Errorf("invalid --redirects_json: %w", err)
+				return validationError("invalid --redirects_json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
 			}
 			body["redirects"] = redirects
 		}
 		if len(body) == 0 {
-			return fmt.Errorf("no fields specified; pass at least one flag to update")
+			return validationError("no fields specified; pass at least one flag to update")
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 
 		data, err := c.Put("rotators/"+args[0]+"/rules/"+ruleID, body)
@@ -290,20 +300,22 @@ func init() {
 	registerIdempotencyKeyFlag(rotatorCreateCmd)
 	registerIdempotencyKeyFlag(rotatorRuleCreateCmd)
 	rotatorCreateCmd.Flags().String("name", "", "Rotator name (required)")
-	rotatorCreateCmd.Flags().String("default_url", "", "Default redirect URL")
-	rotatorCreateCmd.Flags().String("default_campaign", "", "Default campaign ID")
-	rotatorCreateCmd.Flags().String("default_lp", "", "Default landing page ID")
+	rotatorCreateCmd.Flags().String("default_url", "", "Default destination: an http(s) URL (one of --default_url, --default_campaign, --default_lp)")
+	rotatorCreateCmd.Flags().String("default_campaign", "", "Default destination: one of your campaign ids")
+	rotatorCreateCmd.Flags().String("default_lp", "", "Default destination: one of your landing page ids")
 
 	rotatorUpdateCmd.Flags().String("name", "", "Rotator name")
-	rotatorUpdateCmd.Flags().String("default_url", "", "Default redirect URL")
-	rotatorUpdateCmd.Flags().String("default_campaign", "", "Default campaign ID")
-	rotatorUpdateCmd.Flags().String("default_lp", "", "Default landing page ID")
+	rotatorUpdateCmd.Flags().String("default_url", "", "New default: an http(s) URL; replaces the current default, whatever its kind")
+	rotatorUpdateCmd.Flags().String("default_campaign", "", "New default: one of your campaign ids; replaces the current default")
+	rotatorUpdateCmd.Flags().String("default_lp", "", "New default: one of your landing page ids; replaces the current default")
 
 	registerDeleteFlags(rotatorDeleteCmd, "rotator")
 
 	rotatorRuleCreateCmd.Flags().String("rule_name", "", "Rule name (required)")
 	rotatorRuleCreateCmd.Flags().String("splittest", "", "Enable split test")
 	enumFlag(rotatorRuleCreateCmd, "splittest", newEnum(binaryValues))
+	rotatorRuleCreateCmd.Flags().String("status", "", "Rule status: 1 active (the default), 0 created paused")
+	enumFlag(rotatorRuleCreateCmd, "status", newEnum(binaryValues))
 	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
 	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_campaign":"90008","weight":"100","name":"A"}]`)
 	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
@@ -317,7 +329,7 @@ func init() {
 	enumFlag(rotatorRuleUpdateCmd, "splittest", newEnum(binaryValues))
 	rotatorRuleUpdateCmd.Flags().String("status", "", "Rule status (1 = active)")
 	enumFlag(rotatorRuleUpdateCmd, "status", newEnum(binaryValues))
-	rotatorRuleUpdateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"US"}]`)
+	rotatorRuleUpdateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
 	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
 
 	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)

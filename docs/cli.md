@@ -986,16 +986,20 @@ p202 rotator delete --ids 5,6 --force
 | Flag                 | Required (create) | Description             |
 |----------------------|-------------------|-------------------------|
 | `--name`             | Yes               | Rotator name            |
-| `--default_url`      | No                | Default redirect URL    |
-| `--default_campaign` | No                | Default campaign ID     |
-| `--default_lp`       | No                | Default landing page ID |
+| `--default_url`      | No                | Default destination: an http(s) URL |
+| `--default_campaign` | No                | Default destination: one of your campaign ids |
+| `--default_lp`       | No                | Default destination: one of your landing page ids |
+
+The default is one destination: give at most one of the three. On `update`,
+giving one replaces the default whatever its kind (a campaign default becomes a
+URL default), as the Redirectors page does.
 
 ### Create a rule
 
 ```bash
 p202 rotator rule-create 5 \
   --rule_name "US Traffic" \
-  --criteria_json '[{"type":"country","statement":"is","value":"US"}]' \
+  --criteria_json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
   --redirects_json '[{"redirect_url":"https://us.example.com","weight":"100","name":"US Offer"}]'
 ```
 
@@ -1003,10 +1007,14 @@ p202 rotator rule-create 5 \
 |--------------------|----------|----------------------------|
 | `--rule_name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
-| `--criteria_json`  | No       | Criteria as JSON array     |
-| `--redirects_json` | No       | Redirects as JSON array    |
+| `--status`         | No       | 1 active (default), 0 created paused |
+| `--criteria_json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)` |
+| `--redirects_json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
 
-Both JSON fields are validated before sending.
+Both JSON fields are checked for syntax before sending, and the server checks
+the rest before writing anything: an unknown criterion type, a country written
+as a bare code (`US` never matches), a redirect with no destination or two, or
+a campaign or landing page that is not yours is refused naming the entry.
 
 ### Delete a rule
 
@@ -1022,7 +1030,7 @@ p202 rotator rule-delete 5 --ids 12,13 --force
 p202 rotator rule-update 5 12 --rule_name "US Traffic v2"
 p202 rotator rule-update 5 12 --status 0
 p202 rotator rule-update 5 12 \
-  --criteria_json '[{"type":"country","statement":"is","value":"US"}]' \
+  --criteria_json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
   --redirects_json '[{"redirect_campaign":"4","weight":"100","name":"US Offer"}]'
 ```
 

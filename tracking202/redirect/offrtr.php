@@ -314,7 +314,7 @@ if ($default == false) {
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 			}
 
-			if ($rule_redirect_row['redirect_campaign'] != null) {
+			if (!empty($rule_redirect_row['redirect_campaign'])) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
 
@@ -433,11 +433,11 @@ if ($default == false) {
 				    die();
 				}
 
-			} else if ($rule_redirect_row['redirect_lp'] != null) {
+			} else if (!empty($rule_redirect_row['redirect_lp'])) {
 				$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
 				header('location: ' . $redirect_site_url);
 				die();
-			} else if($rule_redirect_row['redirect_url'] != null) {
+			} else if(!empty($rule_redirect_row['redirect_url'])) {
 				header('location: ' . $rule_redirect_row['redirect_url']);
 				die();
 			} else if ($rule_redirect_row['auto_monetizer'] != null) {
@@ -446,7 +446,7 @@ if ($default == false) {
 			}
 } else {
 
-		if ($rotator_row['default_campaign'] != null) {
+		if (!empty($rotator_row['default_campaign'])) {
 				$click_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
@@ -580,11 +580,11 @@ if ($default == false) {
 				    die();
 				}
 
-		} else if ($rotator_row['default_lp'] != null) {
+		} else if (!empty($rotator_row['default_lp'])) {
 			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
 			header('location: ' . $redirect_site_url);
 			die();
-		} else if($rotator_row['default_url'] != null) {
+		} else if(!empty($rotator_row['default_url'])) {
 			header('location: ' . $rotator_row['default_url']);
 			die();
 		} else if ($rotator_row['auto_monetizer'] != null) {
