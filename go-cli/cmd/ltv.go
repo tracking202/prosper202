@@ -65,11 +65,10 @@ func collectLtvFilters(cmd *cobra.Command, paging bool) (map[string]string, erro
 		if cmd.Flags().Lookup(f) == nil {
 			continue
 		}
+		// time_from/time_to go as given: the server reads unix seconds, a
+		// date or a time with its offset (TimeBound), and refuses anything
+		// else naming the field.
 		if v := getStringFlagOrDefault(cmd, "ltv", f); v != "" {
-			if (f == "time_from" || f == "time_to") && !unixTimePattern.MatchString(v) {
-				return nil, validationError("--%s must be a unix timestamp in seconds, got %q", f, v).
-					WithHint("Or use --period today|yesterday|last7|last30|last90.")
-			}
 			params[f] = v
 		}
 	}
@@ -163,8 +162,8 @@ func collectLtvFieldFilters(cmd *cobra.Command, params map[string]string) error 
 func addLtvTimeFilters(cmd *cobra.Command) {
 	cmd.Flags().StringP("period", "p", "", "Period")
 	enumFlag(cmd, "period", newEnum(reportPeriods))
-	cmd.Flags().String("time_from", "", "Acquisition window start (unix timestamp)")
-	cmd.Flags().String("time_to", "", "Acquisition window end (unix timestamp)")
+	cmd.Flags().String("time_from", "", "Acquisition window start: "+timeFromHelp[len("Start: "):])
+	cmd.Flags().String("time_to", "", "Acquisition window end, inclusive: "+timeToHelp[len("End, inclusive: "):])
 }
 
 // ltvGet is the shape of every plain LTV read: validated params, one GET,

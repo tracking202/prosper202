@@ -131,6 +131,23 @@ func TestLtvCustomersSendsSearchSegmentAndDottedFieldFilters(t *testing.T) {
 	}
 }
 
+// The server reads a date or a time with its offset as well as unix seconds
+// (TimeBound) and refuses anything else naming the field, so the window goes
+// as given: a local unix-only check refused dates the server reads.
+func TestLtvWindowGoesAsGiven(t *testing.T) {
+	srv := newLtvServer(t, nil)
+	if _, _, err := executeCommand("ltv", "summary", "--time_from", "2026-10-01", "--time_to", "2026-10-07T23:59:59Z"); err != nil {
+		t.Fatalf("ltv summary: %v", err)
+	}
+	q, err := url.ParseQuery(srv.only(t).RawQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Get("time_from") != "2026-10-01" || q.Get("time_to") != "2026-10-07T23:59:59Z" {
+		t.Errorf("query = %v, want the window as given", q)
+	}
+}
+
 func TestLtvFieldFiltersReachEveryReadTheServerFiltersByThem(t *testing.T) {
 	for _, tc := range []struct{ cmd, path string }{
 		{"summary", "/ltv/summary"},
@@ -165,7 +182,6 @@ func TestLtvBadFieldFiltersAreRefusedBeforeAnyRequest(t *testing.T) {
 		{[]string{"--limit", "900"}, "--limit must be a whole number from 1 to 500"},
 		{[]string{"--limit", "abc"}, "--limit must be"},
 		{[]string{"--offset", "-3"}, "--offset must be"},
-		{[]string{"--time_from", "2026-01-01"}, "unix timestamp"},
 		{[]string{"--all", "--limit", "5"}, "does not combine"},
 		{[]string{"7", "--search", "acme"}, "filters the customer list"},
 		{[]string{"seven"}, "numeric"},

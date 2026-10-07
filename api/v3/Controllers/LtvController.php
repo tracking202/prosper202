@@ -9,6 +9,9 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\LostIdempotencyRaceException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Ltv\LtvQuery;
@@ -34,6 +37,9 @@ use Prosper202\Ltv\SubscriptionNotFoundException;
  */
 class LtvController
 {
+    use StatementHelpers;
+    use AccountTimezone;
+
     private Connection $conn;
     private MysqlCustomerRepository $customers;
     private MysqlCustomerFieldRepository $fields;
@@ -1024,14 +1030,15 @@ class LtvController
 
     /**
      * Build the LtvQuery from request params: time window (time_from/time_to
-     * or period=today|yesterday|last7|last30|last90) and up to 3 custom-field
+     * in TimeBound's forms, or period=today|yesterday|last7|last30|last90) and up to 3 custom-field
      * filters (cf.<field_key>=value, cf.<field_key>.min= / .max= for
      * number/date fields).
      */
     private function query(array $params): LtvQuery
     {
-        $timeFrom = !empty($params['time_from']) ? (int) $params['time_from'] : null;
-        $timeTo = !empty($params['time_to']) ? (int) $params['time_to'] : null;
+        // Read as the reports read them (TimeBound): a date-shaped value
+        // cast with (int) was 2026 seconds, and the window covered all time.
+        [$timeFrom, $timeTo] = TimeBound::window($params, fn (): string => $this->accountTimezone());
 
         if (!empty($params['period'])) {
             $now = time();

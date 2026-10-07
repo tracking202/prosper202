@@ -5820,8 +5820,8 @@ paths:
       operationId: ltvSummary
       parameters:
       - $ref: '#/components/parameters/period'
-      - $ref: '#/components/parameters/timeFrom'
-      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/windowFrom'
+      - $ref: '#/components/parameters/windowTo'
       responses:
         '200':
           description: Customers, revenue, orders and averages over the window
@@ -5849,8 +5849,8 @@ paths:
       operationId: ltvListCustomers
       parameters:
       - $ref: '#/components/parameters/period'
-      - $ref: '#/components/parameters/timeFrom'
-      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/windowFrom'
+      - $ref: '#/components/parameters/windowTo'
       - $ref: '#/components/parameters/limit'
       - $ref: '#/components/parameters/offset'
       - name: sort
@@ -6412,8 +6412,8 @@ paths:
       operationId: ltvBreakdown
       parameters:
       - $ref: '#/components/parameters/period'
-      - $ref: '#/components/parameters/timeFrom'
-      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/windowFrom'
+      - $ref: '#/components/parameters/windowTo'
       - name: by
         in: query
         schema:
@@ -6502,8 +6502,8 @@ paths:
       operationId: ltvPredict
       parameters:
       - $ref: '#/components/parameters/period'
-      - $ref: '#/components/parameters/timeFrom'
-      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/windowFrom'
+      - $ref: '#/components/parameters/windowTo'
       - name: by
         in: query
         schema:
