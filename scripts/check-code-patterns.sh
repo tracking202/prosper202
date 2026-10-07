@@ -146,12 +146,17 @@ while IFS= read -r file; do
         fi
     fi
 
-    # ── Pattern 8: Digit-prefixed SQL alias ──
-    # MySQL rejects unquoted aliases starting with a digit
-    if grep -qE '\bAS\s+[0-9][a-zA-Z_]+\b' "$tmpfile"; then
+    # ── Pattern 8: an SQL alias the server reads as a number ──
+    # An unquoted identifier may start with a digit (`202_dataengine AS 2c`
+    # runs on every Visitors request); what the server refuses is one that is
+    # a number: all digits (AS 22), an exponent (AS 2e1), hex (AS 0x1) or
+    # binary (AS 0b1). Each executed on MariaDB 10.11: those four refused,
+    # AS 2c, AS 2st and AS 2e accepted. This used to flag every digit-led
+    # alias, the tree's own included.
+    if grep -qE '\bAS\s+([0-9]+|[0-9]+[eE][0-9]+|0[xX][0-9a-fA-F]+|0[bB][01]+)\b' "$tmpfile"; then
         add_violation "$file" \
-            'SQL alias starting with digit' \
-            'MySQL requires aliases to start with a letter (e.g., AS cv2 not AS 2cv)'
+            'SQL alias the server reads as a number' \
+            'An alias may start with a digit (AS 2c) but must not be one: not all digits (AS 22), an exponent (AS 2e1), hex (AS 0x1) or binary (AS 0b1)'
     fi
 
     rm -f "$tmpfile"
