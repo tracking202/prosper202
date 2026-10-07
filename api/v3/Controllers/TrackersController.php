@@ -7,11 +7,13 @@ namespace Api\V3\Controllers;
 use Api\V3\Controller;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
-use Prosper202\Click\TrackingBaseUrl;
+use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Click\TrackingLinkVariables;
 
 class TrackersController extends Controller
 {
+    use TrackingBaseLookup;
+
     protected function tableName(): string { return '202_trackers'; }
     protected function primaryKey(): string { return 'tracker_id'; }
 
@@ -115,7 +117,7 @@ class TrackersController extends Controller
         $tracker = $this->get($id);
         $row = $tracker['data'];
         $publicId = (int)$row['tracker_id_public'];
-        $baseUrl = TrackingBaseUrl::build($this->trackingDomain(), $server ?? $_SERVER, dirname(__DIR__, 3));
+        $baseUrl = $this->trackingBaseUrl($server);
         $variables = TrackingLinkVariables::query($this->customVariables((int)($row['ppc_account_id'] ?? 0)), $values);
 
         // A landing-page tracker promotes the landing page's own URL, so resolve
@@ -245,22 +247,6 @@ class TrackersController extends Controller
         $stmt->close();
 
         return (string)($row['landing_page_url'] ?? '');
-    }
-
-    /** user 1's tracking domain, which getTrackingDomain() builds every UI link on; '' when unset. */
-    private function trackingDomain(): string
-    {
-        $stmt = $this->prepare('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1');
-        $this->execute($stmt, 'Failed to query tracking domain');
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new DatabaseException('Failed to query tracking domain');
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        return (string) ($row['user_tracking_domain'] ?? '');
     }
 
     /**

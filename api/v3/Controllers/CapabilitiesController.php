@@ -77,6 +77,14 @@ class CapabilitiesController
                     // and /conversions/uploads, each with ?dry_run=1. Not
                     // stageable.
                     'update_section' => true,
+                    // The UI's Setup section's code and per-source settings
+                    // as REST, behind its role permission
+                    // (access_to_setup_section): GET /landing-pages/{id}/code
+                    // (Get LP Code), GET /conversions/postback-code
+                    // (Postback / Pixel), and a traffic source's custom
+                    // variables and an account's pixels under
+                    // /ppc-networks/{id}/variables and /ppc-accounts/{id}/pixels.
+                    'setup_section' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the
