@@ -36,8 +36,13 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
 		t.Errorf("breakdown by browser: %+v", a.Results)
 	}
-	if r := rankOf(a, "p202 analytics"); r == 0 || r > 3 || a.Results[r-1].Try != "p202 analytics --group-by browser" {
+	// report groups (the Group Overview) also groups by browser, and ranks
+	// beside the single-level commands; the shorthand stays near the top.
+	if r := rankOf(a, "p202 analytics"); r == 0 || r > 4 || a.Results[r-1].Try != "p202 analytics --group-by browser" {
 		t.Errorf("breakdown by browser: analytics at %d in %+v", r, a.Results)
+	}
+	if r := rankOf(a, "p202 report groups"); r != 0 && a.Results[r-1].Try != "p202 report groups --by browser" {
+		t.Errorf("breakdown by browser: report groups offered without a runnable try: %+v", a.Results[r-1])
 	}
 	if a.Results[0].Try != "p202 report breakdown --breakdown browser" {
 		t.Errorf("breakdown by browser: try = %q", a.Results[0].Try)

@@ -267,6 +267,12 @@ p202 report breakdown --breakdown ip --keyword "running shoes" --period thismont
 p202 report breakdown --breakdown campaign --ip 2001:db8::1 --period alltime --json
 ```
 
+For the Group Overview — nested groups, each with its totals — use
+`p202 report groups --by ppc_network,campaign,keyword --period last7 --json`:
+the answer is a tree (`data[].children[]`), and a group's clicks with no value
+at the next level are its child with `id: null` (`[no keyword]` in the table),
+so every group is the sum of its children. A breakdown leaves those clicks out.
+
 Periods: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime`. The calendar ones start at midnight in the account's timezone (`today` used to be the server's day); `lastN` is N×24 hours up to now. A filter or value the server does not take is a validation error naming it (`--ip 999.1.1.1`, `--aff_campaign_id abc`), never silently ignored.
 
 ### Read performance over time
@@ -766,7 +772,8 @@ an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
 ```
 p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
                 [--aff_campaign_id N] [--ppc_account_id N] [--landing_page_id N] [--all]
-                [--click_lead 0|1] [--click_bot 0|1] [--json]
+                [--click_lead 0|1] [--click_bot 0|1] [--period P] [--keyword T] [--referer T] [--ip A]
+                [--show all|real|filtered|filtered_bot|leads] [--device_type N] [... every report filter] [--json]
 p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjson]
                 # the Spy page: newest clicks, then one JSON line per new click; bound it with --stop-after
 p202 click get <id> [--json]

@@ -11,6 +11,7 @@ Aggregate performance data across campaigns, networks, time periods, and dimensi
 | `GET` | `/reports/timeseries` | Performance over time |
 | `GET` | `/reports/daypart` | Performance by hour of day |
 | `GET` | `/reports/weekpart` | Performance by day of week |
+| `GET` | `/reports/groups` | Traffic grouped by up to four dimensions, nested, every group with its totals (see [Group Overview](#group-overview)) |
 | `GET` | `/rotators/{id}/stats` | One rotator: its totals, each rule, and its default (see [Rotator stats](#rotator-stats)) |
 
 ## Common Query Parameters
@@ -128,6 +129,39 @@ Buckets come oldest first, at most 2000 per response. Next to `data` and `interv
 
 **Sort options:** `hour_of_day` (or `day_of_week`), `total_clicks`, `total_click_throughs`, `total_leads`, `total_income`, `total_cost`, `total_net`, `epc`, `avg_cpc`, `conv_rate`, `roi`, `cpa`.
 
+## Group Overview
+
+`GET /reports/groups?by=ppc_network,campaign,keyword` is the Overview's Group
+Overview: the traffic in the window and filters above, grouped by up to four
+of the breakdown dimensions, one inside the other (`by`, outermost first,
+each once). Every group carries every metric of
+[Metrics Returned](#metrics-returned), and its `children` (the next level;
+the innermost level has none):
+
+```json
+{
+  "data": [
+    {"breakdown": "ppc_network", "id": 3, "name": "Facebook", "total_clicks": "40", "total_income": "61.50000", "...": "...",
+     "children": [
+       {"breakdown": "campaign", "id": 12, "name": "Shoes", "total_clicks": "31", "...": "...", "children": ["..."]},
+       {"breakdown": "campaign", "id": null, "name": null, "total_clicks": "9", "...": "..."}
+     ]}
+  ],
+  "totals": {"total_clicks": "52", "...": "..."},
+  "by": ["ppc_network", "campaign", "keyword"]
+}
+```
+
+A group is the sum of its children. Unlike a breakdown, which leaves out the
+clicks with no value for its dimension, a group keeps them as a child with
+`id` and `name` null (the page's "[No keyword]" row), listed last. Children
+come in name order, or by `sort` (`name` or any metric) and `sort_dir`.
+Amounts are summed exactly at five decimals; ratios are each group's own,
+computed from its sums, to five decimals. Metrics come as strings, as a
+breakdown's do. Names the visitor wrote are cleaned as a breakdown's are.
+More than 5,000 groups at the innermost level is a `422` naming `by` — fewer
+levels, a shorter window or a filter — never a cut list.
+
 ## Rotator stats
 
 `GET /rotators/{id}/stats` is the Overview's Rotator Breakdown for one rotator,
@@ -212,6 +246,12 @@ curl "https://your-domain.com/api/v3/reports/breakdown?breakdown=ip&keyword=runn
 ```bash
 curl "https://your-domain.com/api/v3/reports/timeseries?interval=hour&period=today&aff_campaign_id=5" \
   -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### Traffic source › campaign › keyword, last 7 days
+
+```bash
+curl -H "Authorization: Bearer $KEY" "$BASE/api/v3/reports/groups?by=ppc_network,campaign,keyword&period=last7"
 ```
 
 ### A rotator's rules, yesterday

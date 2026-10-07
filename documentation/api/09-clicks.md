@@ -22,11 +22,21 @@ setting what a set of past clicks cost: `POST /clicks/cpc`, in the
 | `offset` | integer | 0 | Pagination offset |
 | `time_from` | string | — | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
-| `aff_campaign_id` | integer | — | Filter by campaign |
-| `ppc_account_id` | integer | — | Filter by PPC account |
-| `landing_page_id` | integer | — | Filter by landing page |
-| `click_lead` | integer | — | 0 = clicks only, 1 = conversions only |
-| `click_bot` | integer | — | 0 = human traffic, 1 = bot traffic |
+| `period` | string | — | A named window in the account's timezone: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` |
+| `aff_campaign_id`, `aff_network_id`, `ppc_account_id`, `ppc_network_id`, `landing_page_id`, `text_ad_id`, `country_id`, `region_id`, `isp_id`, `browser_id`, `platform_id` | integer | — | Narrow to one row of each (`0` or empty: not filtering) |
+| `device_type` | integer | — | A device type id (1 Desktop, 2 Mobile, 3 Tablet, 4 Bot): every device model of that type |
+| `method_of_promotion` | string | — | `directlink` (no landing page) or `landingpage` |
+| `show` | string | `all` | The Visitors page's "show" menu: `all`, `real` (not filtered), `filtered`, `filtered_bot`, `leads` (converted) |
+| `keyword`, `referer` | string | — | The keyword, or the referring URL, contains this text (case-insensitive; `%` and `_` match themselves) |
+| `ip` | string | — | One address, IPv4 or IPv6, however it is written |
+| `click_lead` | `0` or `1` | — | 0 = clicks only, 1 = conversions only |
+| `click_bot` | `0` or `1` | — | 0 = human traffic, 1 = bot traffic |
+
+These are the Visitors page's filters, the same ones every report takes
+([Reports](11-reports.md)). A parameter not listed here, a malformed value, a
+list where one value goes, and a `limit` or `offset` out of range are each a
+`422` naming the parameter; they were ignored or clamped before, so a
+misspelt filter answered for every click.
 
 ## List Response Fields
 

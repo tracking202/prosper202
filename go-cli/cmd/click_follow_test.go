@@ -191,6 +191,7 @@ func TestClickFollowRefusesWhatItCannotHonour(t *testing.T) {
 	for _, args := range [][]string{
 		{"click", "list", "--follow", "--all"},
 		{"click", "list", "--follow", "--time_from", "2026-10-01"},
+		{"click", "list", "--follow", "--period", "last7"},
 		{"click", "list", "--follow", "--page", "2"},
 		{"click", "list", "--interval", "10s"},
 		{"click", "list", "--stop-after", "1m"},
@@ -241,5 +242,39 @@ func TestClickFollowStopsOnAFailedPoll(t *testing.T) {
 	}
 	if got := followedIDs(t, stdout); len(got) != 1 || got[0] != 1 {
 		t.Errorf("printed %v before failing, want [1]", got)
+	}
+}
+
+// click list takes the Visitors page's filters under the names the reports
+// use, and sends each as the server's parameter.
+func TestClickListSendsTheVisitorsFilters(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = map[string]string{}
+		for k := range r.URL.Query() {
+			got[k] = r.URL.Query().Get(k)
+		}
+		_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	_, _, err := executeCommand("click", "list", "--keyword", "shoes", "--show", "real", "--period", "last7",
+		"--device_type", "2", "--ip", "203.0.113.9", "--referer", "news", "--ppc_network_id", "4",
+		"--method_of_promotion", "directlink", "--click_bot", "0", "--json")
+	if err != nil {
+		t.Fatalf("click list: %v", err)
+	}
+	want := map[string]string{"keyword": "shoes", "show": "real", "period": "last7", "device_type": "2",
+		"ip": "203.0.113.9", "referer": "news", "ppc_network_id": "4", "method_of_promotion": "directlink", "click_bot": "0"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("query %s = %q, want %q (sent %v)", k, got[k], v, got)
+		}
+	}
+	if _, _, err := executeCommand("click", "list", "--show", "everything"); err == nil || exitCodeForError(err) != ExitValidation {
+		t.Errorf("--show outside its values must be refused before any request: %v", err)
 	}
 }

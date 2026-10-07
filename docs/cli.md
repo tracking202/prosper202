@@ -630,6 +630,11 @@ p202 click list --follow --ndjson --stop-after 10m
 | `--landing_page_id` |         | Filter by landing page               |
 | `--click_lead`      |         | 0 = clicks only, 1 = conversions only |
 | `--click_bot`       |         | 0 = human, 1 = bot                   |
+| `-p, --period`      |         | A named window in the account's timezone: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` |
+| `--keyword`, `--referer` | | The keyword, or the referring URL, contains this text |
+| `--ip`              |         | One address, IPv4 or IPv6            |
+| `--show`            | all     | `all`, `real`, `filtered`, `filtered_bot`, `leads` |
+| `--device_type`, `--method_of_promotion`, `--aff_network_id`, `--ppc_network_id`, `--text_ad_id`, `--country_id`, `--region_id`, `--isp_id`, `--browser_id`, `--platform_id` | | The rest of the Visitors page's filters, as `p202 report` takes them |
 | `--all`             | false   | Fetch all rows across pages          |
 | `--follow`          |         | Print the newest `--limit` clicks (default 10), then each new click as it arrives |
 | `--interval`        | 5s      | With `--follow`: how often to poll (at least 1s) |
@@ -987,6 +992,7 @@ p202 report breakdown --breakdown campaign --period last7
 p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limit 10
 p202 report breakdown --breakdown referer --period lastmonth --show real --device_type 2
 p202 report breakdown --breakdown ip --keyword "running shoes" --period thismonth
+p202 report groups --by ppc_network,campaign,keyword --period last7   # the Group Overview: nested, each group with its totals
 ```
 
 | Flag               | Default       | Description                |

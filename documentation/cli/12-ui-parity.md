@@ -40,16 +40,16 @@ record links only to the caller's own records
 | Campaign Overview | `/reports/summary`, `/reports/breakdown?breakdown=campaign` | `p202 report summary`, `report breakdown`, `p202 dashboard` | ✅ |
 | Breakdown Analysis | `/reports/timeseries`, `/reports/breakdown` | `p202 report timeseries`, `report breakdown` | ✅ |
 | Day Parting / Week Parting | `/reports/daypart`, `/reports/weekpart` | `p202 report daypart`, `report weekpart` | ✅ |
-| Group Overview (up to four groupings, nested, with subtotals) | — | `p202 report crosstab` pivots one metric across two | ◐ no nested report with every metric |
-| Rotator breakdown | — | — | ✗ |
+| Group Overview (up to four groupings, nested, with subtotals) | `GET /reports/groups?by=…` | `p202 report groups --by …` | ✅ |
+| Rotator breakdown | `GET /rotators/{id}/stats` | `p202 rotator stats` | ✅ counted by rule (the page counts by redirect id) |
 
 ## Analyze
 
 | Page | API | CLI | |
 | ---- | --- | --- | - |
 | Keywords, Text Ads, Countries, Cities, Regions, ISP/Carrier, Landing Pages, Devices, Browsers, Platforms | `/reports/breakdown?breakdown=…` | `p202 report breakdown --breakdown …`, `p202 analytics --group-by …` | ✅ |
-| Referers, IPs, Custom Variables (`c1`–`c4`, UTM) | — | — | ✗ |
-| The pages' filters (text ad, region, ISP, browser, platform, device type, keyword, IP, referer, "show") | — | — | ◐ campaign, category, traffic source, account, landing page and country only |
+| Referers, IPs, Custom Variables (`c1`–`c4`, UTM), device type, rotator and rule | `/reports/breakdown?breakdown=referer\|referer_url\|ip\|c1…c4\|utm_*\|device_type\|rotator\|rotator_rule` | `p202 report breakdown --breakdown …` | ✅ |
+| The pages' filters (text ad, region, ISP, browser, platform, device type, keyword, IP, referer, "show") and periods | every `/reports/*` | every `p202 report …` command | ✅ |
 | Customer LTV (customers, companies, subscriptions, products, fields, webhooks, integrations, merges) | `/ltv/…` | `p202 ltv …` | ✅ |
 | Mobile Apps | `/apps/report`, `/apps/postbacks` | `p202 app report`, `app postbacks` | ✅ |
 | CSV downloads | every list and report as JSON | `--csv` on any list or report, `--all` for every page | ✅ |
@@ -58,7 +58,7 @@ record links only to the caller's own records
 
 | Page | API | CLI | |
 | ---- | --- | --- | - |
-| Visitors: each click with its campaign, source, keyword, IP, location, device, referrer and landing URLs | `/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions` | `p202 click list`, `click get`, `click conversions` | ◐ filters by campaign, account, landing page, lead and bot only |
+| Visitors: each click with its campaign, source, keyword, IP, location, device, referrer and landing URLs | `/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions` | `p202 click list`, `click get`, `click conversions` | ✅ the same filters and periods as the reports |
 | Spy: the newest clicks, then each new one | `/clicks` polled | `p202 click list --follow` | ✅ |
 
 ## Update

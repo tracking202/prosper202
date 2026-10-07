@@ -1575,20 +1575,26 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/period"
         - $ref: "#/components/parameters/windowFrom"
         - $ref: "#/components/parameters/windowTo"
-        - name: aff_campaign_id
-          in: query
-          schema:
-            type: integer
-        - name: ppc_account_id
-          in: query
-          schema:
-            type: integer
-        - name: landing_page_id
-          in: query
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
         - name: click_lead
           in: query
           description: "0 = clicks only, 1 = conversions only"
@@ -2118,6 +2124,77 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/ReportMetrics"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /reports/groups:
+    get:
+      tags: [Reports]
+      summary: Group Overview
+      description: Traffic grouped by up to four breakdown dimensions, nested, every group with
+        its totals. A group is the sum of its children; the clicks a level has no value for are
+        its child with `id` and `name` null, listed last. More than 5,000 innermost groups is a 422.
+      operationId: reportGroups
+      parameters:
+        - name: by
+          in: query
+          required: true
+          description: One to four breakdown dimensions, comma separated, outermost first, each once
+          schema:
+            type: string
+            example: ppc_network,campaign,keyword
+        - name: sort
+          in: query
+          description: "`name` (default) or a metric"
+          schema:
+            type: string
+        - name: sort_dir
+          in: query
+          schema:
+            type: string
+            enum: [ASC, DESC]
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
+      responses:
+        "200":
+          description: The groups as a tree (`data`, each with `children` but the innermost), `totals`, and `by`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  totals:
+                    type: object
+                    additionalProperties: true
+                  by:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationError"
 

@@ -6,9 +6,10 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\ReportFilter;
 use Api\V3\Support\StatementHelpers;
-use Api\V3\Support\TimeBound;
 
 class ClicksController
 {
@@ -71,53 +72,91 @@ class ClicksController
         'platform_name', 'browser_name', 'device_name', 'device_type',
     ];
 
+    /**
+     * The Visitors page's filters, through the reports' one parser
+     * (ReportFilter): its logical columns on a click row and the joins in
+     * FILTER_JOINS. Every filter the Analyze pages have is served here.
+     */
+    private const FILTER_COLUMNS = [
+        'click_time'                => 'c.click_time',
+        'aff_campaign_id'           => 'c.aff_campaign_id',
+        'aff_network_id'            => 'ac.aff_network_id',
+        'ppc_account_id'            => 'c.ppc_account_id',
+        'ppc_network_id'            => 'pa.ppc_network_id',
+        'landing_page_id'           => 'c.landing_page_id',
+        'country_id'                => 'ca.country_id',
+        'text_ad_id'                => 'ca.text_ad_id',
+        'region_id'                 => 'ca.region_id',
+        'isp_id'                    => 'ca.isp_id',
+        'browser_id'                => 'ca.browser_id',
+        'platform_id'               => 'ca.platform_id',
+        'device_id'                 => 'ca.device_id',
+        'click_filtered'            => 'c.click_filtered',
+        'click_bot'                 => 'c.click_bot',
+        'click_lead'                => 'c.click_lead',
+        'keyword_id'                => 'ca.keyword_id',
+        'ip_id'                     => 'ca.ip_id',
+        'click_referer_site_url_id' => 'cs.click_referer_site_url_id',
+    ];
+
+    /** What the count needs for the filters' columns (DETAIL_JOINS has them too). */
+    private const FILTER_JOINS = '
+            LEFT JOIN 202_clicks_advance ca ON c.click_id = ca.click_id
+            LEFT JOIN 202_clicks_site cs ON c.click_id = cs.click_id
+            LEFT JOIN 202_aff_campaigns ac ON c.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = c.user_id
+            LEFT JOIN 202_ppc_accounts pa ON c.ppc_account_id = pa.ppc_account_id AND pa.user_id = c.user_id';
+
+    /** Parameters of the list beyond ReportFilter's window and filters. */
+    private const LIST_PARAMS = ['limit', 'offset', 'click_lead', 'click_bot'];
+
+    public const MAX_LIMIT = 500;
+
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
 
+    /**
+     * Every parameter GET /clicks takes: the window, the Visitors page's
+     * filters, paging, and the lead and bot switches.
+     *
+     * @return list<string>
+     */
+    public static function listParams(): array
+    {
+        return [...ReportFilter::params(self::FILTER_COLUMNS), ...self::LIST_PARAMS];
+    }
+
     public function list(array $params): array
     {
-        $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        // A misspelt or malformed filter is refused by name, never ignored:
+        // ignored, the list answers for every click while reading as the
+        // filtered one (CLAUDE.md #4). The same for a limit or offset out of
+        // range, which were clamped.
+        ReportFilter::rejectUnknown($params, self::listParams());
+        $limit = self::wholeNumber($params, 'limit', 50, 1, self::MAX_LIMIT);
+        $offset = self::wholeNumber($params, 'offset', 0, 0, PHP_INT_MAX);
 
         $where = ['c.user_id = ?'];
         $binds = [$this->userId];
         $types = 'i';
 
-        [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
-        if ($from !== null) {
-            $where[] = 'c.click_time >= ?';
-            $binds[] = $from;
-            $types .= 'i';
-        }
-        if ($to !== null) {
-            $where[] = 'c.click_time <= ?';
-            $binds[] = $to;
-            $types .= 'i';
-        }
+        ReportFilter::apply($params, fn (): string => $this->accountTimezone(), $where, $binds, $types, self::FILTER_COLUMNS);
 
-        foreach (['aff_campaign_id', 'ppc_account_id', 'landing_page_id'] as $filter) {
-            if (!empty($params[$filter])) {
-                $where[] = "c.$filter = ?";
-                $binds[] = (int)$params[$filter];
+        foreach (['click_lead', 'click_bot'] as $flag) {
+            if (array_key_exists($flag, $params)) {
+                $value = $params[$flag];
+                if ($value !== '0' && $value !== '1' && $value !== 0 && $value !== 1) {
+                    throw new ValidationException('Invalid ' . $flag, [$flag => 'Must be 0 or 1']);
+                }
+                $where[] = "c.$flag = ?";
+                $binds[] = (int) $value;
                 $types .= 'i';
             }
         }
 
-        if (isset($params['click_lead'])) {
-            $where[] = 'c.click_lead = ?';
-            $binds[] = (int)$params['click_lead'];
-            $types .= 'i';
-        }
-        if (isset($params['click_bot'])) {
-            $where[] = 'c.click_bot = ?';
-            $binds[] = (int)$params['click_bot'];
-            $types .= 'i';
-        }
-
         $whereClause = 'WHERE ' . implode(' AND ', $where);
 
-        $countSql = "SELECT COUNT(*) as total FROM 202_clicks c $whereClause";
+        $countSql = 'SELECT COUNT(*) as total FROM 202_clicks c ' . self::FILTER_JOINS . " $whereClause";
         $stmt = $this->prepare($countSql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
@@ -152,6 +191,22 @@ class ClicksController
             'data' => $rows,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
+    }
+
+    /** A whole number from $min to $max, or the default when absent; anything else is refused. */
+    private static function wholeNumber(array $params, string $name, int $default, int $min, int $max): int
+    {
+        if (!array_key_exists($name, $params) || $params[$name] === '') {
+            return $default;
+        }
+        $value = $params[$name];
+        $text = is_int($value) ? (string) $value : (is_string($value) ? $value : '');
+        if (preg_match('/^[0-9]{1,18}$/D', $text) !== 1 || (int) $text < $min || (int) $text > $max) {
+            $range = $max === PHP_INT_MAX ? "$min or more" : "$min to $max";
+            throw new ValidationException('Invalid ' . $name, [$name => "A whole number, $range"]);
+        }
+
+        return (int) $text;
     }
 
     public function get(int $id): array

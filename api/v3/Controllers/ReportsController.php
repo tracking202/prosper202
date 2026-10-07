@@ -157,6 +157,18 @@ class ReportsController
     /** What a breakdown takes besides the window and the filters. */
     private const array BREAKDOWN_PARAMS = ['breakdown', 'sort', 'sort_dir', 'limit', 'offset'];
 
+    /** What a group report takes besides the window and the filters. */
+    private const array GROUPS_PARAMS = ['by', 'sort', 'sort_dir'];
+
+    /** The Group Overview page's depth. */
+    public const int GROUPS_MAX_LEVELS = 4;
+
+    /** Leaf groups one answer may carry; more is refused, never cut. */
+    public const int GROUPS_MAX_ROWS = 5000;
+
+    /** The aliases the BREAKDOWNS join snippets use, renamed per level. */
+    private const array JOIN_ALIASES = ['ref', 'su', 'dm', 'i6'];
+
     public const int BREAKDOWN_MAX_LIMIT = 500;
     private const array DAYPART_ALLOWED_SORTS = [
         'hour_of_day',
@@ -252,6 +264,7 @@ class ReportsController
             'breakdown'  => self::BREAKDOWN_PARAMS,
             'timeseries' => ['interval'],
             'daypart', 'weekpart' => ['sort', 'sort_dir'],
+            'groups'     => self::GROUPS_PARAMS,
             default      => throw new \InvalidArgumentException("No report named $report"),
         };
 
@@ -385,6 +398,246 @@ class ReportsController
             'breakdown' => $breakdownType,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
         ];
+    }
+
+    /**
+     * The Overview's Group Overview: traffic grouped by up to four
+     * breakdown dimensions, each group's rows under it, every group with
+     * its totals (the page's ReportSummaryForm). `by` names the levels,
+     * outermost first: `by=ppc_network,campaign,keyword`.
+     *
+     * Unlike a breakdown, a group keeps the clicks a level has no value for
+     * (no keyword, a direct link's landing page): they are its `none` child
+     * (id and name null), as the page's "[No keyword]" row, so a group's
+     * totals are the sum of its children's. Children are sorted by name, or
+     * by `sort`; the `none` child comes last. Money is summed exactly at
+     * five decimals, as the columns hold it, and each group's ratios are
+     * computed from its own sums.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    public function groups(array $params): array
+    {
+        ReportFilter::rejectUnknown($params, self::reportParams('groups'));
+        $by = $params['by'] ?? '';
+        $levels = is_string($by) && $by !== '' ? array_map('trim', explode(',', $by)) : [];
+        $dims = implode(', ', array_keys(self::BREAKDOWNS));
+        if ($levels === [] || count($levels) > self::GROUPS_MAX_LEVELS) {
+            throw new ValidationException('Invalid by', ['by' => 'One to ' . self::GROUPS_MAX_LEVELS . ' dimensions, comma separated, outermost first, from: ' . $dims]);
+        }
+        foreach ($levels as $level) {
+            if (!isset(self::BREAKDOWNS[$level])) {
+                throw new ValidationException('Invalid by', ['by' => "\"$level\" is not a dimension; valid: $dims"]);
+            }
+        }
+        if (count(array_unique($levels)) !== count($levels)) {
+            throw new ValidationException('Invalid by', ['by' => 'Each dimension once']);
+        }
+        $sortBy = self::sortField($params, 'name', ['name', ...self::METRIC_FIELDS]);
+        $sortDir = self::sortDirection($params, $sortBy === 'name' ? 'ASC' : 'DESC');
+
+        [$where, $binds, $types] = $this->filtered($params);
+        $select = [];
+        $joins = [];
+        $group = [];
+        foreach ($levels as $n => $level) {
+            $bd = self::BREAKDOWNS[$level];
+            $alias = static fn (string $sql): string => (string) preg_replace(
+                '/\\b(' . implode('|', self::JOIN_ALIASES) . ')\\b/',
+                '${1}' . $n,
+                $sql
+            );
+            // Left joins: a click with no value at this level stays in its
+            // parent's totals, as the page's "[No …]" row.
+            $joins[] = str_replace('INNER JOIN', 'LEFT JOIN', $alias(
+                $bd['join'] ?? "INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}"
+            ));
+            $select[] = $alias("ref.{$bd['id']}") . " AS l{$n}_id";
+            $select[] = $alias($bd['name_sql'] ?? "ref.{$bd['name']}") . " AS l{$n}_name";
+            foreach ($bd['extra'] ?? [] as $key => $expr) {
+                $select[] = $alias($expr) . " AS l{$n}_x_$key";
+                $group[] = $alias($expr);
+            }
+            $group[] = $alias($bd['group'] ?? "ref.{$bd['id']}, ref.{$bd['name']}");
+        }
+
+        $sql = 'SELECT ' . implode(', ', $select) . ',
+                SUM(de.clicks) AS clicks, SUM(de.click_out) AS click_out, SUM(de.leads) AS leads,
+                SUM(de.income) AS income, SUM(de.cost) AS cost
+            FROM 202_dataengine de
+            ' . implode("\n            ", $joins) . '
+            WHERE ' . implode(' AND ', $where) . '
+            GROUP BY ' . implode(', ', $group) . '
+            LIMIT ?';
+        $binds[] = self::GROUPS_MAX_ROWS + 1;
+        $types .= 'i';
+
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Group report query failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Group report query failed');
+        }
+        $leaves = $result->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+        if (count($leaves) > self::GROUPS_MAX_ROWS) {
+            throw new ValidationException('Too many groups', [
+                'by' => 'More than ' . self::GROUPS_MAX_ROWS . ' groups at the innermost level: use fewer or coarser levels, a shorter period, or a filter',
+            ]);
+        }
+
+        $total = self::emptyGroup();
+        $root = ['children' => []];
+        foreach ($leaves as $leaf) {
+            $sums = [
+                'clicks' => (int) $leaf['clicks'], 'click_out' => (int) $leaf['click_out'], 'leads' => (int) $leaf['leads'],
+                'income' => self::units($leaf['income']), 'cost' => self::units($leaf['cost']),
+            ];
+            self::addSums($total, $sums);
+            $node = &$root;
+            foreach ($levels as $n => $level) {
+                $id = $leaf["l{$n}_id"];
+                $key = $id === null ? 'none' : 'id:' . $id;
+                if (!isset($node['children'][$key])) {
+                    $name = $leaf["l{$n}_name"];
+                    if ($name !== null && in_array($level, self::VISITOR_AUTHORED_BREAKDOWNS, true)) {
+                        $name = ResponseSanitizer::cleanRowFields(['name' => $name], ['name'])['name'];
+                    }
+                    $child = ['breakdown' => $level, 'id' => $id === null ? null : (int) $id, 'name' => $name];
+                    foreach (array_keys(self::BREAKDOWNS[$level]['extra'] ?? []) as $x) {
+                        $child[$x] = $leaf["l{$n}_x_$x"] === null ? null : (int) $leaf["l{$n}_x_$x"];
+                    }
+                    $node['children'][$key] = $child + self::emptyGroup() + ($n < count($levels) - 1 ? ['children' => []] : []);
+                }
+                $node = &$node['children'][$key];
+                self::addSums($node, $sums);
+            }
+            unset($node);
+        }
+
+        return [
+            'data' => self::presentGroups($root['children'], $sortBy, $sortDir),
+            'totals' => self::groupMetrics($total),
+            'by' => $levels,
+            'available_breakdowns' => array_keys(self::BREAKDOWNS),
+        ];
+    }
+
+    /** @return array{clicks: int, click_out: int, leads: int, income: int, cost: int} */
+    private static function emptyGroup(): array
+    {
+        return ['clicks' => 0, 'click_out' => 0, 'leads' => 0, 'income' => 0, 'cost' => 0];
+    }
+
+    /** @param array<string, int> $sums */
+    private static function addSums(array &$group, array $sums): void
+    {
+        foreach ($sums as $k => $v) {
+            $group[$k] += $v;
+            if (!is_int($group[$k])) {
+                throw new DatabaseException('Group report sum overflowed');
+            }
+        }
+    }
+
+    /**
+     * A DECIMAL(…,5) as a whole number of 1/100000ths, exactly. A SUM over
+     * rows that are all NULL is NULL: no money, 0. Anything else that is not
+     * a decimal is refused, not read as 0.
+     */
+    private static function units(mixed $decimal): int
+    {
+        if ($decimal === null) {
+            return 0;
+        }
+        $decimal = (string) $decimal;
+        if (preg_match('/^(-?)(\d+)(?:\.(\d{1,5}))?$/D', $decimal, $m) !== 1) {
+            throw new DatabaseException('Group report read an amount it could not parse');
+        }
+        $units = (int) $m[2] * 100000 + (int) str_pad($m[3] ?? '', 5, '0');
+
+        return $m[1] === '-' ? -$units : $units;
+    }
+
+    /** 1/100000ths back to the five-decimal string a breakdown serves. */
+    private static function decimal(int $units): string
+    {
+        $sign = $units < 0 ? '-' : '';
+        $units = abs($units);
+
+        return $sign . intdiv($units, 100000) . '.' . str_pad((string) ($units % 100000), 5, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * A group's metrics from its sums, as breakdown() computes them in SQL:
+     * counts and amounts as the strings a breakdown serves, ratios to five
+     * decimals.
+     *
+     * @param array<string, int> $g
+     * @return array<string, string>
+     */
+    private static function groupMetrics(array $g): array
+    {
+        $ratio = static fn (float $num, float $den, float $scale = 1.0): string => sprintf('%.5F', $den > 0 ? $num / $den * $scale : 0);
+        $income = $g['income'] / 100000;
+        $cost = $g['cost'] / 100000;
+
+        return [
+            'total_clicks' => (string) $g['clicks'],
+            'total_click_throughs' => (string) $g['click_out'],
+            'total_leads' => (string) $g['leads'],
+            'total_income' => self::decimal($g['income']),
+            'total_cost' => self::decimal($g['cost']),
+            'total_net' => self::decimal($g['income'] - $g['cost']),
+            'epc' => $ratio($income, $g['clicks']),
+            'avg_cpc' => $ratio($cost, $g['clicks']),
+            'conv_rate' => $ratio($g['leads'], $g['click_out'], 100.0),
+            'roi' => $ratio($income - $cost, $cost, 100.0),
+            'cpa' => $ratio($cost, $g['leads']),
+        ];
+    }
+
+    /**
+     * The tree as served: each group's metrics in place of its sums, its
+     * children sorted, the `none` child last.
+     *
+     * @param array<string, array<string, mixed>> $children
+     * @return list<array<string, mixed>>
+     */
+    private static function presentGroups(array $children, string $sortBy, string $sortDir): array
+    {
+        $out = [];
+        $none = null;
+        foreach ($children as $key => $child) {
+            $sums = array_intersect_key($child, self::emptyGroup());
+            $node = array_diff_key($child, self::emptyGroup() + ['children' => true]) + self::groupMetrics($sums);
+            if (isset($child['children'])) {
+                $node['children'] = self::presentGroups($child['children'], $sortBy, $sortDir);
+            }
+            if ($key === 'none') {
+                $none = $node;
+            } else {
+                $out[] = $node;
+            }
+        }
+        usort($out, static function (array $a, array $b) use ($sortBy, $sortDir): int {
+            $cmp = $sortBy === 'name'
+                ? strcasecmp((string) $a['name'], (string) $b['name'])
+                : ((float) $a[$sortBy] <=> (float) $b[$sortBy]);
+            if ($sortDir === 'DESC') {
+                $cmp = -$cmp;
+            }
+
+            return $cmp !== 0 ? $cmp : ($a['id'] <=> $b['id']);
+        });
+        if ($none !== null) {
+            $out[] = $none;
+        }
+
+        return $out;
     }
 
     public function timeseries(array $params): array

@@ -429,6 +429,7 @@ try {
             $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
             $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
             $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
+            $r->get('/groups',     fn() => $crud($cls)->groups($queryParams));
         });
 
         // ── LTV: reads (ltv:read) ───────────────────────────────────────
@@ -977,7 +978,7 @@ try {
                 'clicks'        => '/clicks',
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
-                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
+                'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart|groups}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
