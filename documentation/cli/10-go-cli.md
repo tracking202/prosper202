@@ -73,6 +73,9 @@ hidden flags are left out. `p202 --help` points at both commands.
 
 ## Commands
 
+For the command that does what a given page of the web UI does, and what
+still needs the browser, see [UI parity](12-ui-parity.md).
+
 | Command | Description |
 | ------- | ----------- |
 | `p202 search <words...>` | Find the command for a task (offline; see [Finding a Command](#finding-a-command)) |
