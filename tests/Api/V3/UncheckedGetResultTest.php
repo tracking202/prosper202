@@ -55,7 +55,6 @@ final class UncheckedGetResultTest extends TestCase
     private const KNOWN_UNCHECKED = [
         '202-config/Messaging/MessagingService.class.php',
         '202-config/migrations/run_ltv_migration.php',
-        '202-config/functions-auth.php',
         '202-account/user-management.php',
         '202-account/account.php',
         '202-config/install.php',
@@ -69,6 +68,8 @@ final class UncheckedGetResultTest extends TestCase
     private const GRACEFUL = [
         'api/v3/Controllers/CapabilitiesController.php::timezoneSupport' =>
             'A capability probe: a failed read answers "unknown", which /capabilities reports as such, never as "fallback-only".',
+        '202-config/functions-auth.php::accountTimezone' =>
+            'An unread zone answers null, which set_timezone() reads as "keep the zone the session holds": the page counts days in the zone captured at sign-in, as every page did before it read the account\'s.',
         'api/v3/Controllers/CapabilitiesController.php::loadClickServerKey' =>
             'Fails closed: a key that cannot be read is no key, so the shell capability is denied; /capabilities still answers.',
     ];

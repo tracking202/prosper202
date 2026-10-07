@@ -129,8 +129,7 @@ class AUTH
        // die('prepared statement...');
         self::bind($stmt, 's', $username);
         self::execute($stmt, 'Unable to execute login query');
-        $result = $stmt->get_result();
-        $user_row = $result ? $result->fetch_assoc() : null;
+        $user_row = self::resultOf($stmt, 'Unable to read the login query')->fetch_assoc();
         $stmt->close();
        // die('done fetching user row...');
         if (!$user_row) {
@@ -213,8 +212,7 @@ class AUTH
 
         self::bind($stmt, 's', $installHash);
         self::execute($stmt, 'Unable to execute API owner lookup query');
-        $result = $stmt->get_result();
-        $ownerRow = $result ? $result->fetch_assoc() : null;
+        $ownerRow = self::resultOf($stmt, 'Unable to read the API owner lookup')->fetch_assoc();
         $stmt->close();
 
         if ($ownerRow && isset($ownerRow['user_id'])) {
@@ -430,11 +428,12 @@ class AUTH
             self::bind($stmt, 'i', $userId);
             self::execute($stmt, 'Unable to read the account time zone');
             $result = $stmt->get_result();
-            $row = $result === false ? null : $result->fetch_assoc();
-            $stmt->close();
             if ($result === false) {
+                $stmt->close();
                 return null;
             }
+            $row = $result->fetch_assoc();
+            $stmt->close();
         } catch (\Throwable) {
             return null;
         }
@@ -707,8 +706,10 @@ class AUTH
         }
         self::bind($stmt, 'si', $value, $since);
         self::execute($stmt, 'Unable to execute login throttle query');
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
+        // A failed read is not "no failures": it throws, and the login page
+        // logs it ("Rate limit check failed") before going on, as it does for
+        // a query that fails to prepare or run.
+        $row = self::resultOf($stmt, 'Unable to read the login throttle query')->fetch_assoc();
         $stmt->close();
 
         return $row ? (int) $row['failures'] : 0;
@@ -743,6 +744,22 @@ class AUTH
         if (!$stmt->bind_param($types, ...$values)) {
             throw new \RuntimeException('Unable to bind statement parameters');
         }
+    }
+
+    /**
+     * The statement's result set. A false get_result() is a failed read, and
+     * read as an empty result it was "no such user" at sign-in, "no failed
+     * attempts" to the login throttle, and "no owner" to the API key lookup.
+     */
+    private static function resultOf(\mysqli_stmt $stmt, string $message): \mysqli_result
+    {
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new \RuntimeException($message);
+        }
+
+        return $result;
     }
 
     private static function execute(\mysqli_stmt $stmt, string $message): void
