@@ -38,6 +38,10 @@ Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202s
 - The Get LP Code redirect page (options 2 and 3) works from any site. It finds the click through a cookie on the landing page itself.
 - A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. A pixel then falls back to the visitor's last click from the same IP address.
 
+## Where does the password reset email link to?
+
+To the tracking domain in **Account › Settings** (the installer fills it in with the address you installed on), never to the address the reset was requested from. Whoever asks for a reset chooses that address, and the email goes to the account's owner. If no tracking domain is set, the email gives the reset page and its code without a link: open it on the address you sign in at.
+
  ## Is Memcache required?
 
 No, but strongly recommended.

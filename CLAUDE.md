@@ -260,6 +260,19 @@ insert must default to counting only rows that passed verification, with
 the unverified visible in separate columns — "stored and flagged" is not a
 trust decision, the read path makes one whether it means to or not.
 
+The Host header is the same kind of claim, and what decides whether it may
+be used is who receives the result. In the requester's own response (a
+redirect back to the host it asked for, a cookie it keeps for that host) a
+forged Host harms only the forger, so `TrackingBaseUrl::forRequest()` takes
+it, validated. In anything sent to someone else it is an attack:
+`202-lost-pass.php` built the reset link from `SERVER_NAME`, which is the
+Host header under Apache's default and under nginx's catch-all (connect.php
+maps `_` to it), so a stranger who knew a username and email could have the
+owner emailed a genuine key on a link to the stranger's host. The link is
+now the stored tracking domain (`PasswordResetLink`), with no link at all
+when none is stored. Before taking a host, a scheme or a path from the
+request, ask who will follow the URL.
+
 ### 17. A key derived from an identity must be injective
 When a value exists to tell two things apart, every transform between the
 thing and the comparison has to preserve the distinction. Two instances

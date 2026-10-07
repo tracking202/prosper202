@@ -58,12 +58,9 @@ final class RequestHostSourceTest extends TestCase
         ],
         '202-config/functions-auth.php' => [2, 'the list of request fields a security log records'],
         '202-config/Slack.class.php' => [4, "the Slack message's sender name (senderName() and payload()'s check for one)"],
-        '202-lost-pass.php' => [
-            1,
-            'NOT a self-URL: the reset link goes to the account\'s email, someone other than the requester, so its host'
-            . ' must not come from the request at all (an open finding: SERVER_NAME is the Host header under Apache\'s'
-            . ' default UseCanonicalName Off). Routing it through the request-origin helper would make that official.',
-        ],
+        // 202-lost-pass.php read SERVER_NAME for the reset link, which goes to
+        // someone other than the requester; it reads the stored address now
+        // (PasswordResetLink), and a read there fails this test.
     ];
 
     /**
