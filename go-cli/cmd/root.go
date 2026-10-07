@@ -215,7 +215,15 @@ func init() {
 func resetAllFlags(cmd *cobra.Command) {
 	resetFlagSet := func(fs *pflag.FlagSet) {
 		fs.VisitAll(func(f *pflag.Flag) {
-			_ = fs.Set(f.Name, f.DefValue)
+			// A repeatable flag (--cf, --field, --item) cannot be reset
+			// through Set: Set appends once the flag has been parsed, and
+			// even the first Set stores its default's text "[]" as a value.
+			// The next command then read a value nobody gave it.
+			if sv, ok := f.Value.(pflag.SliceValue); ok && f.DefValue == "[]" {
+				_ = sv.Replace(nil)
+			} else {
+				_ = fs.Set(f.Name, f.DefValue)
+			}
 			f.Changed = false
 		})
 	}

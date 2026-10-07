@@ -243,11 +243,20 @@ func intValue(raw interface{}) (int, bool) {
 	}
 }
 
+// pagedRowIDFields names the id column of paged endpoints that are not sync
+// entities, so --all recognises a row it already has by its id rather than
+// by its whole JSON: a customer whose revenue changed between two pages is
+// still one customer.
+var pagedRowIDFields = map[string][]string{
+	"ltv/customers": {"customer_id"},
+}
+
 func rowDedupeKey(endpoint string, row map[string]interface{}) string {
 	candidateFields := []string{"id", "public_id"}
 	if fields, exists := syncEntityIDFields[endpoint]; exists {
 		candidateFields = append(candidateFields, fields...)
 	}
+	candidateFields = append(candidateFields, pagedRowIDFields[endpoint]...)
 	for _, field := range candidateFields {
 		if val := scalarString(row[field]); val != "" {
 			return field + ":" + val

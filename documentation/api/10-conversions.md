@@ -55,6 +55,13 @@ back.
 | `payout` | decimal | No | Override payout (defaults to the click's campaign payout) |
 | `transaction_id` | string | No | Deduplication key |
 | `conv_time` | integer | No | Unix timestamp (defaults to now) |
+| `status` | string | No | Only `"reversed"`: records a reversal of the click's conversion with this `transaction_id` instead of a new conversion (a sale is reversed once; `404` when the click has no such conversion) |
+| `reversal_id` | string | No | With `status: "reversed"`, the network's id for the reversal (a non-empty string) |
+| `customer_id` | integer | No | The LTV customer the revenue belongs to; it wins over `customer_ref` |
+| `customer_ref` | string | No | Your id for the customer: resolved to one, or a customer is created for it |
+| `customer_ref_type` | string | No | What `customer_ref` is: `email_md5`, `email_sha256`, `esp_id`, `merchant_id`, `subid` or `custom` (the default); read only with `customer_ref` |
+| `customer_crm` | object | No | CRM fields (`first_name`, `last_name`, `email`, `phone`, `company`, `address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country`) applied only when this conversion creates the customer |
+| `items` | array | No | Product line items on the customer's revenue event: each `{external_product_id or sku, name, quantity, unit_price, amount, price}`. Recorded only when the conversion resolves to a customer — named here, or already linked to the click — and dropped without an error otherwise |
 
 Creates are idempotent on `transaction_id`: if a conversion with the same
 `transaction_id` already exists for the given `click_id`, nothing is written

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Identity\CustomerId;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentitySignal;
@@ -21,6 +22,30 @@ final class MysqlCustomerCrmRepository
     private const CRM_COLUMNS = [
         'first_name', 'last_name', 'phone', 'company',
         'address_line1', 'address_line2', 'city', 'region', 'postal_code', 'country',
+    ];
+
+    /**
+     * The per-customer rows erase() deletes outright, in the order it
+     * deletes them, each keyed (customer_id, user_id). One list for the
+     * erasure and its preview (erasurePreview()), so the preview cannot
+     * report a table the erasure no longer touches, or miss one it does.
+     * Personalization tokens hold sealed PII snapshots, so erasure reaches
+     * them too.
+     */
+    private const ERASED_TABLES = [
+        'customer-aliases' => '202_customer_aliases',
+        'personalization-tokens' => '202_personalization_tokens',
+        'customer-field-values' => '202_customer_field_values',
+    ];
+
+    /**
+     * The per-customer rows erase() keeps: money stays for revenue
+     * integrity, and none of these rows carries personal data once the
+     * customer record is anonymized.
+     */
+    private const KEPT_TABLES = [
+        'revenue-events' => '202_revenue_events',
+        'subscriptions' => '202_subscriptions',
     ];
 
     public function __construct(
@@ -360,25 +385,15 @@ final class MysqlCustomerCrmRepository
             // aliases, so it is reached before they go.
             $this->eraseIdentitySignals($userId, $customerId);
 
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_customer_aliases WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
-
-            // Personalization tokens hold sealed PII snapshots — erasure must
-            // reach them too.
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_personalization_tokens WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
-
-            $stmt = $this->conn->prepareWrite(
-                'DELETE FROM 202_customer_field_values WHERE customer_id = ? AND user_id = ?'
-            );
-            $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
-            $this->conn->executeUpdate($stmt);
+            // Aliases, personalization tokens (sealed PII snapshots) and
+            // custom-field values go outright; see ERASED_TABLES.
+            foreach (self::ERASED_TABLES as $table) {
+                $stmt = $this->conn->prepareWrite(
+                    "DELETE FROM {$table} WHERE customer_id = ? AND user_id = ?"
+                );
+                $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+                $this->conn->executeUpdate($stmt);
+            }
 
             $stmt = $this->conn->prepareWrite(
                 "UPDATE 202_customers
@@ -392,6 +407,36 @@ final class MysqlCustomerCrmRepository
             $this->conn->bind($stmt, 'iii', [$now, $customerId, $userId]);
             $this->conn->executeUpdate($stmt);
         });
+    }
+
+    /**
+     * What erase() would do to one customer, without doing it: per table,
+     * how many of the customer's rows it deletes (ERASED_TABLES) and how
+     * many it keeps (KEPT_TABLES). Read-only; the caller has already
+     * checked the customer belongs to the account.
+     *
+     * @return list<array{resource: string, action: string, count: int}>
+     */
+    public function erasurePreview(int $userId, int $customerId): array
+    {
+        $cascade = [];
+        foreach ([[self::ERASED_TABLES, 'delete'], [self::KEPT_TABLES, 'kept']] as [$tables, $action]) {
+            foreach ($tables as $resource => $table) {
+                $stmt = $this->conn->prepareRead(
+                    "SELECT COUNT(*) AS c FROM {$table} WHERE customer_id = ? AND user_id = ?"
+                );
+                $this->conn->bind($stmt, 'ii', [$customerId, $userId]);
+                $row = $this->conn->fetchOne($stmt);
+                if ($row === null) {
+                    // COUNT(*) always yields a row; none means the read
+                    // failed, and a preview must not report it as zero.
+                    throw new QueryException('COUNT(*) over ' . $table . ' returned no row');
+                }
+                $cascade[] = ['resource' => $resource, 'action' => $action, 'count' => (int) $row['c']];
+            }
+        }
+
+        return $cascade;
     }
 
     /**

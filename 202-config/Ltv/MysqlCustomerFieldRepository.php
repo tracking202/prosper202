@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -32,6 +33,42 @@ final class MysqlCustomerFieldRepository
         $this->conn->bind($stmt, 'i', [$userId]);
 
         return $this->conn->fetchAll($stmt);
+    }
+
+    /**
+     * One definition by id, with the columns list() returns; null when the
+     * account has no such field.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function get(int $userId, int $fieldId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT field_id, field_key, label, field_type, options, is_required, sort_order, created_at, updated_at
+             FROM 202_customer_fields WHERE field_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$fieldId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * How many customers hold a value for the field: the rows delete()
+     * removes with the definition, counted with the same predicate.
+     */
+    public function valueCount(int $userId, int $fieldId): int
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT COUNT(*) AS c FROM 202_customer_field_values WHERE field_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$fieldId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            // COUNT(*) always yields a row; none means the read failed.
+            throw new QueryException('COUNT(*) over 202_customer_field_values returned no row');
+        }
+
+        return (int) $row['c'];
     }
 
     /**

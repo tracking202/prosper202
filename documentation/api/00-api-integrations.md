@@ -93,9 +93,14 @@ delete is `soft` or `hard`, and cascade counts — without removing anything:
 ```
 
 Covered: the CRUD entities, conversions, rotators and their rules,
-attribution models, users, API keys, and role assignments. The parameter is
-fail-closed: an endpoint without a preview (currently the LTV deletes)
-rejects `dry_run` with `422` instead of falling through to the real delete,
+attribution models and exports, apps and SKAN encodings, goals, users, API
+keys, role assignments, and the LTV deletes — a customer's erasure (`action:
+erase`, `mode: anonymize`, with what it deletes and what it keeps per table),
+customer aliases, companies (with `refused` naming why a company with
+customers attached would not delete), custom fields (with the values that go
+with them), webhooks (with their queued deliveries) and integrations. The
+parameter is fail-closed: an endpoint without a preview rejects `dry_run`
+with `422` instead of falling through to the real delete,
 and an unrecognized `dry_run` value (anything other than `1/true/yes` or
 `0/false/no`) is a `422`, never a delete. `features.delete_dry_run` in
 [capabilities](17-capabilities.md) advertises support.

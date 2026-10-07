@@ -274,6 +274,28 @@ type deleteSpec struct {
 	// idsHintText overrides the --ids recovery hint for commands whose ids are
 	// not discoverable via a plain `<entity> list` (rotator rules, for example).
 	idsHintText string
+	// verb and past name the act in the prompt and the summary, "delete" and
+	// "deleted" when empty. An LTV customer is erased, not deleted (its
+	// personal data goes, its revenue stays), and the question the person
+	// answers has to say which.
+	verb, past string
+	// explain, when set, adds the recovery step to a delete the server
+	// refused (a company with customers attached is merged, not deleted).
+	explain func(error) error
+}
+
+func (s deleteSpec) verbs() (string, string) {
+	if s.verb == "" {
+		return "delete", "deleted"
+	}
+	return s.verb, s.past
+}
+
+func (s deleteSpec) explained(err error) error {
+	if err == nil || s.explain == nil {
+		return err
+	}
+	return s.explain(err)
 }
 
 // idsHint returns the recovery hint shown when --ids resolves to nothing.
@@ -319,8 +341,9 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		if api.StagedMode() {
 			return stageDeletes(c, spec.endpoint, ids)
 		}
+		verb, past := spec.verbs()
 		if !force {
-			ok, err := confirmAction(cmd, "Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context)
+			ok, err := confirmAction(cmd, "%s %d %s%s%s?", capitalize(verb), len(ids), spec.plural, spec.cascadeMany, spec.context)
 			if err != nil {
 				return err
 			}
@@ -333,14 +356,19 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		for _, id := range ids {
 			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 				failed++
-				fmt.Fprintf(os.Stderr, "Failed to delete %s %s%s: %v\n", spec.noun, id, spec.context, err)
+				fmt.Fprintf(os.Stderr, "Failed to %s %s %s%s: %v\n", verb, spec.noun, id, spec.context, err)
+				if spec.explain != nil {
+					if hint := hintFor(spec.explained(err)); hint != "" {
+						fmt.Fprintf(os.Stderr, "  Hint: %s\n", hint)
+					}
+				}
 				continue
 			}
 			deleted++
 		}
-		output.Success("Deleted %d of %d %s%s.", deleted, len(ids), spec.plural, spec.context)
+		output.Success("%s %d of %d %s%s.", capitalize(past), deleted, len(ids), spec.plural, spec.context)
 		if failed > 0 {
-			return partialFailureError("failed to delete %d %s", failed, spec.plural)
+			return partialFailureError("failed to %s %d %s", verb, failed, spec.plural)
 		}
 		return nil
 	}
@@ -356,13 +384,14 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		return err
 	}
 	if dryRun {
-		return renderDeletePreviews(c, spec.endpoint, []string{id})
+		return spec.explained(renderDeletePreviews(c, spec.endpoint, []string{id}))
 	}
 	if api.StagedMode() {
 		return stageDeletes(c, spec.endpoint, []string{id})
 	}
+	verb, past := spec.verbs()
 	if !force {
-		ok, err := confirmAction(cmd, "Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context)
+		ok, err := confirmAction(cmd, "%s %s %s%s%s?", capitalize(verb), spec.noun, id, spec.cascadeOne, spec.context)
 		if err != nil {
 			return err
 		}
@@ -372,9 +401,9 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		}
 	}
 	if err := c.Delete(spec.endpoint + "/" + id); err != nil {
-		return err
+		return spec.explained(err)
 	}
-	output.Success("%s %s deleted%s.", capitalize(spec.noun), id, spec.context)
+	output.Success("%s %s %s%s.", capitalize(spec.noun), id, past, spec.context)
 	return nil
 }
 

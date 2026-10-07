@@ -821,11 +821,11 @@ try {
         // removing anything. Fail-closed by construction: a dry-run DELETE is
         // only ever dispatched to a handler registered here, and a DELETE with
         // dry_run set whose path has no preview is rejected — it can never fall
-        // through to the real delete. (LTV deletes have no previews yet, so
-        // they reject.) Auth checks that live inside a main DELETE handler
-        // are replicated on its preview below (PreviewAuthParityTest holds
-        // that); group middleware runs from the main match before this
-        // router is consulted, for a dry run and for a staged write alike.
+        // through to the real delete. Auth checks that live inside a main
+        // DELETE handler are replicated on its preview below
+        // (PreviewAuthParityTest holds that); group middleware runs from the
+        // main match before this router is consulted, for a dry run and for a
+        // staged write alike.
         $previewRouter = new Router();
         foreach ($crudMap as $resource => $class) {
             $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
@@ -856,6 +856,18 @@ try {
             \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
             \Api\V3\Controllers\GoalsController::pathId($ctx['campaignId'])
         ));
+        // The LTV deletes make no authorization check inside their handlers:
+        // the group's ltv:write middleware, run from the main match before
+        // this router is consulted, is their only one.
+        $previewRouter->group('/ltv', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\LtvController::class;
+            $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview((int)$ctx['id']));
+            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview((int)$ctx['id'], (int)$ctx['aliasId']));
+            $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview((int)$ctx['id']));
+            $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview((int)$ctx['id']));
+            $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview((int)$ctx['id']));
+            $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview((int)$ctx['id']));
+        });
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {

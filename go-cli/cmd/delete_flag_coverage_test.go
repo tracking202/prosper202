@@ -21,7 +21,9 @@ func TestEveryDeleteCommandHasTheSafetyFlags(t *testing.T) {
 			walk(sub)
 		}
 		name := c.Name()
-		if name != "delete" && name != "remove" && !strings.HasSuffix(name, "-delete") {
+		// erase is a delete by another name (`ltv customer erase` removes a
+		// customer's personal data for good) and owes the same flags.
+		if name != "delete" && name != "remove" && name != "erase" && !strings.HasSuffix(name, "-delete") {
 			return
 		}
 		// rotate deletes the old key but is not itself a delete command.

@@ -77,6 +77,44 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * One endpoint with the columns list() returns — never the secret, which
+     * leaves the server once, at creation. Null when the account has none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function get(int $userId, int $webhookId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT webhook_id, webhook_url, subscribed_events, status, created_at, updated_at
+             FROM 202_ltv_webhooks WHERE webhook_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$webhookId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
+     * The endpoint's queued and past deliveries by status — the rows
+     * delete() removes with it, counted with the same predicate.
+     *
+     * @return array<string, int> status => count (only statuses present)
+     */
+    public function deliveryCounts(int $userId, int $webhookId): array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT status, COUNT(*) AS c FROM 202_ltv_webhook_deliveries
+             WHERE webhook_id = ? AND user_id = ? GROUP BY status ORDER BY status'
+        );
+        $this->conn->bind($stmt, 'ii', [$webhookId, $userId]);
+        $counts = [];
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $counts[(string) $row['status']] = (int) $row['c'];
+        }
+
+        return $counts;
+    }
+
+    /**
      * Well-formedness rule for event names (not a membership check): a
      * namespaced lowercase slug such as "conversion.recorded". Deliberately
      * permissive about WHICH events exist so future emitters and versions

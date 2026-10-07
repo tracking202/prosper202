@@ -653,7 +653,11 @@ p202 conversion list   [--limit 50] [--offset 0] [--campaign_id N] [--all]
                        [--source pixel|postback|universal_pixel|api|subid_upload|revenue_upload|legacy_pixel|clickbank|app_install|goal|legacy_baseline]
                        [--goal N] [--json]
 p202 conversion get    <id> [--json]
-p202 conversion create --click_id N [--payout F] [--transaction_id S] [--idempotency-key S] [--json]
+p202 conversion create --click_id N [--payout F] [--transaction_id S] [--conv-time T] [--idempotency-key S]
+                       [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction_id
+                       [--customer-id N | --customer-ref S [--customer-ref-type T] [--customer-crm JSON]]
+                       [--item JSON]... | [--items-file FILE]     # line items: need a customer named here
+                       [--json]
 p202 conversion import <file.csv|file.json> [--dry-run [--check-clicks]] [--force]
                        [--subid-column H] [--payout-column H] [--txid-column H] [--time-column H]
                        [--time-format LAYOUT] [--timezone TZ] [--json]
@@ -786,6 +790,85 @@ c1–c4, country, device, day. Without `--model` the breakdown is "effective":
 each conversion under its campaign's model override, else the account default.
 Money comes back as exact decimal strings; `totals.attributed_revenue` equals
 the counted conversion value in the range under every model.
+
+### Customer lifetime value (LTV)
+
+Reads take `--cf key=value`, `--cf key.min=N`, `--cf key.max=N` (custom-field
+filters, at most 3; `.min`/`.max` on number and date fields) on summary,
+customers, breakdown and predict.
+
+```
+p202 ltv summary       [-p period | --time_from T --time_to T] [--cf F]... [--json]
+p202 ltv customers     [--search S] [--segment repeat|subscribers|at_risk] [--cf F]...
+                       [-s sort] [--dir ASC|DESC] [-l 1-500] [-o N | --all] [-p period] [--json]
+p202 ltv customers     <customer-id> [--json]          # CRM, aliases, custom fields, recent revenue
+p202 ltv breakdown     [-b campaign|ppc_account|landing_page|product] [--cf F]... [--json]
+p202 ltv predict       [-b dimension] [--cf F]... [--json]
+p202 ltv cohorts       [--months 1-24] [--json]
+p202 ltv products      [-l 1-500] [-o N] [--json]
+p202 ltv mrr | subscriptions [--status S] | companies | abm [--company NAME] [--json]
+p202 ltv engagement    <customer-id> [--days N] [--json]
+
+p202 ltv customer upsert   (--customer-ref S [--customer-ref-type T] | --customer-id N) [record flags] [--json]
+p202 ltv customer update   <customer-id> [record flags] [--json]
+p202 ltv customer merge    <target-id> --from <source-id> [--force] [--json]       # irreversible
+p202 ltv customer erase    <customer-id> | --ids N1,N2 [--dry-run] [--force]       # personal data only
+p202 ltv customer alias add    <customer-id> --value S [--type T] [--json]
+p202 ltv customer alias remove <customer-id> <alias-id> | --ids N1,N2 [--dry-run] [--force]
+#   record flags: --first-name --last-name --email --phone --company --address-line1 --address-line2
+#                 --city --region --postal-code --country (each: "" clears it; not given: untouched)
+#                 --field key=value (key= clears it) --alias type=value
+
+p202 ltv company create  --name S [--domain D] [--json]
+p202 ltv company update  <company-id> [--name S] [--domain D|""] [--json]
+p202 ltv company merge   <target-id> --from <source-id> [--force] [--json]
+p202 ltv company delete  <company-id> | --ids N1,N2 [--dry-run] [--force]
+
+p202 ltv revenue record          --amount N (--customer-id N | --customer-ref S [--customer-ref-type T] [--customer-crm JSON])
+                                 [--event-type purchase|one_time|refund|chargeback|adjustment] [--currency C]
+                                 [--occurred-at T] [--item JSON]... | [--items-file FILE] [--idempotency-key S]
+                                 [--external-ref S] [--transaction-id S] [--json]
+p202 ltv engagement-event record --event NAME (customer flags) [--value N] [--occurred-at T] [--json]
+p202 ltv subscription upsert     --external-sub-id S --amount N (customer flags) [--interval day|week|month|year]
+                                 [--interval-count N] [--status S] [--plan-name S] [--started-at T]
+                                 [--period-start T] [--period-end T] [--grace-days N] [--json]
+p202 ltv subscription event      <external-sub-id> --type renewal|cancel|refund [--amount N]
+                                 [--idempotency-key S] [--transaction-id S] [--occurred-at T] [--period-end T] [--json]
+p202 ltv product upsert          (--external-product-id S | --sku S) [--name S] [--price N] [--json]
+p202 ltv next-offer impression   <customer-id> [--campaign-id N] [--json]
+
+p202 ltv fields list | create --key K [--type text|number|date|boolean|select|email|url] [--option V]...
+                       [--label S] [--required] [--sort-order N]
+p202 ltv fields update <field-id> [--label S] [--option V]... [--required=true|false] [--sort-order N]
+p202 ltv fields delete <field-id> | --ids N1,N2 [--dry-run] [--force]
+p202 ltv webhooks list | create --url https://… [--events E1,E2 | --events '*'] | delete <id> [--dry-run] [--force]
+p202 ltv integrations list | create --provider P [--name S] [--config JSON | --config-file FILE]
+                       | delete <id> [--dry-run] [--force]
+```
+
+- **Every LTV write refuses `--staged`** before sending anything: the server
+  stages no `/ltv` write. A delete's `--dry-run` still runs under `--staged`
+  (it is a read).
+- `ltv customer erase` anonymizes: CRM fields, aliases (and their identity
+  signals), custom-field values and personalization tokens go; the customer
+  row, revenue events and subscriptions stay, so LTV totals do not change.
+  `--dry-run` returns `action: erase`, `mode: anonymize` and per-table
+  `delete`/`kept` counts.
+- `ltv company delete --dry-run` returns `refused` with the delete's own
+  reason while customers are attached; merge instead.
+- `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
+  sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
+  takes the known names or `*` (every event, including future ones), and is
+  always sent as a list.
+- `ltv revenue record --idempotency-key K` again answers the first event with
+  `duplicate: true` (and a note on stderr) and records nothing; `void:`,
+  `void-nc:`, `reinstate:`, `backfill:` and `sub:` keys are reserved.
+- `ltv subscription event` addresses the subscription by its external id in
+  the URL path, which the server matches as sent: an id needing URL escaping
+  (a space, `/`, `%`, …) is refused before sending.
+- `ltv engagement-event record` is an ABM engagement signal on a customer;
+  `p202 event send` is a click's web event for its goals. They are different
+  endpoints.
 
 ### Users
 

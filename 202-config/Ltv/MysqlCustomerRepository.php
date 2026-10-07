@@ -191,6 +191,24 @@ final class MysqlCustomerRepository
     }
 
     /**
+     * One alias of one customer, scoped exactly as deleteAlias() scopes its
+     * DELETE (alias, customer, user), so the delete preview finds the row
+     * the delete would remove and nothing else. Null when there is none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function findAlias(int $userId, int $customerId, int $aliasId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT alias_id, customer_id, alias_type, alias_value, created_at FROM 202_customer_aliases
+             WHERE alias_id = ? AND customer_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'iii', [$aliasId, $customerId, $userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    /**
      * Remove one alias from a customer. Scoped to (user, customer) so a
      * stale/foreign alias_id cannot unlink someone else's identity. The
      * customer record itself is untouched — only the resolution mapping goes.

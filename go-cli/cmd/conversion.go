@@ -118,21 +118,27 @@ var conversionGetCmd = &cobra.Command{
 var conversionCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a conversion",
+	Long: "Records a conversion on a click. --status reversed records a reversal of the click's earlier\n" +
+		"conversion with the same --transaction-id instead (--reversal-id is the network's id for it).\n" +
+		"--customer-id or --customer-ref (+ --customer-ref-type, --customer-crm) links it to an LTV\n" +
+		"customer; --item / --items-file add product line items to that customer's revenue event, so\n" +
+		"they need a customer named here.\n\n" +
+		"  p202 conversion create --click-id 123 --payout 49 --transaction-id ORD-1 --customer-ref CUST-77 \\\n" +
+		"      --item '{\"sku\":\"PRO-1\",\"quantity\":1,\"unit_price\":49}'\n" +
+		"  p202 conversion create --click-id 123 --status reversed --transaction-id ORD-1",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		clickIDStr, _ := cmd.Flags().GetString("click_id")
 		if clickIDStr == "" {
 			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
 		}
 		if clickIDStr == "" {
-			return fmt.Errorf("required flag --click_id (or --click_id_public) is missing")
+			return validationError("required flag --click_id (or --click_id_public) is missing").
+				WithHint("Use the internal click id from `p202 click list`.")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
-		if err != nil {
-			return fmt.Errorf("--click_id must be an integer: %s", clickIDStr)
+		if err != nil || clickID <= 0 {
+			return validationError("--click_id must be a positive integer: %s", clickIDStr).
+				WithHint("Use the internal click id from `p202 click list`.")
 		}
 		body := map[string]interface{}{
 			"click_id": clickID,
@@ -145,6 +151,46 @@ var conversionCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("transaction_id"); v != "" {
 			body["transaction_id"] = v
 		}
+		if t, ok, err := ltvUnixTime(cmd, "conv-time"); err != nil {
+			return err
+		} else if ok {
+			body["conv_time"] = t
+		}
+		if status := enumValue(cmd, "status"); status != "" {
+			body["status"] = status
+			if _, hasTx := body["transaction_id"]; !hasTx {
+				return validationError("--status reversed needs --transaction-id: the reversal nets the click's conversion with that transaction id").
+					WithHint("`p202 click conversions %d` shows the click's conversions and their transaction ids.", clickID)
+			}
+		}
+		if cmd.Flags().Changed("reversal-id") {
+			if _, reversal := body["status"]; !reversal {
+				return validationError("--reversal-id names a reversal; add --status reversed").
+					WithHint("A plain conversion carries no reversal id; drop --reversal-id, or record the reversal with --status reversed.")
+			}
+			v, _ := cmd.Flags().GetString("reversal-id")
+			body["reversal_id"] = v
+		}
+		if err := conversionCustomer(cmd, body); err != nil {
+			return err
+		}
+		items, hasItems, err := ltvItems(cmd)
+		if err != nil {
+			return err
+		}
+		if hasItems {
+			_, byID := body["customer_id"]
+			_, byRef := body["customer_ref"]
+			if !byID && !byRef {
+				return validationError("line items need a customer: name one with --customer-id or --customer-ref").
+					WithHint("Items are stored on the customer's revenue event; a conversion that resolves to no customer records none of them, without an error.")
+			}
+			body["items"] = items
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("conversions", body, idemKey)
 		if err != nil {
@@ -156,6 +202,38 @@ var conversionCreateCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// conversionCreateIdentityFlags name the LTV customer of a conversion.
+var conversionCreateIdentityFlags = []string{"customer-id", "customer-ref", "customer-ref-type", "customer-crm"}
+
+// conversionCustomer adds the optional customer identity to a conversion.
+// Unlike an LTV write a conversion needs none (a click already linked to a
+// customer, or the account's c-param, can name it), so only what is given
+// is checked, as ltvIdentity checks it. --customer-crm alone is the CRM the
+// c-param fallback creates its customer with.
+func conversionCustomer(cmd *cobra.Command, body map[string]interface{}) error {
+	given := false
+	for _, f := range conversionCreateIdentityFlags {
+		given = given || cmd.Flags().Changed(f)
+	}
+	if !given {
+		return nil
+	}
+	if cmd.Flags().Changed("customer-id") || cmd.Flags().Changed("customer-ref") {
+		return ltvIdentity(cmd, body)
+	}
+	if cmd.Flags().Changed("customer-ref-type") {
+		return validationError("--customer-ref-type describes --customer-ref, which was not given").
+			WithHint("Add --customer-ref, or drop --customer-ref-type.")
+	}
+	raw, _ := cmd.Flags().GetString("customer-crm")
+	crm, err := ltvCRMObject(raw)
+	if err != nil {
+		return err
+	}
+	body["customer_crm"] = crm
+	return nil
 }
 
 // conversionCreateNote says when a 201 wrote nothing new: the server matched a
@@ -222,6 +300,12 @@ func init() {
 	conversionCreateCmd.Flags().String("payout", "", "Payout amount")
 	conversionCreateCmd.Flags().String("conversion_payout", "", "Legacy alias for --payout")
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")
+	conversionCreateCmd.Flags().String("conv-time", "", "When it converted, unix seconds (default now)")
+	conversionCreateCmd.Flags().String("status", "", "Record a reversal of the click's conversion with this --transaction-id")
+	enumFlag(conversionCreateCmd, "status", newEnum([]string{"reversed"}))
+	conversionCreateCmd.Flags().String("reversal-id", "", "The network's id for the reversal (with --status reversed)")
+	addLtvIdentityFlags(conversionCreateCmd, true)
+	addLtvItemFlags(conversionCreateCmd)
 	registerIdempotencyKeyFlag(conversionCreateCmd)
 
 	registerDeleteFlags(conversionDeleteCmd, "conversion")

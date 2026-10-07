@@ -465,6 +465,14 @@ func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
 
+// Patch sends a partial update: the server changes only the fields the body
+// names (the /ltv customer, company and field updates). It goes through the
+// same request path as Put, so --staged stamps it the same way and a server
+// that cannot stage it refuses rather than performing it.
+func (c *Client) Patch(path string, body interface{}) ([]byte, error) {
+	return c.do("PATCH", path, nil, body)
+}
+
 func (c *Client) Delete(path string) error {
 	_, err := c.do("DELETE", path, nil, nil)
 	return err

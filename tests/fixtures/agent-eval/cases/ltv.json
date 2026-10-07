@@ -1,0 +1,65 @@
+{
+  "cases": [
+    {
+      "id": "ltv-001-revenue-from-another-system-lands-once-on-the-customer",
+      "priority": "high",
+      "state": "seeded fixture; setup makes an LTV customer with the reference EVAL-LTV-CUST (no revenue yet)",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-CUST --email eval-ltv@example.com --first-name Eve --json >/dev/null"
+      ],
+      "ask": "Our billing system reports that customer EVAL-LTV-CUST bought the Pro plan (SKU EVAL-PRO) for $49.00, order EVAL-LTV-ORD-1. Record that revenue on the customer.",
+      "expected": {
+        "runs_one_of": [
+          "ltv revenue record"
+        ],
+        "checks": [
+          {
+            "run": "id=$(p202 ltv customers --search EVAL-LTV-CUST --json | jq -r '.data[0].customer_id'); p202 ltv customers \"$id\" --json | jq '[.data.recent_events[] | select(.event_type==\"purchase\" and (.amount|tonumber)==49)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if customer EVAL-LTV-CUST has exactly one 49.00 purchase on its revenue ledger, recorded with the order as its idempotency key or reference so a retry cannot double it. FAIL if the revenue went to another or a new customer, was recorded twice, or was recorded as a click conversion instead of on the customer.",
+        "reply_includes": [
+          "EVAL-LTV-CUST"
+        ]
+      },
+      "notes": "The check reads the customer's ledger, not the reply: a purchase on a fresh customer (a typo in --customer-ref creates one), a second purchase from a retry without --idempotency-key, or a refund-signed amount all fail it. Re-running on the same instance stays green when the agent keys the order (the server answers duplicate: true and records nothing), which is the behaviour the case wants."
+    },
+    {
+      "id": "ltv-002-gdpr-erasure-keeps-the-revenue",
+      "priority": "high",
+      "state": "seeded fixture; setup makes an LTV customer EVAL-LTV-GDPR (email eval-gdpr@example.com) with one 31.57 purchase",
+      "setup": [
+        "p202 ltv customer upsert --customer-ref EVAL-LTV-GDPR --email eval-gdpr@example.com --first-name Gina --json >/dev/null",
+        "p202 ltv revenue record --customer-ref EVAL-LTV-GDPR --amount 31.57 --idempotency-key EVAL-LTV-GDPR-1 --json >/dev/null"
+      ],
+      "ask": "Customer EVAL-LTV-GDPR asked us to forget them under GDPR. Erase their personal data, but our revenue numbers must stay intact.",
+      "expected": {
+        "runs_one_of": [
+          "ltv customer erase"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv customers --search eval-gdpr@example.com --json | jq '.pagination.total == 0'",
+            "includes": [
+              "true"
+            ]
+          },
+          {
+            "run": "p202 ltv customers --search erased: --all --json | jq '[.data[] | select((.total_revenue|tonumber) == 31.57)] | length >= 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the customer's personal data is gone (no customer is found by its email or reference) while an anonymized customer still carries its 31.57 of revenue, and the reply says the revenue was kept. FAIL if the customer is still findable, its revenue was removed or moved, or the agent only reported what it would do.",
+        "reply_includes": [
+          "EVAL-LTV-GDPR"
+        ]
+      },
+      "notes": "Erasure in Prosper202 anonymizes rather than deletes (`p202 ltv customer erase`): the second check finds the anonymized row (primary_ref erased:<id>) by its untouched revenue, so an agent that found some other way to make the customer disappear — merging it away, or clearing fields by hand while the reference alias survives — fails one check or the other."
+    }
+  ]
+}

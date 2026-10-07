@@ -6078,10 +6078,17 @@ paths:
       - LTV
       summary: Erase a customer
       description: 'Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview. Erases the customer''s personal data and
-        queues a `customer.updated` webhook (`erased: true`).'
+        an `idempotency_key` field instead). Erases the customer''s personal data — CRM fields, aliases (and their
+        identity-graph signals), custom field values and personalization tokens — and anonymizes the record
+        (`primary_ref` becomes `erased:<id>`, `status` `anonymized`); its revenue events and subscriptions are kept,
+        so LTV totals do not change. Queues a `customer.updated` webhook (`erased: true`). `dry_run=1` answers what
+        would be removed and what kept (`action: erase`, `mode: anonymize`, per-table counts in `cascade`).'
       operationId: ltvDeleteCustomer
+      parameters:
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Erased
         '403':
@@ -6300,7 +6307,8 @@ paths:
       - LTV
       summary: Remove a customer alias
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead). Removes only the mapping; the customer and its revenue stay.
+        `dry_run=1` returns the alias the delete would remove.
       operationId: ltvDeleteAlias
       parameters:
       - name: id
@@ -6314,7 +6322,10 @@ paths:
         required: true
         schema:
           type: integer
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Removed
         '403':
@@ -6689,9 +6700,15 @@ paths:
       - LTV
       summary: Delete a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead). Refused with `422` while customers are attached (merge the company
+        instead) or customers wait for the entity-linking sweep. `dry_run=1` returns the company and, in `refused`,
+        the reason the delete would be turned down (`null` when it would go ahead).
       operationId: ltvDeleteCompany
+      parameters:
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Deleted
         '403':
@@ -7140,9 +7157,14 @@ paths:
       - LTV
       summary: Delete a custom field
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead). Deletes the definition and every customer's value for it. `dry_run=1`
+        returns the field and the number of values (`customer-field-values` in `cascade`).
       operationId: ltvDeleteField
+      parameters:
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Deleted
         '403':
@@ -7219,7 +7241,8 @@ paths:
       - LTV
       summary: Delete an outbound webhook
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead). Deletes the endpoint and its delivery queue; pending deliveries are
+        dropped, not sent. `dry_run=1` returns the webhook (never its secret) and its deliveries by status.
       operationId: ltvDeleteWebhook
       parameters:
       - name: id
@@ -7228,7 +7251,10 @@ paths:
         schema:
           type: integer
         description: Webhook id
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Deleted
         '403':
@@ -7304,7 +7330,7 @@ paths:
       - LTV
       summary: Delete an inbound integration
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead) and have no `dry_run` preview.
+        an `idempotency_key` field instead). `dry_run=1` returns the integration the delete would remove.
       operationId: ltvDeleteIntegration
       parameters:
       - name: id
@@ -7313,7 +7339,10 @@ paths:
         schema:
           type: integer
         description: Integration id
+      - $ref: '#/components/parameters/dryRun'
       responses:
+        '200':
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
         '204':
           description: Deleted
         '403':
@@ -7994,9 +8023,9 @@ components:
       description: |
         Preview the delete without performing it. With `dry_run=1` the
         response is `200` with `{data: {dry_run, action, resource, mode,
-        record, cascade}}` instead of `204`. Fail-closed: endpoints without
-        preview support (the LTV deletes) reject the parameter with `422`,
-        and an unrecognized value is a `422` — never a delete. Supported
+        record, cascade}}` instead of `204`. Fail-closed: an endpoint
+        without preview support rejects the parameter with `422`, and an
+        unrecognized value is a `422` — never a delete. Supported
         when the capabilities report `features.delete_dry_run`.
       schema:
         type: string

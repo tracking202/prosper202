@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use RuntimeException;
 
 /**
@@ -575,15 +576,42 @@ final class MysqlCompanyRepository
             throw new RuntimeException('Company not found');
         }
 
+        $refusal = $this->deleteRefusal($userId, $companyId, (string) $company['name']);
+        if ($refusal !== null) {
+            throw new RuntimeException($refusal);
+        }
+
+        $stmt = $this->conn->prepareWrite(
+            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
+        );
+        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
+        $this->conn->executeUpdate($stmt);
+        });
+    }
+
+    /**
+     * Why delete() would refuse this company, or null when it would not:
+     * attached customers (the right operation is a merge), or customers
+     * whose company STRING matches but who are not yet stamped (removing the
+     * entity would only have the linking sweep re-create it). delete() asks
+     * this under the company row's lock; the delete preview asks it without
+     * one, so its answer can be overtaken by a concurrent attach — the
+     * delete re-asks and is the arbiter.
+     */
+    public function deleteRefusal(int $userId, int $companyId, string $companyName): ?string
+    {
         $countStmt = $this->conn->prepareWrite(
             'SELECT COUNT(*) AS c FROM 202_customers WHERE company_id = ? AND user_id = ?'
         );
         $this->conn->bind($countStmt, 'ii', [$companyId, $userId]);
         $count = $this->conn->fetchOne($countStmt);
-        if (((int) ($count['c'] ?? 0)) > 0) {
-            throw new RuntimeException(
-                'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead'
-            );
+        if ($count === null) {
+            // COUNT(*) always yields a row; none means the read failed, and
+            // "no attached customers" must not stand in for "unknown".
+            throw new QueryException('COUNT(*) over 202_customers returned no row');
+        }
+        if ((int) $count['c'] > 0) {
+            return 'Company still has ' . (int) $count['c'] . ' attached customer(s); merge it into another company instead';
         }
 
         // Unstamped legacy rows may hold UNCANONICAL strings (pre-fix
@@ -597,7 +625,7 @@ final class MysqlCompanyRepository
              GROUP BY company"
         );
         $this->conn->bind($strayStmt, 'i', [$userId]);
-        $targetNormalized = self::normalizeName((string) $company['name']);
+        $targetNormalized = self::normalizeName($companyName);
         $strayCount = 0;
         foreach ($this->conn->fetchAll($strayStmt) as $strayRow) {
             if (self::normalizeName((string) $strayRow['company']) === $targetNormalized) {
@@ -605,18 +633,11 @@ final class MysqlCompanyRepository
             }
         }
         if ($strayCount > 0) {
-            throw new RuntimeException(
-                'Company has ' . $strayCount . ' customer(s) pending entity linking;'
-                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry'
-            );
+            return 'Company has ' . $strayCount . ' customer(s) pending entity linking;'
+                . ' run the maintenance cron (202-cronjobs/ltv_maintenance.php) and retry';
         }
 
-        $stmt = $this->conn->prepareWrite(
-            'DELETE FROM 202_companies WHERE company_id = ? AND user_id = ?'
-        );
-        $this->conn->bind($stmt, 'ii', [$companyId, $userId]);
-        $this->conn->executeUpdate($stmt);
-        });
+        return null;
     }
 
     /**
