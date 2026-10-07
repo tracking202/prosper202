@@ -59,6 +59,25 @@ on `202_api_keys` (fresh installs have it; the 1.9.75 upgrade backfills it —
 `features.api_key_scopes` in [capabilities](17-capabilities.md) reports
 whether scoped keys can be minted).
 
+### Role Permissions
+
+A key acts as its user, and the user's **role** limits it as the web pages
+limit that user — a scope can narrow a key further, never past its role:
+
+| Routes | The role needs | As the page that does it |
+| ------ | -------------- | ------------------------ |
+| `POST`/`PUT` on `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules), and their `bulk-upsert` | `access_to_setup_section` | every Setup page |
+| `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
+| The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
+| Attribution reports and models | `view_attribution_reports`, `manage_attribution_models` | Attribution |
+
+The check runs before the handler, so a `?dry_run=1` preview and a
+`?staged=1` proposal are refused exactly as the write is, and a staged change
+is applied with the applier's permissions. Reads are not gated by role. A
+refusal is `403` naming the permission: `This account's role does not have
+the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user role`).
+Forecast events have no Setup page and are not gated.
+
 ## Common Headers
 
 | Header | Direction | Description |

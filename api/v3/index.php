@@ -281,15 +281,45 @@ try {
         $router = new Router();
 
 
+        // The Setup pages' role permissions (CLAUDE.md #5): every Setup page
+        // asks for access_to_setup_section, and each removal for its own
+        // remove_* permission as well (delete_tracker.php, aff_campaigns.php,
+        // …); a delete asks for both, the remove_* first so a refusal names
+        // the narrower one. The API asked for neither, so a key of a Campaign
+        // viewer — a role that "changes nothing" — could create and delete
+        // campaigns, while the
+        // Update and attribution routes already held to their pages' rules.
+        // Group middleware runs from the main match, so a dry-run preview and
+        // a staged write are refused exactly as the write is (and a staged
+        // change is applied with the applier's permissions). Forecast events
+        // have no Setup page and stay ungated.
+        $setupSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_setup_section');
+        };
+        // Each with its permission as a literal, so PreviewAuthParityTest
+        // can read what a delete (and so its preview) asks for.
+        $setupRemove = [
+            'campaigns'     => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign'); },
+            'aff-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign_category'); },
+            'ppc-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source'); },
+            'ppc-accounts'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source_account'); },
+            'trackers'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_tracker'); },
+            'landing-pages' => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_landing_page'); },
+            'text-ads'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_text_ad'); },
+        ];
         foreach ($crudMap as $resource => $class) {
-            $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $queryParams, $payload) {
+            $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
                 $r->get('',       fn() => $crud($class)->list($queryParams));
-                $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
+            });
+            $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $payload) {
+                $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
                 $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
+            }, isset($setupRemove[$resource]) ? [$setupSection] : []);
+            $router->group("/$resource", function (Router $r) use ($class, $crud) {
                 $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
-            });
+            }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
 
         // Tracker sub-resource
@@ -493,20 +523,25 @@ try {
         ]);
 
         // ── Rotators ─────────────────────────────────────────────────────
-        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
-            $cls = \Api\V3\Controllers\RotatorsController::class;
-            $r->get('',        fn() => $crud($cls)->list($queryParams));
-            $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($cls)->create($payload)));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->update((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
-
-            // Sub-resource: rules
-            $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
-            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($cls)->createRule((int)$ctx['id'], $payload)));
-            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($cls)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
-            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+        // Setup > Redirectors' permissions, as for the CRUD resources above.
+        $rotators = \Api\V3\Controllers\RotatorsController::class;
+        $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
+            $r->get('',                        fn() => $crud($rotators)->list($queryParams));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get((int)$ctx['id']));
+            $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules((int)$ctx['id']));
         });
+        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
+            $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
+            $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update((int)$ctx['id'], $payload));
+            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($rotators)->createRule((int)$ctx['id'], $payload)));
+            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
+        }, [$setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}', fn($ctx) => tap($crud($rotators), fn($c) => $c->delete((int)$ctx['id'])));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator'); }, $setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator_rule'); }, $setupSection]);
 
         // ── Multi-touch attribution ──────────────────────────────────────
         // Gated by the same role permissions as the session pages (plan

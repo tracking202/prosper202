@@ -33,6 +33,16 @@ info:
     create a key broader than itself. Denials are `403` naming the required
     scope. Advertised via `features.api_key_scopes`.
 
+    ## Role Permissions
+    A key also acts within its user's role, as the web pages limit that
+    user. Creating or changing a Setup entity (campaigns, aff-networks,
+    ppc-networks, ppc-accounts, trackers, landing-pages, text-ads, rotators
+    and their rules, and each `bulk-upsert`) needs `access_to_setup_section`;
+    deleting one needs that and the entity's own `remove_*` permission
+    (`remove_campaign`, `remove_tracker`, `remove_rotator_rule`, …). The
+    check runs before the handler, so `?dry_run=1` and `?staged=1` are
+    refused as the write is. Denials are `403` naming the permission.
+
     ## Idempotent Creates
     Single POST creates across the operator surface (CRUD entities,
     conversions, rotators and rules, attribution models and exports, users)
