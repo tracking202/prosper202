@@ -410,6 +410,23 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::assertNull($byKey['paykickstart']['secret_stored'], 'PayKickstart needs no secret');
         self::assertStringNotContainsString('cb-secret-xyz', (string) json_encode($answer));
         self::q("UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0 WHERE user_id = " . self::ADMIN);
+
+        // With no domain stored, the URLs go back to the caller to paste, as
+        // the Integrations page shows them: on the host the request used, not
+        // the server's own name and port (behind a proxy, an address no
+        // network reaches; TrackingBaseUrl::domainForResponse()).
+        self::q("UPDATE 202_users_pref SET user_tracking_domain = '' WHERE user_id = 1");
+        try {
+            $answer = $this->admin()->integrations([
+                'HTTP_HOST' => 'proxy.example:9443', 'HTTPS' => 'on', 'SERVER_NAME' => 'internal', 'SERVER_PORT' => 8080,
+                'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+            ])['data'];
+            self::assertSame('https://proxy.example:9443/', $answer['base_url']);
+            $byKey = array_column($answer['integrations'], null, 'integration');
+            self::assertSame('https://proxy.example:9443/tracking202/static/cb202.php', $byKey['clickbank']['url']);
+        } finally {
+            self::q("UPDATE 202_users_pref SET user_tracking_domain = 'track.example.com' WHERE user_id = 1");
+        }
     }
 
     public function testInfoNamesTheCodeAndDatabaseVersions(): void
