@@ -117,6 +117,53 @@ final class SetTimezoneReadsTheAccountIntegrationTest extends TestCase
         self::assertSame($expected, $_SESSION['user_timezone'], 'the session copy every other reader uses agrees');
     }
 
+    /** @return iterable<string, array{int, int}> */
+    public static function failedReads(): iterable
+    {
+        yield 'mysqli throws (strict reporting)' => [MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT, self::FIRST_USER + 3];
+        yield 'mysqli answers false (no reporting)' => [MYSQLI_REPORT_OFF, self::FIRST_USER + 4];
+    }
+
+    /**
+     * A read that fails is not "keep the zone the session has". Answered
+     * that way (a failed prepare, execute or get_result(), and any exception,
+     * all read as null), one transient database error counted the page's
+     * days in the zone captured at sign-in, which may no longer be the
+     * account's, and said nothing. It throws, naming the account, and sets
+     * no zone.
+     *
+     * @dataProvider failedReads
+     */
+    public function testAReadThatFailsThrowsAndSetsNoZone(int $reporting, int $userId): void
+    {
+        // A connection with no 202_users to read: the query cannot run.
+        $broken = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            'information_schema',
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        \DB::$conn = $broken;
+        $_SESSION['user_id'] = $userId;
+        $_SESSION['user_timezone'] = 'America/New_York';
+        mysqli_report($reporting);
+        $thrown = null;
+        try {
+            AUTH::set_timezone($_SESSION['user_timezone']);
+        } catch (\RuntimeException $e) {
+            $thrown = $e;
+        } finally {
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $broken->close();
+        }
+
+        self::assertNotNull($thrown, 'a read that failed answered as though it had read a zone');
+        self::assertStringContainsString('time zone of account ' . $userId, $thrown->getMessage(), 'naming whose');
+        self::assertSame('UTC', date_default_timezone_get(), 'no zone was set from a read that failed');
+        self::assertSame('America/New_York', $_SESSION['user_timezone'], 'and the session copy is untouched');
+    }
+
     public function testWithoutASignedInUserTheArgumentStands(): void
     {
         unset($_SESSION['user_id'], $_SESSION['user_timezone']);
