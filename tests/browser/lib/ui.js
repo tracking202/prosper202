@@ -215,6 +215,14 @@ class Ui {
 
   async setViewport(width, height = 900) {
     await this.page.setViewportSize({ width, height });
+    // Two animation frames: the chrome re-centres its sub-menu strips on the
+    // frame after a resize (p202-chrome.js), and ready() returns at once on a
+    // page that has already loaded, so a check measured straight after the
+    // resize raced that frame — one Setup page at 390px, a different one each
+    // run, read as clipped. A reader never sees the state before that frame.
+    await this.page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }));
   }
 
   // ── Clipboard ─────────────────────────────────────────────────────
