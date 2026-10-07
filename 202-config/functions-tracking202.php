@@ -286,11 +286,11 @@ function query(
         if ($user_row['user_pref_ppc_network_id'] and ! ($user_row['user_pref_ppc_account_id'])) {
 
             if (! preg_match('/202_ppc_accounts/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id) ";
+                $command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id) ";
             }
 
             if (! preg_match('/202_ppc_networks/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
+                $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id) ";
             }
         }
 
@@ -298,11 +298,11 @@ function query(
         if ($user_row['user_pref_aff_network_id'] and ! ($user_row['user_pref_aff_campaign_id'])) {
 
             if (! preg_match('/202_aff_campaigns/', (string) $command)) {
-                $command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) ";
+                $command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id) ";
             }
 
             if (! preg_match('/202_aff_networks/', (string) $command)) {
-                $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
+                $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id AND 2an.user_id = 2c.user_id) ";
             }
         }
 
@@ -380,11 +380,15 @@ function query(
         if ($user_row['user_pref_ppc_network_id'] and ! ($user_row['user_pref_ppc_account_id'])) {
             $mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
             if ($user_row['user_pref_ppc_network_id'] == '16777215') {
+                // The count reads what the list's joins read: the click's
+                // own account's traffic source account, and that account's
+                // own source (CLAUDE.md #27). One naming another account's
+                // reads as no source in both.
                 $click_sql .= "  AND      2pn.ppc_network_id IS NULL";
-                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS 2pa2 WHERE 2pa2.ppc_account_id = 2c.ppc_account_id AND 2pa2.ppc_network_id IS NOT NULL)";
+                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS own_pa INNER JOIN 202_ppc_networks AS own_pn ON (own_pn.ppc_network_id = own_pa.ppc_network_id AND own_pn.user_id = own_pa.user_id) WHERE own_pa.ppc_account_id = 2c.ppc_account_id AND own_pa.user_id = 2c.user_id)";
             } else {
                 $click_sql .= "  AND      2pn.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "'";
-                $count_where .= "  AND      2c.ppc_account_id IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
+                $count_where .= "  AND      2c.ppc_account_id IN (SELECT own_pa.ppc_account_id FROM 202_ppc_accounts AS own_pa INNER JOIN 202_ppc_networks AS own_pn ON (own_pn.ppc_network_id = own_pa.ppc_network_id AND own_pn.user_id = own_pa.user_id) WHERE own_pa.user_id = 2c.user_id AND own_pa.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
             }
         }
 

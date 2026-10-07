@@ -90,13 +90,18 @@ $cells = static function (array $s, int $roiPrecision) use ($cpv, $canSee, $e): 
 	];
 };
 
-/** A rule's criteria and where it sends a click, under its name. */
-$ruleDetails = static function (int $ruleId) use ($fetchAll, $e): string {
+/**
+ * A rule's criteria and where it sends a click, under its name. The rule is
+ * one of this account's redirectors' (RotatorBreakdown reads `ro.user_id`);
+ * a campaign or landing page it sends to is named only when it is this
+ * account's too (CLAUDE.md #27), and otherwise shown by its id.
+ */
+$ruleDetails = static function (int $ruleId) use ($fetchAll, $e, $userId): string {
 	$criteria = $fetchAll('SELECT DISTINCT type, statement, value FROM 202_rotator_rules_criteria WHERE rule_id = ' . $ruleId);
 	$redirects = $fetchAll('SELECT rr.redirect_url, rr.redirect_campaign, rr.redirect_lp, rr.weight, ac.aff_campaign_name, lp.landing_page_nickname
 		FROM 202_rotator_rules_redirects AS rr
-		LEFT JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = rr.redirect_campaign)
-		LEFT JOIN 202_landing_pages AS lp ON (lp.landing_page_id = rr.redirect_lp AND lp.landing_page_deleted = 0)
+		LEFT JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = rr.redirect_campaign AND ac.user_id = ' . $userId . ')
+		LEFT JOIN 202_landing_pages AS lp ON (lp.landing_page_id = rr.redirect_lp AND lp.landing_page_deleted = 0 AND lp.user_id = ' . $userId . ')
 		WHERE rr.rule_id = ' . $ruleId);
 
 	$items = [];

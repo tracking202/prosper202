@@ -380,7 +380,7 @@ class DataEngine
         $sql = "select landing_page_nickname,
 2st.landing_page_id," . MetricsSql::GROUPED_SELECT . "
 from 202_dataengine as 2st
-LEFT OUTER JOIN 202_landing_pages USING (landing_page_id)"
+LEFT OUTER JOIN 202_landing_pages USING (landing_page_id, user_id)"
             . $this->mysql['user_id_query'] . "
 AND 2st.click_time >= " . $clickFrom . "
 AND 2st.click_time <= " . $clickTo . $click_filtered . "
@@ -409,7 +409,7 @@ ORDER BY landing_page_id ASC";
             (SUM(income)-SUM(cost)) AS net,
             CASE WHEN SUM(cost) > 0 THEN ((SUM(income)-SUM(cost))/SUM(cost)*100) ELSE 0 END as roi
              FROM 202_dataengine AS 2c
-             LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
+             LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
              WHERE 2c.user_id = " . $this->mysql['user_id'] . "
 AND 2c.click_time >= " . $clickFrom . "
 AND 2c.click_time <= " . $clickTo . $click_filtered . "
@@ -428,7 +428,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             landing_page_nickname,
             2st.landing_page_id,";
             $labelJoins = "
-            LEFT JOIN 202_landing_pages USING (landing_page_id)";
+            LEFT JOIN 202_landing_pages USING (landing_page_id, user_id)";
             $typeCondition = "
             AND 2st.aff_campaign_id IS FALSE
             AND 2st.landing_page_id IS TRUE";
@@ -439,8 +439,8 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             aff_campaign_name,
             2st.aff_campaign_id,";
             $labelJoins = "
-            LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-            LEFT JOIN 202_aff_networks on (2st.aff_network_id= 202_aff_networks.`aff_network_id`)";
+            LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id)
+            LEFT JOIN 202_aff_networks on (2st.aff_network_id= 202_aff_networks.`aff_network_id` AND 202_aff_networks.user_id = 2st.user_id)";
             $typeCondition = "
             AND 2st.aff_campaign_id IS TRUE";
         }
@@ -472,15 +472,19 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
 
         // Fix #3a: use canonical metric SELECT. Joins are 202_ppc_accounts and
         // 202_ppc_networks — neither carries income/cost/clicks, so 2st. is safe.
+        // Each names a row of the click's own account only (CLAUDE.md #27): a
+        // click naming another account's source is still counted, unnamed.
+        // The WHERE is its own statement, so the ON clause ends in the string
+        // AccountScopedJoinTest reads.
         $ppc_sql = "select
             ppc_account_name,
             ppc_network_name,
             2st.ppc_account_id,
             2st.{$select_by_id}," . MetricsSql::GROUPED_SELECT . "
             from 202_dataengine as 2st
-            LEFT JOIN 202_ppc_accounts ON (2st.ppc_account_id = 202_ppc_accounts.ppc_account_id)
-            LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id)"
-            . $this->mysql['user_id_query']
+            LEFT JOIN 202_ppc_accounts ON (2st.ppc_account_id = 202_ppc_accounts.ppc_account_id AND 202_ppc_accounts.user_id = 2st.user_id)
+            LEFT JOIN 202_ppc_networks ON (202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)";
+        $ppc_sql .= $this->mysql['user_id_query']
             . " AND 2st.{$select_by_id} IN (" . implode(",", $ids) . ")";
 
         if ($type == 'alp') {
@@ -553,12 +557,15 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
         // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
         // 202_ppc_networks has no income/cost/clicks, so 2st. prefix is safe.
+        // The traffic source is the click's own account's (CLAUDE.md #27): this
+        // is an inner join, so a click naming another account's source drops
+        // out of the report, as one naming a source that no longer exists did.
         $click_sql = " SELECT 2st.user_id,
         2st.ppc_network_id,
         ppc_network_name," . MetricsSql::GROUPED_SELECT . "
         FROM 202_dataengine as 2st
-        JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)"
-            . $filters['join']
+        JOIN 202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)";
+        $click_sql .= $filters['join']
             . $this->mysql['user_id_query']
             . " AND 2st.variable_set_id != 0 AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
         group by 2st.user_id, 2st.ppc_network_id" . $filters['limit'];
@@ -596,8 +603,9 @@ FROM
         JOIN
     202_ppc_network_variables ON (202_custom_variables.ppc_variable_id = 202_ppc_network_variables.ppc_variable_id)
         JOIN
-    202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id)
-" . $filters['join'] . $this->mysql['user_id_query'] . "
+    202_ppc_networks ON (202_ppc_networks.ppc_network_id = 2st.ppc_network_id AND 202_ppc_networks.user_id = 2st.user_id)
+";
+        $click_sql .= $filters['join'] . $this->mysql['user_id_query'] . "
         AND 2st.variable_set_id != 0
         AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
 group by ppc_network_id , name , variable

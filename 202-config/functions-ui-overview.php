@@ -281,13 +281,17 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         return $list;
     };
 
+    // An account is listed under its source and a campaign under its
+    // category only when the parent is this account's too (CLAUDE.md #27):
+    // one filed under another account's is left out, as one under a deleted
+    // parent is (ReportPrefsStore::lists() reads them the same way).
     $queries = [
         'ppc_network_id' => static fn () => [P202_REPORT_NO_TRAFFIC_SOURCE => '[No traffic source]'] + $flat($rows(
             'SELECT ppc_network_id, ppc_network_name FROM 202_ppc_networks WHERE user_id = ? AND ppc_network_deleted = 0 ORDER BY ppc_network_name'
         )),
         'ppc_account_id' => static fn () => $grouped($rows(
             'SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts AS a'
-            . ' JOIN 202_ppc_networks AS n ON (n.ppc_network_id = a.ppc_network_id)'
+            . ' JOIN 202_ppc_networks AS n ON (n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id)'
             . ' WHERE a.user_id = ? AND a.ppc_account_deleted = 0 AND n.ppc_network_deleted = 0'
             . ' ORDER BY n.ppc_network_name, a.ppc_account_name'
         )),
@@ -296,7 +300,7 @@ function p202_overview_filter_lists(\Prosper202\Database\Connection $conn, int $
         )),
         'aff_campaign_id' => static fn () => $grouped($rows(
             'SELECT c.aff_campaign_id, c.aff_campaign_name, n.aff_network_name FROM 202_aff_campaigns AS c'
-            . ' JOIN 202_aff_networks AS n ON (n.aff_network_id = c.aff_network_id)'
+            . ' JOIN 202_aff_networks AS n ON (n.aff_network_id = c.aff_network_id AND n.user_id = c.user_id)'
             . ' WHERE c.user_id = ? AND c.aff_campaign_deleted = 0 AND n.aff_network_deleted = 0'
             . ' ORDER BY n.aff_network_name, c.aff_campaign_name'
         )),
@@ -361,6 +365,28 @@ function p202_overview_data_user_id(): ?int
 }
 
 /**
+ * The statement p202_overview_seen_list() runs: the account's clicks in the
+ * window (`d.user_id = ?`, or every account's for a session that sees every
+ * campaign), joined to the lookup the list names. Every lookup in
+ * P202_OVERVIEW_SEEN_LISTS is install-wide (no user_id), which
+ * AccountScopedJoinTest::testRuntimeBuiltSqlIsTied() checks by scanning
+ * what this returns for each.
+ */
+function p202_overview_seen_list_sql(string $name, bool $everyAccount, int $limit = P202_OVERVIEW_SEEN_LIMIT): string
+{
+    if (!isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
+        throw new InvalidArgumentException("p202_overview_seen_list_sql(): '$name' is not a filter listed from the clicks");
+    }
+    [$column, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
+    $scope = $everyAccount ? 'd.user_id != 0' : 'd.user_id = ?';
+
+    return "SELECT d.$column AS id, MIN($label) AS label FROM 202_dataengine AS d"
+        . " JOIN $lookup ON ($idColumn = d.$column)"
+        . " WHERE $scope AND d.click_time >= ? AND d.click_time <= ?"
+        . " GROUP BY d.$column ORDER BY SUM(d.clicks) DESC, d.$column LIMIT " . max(1, $limit);
+}
+
+/**
  * One filter's list, id => label: the ids of `$name` that the clicks in the
  * window carried, the busiest `$limit` of them, in label order. The id is the
  * one the clicks carry, which is the one the report's filter matches; the
@@ -375,12 +401,8 @@ function p202_overview_seen_list(\Prosper202\Database\Connection $conn, string $
     if (!isset(P202_OVERVIEW_SEEN_LISTS[$name])) {
         throw new InvalidArgumentException("p202_overview_seen_list(): '$name' is not a filter listed from the clicks");
     }
-    [$column, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
-    $scope = $dataUserId === null ? 'd.user_id != 0' : 'd.user_id = ?';
-    $sql = "SELECT d.$column AS id, MIN($label) AS label FROM 202_dataengine AS d"
-        . " JOIN $lookup ON ($idColumn = d.$column)"
-        . " WHERE $scope AND d.click_time >= ? AND d.click_time <= ?"
-        . " GROUP BY d.$column ORDER BY SUM(d.clicks) DESC, d.$column LIMIT " . max(1, $limit);
+    [, $lookup, $idColumn, $label] = P202_OVERVIEW_SEEN_LISTS[$name];
+    $sql = p202_overview_seen_list_sql($name, $dataUserId === null, $limit);
     $params = $dataUserId === null ? [$from, $to] : [$dataUserId, $from, $to];
     $stmt = $conn->prepareRead($sql);
     $conn->bind($stmt, str_repeat('i', count($params)), $params);

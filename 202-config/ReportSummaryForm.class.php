@@ -510,6 +510,25 @@ class ReportSummaryForm extends ReportBasicForm
 			case 'transaction_id':
 				$groupby_null = '';
 				break;
+			// A redirector, rule and redirect group by the joined row, the id
+			// the SELECT names them by. Grouped by the click's own id (the
+			// bare name resolves to 2c's column), a click naming another
+			// account's redirector, or one removed since, made a second group
+			// whose selected id was as empty as the none group's, and one of
+			// the two replaced the other in the tree: its clicks vanished from
+			// the report. Now both are the none group, counted (CLAUDE.md #27).
+			case 'rotator_id':
+				$gb = '2rt.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_id':
+				$gb = '2rr.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_redirect_id':
+				$gb = '2rrr.id';
+				$groupby_null = '0';
+				break;
 			default:
 				$groupby_null = '0';
 				break;
@@ -812,24 +831,30 @@ class ReportSummaryForm extends ReportBasicForm
 			FROM
 				202_dataengine AS 2c";
 
+		// Every account-owned record is named only within the click's own
+		// account (CLAUDE.md #27): a click naming another account's campaign,
+		// source, landing page, text ad or redirector is still counted, in the
+		// unnamed group, as ReportsController::dimensionJoin() reads it. A rule
+		// and its redirect have no user_id; they are the account's through
+		// their redirector.
 		$info_sql .= "
-			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
+			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
 		";
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT) || $user_row['user_pref_ppc_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)";
 
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $user_row['user_pref_ppc_network_id']) {
-				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id)";
+				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)";
 			}
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK) || $user_row['user_pref_aff_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id AND 2an.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2c.user_id)";
 		}
 
 		// The keyword, referer and IP filters are WHERE terms (TextFilterSql,
@@ -839,7 +864,7 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TEXT_AD)) {
-			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT)) {
@@ -925,15 +950,15 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id AND 2rt.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id AND 2rr.rotator_id IN (SELECT own_ro.id FROM 202_rotators AS own_ro WHERE own_ro.user_id = 2c.user_id))";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id AND 2rrr.rule_id IN (SELECT own_rr.id FROM 202_rotator_rules AS own_rr INNER JOIN 202_rotators AS own_rro ON (own_rro.id = own_rr.rotator_id) WHERE own_rro.user_id = 2c.user_id))";
 		}
 
 		if ($ledgerLevel) {

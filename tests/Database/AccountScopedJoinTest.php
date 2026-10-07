@@ -102,12 +102,13 @@ final class AccountScopedJoinTest extends TestCase
     private const WEBHOOK_DELIVERY = 'the dispatcher reads every account\'s due deliveries with their own endpoint: a delivery is written only for a webhook read for the same account (MysqlWebhookRepository::enqueue(): `WHERE user_id = ?`)';
     private const CLICK_TRACKER = 'the click\'s own tracker: 202_cpa_trackers records the tracker the click came through, and the redirect takes the click\'s user_id from that tracker';
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
+    private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
+    private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
 
     // Why a site is in KNOWN_UNSCOPED (it can show or use another
     // account's record, and is left to the change that owns the file).
 
-    private const LEGACY_REPORT = 'legacy report page or data engine (the Analyze/overview/Visitors work owns these files): names, or groups by, another account\'s record when a click names one';
     private const SETUP_PAGE = 'legacy Setup or Get Links page: names another account\'s record when a Setup record names one';
     private const TRACKING_PATH = 'tracking path (a redirect or static endpoint resolving public ids from the URL): follows a tracker\'s, landing page\'s or rotator rule\'s stored id to another account\'s record; reported, not changed here';
     private const LEGACY_API = 'legacy API v1/v2 report: names another account\'s landing page or campaign when a click names one';
@@ -206,6 +207,9 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_attribution_models | m.model_id = cr.model_id' => self::DIRTY_MARKS,
             'no user_id tie | 202_attribution_journey_meta | jm.conv_id = j.conv_id' => self::DIRTY_MARKS,
         ],
+        '202-config/ReportSummaryForm.class.php' => [
+            'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEDGER_PARTS,
+        ],
         '202-config/Update/SubidBatch.php' => [
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0' => self::SAME_CLICK_CONVERSIONS,
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0 #2' => self::SAME_CLICK_CONVERSIONS,
@@ -217,6 +221,9 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/functions-auth.php' => [
             'comma join | 202_users | SELECT * FROM 202_auth_keys `2a` , 202_users `2u` WHERE `2a`.expires > UNIX_TIMESTAMP' => self::AUTH_KEY,
+        ],
+        '202-config/functions-ui-overview.php' => [
+            'table built at runtime | $lookup | AS d JOIN {$lookup} ON ( {$idColumn} = d.{$column} ) WHERE {$scope}' => self::RUNTIME_CHECKED,
         ],
         '202-config/functions-upgrade.php' => [
             'no user_id tie | 202_conversion_logs | transaction_id IS NOT NULL' => self::UPGRADE,
@@ -266,6 +273,13 @@ final class AccountScopedJoinTest extends TestCase
             'no table after JOIN | ? | LEFT JOIN' => self::JOIN_REWRITE,
             'table built at runtime | {$bd[\'table\']} | INNER JOIN {{$bd[\'table\']}} ref ON {$on}' => self::RUNTIME_CHECKED,
         ],
+        'tracking202/Report/ReportPrefsStore.php' => [
+            'condition built at runtime | 202_dataengine | `2st`.region_id = r.region_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::DATA_SCOPE,
+            'condition built at runtime | 202_dataengine | `2st`.isp_id = i.isp_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::DATA_SCOPE,
+        ],
+        'tracking202/ajax/click_history.php' => [
+            'no user_id tie | 202_conversion_logs | cvl.click_id = `2c`.click_id' => self::SAME_CLICK_CONVERSIONS,
+        ],
         'tracking202/ajax/ltv_products.php' => [
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id' => self::EVENT_LINES,
         ],
@@ -296,42 +310,9 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_ppc_networks | a.ppc_network_id = n.ppc_network_id' => self::SETUP_PAGE,
             'no user_id tie | 202_aff_networks | c.aff_network_id = n.aff_network_id' => self::SETUP_PAGE,
         ],
-        '202-config/DataEngine/ClickRollupSql.php' => [
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | `2ac`.aff_network_id = `2an`.aff_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2c`.ppc_account_id = `2pa`.ppc_account_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_networks | `2pa`.ppc_network_id = `2pn`.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | `2c`.landing_page_id = `2lp`.landing_page_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_text_ads | `2ca`.text_ad_id = `2ta`.text_ad_id' => self::LEGACY_REPORT,
-        ],
-        '202-config/DataEngine/GroupedReportRegistry.php' => [
-            'no user_id tie | 202_text_ads | `2st`.text_ad_id = 202_text_ads.text_ad_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | `2st`.landing_page_id = 202_landing_pages.landing_page_id' => self::LEGACY_REPORT,
-        ],
-        '202-config/ReportSummaryForm.class.php' => [
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2c`.ppc_account_id = `2pa`.ppc_account_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_networks | `2pa`.ppc_network_id = `2pn`.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | `2ac`.aff_network_id = `2an`.aff_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | `2c`.landing_page_id = `2lp`.landing_page_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_text_ads | `2c`.text_ad_id = `2ta`.text_ad_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_rotators | `2c`.rotator_id = `2rt`.id' => self::LEGACY_REPORT,
-            'table built at runtime | \\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope) | LEFT OUTER JOIN {\\Prosper202\\Conversion\\Ledger\\LedgerReportSql::partsTable($clickScope)} AS lcp ON ( `2c`.click_id = lcp.' => self::LEGACY_REPORT,
-        ],
         '202-config/Tracker/MysqlTrackerRepository.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
             'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        '202-config/class-dataengine.php' => [
-            'USING without user_id | 202_landing_pages | LEFT OUTER JOIN 202_landing_pages USING ( landing_page_id ) {$this->mysql[\'user_id_query\']} AND `2st`.click_time >=' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'USING without user_id | 202_landing_pages | LEFT JOIN 202_landing_pages USING ( landing_page_id )' => self::LEGACY_REPORT,
-            'USING without user_id | 202_aff_campaigns | LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_aff_networks on ( `2st`.' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | `2st`.aff_network_id = 202_aff_networks.`aff_network_id`' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2st`.ppc_account_id = 202_ppc_accounts.ppc_account_id' => self::LEGACY_REPORT,
-            'condition built at runtime | 202_ppc_networks | ( 202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id ) {$this->mysql[\'user_id_query\']} AND `2st`.{{$select_by_id}} IN ( {implode(",", $ids)} )' => self::LEGACY_REPORT,
-            'condition built at runtime | 202_ppc_networks | ( 202_ppc_networks.ppc_network_id = `2st`.ppc_network_id ) {$filters[\'join\']} {$this->mysql[\'user_id_query\']} AND `2st`.variable_set_id != 0 AND click_time >= {$clickFrom} AND click_time <= {$clickTo…' => self::LEGACY_REPORT,
-            'condition built at runtime | 202_ppc_networks | ( 202_ppc_networks.ppc_network_id = `2st`.ppc_network_id ) {$filters[\'join\']} {$this->mysql[\'user_id_query\']} AND `2st`.variable_set_id != 0 AND click_time >= {$clickFrom} AND click_time <= {$clickTo… #2' => self::LEGACY_REPORT,
         ],
         '202-config/connect2.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
@@ -339,19 +320,6 @@ final class AccountScopedJoinTest extends TestCase
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id #2' => self::TRACKING_PATH,
             'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN 202_landing_pages USING ( landing_page_id' => self::TRACKING_PATH,
             'USING without user_id | 202_landing_pages | ) LEFT JOIN 202_landing_pages USING ( landing_page_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        '202-config/functions-tracking202.php' => [
-            'no user_id tie | 202_ppc_accounts | `2c`.ppc_account_id = `2pa`.ppc_account_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_networks | `2pa`.ppc_network_id = `2pn`.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | `2ac`.aff_network_id = `2an`.aff_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2pa2`.ppc_account_id = `2c`.ppc_account_id AND `2pa2`.ppc_network_id IS NOT NULL' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | ppc_network_id = \'{0}\'' => self::LEGACY_REPORT,
-        ],
-        '202-config/functions-ui-overview.php' => [
-            'no user_id tie | 202_ppc_networks | n.ppc_network_id = a.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | n.aff_network_id = c.aff_network_id' => self::LEGACY_REPORT,
-            'table built at runtime | $lookup | AS d JOIN {$lookup} ON ( {$idColumn} = d.{$column} ) WHERE {$scope}' => self::LEGACY_REPORT,
         ],
         '202-cronjobs/daily-email.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns AS `2ca` USING ( aff_campaign_id ) WHERE `2c`.click_time' => self::CRON,
@@ -367,22 +335,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_landing_pages | `2lp`.landing_page_id = `2c`.landing_page_id' => self::LEGACY_API,
             'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca`' => self::LEGACY_API,
             'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca` #2' => self::LEGACY_API,
-        ],
-        'tracking202/Report/ReportPrefsStore.php' => [
-            'no user_id tie | 202_ppc_networks | n.ppc_network_id = a.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_networks | n.aff_network_id = c.aff_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_campaigns | c.aff_campaign_id = lp.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_campaigns | c.aff_campaign_id = t.aff_campaign_id' => self::LEGACY_REPORT,
-            'condition built at runtime | 202_dataengine | `2st`.region_id = r.region_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::LEGACY_REPORT,
-            'condition built at runtime | 202_dataengine | `2st`.isp_id = i.isp_id AND {($dataUserId === null ? \'2st.user_id != 0\' : \'2st.user_id = \'.$dataUserId)} AND `2st`.click_time >= ? AND `2st`.click_time <= ?' => self::LEGACY_REPORT,
-        ],
-        'tracking202/ajax/click_history.php' => [
-            'no user_id tie | 202_conversion_logs | cvl.click_id = `2c`.click_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2c`.ppc_account_id = `2pa`.ppc_account_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_networks | `2pa`.ppc_network_id = `2pn`.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | 202_landing_pages.landing_page_id = `2c`.landing_page_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_text_ads | `2c`.text_ad_id = `2ta`.text_ad_id' => self::LEGACY_REPORT,
         ],
         'tracking202/ajax/generate_tracking_link.php' => [
             'USING without user_id | 202_aff_campaigns | 202_trackers LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_aff_networks USING ( aff_network_id' => self::SETUP_PAGE,
@@ -402,10 +354,6 @@ final class AccountScopedJoinTest extends TestCase
         'tracking202/ajax/rotator.php' => [
             'no user_id tie | 202_aff_campaigns | `2ro`.default_campaign = `2ac`.aff_campaign_id' => self::SETUP_PAGE,
             'no user_id tie | 202_landing_pages | `2ro`.default_lp = `2lp`.landing_page_id' => self::SETUP_PAGE,
-        ],
-        'tracking202/ajax/sort_rotator.php' => [
-            'no user_id tie | 202_aff_campaigns | ac.aff_campaign_id = rr.redirect_campaign' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | lp.landing_page_id = rr.redirect_lp AND lp.landing_page_deleted = 0' => self::LEGACY_REPORT,
         ],
         'tracking202/redirect/cl.php' => [
             'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,
@@ -491,13 +439,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'tracking202/update/_includes/update_ui.php' => [
             'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::SETUP_PAGE,
-        ],
-        'tracking202/visitors/download/index.php' => [
-            'no user_id tie | 202_aff_campaigns | `2c`.aff_campaign_id = `2ac`.aff_campaign_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_accounts | `2c`.ppc_account_id = `2pa`.ppc_account_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_ppc_networks | `2pa`.ppc_network_id = `2pn`.ppc_network_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_landing_pages | 202_landing_pages.landing_page_id = `2c`.landing_page_id' => self::LEGACY_REPORT,
-            'no user_id tie | 202_text_ads | 202_text_ads.text_ad_id = `2c`.text_ad_id' => self::LEGACY_REPORT,
         ],
     ];
 
@@ -683,6 +624,20 @@ final class AccountScopedJoinTest extends TestCase
             $checked += $this->assertTied("SELECT $name FROM (SELECT 1 AS k, 1 AS named) g", "AttributionReports::nameSql('$dimension')");
         }
         self::assertGreaterThanOrEqual(20, $checked, 'the account dimensions of all three builders were read');
+
+        // The Overview's lists drawn from the clicks: every lookup they join
+        // must be install-wide, so the scan finds no account table in any.
+        require_once dirname(__DIR__, 2) . '/202-config/functions-ui-overview.php';
+        $lists = 0;
+        foreach (array_keys(P202_OVERVIEW_SEEN_LISTS) as $name) {
+            foreach ([false, true] as $everyAccount) {
+                $sql = p202_overview_seen_list_sql($name, $everyAccount);
+                self::assertSame([], SqlJoinScan::findings($sql, [], self::accountTables()), "p202_overview_seen_list_sql('$name') joins a table an account owns: tie it, or keep it off this list");
+                self::assertStringContainsString(' JOIN ', $sql, "p202_overview_seen_list_sql('$name') was read");
+                $lists++;
+            }
+        }
+        self::assertGreaterThanOrEqual(8, $lists, 'every seen list was read');
     }
 
     /** @return int how many account-table reads the SQL holds, all tied */
