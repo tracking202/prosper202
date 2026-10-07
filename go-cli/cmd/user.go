@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,7 +13,6 @@ import (
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var userCmd = &cobra.Command{
@@ -61,10 +61,6 @@ var userCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new user",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		name, _ := cmd.Flags().GetString("user_name")
 		email, _ := cmd.Flags().GetString("user_email")
 		if name == "" {
@@ -77,26 +73,28 @@ var userCreateCmd = &cobra.Command{
 			"user_name":  name,
 			"user_email": email,
 		}
-		// Secure password input
+		// Secure password input: a hidden prompt (asked twice), or one line
+		// of piped stdin. --user_pass works too, into shell history.
 		pass, _ := cmd.Flags().GetString("user_pass")
 		if pass == "" {
-			fmt.Fprint(os.Stderr, "Password (hidden): ")
-			passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
-			if err != nil {
-				return fmt.Errorf("reading password: %w", err)
+			var err error
+			if pass, err = readNewPassword("Password (hidden): "); err != nil {
+				return err
 			}
-			pass = string(passBytes)
 		}
 		if pass == "" {
-			return validationError("password is required").WithHint("Pass --password, or pipe it on stdin when prompted; it is never echoed.")
+			return validationError("password is required").WithHint(passwordInputHint)
 		}
 		body["user_pass"] = pass
 
-		for _, f := range []string{"user_fname", "user_lname", "user_timezone"} {
+		for _, f := range []string{"user_fname", "user_lname", "user_timezone", "user_active"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("users", body, idemKey)
@@ -113,42 +111,88 @@ var userUpdateCmd = &cobra.Command{
 	Short: "Update a user",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		body := map[string]interface{}{}
 		for _, f := range []string{"user_fname", "user_lname", "user_email", "user_timezone", "user_active"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
 		}
-		// Secure password: if --user_pass flag is present, prompt
-		if cmd.Flags().Changed("user_pass") {
-			pass, _ := cmd.Flags().GetString("user_pass")
+		setPassword, _ := cmd.Flags().GetBool("set-password")
+		askCurrent, _ := cmd.Flags().GetBool("current-password")
+		if setPassword && cmd.Flags().Changed("user_pass") {
+			return validationError("--set-password and --user_pass both set the password; use one").
+				WithHint("--set-password reads it without echo (prompt or piped stdin); --user_pass leaves it in shell history.")
+		}
+		// The current password comes first: a piped caller sends it on the
+		// first line and the new one on the second.
+		if askCurrent {
+			current, err := readSecret("Your current password (hidden): ")
+			if err != nil {
+				return err
+			}
+			if current == "" {
+				return validationError("--current-password read an empty value").WithHint(passwordInputHint)
+			}
+			body["current_password"] = current
+		}
+		if setPassword {
+			pass, err := readNewPassword("New password (hidden): ")
+			if err != nil {
+				return err
+			}
 			if pass == "" {
-				fmt.Fprint(os.Stderr, "New password (hidden): ")
-				passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-				fmt.Fprintln(os.Stderr)
-				if err != nil {
-					return fmt.Errorf("reading password: %w", err)
-				}
-				pass = string(passBytes)
+				return validationError("--set-password read an empty password; nothing was changed").WithHint(passwordInputHint)
 			}
-			if pass != "" {
-				body["user_pass"] = pass
-			}
+			body["user_pass"] = pass
+		} else if pass, _ := cmd.Flags().GetString("user_pass"); pass != "" {
+			body["user_pass"] = pass
+		}
+		if askCurrent && body["user_pass"] == nil {
+			return validationError("--current-password is only needed with a new password").
+				WithHint("Add --set-password (or --user_pass) to change the password.")
 		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update")
 		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
 		data, err := c.Put("users/"+args[0], body)
+		if err != nil && body["user_pass"] != nil && body["current_password"] == nil && needsCurrentPassword(err) {
+			// Your own password: the server wants the current one too. At a
+			// terminal, ask and try once more; through a pipe, say how.
+			if !isTerminal(os.Stdin) {
+				return withHint(err, "Changing your own password needs your current password: re-run with --current-password "+
+					"and pipe it on the first line of stdin (the new one on the second, with --set-password), or run it at a terminal to be asked.")
+			}
+			current, rerr := readSecret("Your current password (hidden): ")
+			if rerr != nil {
+				return rerr
+			}
+			body["current_password"] = current
+			data, err = c.Put("users/"+args[0], body)
+		}
 		if err != nil {
 			return err
 		}
 		render(data)
 		return nil
 	},
+}
+
+// passwordInputHint is the recovery step for a missing password value.
+const passwordInputHint = "Type it at the hidden prompt, or pipe it on stdin (one line); it is never echoed. A --user_pass value works too, but stays in your shell history."
+
+// needsCurrentPassword reports whether err is the server asking for the
+// current password (a 422 naming current_password).
+func needsCurrentPassword(err error) bool {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return false
+	}
+	_, ok := apiErr.FieldErrors["current_password"]
+	return ok
 }
 
 var userDeleteCmd = &cobra.Command{
@@ -665,7 +709,9 @@ func init() {
 	// User CRUD flags
 	userCreateCmd.Flags().String("user_name", "", "Username (required)")
 	userCreateCmd.Flags().String("user_email", "", "Email (required)")
-	userCreateCmd.Flags().String("user_pass", "", "Password (prompted securely if omitted)")
+	userCreateCmd.Flags().String("user_pass", "", "Password, 8-72 characters (omit it to be asked without echo, or to pipe it on stdin; a value here stays in shell history)")
+	userCreateCmd.Flags().String("user_active", "", "1=active (default), 0=inactive")
+	enumFlag(userCreateCmd, "user_active", newEnum(binaryValues))
 	userCreateCmd.Flags().String("user_fname", "", "First name")
 	userCreateCmd.Flags().String("user_lname", "", "Last name")
 	userCreateCmd.Flags().String("user_timezone", "", "Timezone (default: UTC)")
@@ -673,7 +719,9 @@ func init() {
 	userUpdateCmd.Flags().String("user_fname", "", "First name")
 	userUpdateCmd.Flags().String("user_lname", "", "Last name")
 	userUpdateCmd.Flags().String("user_email", "", "Email")
-	userUpdateCmd.Flags().String("user_pass", "", "New password (prompted securely if flag given without value)")
+	userUpdateCmd.Flags().String("user_pass", "", "New password, 8-72 characters (prefer --set-password: a value here stays in shell history)")
+	userUpdateCmd.Flags().Bool("set-password", false, "Set a new password, read without echo: asked twice at a terminal, or one line of piped stdin")
+	userUpdateCmd.Flags().Bool("current-password", false, "Send your current password, which changing your OWN password needs (asked without echo, or the first line of piped stdin)")
 	userUpdateCmd.Flags().String("user_timezone", "", "Timezone")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 	enumFlag(userUpdateCmd, "user_active", newEnum(binaryValues))

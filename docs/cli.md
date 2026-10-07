@@ -1103,13 +1103,13 @@ p202 user update 1 --user_fname "Jane" --user_lname "Doe"
 p202 user delete 2
 ```
 
-When creating or updating a user, if `--user_pass` is omitted, the CLI prompts for the password securely (input is hidden).
+When creating a user without `--user_pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A `--user_pass` value works on both but stays in shell history.
 
 | Flag              | Required (create) | Description         |
 |-------------------|-------------------|---------------------|
 | `--user_name`     | Yes               | Username            |
 | `--user_email`    | Yes               | Email address       |
-| `--user_pass`     | Yes (prompted)    | Password            |
+| `--user_pass`     | Yes (prompted or piped) | Password, 8-72 characters |
 | `--user_fname`    | No                | First name          |
 | `--user_lname`    | No                | Last name           |
 | `--user_timezone` | No                | Timezone (default: UTC) |

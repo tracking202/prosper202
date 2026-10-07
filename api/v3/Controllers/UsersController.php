@@ -143,7 +143,9 @@ class UsersController
         if ($username === '') { $errors['user_name'] = 'Required'; }
         if ($email === '') { $errors['user_email'] = 'Required'; }
         if ($password === '') { $errors['user_pass'] = 'Required'; }
-        if (strlen($password) > 0 && strlen($password) < 8) { $errors['user_pass'] = 'Must be at least 8 characters'; }
+        if ($password !== '' && (strlen($password) < self::PASSWORD_MIN || strlen($password) > self::PASSWORD_MAX)) {
+            $errors['user_pass'] = 'Must be between ' . self::PASSWORD_MIN . ' and ' . self::PASSWORD_MAX . ' characters';
+        }
         if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) { $errors['user_email'] = 'Invalid email format'; }
         if ($errors) {
             throw new ValidationException('Validation failed', $errors);
@@ -209,7 +211,19 @@ class UsersController
         }
     }
 
-    public function update(int $id, array $payload): array
+    /** bcrypt reads only the first 72 bytes; a longer password would accept any tail. */
+    private const PASSWORD_MIN = 8;
+    private const PASSWORD_MAX = 72;
+
+    /**
+     * $actorUserId is who is asking. Changing your own password needs
+     * `current_password`, as Personal settings asks for it
+     * (202-account/account.php): an API key, or a session, that is not the
+     * password must not be enough to take over the sign-in. Setting another
+     * user's password is the admin's reset (user-management.php), which the
+     * route has already authorized, and asks for no current password.
+     */
+    public function update(int $id, array $payload, ?int $actorUserId = null): array
     {
         $this->get($id);
 
@@ -230,11 +244,16 @@ class UsersController
         }
 
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
-            if (strlen((string) $payload['user_pass']) < 8) {
-                throw new ValidationException('Password too short', ['user_pass' => 'Must be at least 8 characters']);
+            $password = $payload['user_pass'];
+            if (!is_string($password)) {
+                throw new ValidationException('Invalid password', ['user_pass' => 'Must be a string']);
+            }
+            self::checkPasswordLength($password);
+            if ($actorUserId === $id) {
+                $this->requireCurrentPassword($id, $payload['current_password'] ?? null);
             }
             $sets[] = 'user_pass = ?';
-            $binds[] = \hash_user_pass((string) $payload['user_pass']);
+            $binds[] = \hash_user_pass($password);
             $types .= 's';
         }
 
@@ -251,6 +270,46 @@ class UsersController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    private static function checkPasswordLength(string $password): void
+    {
+        $length = strlen($password);
+        if ($length < self::PASSWORD_MIN || $length > self::PASSWORD_MAX) {
+            throw new ValidationException(
+                'Invalid password',
+                ['user_pass' => 'Must be between ' . self::PASSWORD_MIN . ' and ' . self::PASSWORD_MAX . ' characters']
+            );
+        }
+    }
+
+    /**
+     * The password check Personal settings makes before a change: a 422
+     * naming current_password when it is missing or wrong. A stored hash
+     * that cannot be read is a 500, never "wrong password" (error pattern
+     * #11).
+     */
+    private function requireCurrentPassword(int $userId, mixed $current): void
+    {
+        if (!is_string($current) || $current === '') {
+            throw new ValidationException(
+                'Changing your own password needs your current password',
+                ['current_password' => 'Required when you change your own password']
+            );
+        }
+        $stmt = $this->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Password check failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Password check failed');
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        if (!$row || !\verify_user_pass($current, (string) ($row['user_pass'] ?? ''))['valid']) {
+            throw new ValidationException('Current password is incorrect', ['current_password' => 'Does not match']);
+        }
     }
 
     /**
@@ -300,12 +359,27 @@ class UsersController
         return ['data' => $rows];
     }
 
+    /**
+     * The role a POST /users/{id}/roles grants, read one way for both the
+     * authorization check (Auth::requireMayChangeRoles) and the write. A
+     * lenient cast here would let the two disagree: (int) reads "1.0",
+     * "1abc" and true all as 1, the Super user role the check refuses.
+     */
+    public static function roleIdFrom(array $payload): int
+    {
+        $raw = $payload['role_id'] ?? null;
+        if (is_int($raw) && $raw > 0) {
+            return $raw;
+        }
+        if (is_string($raw) && preg_match('/^[1-9][0-9]{0,9}$/', $raw) === 1) {
+            return (int) $raw;
+        }
+        throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive whole number']);
+    }
+
     public function assignRole(int $userId, array $payload): array
     {
-        $roleId = (int)($payload['role_id'] ?? 0);
-        if ($roleId <= 0) {
-            throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive integer']);
-        }
+        $roleId = self::roleIdFrom($payload);
 
         // Validate BEFORE mutating: 202_user_role has no foreign keys, so an
         // insert for a nonexistent user/role would persist an orphan grant

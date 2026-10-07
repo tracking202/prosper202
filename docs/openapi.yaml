@@ -2812,7 +2812,12 @@ paths:
     put:
       tags: [Users]
       summary: Update a user
-      description: Accessible by self or admin. Password re-hashed if provided.
+      description: >-
+        Your own account, or another user's under the user-management rules:
+        Admin, never user 1 unless you are user 1, and an Admin or Super user
+        account only with the Super user role (403 otherwise). A new
+        `user_pass` (8-72 characters) is re-hashed; changing your own needs
+        `current_password` too (422 naming it when missing or wrong).
       operationId: updateUser
       requestBody:
         required: true
@@ -2839,7 +2844,8 @@ paths:
       tags: [Users]
       summary: Delete a user
       description: >-
-        Admin only. Soft-deletes the user (sets user_deleted = 1) and, in the
+        Super user only (the add_edit_delete_admin permission); user 1 and the
+        caller are never removed (403). Soft-deletes the user (sets user_deleted = 1) and, in the
         same transaction, revokes their API keys, deletes their app
         registrations, SKAN encodings, identity-graph rows and MTA state, and
         releases their app postbacks to unclaimed. Clicks and conversions are
@@ -2861,7 +2867,11 @@ paths:
     post:
       tags: [Users]
       summary: Assign a role to a user
-      description: Admin only. Idempotent (INSERT IGNORE).
+      description: >-
+        Admin, under the user-management rules: never user 1, an Admin or
+        Super user account only with the Super user role, role 2 (Admin) only
+        by a Super user, and role 1 (Super user) never (403). `role_id` must
+        be a positive whole number (422 otherwise). Idempotent (INSERT IGNORE).
       operationId: assignRole
       requestBody:
         required: true
@@ -2893,7 +2903,9 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Users]
       summary: Remove a role from a user
-      description: Admin only.
+      description: >-
+        Admin, under the user-management rules: never user 1's roles, and an
+        Admin or Super user account only with the Super user role (403).
       operationId: removeRole
       responses:
         "200":
@@ -9952,6 +9964,7 @@ components:
         user_pass:
           type: string
           minLength: 8
+          maxLength: 72
         user_fname:
           type: string
         user_lname:
@@ -9976,6 +9989,12 @@ components:
         user_pass:
           type: string
           minLength: 8
+          maxLength: 72
+        current_password:
+          type: string
+          description: >-
+            Required with `user_pass` when you change your own password;
+            not sent when resetting another user's.
         user_timezone:
           type: string
         user_active:

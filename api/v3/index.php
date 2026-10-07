@@ -706,46 +706,48 @@ try {
                 $auth->requireSelfOrAdmin((int)$ctx['id']);
                 return $make()->get((int)$ctx['id']);
             });
-            $r->put('/{id}', function ($ctx) use ($auth, $make, $payload) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
-                return $make()->update((int)$ctx['id'], $payload);
+            // Writes to another user's account follow user-management.php:
+            // requireSelfOrMayManageUser() and its siblings in Auth say how.
+            $r->put('/{id}', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                return $make()->update((int)$ctx['id'], $payload, $auth->userId());
             });
-            $r->delete('/{id}', function ($ctx) use ($auth, $make) {
-                $auth->requireAdmin();
+            $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayDeleteUser($db, (int)$ctx['id']);
                 $make()->delete((int)$ctx['id']);
                 return null; // 204
             });
 
-            // Roles sub-resource (admin only)
-            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload) {
-                $auth->requireAdmin();
+            // Roles sub-resource
+            $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireMayChangeRoles($db, (int)$ctx['id'], \Api\V3\Controllers\UsersController::roleIdFrom($payload));
                 return $make()->assignRole((int)$ctx['id'], $payload);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make) {
-                $auth->requireAdmin();
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayChangeRoles($db, (int)$ctx['id'], null);
                 $make()->removeRole((int)$ctx['id'], (int)$ctx['roleId']);
                 return null;
             });
 
-            // API keys (self-or-admin)
-            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            // API keys (self, or a user you may manage)
+            $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return $make()->listApiKeys((int)$ctx['id']);
             });
-            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return ['_status' => 201] + $make()->createApiKey((int)$ctx['id'], $payload, $auth);
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 $make()->deleteApiKey((int)$ctx['id'], $ctx['keyId']);
                 return null;
             });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
-            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 // A read that hands out a signing secret: whoever holds the
                 // key can link any click to any customer id, which is a write
                 // to the account's identity graph. So a read-only or
@@ -753,18 +755,19 @@ try {
                 $auth->requireScope('users:write');
                 return $make()->identityKey((int)$ctx['id']);
             });
-            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return $make()->rotateIdentityKey((int)$ctx['id']);
             });
 
-            // Preferences (self-or-admin)
-            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            // Preferences (self, or a user you may manage: they hold the
+            // account's integration secrets)
+            $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return $make()->getPreferences((int)$ctx['id']);
             });
-            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return $make()->updatePreferences((int)$ctx['id'], $payload);
             });
         });
@@ -855,16 +858,16 @@ try {
         ));
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
-            $r->delete('/{id}', function ($ctx) use ($auth, $make) {
-                $auth->requireAdmin();
+            $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayDeleteUser($db, (int)$ctx['id']);
                 return $make()->deletePreview((int)$ctx['id']);
             });
-            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
+            $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
                 return $make()->deleteApiKeyPreview((int)$ctx['id'], (string)$ctx['keyId']);
             });
-            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make) {
-                $auth->requireAdmin();
+            $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
+                $auth->requireMayChangeRoles($db, (int)$ctx['id'], null);
                 return $make()->removeRolePreview((int)$ctx['id'], (int)$ctx['roleId']);
             });
         });
