@@ -15,7 +15,12 @@ if (!isset($db) || !($db instanceof mysqli)) {
 }
 
 $partition_support = 0;
-$partitionSql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
+// This database's tables only: without the WHERE, MySQL lists the partitions
+// of every table on the server, which took 7 seconds on a server holding 50
+// databases (a shared host holds more) on every load of this page, and held
+// the POST back from the upgrade lock it takes. An installed schema always
+// lists its tables here, so the answer is the same.
+$partitionSql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_SCHEMA = DATABASE()";
 $partitionRow = memcache_mysql_fetch_assoc($partitionSql);
 if (is_array($partitionRow) && (int)($partitionRow['partition_support'] ?? 0) > 0) {
     $partition_support = 1;
