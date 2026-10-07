@@ -89,6 +89,11 @@ func getWithPublicFallback(c *api.Client, entity crudEntity, id string, forcePub
 	data, err := c.Get(entity.Endpoint+"/"+id, nil)
 	if err != nil && isNotFoundErr(err) {
 		if internal := resolvePublicID(c, entity, id); internal != "" {
+			// Said, not silent: public ids are short (the setup pages' rand-
+			// id-rand), so a mistyped internal id can be some other row's
+			// public id, and the caller must be able to tell which it got.
+			fmt.Fprintf(os.Stderr, "No %s has id %s; showing %s %s, whose public %s is %s.\n",
+				entity.Name, id, entity.Name, internal, entity.PublicIDField, id)
 			return c.Get(entity.Endpoint+"/"+internal, nil)
 		}
 	}
@@ -979,12 +984,13 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 // without a word — five flags here once reported success and saved nothing.
 var crudEntities = []crudEntity{
 	{
-		Name:         "campaign",
-		Plural:       "campaigns (affiliate offers with URLs, payouts, and postback settings)",
-		Endpoint:     "campaigns",
-		IDField:      "aff_campaign_id",
-		URLFields:    campaignURLFields,
-		StatsGroupBy: "campaign",
+		Name:          "campaign",
+		Plural:        "campaigns (affiliate offers with URLs, payouts, and postback settings)",
+		Endpoint:      "campaigns",
+		IDField:       "aff_campaign_id",
+		PublicIDField: "aff_campaign_id_public",
+		URLFields:     campaignURLFields,
+		StatsGroupBy:  "campaign",
 		Fields: []crudField{
 			{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 			{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
@@ -1069,10 +1075,12 @@ var crudEntities = []crudEntity{
 		},
 	},
 	{
-		Name:      "landing-page",
-		Plural:    "landing pages (pre-sell pages visitors see before the offer)",
-		Endpoint:  "landing-pages",
-		URLFields: []string{"landing_page_url", "leave_behind_page_url"},
+		Name:          "landing-page",
+		Plural:        "landing pages (pre-sell pages visitors see before the offer)",
+		Endpoint:      "landing-pages",
+		IDField:       "landing_page_id",
+		PublicIDField: "landing_page_id_public",
+		URLFields:     []string{"landing_page_url", "leave_behind_page_url"},
 		Fields: []crudField{
 			{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
 			{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},

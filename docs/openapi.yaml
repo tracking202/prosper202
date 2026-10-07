@@ -8308,7 +8308,9 @@ components:
         aff_campaign_id_public:
           type: integer
           readOnly: true
-          description: Random public ID, auto-generated on create
+          description: >-
+            The id go.php?acip= carries: a random digit, the campaign id, a
+            random digit (the setup page's form), set on create.
         aff_campaign_deleted:
           type: integer
           readOnly: true
@@ -8730,6 +8732,13 @@ components:
           maxLength: 2048
         landing_page_type:
           type: integer
+        landing_page_id_public:
+          type: integer
+          readOnly: true
+          description: >-
+            The id landing-page code and the go/lp redirects carry (lpip=): a
+            random digit, the page id, a random digit, set on create; a page
+            created before the API set one is given one when it is read.
         landing_page_deleted:
           type: integer
           readOnly: true

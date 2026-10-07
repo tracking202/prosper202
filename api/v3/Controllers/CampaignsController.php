@@ -40,6 +40,9 @@ class CampaignsController extends Controller
             // foreign_click. Written only through create()/update() below,
             // which read the raw value; null or 0 unlinks.
             'app_registration_id'          => ['type' => 'i', 'readonly' => true],
+            // The id advanced landing-page code and go.php carry (acip=…),
+            // set by afterCreate() the way the setup page sets it.
+            'aff_campaign_id_public'       => ['type' => 'i', 'readonly' => true],
         ];
     }
 
@@ -65,13 +68,23 @@ class CampaignsController extends Controller
     {
         $extras = [
             'aff_campaign_time'      => ['type' => 'i', 'value' => time()],
-            'aff_campaign_id_public' => ['type' => 'i', 'value' => random_int(1_000_000, 99_999_999)],
         ];
         if ($this->pendingRegistrationLink !== null) {
             $extras['app_registration_id'] = ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']];
         }
 
         return $extras;
+    }
+
+    /**
+     * The public id: the setup page's rand-id-rand, unique by construction.
+     * It was a random 8-digit number, which go.php resolves across every
+     * account, so two campaigns could share one.
+     */
+    #[\Override]
+    protected function afterCreate(int $insertId, array $payload): void
+    {
+        $this->assignPublicId('aff_campaign_id_public', $insertId);
     }
 
     #[\Override]

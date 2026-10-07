@@ -215,6 +215,16 @@ The envelope fields below (full `pagination` metadata, and `version`/`etag` on s
 }
 ```
 
+### Filtering a List
+
+The standard CRUD lists take `filter[<field>]=<value>` for any field the
+resource declares, its id included (`GET /campaigns?filter[aff_network_id]=3`,
+`GET /campaigns?filter[aff_campaign_id_public]=148`); several filters must all
+match. A filter the list cannot apply is a `422` naming it — a field the
+resource does not have, text for a whole-number field, a list instead of one
+value — never an unfiltered answer: a misspelled filter used to return every
+row with a `200`.
+
 ### Single Resource
 
 ```json

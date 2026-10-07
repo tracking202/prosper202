@@ -212,6 +212,88 @@ abstract class Controller
     }
 
     /**
+     * The list's `filter[<field>]=<value>` pairs, each a field this
+     * controller declares with a value its type can hold.
+     *
+     * A filter it could not apply used to be skipped, so the list came
+     * back unfiltered with a 200: `filter[aff_campaing_id]=3` (a typo),
+     * `filter[aff_campaign_id_public]=…` (a read-only field), or
+     * `filter[aff_campaign_id]=abc` (bound as 0) each answered with every
+     * row, or none, as though it had been honoured. A narrowing that is
+     * silently dropped widens the answer (error pattern #4), so each of
+     * those is a 422 naming what the list can be filtered by. Read-only
+     * fields are filterable: a filter is a read.
+     *
+     * @param array<string, mixed> $params
+     * @param array<string, array<string, mixed>> $fields
+     * @return array<string, mixed>
+     */
+    private function listFilters(array $params, array $fields): array
+    {
+        if (!array_key_exists('filter', $params)) {
+            return [];
+        }
+        $filters = $params['filter'];
+        $filterable = 'Filter by field: ' . implode(', ', array_keys($fields));
+        if (!is_array($filters)) {
+            throw new ValidationException('Invalid filter', ['filter' => 'Use filter[<field>]=<value>. ' . $filterable]);
+        }
+        $errors = [];
+        foreach ($filters as $field => $value) {
+            $key = 'filter[' . $field . ']';
+            if (!isset($fields[$field])) {
+                $errors[$key] = 'Not a field of this list. ' . $filterable;
+                continue;
+            }
+            $type = $fields[$field]['type'] ?? 's';
+            if (!is_scalar($value)) {
+                $errors[$key] = 'Must be a single value';
+            } elseif ($type === 'i' && preg_match('/^-?[0-9]+$/D', (string) $value) !== 1) {
+                $errors[$key] = 'Must be a whole number';
+            } elseif ($type === 'd' && !is_numeric($value)) {
+                $errors[$key] = 'Must be a number';
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid filter', $errors);
+        }
+
+        return $filters;
+    }
+
+    /**
+     * Give a just-inserted row the public id the setup pages give theirs:
+     * a random digit, the row id, a random digit (landing_pages.php,
+     * aff_campaigns.php). Embedding the id makes it unique by construction,
+     * which a random number is not: the redirects resolve a public id
+     * across every account. Run from afterCreate(), where a failure is
+     * reported as a committed write rather than a failed create.
+     */
+    protected function assignPublicId(string $column, int $insertId, int $max = 4294967295): int
+    {
+        // The columns are INT UNSIGNED and the ids MEDIUMINT: past ten
+        // million rows a leading 5-9 no longer fits, and strict mode refuses
+        // the write (the setup pages, running non-strict, are clamped to the
+        // maximum — a shared id). So the leading digit is drawn from those
+        // that fit.
+        $lead = 9;
+        while ($lead > 1 && (int) ($lead . $insertId . '9') > $max) {
+            $lead--;
+        }
+        $publicId = (int) (random_int(1, $lead) . $insertId . random_int(1, 9));
+        if ($publicId > $max) {
+            throw new \Api\V3\Exception\DatabaseException("No public id fits $column for row $insertId");
+        }
+        $sql = sprintf('UPDATE %s SET %s = ? WHERE %s = ?', $this->tableName(), $column, $this->primaryKey());
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, 'ii', $publicId, $insertId);
+        $this->execute($stmt, 'Public id assignment failed');
+        $stmt->close();
+
+        return $publicId;
+    }
+
+    /**
      * Called before UPDATE.  Return extra columns to include in the UPDATE SET.
      * @return array<string, array{type: string, value: mixed}>
      */
@@ -284,18 +366,14 @@ abstract class Controller
             $where[] = $this->deletedColumn() . ' = 0';
         }
 
-        $fields = $this->resolveFields();
-        $filters = $params['filter'] ?? [];
-        if (is_array($filters)) {
-            foreach ($filters as $field => $value) {
-                $fieldDef = $fields[$field] ?? null;
-                if ($fieldDef && !($fieldDef['readonly'] ?? false)) {
-                    [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fieldDef, $value);
-                    $where[] = $condition;
-                    $binds[] = $bindValue;
-                    $types .= $bindType;
-                }
-            }
+        // The primary key filters too: `filter[aff_campaign_id]=3` on
+        // campaigns is a lookup by id.
+        $fields = [$this->primaryKey() => ['type' => 'i']] + $this->resolveFields();
+        foreach ($this->listFilters($params, $fields) as $field => $value) {
+            [$condition, $bindValue, $bindType] = $this->filterCondition($field, $fields[$field], $value);
+            $where[] = $condition;
+            $binds[] = $bindValue;
+            $types .= $bindType;
         }
 
         if (isset($params['updated_since']) && $params['updated_since'] !== '') {

@@ -30,7 +30,10 @@ Manage campaigns.
 | `aff_campaign_cloaking` | integer | No | Cloaking enabled (0/1) |
 | `aff_campaign_rotate` | integer | No | Rotation enabled (0/1) |
 
-Auto-generated on create: `aff_campaign_time` (unix timestamp), `aff_campaign_id_public` (random public ID).
+Auto-generated on create: `aff_campaign_time` (unix timestamp) and `aff_campaign_id_public`,
+the id advanced landing-page code and `go.php?acip=` carry: a random digit, the
+campaign id, a random digit, as the setup page makes it, so no two campaigns
+share one. It is returned with the campaign and can be filtered on.
 
 **Changing `aff_campaign_url`.** Links redirect to the new URL within three
 minutes (with memcached running, the redirect caches a link's row that long).
