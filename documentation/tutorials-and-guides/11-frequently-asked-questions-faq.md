@@ -40,7 +40,17 @@ Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202s
 
 ## Where does the password reset email link to?
 
-To the tracking domain in **Account › Settings** (the installer fills it in with the address you installed on), never to the address the reset was requested from. Whoever asks for a reset chooses that address, and the email goes to the account's owner. If no tracking domain is set, the email gives the reset page and its code without a link: open it on the address you sign in at.
+To the tracking domain stored in **Account › Personal Settings**, never to the address the reset was requested from. Whoever asks for a reset chooses that address, and the email goes to the account's owner. If no tracking domain is set, the email gives the reset page and its code without a link: open it on the address you sign in at.
+
+## Does the installer set my tracking domain?
+
+No. A fresh install has no tracking domain stored, and until you set one:
+
+- The pages build the links, snippets and postback URLs they show you on the address your browser used to open the page. Open them on the address your visitors and networks will use, or the links name that other address.
+- Anything sent to someone else uses the server's own name and port instead: the address registered with the hosted service (which runs the automatic cron jobs and sends the daily email by calling your install back) and its cookie for your install's address. Behind a reverse proxy or a published container port, that may be an address nobody outside can reach.
+- The password reset email has no link (see above).
+
+To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user_tracking_domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
 
  ## Is Memcache required?
 

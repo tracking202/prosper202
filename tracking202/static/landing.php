@@ -93,9 +93,9 @@ if ($cv_sql !== '') {
     $cv_result = $db->query($cv_sql);
     if ($cv_result && $cv_result->num_rows > 0) {
         $cv_row = $cv_result->fetch_assoc();
-        if (!empty($cv_row['parameters'])) {
-            $t202CustomVars = explode(',', $cv_row['parameters']);
-        }
+        // The source's variable names (TrackerVariables: NULL or none is no
+        // variables; a variable named "0" is one).
+        $t202CustomVars = array_column(\Prosper202\Click\TrackerVariables::pairs($cv_row), 0);
     }
 }
 

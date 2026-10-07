@@ -8,16 +8,17 @@ use Prosper202\Database\Connection;
 
 /**
  * The privacy setting (user_pref_privacy) that governs an account's
- * visitors, for code that does not run connect2.php's bootstrap — the app
- * intakes.
+ * visitors: the strictest of the install's (the first account's, user 1)
+ * and the owning account's own, which every account sets on Personal
+ * settings. The app intakes read it here; the click path reads the
+ * install's in connect2.php's bootstrap and the owner's here once each
+ * endpoint knows whose link was clicked (p202ApplyOwnerPrivacy()).
  *
- * The click path reads one row: the first account's (user 1), the install's
- * setting, whichever account's tracker was clicked. Every account can set
- * its own on Personal settings, though, so an account that holds back
- * would be overruled by an install that does not. Here the strictest of the
- * two governs: the install's, which is what the click path applies, and the
- * owning account's own. Masking more is the safe direction; that the click
- * path still reads only the install's is recorded where it is read.
+ * The click path used to read the install's alone, whichever account's
+ * tracker was clicked: an account that held back was overruled by an
+ * install that did not (measured: an account set to 'all' had its clicks
+ * stored unmasked, with every click cookie set, under an install set to
+ * 'disabled'). Masking more is the safe direction.
  *
  * Read as the value it is, or as 'all' — hold back — when it cannot be read
  * (CLAUDE.md #11: a security value that cannot be parsed never resolves to
@@ -69,6 +70,30 @@ final class PrivacySetting
             }
             if ($rank[$value] > $rank[$strictest]) {
                 $strictest = $value;
+            }
+        }
+
+        return $strictest;
+    }
+
+    /**
+     * The strictest of several settings already read; anything that is not a
+     * setting counts as 'all' (CLAUDE.md #11). With none given, 'all': no
+     * setting was read, so nothing says the visitor may be tracked in full.
+     */
+    public static function strictest(mixed ...$settings): string
+    {
+        if ($settings === []) {
+            return 'all';
+        }
+        $rank = array_flip(self::SETTINGS);
+        $strictest = self::SETTINGS[0];
+        foreach ($settings as $setting) {
+            if (!is_string($setting) || !isset($rank[$setting])) {
+                return 'all';
+            }
+            if ($rank[$setting] > $rank[$strictest]) {
+                $strictest = $setting;
             }
         }
 

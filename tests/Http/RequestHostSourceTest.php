@@ -171,6 +171,184 @@ final class RequestHostSourceTest extends TestCase
         self::assertSame($listed, $seen, 'a listed file no longer calls it');
     }
 
+    /** The license service's deeplink-cookie pixel: it names this install's address to the service. */
+    private const DEEPLINK_PIXEL = 'dni/deeplink/cookie/set/';
+
+    /** What every deeplink pixel encodes: the stored address, or the server's own name. */
+    private const DEEPLINK_ADDRESS = 'p202TrackingBaseUrl()';
+
+    /**
+     * Each deeplink pixel in one source: its line, and the argument of the
+     * base64_encode() that completes its URL — the first one after the URL
+     * text, in the statement (or the `<?php … ?>` block) that holds it or
+     * follows it. '' when there is none to read: a URL completed some other
+     * way is reported, not passed.
+     *
+     * @return list<array{int, string}>
+     */
+    private static function deeplinkPixels(string $source): array
+    {
+        $tokens = array_values(array_filter(
+            token_get_all($source),
+            static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+        ));
+        $carriers = [T_INLINE_HTML, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
+        $pixels = [];
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token) || !in_array($token[0], $carriers, true)) {
+                continue;
+            }
+            $at = strrpos($token[1], self::DEEPLINK_PIXEL);
+            if ($at === false) {
+                continue;
+            }
+            $line = $token[2] + substr_count(substr($token[1], 0, $at), "\n");
+            $html = $token[0] === T_INLINE_HTML;
+            // In HTML the URL runs on into the PHP block only when nothing
+            // ends it first (a quote, a space, the tag's close).
+            $rest = substr($token[1], $at + strlen(self::DEEPLINK_PIXEL));
+            if ($html && preg_match('/["\'\s>]/', $rest) === 1) {
+                $pixels[] = [$line, ''];
+                continue;
+            }
+            $pixels[] = [$line, self::encodedInStatement($tokens, $i + 1, $html)];
+        }
+
+        return $pixels;
+    }
+
+    /**
+     * The argument of the first base64_encode() from $from to the end of the
+     * statement: the PHP block after inline HTML, or the rest of a PHP
+     * string's statement. '' when there is none.
+     *
+     * @param list<array{int, string, int}|string> $tokens
+     */
+    private static function encodedInStatement(array $tokens, int $from, bool $afterHtml): string
+    {
+        $opens = [T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO];
+        for ($j = $from, $n = count($tokens); $j < $n; $j++) {
+            $t = $tokens[$j];
+            if ($afterHtml && is_array($t) && in_array($t[0], $opens, true)) {
+                continue;
+            }
+            if ($t === ';' || (is_array($t) && in_array($t[0], [T_CLOSE_TAG, T_INLINE_HTML], true))) {
+                return '';
+            }
+            $named = is_array($t) && in_array($t[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true)
+                && strtolower(ltrim($t[1], '\\')) === 'base64_encode';
+            if ($named && ($tokens[$j + 1] ?? null) === '(') {
+                return self::parenthesized($tokens, $j + 1);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * The text inside the parentheses that open at $open, whitespace dropped.
+     *
+     * @param list<array{int, string, int}|string> $tokens
+     */
+    private static function parenthesized(array $tokens, int $open): string
+    {
+        $text = '';
+        $depth = 0;
+        for ($k = $open, $n = count($tokens); $k < $n; $k++) {
+            $part = $tokens[$k];
+            if ($part === '(' && ++$depth === 1) {
+                continue;
+            }
+            if ($part === ')' && --$depth === 0) {
+                break;
+            }
+            $text .= is_array($part) ? $part[1] : $part;
+        }
+
+        return $text;
+    }
+
+    /**
+     * The deeplink pixel hands this install's address to the license
+     * service, which sets its cookie for that address: a URL for someone
+     * other than the requester, so the stored address (or the server's own
+     * name), never the Host header (CLAUDE.md #16). The account home sent
+     * p202TrackingBaseUrl(); the license-key pages (202-config/get_apikey.php
+     * and api-key-required.php) sent TrackingBaseUrl::forRequest(), the
+     * address the request named, so one install was registered at two
+     * addresses depending on which page loaded the pixel.
+     *
+     * What this does not see: an address handed to the service any other
+     * way — callAutoCron(), registerDailyEmail() and getDNIHost() build
+     * theirs from p202TrackingBaseUrl() in functions-tracking202.php, and the
+     * Landing Page Optimizer's pairing sends the request's origin (an open
+     * question for that service's owner, not settled here).
+     */
+    public function testEveryDeeplinkPixelNamesTheStoredAddress(): void
+    {
+        $wrong = [];
+        $seen = 0;
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            foreach (self::deeplinkPixels($source) as [$line, $argument]) {
+                $seen++;
+                if ($argument !== self::DEEPLINK_ADDRESS) {
+                    $shown = $argument === '' ? '(nothing readable)' : $argument;
+                    $wrong[] = $path . ':' . $line . '  encodes ' . $shown;
+                }
+            }
+        }
+        // The account home, the license-key step of the installer and the
+        // license-missing page.
+        self::assertGreaterThanOrEqual(3, $seen, 'the scan finds the deeplink pixels');
+        self::assertSame([], $wrong, "A deeplink pixel names an address other than the stored one:\n  "
+            . implode("\n  ", $wrong) . "\nEncode " . self::DEEPLINK_ADDRESS . ': the service, not the requester,'
+            . ' is who the URL is for.');
+    }
+
+    /** @return iterable<string, array{string, list<array{int, string}>}> */
+    public static function deeplinkShapes(): iterable
+    {
+        $url = 'https://x/api/v2/dni/deeplink/cookie/set/';
+        yield 'inline HTML completed by an echo block' => [
+            '<img src="' . $url . '<?php echo base64_encode(p202TrackingBaseUrl()); ?>">',
+            [[1, 'p202TrackingBaseUrl()']],
+        ];
+        yield 'escaped around the encoding' => [
+            '<img src="' . $url . '<?php echo htmlspecialchars(base64_encode(p202TrackingBaseUrl()), ENT_QUOTES); ?>">',
+            [[1, 'p202TrackingBaseUrl()']],
+        ];
+        yield 'the request\'s origin' => [
+            '<img src="' . $url . '<?= base64_encode(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER)) ?>">',
+            [[1, '\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER)']],
+        ];
+        yield 'on a later line of the HTML' => [
+            "<p>\n</p>\n<img src=\"" . $url . '<?= base64_encode($x) ?>">',
+            [[3, '$x']],
+        ];
+        yield 'a PHP string concatenated' => [
+            "<?php\n\$u = '" . $url . "' . base64_encode(\$base);",
+            [[2, '$base']],
+        ];
+        yield 'completed some other way' => [
+            "<?php\n\$u = '" . $url . "' . \$encoded;\n\$v = base64_encode(p202TrackingBaseUrl());",
+            [[2, '']],
+        ];
+        yield 'an encoding in a later block is not this one' => [
+            '<img src="' . $url . '"><?php echo base64_encode(p202TrackingBaseUrl()); ?>',
+            [[1, '']],
+        ];
+        yield 'a comment is not a pixel' => ["<?php // dni/deeplink/cookie/set/\n", []];
+    }
+
+    /**
+     * @dataProvider deeplinkShapes
+     * @param list<array{int, string}> $expected
+     */
+    public function testTheShapesADeeplinkPixelTakes(string $source, array $expected): void
+    {
+        self::assertSame($expected, self::deeplinkPixels($source));
+    }
+
     /** @return iterable<string, array{string, int}> */
     public static function trackingDomainShapes(): iterable
     {

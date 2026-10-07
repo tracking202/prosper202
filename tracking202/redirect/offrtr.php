@@ -409,9 +409,9 @@ if ($default == false) {
 				// Initialize before the branch so the non-cloaked path doesn't read an
 				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
 				$cloaking_on = false;
-				if (($rule_redirect_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-				(($rule_redirect_row['click_cloaking'] == - 1) and ($rule_redirect_row['aff_campaign_cloaking'] == 1)) or ((! isset($rule_redirect_row['click_cloaking'])) and ($rule_redirect_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-				{
+				// The setting the click keeps, or the redirect campaign's when it
+				// leaves the decision to the campaign (ClickCloaking).
+				if (\Prosper202\Click\ClickCloaking::isOn($rule_redirect_row)) {
 				    $cloaking_on = true;
 				    $mysql['click_cloaking'] = 1;
 				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -464,7 +464,7 @@ if ($default == false) {
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
-						action="/tracking202/redirect/cl2.php">
+						action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 						<input type="hidden" name="q"
 							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>
@@ -558,9 +558,12 @@ if ($default == false) {
 				// Initialize before the branch so the non-cloaked path doesn't read an
 				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
 				$cloaking_on = false;
-				if (($click_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-				(($click_row['click_cloaking'] == - 1) and ($rotator_row['aff_campaign_cloaking'] == 1)) or ((! isset($click_row['click_cloaking'])) and ($rotator_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-				{
+				// The setting the click keeps, or the default campaign's when it
+				// leaves the decision to the campaign (ClickCloaking).
+				if (\Prosper202\Click\ClickCloaking::isOn([
+					'click_cloaking' => $click_row['click_cloaking'] ?? null,
+					'aff_campaign_cloaking' => $rotator_row['aff_campaign_cloaking'] ?? null,
+				])) {
 				    $cloaking_on = true;
 				    $mysql['click_cloaking'] = 1;
 				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -613,7 +616,7 @@ if ($default == false) {
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
-						action="/tracking202/redirect/cl2.php">
+						action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 						<input type="hidden" name="q"
 							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>

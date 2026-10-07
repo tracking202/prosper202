@@ -87,6 +87,10 @@ if (!$rotator_row) {
 }
 
 $user_id = $db->real_escape_string((string)$rotator_row['user_id']);
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this tracker's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($rotator_row['user_id'] ?? null);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
 //grab rules data
@@ -836,7 +840,7 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 		$rtrCampaignAllows = is_array($rtrCampaignRow)
 			&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
 	}
-	$rtrIdentity = \Prosper202\Identity\ClickIdentity::fromRequest($_GET, $_COOKIE, $rtrCampaignAllows);
+	$rtrIdentity = p202ClickIdentity($_GET, $rtrCampaignAllows);
 	$rtrIdentity->sendCookie($_SERVER);
 	$rtrIdentity->attach(
 		\Prosper202\Repository\LookupRepositoryFactory::connection($db),

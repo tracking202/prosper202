@@ -47,6 +47,11 @@ if (!$tracker_row) {
 	die();
 }
 
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this landing page's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
+
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ?? '0'));
 $user_sql = "SELECT 		user_timezone, 
@@ -213,11 +218,10 @@ $mysql['gclid'] = $db->real_escape_string((string)$_GET['gclid']);
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', (string) $tracker_row['parameters']);
-
-foreach ($parameters as $key => $value) {
-	if ($value === '' || !isset($_GET[$value])) {
+// The traffic source's variables; none for a click with no tracker (no
+// t202id, or one that names none), as for a source that has none.
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
+	if (!isset($_GET[$value])) {
 		continue;
 	}
 
@@ -225,7 +229,7 @@ foreach ($parameters as $key => $value) {
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) $ppc_variable_ids[$key]);
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -390,12 +394,10 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = '0';
 }
 
-// Determine cloaking
-if (!$tracker_row['click_cloaking']) {
-	$mysql['click_cloaking'] = -1;
-} else {
-	$mysql['click_cloaking'] = (int) $tracker_row['click_cloaking'];
-}
+// Cloaking is decided when the visitor leaves for the offer (off.php): the
+// click keeps the tracker's setting, -1 (the campaign decides) when there is
+// no tracker, and 0 when the link turns it off (ClickCloaking).
+$mysql['click_cloaking'] = \Prosper202\Click\ClickCloaking::trackerSetting($tracker_row);
 
 // Compute site URLs
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? ''));
@@ -411,9 +413,8 @@ $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
 // p202lpid the landing page's script sends, a signed customer id — linked
 // after the click is stored; nothing when consent is withheld or the
 // campaign's identity capture is off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
 	// Minted only when the landing page is on the tracker's own site; a
 	// cross-site script request links by the page's p202lpid instead.
@@ -441,12 +442,17 @@ header('Content-Type: application/javascript; charset=UTF-8');
 function t202initB() {
 
 var subid =<?php echo json_encode((string) $click_id); ?>;
-createCookie('tracking202subid',subid,0);
-
 var pci = <?php echo json_encode((string) $click_id_public); ?>;
-createCookie('tracking202pci',pci,0);
 
-<?php echo p202MintPersonalizationCookieJs($db, (int) ($tracker_row['user_id'] ?? 0), $_GET, (int) $click_id); ?>
+<?php
+// The click cookies on the landing page's own site: none for a visitor the
+// privacy setting holds back (p202ClickCookieJs()). The variables above are
+// what the script has always answered with (the live passes read the click
+// id from them); they set nothing.
+echo p202ClickCookieJs(['tracking202subid' => (string) $click_id, 'tracking202pci' => (string) $click_id_public]);
+$p13nOwner = (int) ($tracker_row['user_id'] ?? 0);
+echo p202MintPersonalizationCookieJs($db, $p13nOwner, $_GET, (int) $click_id, trackingEnabled());
+?>
 
 }
 

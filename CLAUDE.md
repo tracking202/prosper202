@@ -1037,6 +1037,24 @@ comparison against the stored value and ask which side of the transform the
 other operand is on — and every other writer of the same kind of value, and
 whether it was given the transform at all.
 
+The setting that decides the mask had the same blind spot one level up. The
+click path's bootstrap reads the privacy setting before any endpoint knows
+whose link was clicked, so it read the one row it could name — the
+install's — and every endpoint then acted under it: an account set to
+`all` under an install set to `disabled` had its visitors stored unmasked
+and given every click cookie, measured live. A value read before the
+subject it governs is known is a value about some other subject, and
+nothing about it looks wrong. The click path now holds back until an
+endpoint names the owner (`p202ApplyOwnerPrivacy()`; before that the answer
+is `all`, logged, never the install's), and `OwnerPrivacyAppliedFirstTest`
+holds every endpoint to naming it before it stores an address or sets a
+cookie. The same sweep found three cookies the setting had never governed
+at all — the `p202vid` visitor cookie, the click cookies the landing-page
+script writes on the operator's own page, and go.php's 202v cookies — each
+set under every setting, the install's included: a guard on the setters
+you know about does not reach a cookie another path writes (#5). List
+every place the guarded act happens before trusting the guard.
+
 ### 31. A copied value is stale from the moment its source changes
 A click's report row (202_dataengine) copies two values from Setup, not from
 the click: its account's traffic source and its campaign's category. The

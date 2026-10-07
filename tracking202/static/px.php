@@ -22,6 +22,11 @@ $aff_campaign_row =  memcache_mysql_fetch_assoc($aff_campaign_sql);
 if (!$aff_campaign_row) { die(); }
 
 $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']);
+// The privacy setting in force: the stricter of the install's and the
+// campaign's account's (p202ApplyOwnerPrivacy()) — whose clicks the lookup
+// below searches, and whose click alone may convert here — before the
+// address is looked up or stored.
+p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
 // A cookie is untrusted input: only an exact positive integer names a click

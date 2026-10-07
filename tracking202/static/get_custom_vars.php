@@ -13,11 +13,9 @@ $sql = "SELECT
 $result = $db->query($sql);
 if ($result && $result->num_rows > 0) {
 	$row = $result->fetch_assoc();
-	$parameters = explode(',', (string) $row['parameters']);
-
-	foreach ($parameters as $parameter) {
-		$data[] = $parameter;
-	}
+	// The source's variable names: none for a source that has none (its NULL
+	// list answered [""]), as TrackerVariables reads them for the click.
+	$data = array_column(\Prosper202\Click\TrackerVariables::pairs($row), 0);
 }
 
 echo json_encode($data, JSON_UNESCAPED_UNICODE);

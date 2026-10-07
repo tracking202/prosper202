@@ -151,9 +151,10 @@ if ($db) {
 // The privacy mode: the install's setting, user 1's row, read through
 // memcache_mysql_fetch_assoc(), which caches it for three minutes when
 // memcache works. Every account has a setting of its own on Personal
-// settings, and this does not read it: the click's account is known only
-// after this runs, in each endpoint. The app intakes, which know theirs,
-// apply the stricter of the two (PrivacySetting).
+// settings too, and the click's account is known only after this runs, in
+// each endpoint: there, p202ApplyOwnerPrivacy() puts the stricter of the
+// two in force, and until an endpoint has, trackingEnabled() holds back.
+// The app intakes apply the same stricter of the two (PrivacySetting).
 //
 // With memcache working this used to read account.php's per-account key,
 // user_pref_privacy_<id>, under the request's t202id, pci or lpip instead —
@@ -195,8 +196,16 @@ if (!isset($_SESSION['privacy'])) {
 // The visitor's address: one rule for every click endpoint, read through
 // VisitorIp, never from a forwarding header directly (the bootstrap used to
 // rewrite $_SERVER['HTTP_X_FORWARDED_FOR'] in place for the endpoints to
-// read back, each with its own fallback and none validating it).
-$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+// read back, each with its own fallback and none validating it). Masked
+// under the install's own setting, not the request's: what reads this
+// global is the data engine's by-address fallback (setDirtyHour() with no
+// click id), which looks among the first account's clicks, and those are
+// stored under the install's setting; and the bot ranges, which a /24 mask
+// does not move across.
+$ip_address = ipAddress(
+    \Prosper202\Http\VisitorIp::fromServer($_SERVER),
+    !\Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'], p202VisitorMayBeInEu(...))
+);
 
 /**
  * The visitor's address as every click-path row stores it (StoredVisitorIp):
@@ -209,13 +218,169 @@ function p202StoredVisitorIp(): string
 }
 
 /**
+ * Puts in force, for the rest of this request, the privacy setting that
+ * governs the visitor of $ownerId's link: the strictest of the install's
+ * (the bootstrap's $_SESSION['privacy']) and the account's own
+ * (PrivacySetting::forAccount(), which reads both again, uncached, and holds
+ * back for a read that fails or a stored value that is not a setting).
+ *
+ * Every click endpoint calls it as soon as it knows whose click it is —
+ * the tracker's, the landing page's, the click's or the campaign's account —
+ * and before it stores the visitor's address or sets a cookie
+ * (OwnerPrivacyAppliedFirstTest). It read the install's setting alone: an
+ * account set to 'all' under an install set to 'disabled' had its visitors
+ * stored unmasked and given every click cookie (measured live).
+ *
+ * A lookup among the first account's clicks (the pixels' and off.php's
+ * by-address fallbacks, which only ever look there) applies user 1's, which
+ * is the install's: those clicks were stored under it. A later call for
+ * another owner replaces the setting in force; the install's is always part
+ * of it.
+ *
+ * An owner that is not a positive integer — a row that names no account —
+ * holds back: nothing says which setting governs (CLAUDE.md #11).
+ */
+function p202ApplyOwnerPrivacy(mixed $ownerId, ?\Prosper202\Database\Connection $conn = null): void
+{
+    $owner = is_int($ownerId) ? $ownerId : (is_string($ownerId) && ctype_digit($ownerId) ? (int) $ownerId : 0);
+    if ($owner <= 0) {
+        error_log('p202 privacy: the click names no account (' . var_export($ownerId, true) . '); holding back');
+        $GLOBALS['p202PrivacyInForce'] = 'all';
+
+        return;
+    }
+    if ($conn === null) {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db instanceof \mysqli) {
+            error_log('p202 privacy: no database to read user ' . $owner . '\'s setting from; holding back');
+            $GLOBALS['p202PrivacyInForce'] = 'all';
+
+            return;
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+    }
+    $GLOBALS['p202PrivacyInForce'] = \Prosper202\Http\PrivacySetting::strictest(
+        $_SESSION['privacy'] ?? 'all',
+        \Prosper202\Http\PrivacySetting::forAccount($conn, $owner)
+    );
+}
+
+/**
+ * The privacy setting in force for this request's visitor: what
+ * p202ApplyOwnerPrivacy() put in force, or 'all' before any endpoint has
+ * said whose click this is. Nothing should ask before then — an error logged
+ * that early (record_mysql_error()) is the one place that may — so the first
+ * such question is logged with the script that asked: an endpoint that
+ * stores an address or sets a cookie without naming the owner first masks
+ * the address and sets nothing, rather than tracking in full under a
+ * setting that may not be the owner's.
+ */
+function p202PrivacyInForce(): string
+{
+    $inForce = $GLOBALS['p202PrivacyInForce'] ?? null;
+    if (is_string($inForce)) {
+        return $inForce;
+    }
+    static $logged = false;
+    if (!$logged) {
+        $logged = true;
+        error_log('p202 privacy: asked before the request named whose click this is ('
+            . (is_string($_SERVER['SCRIPT_NAME'] ?? null) ? $_SERVER['SCRIPT_NAME'] : '?') . '); holding back');
+    }
+
+    return 'all';
+}
+
+/**
  * Whether this visitor may be tracked in full: cookies set, the address
- * stored as it arrived. False under the owner's privacy setting — 'all', or
- * 'eu' for a visitor who may be in the European Union (p202VisitorMayBeInEu()).
+ * stored as it arrived. False under the privacy setting in force
+ * (p202PrivacyInForce(): the stricter of the install's and the link owner's)
+ * — 'all', or 'eu' for a visitor who may be in the European Union
+ * (p202VisitorMayBeInEu()).
  */
 function trackingEnabled(): bool
 {
-    return \Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'] ?? 'disabled', p202VisitorMayBeInEu(...));
+    return \Prosper202\Http\PrivacyMode::tracksInFull(p202PrivacyInForce(), p202VisitorMayBeInEu(...));
+}
+
+/**
+ * The account and campaign of a stored click, for an endpoint that is
+ * handed a click id and must apply its owner's privacy setting (go.php's
+ * 202v link). Null when there is no such click — and when it cannot be read,
+ * logged: the one caller sets no cookie for either, the conservative answer,
+ * so the two need not be told apart there.
+ *
+ * @return array{user_id: int, aff_campaign_id: int}|null
+ */
+function p202ClickOwner(int $clickId): ?array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if ($clickId <= 0 || !$db instanceof \mysqli) {
+        return null;
+    }
+    try {
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareRead('SELECT user_id, aff_campaign_id FROM 202_clicks WHERE click_id = ?');
+        $conn->bind($stmt, 'i', [$clickId]);
+        $row = $conn->fetchOne($stmt);
+    } catch (\Throwable $e) {
+        error_log('p202ClickOwner: click ' . $clickId . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+
+    if ($row === null) {
+        return null;
+    }
+
+    return ['user_id' => (int) $row['user_id'], 'aff_campaign_id' => (int) $row['aff_campaign_id']];
+}
+
+/**
+ * The identity signals a click request carries (ClickIdentity::fromRequest())
+ * under the privacy setting in force: a visitor held back has no p202vid
+ * read, minted or sent, as they are set no click cookie. It was set under
+ * every setting.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202ClickIdentity(array $get, bool $campaignAllows, bool $mayMint = true): \Prosper202\Identity\ClickIdentity
+{
+    $inFull = trackingEnabled();
+
+    return \Prosper202\Identity\ClickIdentity::fromRequest(
+        $get,
+        $inFull ? $_COOKIE : [],
+        $campaignAllows,
+        $mayMint && $inFull
+    );
+}
+
+/**
+ * The script statements that set click cookies on the landing page's own
+ * site — record_simple.php and record_adv.php answer the page's script with
+ * them, through landing.php's createCookie() — or none when the visitor is
+ * held back, as setClickIdCookie() sets none on the tracker's. They were
+ * written into the response under every setting.
+ *
+ * @param array<string, string> $cookies name => value
+ */
+function p202ClickCookieJs(array $cookies): string
+{
+    if (!trackingEnabled()) {
+        return '';
+    }
+    $js = '';
+    foreach ($cookies as $name => $value) {
+        $arguments = json_encode([(string) $name, (string) $value]);
+        if ($arguments === false) {
+            error_log('p202 click cookies: ' . $name . ' could not be written into the script; not set');
+            continue;
+        }
+        $js .= 'createCookie(' . substr($arguments, 1, -1) . ',0);' . "\n";
+    }
+
+    return $js;
 }
 
 /**
@@ -2367,7 +2532,10 @@ function getGeoData($ip)
             'city' => '',
             'region' => '',
             'region_code' => '',
-            'postal' => ''
+            // The key every other answer carries (landing.php reads it): this
+            // one said 'postal', so without the GeoIP library every landing
+            // page script warned "Undefined array key".
+            'postal_code' => ''
         ];
     }
 
@@ -2739,6 +2907,21 @@ function get_absolute_url(): string
 }
 
 /**
+ * A path on this install for a URL in the requester's own response (a form
+ * action, a redirect to the 404 page): the install's directory under the
+ * document root (TrackingBaseUrl::installPath()), then $relative. The
+ * cloaked redirects' forms posted to a root-absolute
+ * '/tracking202/redirect/cl2.php', which on an install in a subdirectory is
+ * a 404 (measured: served from /agent-…/, off.php's form named
+ * /tracking202/redirect/cl2.php). ClickPathUrlsTest refuses a root-absolute
+ * path of this install in the click endpoints.
+ */
+function p202InstallPath(string $relative): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::installPath($_SERVER, ROOT_PATH) . ltrim($relative, '/');
+}
+
+/**
  * True when the current request is a SPECULATIVE fetch — a browser prefetch /
  * prerender, a link-preview scanner, or a HEAD probe — rather than a real human
  * navigation. The click-recording redirect endpoints (dl/lp/rtr/off/…) must not
@@ -3054,7 +3237,10 @@ function getTokens($mysql)
     return $tokens;
 }
 
-function ipAddress($ip_address)
+/**
+ * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
+ */
+function ipAddress($ip_address, ?bool $masked = null)
 {
 
     $ip = new stdClass;
@@ -3071,7 +3257,7 @@ function ipAddress($ip_address)
         $ip->address = '0.0.0.0';
     }
 
-    if (!trackingEnabled()) {
+    if ($masked ?? !trackingEnabled()) {
         $ip = maskIpAddress($ip);
     }
 

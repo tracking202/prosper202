@@ -251,6 +251,11 @@ if (!$tracker_row) {
 	);
 }
 
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this tracker's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
+
 // The URL a MySQL outage redirects to (read above): kept equal to the
 // campaign's current URL, not the one it had at its first click.
 if ($memcacheWorking) {
@@ -385,15 +390,12 @@ $mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', (string) $tracker_row['ppc_variable_ids']) : [];
-$parameters = !empty($tracker_row['parameters']) ? explode(',', (string) $tracker_row['parameters']) : [];
-
-foreach ($parameters as $key => $value) {
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
 	$variable = (string)($_GET[$value] ?? '');
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) ($ppc_variable_ids[$key] ?? 0));
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -508,10 +510,7 @@ $mysql['click_id_public'] = '';
 
 // Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
-if (($tracker_row['click_cloaking'] == 1) or
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
-) {
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
@@ -535,9 +534,8 @@ if ($cloaking_on === true) {
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
 // A tracker with no campaign has NULL there, which leaves capture on (the
 // column's default); anything but '1' or '0' reads as off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(
 		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
 	)

@@ -41,6 +41,9 @@ else if ($db) { //if not find the list clicks id of the ip within a 30 day range
     // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
     // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
+    // The lookup is among the first account's clicks, stored under its
+    // setting, which is the install's (p202ApplyOwnerPrivacy()).
+    p202ApplyOwnerPrivacy($mysql['user_id']);
     $daysago = time() - 86400; // 24 hours
     // The visitor's last click by the address the click path stored
     // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
@@ -177,7 +180,7 @@ if ($pci == '') {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>
@@ -324,9 +327,9 @@ $mysql['click_out'] = 1;
 // Initialize before the branch so the non-cloaked path doesn't read an
 // undefined variable at the $cloaking_on checks further down (matches dl.php/lp.php).
 $cloaking_on = false;
-if (($info_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-(($info_row['click_cloaking'] == - 1) and ($info_row['aff_campaign_cloaking'] == 1)) or ((! isset($info_row['click_cloaking'])) and ($info_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-{
+// The setting the click keeps (record_adv.php: the tracker's, -1 when it
+// leaves the decision to the campaign), or the campaign's (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($info_row)) {
     $cloaking_on = true;
     $mysql['click_cloaking'] = 1;
     // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -381,6 +384,10 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $mysql['landing_page_id'] = $db->real_escape_string((string)$info_row['landing_page_id']);
 $mysql['user_id'] = $db->real_escape_string((string)$info_row['user_id']);
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($info_row['user_id'] ?? null);
 
 // set timezone correctly
 $user_sql = "SELECT user_timezone FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
@@ -437,7 +444,7 @@ if ($cloaking_on == true) {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>

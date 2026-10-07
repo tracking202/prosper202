@@ -71,7 +71,12 @@ One switch turns all of it off:
   landing pages then read, create and send no landing-page id either.
 
 Then no cookie is set or read, the landing-page id is deleted, and each click
-is a journey of one. `p202.track()` ([web events](../api/23-events.md)) finds
+is a journey of one.
+
+The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
+withholds the `p202vid` cookie too: a visitor it holds back is neither given
+one nor read for one, as they are given no click cookie. The landing-page id
+and a signed customer id still link that visitor's clicks. `p202.track()` ([web events](../api/23-events.md)) finds
 the visitor's click by the landing-page id alone, so it sends nothing either.
 
 ## Limits

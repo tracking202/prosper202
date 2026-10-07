@@ -94,8 +94,11 @@ if ($success) {
 <?php
 	echo p202_standalone_card_end();
 }
-// The license service's cookie for this install's address (an image, as before).
+// The license service's cookie for this install's address (an image, as
+// before). The service is who this URL is for, so it is the stored address
+// (or the server's own name), as on the account home: never the Host header
+// this request chose (CLAUDE.md #16; RequestHostSourceTest).
 ?>
-	<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo htmlspecialchars(base64_encode(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER)), ENT_QUOTES, 'UTF-8'); ?>" alt="" width="1" height="1" class="d-block">
+	<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo htmlspecialchars(base64_encode(p202TrackingBaseUrl()), ENT_QUOTES, 'UTF-8'); ?>" alt="" width="1" height="1" class="d-block">
 <?php
 info_bottom();

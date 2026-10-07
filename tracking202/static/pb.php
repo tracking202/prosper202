@@ -14,10 +14,15 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 //get the aff_camapaign_id
 $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)($_GET['acip'] ?? ''));
 
-$aff_campaign_sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
+$aff_campaign_sql = "SELECT aff_campaign_id, user_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
 $aff_campaign_row =  memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
 
 if (!$aff_campaign_row) { die(); }
+
+// The privacy setting in force: the stricter of the install's and the
+// campaign's account's (p202ApplyOwnerPrivacy()), before the conversion
+// stores the address.
+p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 
 // An exact positive integer, or nothing: "123.9" must not become click 123.
 $click_id = p202ParseClickId($_GET['subid'] ?? null);
