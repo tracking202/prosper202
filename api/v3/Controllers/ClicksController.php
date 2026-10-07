@@ -30,7 +30,8 @@ class ClicksController
     private const DETAIL_COLUMNS = '
                 c.click_id, c.aff_campaign_id, c.ppc_account_id, c.landing_page_id,
                 c.click_cpc, c.click_payout, c.click_lead, c.click_filtered,
-                c.click_bot, c.click_alp, c.click_time, c.rotator_id, c.rule_id,
+                c.click_bot, c.click_alp, c.click_time,
+                crot.rotator_id, crot.rule_id, crot.rule_redirect_id,
                 cr.click_id_public, cr.click_cloaking, cr.click_in, cr.click_out,
                 ca.text_ad_id, ca.keyword_id, ca.ip_id, ca.country_id, ca.region_id, ca.city_id,
                 ca.platform_id, ca.browser_id, ca.device_id, ca.isp_id,
@@ -45,6 +46,7 @@ class ClicksController
 
     private const DETAIL_JOINS = '
             LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
+            LEFT JOIN 202_clicks_rotator crot ON c.click_id = crot.click_id
             LEFT JOIN 202_clicks_advance ca ON c.click_id = ca.click_id
             LEFT JOIN 202_clicks_site cs ON c.click_id = cs.click_id
             LEFT JOIN 202_aff_campaigns ac ON c.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = c.user_id
@@ -201,7 +203,10 @@ class ClicksController
     /**
      * The click's money as numbers: click_cpc and click_payout are DECIMAL
      * columns, which mysqli hands back as strings ("12.50000") beside ids
-     * that are numbers.
+     * that are numbers. Its rotator, rule and redirect are the click's
+     * 202_clicks_rotator row: 202_clicks.rule_id holds the redirect's id, not
+     * the rule's, and 202_clicks.rotator_id is set only by rtr.php, so a
+     * landing page's offer rotator's clicks read as no rotator.
      *
      * @param array<string, mixed> $row
      * @return array<string, mixed>
@@ -211,6 +216,15 @@ class ClicksController
         foreach (['click_cpc', 'click_payout'] as $money) {
             if (isset($row[$money]) && is_string($row[$money]) && is_numeric($row[$money])) {
                 $row[$money] = (float) $row[$money];
+            }
+        }
+        // One "none": a click no rotator routed has no 202_clicks_rotator row
+        // (null), and a rotator's default is stored as rule 0 and redirect 0.
+        foreach (['rotator_id', 'rule_id', 'rule_redirect_id'] as $id) {
+            if (array_key_exists($id, $row) && ($row[$id] === null || (int) $row[$id] === 0)) {
+                $row[$id] = null;
+            } elseif (array_key_exists($id, $row)) {
+                $row[$id] = (int) $row[$id];
             }
         }
 

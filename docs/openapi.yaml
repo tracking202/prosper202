@@ -10977,8 +10977,19 @@ components:
           type: integer
         rotator_id:
           type: integer
+          nullable: true
+          description: >-
+            The rotator that routed the click (its 202_clicks_rotator row);
+            null when no rotator did. A landing page's offer rotator records
+            its clicks here too.
         rule_id:
           type: integer
+          nullable: true
+          description: The rotator rule that matched; null for the rotator's default or no rotator.
+        rule_redirect_id:
+          type: integer
+          nullable: true
+          description: The redirect of that rule the click was sent to.
         click_id_public:
           type: string
         click_cloaking:
