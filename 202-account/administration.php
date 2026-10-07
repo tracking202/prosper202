@@ -1,6 +1,5 @@
 <?php
 include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-timeframe.php');
 include_once(str_repeat("../", 1) . '202-config/functions-db.php');
 include_once(str_repeat("../", 1) . '202-config/functions-indexes.php');
 include_once(str_repeat("../", 1) . '202-config/functions-icons.php');

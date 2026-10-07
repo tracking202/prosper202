@@ -107,16 +107,35 @@ class DataEngine
     private function runCountQuery(string $countSql): int
     {
         $result = _mysqli_query($countSql);
-        if (!$result) {
+        if (!$result instanceof mysqli_result) {
             $error = self::$db instanceof mysqli
                 ? self::$db->error
                 : (($GLOBALS['db'] ?? null) instanceof mysqli ? $GLOBALS['db']->error : 'unknown');
             error_log('DataEngine count query failed: ' . $error);
-            return 0;
+            // Thrown as collectRows() throws: a count that failed is not 0
+            // groups, which the pager reads as a report of one page, with no
+            // way past the rows it shows.
+            throw new RuntimeException('DataEngine count query failed');
         }
 
         $row = $result->fetch_assoc();
         return (int) ($row['cnt'] ?? 0);
+    }
+
+    /**
+     * Run one of a report's queries, failing as collectRows() fails: a query
+     * that did not run is not a report with no rows.
+     */
+    private function reportQuery(string $sql): mysqli_result
+    {
+        $result = _mysqli_query($sql);
+        if (!$result instanceof mysqli_result) {
+            $error = self::$db instanceof mysqli ? self::$db->error : 'unknown';
+            error_log('DataEngine report query failed: ' . $error);
+            throw new RuntimeException('DataEngine report query failed');
+        }
+
+        return $result;
     }
 
     /**
@@ -441,10 +460,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         group BY " . $select_by_id . "
         ORDER BY " . $select_by_id . " ASC";
 
-        $click_result = _mysqli_query($click_sql);
-        if (!$click_result) {
-            return $data;
-        }
+        $click_result = $this->reportQuery($click_sql);
 
         $ids = [];
         while ($click_row = $click_result->fetch_assoc()) {
@@ -479,12 +495,9 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             group BY 2st.{$select_by_id},2st.ppc_account_id
             ORDER BY 2st.ppc_account_id ASC;";
 
-        $ppc_result = _mysqli_query($ppc_sql);
-
-        if ($ppc_result && $ppc_result->num_rows > 0) {
-            while ($ppc_row = $ppc_result->fetch_assoc()) {
-                $data[$ppc_row[$select_by_id]]['ppc_accounts'][$ppc_row['ppc_account_id']] = $this->htmlFormat($ppc_row, $cpv);
-            }
+        $ppc_result = $this->reportQuery($ppc_sql);
+        while ($ppc_row = $ppc_result->fetch_assoc()) {
+            $data[$ppc_row[$select_by_id]]['ppc_accounts'][$ppc_row['ppc_account_id']] = $this->htmlFormat($ppc_row, $cpv);
         }
 
         return $data;
@@ -553,16 +566,14 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         group by 2st.user_id, 2st.ppc_network_id" . $filters['limit'];
 
         $totals = new ReportTotals();
-        $click_result = _mysqli_query($click_sql);
-        if ($click_result) {
-            while ($click_row = $click_result->fetch_assoc()) {
-                if (!empty($_SESSION['publisher']) && $click_row['user_id'] != $this->mysql['user_id']) {
-                    continue;
-                }
-                $totals->add($click_row);
+        $click_result = $this->reportQuery($click_sql);
+        while ($click_row = $click_result->fetch_assoc()) {
+            if (!empty($_SESSION['publisher']) && $click_row['user_id'] != $this->mysql['user_id']) {
+                continue;
             }
-            $data[] = $this->htmlFormat($totals->toArray(), $cpv, 'total');
+            $totals->add($click_row);
         }
+        $data[] = $this->htmlFormat($totals->toArray(), $cpv, 'total');
 
         // Fix #1: include $filters['join'] so keyword filter's 2k alias resolves.
         // Fix #3a: replace inline metric columns with MetricsSql::GROUPED_SELECT.
@@ -594,14 +605,12 @@ FROM
 group by ppc_network_id , name , variable
 ORDER BY ppc_network_id , name , variable";
 
-        $click_result = _mysqli_query($click_sql);
-        if ($click_result) {
-            while ($click_row = $click_result->fetch_assoc()) {
-                $formatted = $this->htmlFormat($click_row, $cpv);
-                $data[$click_row['ppc_network_id']][] = $formatted;
-                $data[$click_row['ppc_network_id']]['variables'][$click_row['ppc_variable_id']][] = $formatted;
-                $data[$click_row['ppc_network_id']]['variables'][$click_row['ppc_variable_id']]['values'][] = $formatted;
-            }
+        $click_result = $this->reportQuery($click_sql);
+        while ($click_row = $click_result->fetch_assoc()) {
+            $formatted = $this->htmlFormat($click_row, $cpv);
+            $data[$click_row['ppc_network_id']][] = $formatted;
+            $data[$click_row['ppc_network_id']]['variables'][$click_row['ppc_variable_id']][] = $formatted;
+            $data[$click_row['ppc_network_id']]['variables'][$click_row['ppc_variable_id']]['values'][] = $formatted;
         }
 
         $data[] = $this->htmlFormat($totals->toArray(), $cpv, 'total');
@@ -1022,8 +1031,11 @@ ORDER BY ppc_network_id , name , variable";
             $result = false;
             if ($selectParts !== []) {
                 $result = self::$db->query($sqlObj);
-                if (!$result) {
+                if (!$result instanceof mysqli_result) {
+                    // Not a chart of zeroes, which is what the series below
+                    // fill an absent day with: the chart said "no traffic".
                     error_log('DataEngine getChart query failed: ' . self::$db->error);
+                    throw new RuntimeException('DataEngine chart query failed');
                 }
             }
 

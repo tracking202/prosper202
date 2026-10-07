@@ -324,8 +324,21 @@ if ($default == false) {
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
-				WHERE 2c.click_id='".$mysql['click_id']."'";
-		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+				WHERE 2c.click_id='".$mysql['click_id']."'
+				ORDER BY rur.id";
+		// One row per redirect of the rule, chosen by weight with rtr.php's
+		// chooser, as rtr.php chooses: the first row alone sent every click
+		// to the rule's first redirect, a weight of 0 included. (In id order,
+		// the order rtr.php's scan of the table reads them in, so a rule with
+		// no weight anywhere sends both entry points to the same first one;
+		// the changed text also keys a fresh cache entry, so a row the old
+		// single-row read cached is never taken for a list.)
+		$rule_redirect_rows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+		if (count($rule_redirect_rows) > 1) {
+			$rule_redirect_row = $rule_redirect_rows[getSplitTestValue($rule_redirect_rows)];
+		} else {
+			$rule_redirect_row = $rule_redirect_rows[0] ?? null;
+		}
 
 			// backfill the resolved redirect id onto the click row
 			if (is_array($rule_redirect_row) && isset($rule_redirect_row['rule_redirect_id'])) {
@@ -474,7 +487,9 @@ if ($default == false) {
 				}
 
 			} else if (!empty($rule_redirect_row['redirect_lp'])) {
-				$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
+				// The chosen redirect's landing page (lp joins on rur.redirect_lp),
+				// not the rotator default's, which $rotator_row carries.
+				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id']);
 				header('location: ' . $redirect_site_url);
 				die();
 			} else if(!empty($rule_redirect_row['redirect_url'])) {
