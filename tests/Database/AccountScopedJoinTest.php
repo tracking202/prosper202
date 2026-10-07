@@ -110,7 +110,6 @@ final class AccountScopedJoinTest extends TestCase
     // account's record, and is left to the change that owns the file).
 
     private const TRACKING_PATH = 'tracking path (a redirect or static endpoint resolving public ids from the URL): follows a tracker\'s, landing page\'s or rotator rule\'s stored id to another account\'s record; reported, not changed here';
-    private const CRON = 'daily-email cron (the cron work owns it): names another account\'s campaign when a click names one';
 
     /**
      * Category (b): reads that join an account-owned table without tying
@@ -296,10 +295,11 @@ final class AccountScopedJoinTest extends TestCase
 
     /**
      * Category (c) left for another change: a read that can show another
-     * account's name, in a file another piece of work owns (the legacy
-     * Analyze pages and data engine, the redirects and static endpoints
-     * that resolve public ids from URLs, the crons). This list only ever
-     * shrinks.
+     * account's name, in a file another piece of work owns (the redirects
+     * and static endpoints that resolve public ids from URLs). The legacy
+     * report pages and data engine, the Setup pages, the legacy API and the
+     * daily-email cron were tied in their own changes and left this list.
+     * This list only ever shrinks.
      *
      * @var array<string, array<string, string>>
      */
@@ -314,10 +314,6 @@ final class AccountScopedJoinTest extends TestCase
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id #2' => self::TRACKING_PATH,
             'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN 202_landing_pages USING ( landing_page_id' => self::TRACKING_PATH,
             'USING without user_id | 202_landing_pages | ) LEFT JOIN 202_landing_pages USING ( landing_page_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        '202-cronjobs/daily-email.php' => [
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns AS `2ca` USING ( aff_campaign_id ) WHERE `2c`.click_time' => self::CRON,
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns AS `2ca` USING ( aff_campaign_id ) WHERE `2c`.aff_campaign_id' => self::CRON,
         ],
         'tracking202/redirect/cl.php' => [
             'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,

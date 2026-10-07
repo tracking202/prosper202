@@ -74,6 +74,13 @@ INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, ppc_account_id, land
 INSERT INTO 202_clicks_advance (click_id, text_ad_id, ip_id, country_id, region_id, city_id, platform_id, browser_id, device_id) VALUES
   (700101, 7001, 0, 0, 0, 0, 0, 0, 0), (700102, 7002, 0, 0, 0, 0, 0, 0, 0), (700103, 7003, 0, 0, 0, 0, 0, 0, 0), (700104, 0, 0, 0, 0, 0, 0, 0, 0);
 INSERT INTO 202_clicks_record (click_id, click_id_public, click_out) VALUES (700101, 7001011, 1), (700102, 7001021, 1), (700103, 7001031, 1), (700104, 7001041, 1);
+-- B's own click today, on its own campaign: no page of A's reads it, and the
+-- daily email, addressed to user 1, read it too.
+DELETE FROM 202_clicks WHERE click_id = 700201;
+DELETE FROM 202_clicks_record WHERE click_id = 700201;
+INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, ppc_account_id, landing_page_id, click_cpc, click_payout, click_time, rotator_id) VALUES
+  (700201, 2, 7002, 7002, 0, 0.10, 99, @t, 0);
+INSERT INTO 202_clicks_record (click_id, click_id_public, click_out) VALUES (700201, 7002011, 1);
 INSERT INTO 202_clicks_rotator (click_id, rotator_id, rule_id, rule_redirect_id) VALUES (700102, 7002, 7002, 7002), (700104, 7003, 7003, 7003);
 INSERT INTO 202_dataengine (user_id, click_id, click_time, ppc_network_id, ppc_account_id, aff_network_id, aff_campaign_id, landing_page_id,
   text_ad_id, variable_set_id, rotator_id, rule_id, rule_redirect_id, clicks, click_out, leads, payout, income, cost) VALUES
