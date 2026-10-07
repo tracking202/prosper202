@@ -69,15 +69,25 @@ class SyncEngine
         ],
     ];
 
+    /**
+     * The fields of a source record that a write to the target must not
+     * carry: its ids and owner, what the server assigns (public ids, times),
+     * and the version/etag every GET adds. The target refuses a read-only
+     * field on a create, and on an update unless it holds the target record's
+     * own value (Controller::validatePayload()), so they are left out. A
+     * rotator's rules go through /rotators/{id}/rules (syncRotatorRules()) and
+     * its auto-monetizer is the Setup page's, so neither travels in the
+     * rotator's own body. Compared records drop them too.
+     */
     private const array IMMUTABLE_FIELDS = [
-        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted'],
-        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted'],
-        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted'],
-        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted'],
-        'rotators' => ['id', 'user_id'],
-        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time'],
-        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_deleted'],
-        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted'],
+        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted', 'version', 'etag'],
+        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted', 'version', 'etag'],
+        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted', 'version', 'etag'],
+        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted', 'version', 'etag'],
+        'rotators' => ['id', 'user_id', 'auto_monetizer', 'rules'],
+        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time', 'version', 'etag'],
+        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_id_public', 'landing_page_deleted', 'version', 'etag'],
+        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted', 'version', 'etag'],
     ];
 
     public function __construct(private readonly ServerStateStore $store)

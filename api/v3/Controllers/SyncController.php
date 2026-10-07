@@ -22,8 +22,15 @@ class SyncController
         $this->engine = $engine ?? new SyncEngine($this->store);
     }
 
+    /** What a sync job body may carry; resolveSyncOptions() and resolveProfiles() read them. */
+    private const JOB_FIELDS = [
+        'source', 'from', 'target', 'to', 'entity', 'dry_run', 'skip_errors', 'force_update', 'incremental',
+        'prune', 'prune_preview', 'confirmation_token', 'prune_allowlist', 'prune_denylist', 'updated_since', 'max_attempts',
+    ];
+
     public function plan(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source', 'from', 'target', 'to', 'entity', 'collision_mode', 'prune_preview', 'prune'], 'a sync plan');
         [$source, $target] = $this->resolveProfiles($payload);
         $entity = trim((string)($payload['entity'] ?? 'all'));
         $collisionMode = strtolower(trim((string)($payload['collision_mode'] ?? 'warn')));
@@ -45,6 +52,7 @@ class SyncController
 
     public function createJob(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a sync job');
         [$source, $target] = $this->resolveProfiles($payload);
         $entity = trim((string)($payload['entity'] ?? 'all'));
         $this->enforceQueueLimit($source, $target);
@@ -152,12 +160,14 @@ class SyncController
 
     public function reSync(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a re-sync job');
         $payload['incremental'] = true;
         return $this->createJob($payload);
     }
 
     public function runWorker(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['limit'], 'a worker run');
         $limit = max(1, min(100, (int)($payload['limit'] ?? 10)));
         $jobs = $this->store->listJobs(['queued'], $limit);
 

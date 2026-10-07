@@ -31,6 +31,25 @@ Config constants, DB connections, and other resources must be initialized before
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
+The quietest form is a handler that reads the keys it knows and never looks
+at the rest. The CRUD base `continue`d past any key that was not a writable
+field and past any `null`, and cast whatever `is_numeric()` let through, so a
+typo'd field, a field the resource does not write, a `null` meant to clear
+one, `"1.5"` for an id and a 60-character name for a VARCHAR(50) all
+answered 200 with less (or something else) stored, or a strict-mode 500 —
+and a dozen hand-written handlers
+did the same with their own bodies. Every handler now hands its body to
+`PayloadKeys::refuseUnknown()` before anything reads it, or to the base's
+`validatePayload()`; `PayloadHandlersRefuseUnknownKeysTest` holds every
+handler that takes `$payload` to that, and `ControllerFieldsMatchSchemaTest`
+holds each field's `nullable`, `range` and `max_length` to its column. A key
+a handler consumes itself (a campaign's links, an app's `store_link`) is
+removed before the rest reaches the base, or the base refuses it. Read-only
+keys are the one exception that is not "refuse": a body read with GET must go
+back whole, so they are accepted with the record's own value and refused with
+any other — and every client that builds a body from *another* record
+(`p202 import`, `sync`, `SyncEngine`) has to leave them out.
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 

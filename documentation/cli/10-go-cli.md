@@ -556,8 +556,18 @@ resend the same command; a spent `Idempotency-Key` (its request died without
 recording a response) says to check whether the record exists and use a new
 key only if it does not; an `apply_interrupted` staged change says to check
 whether the write landed and stage it again if not; a staged change in the
-wrong state points at `p202 change show`; and only an actual duplicate gets
-"update it instead of creating".
+wrong state points at `p202 change show`; a `Version mismatch` (an
+`If-Match`, or a body's `version`/`etag`, from an older read of the record)
+says to read the record again and make the change on that; and only an
+actual duplicate gets "update it instead of creating".
+
+The server refuses, rather than ignores, a field it does not write and a
+read-only field (an id, a public id, `version`) that is not the record's own
+value. A 422 naming one gets a hint saying nothing was written and to drop the
+field (for `p202 import`, from the file's records); a p202 command that sent
+one by itself means the CLI and the server differ in version, so the hint
+names `p202 --version` and `p202 system version`. `import` and `sync` leave
+those fields out of the bodies they build from another record.
 
 ### Exit Codes
 

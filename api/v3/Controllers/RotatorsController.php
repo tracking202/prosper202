@@ -124,8 +124,40 @@ class RotatorsController
         throw new DatabaseException('Unable to allocate a unique rotator public id');
     }
 
+    /**
+     * The keys a rotator is written with. public_id is honoured on create
+     * when free (see create()), and fixed after.
+     */
+    private const ROTATOR_FIELDS = ['name', 'default_url', 'default_campaign', 'default_lp'];
+
+    /**
+     * What GET answers that no write here sets: rules are written through
+     * /rotators/{id}/rules, the auto-monetizer by the Setup page. Accepted
+     * on an update only with the values the rotator holds, so a GET body can
+     * be sent back; refused on a create.
+     */
+    private const READ_ONLY = ['id', 'user_id', 'auto_monetizer', 'rules'];
+
+    /** A rule's keys, on create and update alike. */
+    private const RULE_FIELDS = ['rule_name', 'splittest', 'status', 'criteria', 'redirects'];
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed>|null $current the rotator an update changes
+     * @param list<string> $readOnly
+     */
+    private static function refuseChangedReadOnly(array $payload, ?array $current, array $readOnly): void
+    {
+        $errors = \Api\V3\Support\PayloadKeys::changedReadOnly($payload, $readOnly, $current);
+        if ($errors !== []) {
+            throw new ValidationException('Read-only field', $errors);
+        }
+    }
+
     public function create(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
+        self::refuseChangedReadOnly($payload, null, self::READ_ONLY);
         $name = self::ruleOrRotatorName($payload, 'name', true);
         $default = $this->destination($payload, self::DEFAULT_KEYS, false);
         // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
@@ -168,7 +200,10 @@ class RotatorsController
 
     public function update(int $id, array $payload): array
     {
-        $this->get($id);
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
+        // public_id is what the redirects resolve: it was ignored here, so a
+        // caller who sent a new one believed the links had moved.
+        self::refuseChangedReadOnly($payload, (array) $this->get($id)['data'], [...self::READ_ONLY, 'public_id']);
 
         $sets = [];
         $binds = [];
@@ -493,6 +528,7 @@ class RotatorsController
 
     public function createRule(int $rotatorId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
         $this->get($rotatorId);
 
         $ruleName = self::ruleOrRotatorName($payload, 'rule_name', true);
@@ -521,14 +557,8 @@ class RotatorsController
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
         $this->get($rotatorId);
-
-        $allowed = ['rule_name' => true, 'splittest' => true, 'status' => true, 'criteria' => true, 'redirects' => true];
-        foreach (array_keys($payload) as $field) {
-            if (!isset($allowed[$field])) {
-                throw new ValidationException('Unsupported field in rule update payload', [$field => 'Unsupported field']);
-            }
-        }
 
         // get() above proved the rotator is the caller's; the rule must be its.
         $stmt = $this->prepare('SELECT 1 FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');

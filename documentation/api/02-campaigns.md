@@ -17,14 +17,14 @@ Manage campaigns.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `aff_campaign_name` | string | Yes | Campaign name (max 255) |
+| `aff_campaign_name` | string | Yes | Campaign name (max 50) |
 | `aff_campaign_url` | string | Yes | Primary destination URL (max 2048) |
-| `aff_campaign_url_2` | string | No | Alternate URL 2 (max 2048) |
-| `aff_campaign_url_3` | string | No | Alternate URL 3 (max 2048) |
-| `aff_campaign_url_4` | string | No | Alternate URL 4 (max 2048) |
-| `aff_campaign_url_5` | string | No | Alternate URL 5 (max 2048) |
+| `aff_campaign_url_2` | string | No | Alternate URL 2 (max 2048; `null` clears it) |
+| `aff_campaign_url_3` | string | No | Alternate URL 3 (max 2048; `null` clears it) |
+| `aff_campaign_url_4` | string | No | Alternate URL 4 (max 2048; `null` clears it) |
+| `aff_campaign_url_5` | string | No | Alternate URL 5 (max 2048; `null` clears it) |
 | `aff_campaign_payout` | decimal | Yes | Default payout amount |
-| `aff_campaign_currency` | string | No | Currency code (max 5) |
+| `aff_campaign_currency` | string | No | Currency code (max 3) |
 | `aff_campaign_foreign_payout` | decimal | No | Foreign currency payout (default 0) |
 | `aff_network_id` | integer | Yes | Associated network ID |
 | `aff_campaign_cloaking` | integer | No | Cloaking enabled (0/1) |

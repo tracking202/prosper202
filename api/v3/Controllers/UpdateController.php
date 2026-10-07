@@ -8,6 +8,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PayloadKeys;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Conversion\RevenueUploadImporter;
@@ -81,7 +82,7 @@ final class UpdateController
      */
     public function cpc(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, self::CPC_FIELDS);
+        PayloadKeys::refuseUnknown($payload, self::CPC_FIELDS, 'a CPC update', self::QUERY_NOT_BODY);
 
         $errors = [];
         $in = [];
@@ -186,7 +187,7 @@ final class UpdateController
      */
     public function markSubids(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, ['subids']);
+        PayloadKeys::refuseUnknown($payload, ['subids'], 'a subid update', self::QUERY_NOT_BODY);
         $items = self::subidList($payload);
         $batch = new SubidBatch($this->conn);
 
@@ -221,7 +222,7 @@ final class UpdateController
      */
     public function deleteSubids(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, ['subids']);
+        PayloadKeys::refuseUnknown($payload, ['subids'], 'a subid deletion', self::QUERY_NOT_BODY);
         $items = self::subidList($payload);
         $batch = new SubidBatch($this->conn);
 
@@ -258,7 +259,7 @@ final class UpdateController
      */
     public function resetSubids(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, ['aff_network_id', 'aff_campaign_id']);
+        PayloadKeys::refuseUnknown($payload, ['aff_network_id', 'aff_campaign_id'], 'a subid reset', self::QUERY_NOT_BODY);
         $errors = [];
         $network = self::filterId($payload, 'aff_network_id', 'category', 'aff-networks', $errors, 18);
         $campaign = self::filterId($payload, 'aff_campaign_id', 'campaign', 'campaigns', $errors, 18);
@@ -328,7 +329,7 @@ final class UpdateController
      */
     public function uploadRevenue(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, ['csv', 'file_name', 'subid_column', 'amount_column']);
+        PayloadKeys::refuseUnknown($payload, ['csv', 'file_name', 'subid_column', 'amount_column'], 'a revenue upload', self::QUERY_NOT_BODY);
         $errors = [];
         $csv = is_string($payload['csv'] ?? null) ? $payload['csv'] : '';
         if (trim($csv) === '') {
@@ -417,22 +418,9 @@ final class UpdateController
      * @param array<string, mixed> $payload
      * @param list<string> $allowed
      */
-    private static function onlyKeys(array $payload, array $allowed): void
-    {
-        $errors = [];
-        foreach (array_keys($payload) as $key) {
-            $key = (string) $key;
-            if (in_array($key, $allowed, true)) {
-                continue;
-            }
-            $errors[$key] = $key === 'dry_run'
-                ? 'goes in the query string, not the body: POST …?dry_run=1 previews; without it the request writes'
-                : 'is not accepted here (accepted: ' . implode(', ', $allowed) . ')';
-        }
-        if ($errors !== []) {
-            throw new ValidationException('Unknown field', $errors);
-        }
-    }
+    private const QUERY_NOT_BODY = [
+        'dry_run' => 'goes in the query string, not the body: POST …?dry_run=1 previews; without it the request writes',
+    ];
 
     /**
      * An id filter as the page's reader takes it: '' when absent (every one),

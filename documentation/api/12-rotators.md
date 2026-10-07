@@ -25,8 +25,14 @@ Manage traffic rotators with rules, criteria, and weighted redirects for split t
 | `default_url` | string | No | Default destination: an `http://` or `https://` URL |
 | `default_campaign` | integer | No | Default destination: one of your live campaigns |
 | `default_lp` | integer | No | Default destination: one of your live landing pages |
-| `public_id` | integer | No | Public ID (auto-generated; a taken one is replaced) |
+| `public_id` | integer | No | Public ID: on create, honoured when no redirector has it (auto-generated otherwise); fixed after, so an update accepts only the redirector's own |
 | `auto_monetizer` | string | Read-only | `"true"` when the default is the auto-monetizer (set on the Redirectors page) |
+
+A body may carry only these fields; any other key is a `422` naming it.
+`id`, `user_id`, `auto_monetizer` and `rules` (written through
+`/rotators/{id}/rules`) are what `GET` answers beside them: an update accepts
+them only with the redirector's own values, so a `GET` body can be sent back,
+and a create refuses them.
 
 **The default is one destination**, as on Setup → Redirectors: send at most one
 of `default_url`, `default_campaign` and `default_lp`. On an update, naming any

@@ -77,6 +77,7 @@ class AttributionController
 
     public function createModel(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::MODEL_FIELDS, 'an attribution model');
         $name = self::requiredName($payload);
         $typeValue = $payload['model_type'] ?? null;
         if (!is_string($typeValue) || $typeValue === '') {
@@ -113,18 +114,14 @@ class AttributionController
         }
     }
 
+    /** The fields a model is written with, on create and update alike. */
+    private const MODEL_FIELDS = ['model_name', 'model_type', 'weighting_config', 'lookback_days', 'status', 'is_default'];
+
     public function updateModel(int $id, array $payload): array
     {
-        $known = ['model_name', 'model_type', 'weighting_config', 'lookback_days', 'status', 'is_default'];
-        $unknown = array_diff(array_keys($payload), $known);
-        if ($unknown !== []) {
-            throw new ValidationException(
-                'Unknown field(s): ' . implode(', ', $unknown),
-                array_fill_keys(array_values($unknown), 'Not a model field; valid: ' . implode(', ', $known))
-            );
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::MODEL_FIELDS, 'an attribution model');
         if ($payload === []) {
-            throw new ValidationException('No fields to update', ['model' => 'Send at least one of: ' . implode(', ', $known)]);
+            throw new ValidationException('No fields to update', ['model' => 'Send at least one of: ' . implode(', ', self::MODEL_FIELDS)]);
         }
 
         $this->conn->transaction(function () use ($id, $payload): void {
@@ -437,13 +434,7 @@ class AttributionController
     public function createExport(array $payload): array
     {
         $known = ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'run_at', 'webhook_url', 'webhook_secret'];
-        $unknown = array_diff(array_keys($payload), $known);
-        if ($unknown !== []) {
-            throw new ValidationException(
-                'Unknown field(s): ' . implode(', ', $unknown),
-                array_fill_keys(array_values($unknown), 'Not an export field; valid: ' . implode(', ', $known))
-            );
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, $known, 'an attribution export');
 
         $groupBy = $payload['group_by'] ?? 'campaign';
         if (!is_string($groupBy) || !in_array($groupBy, AttributionReports::dimensions(), true)) {

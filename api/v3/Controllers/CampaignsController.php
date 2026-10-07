@@ -15,18 +15,18 @@ class CampaignsController extends Controller
     protected function fields(): array
     {
         return [
-            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 255],
+            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 50],
             'aff_campaign_url'             => ['type' => 's', 'required' => true, 'max_length' => 2048],
-            'aff_campaign_url_2'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_3'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_4'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_5'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_payout'          => ['type' => 'd', 'required' => true],
+            'aff_campaign_url_2'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_3'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_4'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_5'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_payout'          => ['type' => 'd', 'required' => true, 'range' => [-999999.99, 999999.99]],
             'aff_campaign_currency'        => ['type' => 's', 'max_length' => 3],
-            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0],
-            'aff_network_id'               => ['type' => 'i', 'required' => true],
-            'aff_campaign_cloaking'        => ['type' => 'i'],
-            'aff_campaign_rotate'          => ['type' => 'i'],
+            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0, 'range' => [-999999.99, 999999.99]],
+            'aff_network_id'               => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
+            'aff_campaign_cloaking'        => ['type' => 'i', 'range' => self::TINYINT],
+            'aff_campaign_rotate'          => ['type' => 'i', 'range' => self::TINYINT],
             // How a click's conversions roll up into its value: the latest
             // one's payout (replace) or their sum (accumulate).
             'payout_mode'                  => ['type' => 's', 'allowed' => ['replace', 'accumulate']],
@@ -49,6 +49,12 @@ class CampaignsController extends Controller
             // set by afterCreate() the way the setup page sets it.
             'aff_campaign_id_public'       => ['type' => 'i', 'readonly' => true],
         ];
+    }
+
+    #[\Override]
+    protected function handledKeys(): array
+    {
+        return ['app_registration_id', 'attribution_model_id'];
     }
 
     /**
@@ -83,7 +89,11 @@ class CampaignsController extends Controller
     {
         $this->pendingLinks = $this->linksIn($payload);
         try {
-            return parent::create($payload);
+            // The links are read here and written through beforeCreate();
+            // the base sees only the fields it writes, so it refuses any other
+            // key (a read-only one included) rather than this controller
+            // having to.
+            return parent::create(array_diff_key($payload, $this->pendingLinks));
         } finally {
             $this->pendingLinks = [];
         }
@@ -183,6 +193,10 @@ class CampaignsController extends Controller
             $this->pendingLinks = $links;
             try {
                 return parent::update($id, $payload);
+            } catch (\Api\V3\Exception\NothingToUpdateException) {
+                // The rest of the body is read-only values the campaign
+                // already holds (a GET body sent back with a new link), which
+                // the base checked: the links are the whole write.
             } finally {
                 $this->pendingLinks = [];
             }

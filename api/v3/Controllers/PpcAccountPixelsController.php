@@ -66,6 +66,7 @@ final class PpcAccountPixelsController
      */
     public function create(int $accountId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::FIELDS, 'a pixel');
         $this->account($accountId);
         $fields = $this->validate($payload, null);
 
@@ -97,6 +98,7 @@ final class PpcAccountPixelsController
      */
     public function update(int $accountId, int $pixelId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::FIELDS, 'a pixel');
         $this->account($accountId);
         $current = $this->pixel($accountId, $pixelId);
         if ($payload === []) {
@@ -163,12 +165,8 @@ final class PpcAccountPixelsController
      */
     private function validate(array $payload, ?array $current): array
     {
+        // Unknown keys were refused by the handler (PayloadKeys).
         $errors = [];
-        foreach (array_keys($payload) as $key) {
-            if (!in_array($key, self::FIELDS, true)) {
-                $errors[(string) $key] = 'Unknown field; a pixel has pixel_type_id, pixel_code and correction_url';
-            }
-        }
         $types = $this->pixelTypes();
 
         $typeId = $current === null ? null : (int) $current['pixel_type_id'];

@@ -21,7 +21,7 @@ Manage pay-per-click advertising accounts within PPC networks.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `ppc_account_name` | string | Yes | Account name (max 255) |
+| `ppc_account_name` | string | Yes | Account name (max 50) |
 | `ppc_network_id` | integer | Yes | Parent PPC network ID |
 | `ppc_account_default` | integer | No | Set as default account (0/1) |
 

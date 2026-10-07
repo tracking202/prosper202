@@ -19,14 +19,14 @@ class ForecastEventsController extends Controller
         return [
             'event_name'          => ['type' => 's', 'required' => true, 'max_length' => 255],
             'event_date'          => ['type' => 's', 'required' => true, 'max_length' => 10],
-            'end_date'            => ['type' => 's', 'max_length' => 10],
+            'end_date'            => ['type' => 's', 'nullable' => true, 'max_length' => 10],
             'recurrence'          => ['type' => 's', 'max_length' => 10, 'allowed' => ['none', 'monthly', 'yearly', 'custom']],
             'impact_type'         => ['type' => 's', 'max_length' => 10, 'allowed' => ['boost', 'suppress', 'neutral']],
-            'expected_impact_pct' => ['type' => 'd'],
-            'lead_days'           => ['type' => 'i'],
-            'lag_days'            => ['type' => 'i'],
-            'tags'                => ['type' => 's', 'max_length' => 500],
-            'notes'               => ['type' => 's', 'max_length' => 500],
+            'expected_impact_pct' => ['type' => 'd', 'nullable' => true, 'range' => [-999999.99, 999999.99]],
+            'lead_days'           => ['type' => 'i', 'range' => self::INT],
+            'lag_days'            => ['type' => 'i', 'range' => self::INT],
+            'tags'                => ['type' => 's', 'nullable' => true, 'max_length' => 500],
+            'notes'               => ['type' => 's', 'nullable' => true, 'max_length' => 500],
         ];
     }
 

@@ -82,6 +82,7 @@ final class PpcNetworkVariablesController
      */
     public function create(int $networkId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::FIELDS, 'a variable');
         $this->network($networkId);
         $values = self::validate($payload, true);
 
@@ -105,6 +106,7 @@ final class PpcNetworkVariablesController
      */
     public function update(int $networkId, int $variableId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::FIELDS, 'a variable');
         $this->network($networkId);
         $this->variable($networkId, $variableId);
         $values = self::validate($payload, false);
@@ -172,12 +174,8 @@ final class PpcNetworkVariablesController
      */
     private static function validate(array $payload, bool $create): array
     {
+        // Unknown keys were refused by the handler (PayloadKeys).
         $errors = [];
-        foreach (array_keys($payload) as $key) {
-            if (!in_array($key, self::FIELDS, true)) {
-                $errors[(string) $key] = 'Unknown field; a variable has name, parameter and placeholder';
-            }
-        }
         $values = [];
         foreach (self::FIELDS as $field) {
             if (!array_key_exists($field, $payload)) {
