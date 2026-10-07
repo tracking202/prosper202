@@ -526,7 +526,11 @@ hint to omit the flag or give it a value. Read as "not given", an empty
 filter would list everything as though filtered, and an empty update field
 would silently leave the field as it was. The few flags whose empty value
 is a deliberate write — clearing an app's `--notes` on `p202 app update`,
-and the fields of `p202 app encoding update` — pass it through; the root
+the fields of `p202 app encoding update`, and the clearable fields of the
+CRUD `update` commands (`--help` marks each `"" clears it`) — pass it
+through; a clearable date (`p202 forecast-event update <id> --end_date ""`)
+goes as JSON `null`, the one clear a date column takes, and every date flag
+is checked as a `YYYY-MM-DD` day that exists before a request. The root
 flags `--fields`, `--profile` and `--group` keep their "empty is the
 default" meaning. Every other string flag of every command follows the
 rule, and a test walks the whole command tree to keep it so.

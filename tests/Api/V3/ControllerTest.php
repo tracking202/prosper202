@@ -56,6 +56,8 @@ class StubController extends Controller
             'note'        => ['type' => 's', 'nullable' => true, 'max_length' => 20],
             'rank'        => ['type' => 'i', 'range' => [0, 255]],
             'ratio'       => ['type' => 'd', 'range' => [-99.99, 99.99]],
+            'day'         => ['type' => 's', 'format' => 'date'],
+            'until'       => ['type' => 's', 'format' => 'date', 'nullable' => true],
             'created_at'  => ['type' => 's', 'readonly' => true],
         ];
     }
@@ -774,6 +776,90 @@ final class ControllerTest extends TestCase
                 $this->assertSame(['description' => "Field 'description' must be a string"], $e->getFieldErrors());
             }
         }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function dates(): iterable
+    {
+        yield 'a day' => ['2026-11-27'];
+        yield 'a leap day' => ['2024-02-29'];
+        yield 'the first day a DATE holds' => ['1000-01-01'];
+        yield 'the last' => ['9999-12-31'];
+    }
+
+    /** @dataProvider dates */
+    public function testValidatePayloadAcceptsADayWrittenAsTheColumnStoresIt(string $sent): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->assertSame(['day' => $sent], $ctrl->testValidatePayload(['day' => $sent]));
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function notDates(): iterable
+    {
+        // "" is the one that was a 500: under strict SQL mode MySQL refuses
+        // it for a DATE column, so PUT /forecast-events/{id} {"end_date": ""}
+        // answered "Internal server error". The rest were the same 500, or
+        // without strict mode a 0000-00-00 stored where a day was meant.
+        yield 'empty' => [''];
+        yield 'a day that does not exist' => ['2026-02-30'];
+        yield 'not a leap year' => ['2023-02-29'];
+        yield 'month 13' => ['2026-13-01'];
+        yield 'day first' => ['27/11/2026'];
+        yield 'no leading zeros' => ['2026-1-1'];
+        yield 'a time too' => ['2026-11-27 00:00:00'];
+        yield 'ISO 8601 with a time' => ['2026-11-27T00:00:00Z'];
+        yield 'leading space' => [' 2026-11-27'];
+        yield 'trailing newline' => ["2026-11-27\n"];
+        yield 'before the years a DATE holds' => ['0999-12-31'];
+        yield 'the zero date' => ['0000-00-00'];
+        yield 'digits as a JSON integer' => [20261127];
+        yield 'a bool' => [true];
+        yield 'a list' => [['2026-11-27']];
+    }
+
+    /** @dataProvider notDates */
+    public function testValidatePayloadRefusesWhatIsNotADay(mixed $sent): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        foreach (['day' => '', 'until' => '; send null to clear it'] as $field => $clear) {
+            try {
+                $ctrl->testValidatePayload([$field => $sent]);
+                $this->fail('expected ' . var_export($sent, true) . " to be refused for $field");
+            } catch (ValidationException $e) {
+                $this->assertSame(
+                    [$field => "Field '$field' must be a date written YYYY-MM-DD, "
+                        . "a day that exists (e.g. 2026-11-27)$clear"],
+                    $e->getFieldErrors()
+                );
+            }
+        }
+    }
+
+    public function testValidatePayloadClearsANullableDateWithNullOnly(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->assertSame(['until' => null], $ctrl->testValidatePayload(['until' => null]));
+        try {
+            $ctrl->testValidatePayload(['day' => null]);
+            $this->fail('expected null to be refused for a date that cannot be NULL');
+        } catch (ValidationException $e) {
+            $this->assertStringContainsString('cannot be null', $e->getFieldErrors()['day']);
+        }
+    }
+
+    public function testListRefusesADateFilterThatIsNotADay(): void
+    {
+        // filter[event_date]=garbage compared a DATE with 'garbage', matched
+        // nothing, and the empty list read as "no events that day".
+        [$ctrl] = $this->createControllerWithDb(['COUNT(*)' => ['total' => 0], 'SELECT' => []]);
+        try {
+            $ctrl->list(['filter' => ['day' => 'garbage']]);
+            $this->fail('expected a date filter that is not a day to be refused');
+        } catch (ValidationException $e) {
+            $this->assertSame(['filter[day]' => 'Must be a date written YYYY-MM-DD'], $e->getFieldErrors());
+        }
+        $this->assertSame([], $ctrl->list(['filter' => ['day' => '2026-11-27']])['data']);
     }
 
     public function testValidatePayloadRequiredFieldsWhenFlagTrue(): void

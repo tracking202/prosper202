@@ -6482,11 +6482,12 @@ paths:
                 event_date:
                   type: string
                   format: date
-                  description: Start date, YYYY-MM-DD
+                  description: 'Start date, YYYY-MM-DD, a day that exists (years 1000-9999). Anything else, "" included, is a 422.'
                 end_date:
                   type: string
                   format: date
                   nullable: true
+                  description: 'End date, YYYY-MM-DD, as event_date. null clears it; "" is a 422 (it reached the database and answered 500 before).'
                 recurrence:
                   type: string
                   enum:
@@ -6667,11 +6668,12 @@ paths:
                 event_date:
                   type: string
                   format: date
-                  description: Start date, YYYY-MM-DD
+                  description: 'Start date, YYYY-MM-DD, a day that exists (years 1000-9999). Anything else, "" included, is a 422.'
                 end_date:
                   type: string
                   format: date
                   nullable: true
+                  description: 'End date, YYYY-MM-DD, as event_date. null clears it; "" is a 422 (it reached the database and answered 500 before).'
                 recurrence:
                   type: string
                   enum:

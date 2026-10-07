@@ -155,6 +155,38 @@ final class PayloadValidationIntegrationTest extends TestCase
         self::assertSame($read, $after, 'the record is as it was, version included');
     }
 
+    /**
+     * A DATE column under strict SQL mode refuses "" and any day that does
+     * not exist with an error, which the API answered as a 500: `p202
+     * forecast-event update <id> --end_date ""` sent exactly that. Each is a
+     * 422 on the field now, the row is untouched, and null clears end_date.
+     */
+    public function testAForecastEventDateIsADayOrARefusalNeverADatabaseError(): void
+    {
+        $events = new ForecastEventsController(self::$db, self::USER);
+        $made = $events->create(['event_name' => 'sale', 'event_date' => '2026-11-27', 'end_date' => '2026-11-30']);
+        $id = (int) $made['data']['event_id'];
+
+        $refused = [
+            ['end_date' => ''], ['end_date' => '2026-02-30'], ['event_date' => '27/11/2026'], ['event_date' => ''],
+        ];
+        foreach ($refused as $body) {
+            try {
+                $events->update($id, $body);
+                self::fail('expected ' . json_encode($body) . ' to be refused');
+            } catch (ValidationException $e) {
+                self::assertSame(array_keys($body), array_keys($e->getFieldErrors()));
+            }
+        }
+        $row = self::$db->query("SELECT event_date, end_date FROM 202_forecast_events WHERE event_id = $id")
+            ->fetch_assoc();
+        self::assertSame(['event_date' => '2026-11-27', 'end_date' => '2026-11-30'], $row, 'refused, nothing written');
+
+        self::assertNull($events->update($id, ['end_date' => null])['data']['end_date']);
+        $set = $events->update($id, ['end_date' => '2026-12-01']);
+        self::assertSame('2026-12-01', $set['data']['end_date']);
+    }
+
     public function testATrackerSentBackWithItsUnusedCostAsNullKeepsTheCostItUses(): void
     {
         // TrackersController::beforeUpdate() clears the other cost when one

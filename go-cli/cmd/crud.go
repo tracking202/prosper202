@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"p202/internal/api"
 	"p202/internal/metrics"
@@ -27,6 +28,33 @@ type crudField struct {
 	// the field (what the setup page does when the box is emptied). Any
 	// other field refuses an empty value (empty_flags.go).
 	Clearable bool
+	// Date: the controller declares 'format' => 'date' (a DATE column). The
+	// value must be a day written YYYY-MM-DD, checked before a request; a
+	// Clearable date's "" goes as JSON null, the one clear a DATE takes —
+	// the server refuses "" (it was a 500 under strict SQL mode).
+	// TestCRUDFlagsMatchTheirControllers holds Date to the controller.
+	Date bool
+}
+
+// crudDateLayout is the form a Date field takes: the server's
+// Controller::isDate(), a real calendar day in the years a DATE holds.
+const crudDateLayout = "2006-01-02"
+
+// crudDateValue checks a Date field's flag value and returns what the body
+// carries for it: the day as given, or nil (JSON null) for the clear.
+func crudDateValue(f crudField, v string, update bool) (interface{}, error) {
+	if v == "" && f.Clearable && update {
+		return nil, nil
+	}
+	day, err := time.Parse(crudDateLayout, v)
+	if err != nil || day.Year() < 1000 || day.Format(crudDateLayout) != v {
+		e := validationError("--%s must be a date written YYYY-MM-DD, a day that exists (e.g. 2026-11-27): %q", f.Name, v)
+		if f.Clearable && update {
+			return nil, e.WithHint("Or pass --%s \"\" to clear it.", f.Name)
+		}
+		return nil, e
+	}
+	return v, nil
 }
 
 // forecastEventRecurrences are ForecastEventsController's recurrence values.
@@ -1024,6 +1052,13 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err := requireCRUDFields(entity, body); err != nil {
 				return err
 			}
+			for _, f := range entity.Fields {
+				if v, ok := body[f.Name]; ok && f.Date {
+					if _, err := crudDateValue(f, v, false); err != nil {
+						return err
+					}
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -1058,14 +1093,24 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("update", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
-			body := map[string]string{}
+			body := map[string]interface{}{}
 			for _, f := range entity.Fields {
 				// Changed, not "non-empty": a Clearable field given "" is a
 				// deliberate clear, and every other field refuses "" before
 				// this runs (refuseEmptyStringFlags).
-				if cmd.Flags().Changed(f.Name) {
-					body[f.Name], _ = cmd.Flags().GetString(f.Name)
+				if !cmd.Flags().Changed(f.Name) {
+					continue
 				}
+				v, _ := cmd.Flags().GetString(f.Name)
+				if !f.Date {
+					body[f.Name] = v
+					continue
+				}
+				day, err := crudDateValue(f, v, true)
+				if err != nil {
+					return err
+				}
+				body[f.Name] = day
 			}
 			if len(body) == 0 {
 				return validationError("no fields specified; pass at least one flag to update")
@@ -1264,8 +1309,8 @@ var crudEntities = []crudEntity{
 		Endpoint: "forecast-events",
 		Fields: []crudField{
 			{Name: "event_name", Desc: "Event name (e.g. 'Black Friday', 'Server Outage')", Required: true},
-			{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true},
-			{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)", Clearable: true},
+			{Name: "event_date", Desc: "Event date (YYYY-MM-DD)", Required: true, Date: true},
+			{Name: "end_date", Desc: "End date for multi-day events (YYYY-MM-DD)", Clearable: true, Date: true},
 			{Name: "recurrence", Desc: "Recurrence", Enum: forecastEventRecurrences},
 			{Name: "impact_type", Desc: "Impact type", Enum: []string{"boost", "suppress", "neutral"}},
 			{Name: "expected_impact_pct", Desc: "Expected impact percentage (e.g. +200 for 3x boost, -50 for half)"},

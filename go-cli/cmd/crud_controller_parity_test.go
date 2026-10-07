@@ -21,6 +21,8 @@ var controllerFieldsRaw = map[string]string{
 type controllerField struct {
 	required bool
 	readonly bool
+	date     bool // 'format' => 'date': a DATE column, YYYY-MM-DD
+	nullable bool
 }
 
 // The API drops a field it does not know without a word
@@ -59,6 +61,16 @@ func TestCRUDFlagsMatchTheirControllers(t *testing.T) {
 			}
 			if f.Required {
 				cliRequired = append(cliRequired, f.Name)
+			}
+			// A date the CLI does not check goes to the server as typed,
+			// and one it checks that the server does not is a refusal the
+			// server would not make. A clearable date clears with null,
+			// which only a nullable field takes.
+			if f.Date != def.date {
+				t.Errorf("%s --%s: Date is %v but %s declares 'format' => 'date': %v", entity.Name, f.Name, f.Date, class, def.date)
+			}
+			if f.Date && f.Clearable && !def.nullable {
+				t.Errorf("%s --%s: a clearable date sends null, and %s's field is not 'nullable'", entity.Name, f.Name, class)
 			}
 		}
 		sort.Strings(required)
@@ -119,6 +131,8 @@ func controllerFields(t *testing.T, path string) map[string]controllerField {
 		out[m[1]] = controllerField{
 			required: strings.Contains(m[2], `'required' => true`),
 			readonly: strings.Contains(m[2], `'readonly' => true`),
+			date:     strings.Contains(m[2], `'format' => 'date'`),
+			nullable: strings.Contains(m[2], `'nullable' => true`),
 		}
 	}
 	if len(out) == 0 {
@@ -161,5 +175,55 @@ func TestCRUDCreateNamesAMissingRequiredFlagBeforeConfig(t *testing.T) {
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "p202 campaign create --help") {
 		t.Errorf("hint = %q", hint)
+	}
+}
+
+// A clearable date's "" goes as JSON null: the server refuses "" for a DATE
+// column (it was a 500 under strict SQL mode), and null is how it clears one.
+func TestCRUDUpdateClearsADateWithNull(t *testing.T) {
+	_, seen := goalServer(t, 200, `{"data":{}}`)
+	if _, _, err := executeCommand("forecast-event", "update", "5", "--end_date", ""); err != nil {
+		t.Fatalf("clearing end_date: %v", err)
+	}
+	if len(*seen) != 1 || (*seen)[0].Method != "PUT" {
+		t.Fatalf("requests = %+v, want one PUT", *seen)
+	}
+	if v, ok := (*seen)[0].Body["end_date"]; !ok || v != nil {
+		t.Errorf("body = %v, want end_date sent as null", (*seen)[0].Body)
+	}
+
+	_, seen = goalServer(t, 200, `{"data":{}}`)
+	if _, _, err := executeCommand("forecast-event", "update", "5", "--end_date", "2026-12-01"); err != nil {
+		t.Fatalf("setting end_date: %v", err)
+	}
+	if v := (*seen)[0].Body["end_date"]; v != "2026-12-01" {
+		t.Errorf("end_date = %v, want the day as given", v)
+	}
+}
+
+// A value that is not a day is refused before a request, naming the flag
+// and the form, on create and update alike.
+func TestCRUDDateFlagsRefuseWhatIsNotADay(t *testing.T) {
+	for _, bad := range []string{"2026-02-30", "27/11/2026", "2026-1-1", "2026-11-27 00:00", "0999-12-31", "tomorrow"} {
+		for _, args := range [][]string{
+			{"forecast-event", "create", "--event_name", "X", "--event_date", bad},
+			{"forecast-event", "update", "5", "--end_date", bad},
+		} {
+			_, seen := goalServer(t, 200, `{"data":{}}`)
+			_, _, err := executeCommand(args...)
+			if err == nil || exitCodeForError(err) != 1 {
+				t.Fatalf("%v: err = %v, want a validation error", args, err)
+			}
+			if !strings.Contains(err.Error(), "must be a date written YYYY-MM-DD") {
+				t.Errorf("%v: err = %v", args, err)
+			}
+			if len(*seen) != 0 {
+				t.Errorf("%v: requests = %+v, want none", args, *seen)
+			}
+		}
+	}
+	_, _, err := executeCommand("forecast-event", "update", "5", "--end_date", "2026-02-30")
+	if hint := hintFor(err); !strings.Contains(hint, `--end_date ""`) {
+		t.Errorf("hint = %q, want the clear named", hint)
 	}
 }
