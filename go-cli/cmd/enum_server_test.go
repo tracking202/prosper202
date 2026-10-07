@@ -36,16 +36,16 @@ func capabilitiesServer(t *testing.T, breakdowns []string, probes *int32, querie
 func TestServerAdvertisedDimensionIsAcceptedWhenTheBuiltInListLacksIt(t *testing.T) {
 	var probes int32
 	var queries []string
-	srv := capabilitiesServer(t, append(append([]string{}, breakdownDimensions...), "referer"), &probes, &queries)
+	srv := capabilitiesServer(t, append(append([]string{}, breakdownDimensions...), "language"), &probes, &queries)
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	if _, _, err := executeCommand("analytics", "--group-by", "referer"); err != nil {
+	if _, _, err := executeCommand("analytics", "--group-by", "language"); err != nil {
 		t.Fatalf("a dimension the server advertises was refused: %v", err)
 	}
-	if len(queries) != 1 || !strings.Contains(queries[0], "breakdown=referer") {
-		t.Errorf("requests = %v, want one breakdown=referer", queries)
+	if len(queries) != 1 || !strings.Contains(queries[0], "breakdown=language") {
+		t.Errorf("requests = %v, want one breakdown=language", queries)
 	}
 }
 
@@ -87,7 +87,7 @@ func TestBuiltInDimensionsNeedNoServerAndAnOfflineServerFallsBack(t *testing.T) 
 
 	// With the server gone, an unknown value is refused with the built-in list.
 	writeTestConfig(t, tmp, "http://127.0.0.1:9", "test-key")
-	_, _, err := executeCommand("analytics", "--group-by", "referer")
+	_, _, err := executeCommand("analytics", "--group-by", "language")
 	if err == nil || !strings.Contains(err.Error(), strings.Join(breakdownDimensions, ", ")) || strings.Contains(err.Error(), "server's list") {
 		t.Errorf("offline error = %v, want the built-in list", err)
 	}

@@ -72,30 +72,47 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	}
 }
 
-// No report has a referrer dimension. Search must say so rather than dress
-// up the nearest text match as the answer.
-func TestSearchDoesNotPretendAReferrerDimensionExists(t *testing.T) {
+// No report has a currency dimension. Search must say so rather than dress
+// up the nearest text match as the answer. (This case was "referrer" until
+// reports gained a referer dimension; see the test below.)
+func TestSearchDoesNotPretendACurrencyDimensionExists(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	for _, q := range []string{"referrer", "breakdown by referrer"} {
+	for _, q := range []string{"currency", "breakdown by currency"} {
 		a := searchJSON(t, q)
-		if q == "referrer" && (a.GoodMatch || !strings.HasPrefix(a.Note, `No command matches "referrer" well`) || len(a.Results) > closestShown) {
+		if q == "currency" && (a.GoodMatch || !strings.HasPrefix(a.Note, `No command matches "currency" well`) || len(a.Results) > closestShown) {
 			t.Errorf("%s: good=%v note=%q results=%d", q, a.GoodMatch, a.Note, len(a.Results))
 		}
 		for _, r := range a.Results {
 			for _, m := range r.Matched {
-				if strings.Contains(m, "accepts refer") {
+				if strings.Contains(m, "accepts currency") {
 					t.Errorf("%s: %s claims %q", q, r.Command, m)
 				}
 			}
-			if strings.Contains(r.Try, "refer") {
+			if strings.Contains(r.Try, "currency") {
 				t.Errorf("%s: %s suggests %q", q, r.Command, r.Try)
 			}
 		}
 	}
 
-	stdout, _, err := executeCommand("search", "referrer")
-	if err != nil || !strings.HasPrefix(stdout, `No command matches "referrer" well`) {
+	stdout, _, err := executeCommand("search", "currency")
+	if err != nil || !strings.HasPrefix(stdout, `No command matches "currency" well`) {
 		t.Errorf("human form: %v\n%s", err, stdout)
+	}
+}
+
+// Reports break down by referer now (the Analyze › Referers page's dimension),
+// and "referrer", the dictionary spelling, is an alias for it.
+func TestSearchFindsTheRefererBreakdown(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	a := searchJSON(t, "breakdown", "by", "referrer")
+	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
+		t.Fatalf("breakdown by referrer: %+v", a.Results)
+	}
+	if !strings.Contains(a.Results[0].Try, "--breakdown referrer") {
+		t.Errorf("breakdown by referrer: try = %q", a.Results[0].Try)
+	}
+	if got := resolveDimension("referrer"); got != "referer" {
+		t.Errorf("resolveDimension(referrer) = %q, want referer", got)
 	}
 }
 

@@ -393,6 +393,12 @@ func TestLosersNotesAndFallbacks(t *testing.T) {
 		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "", 1, true, "TEST"},
 		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff_campaign_id", "7"}, "can't be filtered by --aff_campaign_id", 0, false, "CUT"},
 		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc_account_id", "7"}, "", 1, true, "TEST"},
+		// Every report filter narrows the classic rows only, so each turns the check off — a filter the loop did not
+		// list would compare keyword-filtered rows with account-wide credit.
+		{"a keyword filter", firstTouchModels, onePage, []string{"--breakdown", "source", "--keyword", "shoes"}, "can't be filtered by --keyword", 0, false, "CUT"},
+		{"real clicks only", firstTouchModels, onePage, []string{"--breakdown", "source", "--show", "real"}, "can't be filtered by --show", 0, false, "CUT"},
+		{"a device type", firstTouchModels, onePage, []string{"--breakdown", "source", "--device_type", "2"}, "can't be filtered by --device_type", 0, false, "CUT"},
+		{"show all filters nothing", firstTouchModels, onePage, []string{"--breakdown", "source", "--show", "all"}, "", 1, true, "TEST"},
 		{"backfill running", firstTouchModels, func(url.Values) (int, string) {
 			return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":1,"backfill":{"done":10,"total":100}}}`
 		}, []string{"--breakdown", "source", "--period", "last7"}, "backfilled", 1, true, "TEST"},

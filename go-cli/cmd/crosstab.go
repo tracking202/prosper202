@@ -20,9 +20,15 @@ var dimensionFilterParam = map[string]string{
 	"ppc_network":  "ppc_network_id",
 	"landing_page": "landing_page_id",
 	"country":      "country_id",
+	"text_ad":      "text_ad_id",
+	"region":       "region_id",
+	"isp":          "isp_id",
+	"browser":      "browser_id",
+	"platform":     "platform_id",
+	"device_type":  "device_type",
 }
 
-// crosstabRowDimensions are the dimensions with an entity filter, the only
+// crosstabRowDimensions are the dimensions with an id filter, the only
 // ones a crosstab can fan out over, in breakdownDimensions order.
 func crosstabRowDimensions() []string {
 	var rows []string
@@ -55,7 +61,7 @@ var reportCrosstabCmd = &cobra.Command{
 		}
 		rowFilter := dimensionFilterParam[rowDim]
 		if rowFilter == "" {
-			return validationError("--rows %q can't be used as a crosstab axis (no entity filter)", rowDim)
+			return validationError("--rows %q can't be used as a crosstab axis (no id filter narrows a report to one of its rows)", rowDim)
 		}
 		limitRows, _ := cmd.Flags().GetInt("limit-rows")
 
@@ -80,7 +86,9 @@ var reportCrosstabCmd = &cobra.Command{
 			params[rowFilter] = rowID
 			colRows, err := fetchBreakdownRows(c, params)
 			if err != nil {
-				continue
+				// A row skipped here rendered as a pivot without it, which
+				// reads as that row having no traffic.
+				return fmt.Errorf("fetching %s for %s %s: %w", colDim, rowDim, rowID, err)
 			}
 			out := map[string]interface{}{rowDim: rr["name"]}
 			for _, cr := range colRows {
@@ -112,7 +120,7 @@ var reportCrosstabCmd = &cobra.Command{
 
 func init() {
 	addReportFilters(reportCrosstabCmd)
-	reportCrosstabCmd.Flags().String("rows", "", "Row dimension (one with an entity filter)")
+	reportCrosstabCmd.Flags().String("rows", "", "Row dimension (one with an id filter): {values}")
 	enumFlag(reportCrosstabCmd, "rows", newEnum(crosstabRowDimensions(), enumAliases(dimensionAliases), enumFoldCase()))
 	reportCrosstabCmd.Flags().String("cols", "", "Column dimension")
 	enumFlag(reportCrosstabCmd, "cols", dimensionEnum(breakdownDimensions))

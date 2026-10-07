@@ -38,7 +38,7 @@ func TestAttributionCommandsValidateBeforeTheyConnect(t *testing.T) {
 		{"breakdown with a model name instead of an id", []string{"attribution", "breakdown", "--model", "linear"}, `invalid --model "linear"`, "p202 attribution model list"},
 		{"breakdown comparing a model with itself", []string{"attribution", "breakdown", "--model", "4", "--compare-model", "4"}, "--compare-model must differ from --model", ""},
 		{"breakdown with a period and a range", []string{"attribution", "breakdown", "--period", "last7", "--time-from", "1"}, "--period and --time-from/--time-to are exclusive", "--period last30"},
-		{"breakdown with an unknown period", []string{"attribution", "breakdown", "--period", "lastweek"}, `--period must be one of: today, yesterday, last7, last30, last90; got "lastweek"`, ""},
+		{"breakdown with an unknown period", []string{"attribution", "breakdown", "--period", "lastweek"}, `--period must be one of: today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime; got "lastweek"`, ""},
 		{"breakdown with a date for a time", []string{"attribution", "breakdown", "--time-from", "2026-09-01"}, `invalid --time-from "2026-09-01": unix time in seconds`, ""},
 		{"journeys with a bad time", []string{"attribution", "journeys", "--time-to", "soon"}, `invalid --time-to "soon"`, ""},
 		{"journey of a non-id", []string{"attribution", "journey", "x1"}, `conversion id must be a positive whole number, got "x1"`, "p202 conversion list"},

@@ -258,11 +258,15 @@ func (c *starterCheck) firstTouchROI(a map[string]interface{}) (roi float64, ok 
 	return toFloat(a["roi"]), true
 }
 
-// filterDimension is the breakdown each entity filter narrows to. The attribution report takes no entity filters, so
-// its rows match the classic ones only when the filter is the breakdown itself (the same keys, account-wide either way).
+// filterDimension is the breakdown each report filter (reportFilterFlags) narrows to, "" for none. The attribution report
+// takes no filters, so its rows match the classic ones only when the filter is the breakdown itself (the same keys,
+// account-wide either way). Every report filter is listed: one missing here would leave the check comparing filtered
+// classic rows with unfiltered credit — --show real, --keyword or --device_type narrows the classic rows only.
 var filterDimension = map[string]string{
 	"aff_campaign_id": "campaign", "ppc_account_id": "ppc_account", "landing_page_id": "landing_page",
 	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
+	"text_ad_id": "", "region_id": "", "isp_id": "", "browser_id": "", "platform_id": "", "device_type": "",
+	"method_of_promotion": "", "show": "", "keyword": "", "ip": "", "referer": "",
 }
 
 // loadAttributionCheck fetches the attribution breakdown rows for keys (the ids of the classic rows being checked) over
@@ -291,8 +295,12 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	}
 	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
 	// could be rescued by sales elsewhere (or kept CUT by losses elsewhere): don't reclassify at all.
-	for _, f := range []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"} {
-		if params[f] != "" && filterDimension[f] != dimension {
+	for _, f := range reportFilterFlags {
+		// "" and an id of 0 filter nothing, and neither does show=all (ReportFilter).
+		if v := params[f]; v == "" || v == "0" || (f == "show" && v == "all") {
+			continue
+		}
+		if filterDimension[f] != dimension {
 			hint := "Drop the filter to check attribution"
 			if filterDimension[f] != "" {
 				hint += ", or break down by " + filterDimension[f] + " instead"
@@ -926,7 +934,8 @@ func init() {
 		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country. ROI comes from the\n" +
 		"first active First touch model (or --first-touch-model); without one, rows are checked on assists only. It needs\n" +
 		"an attribution:read key; when it can't run, the command still lists the classic losers and says why on stderr.\n" +
-		"An entity filter other than the breakdown itself turns the check off (the attribution report is account-wide).\n" +
+		"A filter other than the breakdown itself (an entity id, --keyword, --show, --ip, ...) turns the check off: the\n" +
+		"attribution report is account-wide.\n" +
 		"On a server that can't page the attribution report, rows past the first page are marked attribution_checked:\n" +
 		"false. --no-attribution-check turns it off."
 	winners := triageCmd("winners", "Rows to SCALE: profitable, converting keywords/geos; closers come back as CLOSER", true)
@@ -940,8 +949,8 @@ func init() {
 		"so more budget won't bring more new buyers. Check what feeds it before scaling.\n\n" +
 		"The check runs for campaign, ppc_account (traffic source), landing_page, keyword and country, and needs a First\n" +
 		"touch model (the first active one, or --first-touch-model) and an attribution:read key. When it can't run, the\n" +
-		"classic winners are still listed with the reason on stderr. An entity filter other than the breakdown itself\n" +
-		"turns it off; --no-attribution-check does too."
+		"classic winners are still listed with the reason on stderr. A filter other than the breakdown itself (an entity\n" +
+		"id, --keyword, --show, ...) turns it off; --no-attribution-check does too."
 	for _, c := range []*cobra.Command{losers, winners} {
 		addReportFilters(c)
 		c.Flags().StringP("breakdown", "b", "keyword", "Dimension to triage")
