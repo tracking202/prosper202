@@ -18,9 +18,14 @@ The API keeps the rules of **Account › User management**. *Admin* means the
 Admin or Super user role; only the Super user role carries the
 `add_edit_delete_admin` permission.
 
-- **Your own account** — profile, password, API keys, signing key and
-  preferences — is always yours to change. Changing your own password needs
-  `current_password` as well (see [User Fields](#user-fields)).
+- **Your own account**: your email, name and password are always yours to
+  change; changing your own password needs `current_password` as well (see
+  [User Fields](#user-fields)). Your preferences, your API keys and your time
+  zone are Personal Settings', and need the `access_to_personal_settings`
+  permission, as the page does (it shows a user without it only their email
+  and password); the Campaign manager, optimizer, viewer and Publisher roles
+  do not carry it. Your username and active flag are the Users page's and
+  need a user you may manage, even when it is you.
 - **Another user's account** needs Admin, and:
   - only user 1 acts on user 1 (the Super user account the installer
     created), whether to read its keys and preferences or to change them;
@@ -48,9 +53,9 @@ each refusal against a running instance.
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/api-keys` | Self, or a user you may manage | List API keys (masked) |
-| `POST` | `/users/{id}/api-keys` | Self, or a user you may manage | Generate a new API key |
-| `DELETE` | `/users/{id}/api-keys/{keyId}` | Self, or a user you may manage | Delete an API key |
+| `GET` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | List API keys (masked) |
+| `POST` | `/users/{id}/api-keys` | Self with `access_to_personal_settings`, or a user you may manage | Generate a new API key |
+| `DELETE` | `/users/{id}/api-keys/{keyId}` | Self with `access_to_personal_settings`, or a user you may manage | Delete an API key |
 
 API keys are masked after the first 8 characters in list responses. The full key is only returned once, at creation time.
 
@@ -58,8 +63,8 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/preferences` | Self, or a user you may manage | Get user preferences (they include the account's integration secrets) |
-| `PUT` | `/users/{id}/preferences` | Self, or a user you may manage | Update preferences |
+| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (they include the account's integration secrets) |
+| `PUT` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Update preferences |
 
 ## User Fields
 

@@ -117,6 +117,52 @@ final class UserManagementRulesInstanceTest extends TestCase
     }
 
     /**
+     * Personal settings are the page's permission's (access_to_personal_
+     * settings): account.php shows a user without it only their email and
+     * password. Self passed with no permission, so a Campaign manager's key
+     * set every preference the page withholds — the privacy setting that
+     * governs its visitors, the tracking domain — and minted itself keys.
+     * The paths the page leaves open (email, password) stay open, and the
+     * Super user still manages the account's preferences and keys.
+     */
+    public function testPersonalSettingsNeedThePagesPermissionEvenForYourself(): void
+    {
+        $run = 'umr' . bin2hex(random_bytes(4)) . 'mgr';
+        [$status, $body] = self::call(self::$superKey, 'POST', '/users', [
+            'user_name' => $run, 'user_email' => "$run@example.com", 'user_pass' => 'pass-' . $run,
+        ]);
+        $id = (int) ($body['data']['user_id'] ?? 0);
+        $this->assertSame(201, $status, 'creating the Campaign manager: ' . json_encode($body));
+        try {
+            [$status] = self::call(self::$superKey, 'POST', "/users/$id/roles", ['role_id' => 3]);
+            $this->assertSame(200, $status, 'granting Campaign manager');
+            [$status, $body] = self::call(self::$superKey, 'POST', "/users/$id/api-keys", []);
+            $this->assertSame(201, $status, 'the Super user mints its key: ' . json_encode($body));
+            $key = (string) $body['data']['api_key'];
+            $self = "/users/$id";
+            $missing = "'access_to_personal_settings' permission";
+
+            $this->assertRefused(403, $missing, 'GET', "$self/preferences", null, $key);
+            $this->assertRefused(403, $missing, 'PUT', "$self/preferences", ['user_tracking_domain' => 'chosen.example'], $key);
+            $this->assertRefused(403, $missing, 'PUT', "$self/preferences", ['user_pref_privacy' => 'disabled'], $key);
+            $this->assertRefused(403, $missing, 'GET', "$self/api-keys", null, $key);
+            $this->assertRefused(403, $missing, 'POST', "$self/api-keys", [], $key);
+            $this->assertRefused(403, $missing, 'PUT', $self, ['user_timezone' => 'Asia/Tokyo'], $key);
+            [, $prefs] = self::call(self::$superKey, 'GET', "$self/preferences");
+            $this->assertSame('', (string) ($prefs['data']['user_tracking_domain'] ?? ''), 'nothing refused was written');
+
+            [$status, $body] = self::call($key, 'PUT', $self, ['user_email' => "$run-new@example.com"]);
+            $this->assertSame(200, $status, 'its email stays its own to change: ' . json_encode($body));
+            [$status] = self::call(self::$superKey, 'PUT', "$self/preferences", ['user_tracking_domain' => 'managed.example']);
+            $this->assertSame(200, $status, 'the Super user sets a preference of a user it manages');
+            [$status] = self::call(self::$superKey, 'GET', "$self/api-keys");
+            $this->assertSame(200, $status, 'and lists its keys');
+        } finally {
+            self::call(self::$superKey, 'DELETE', "/users/$id");
+        }
+    }
+
+    /**
      * A rename is the Users page's (user-management.php), not Personal
      * settings': an Admin without add_edit_delete_admin may change its own
      * first name but not its username. The Super user may rename it, but not

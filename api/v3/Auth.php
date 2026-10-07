@@ -18,6 +18,7 @@ final readonly class Auth
     private const ROLE_ADMIN = 2;
     /** The legacy permission only the Super user role carries. */
     private const MANAGE_ADMINS = 'add_edit_delete_admin';
+    private const PERSONAL_SETTINGS = 'access_to_personal_settings';
 
     private function __construct(
         private int $userId,
@@ -385,6 +386,26 @@ final readonly class Auth
                 403
             );
         }
+    }
+
+    /**
+     * Personal settings — the preferences, the API keys, the account's time
+     * zone: for your own account, the permission Personal Settings asks
+     * (account.php shows a user without it only their email and password);
+     * for another's, a user requireMayManageUser() lets you act on.
+     *
+     * Self passed with no permission at all, so any role with a key set
+     * every preference the page withholds from it — the privacy setting
+     * that governs its visitors, the tracking domain, the currency its
+     * payouts are re-priced into — and minted itself more keys.
+     */
+    public function requirePersonalSettingsOf(\mysqli $db, int $targetUserId): void
+    {
+        if ($this->userId === $targetUserId) {
+            $this->requirePermission($db, self::PERSONAL_SETTINGS);
+            return;
+        }
+        $this->requireMayManageUser($db, $targetUserId);
     }
 
     /** Your own account, or one requireMayManageUser() lets you act on. */

@@ -917,10 +917,14 @@ try {
             // requireSelfOrMayManageUser() and its siblings in Auth say how.
             $r->put('/{id}', function ($ctx) use ($auth, $make, $payload, $db) {
                 $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
-                // A rename is the Users page's, not Personal settings': it
-                // needs a user you may manage, even when that is you.
-                if (array_key_exists('user_name', $payload)) {
+                // A rename and the active flag are the Users page's, not
+                // Personal settings': they need a user you may manage, even
+                // when that is you. The time zone is Personal settings'.
+                if (array_key_exists('user_name', $payload) || array_key_exists('user_active', $payload)) {
                     $auth->requireMayManageUser($db, (int)$ctx['id']);
+                }
+                if (array_key_exists('user_timezone', $payload)) {
+                    $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 }
                 return $make()->update((int)$ctx['id'], $payload, $auth->userId());
             });
@@ -941,17 +945,18 @@ try {
                 return null;
             });
 
-            // API keys (self, or a user you may manage)
+            // API keys (Personal settings: yours with the page's permission,
+            // or a user you may manage)
             $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 return $make()->listApiKeys((int)$ctx['id']);
             });
             $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 return ['_status' => 201] + $make()->createApiKey((int)$ctx['id'], $payload, $auth);
             });
             $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 $make()->deleteApiKey((int)$ctx['id'], $ctx['keyId']);
                 return null;
             });
@@ -972,14 +977,15 @@ try {
                 return $make()->rotateIdentityKey((int)$ctx['id']);
             });
 
-            // Preferences (self, or a user you may manage: they hold the
-            // account's integration secrets)
+            // Preferences (Personal settings: yours with the page's
+            // permission, or a user you may manage; they hold the account's
+            // integration secrets)
             $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 return $make()->getPreferences((int)$ctx['id']);
             });
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 return $make()->updatePreferences((int)$ctx['id'], $payload);
             });
         });
@@ -1136,7 +1142,7 @@ try {
                 return $make()->deletePreview((int)$ctx['id']);
             });
             $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
                 return $make()->deleteApiKeyPreview((int)$ctx['id'], (string)$ctx['keyId']);
             });
             $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {

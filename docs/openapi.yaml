@@ -3863,7 +3863,10 @@ paths:
       description: >-
         Your own account, or another user's under the user-management rules:
         Admin, never user 1 unless you are user 1, and an Admin or Super user
-        account only with the Super user role (403 otherwise). A new
+        account only with the Super user role (403 otherwise). `user_name` and
+        `user_active` are the Users page's, so they need a user you may
+        manage even when it is you; `user_timezone` is Personal Settings', so
+        your own needs the `access_to_personal_settings` permission. A new
         `user_pass` (8-72 characters) is re-hashed; changing your own needs
         `current_password` too (422 naming it when missing or wrong).
       operationId: updateUser
@@ -3969,7 +3972,11 @@ paths:
     get:
       tags: [Users]
       summary: List API keys for a user
-      description: Self or admin. Keys are masked (first 8 chars visible).
+      description: >-
+        Your own with the `access_to_personal_settings` permission (Personal
+        Settings', which shows a user without it only their email and
+        password), or a user you may manage. Keys are masked (first 8 chars
+        visible).
       operationId: listApiKeys
       responses:
         "200":
@@ -4000,8 +4007,9 @@ paths:
       tags: [Users]
       summary: Create an API key
       description: |
-        Self or admin. Returns the full 64-character hex key. This is the only
-        time the full key is visible -- store it securely.
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. Returns the full 64-character hex key. This is the
+        only time the full key is visible -- store it securely.
 
         An optional `scope` attenuates the key (see "API Key Scopes" above).
         Unknown tokens are rejected with 422; a scoped caller must name an
@@ -4063,7 +4071,9 @@ paths:
         - $ref: "#/components/parameters/dryRun"
       tags: [Users]
       summary: Delete an API key
-      description: Self or admin.
+      description: >-
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage.
       operationId: deleteApiKey
       responses:
         "200":
@@ -4137,7 +4147,9 @@ paths:
     get:
       tags: [Users]
       summary: Get user preferences
-      description: Self or admin.
+      description: >-
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. They include the account's integration secrets.
       operationId: getPreferences
       responses:
         "200":
@@ -4155,7 +4167,8 @@ paths:
       tags: [Users]
       summary: Update user preferences
       description: >-
-        Self, or a user you may manage. Any subset of the fields below, each
+        Your own with the `access_to_personal_settings` permission, or a user
+        you may manage. Any subset of the fields below, each
         checked against the settings page that owns it; an unknown key is a
         422 naming it.
       operationId: updatePreferences
