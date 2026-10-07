@@ -445,15 +445,23 @@ AND 2st.click_time <= " . $clickTo . $click_filtered . "
             AND 2st.landing_page_id > 0";
         } else {
             $select_by_id = 'aff_campaign_id';
+            // The campaign's category is the campaign's own, not each click's
+            // copy (2st.aff_network_id, which keeps the category a click was
+            // rolled up under: CLAUDE.md #31). Grouped by the campaign, the
+            // copy was one row's pick among the group's, and a query that
+            // strict MySQL refuses (ONLY_FULL_GROUP_BY: the name is not
+            // determined by the grouped id); it ran only under the lenient
+            // session mode the pages set. Both labels are one value per
+            // campaign, and MIN() says so in every mode, MariaDB's included.
             $labelSelect = "
-            aff_network_name,
-            202_aff_campaigns.aff_campaign_name,
+            MIN(202_aff_networks.aff_network_name) AS aff_network_name,
+            MIN(202_aff_campaigns.aff_campaign_name) AS aff_campaign_name,
             2st.aff_campaign_id,";
             // Each of the account's campaigns (an inner join, as above).
             $labelJoins = "
             INNER JOIN 202_aff_campaigns ON (202_aff_campaigns.aff_campaign_id = 2st.aff_campaign_id
               AND 202_aff_campaigns.user_id = 2st.user_id)
-            LEFT JOIN 202_aff_networks on (2st.aff_network_id= 202_aff_networks.`aff_network_id` AND 202_aff_networks.user_id = 2st.user_id)";
+            LEFT JOIN 202_aff_networks ON (202_aff_networks.aff_network_id = 202_aff_campaigns.aff_network_id AND 202_aff_networks.user_id = 2st.user_id)";
             $typeCondition = "
             AND 2st.aff_campaign_id IS TRUE";
         }
