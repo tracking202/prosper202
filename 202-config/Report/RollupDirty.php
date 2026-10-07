@@ -112,9 +112,22 @@ final class RollupDirty
 
     /**
      * Clicks are about to be deleted, with every row keyed by them
-     * (click-data retention, Prosper202\Click\ClickRetention): mark what
-     * the rollup summed them into, read here, before the rows go, in the
-     * transaction that deletes them —
+     * (click-data retention, Prosper202\Click\ClickRetention): mark the
+     * hours the rollup summed them into (summedHours()), read before the
+     * rows go, in the transaction that deletes them.
+     *
+     * @param list<int> $clickIds
+     * @return int marks written
+     */
+    public static function clicksDeleted(Connection $conn, array $clickIds): int
+    {
+        return self::hourRuns($conn, self::summedHours($conn, $clickIds));
+    }
+
+    /**
+     * Every hour the rollup summed these clicks into, per account, read as
+     * the rows stand now. A click is summed through three tables, and each
+     * is read for it:
      *
      *  - the hours of the clicks' own rows (the cost part, and every
      *    dimension key their clicks_advance and clicks_tracking rows give);
@@ -128,20 +141,24 @@ final class RollupDirty
      *    credit, and RollupMatchesFullComputationTest's tenants carry
      *    exactly that.
      *
-     * Only accounts with an attribution model are marked: AttributionRollup
+     * The conversions a click touches are never taken from the journeys
+     * alone: AttributionRollup::resolveDirtyClicks() and the deletion both
+     * read them here.
+     *
+     * Only accounts with an attribution model are answered: AttributionRollup
      * sums no other (accounts()), and DefaultModel gives every account one
      * from the moment it exists, so an account without one is a deleted
      * user — whose rollup UserDataPurge removed, and whose clicks are kept
      * and age out like any other. A mark there would never be consumed.
      *
      * @param list<int> $clickIds
-     * @return int marks written
+     * @return array<int, list<int>> user_id => hours (unix time DIV 3600; repeats possible)
      */
-    public static function clicksDeleted(Connection $conn, array $clickIds): int
+    public static function summedHours(Connection $conn, array $clickIds): array
     {
         $ids = array_values(array_unique(array_map('intval', $clickIds)));
         if ($ids === []) {
-            return 0;
+            return [];
         }
         $in = implode(',', array_fill(0, count($ids), '?'));
         $types = str_repeat('i', count($ids));
@@ -166,7 +183,7 @@ final class RollupDirty
             $hours[(int) $r['user_id']][] = (int) $r['h'];
         }
         if ($hours === []) {
-            return 0;
+            return [];
         }
 
         $users = array_keys($hours);
@@ -193,7 +210,7 @@ final class RollupDirty
             }
         }
 
-        return self::hourRuns($conn, array_intersect_key($hours, $modelled));
+        return array_intersect_key($hours, $modelled);
     }
 
     /**

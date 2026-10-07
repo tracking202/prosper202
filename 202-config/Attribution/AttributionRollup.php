@@ -30,8 +30,9 @@ use Prosper202\Report\RollupDirty;
  *    cheaply know — a rotator re-click rewriting an existing click — writes
  *    a 202_attribution_rollup_dirty_clicks row instead, and this class turns
  *    it into the hours of the click and of every conversion whose journey
- *    holds it. A report computes every dirty hour exactly, and computes the
- *    whole account exactly while any changed click is unresolved.
+ *    holds it or whose credits name it. A report computes every dirty hour
+ *    exactly, and computes the whole account exactly while any changed
+ *    click is unresolved.
  * 3. **One snapshot.** Each report statement unions the rollup rows with the
  *    exact rows for the hours it cannot serve, and carries a guard evaluated
  *    in the same statement: the account is still built past the planned
@@ -163,10 +164,12 @@ final class AttributionRollup
     }
 
     /**
-     * Turn changed clicks into dirty hours: the hours of every row the click
-     * has (the cost side), and the conversion hours of every journey that
-     * holds it (credits and assists), then drop the click row — in one
-     * transaction, so a report sees either the click or its hours.
+     * Turn changed clicks into dirty hours: every hour the rollup summed
+     * them into — their own rows' (the cost side), and the conversion hours
+     * of every journey that holds one and every credit that names one
+     * (RollupDirty::summedHours(); a journey that lost a position still
+     * credits its click) — then drop the click rows, in one transaction, so
+     * a report sees either the click or its hours.
      */
     public function resolveDirtyClicks(int $deadline): int
     {
@@ -181,35 +184,22 @@ final class AttributionRollup
                 break;
             }
             $this->conn->transaction(function () use ($rows): void {
-                foreach ($rows as $row) {
-                    $clickId = (int) $row['click_id'];
-                    $marks = [];
-                    $stmt = $this->conn->prepareWrite('SELECT DISTINCT user_id, click_time DIV 3600 AS h FROM 202_clicks WHERE click_id = ?');
-                    $this->conn->bind($stmt, 'i', [$clickId]);
-                    foreach ($this->conn->fetchAll($stmt) as $r) {
-                        $marks[] = [(int) $r['user_id'], (int) $r['h']];
+                $marks = [];
+                $summed = RollupDirty::summedHours($this->conn, array_map(static fn (array $r): int => (int) $r['click_id'], $rows));
+                foreach ($summed as $userId => $hours) {
+                    // An account the rollup has never summed (or whose
+                    // state a user deletion removed) has no hours to
+                    // spoil; a mark there would never be consumed.
+                    if ($this->state($userId) !== null) {
+                        $marks[$userId] = $hours;
                     }
-                    $stmt = $this->conn->prepareWrite(
-                        'SELECT DISTINCT jm.user_id, jm.conv_time DIV 3600 AS h
-                         FROM 202_attribution_journeys j JOIN 202_attribution_journey_meta jm ON jm.conv_id = j.conv_id
-                         WHERE j.click_id = ?'
-                    );
-                    $this->conn->bind($stmt, 'i', [$clickId]);
-                    foreach ($this->conn->fetchAll($stmt) as $r) {
-                        $marks[] = [(int) $r['user_id'], (int) $r['h']];
-                    }
-                    foreach ($marks as [$userId, $hour]) {
-                        // An account the rollup has never summed (or whose
-                        // state a user deletion removed) has no hours to
-                        // spoil; a mark there would never be consumed.
-                        if ($this->state($userId) !== null) {
-                            RollupDirty::hours($this->conn, $userId, $hour, $hour);
-                        }
-                    }
-                    $del = $this->conn->prepareWrite('DELETE FROM 202_attribution_rollup_dirty_clicks WHERE dirty_id = ?');
-                    $this->conn->bind($del, 'i', [(int) $row['dirty_id']]);
-                    $this->conn->executeUpdate($del);
                 }
+                RollupDirty::hourRuns($this->conn, $marks);
+                $del = $this->conn->prepareWrite(
+                    'DELETE FROM 202_attribution_rollup_dirty_clicks WHERE dirty_id IN ('
+                    . self::intList(array_map(static fn (array $r): int => (int) $r['dirty_id'], $rows)) . ')'
+                );
+                $this->conn->executeUpdate($del);
             });
             $resolved += count($rows);
             if (count($rows) < self::CLICK_BATCH) {
@@ -564,12 +554,14 @@ final class AttributionRollup
             $this->conn->executeUpdate($stmt);
         }
 
-        // An hour whose journeys hold a click younger than the seal (a
-        // conversion dated before its own click can) is summed but left
-        // dirty, so reports compute it exactly until that click is old:
-        // the redirects that rewrite a young click do not mark it
+        // An hour whose journeys or credits hold a click younger than the
+        // seal (a conversion dated before its own click can) is summed but
+        // left dirty, so reports compute it exactly until that click is
+        // old: the redirects that rewrite a young click do not mark it
         // (RollupDirty::HOT_PATH_SECONDS), which is only sound if no clean
-        // hour holds one.
+        // hour holds one. The credits are read as well as the journeys: a
+        // journey that lost a position still credits its click.
+        $young = ($this->clock)() - self::SEAL_SECONDS;
         $stmt = $this->conn->prepareWrite(
             'SELECT DISTINCT jm.conv_time DIV 3600 AS h
              FROM 202_attribution_journey_meta jm
@@ -577,10 +569,21 @@ final class AttributionRollup
              JOIN 202_clicks c ON c.click_id = j.click_id
              WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ? AND c.click_time > ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$userId, $from, $to, ($this->clock)() - self::SEAL_SECONDS]);
-        foreach ($this->conn->fetchAll($stmt) as $r) {
-            RollupDirty::hours($this->conn, $userId, (int) $r['h'], (int) $r['h']);
+        $this->conn->bind($stmt, 'iiii', [$userId, $from, $to, $young]);
+        $hours = array_map(static fn (array $r): int => (int) $r['h'], $this->conn->fetchAll($stmt));
+        if ($modelIds !== []) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT DISTINCT cr.conv_time DIV 3600 AS h
+                 FROM 202_attribution_credits cr
+                 JOIN 202_clicks c ON c.click_id = cr.click_id
+                 WHERE cr.model_id IN (' . self::intList($modelIds) . ') AND cr.conv_time >= ? AND cr.conv_time <= ? AND c.click_time > ?'
+            );
+            $this->conn->bind($stmt, 'iii', [$from, $to, $young]);
+            foreach ($this->conn->fetchAll($stmt) as $r) {
+                $hours[] = (int) $r['h'];
+            }
         }
+        RollupDirty::hourRuns($this->conn, [$userId => $hours]);
     }
 
     /**
