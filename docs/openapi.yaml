@@ -2768,8 +2768,16 @@ paths:
       summary: Update a rule
       description: >-
         Replaces the fields it sends among rule_name, splittest, status,
-        criteria and redirects (any other field is a 422). PATCH is accepted
-        as the same operation.
+        criteria and redirects (any other field is a 422, and so is any key
+        inside a criterion or redirect the endpoint does not take, named
+        like `redirects.0.weigth`). A rule read with GET can be sent back
+        whole: its id and rotator_id, and each entry's id, rotator_id,
+        rule_id and auto_monetizer, are accepted with the rule's own values
+        and refused with any other (an entry id must be one of this rule's;
+        the entries are written afresh, so a body read before an earlier
+        update names ids that are gone). A create refuses them. A redirect
+        that carries the auto_monetizer it holds, and no destination, stays
+        the auto-monetizer. PATCH is accepted as the same operation.
       operationId: updateRotatorRule
       requestBody:
         required: true

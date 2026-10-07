@@ -49,6 +49,24 @@ Rules contain criteria (conditions a visit must all match) and redirects
 anything is written: a refused rule creates nothing, and a refused update
 leaves the rule as it was.
 
+Every key is checked, inside each criterion and redirect too: a key a
+criterion or redirect does not take is a `422` naming it by its place
+(`redirects.0.weigth`, `criteria.1.valeu`), with the keys it does take.
+Only the top-level keys used to be checked, so `"weigth": 40` was dropped
+and the redirect stored at the default weight of 100.
+
+**A rule read with `GET` can be sent back whole** (`PUT
+/rotators/{id}/rules/{ruleId}` with one of `GET /rotators/{id}/rules`): the
+rule's `id` and `rotator_id`, and each criterion's `id`, `rotator_id` and
+`rule_id` and each redirect's `id`, `rule_id` and `auto_monetizer`, are
+accepted with the rule's own values and refused with any other. An entry's
+`id` must be one of this rule's: an update writes the criteria and redirects
+afresh, so they get new ids, and a body read before an earlier update names
+ids that are gone (re-read the rule). A create refuses all of them. A
+redirect that Setup → Redirectors made the auto-monetizer (no destination,
+`auto_monetizer` set) stays the auto-monetizer when it is sent back that way;
+sending a destination beside it is a `422`.
+
 ### Create/Update Rule Payload
 
 ```json
