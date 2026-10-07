@@ -342,7 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $user_row['install_hash'] ?? '');
+					p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
 
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {

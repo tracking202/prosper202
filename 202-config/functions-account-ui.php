@@ -164,6 +164,26 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
 }
 
 /**
+ * Tell the hosted service when to send the daily email, after the profile
+ * was saved (registerDailyEmail()).
+ *
+ * That needs this install's address, and a read of it that fails throws
+ * rather than register the server's own name (p202StoredTrackingDomain()).
+ * The settings are saved by then, so the failure is said, queued for the
+ * page the save redirects to, and the caller goes on: it still has the
+ * redirects' cached settings to refresh.
+ */
+function p202_account_register_daily_email(string $time, string $timezone, string $installHash): void
+{
+    try {
+        registerDailyEmail($time, $timezone, $installHash);
+    } catch (Throwable $e) {
+        error_log('Daily email registration failed after the profile was saved: ' . $e->getMessage());
+        p202_account_flash('warn', 'The daily email schedule could not be updated just now; save again to retry.');
+    }
+}
+
+/**
  * Save the account currency and re-price this account's campaigns into it:
  * all of it or none.
  *

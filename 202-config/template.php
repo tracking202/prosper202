@@ -428,7 +428,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 			window.addEventListener('load', function() {
 				window.setTimeout(function() {
 					if (navigator.sendBeacon) {
-						navigator.sendBeacon("//<?php echo getTrackingDomain() . get_absolute_url(); ?>202-cronjobs/");
+						<?php echo p202CronBeaconStatement(); ?>
 					}
 				}, 3000);
 			});
