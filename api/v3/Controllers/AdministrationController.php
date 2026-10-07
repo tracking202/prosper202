@@ -49,14 +49,12 @@ use Prosper202\Database\Connection;
 final class AdministrationController
 {
     /**
-     * The tables the cron job's one-off deletion removes rows from, by
-     * click_id — ClearOldClicks()'s list in 202-cronjobs/index.php, which
-     * AdministrationRoutesPermissionTest holds equal to this one.
+     * The tables the cron job's deletions remove a click's rows from, by
+     * click_id: the list Prosper202\Click\ClickRetention deletes from, which
+     * ClearOldClicks() and AutoOptimizeDatabase() in 202-cronjobs/index.php
+     * both run, so the preview counts exactly what goes.
      */
-    public const CLICK_DATA_TABLES = [
-        '202_clicks', '202_clicks_advance', '202_clicks_record', '202_clicks_site', '202_clicks_spy',
-        '202_clicks_tracking', '202_dataengine', '202_google', '202_bing', '202_clicks_variable',
-    ];
+    public const CLICK_DATA_TABLES = \Prosper202\Click\ClickRetention::TABLES;
 
     /** The most days the page's number input accepts (100 years). */
     public const MAX_AUTO_DELETE_DAYS = 36500;
@@ -239,10 +237,10 @@ final class AdministrationController
     // ─── GET|PUT /system/retention ──────────────────────────────────────
 
     /**
-     * Automatic deletion (click data older than auto_delete_days goes each
-     * night; 0 keeps it all) and the one-off deletion scheduled through
-     * delete-before, if any: the cron job deletes, in batches, every click
-     * whose id is below through_click_id.
+     * Automatic deletion (click data older than auto_delete_days goes, from
+     * the first cron run after midnight; 0 keeps it all) and the one-off
+     * deletion scheduled through delete-before, if any: the cron job
+     * deletes, in batches, every click whose id is below through_click_id.
      *
      * @return array{data: array<string, mixed>}
      */
@@ -295,8 +293,9 @@ final class AdministrationController
      * Schedule the deletion of click data from before a day (the page's
      * Advanced › "Delete click data from before"). The page does not delete:
      * it stores a click id on user 1's preferences, and the cron job deletes
-     * every row below it from CLICK_DATA_TABLES, 5,000 a table each run, for
-     * every account on the install. It cannot be undone.
+     * every row below it from CLICK_DATA_TABLES, a batch of clicks from every
+     * table in one transaction (Prosper202\Click\ClickRetention), for every
+     * account on the install. It cannot be undone.
      *
      * The id is the page's: the newest click recorded at or before midnight
      * that begins `before`, in the caller's time zone. A dry run answers it

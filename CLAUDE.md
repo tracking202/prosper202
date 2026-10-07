@@ -365,6 +365,17 @@ parse errors, and the docblock says so rather than guarding against them.
 When a classifier keys on adjacency, ask what the language lets sit
 between the variable and the thing that acts on it.
 
+The same blindness, one token wide: `RollupWritersAreMarkedTest` read each
+string literal alone, so the cron job's
+`explode(',', '202_clicks,202_clicks_advance,…')` and its
+``"DELETE FROM `$table`"`` were neither a write naming a summed table nor a
+bare table name, and the job that deleted every click table passed as
+writing none — the rollup kept sums for deleted clicks. A string is what PHP
+assembles: the scan now joins literals across `.`, reads interpolations and
+heredocs, resolves class constants through the file's imports, and reports
+a write whose table it cannot read as `unread` instead of as no write.
+Measured on 25 planted spellings: the old scan saw 8.
+
 ### 21. Naming a thing is not being guarded by it
 
 `versionsComparedIn()` reported which versions a gate's condition compares
@@ -651,6 +662,22 @@ disagree, make the reader accept every "none" the writers produce, since rows
 already written will not change. An end-to-end request through the real
 reader (here, a click that matches the rule) is what finds it; reading either
 file alone cannot.
+
+### 26. A boundary stands in for a predicate only where its order holds
+Automatic click deletion was to delete clicks older than N days. It took
+`MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
+below the *oldest* expired click — so it deleted almost nothing it promised,
+and, since a redirect reads `click_time` before it allocates the id and a
+rotator re-click gives an old id a new row, it could take a newer click with
+a smaller id. Measured live with a 30-day setting: the old job deleted two
+clicks recorded that day and kept all fourteen expired ones. An id range is a
+cheap stand-in for a time range only where ids are allocated in time order,
+and nothing here guarantees that: select the rows the predicate names, by an
+index on the predicate's own column, and act on their keys. The same job's
+hand-kept list of click tables had drifted five tables behind the schema;
+`ClickRetentionCoversEveryClickTableTest` now holds it to the table
+definitions. And a delete is a write the derived sums must hear about —
+`RollupDirty::clicksDeleted()` marks them in the deleting transaction.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
