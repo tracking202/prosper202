@@ -843,10 +843,9 @@ class ReportSummaryForm extends ReportBasicForm
 			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id)";
 		}
 
-		if ($user_row['user_pref_keyword']) {
-			$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-			$info_sql .= "INNER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id AND 2k.keyword LIKE '%" . $mysql['user_pref_keyword'] . "%')";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
+		// The keyword, referer and IP filters are WHERE terms (TextFilterSql,
+		// below), not joins.
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
 			$info_sql .= "LEFT OUTER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id)";
 		}
 
@@ -854,13 +853,7 @@ class ReportSummaryForm extends ReportBasicForm
 			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id)";
 		}
 
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT) || $user_row['user_pref_referer']) {
-			if ($user_row['user_pref_referer']) {
-				$mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2ru ON (2ru.site_url_address = '" . $mysql['user_pref_referer'] . "')";
-				$info_sql .= "INNER JOIN 202_clicks_site AS 2cs ON (2cs.click_referer_site_url_id = 2ru.site_url_id AND 2c.click_referer_site_url_id = 2cs.click_referer_site_url_id)";
-			}
-
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT)) {
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER)) {
 				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2suf ON (2c.click_referer_site_url_id = 2suf.site_url_id)";
 			}
@@ -901,15 +894,7 @@ class ReportSummaryForm extends ReportBasicForm
 			$info_sql .= "LEFT OUTER JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id)";
 		}
 
-		if ($user_row['user_pref_ip']) {
-			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-
-			$ip_address = (ipAddress($mysql['user_pref_ip']));
-			$mysql['ip_id'] = $db->real_escape_string(INDEXES::get_ip_id($ip_address));
-
-			$info_sql .= "INNER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id AND 2c.ip_id ='" . $mysql['ip_id'] . "')";
-			$info_sql .= "INNER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "LEFT OUTER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)";
 			$info_sql .= "LEFT OUTER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
 		}
@@ -989,6 +974,17 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		$info_sql .= \Prosper202\DataEngine\UserPrefFilters::showFilter((string)($user_row['user_pref_show'] ?? ''), '2c.');
+		// Referer, keyword and IP, as every report and the API read them.
+		// This report matched the keyword as a LIKE pattern, the referer only
+		// when it was the whole URL and through a join that paired each click
+		// with every click sharing its referer, and the address through its
+		// first 202_ips row and an inner join to 202_ips_v6 that no IPv4
+		// address has: an IPv4 filter showed nothing.
+		$info_sql .= \Prosper202\DataEngine\TextFilterSql::where(
+			$user_row,
+			'2c',
+			static fn (string $text): string => $db->real_escape_string($text)
+		);
 		if ($user_row['user_pref_country_id']) {
 			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
 			$info_sql .= "

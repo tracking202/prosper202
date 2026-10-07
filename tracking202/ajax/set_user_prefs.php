@@ -37,7 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$mysql['user_pref_country_id'] = $db->real_escape_string(isset($_POST['country_id']) ? (string)$_POST['country_id'] : '');
 		$mysql['user_pref_region_id'] = $db->real_escape_string(isset($_POST['region_id']) ? (string)$_POST['region_id'] : '');
 		$mysql['user_pref_isp_id'] = $db->real_escape_string(isset($_POST['isp_id']) ? (string)$_POST['isp_id'] : '');    
-		$mysql['user_pref_ip'] = $db->real_escape_string(isset($_POST['ip']) ? (string)$_POST['ip'] : '');  
+		$mysql['user_pref_ip'] = $db->real_escape_string(isset($_POST['ip']) ? (string)$_POST['ip'] : '');
+		// One whole address, as every report reads the filter (TextFilterSql)
+		// and as the v2 pages' readers refuse anything else.
+		$postedIp = trim(isset($_POST['ip']) ? (string)$_POST['ip'] : '');
+		if ($postedIp !== '' && filter_var($postedIp, FILTER_VALIDATE_IP) === false) {
+			$error['ip'] = '<div class="error">That is not an IP address. Give one whole address, IPv4 or IPv6.</div>';
+		}  
 		$mysql['user_pref_ref'] = $db->real_escape_string(isset($_POST['referer']) ? (string)$_POST['referer'] : '');  
 		$mysql['user_pref_keyword'] = $db->real_escape_string(isset($_POST['keyword']) ? (string)$_POST['keyword'] : '');  
 		$mysql['user_pref_limit'] = $db->real_escape_string(isset($_POST['user_pref_limit']) ? (string)$_POST['user_pref_limit'] : '');
@@ -103,7 +109,7 @@ if (isset($_POST['user_pref_time_predefined']) && $_POST['user_pref_time_predefi
 	}
 }
 
-echo ($error['date'] ?? '') . ($error['user_pref_time_predefined'] ?? '') .  ($error['user_pref_limit'] ?? '') . ($error['user_pref_show'] ?? '');    
+echo ($error['date'] ?? '') . ($error['user_pref_time_predefined'] ?? '') .  ($error['user_pref_limit'] ?? '') . ($error['user_pref_show'] ?? '') . ($error['ip'] ?? '');    
 
 
 if (empty($error) && $_SERVER['REQUEST_METHOD'] == 'POST') {

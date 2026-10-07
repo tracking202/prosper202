@@ -6,11 +6,11 @@ namespace Prosper202\DataEngine;
 
 /**
  * Builds the WHERE/JOIN/LIMIT SQL fragments derived from a user's report
- * preferences (202_users_pref row). Pure string assembly — the caller
- * resolves anything that needs a database lookup (IP and referer ids) and
- * passes the result in, which keeps this fully unit-testable. The caller
- * is also responsible for escaping the free-text keyword preference;
- * numeric preferences are integer-cast here as defense in depth.
+ * preferences (202_users_pref row). Pure string assembly: the keyword,
+ * referer and IP filters are subqueries (TextFilterSql, the API's
+ * ReportFilter), so nothing needs looking up first, and their text is
+ * quoted through the escaper the caller passes (the connection's
+ * real_escape_string); numeric preferences are integer-cast here.
  *
  * Faithful to the legacy DataEngine::getFilters(), including the quirk that
  * a "show" preference of real/filtered/filtered_bot/leads *replaces* any
@@ -19,23 +19,22 @@ namespace Prosper202\DataEngine;
 final class UserPrefFilters
 {
     /**
-     * @param array<string, mixed> $userRow      Row from 202_users_pref.
-     * @param int                  $offset       Page offset (from the request).
-     * @param bool                 $forDownload  Downloads are not paginated.
-     * @param ?string              $ipIdList     Resolved ip_id list when the
-     *                                           user filters by IP; null when
-     *                                           the lookup found nothing.
-     * @param ?string              $refererIdList Resolved site_url_id list when
-     *                                           the user filters by referer.
+     * @param array<string, mixed>     $userRow     Row from 202_users_pref.
+     * @param int                      $offset      Page offset (from the request).
+     * @param bool                     $forDownload Downloads are not paginated.
+     * @param callable(string): string $escape      The connection's
+     *                                              real_escape_string, for the
+     *                                              text filters' literals.
      *
-     * @return array{join: string, filter: string, limit: string}
+     * @return array{join: string, filter: string, limit: string} `join` is
+     *   always '' now (the keyword filter joined 202_keywords for its LIKE);
+     *   it stays in the shape for the reports that splice it in.
      */
     public static function build(
         array $userRow,
         int $offset,
         bool $forDownload,
-        ?string $ipIdList = null,
-        ?string $refererIdList = null,
+        callable $escape,
     ): array {
         $filter = '';
         $join = '';
@@ -97,31 +96,7 @@ final class UserPrefFilters
             $filter .= " AND 2st.landing_page_id != 0";
         }
 
-        if (!empty($userRow['user_pref_keyword'])) {
-            $filter .= " AND 2k.keyword like '%" . $userRow['user_pref_keyword'] . "%'";
-            $join = ' LEFT OUTER JOIN 202_keywords AS 2k ON (2k.keyword_id=2st.keyword_id) ';
-        }
-
-        if (!empty($userRow['user_pref_ip'])) {
-            if (($ipIdList ?? '') !== '') {
-                $filter .= " AND 2st.ip_id=" . $ipIdList;
-            } else {
-                // Filter matched nothing: force an empty result set. ip_id is
-                // numeric/NULL, so `ip_id=''` would coerce to `ip_id=0` and
-                // could match real rows; use an unconditionally false predicate.
-                $filter .= " AND 0=1";
-            }
-        }
-
-        if (!empty($userRow['user_pref_referer'])) {
-            if (($refererIdList ?? '') !== '') {
-                $filter .= " AND 2st.click_referer_site_url_id in (" . $refererIdList . ")";
-            } else {
-                // click_referer_site_url_id is numeric/NULL; `=''` would coerce
-                // to 0 and match direct/unknown-referer rows. Force empty set.
-                $filter .= " AND 0=1";
-            }
-        }
+        $filter .= TextFilterSql::where($userRow, '2st', $escape);
 
         if (!empty($userRow['user_pref_limit']) && !$forDownload) {
             $pageSize = (int) $userRow['user_pref_limit'];
