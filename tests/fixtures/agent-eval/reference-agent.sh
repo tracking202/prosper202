@@ -22,6 +22,37 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # Tracking links, the key's identity and rotator URL rules
+    # (setup-links.json). First: the asks name campaigns and "add".
+    *"Google Ads fills in the keyword"*)
+        # The tracker of the named campaign, its link with the source's
+        # macros written in as given (the CLI refuses anything that would
+        # break the URL, so the macro needs no encoding).
+        campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id // empty')
+        if [ -z "$tracker" ]; then
+            printf 'EVAL Campaign B has no tracker (`p202 tracker list`); create one with `p202 tracker create-with-url --aff_campaign_id %s`.\n' "$campaign"
+        else
+            link=$(p202 tracker get-url "$tracker" --t202kw '{keyword}' --c1 google --json | jq -r '.data.direct_url')
+            printf 'The tracking link for EVAL Campaign B (tracker %s), with Google Ads'"'"' keyword macro and c1=google:\n%s\n' "$tracker" "$link"
+        fi
+        ;;
+    *"which Prosper202 user does this CLI"*)
+        me=$(p202 whoami --json)
+        printf 'The key acts as %s (user %s, roles: %s) with scopes %s: %s.\n' \
+            "$(printf '%s' "$me" | jq -r '.data.user_name')" \
+            "$(printf '%s' "$me" | jq -r '.data.user_id')" \
+            "$(printf '%s' "$me" | jq -r '.data.roles | join(", ")')" \
+            "$(printf '%s' "$me" | jq -r '.data.scopes | join(", ")')" \
+            "$(printf '%s' "$me" | jq -r 'if (.data.scopes | index("*")) then "full access" else "limited to those scopes" end')"
+        ;;
+    *"from the IP address 203.0.113.50"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Geo Split")][0].id')
+        p202 rotator rule-create "$rotator" --rule_name "EVAL IP 203.0.113.50" \
+            --criteria_json '[{"type":"ip","statement":"is","value":"203.0.113.50"}]' \
+            --redirects_json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
+        printf 'Added rule "EVAL IP 203.0.113.50" to EVAL Geo Split (redirector %s): visitors from 203.0.113.50 go to https://eval-ip-rule.example/landing; everyone else still follows the existing rules and the default.\n' "$rotator"
+        ;;
     # The Update section (update.json). First, because two of the asks say
     # "delete" or "cost" and must not fall through to the general branches.
     *"Record that cost"*)

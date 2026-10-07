@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "id": "setup-link-001-the-tracking-link-carries-the-sources-macros",
+      "priority": "high",
+      "state": "seeded fixture: EVAL Campaign B has a direct-link tracker",
+      "ask": "I'm about to send Google Ads traffic to EVAL Campaign B. Give me its tracking link, set up so Google Ads fills in the keyword (its macro is {keyword}) and c1 records google.",
+      "expected": {
+        "runs_one_of": ["tracker get-url", "tracker create-with-url"],
+        "reply_includes": ["t202kw={keyword}", "c1=google", "dl.php?t202id="],
+        "rubric": "PASS if the reply gives EVAL Campaign B's tracking link with t202kw={keyword} and c1=google in its query, written unencoded so Google Ads substitutes the macro. FAIL if the macro is URL-encoded ({ becomes %7B), the link belongs to another campaign, or the agent created a second tracker when one existed."
+      },
+      "notes": "`p202 tracker get-url <id> --t202kw '{keyword}' --c1 google` writes the tokens the way Setup > Get Links does. The API used to answer a fixed t202kw={keyword}&c1={c1}..&c4={c4} whatever was asked, and on an install with no tracking domain set it answered 404."
+    },
+    {
+      "id": "setup-link-002-the-agent-knows-whose-key-it-holds",
+      "priority": "medium",
+      "state": "seeded fixture; the CLI is configured with the installer's Super user key (user evalci)",
+      "ask": "Before you change anything: which Prosper202 user does this CLI's API key act as, and is it limited in what it may do?",
+      "expected": {
+        "runs_one_of": ["whoami", "config test"],
+        "reply_includes": ["evalci"],
+        "rubric": "PASS if the reply names the user the key acts as (evalci, user 1) and says its scope is full access (*). FAIL if the agent guesses from the profile name or config file, or changes anything."
+      },
+      "notes": "GET /capabilities carries the key's principal (user id, roles, scopes); `p202 whoami` adds the username. Before it a key holder had no way to learn its own user id."
+    },
+    {
+      "id": "setup-link-003-a-rule-that-redirects-to-a-url-delivers-the-click",
+      "priority": "high",
+      "state": "seeded fixture: the EVAL Geo Split redirector; setup gives it a tracker (link in /tmp/p202-eval-rotator.url) and removes any rule an earlier run added for 203.0.113.50",
+      "setup": [
+        "r=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name==\"EVAL Geo Split\")][0].id') && c=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name==\"EVAL Campaign A\")][0].aff_campaign_id') && t=$(p202 tracker list --all --json | jq -r --arg r \"$r\" '[.data[] | select((.rotator_id|tostring)==$r)][0].tracker_id // empty') && { [ -n \"$t\" ] || t=$(p202 tracker create --aff_campaign_id \"$c\" --rotator_id \"$r\" --json | jq -r '.data.tracker_id'); } && p202 tracker get-url \"$t\" --json | jq -r '.data.direct_url' > /tmp/p202-eval-rotator.url && test -s /tmp/p202-eval-rotator.url",
+        "r=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name==\"EVAL Geo Split\")][0].id') && for rule in $(p202 rotator get \"$r\" --json | jq -r '.data.rules[] | select(any(.criteria[]; .value | contains(\"203.0.113.50\"))) | .id'); do p202 rotator rule-delete \"$r\" \"$rule\" --force >/dev/null; done; true"
+      ],
+      "ask": "On the EVAL Geo Split redirector, add a rule that sends visitors from the IP address 203.0.113.50 to https://eval-ip-rule.example/landing.",
+      "expected": {
+        "runs_one_of": ["rotator rule-create", "rotator rule-update"],
+        "checks": [
+          {
+            "run": "curl -s -o /dev/null -w '%{redirect_url}' -H 'X-Forwarded-For: 203.0.113.50' \"$(cat /tmp/p202-eval-rotator.url)\"",
+            "includes": ["https://eval-ip-rule.example/landing"]
+          },
+          {
+            "run": "curl -s -o /dev/null -w '%{redirect_url}' -H 'X-Forwarded-For: 198.51.100.7' \"$(cat /tmp/p202-eval-rotator.url)\" | grep -c eval-ip-rule.example || true",
+            "includes": ["0"]
+          }
+        ],
+        "rubric": "PASS if a click from 203.0.113.50 through the redirector now lands on https://eval-ip-rule.example/landing and other visitors still reach the redirector's default, and the reply says so. FAIL if the rule matches everyone, if the existing EVAL US Traffic rule was removed or changed, or if the agent reports success without the rule being in place."
+      },
+      "notes": "The first check fires a real click through rtr.php. A URL redirect made through the API used to be stored with redirect_campaign 0, which the redirect read as a campaign with no campaign: the matching visitor got 302 with an empty Location, and this check failed."
+    }
+  ]
+}
