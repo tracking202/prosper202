@@ -578,33 +578,6 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		return $ext;
 	}
 
-	function getPath($path)
-	{
-		$url = "http" . (!empty($_SERVER['HTTPS']) ? "s" : "") .
-			"://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-		$dirs = explode('/', trim((string) preg_replace('/\/+/', '/', (string) $path), '/'));
-		foreach ($dirs as $key => $value)
-			if (empty($value))  unset($dirs[$key]);
-		$parsedUrl = parse_url($url);
-		$pathUrl = explode('/', trim($parsedUrl['path'], '/'));
-		foreach ($pathUrl as $key => $value)
-			if (empty($value))  unset($pathUrl[$key]);
-		$count = count($pathUrl);
-		foreach ($dirs as $dir)
-			if ($dir === '..')
-				if ($count > 0)
-					array_pop($pathUrl);
-				else
-					throw new Exception('Wrong Path');
-			else if ($dir !== '.')
-				if (preg_match('/^(\w|\d|\.| |_|-)+$/', $dir)) {
-					$pathUrl[] = $dir;
-					++$count;
-				} else
-					throw new Exception('Not Allowed Char');
-		return $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/' . implode('/', $pathUrl);
-	}
-
 	function formatOffset($offset)
 	{
 		$hours = $offset / 3600;

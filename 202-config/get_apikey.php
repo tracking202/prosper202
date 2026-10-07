@@ -66,13 +66,5 @@ if ($html['user_api'] == '') {
 	});
 </script>
 
-<?php
-if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {
-	$strProtocol = 'https://';
-} else {
-	$strProtocol = 'http://';
-}
-
-?>
-<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode($strProtocol .  $_SERVER['SERVER_NAME'] . get_absolute_url()); ?>" alt="" width="1" height="1" class="d-block">
+<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER)); ?>" alt="" width="1" height="1" class="d-block">
 <?php info_bottom();

@@ -1,6 +1,9 @@
 <?php
 
 declare(strict_types=1);
+
+use Prosper202\Click\TrackingBaseUrl;
+
 #only allow numeric t202ids, reject 0 as invalid
 $t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id) || (int)$t202id <= 0) die();
@@ -523,7 +526,7 @@ $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_
 
 $cloaking_site_url = '';
 if ($cloaking_on === true) {
-	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
+	$cloaking_site_url = TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 
 // Identity signals (the p202vid cookie, the landing page's p202lpid, a
@@ -592,7 +595,7 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	}
 	$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
-	$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+	$outbound_site_url = TrackingBaseUrl::requestUrl($_SERVER);
 	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
