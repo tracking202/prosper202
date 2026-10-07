@@ -811,6 +811,7 @@ var ltvReads = map[string]bool{
 	"p202 ltv mrr": true, "p202 ltv predict": true, "p202 ltv products": true, "p202 ltv abm": true,
 	"p202 ltv engagement": true, "p202 ltv subscriptions": true, "p202 ltv companies": true,
 	"p202 ltv fields list": true, "p202 ltv webhooks list": true, "p202 ltv integrations list": true,
+	"p202 ltv webhooks deliveries": true,
 }
 
 func TestEveryLtvWriteRefusesStagedBeforeSendingAnything(t *testing.T) {

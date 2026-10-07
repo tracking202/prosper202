@@ -1138,7 +1138,7 @@ var ltvSubscriptionEventCmd = &cobra.Command{
 
 var ltvProductCmd = &cobra.Command{
 	Use:   "product",
-	Short: "Create or update a catalog product (reads: `p202 ltv products`)",
+	Short: "Catalog products: upsert by your product id, update or delete by id (reads: `p202 ltv products`)",
 }
 
 var ltvProductUpsertCmd = &cobra.Command{
@@ -1175,6 +1175,92 @@ var ltvProductUpsertCmd = &cobra.Command{
 		}
 		render(data)
 		return nil
+	}),
+}
+
+const ltvProductListHint = "`p202 ltv products` lists the product ids."
+
+var ltvProductUpdateCmd = &cobra.Command{
+	Use:   "update <product-id>",
+	Short: "Edit a catalog product's name, sku or list price by its id (the LTV Products tab's Edit)",
+	Long: "Changes only the fields given. The name cannot be blank; --sku \"\" and --price \"\" clear them.\n" +
+		"Past order line items keep the name they were sold under. The external product id is the\n" +
+		"product's key and does not change (`ltv product upsert` writes by it).\n\n" +
+		"  p202 ltv product update 12 --name \"Pro plan (annual)\" --price 490\n" +
+		"  p202 ltv product update 12 --sku \"\"",
+	Args: cobra.ExactArgs(1),
+	RunE: ltvWrite(func(cmd *cobra.Command, args []string) error {
+		id, err := ltvPathID(args[0], "product id", ltvProductListHint)
+		if err != nil {
+			return err
+		}
+		body := map[string]interface{}{}
+		if cmd.Flags().Changed("name") {
+			v, _ := cmd.Flags().GetString("name")
+			v = strings.TrimSpace(v)
+			if v == "" {
+				return validationError("--name cannot be blank").WithHint("Give the product's new name, e.g. --name \"Pro plan\".")
+			}
+			body["name"] = v
+		}
+		if cmd.Flags().Changed("sku") {
+			v, _ := cmd.Flags().GetString("sku")
+			body["sku"] = strings.TrimSpace(v)
+		}
+		if cmd.Flags().Changed("price") {
+			v, _ := cmd.Flags().GetString("price")
+			if strings.TrimSpace(v) == "" {
+				body["price"] = nil
+			} else if p, ok, err := ltvDecimal(cmd, "price", false); err != nil {
+				return err
+			} else if ok {
+				body["price"] = p
+			}
+		}
+		if len(body) == 0 {
+			return validationError("no fields to update").
+				WithHint("Give --name, --sku or --price (--sku \"\" and --price \"\" clear them).")
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Patch("ltv/products/"+id, body)
+		if err != nil {
+			return ltvNotFound(err, ltvProductListHint)
+		}
+		render(data)
+		return nil
+	}),
+}
+
+// ltvProductDeleteRefused explains the server's refusal to delete a product
+// that order line items name.
+func ltvProductDeleteRefused(err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == 409 {
+		if strings.Contains(apiErr.Message, "cannot be deleted") {
+			return withHint(err, "A product sold on an order stays in the catalog (its line items name it). Rename it with `p202 ltv product update <id> --name ...` instead.")
+		}
+		return withHint(err, "Nothing was deleted. Run the same delete again; `--dry-run` says first whether it would be refused.")
+	}
+	return ltvNotFound(err, ltvProductListHint)
+}
+
+var ltvProductDeleteCmd = &cobra.Command{
+	Use:   "delete <product-id>",
+	Short: "Delete a catalog product no order line item names (refused while one does)",
+	Long: "--dry-run shows the product and, as refused, why the delete would be refused.\n\n" +
+		"  p202 ltv product delete 12 --dry-run",
+	Args: deleteArgsValidator,
+	RunE: ltvWrite(func(cmd *cobra.Command, args []string) error {
+		return runBulkOrSingleDelete(cmd, args, deleteSpec{
+			endpoint:    "ltv/products",
+			noun:        "product",
+			plural:      "products",
+			idsHintText: "Comma-separate product ids, e.g. --ids 3,4 (" + ltvProductListHint + ")",
+			explain:     ltvProductDeleteRefused,
+		})
 	}),
 }
 
@@ -1294,7 +1380,12 @@ func init() {
 	ltvProductUpsertCmd.Flags().String("sku", "", "SKU (the key when there is no --external-product-id)")
 	ltvProductUpsertCmd.Flags().String("name", "", "Product name")
 	ltvProductUpsertCmd.Flags().String("price", "", "List price in the account currency")
-	ltvProductCmd.AddCommand(ltvProductUpsertCmd)
+	ltvProductUpdateCmd.Flags().String("name", "", "New product name (cannot be blank)")
+	ltvProductUpdateCmd.Flags().String("sku", "", `New SKU ("" clears it)`)
+	ltvProductUpdateCmd.Flags().String("price", "", `New list price in the account currency ("" clears it)`)
+	allowEmpty(ltvProductUpdateCmd, "sku", "price")
+	registerDeleteFlags(ltvProductDeleteCmd, "product")
+	ltvProductCmd.AddCommand(ltvProductUpsertCmd, ltvProductUpdateCmd, ltvProductDeleteCmd)
 
 	ltvNextOfferImpressionCmd.Flags().String("campaign-id", "", "The campaign you delivered (default the current recommendation)")
 	ltvNextOfferCmd.AddCommand(ltvNextOfferImpressionCmd)

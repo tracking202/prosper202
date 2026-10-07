@@ -892,6 +892,8 @@ p202 ltv subscription upsert     --external-sub-id S --amount N (customer flags)
 p202 ltv subscription event      <external-sub-id> --type renewal|cancel|refund [--amount N]
                                  [--idempotency-key S] [--transaction-id S] [--occurred-at T] [--period-end T] [--json]
 p202 ltv product upsert          (--external-product-id S | --sku S) [--name S] [--price N] [--json]
+p202 ltv product update          <product-id> [--name S] [--sku S|""] [--price N|""] [--json]
+p202 ltv product delete          <product-id> | --ids N1,N2 [--dry-run] [--force]   # refused while line items name it
 p202 ltv next-offer impression   <customer-id> [--campaign-id N] [--json]
 
 p202 ltv fields list | create --key K [--type text|number|date|boolean|select|email|url] [--option V]...
@@ -899,6 +901,7 @@ p202 ltv fields list | create --key K [--type text|number|date|boolean|select|em
 p202 ltv fields update <field-id> [--label S] [--option V]... [--required=true|false] [--sort-order N]
 p202 ltv fields delete <field-id> | --ids N1,N2 [--dry-run] [--force]
 p202 ltv webhooks list | create --url https://… [--events E1,E2 | --events '*'] | delete <id> [--dry-run] [--force]
+p202 ltv webhooks deliveries <webhook-id> [--limit 1-100] [--status pending|delivered|failed] [--json]
 p202 ltv integrations list | create --provider P [--name S] [--config JSON | --config-file FILE]
                        | delete <id> [--dry-run] [--force]
 ```
@@ -913,6 +916,14 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   `delete`/`kept` counts.
 - `ltv company delete --dry-run` returns `refused` with the delete's own
   reason while customers are attached; merge instead.
+- `ltv product delete` is refused (409, exit 1) while order line items name
+  the product; `--dry-run` returns that reason as `refused`. Rename it with
+  `ltv product update` instead.
+- `ltv webhooks deliveries` lists one webhook's deliveries newest first (25
+  by default): `status`, `attempts`, `next_attempt_at` (pending only),
+  `last_status_code` and `last_response_body` (the last response or error,
+  e.g. `curl: …`, `blocked: …`); never the secret, never the payload. An
+  unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
   sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
   takes the known names or `*` (every event, including future ones), and is
@@ -1005,7 +1016,38 @@ p202 system db-stats   [--json]     # Admin only
 p202 system cron       [--raw] [--json]  # Admin only; summary per job type, exits 5 when cron is not ticking
 p202 system errors     [--limit N] [--json]  # Admin only
 p202 system dataengine [--json]     # Admin only
+p202 system metrics    [--json]     # Admin only; sync counters, queue, alerts
+
+# Account › Settings — Admin and a role with access_to_settings:
+p202 system info       [--json]     # versions (database_upgrade_needed), PHP limits, memcache, clicks, DB size, cron, DataEngine
+p202 system login-log  [--limit 1-500] [--json]   # newest first: user_name, login_time, ip_address, login_success
+p202 system retention show [--json]               # auto_delete_days, scheduled_deletion
+p202 system retention set --days 0-36500 [--force]                 # asks when it keeps less than now
+p202 system retention delete-before --date YYYY-MM-DD [--dry-run] [--force]   # irreversible; always previews
+p202 system isp-lookup show | enable | disable [--json]
+# Admin and a role with access_to_api_integrations:
+p202 system integrations [--json]   # notification URLs per integration; secret_stored, never the secret
 ```
+
+- A key whose user is not an Admin or the Super user gets exit 2 with
+  `Admin access required.`; the hint names the role and `p202 whoami`. An
+  Admin whose role lacks the page's permission gets exit 2 naming it.
+- `system retention delete-before` previews first (`POST
+  /system/retention/delete-before?dry_run=1`: `through_click_id`, `clicks`,
+  `rows` per table), then asks; `--force` skips the question, not the
+  preview. The write carries the preview's `through_click_id`; if the day now
+  names another click the server answers 409 and nothing is scheduled (run the
+  command again). With no click before the day nothing is written. The cron
+  job does the deleting, for every account, in batches; it cannot be undone.
+- `system retention set` asks only when the new value keeps less click data
+  than the current one (turning deletion on, or fewer days); with no terminal
+  that question fails (exit 1) unless `--force` is given. Known issue: the
+  cron job's automatic deletion currently deletes no clicks (it deletes below
+  `MIN(click_id)` of the old clicks), so do not tell a user that setting it
+  deleted data; `delete-before` does delete.
+- None of the `system` writes can be staged; `--staged` is refused before any
+  request. AutoCron and "update available" are not exposed (they call a remote
+  Prosper202 service).
 
 ## Tool-use schema hints
 

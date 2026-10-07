@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -210,7 +211,7 @@ const ltvWebhookListHint = "`p202 ltv webhooks list` lists the webhook ids."
 
 var ltvWebhooksCmd = &cobra.Command{
 	Use:   "webhooks",
-	Short: "Outbound LTV webhooks (customer, revenue, subscription, conversion, engagement events): list, create, delete",
+	Short: "Outbound LTV webhooks (customer, revenue, subscription, conversion, engagement events): list, create, deliveries, delete",
 }
 
 var ltvWebhooksListCmd = &cobra.Command{
@@ -281,6 +282,52 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 		fmt.Fprintln(cmd.ErrOrStderr(), "Note: store the secret now; it is shown only in this response and cannot be read back (`p202 ltv webhooks list` omits it). Delete and re-create the webhook to get a new one.")
 		return nil
 	}),
+}
+
+// ltvDeliveryStatuses is MysqlWebhookRepository::DELIVERY_STATUSES.
+var ltvDeliveryStatuses = []string{"pending", "delivered", "failed"}
+
+// ltvMaxDeliveries is the most deliveries one request lists.
+const ltvMaxDeliveries = 100
+
+var ltvWebhooksDeliveriesCmd = &cobra.Command{
+	Use:   "deliveries <webhook-id>",
+	Short: "A webhook's delivery log, newest first: each event's status, attempts, next retry and last response or error",
+	Long: "What the LTV Settings tab's Log shows (its last 25 by default; --limit up to 100), and the last\n" +
+		"attempt's response body or error (\"curl: …\", \"blocked: …\", stored cut to 1,000 bytes). A\n" +
+		"delivery is retried with backoff and fails after max_attempts (6), which marks the webhook\n" +
+		"dead. Never the secret, and not the payload.\n\n" +
+		"  p202 ltv webhooks deliveries 3 --status failed",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := ltvPathID(args[0], "webhook id", ltvWebhookListHint)
+		if err != nil {
+			return err
+		}
+		params := map[string]string{}
+		if cmd.Flags().Changed("limit") {
+			v, _ := cmd.Flags().GetString("limit")
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > ltvMaxDeliveries || strconv.Itoa(n) != v {
+				return validationError("--limit must be a whole number from 1 to %d, got %q", ltvMaxDeliveries, v).
+					WithHint("For example --limit 50; without it the last 25 deliveries are listed.")
+			}
+			params["limit"] = v
+		}
+		if v := enumValue(cmd, "status"); v != "" {
+			params["status"] = v
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("ltv/webhooks/"+id+"/deliveries", params)
+		if err != nil {
+			return ltvNotFound(err, ltvWebhookListHint)
+		}
+		render(data)
+		return nil
+	},
 }
 
 var ltvWebhooksDeleteCmd = &cobra.Command{
@@ -418,7 +465,10 @@ func init() {
 	enumFlag(ltvWebhooksCreateCmd, "events", newEnum(ltvWebhookEvents, enumList(),
 		enumHint("Give * alone for every event, including ones later versions add.")))
 	registerDeleteFlags(ltvWebhooksDeleteCmd, "webhook")
-	ltvWebhooksCmd.AddCommand(ltvWebhooksListCmd, ltvWebhooksCreateCmd, ltvWebhooksDeleteCmd)
+	ltvWebhooksDeliveriesCmd.Flags().String("limit", "", "How many deliveries to list, 1-100 (default 25)")
+	ltvWebhooksDeliveriesCmd.Flags().String("status", "", "Only deliveries in this state")
+	enumFlag(ltvWebhooksDeliveriesCmd, "status", newEnum(ltvDeliveryStatuses))
+	ltvWebhooksCmd.AddCommand(ltvWebhooksListCmd, ltvWebhooksCreateCmd, ltvWebhooksDeliveriesCmd, ltvWebhooksDeleteCmd)
 
 	ltvIntegrationsCreateCmd.Flags().String("provider", "", "The system: lowercase a-z, 0-9, - and _ (required)")
 	ltvIntegrationsCreateCmd.Flags().String("name", "", "A name for it (default the provider)")

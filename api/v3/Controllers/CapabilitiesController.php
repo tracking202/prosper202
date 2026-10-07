@@ -77,6 +77,15 @@ class CapabilitiesController
                     // and /conversions/uploads, each with ?dry_run=1. Not
                     // stageable.
                     'update_section' => true,
+                    // Account › Settings and the API integrations page's
+                    // URLs for this install, behind Admin and the pages'
+                    // permissions (access_to_settings,
+                    // access_to_api_integrations): GET /system/info,
+                    // /system/login-log, /system/retention (+ PUT, and
+                    // POST /system/retention/delete-before with ?dry_run=1),
+                    // /system/isp-lookup (+ PUT), /system/integrations.
+                    // Not stageable.
+                    'administration' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the
