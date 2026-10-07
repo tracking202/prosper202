@@ -774,6 +774,97 @@ final class LtvDatabaseIntegrationTest extends TestCase
         self::assertSame('1', $count('202_customer_aliases', "customer_id = $kept"));
     }
 
+    /**
+     * The DELETE previews (`?dry_run=1` on the /ltv deletes) read through
+     * the same repositories the deletes write through. Each preview's answer
+     * is checked here against what its delete then actually does, on real
+     * rows: the counts it reports are the rows that go (or stay), and a
+     * refusal it reports is the delete's own.
+     */
+    public function testDeletePreviewsReportWhatTheDeletesThenDo(): void
+    {
+        foreach (['202_ltv_webhooks', '202_ltv_webhook_deliveries'] as $table) {
+            self::$db->query('TRUNCATE TABLE ' . $table);
+        }
+        $customers = new MysqlCustomerRepository(self::$conn);
+        $fields = new MysqlCustomerFieldRepository(self::$conn);
+        $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, $fields);
+        $fields->create(1, ['field_key' => 'plan', 'field_type' => 'text']);
+
+        // Customer erasure: what goes and what stays, per table.
+        $id = $crm->upsert(1, ['customer_ref' => 'preview-1', 'email' => 'p@example.com', 'custom_fields' => ['plan' => 'pro']]);
+        $customers->addAlias(1, $id, 'esp_id', 'E-1', 1700000000);
+        $other = $crm->upsert(1, ['customer_ref' => 'preview-2', 'custom_fields' => ['plan' => 'free']]);
+        $customers->insertRevenueEvent(1, $id, ['event_type' => 'purchase', 'amount' => 10.0, 'currency' => 'USD', 'occurred_at' => 1700000000, 'source' => 'api'], 1700000000);
+        self::$db->query("INSERT INTO 202_personalization_tokens SET token_hash=UNHEX(SHA2('preview',256)), user_id=1, customer_id=$id, created_at=1700000000, first_use_deadline=1700003600, replay_until=1702592000");
+
+        $preview = [];
+        foreach ($crm->erasurePreview(1, $id) as $row) {
+            $preview[$row['resource']] = [$row['action'], $row['count']];
+        }
+        self::assertSame([
+            'customer-aliases' => ['delete', 2],
+            'personalization-tokens' => ['delete', 1],
+            'customer-field-values' => ['delete', 1],
+            'revenue-events' => ['kept', 1],
+            'subscriptions' => ['kept', 0],
+        ], $preview);
+        $crm->erase(1, $id);
+        $count = fn (string $table, int $customer): int
+            => (int) $this->scalar("SELECT COUNT(*) FROM $table WHERE customer_id = $customer AND user_id = 1");
+        self::assertSame(0, $count('202_customer_aliases', $id));
+        self::assertSame(0, $count('202_personalization_tokens', $id));
+        self::assertSame(0, $count('202_customer_field_values', $id));
+        self::assertSame(1, $count('202_revenue_events', $id), 'the money the preview said stays, stays');
+        self::assertSame(1, $count('202_customer_field_values', $other), 'another customer is untouched');
+
+        // Alias lookup is scoped like deleteAlias(): another customer's
+        // alias id is not found through this customer.
+        $otherAlias = (int) $this->scalar("SELECT alias_id FROM 202_customer_aliases WHERE customer_id = $other");
+        self::assertNull($customers->findAlias(1, $id, $otherAlias));
+        self::assertSame('preview-2', $customers->findAlias(1, $other, $otherAlias)['alias_value'] ?? null);
+
+        // Company: the preview's refusal is the delete's refusal.
+        $companies = new MysqlCompanyRepository(self::$conn);
+        $busy = $companies->create(1, 'Busy Co');
+        $crm->upsert(1, ['customer_id' => $other, 'company' => 'Busy Co']);
+        $refusal = $companies->deleteRefusal(1, $busy, 'Busy Co');
+        self::assertNotNull($refusal);
+        try {
+            $companies->delete(1, $busy);
+            self::fail('a company with a customer attached must not delete');
+        } catch (\RuntimeException $e) {
+            self::assertSame($refusal, $e->getMessage(), 'the preview reports the delete\'s own refusal');
+        }
+        $empty = $companies->create(1, 'Empty Co');
+        self::assertNull($companies->deleteRefusal(1, $empty, 'Empty Co'));
+        $companies->delete(1, $empty);
+        self::assertNull($companies->get(1, $empty));
+
+        // Field: the values it counts are the values the delete removes.
+        $plan = $fields->findByKey(1, 'plan');
+        self::assertNotNull($plan);
+        $fieldId = (int) $plan['field_id'];
+        self::assertSame('plan', $fields->get(1, $fieldId)['field_key'] ?? null);
+        self::assertNull($fields->get(2, $fieldId), 'another account does not see it');
+        self::assertSame(1, $fields->valueCount(1, $fieldId), 'the erased customer\'s value is already gone');
+        $fields->delete(1, $fieldId);
+        self::assertSame(0, (int) $this->scalar("SELECT COUNT(*) FROM 202_customer_field_values WHERE field_id = $fieldId"));
+
+        // Webhook: never the secret, and the deliveries it counts go with it.
+        $webhooks = new \Prosper202\Ltv\MysqlWebhookRepository(self::$conn);
+        $hook = $webhooks->create(1, 'https://hooks.example.com/p', ['revenue.recorded'])['webhookId'];
+        $webhooks->enqueue(1, 'revenue.recorded', ['event_id' => 1]);
+        $webhooks->enqueue(1, 'revenue.recorded', ['event_id' => 2]);
+        $row = $webhooks->get(1, $hook);
+        self::assertIsArray($row);
+        self::assertArrayNotHasKey('webhook_secret', $row);
+        self::assertSame(['pending' => 2], $webhooks->deliveryCounts(1, $hook));
+        $webhooks->delete(1, $hook);
+        self::assertNull($webhooks->get(1, $hook));
+        self::assertSame([], $webhooks->deliveryCounts(1, $hook));
+    }
+
     /** An account whose identity keys were never minted erases without minting them. */
     public function testEraseMintsNoIdentityKeys(): void
     {

@@ -298,17 +298,36 @@ class LtvController
 
     public function fieldsList(): array
     {
-        return $this->wrap(function (): array {
-            $rows = $this->fields->list($this->userId);
-            foreach ($rows as &$row) {
-                if (isset($row['options']) && is_string($row['options'])) {
-                    $row['options'] = json_decode($row['options'], true);
-                }
-            }
-            unset($row);
+        return $this->wrap(fn (): array => [
+            'data' => array_map(self::presentField(...), $this->fields->list($this->userId)),
+        ]);
+    }
 
-            return ['data' => $rows];
-        });
+    /**
+     * A field definition as the API shows it: options decoded from their
+     * stored JSON. Stored options that do not decode are flagged rather than
+     * shown as "no options" (CLAUDE.md #4), as integrations flag their config.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function presentField(array $row): array
+    {
+        if (isset($row['options']) && is_string($row['options'])) {
+            $decoded = json_decode($row['options'], true);
+            if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                error_log(
+                    'LTV field #' . (int) ($row['field_id'] ?? 0)
+                    . ' has undecodable options JSON: ' . json_last_error_msg()
+                );
+                $row['options'] = null;
+                $row['options_invalid'] = true;
+            } else {
+                $row['options'] = $decoded;
+            }
+        }
+
+        return $row;
     }
 
     // ── Customer CRM writes ──────────────────────────────────────────
@@ -820,6 +839,184 @@ class LtvController
                 // surface as an error, never as "already deleted".
                 throw new NotFoundException('Integration not found');
             }
+        });
+    }
+
+    // ── Delete previews (`?dry_run=1`) ───────────────────────────────
+    //
+    // Read-only: what each DELETE above would remove, or why it would
+    // refuse, without doing it. Each finds its record with the same scope
+    // and the same not-found answer as its DELETE, so a preview that
+    // answers 200 names the row the DELETE would act on. The DELETEs make no
+    // authorization check of their own (the route group's ltv:write
+    // middleware, which the dispatcher runs before a preview too, is their
+    // only one), so neither do the previews.
+
+    /**
+     * Preview of deleteCustomer(): an erasure, not a delete. Personal data
+     * goes, the customer row and its money stay.
+     */
+    public function deleteCustomerPreview(int $customerId): array
+    {
+        $this->requireCustomer($customerId);
+
+        return $this->wrap(function () use ($customerId): array {
+            $customer = $this->crm->get($this->userId, $customerId, 1);
+            if ($customer === null) {
+                throw new NotFoundException('Customer not found');
+            }
+            // The record is what erasure changes; the money it keeps is
+            // counted in the cascade rather than listed.
+            unset($customer['recent_events'], $customer['subscriptions']);
+
+            return ['data' => [
+                'dry_run' => true,
+                'action' => 'erase',
+                'resource' => 'ltv-customers',
+                'mode' => 'anonymize',
+                'record' => $customer,
+                'effect' => 'Erases the customer\'s personal data in one transaction: first_name, last_name, email, '
+                    . 'phone, company, address_line1, address_line2, city, region, postal_code and country are '
+                    . 'cleared, the company link is removed, primary_ref becomes erased:' . $customerId
+                    . ' and status anonymized. The identity-graph signal of each alias, where the graph holds one, '
+                    . 'is deleted, so no later click joins this customer through it. Revenue events and '
+                    . 'subscriptions are kept with their amounts, so LTV totals do not change. Not reversible.',
+                'cascade' => $this->crm->erasurePreview($this->userId, $customerId),
+            ]];
+        });
+    }
+
+    /**
+     * Preview of deleteCustomerAlias(): one identifier stops resolving to
+     * the customer; the customer is untouched.
+     */
+    public function deleteCustomerAliasPreview(int $customerId, int $aliasId): array
+    {
+        $this->requireCustomer($customerId);
+        $alias = $this->wrap(fn (): ?array => $this->customers->findAlias($this->userId, $customerId, $aliasId));
+        if ($alias === null) {
+            throw new NotFoundException('Alias not found on this customer');
+        }
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'customer-aliases',
+            'mode' => 'hard',
+            'record' => $alias,
+            'effect' => 'Removes only the mapping: the customer, its revenue and its other aliases stay. A later event '
+                . 'carrying this identifier no longer resolves to customer ' . $customerId . ' (it creates or matches '
+                . 'another customer).',
+            'cascade' => [],
+        ]];
+    }
+
+    /**
+     * Preview of deleteCompany(), including the refusal the delete would
+     * answer while customers are attached (refused: the delete's own
+     * message; null when it would go ahead).
+     */
+    public function deleteCompanyPreview(int $companyId): array
+    {
+        $companies = new MysqlCompanyRepository($this->conn);
+        $company = $this->wrap(fn (): ?array => $companies->get($this->userId, $companyId));
+        if ($company === null) {
+            throw new NotFoundException('Company not found');
+        }
+        $refused = $this->wrap(
+            fn (): ?string => $companies->deleteRefusal($this->userId, $companyId, (string) $company['name'])
+        );
+
+        return ['data' => [
+            'dry_run' => true,
+            'action' => 'delete',
+            'resource' => 'ltv-companies',
+            'mode' => 'hard',
+            'record' => $company,
+            'refused' => $refused,
+            'cascade' => [],
+        ]];
+    }
+
+    /**
+     * Preview of deleteField(): the definition and every customer's value
+     * for it.
+     */
+    public function deleteFieldPreview(int $fieldId): array
+    {
+        return $this->wrap(function () use ($fieldId): array {
+            $field = $this->fields->get($this->userId, $fieldId);
+            if ($field === null) {
+                throw new NotFoundException('Field not found');
+            }
+
+            return ['data' => [
+                'dry_run' => true,
+                'action' => 'delete',
+                'resource' => 'ltv-fields',
+                'mode' => 'hard',
+                'record' => self::presentField($field),
+                'cascade' => [
+                    [
+                        'resource' => 'customer-field-values',
+                        'count' => $this->fields->valueCount($this->userId, $fieldId),
+                    ],
+                ],
+            ]];
+        });
+    }
+
+    /**
+     * Preview of deleteWebhook(): the endpoint (never its secret) and its
+     * delivery queue, pending deliveries included — they are dropped, not
+     * sent.
+     */
+    public function deleteWebhookPreview(int $webhookId): array
+    {
+        return $this->wrap(function () use ($webhookId): array {
+            $webhook = $this->webhooks->get($this->userId, $webhookId);
+            if ($webhook === null) {
+                throw new NotFoundException('Webhook not found');
+            }
+            $byStatus = $this->webhooks->deliveryCounts($this->userId, $webhookId);
+
+            return ['data' => [
+                'dry_run' => true,
+                'action' => 'delete',
+                'resource' => 'ltv-webhooks',
+                'mode' => 'hard',
+                'record' => $webhook,
+                'cascade' => [
+                    [
+                        'resource' => 'ltv-webhook-deliveries',
+                        'count' => array_sum($byStatus),
+                        'by_status' => (object) $byStatus,
+                    ],
+                ],
+            ]];
+        });
+    }
+
+    /**
+     * Preview of deleteIntegration(): the record alone; nothing else
+     * references it.
+     */
+    public function deleteIntegrationPreview(int $integrationId): array
+    {
+        return $this->wrap(function () use ($integrationId): array {
+            $integration = (new MysqlIntegrationRepository($this->conn))->get($this->userId, $integrationId);
+            if ($integration === null) {
+                throw new NotFoundException('Integration not found');
+            }
+
+            return ['data' => [
+                'dry_run' => true,
+                'action' => 'delete',
+                'resource' => 'ltv-integrations',
+                'mode' => 'hard',
+                'record' => $integration,
+                'cascade' => [],
+            ]];
         });
     }
 

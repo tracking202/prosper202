@@ -28,27 +28,53 @@ final class MysqlIntegrationRepository
              FROM 202_ltv_integrations WHERE user_id = ? ORDER BY integration_id ASC'
         );
         $this->conn->bind($stmt, 'i', [$userId]);
-        $rows = $this->conn->fetchAll($stmt);
-        foreach ($rows as &$row) {
-            if (isset($row['config']) && is_string($row['config'])) {
-                $decoded = json_decode($row['config'], true);
-                if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
-                    // Corrupt stored JSON must be visible, not presented as
-                    // "no config set" (CLAUDE.md: no silent data loss).
-                    error_log(
-                        'LTV integration #' . (int) ($row['integration_id'] ?? 0)
-                        . ' has undecodable config JSON: ' . json_last_error_msg()
-                    );
-                    $row['config'] = null;
-                    $row['config_invalid'] = true;
-                } else {
-                    $row['config'] = $decoded;
-                }
+
+        return array_map(self::decodeConfig(...), $this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * One integration, shaped as list() shapes each row; null when the
+     * account has none with this id.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function get(int $userId, int $integrationId): ?array
+    {
+        $stmt = $this->conn->prepareRead(
+            'SELECT integration_id, provider, name, config, status, created_at, updated_at
+             FROM 202_ltv_integrations WHERE integration_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'ii', [$integrationId, $userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row !== null ? self::decodeConfig($row) : null;
+    }
+
+    /**
+     * The row with its stored config JSON decoded.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function decodeConfig(array $row): array
+    {
+        if (isset($row['config']) && is_string($row['config'])) {
+            $decoded = json_decode($row['config'], true);
+            if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+                // Corrupt stored JSON must be visible, not presented as
+                // "no config set" (CLAUDE.md: no silent data loss).
+                error_log(
+                    'LTV integration #' . (int) ($row['integration_id'] ?? 0)
+                    . ' has undecodable config JSON: ' . json_last_error_msg()
+                );
+                $row['config'] = null;
+                $row['config_invalid'] = true;
+            } else {
+                $row['config'] = $decoded;
             }
         }
-        unset($row);
 
-        return $rows;
+        return $row;
     }
 
     /**
