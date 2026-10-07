@@ -61,22 +61,40 @@ final class PrivacyBootstrapTest extends TestCase
         // Not a setting: held back, as the app intakes read it (PrivacySetting).
         yield 'a value that is not a setting' => ['EU', 'all'];
         yield 'an empty value' => ['', 'all'];
+        // The read failed (the helper's false): held back, never 'disabled'.
+        yield 'a read that failed' => [false, 'all'];
+        // No preferences row: nothing set, the column's default.
+        yield 'no row' => [null, 'disabled'];
     }
 
     /** @dataProvider storedValues */
-    public function testTheStoredValueIsReadAsTheSettingItIs(string $stored, string $inForce): void
+    public function testTheStoredValueIsReadAsTheSettingItIs(string|false|null $stored, string $inForce): void
     {
         self::stubs();
         $GLOBALS['p202TestStored'] = $stored;
         $_SESSION = [];
         $_GET = [];
-        self::assertSame($inForce, self::bootstrap(false));
+        // What the bootstrap logs, kept off this process's stderr.
+        $log = (string) tempnam(sys_get_temp_dir(), 'p202-privacy-log-');
+        ini_set('error_log', $log);
+        try {
+            self::assertSame($inForce, self::bootstrap(false));
+            $logged = (string) file_get_contents($log);
+        } finally {
+            @unlink($log);
+        }
+        if ($stored === false) {
+            self::assertStringContainsString('could not be read; holding back', $logged, 'a failed read is logged, so it can be found');
+        } else {
+            self::assertSame('', $logged, 'nothing is logged for a read that worked');
+        }
     }
 
     /**
      * What the bootstrap's lines call: a cache that holds nothing under any
      * key (what a redirect's tracker-id key always was), and a database whose
-     * user 1 row holds $GLOBALS['p202TestStored'], recording the SQL asked.
+     * user 1 row holds $GLOBALS['p202TestStored'] (false: the query failed;
+     * null: there is no row), recording the SQL asked.
      */
     private static function stubs(): void
     {
@@ -88,7 +106,9 @@ final class PrivacyBootstrapTest extends TestCase
             function getCache(string $key, $default = false) { return false; }
             function memcache_mysql_fetch_assoc($sql) {
                 $GLOBALS['p202TestSql'][] = $sql;
-                return ['user_pref_privacy' => $GLOBALS['p202TestStored'] ?? 'all'];
+                $stored = array_key_exists('p202TestStored', $GLOBALS) ? $GLOBALS['p202TestStored'] : 'all';
+                // false: the query failed; null: no row (fetch_assoc()'s answer).
+                return $stored === false || $stored === null ? $stored : ['user_pref_privacy' => $stored];
             }
             PHP);
     }

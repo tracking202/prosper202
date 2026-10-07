@@ -170,7 +170,15 @@ if (!isset($_SESSION['privacy'])) {
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
     $privacy = memcache_mysql_fetch_assoc($user_sql);
-    if (isset($privacy['user_pref_privacy'])) {
+    if ($privacy === false) {
+        // The read failed (memcache_mysql_fetch_assoc() answers false for a
+        // failed query, null for no row): hold back rather than track in
+        // full, as the app intakes do (PrivacySetting). It answered
+        // 'disabled' here — the most permissive setting standing in for one
+        // nobody could read (CLAUDE.md #11).
+        error_log('p202 privacy: user 1\'s user_pref_privacy could not be read; holding back for this request');
+        $_SESSION['privacy'] = 'all';
+    } elseif (isset($privacy['user_pref_privacy'])) {
         // A stored value that is not a setting holds back rather than
         // tracking in full (CLAUDE.md #11), as the app intakes read it
         // (PrivacySetting).
@@ -178,7 +186,8 @@ if (!isset($_SESSION['privacy'])) {
             ? $privacy['user_pref_privacy']
             : 'all';
     } else {
-        $_SESSION['privacy'] = 'disabled'; //default to disabled
+        // No preferences row: nothing was set, the column's own default.
+        $_SESSION['privacy'] = 'disabled';
     }
 }
 
