@@ -27,8 +27,14 @@ function record_mysql_error($dbOrSql, $sql = null): never
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
-    $auth = new AUTH();
-    $auth->set_timezone($_SESSION['user_timezone']);
+    // The session's zone, for the footer's clock; this page counts nothing in
+    // it. AUTH::set_timezone() would read the account's zone from the
+    // database that has just failed, and a failed read there throws (a fatal
+    // in place of this page, with the error never recorded).
+    $sessionZone = is_string($_SESSION['user_timezone'] ?? null) ? $_SESSION['user_timezone'] : '';
+    if (in_array($sessionZone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+        date_default_timezone_set($sessionZone);
+    }
 
     $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
