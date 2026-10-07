@@ -163,7 +163,7 @@ $mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id
 
 //now gather variables for the clicks record db
 //click_id is needed to build click_id_public below, so resolve it first
-$click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']] ?? '';
+$click_id = getCookie202('tracking202subid_a_'.$tracker_row['aff_campaign_id']) ?? '';
 //lets determine if cloaking is on
 $cloaking_on = false;
 if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on
@@ -182,7 +182,7 @@ if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking
 
 if ($cloaking_on == true) {
 
-	$cloaking_site_url = 'http://'.$_SERVER['SERVER_NAME'] . '/tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
 	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db, $cloaking_site_url);
 	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string((string) $click_cloaking_site_url_id);         
 	

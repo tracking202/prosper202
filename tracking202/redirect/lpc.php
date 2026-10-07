@@ -46,7 +46,7 @@ $html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_na
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
 // get the click id
-$mysql['click_id']=$db->real_escape_string((string)($_COOKIE['tracking202subid'] ?? ''));
+$mysql['click_id']=$db->real_escape_string((string)(getCookie202('tracking202subid') ?? ''));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 

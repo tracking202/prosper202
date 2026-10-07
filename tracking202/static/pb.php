@@ -48,7 +48,7 @@ try {
 	$outcome = p202RecordLegacyConversion($db, $click_id, 2, [
 		'campaign_id'    => (int) $aff_campaign_row['aff_campaign_id'],
 		'transaction_id' => p202ExtractTransactionId($_GET),
-		'ip'             => p202ClientIp($_SERVER),
+		'ip'             => p202StoredVisitorIp(),
 		'user_agent'     => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 		'source'         => \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value,
 		'event_name'     => $webEvent['event_name'] ?? null,

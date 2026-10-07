@@ -545,7 +545,7 @@ p202 rotator rule-create "$ROTATOR_ID" \
 ```
 
 JSON fields (`--criteria_json`, `--redirects_json`, `--weighting_config`) are validated locally before the API call. Malformed JSON produces an immediate error (exit 1).
-A rotator's default is one destination (`--default_url`, `--default_campaign` or `--default_lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, city, isp, ip, platform, device, browser, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches.
+A rotator's default is one destination (`--default_url`, `--default_campaign` or `--default_lp`); setting one on `update` replaces the default whatever its kind. Each redirect names exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`; criteria types are country, region, city, isp, ip, platform, device, browser, and countries are written `United States(US)` (`p202 rotator criteria-values`) — a bare `US` is refused, because it never matches. An `ip` criterion lists single IPv4 or IPv6 addresses (stored canonical, so `2001:DB8::1` is `2001:db8::1`); a range or a typo is refused by name for the same reason.
 
 ### Forecast next week and flag today as normal or anomalous
 

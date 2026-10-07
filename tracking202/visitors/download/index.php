@@ -134,12 +134,12 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			
 			//if not a landing page
 			if (!$click_row['click_alp']) { 
-				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
+				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
 			} else { 
 				//advanced lander
-				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
+				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
 			}
 		} else {
 			$html['cloaking'] = '';

@@ -16,8 +16,9 @@ use Tests\Support\SourceScan;
  * the port on a non-default one, and a Domain with a port never matches: the
  * browser dropped tracking202subid and every cookie beside it, so lp.php
  * never set click_out and no pixel found its click by cookie on an install
- * served from :8080 or :8443. go.php and ipx.php used SERVER_NAME, which is
- * the server's configured name rather than the host the browser asked for.
+ * served from :8080 or :8443. go.php and ipx.php (whose cookie is gone with
+ * its impression write) used SERVER_NAME, which is the server's configured
+ * name rather than the host the browser asked for.
  * Each was its own derivation; this test makes a new one name its line.
  *
  * What it reads, by token: every call to setcookie() and setrawcookie() —
@@ -90,13 +91,59 @@ final class CookieDomainSourceTest extends TestCase
     public function testTheScanReadsTheTreesCookieDomains(): void
     {
         // Without this a scan that read nothing would pass the test above:
-        // connect2.php's twelve click cookies, go.php's three, ipx.php's one,
-        // and remember_me's three.
+        // connect2.php's twelve click cookies, go.php's three and
+        // remember_me's three.
         $read = 0;
         foreach (SourceScan::phpFiles() as $path => $source) {
             $read += self::scan($source, self::ALLOWED_IN_FILE[$path] ?? [])['domains'];
         }
+        self::assertGreaterThanOrEqual(18, $read);
+    }
+
+    /**
+     * Every cookie is set for the whole site. A cookie with no Path (or an
+     * empty one) gets the directory of the script that set it: go.php's
+     * campaign cookie landed under /tracking202/redirect/, so the pixels under
+     * /tracking202/static/ never saw it and credited whatever click the
+     * general cookie named — another campaign's.
+     */
+    public function testEveryCookieIsSetForTheWholeSite(): void
+    {
+        $problems = [];
+        $read = 0;
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            foreach (self::scan($source, self::ALLOWED_IN_FILE[$path] ?? [])['paths'] as [$line, $value]) {
+                $read++;
+                if ($value !== "'/'" && $value !== '"/"') {
+                    $problems[] = $path . ':' . $line . '  Path ' . ($value ?? '(none: the script\'s directory)');
+                }
+            }
+        }
+
+        // connect2.php's twelve, go.php's three, remember_me's three and the
+        // visitor cookie: without a floor a scan that read nothing would pass.
         self::assertGreaterThanOrEqual(19, $read);
+        self::assertSame([], $problems, "A cookie is not set for the whole site:\n  " . implode("\n  ", $problems)
+            . "\nPass 'path' => '/': the readers (lp.php, the pixels, the API) live in other directories.");
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function pathShapes(): iterable
+    {
+        yield 'an empty path' => ['<?php setcookie("a", "b", ["path" => ""]);', '""'];
+        yield 'no path at all' => ['<?php setcookie("a", "b", ["expires" => 0]);', null];
+        yield 'a directory' => ['<?php setcookie("a", "b", ["path" => "/tracking202/"]);', '"/tracking202/"'];
+        yield 'the old signature' => ['<?php setcookie("a", "b", 0, "");', '""'];
+        yield 'the old signature without a path' => ['<?php setcookie("a", "b", 0);', null];
+        yield 'a named path' => ['<?php setcookie("a", "b", path: "/x");', '"/x"'];
+        yield 'the key in another case' => ['<?php setcookie("a", "b", ["Path" => "/x"]);', '"/x"'];
+        yield 'the whole site' => ['<?php setcookie("a", "b", ["path" => "/"]);', '"/"'];
+    }
+
+    /** @dataProvider pathShapes */
+    public function testThePathOfEveryShapeIsRead(string $source, ?string $expected): void
+    {
+        self::assertSame([[1, $expected]], self::scan($source, [])['paths']);
     }
 
     public function testAuthCookieDomainIsOnlyCookieDomain(): void
@@ -188,7 +235,7 @@ final class CookieDomainSourceTest extends TestCase
 
     /**
      * @param list<string> $allowedHere
-     * @return array{problems: list<string>, domains: int, computedHeaders: list<int>}
+     * @return array{problems: list<string>, domains: int, computedHeaders: list<int>, paths: list<array{int, ?string}>}
      */
     private static function scan(string $source, array $allowedHere): array
     {
@@ -197,6 +244,7 @@ final class CookieDomainSourceTest extends TestCase
         $problems = [];
         $domains = 0;
         $computedHeaders = [];
+        $paths = [];
         $check = static function (array $value, int $line) use (&$problems, &$domains, $allowed): void {
             $domains++;
             $text = self::text($value);
@@ -248,6 +296,7 @@ final class CookieDomainSourceTest extends TestCase
             // the old signature's domain the fifth; session_set_cookie_params
             // takes the options first and the old domain third.
             [$optionsAt, $domainAt] = $name === 'session_set_cookie_params' ? [0, 2] : [2, 4];
+            $pathValue = null;
             foreach ($args as $k => $arg) {
                 if (($arg[0] ?? null) !== null && is_array($arg[0]) && $arg[0][0] === T_ELLIPSIS) {
                     $problems[] = $line . '  argument unpacking: the options cannot be read';
@@ -258,8 +307,10 @@ final class CookieDomainSourceTest extends TestCase
                     [$argName, $value] = $named;
                     if ($argName === 'domain') {
                         $check($value, $line);
+                    } elseif ($argName === 'path') {
+                        $pathValue = $value;
                     } elseif (in_array($argName, ['expires_or_options', 'lifetime_or_options'], true)) {
-                        self::readOptions($value, $line, $check, $problems);
+                        $pathValue = self::readOptions($value, $line, $check, $problems) ?? $pathValue;
                     }
                     continue;
                 }
@@ -269,31 +320,45 @@ final class CookieDomainSourceTest extends TestCase
                     // the call goes on to the domain position; otherwise it
                     // may be an options array held elsewhere, and is refused.
                     if (self::isArrayLiteral($arg) || (count($args) <= $domainAt && !self::isPlainExpiry($arg))) {
-                        self::readOptions($arg, $line, $check, $problems);
+                        $pathValue = self::readOptions($arg, $line, $check, $problems) ?? $pathValue;
                     }
                 } elseif ($k === $domainAt && !self::isArrayLiteral($args[$optionsAt] ?? [])) {
                     $check($arg, $line);
+                } elseif ($k === $optionsAt + 1 && !self::isArrayLiteral($args[$optionsAt] ?? [])) {
+                    // The old signature's fourth argument is the path.
+                    $pathValue = $arg;
                 }
+            }
+            if ($name !== 'session_set_cookie_params') {
+                $paths[] = [$line, $pathValue === null ? null : self::text($pathValue)];
             }
         }
 
-        return ['problems' => $problems, 'domains' => $domains, 'computedHeaders' => $computedHeaders];
+        return [
+            'problems' => $problems,
+            'domains' => $domains,
+            'computedHeaders' => $computedHeaders,
+            'paths' => $paths,
+        ];
     }
 
     /**
-     * The `domain` entry of an inline options array, or a refusal when the
-     * options are not an inline array this can read.
+     * Check the `domain` entry of an inline options array, or refuse options
+     * that are not an inline array this can read; return the `path` entry's
+     * tokens (null when there is none).
      *
      * @param list<string|array{0:int,1:string,2:int}> $arg
      * @param list<string> $problems
+     * @return list<string|array{0:int,1:string,2:int}>|null
      */
-    private static function readOptions(array $arg, int $line, callable $check, array &$problems): void
+    private static function readOptions(array $arg, int $line, callable $check, array &$problems): ?array
     {
         if (!self::isArrayLiteral($arg)) {
             $problems[] = $line . '  options passed as ' . self::text($arg)
                 . ': write the options array inline so its Domain can be read';
-            return;
+            return null;
         }
+        $path = null;
         $inner = $arg[0] === '[' ? array_slice($arg, 1, -1) : array_slice($arg, 2, -1);
         foreach (self::split($inner) as $element) {
             if ($element === []) {
@@ -321,10 +386,15 @@ final class CookieDomainSourceTest extends TestCase
                 continue;
             }
             // PHP reads the option names case-insensitively.
-            if (strtolower(substr($key[0][1], 1, -1)) === 'domain') {
+            $option = strtolower(substr($key[0][1], 1, -1));
+            if ($option === 'domain') {
                 $check(array_slice($element, $arrow + 1), $line);
+            } elseif ($option === 'path') {
+                $path = array_slice($element, $arrow + 1);
             }
         }
+
+        return $path;
     }
 
     /** An expiry of the old signature: digits, time(), arithmetic. */

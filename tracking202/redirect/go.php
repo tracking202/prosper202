@@ -12,9 +12,13 @@ use Tracking202\Redirect\RedirectHelper;
 // __DIR__ . '/RedirectHelper.php' would resolve to the lowercase directory and
 // fatal with "Failed opening required" everywhere except case-insensitive macOS.
 require_once __DIR__ . '/../Redirect/RedirectHelper.php';
-// CookieDomain, for the same reason: the cookies below are set before any
-// bootstrap loads the autoloader.
+// CookieDomain, and RequestHost, which it reads the Host header through, for
+// the same reason: the cookies below are set before any bootstrap loads the
+// autoloader (GoPhpBeforeBootstrapTest runs this script without one); and
+// ClickCookie, which reads the outbound cookie below.
+require_once __DIR__ . '/../../202-config/Http/RequestHost.php';
 require_once __DIR__ . '/../../202-config/Http/CookieDomain.php';
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 
 $vars = explode(' ', base64_decode((string) RedirectHelper::getStringParam('202v')));
 
@@ -22,7 +26,9 @@ if(isset($vars[1])){
 $_GET['pci']=$vars[1];
 $expire = time() + 2592000;
 @setcookie('tracking202subid',$vars[0], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
-@setcookie('tracking202subid_a_' . $vars[2],$vars[0], ['expires' => $expire, 'path' => '', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
+// Path '/', like every click cookie: an empty path defaults to this
+// script's directory, and the pixels under /tracking202/static/ never saw it.
+@setcookie('tracking202subid_a_' . $vars[2],$vars[0], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 @setcookie('tracking202pci',$vars[1], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 }
 $redirect_site_url='';
@@ -30,8 +36,8 @@ $redirect_site_url='';
 
 // Simple LP redirect
 if (isset($_GET['lpip']) && is_numeric($_GET['lpip'])) {
-    if (isset($_COOKIE['tracking202outbound'])) {
-        $tracking202outbound = $_COOKIE['tracking202outbound'];
+    if (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound') !== null) {
+        $tracking202outbound = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound');
     } else {
         require_once substr(__DIR__, 0, -21) . '/tracking202/redirect/lp.php';
     }

@@ -264,8 +264,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // The ip column is varchar(45): exactly one address fits, a forwarding
         // chain does not, and an over-long value fails the INSERT under strict
         // sql_mode and rolls the conversion back. Whatever a caller hands in,
-        // the row gets one valid address or nothing (p202ClientIp() picks the
-        // address at the endpoints; this is the writer's own floor).
+        // the row gets one valid address or nothing (p202StoredVisitorIp()
+        // picks the address at the endpoints; this is the writer's own floor).
         $ip = trim((string) ($data['ip'] ?? ''));
         $data['ip'] = $ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
 

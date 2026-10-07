@@ -303,9 +303,8 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
 
             // The beacon request hits the tracking domain, so the request
             // cookies are the tracker's own: the prior click's subid.
-            $cookieClickId = isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])
-                ? (int) $_COOKIE['tracking202subid']
-                : 0;
+            $cookieSubid = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
+            $cookieClickId = is_numeric($cookieSubid) ? (int) $cookieSubid : 0;
 
             // Engagement (ABM): whenever the visitor resolves to a known
             // customer — through any explicit signal — stamp this pageview's
@@ -591,29 +590,6 @@ if (!function_exists('p202LinkConversionIdentity')) {
     }
 }
 
-if (!function_exists('p202ClientIp')) {
-    /**
-     * The client address to store on a conversion row: one valid IP, or ''.
-     *
-     * X-Forwarded-For is a comma-separated chain behind more than one proxy,
-     * and with IPv6 hops it runs well past the 45 characters
-     * 202_conversion_logs.ip holds. Passed through as it was, the INSERT
-     * failed under strict sql_mode and rolled the conversion back — a 500
-     * from pb.php on every retry, silence from px.php. VisitorIp takes the
-     * leftmost hop only when it parses as an address, otherwise REMOTE_ADDR,
-     * otherwise nothing — the same address the click path records, so a
-     * conversion row and its click agree. The header is attacker-supplied,
-     * so the value is for display only and never a security decision
-     * (CLAUDE.md error pattern #16).
-     *
-     * @param array<string,mixed> $server $_SERVER, or a stand-in in tests.
-     */
-    function p202ClientIp(array $server): string
-    {
-        return \Prosper202\Http\VisitorIp::fromServer($server);
-    }
-}
-
 if (!function_exists('p202ClickIdFromRequest')) {
     /**
      * Which click a pixel request names, from the places gpx.php and upx.php
@@ -643,9 +619,10 @@ if (!function_exists('p202ClickIdFromRequest')) {
             ['sid', $get['sid'] ?? null],
         ];
         if ($campaignId > 0) {
-            $places[] = ['tracking202subid_a_' . $campaignId, $cookies['tracking202subid_a_' . $campaignId] ?? null];
+            $campaignCookie = 'tracking202subid_a_' . $campaignId;
+            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie)];
         }
-        $places[] = ['tracking202subid', $cookies['tracking202subid'] ?? null];
+        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid')];
 
         foreach ($places as [$name, $value]) {
             if ($value === null || $value === '') {

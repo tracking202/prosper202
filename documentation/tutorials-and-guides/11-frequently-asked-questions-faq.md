@@ -28,6 +28,16 @@ In general, installs and upgrades work fine. If there is an issue, it might warr
 
 In general it is best to install Prosper on its own standalone domain but people have installed Prosper on subdomains and made it work.
 
+## Does my tracking domain need HTTPS?
+
+Serve it over HTTPS if you can. The click cookies a landing page or a conversion pixel on another site relies on are `Secure; SameSite=None`, and browsers only keep those over HTTPS.
+
+Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202subid-legacy` and so on), which browsers keep on the usual first-party terms:
+
+- A landing page or thank-you page on the tracking domain's own site works. An example is a tracker at `track.example.com` with a landing page at `www.example.com`.
+- The Get LP Code redirect page (options 2 and 3) works from any site. It finds the click through a cookie on the landing page itself.
+- A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. A pixel then falls back to the visitor's last click from the same IP address.
+
  ## Is Memcache required?
 
 No, but strongly recommended.

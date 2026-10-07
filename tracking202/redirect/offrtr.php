@@ -8,8 +8,11 @@ ob_start();
 
 $urlvarslist = $_GET;
 $rpi = $_GET['rpi'];
+// The click cookie, or its -legacy twin (ClickCookie; the autoloader is not loaded yet).
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
+$cookieClickId = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
 
-if(!isset($_COOKIE['tracking202subid']) || !is_numeric($_COOKIE['tracking202subid']) || !isset($rpi) || !is_numeric($rpi)) { 
+if($cookieClickId === null || !is_numeric($cookieClickId) || !isset($rpi) || !is_numeric($rpi)) { 
     die();
 } 
 
@@ -24,7 +27,7 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
+$mysql['click_id'] = $db->real_escape_string((string) $cookieClickId);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
 $rotator_sql = "SELECT
@@ -193,11 +196,11 @@ foreach ($rule_row as $rule) {
 
 				case 'ip':
 					if ($statement) {
-						if (in_array($ip_address, $values)) {
+						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					} else {
-						if (!in_array($ip_address, $values)) {
+						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					}
@@ -427,12 +430,12 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
-				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
-				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				    $cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				}
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
@@ -580,12 +583,12 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
-				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				if ($cloaking_on == true) {
-				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				    $cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				}
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);

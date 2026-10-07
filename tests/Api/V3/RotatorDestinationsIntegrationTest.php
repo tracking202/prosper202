@@ -151,6 +151,22 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         self::assertSame(['https://rule.example/', null, null, '100'], $row);
     }
 
+    public function testAnIpCriterionIsStoredAsItsCanonicalAddresses(): void
+    {
+        $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
+        // As a person types them: upper case, zeros written out, a space
+        // after the comma, one address twice.
+        $typed = '2001:DB8:0:0::77, 198.51.100.88,2001:db8::77';
+        $this->rotators()->createRule($id, [
+            'rule_name' => 'ips',
+            'criteria' => [['type' => 'ip', 'statement' => 'is', 'value' => $typed]],
+            'redirects' => [['redirect_url' => 'https://rule.example/']],
+        ]);
+        $stored = self::$db->query("SELECT value FROM 202_rotator_rules_criteria WHERE rotator_id = $id")
+            ->fetch_row()[0];
+        self::assertSame('2001:db8::77,198.51.100.88', $stored);
+    }
+
     /** @return iterable<string, array{0: array<string, mixed>, 1: string}> */
     public static function refusedDefaults(): iterable
     {
@@ -193,6 +209,13 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         yield 'a country as a bare code, which never matches' => [['criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'United States(US),CA']]], 'criteria.0.value'];
         yield 'a criterion statement they ignore' => [['criteria' => [['type' => 'country', 'statement' => 'isnt', 'value' => 'x']]], 'criteria.0.statement'];
         yield 'a criterion that is not an object' => [['criteria' => ['country']], 'criteria.0'];
+        $ip = static fn (string $value): array => [
+            ['criteria' => [['type' => 'ip', 'statement' => 'is', 'value' => $value]]],
+            'criteria.0.value',
+        ];
+        yield 'an IP criterion that is not an address' => $ip('203.0.113.9, 203.0.113.500');
+        yield 'an IP range, which the redirects never matched' => $ip('203.0.113.0/24');
+        yield 'an IP criterion with no address' => $ip(' , ');
         yield 'a status that is not 0 or 1' => [['status' => '1.5'], 'status'];
     }
 

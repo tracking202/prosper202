@@ -10,6 +10,7 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
+use Prosper202\Rotator\IpCriterion;
 
 class RotatorsController
 {
@@ -409,6 +410,18 @@ class RotatorsController
                             throw new ValidationException('A country is written Name(CC)', ["$at.value" => '"' . trim($country) . '" never matches: write it as the redirects compare it, e.g. "United States(US)" (`p202 rotator criteria-values --search ' . trim($country) . '`)']);
                         }
                     }
+                }
+                // An IP criterion is a list of single addresses, stored in
+                // canonical form; one that is not an address (a typo, a
+                // range) would never match, so it is refused by name.
+                if ($type === 'ip') {
+                    $refused = IpCriterion::refusal((string)$value);
+                    if ($refused !== null) {
+                        throw new ValidationException('An IP criterion lists single addresses', [
+                            "$at.value" => $refused,
+                        ]);
+                    }
+                    $value = IpCriterion::normalize((string)$value)['value'];
                 }
                 $out['criteria'][] = ['type' => $type, 'statement' => $statement, 'value' => trim((string)$value)];
             }

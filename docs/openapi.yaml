@@ -11737,7 +11737,10 @@ components:
                 default: is
               value:
                 type: string
-                description: Comma-separated; countries as Name(CC), e.g. "United States(US)".
+                description: >-
+                  Comma-separated; countries as Name(CC), e.g. "United States(US)".
+                  For type ip, single IPv4 or IPv6 addresses, stored in canonical
+                  form; a value that is not an address (a range included) is a 422.
         redirects:
           type: array
           items:

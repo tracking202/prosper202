@@ -188,15 +188,50 @@ if (!isset($_SESSION['privacy'])) {
 // read back, each with its own fallback and none validating it).
 $ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
 
+/**
+ * The visitor's address as every click-path row stores it (StoredVisitorIp):
+ * masked when trackingEnabled() is false. The pixels' "this address's last
+ * click" lookups take it too, so they compare like with like.
+ */
+function p202StoredVisitorIp(): string
+{
+    return \Prosper202\Http\StoredVisitorIp::fromServer($_SERVER, !trackingEnabled());
+}
+
+/**
+ * Whether this visitor may be tracked in full: cookies set, the address
+ * stored as it arrived. False under the owner's privacy setting — 'all', or
+ * 'eu' for a visitor who may be in the European Union (p202VisitorMayBeInEu()).
+ */
 function trackingEnabled(): bool
 {
-    $trackingEnabled = true;
+    return \Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'] ?? 'disabled', p202VisitorMayBeInEu(...));
+}
 
-    if ($_SESSION['privacy'] === 'all' || ($_SESSION['privacy'] === 'eu' && $_SESSION['is_european_union'])) {
-        $trackingEnabled = false;
+/**
+ * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
+ * their address places them outside the European Union, it does.
+ *
+ * The check used to read $_SESSION['is_european_union'], which nothing ever
+ * set: every request under 'eu' raised an undefined-key warning and tracked
+ * EU visitors in full — cookies set, the address stored — which is what the
+ * setting promises not to do. Only a positive "not in the EU" lifts privacy:
+ * an address GeoIP cannot place, or one in a European country outside the
+ * EU (getGeoData() reports those as "Unknown"), is treated as possibly EU,
+ * and so is everyone when the GeoIP library is missing (getGeoData() then
+ * answers false for every address without looking). Asked once per request.
+ */
+function p202VisitorMayBeInEu(): bool
+{
+    static $mayBe = null;
+    if ($mayBe === null) {
+        $answer = class_exists(\GeoIp2\Database\Reader::class)
+            ? (getGeoData(\Prosper202\Http\VisitorIp::fromServer($_SERVER))['is_european_union'] ?? null)
+            : null;
+        $mayBe = \Prosper202\Http\PrivacyMode::mayBeInEu($answer);
     }
 
-    return $trackingEnabled;
+    return $mayBe;
 }
 
 function _mysqli_query($dbOrSql, $sql = null)
@@ -2548,7 +2583,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($dbOrSql, $sql = null): never
 {
-    global $server_row, $ip_address; // Add global $ip_address
+    global $server_row;
 
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -2576,11 +2611,10 @@ function record_mysql_error($dbOrSql, $sql = null): never
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
-    $ipForError = $ip_address ?? \Prosper202\Http\VisitorIp::fromServer($_SERVER);
-    $ip_id = INDEXES::get_ip_id($ipForError);
+    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
-    $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
@@ -3021,16 +3055,10 @@ function ipAddress($ip_address)
 
 function maskIpAddress($ip)
 {
-
-    if ($ip->type == 'ipv4') {
-        $bits = explode('.', (string) $ip->address);
-        $masked = implode(".", array_slice($bits, 0, 3)) . ".0";
-    } else if ($ip->type == 'ipv6') {
-        $bits = explode(':', (string) $ip->address);
-        $masked = implode(":", array_slice($bits, 0, 3)) . ":0000:0000:0000:0000:0000";
-    }
-    if (isset($masked)) {
-        $ip->address = $masked;
+    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
+    // so the $ip_address global and every stored address agree.
+    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
+        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
     }
 
     return $ip;
@@ -3733,42 +3761,6 @@ function getUTMParams(&$mysql)
     $mysql['utm_content'] = $db->real_escape_string($utm_content);
 }
 
-/**
- * Link the visitor's impression row to a freshly-recorded click. Single source for
- * what was previously copy-pasted across record_simple.php, record_adv.php and
- * dl.php (each with slightly different error handling). If a p202_ipx cookie is
- * present, link that exact impression; otherwise fall back to the latest unlinked
- * impression for the landing page (when one is supplied — dl.php has none, so it
- * no-ops without a cookie, preserving its prior behavior).
- *
- * 202_clicks_impressions is created by no installer today, so a missing table is
- * logged, never fatal — click recording must not die on the optional impression
- * link. The query is wrapped in try/catch because that non-fatal guarantee depends
- * on the mysqli_report() mode: under MYSQLI_REPORT_STRICT alone (what connect2.php
- * sets) a missing table makes query() return false, but under STRICT|ERROR (the
- * PHP 8.1 default) it throws mysqli_sql_exception — handle both.
- */
-function p202LinkImpressionToClick(mysqli $db, $clickId, $landingPageId = null, string $context = 'record')
-{
-    $clickId = $db->real_escape_string((string) $clickId);
-    if (isset($_COOKIE['p202_ipx'])) {
-        $ipx = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
-        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE impression_id = '" . $ipx . "'";
-    } elseif ($landingPageId !== null && $landingPageId !== '') {
-        $lp = $db->real_escape_string((string) $landingPageId);
-        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE click_id IS NULL AND landing_page_id = '" . $lp . "' ORDER BY impression_id DESC LIMIT 1";
-    } else {
-        return; // no cookie and no landing page to fall back to (e.g. dl.php)
-    }
-    try {
-        if (!$db->query($sql)) {
-            error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $db->error);
-        }
-    } catch (\mysqli_sql_exception $e) {
-        error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $e->getMessage());
-    }
-}
-
 function getCVars(&$mysql)
 {
 
@@ -3999,18 +3991,8 @@ function getUrlVars202(): array
     return $urlvarslist;
 }
 
+/** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */
 function getCookie202($cookieName)
 {
-    $cookieValue = null;
-    $legacyCookie = $cookieName . '-legacy';
-    // check new format
-    if (isset($_COOKIE[$cookieName])) {
-        $cookieValue = $_COOKIE[$cookieName];
-    } // if not found check legacy
-    else {
-        if (isset($_COOKIE[$legacyCookie])) {
-            $cookieValue = $_COOKIE[$legacyCookie];
-        }
-    }
-    return $cookieValue;
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
 }

@@ -81,7 +81,7 @@ leaves the rule as it was.
 | ----- | ---- | ----------- |
 | `type` | string | `country`, `region`, `city`, `isp`, `ip`, `platform`, `device` or `browser` — the types the redirects evaluate; any other is a `422`, since it would never match |
 | `statement` | string | `is` (default) or `is_not` |
-| `value` | string | Comma-separated values, compared exactly. Countries are `Name(CC)`, e.g. `United States(US)` (`p202 rotator criteria-values` lists them); devices are lowercase (`desktop`, `mobile`, `tablet`, `bot`) |
+| `value` | string | Comma-separated values, compared exactly. Countries are `Name(CC)`, e.g. `United States(US)` (`p202 rotator criteria-values` lists them); devices are lowercase (`desktop`, `mobile`, `tablet`, `bot`). An `ip` value lists single IPv4 or IPv6 addresses, compared as addresses (`2001:DB8::1` matches `2001:db8::1`) and stored in canonical form; anything else, a range such as `203.0.113.0/24` included, is a `422` naming it, since it would never match |
 
 ### Redirect Object
 

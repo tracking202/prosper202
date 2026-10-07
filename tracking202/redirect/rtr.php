@@ -245,11 +245,11 @@ foreach ($rule_row as $rule) {
 
 				case 'ip':
 					if ($statement) {
-						if (in_array($ip_address, $values)) {
+						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					} else {
-						if (!in_array($ip_address, $values)) {
+						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					}
@@ -552,7 +552,8 @@ $mysql['click_bot'] = $clickIsBot ? '1' : '0';
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
 
-$ip_id = INDEXES::get_ip_id($db, $ip_address);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = INDEXES::get_ip_id($db, p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 $countryName = $GeoData['country'] ?? '';
@@ -583,18 +584,15 @@ $mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 
 if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
-	$click_sql1 = "	SELECT 	202_clicks.click_id,keyword,keyword_id
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					LEFT JOIN 	202_keywords USING (keyword_id) 
-					WHERE 	202_ips.ip_address='".$ip_address."'
-					AND		202_clicks.user_id='".$user_id."'  
-					AND		202_clicks.click_time >= '30'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1 ? $click_result1->fetch_assoc() : null;
+	// The visitor's last click by the address the click path stored
+	// (p202StoredVisitorIp). The window is unchanged: click_time >= 30, i.e.
+	// any time, as the query has always read it.
+	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+		new \Prosper202\Database\Connection($db),
+		p202StoredVisitorIp(),
+		(int) $user_id,
+		30
+	);
 
 	if ($click_row1 && !empty($click_row1['click_id'])) {
 		// Set the bare $click_id too, not just the escaped copy: it is read at
@@ -760,19 +758,13 @@ if (!empty($referer_query['url'])) {
 
 $mysql['click_referer_site_url_id'] = $db->real_escape_string((string)$click_referer_site_url_id); 
 
-$outbound_site_url = 'http://'.$_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url); 
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id); 
 
 if ($cloaking_on == true) {
-	// Match the request scheme (mirrors getSecureStatus(), which isn't loaded
-	// here) and honor subdirectory installs via get_absolute_url() — a
-	// hard-coded http://.../tracking202/... downgraded https visitors and
-	// broke non-root installs (review finding).
-	$cloaking_secure = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-		|| (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string) $_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
-		|| (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
-	$cloaking_site_url = ($cloaking_secure ? 'https://' : 'http://').$_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
+	// The request's own scheme, host and port, and the install directory.
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 // Landing Page Optimizer: the t202ctx token is minted ONLY when the
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —

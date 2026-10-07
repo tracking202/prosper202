@@ -38,9 +38,11 @@ namespace Prosper202\Http;
  *  - A host with no dot (`localhost`, an intranet name) gets no Domain, the
  *    rule AUTH::cookie_domain() already had for localhost: Chromium stores
  *    `Domain=localhost` and `Domain=tracker` as host-only cookies too.
- *  - Anything that is not a host name — no Host header, a non-numeric port,
- *    a trailing dot, a character setcookie() would refuse with a ValueError
- *    (`;`, `,`, whitespace) — gets no Domain. A host-only cookie is accepted
+ *  - Anything that is not a host name — no Host header, a non-numeric or
+ *    out-of-range port, a trailing dot, a character setcookie() would refuse
+ *    with a ValueError (`;`, `,`, whitespace) — gets no Domain. Whether the
+ *    header names a host at all is RequestHost::parse()'s answer, shared
+ *    with the install's own URLs (TrackingBaseUrl::forRequest()). A host-only cookie is accepted
  *    for every host a browser can reach; a wrong Domain is dropped, and a
  *    refused one throws out of the click path.
  *
@@ -60,32 +62,23 @@ final class CookieDomain
      */
     public static function fromServer(array $server): string
     {
-        $host = $server['HTTP_HOST'] ?? null;
+        $host = RequestHost::fromServer($server);
 
-        return is_string($host) ? self::forHost($host) : '';
+        return $host === null ? '' : self::forHost($host);
     }
 
     /** The Domain for a request to `$host` (a Host header value), or '' for none. */
     public static function forHost(string $host): string
     {
-        $host = strtolower($host);
-        // An IPv6 literal is bracketed in a Host header, with or without a
-        // port; a bare one (two or more colons) is not valid there, and is
-        // not a domain either way.
-        if ($host === '' || $host[0] === '[' || substr_count($host, ':') > 1) {
+        // What is a host at all, and what is an address, is RequestHost's
+        // answer, the one this install's own URLs are built from too: a bare
+        // IPv6 address (not valid Host syntax), a second or non-numeric port
+        // and anything with a character no host has are not hosts.
+        $parsed = RequestHost::parse($host);
+        if ($parsed === null || $parsed['ip']) {
             return '';
         }
-        $colon = strpos($host, ':');
-        if ($colon !== false) {
-            $port = substr($host, $colon + 1);
-            if ($port !== '' && !ctype_digit($port)) {
-                return '';
-            }
-            $host = substr($host, 0, $colon);
-        }
-        if ($host === '' || filter_var($host, FILTER_VALIDATE_IP) !== false) {
-            return '';
-        }
+        $host = $parsed['name'];
         // A browser parses a host whose last label is a number (`10.1`,
         // `0x7f.1`) as an IPv4 address (the WHATWG URL host parser), so it is
         // an IP literal however filter_var() reads it.

@@ -33,7 +33,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
-    $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 

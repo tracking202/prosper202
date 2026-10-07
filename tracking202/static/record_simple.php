@@ -290,7 +290,8 @@ if (isset($utm_content) && $utm_content != '') {
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
 $ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
-$ip_id = $locationRepo->findOrCreateIp($ip);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 $detect = new DeviceDetect();
@@ -418,13 +419,13 @@ $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? '
 $click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
+$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
 $click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 $mysql['click_cloaking_site_url_id'] = '0';
 
 if ($cloaking_on === true) {
-	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 	$click_cloaking_site_url_id = $locationRepo->findOrCreateSiteUrl($cloaking_site_url);
 	$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 }
@@ -482,8 +483,6 @@ setOutboundCookie($outbound_site_url);
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
-
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_simple');
 
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>

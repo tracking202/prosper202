@@ -178,7 +178,7 @@ try {
 			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
 			'time_difference' => $time_difference,
-			'ip'              => p202ClientIp($_SERVER),
+			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 2,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '',

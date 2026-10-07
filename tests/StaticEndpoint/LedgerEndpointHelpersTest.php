@@ -63,6 +63,23 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'a malformed cookie is refused, not skipped' => [[], ['tracking202subid' => 'abc'], 0, ['click_id' => null, 'malformed' => 'tracking202subid']];
         yield 'zero is not a click' => [['subid' => '0'], [], 0, ['click_id' => null, 'malformed' => 'subid']];
         yield 'an array is not a click' => [['subid' => ['1']], [], 0, ['click_id' => null, 'malformed' => 'subid']];
+        // Plain HTTP: the Secure cookie never exists, its -legacy twin does (ClickCookie).
+        yield 'the campaign cookie\'s -legacy twin' => [
+            [],
+            ['tracking202subid_a_5-legacy' => '8', 'tracking202subid-legacy' => '9'],
+            5,
+            ['click_id' => 8, 'malformed' => null],
+        ];
+        $click = static fn (int $id): array => ['click_id' => $id, 'malformed' => null];
+        yield 'the general cookie\'s -legacy twin' => [[], ['tracking202subid-legacy' => '9'], 5, $click(9)];
+        $both = ['tracking202subid' => '9', 'tracking202subid-legacy' => '7'];
+        yield 'the cookie before its twin' => [[], $both, 0, $click(9)];
+        yield 'a malformed twin is refused too' => [
+            [],
+            ['tracking202subid-legacy' => 'abc'],
+            0,
+            ['click_id' => null, 'malformed' => 'tracking202subid'],
+        ];
     }
 
     // --- reversals ---------------------------------------------------------

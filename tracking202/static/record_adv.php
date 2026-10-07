@@ -281,7 +281,8 @@ if (isset($utm_content) && $utm_content != '') {
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
 $ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
-$ip_id = $locationRepo->findOrCreateIp($ip);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 //$device_id = PLATFORMS::get_device_info($db);
@@ -432,8 +433,6 @@ setPCIdCookie($mysql['click_id_public']);
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
-
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_adv');
 
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>

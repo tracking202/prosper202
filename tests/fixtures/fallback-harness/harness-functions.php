@@ -64,3 +64,17 @@ function setPrePopVars($vars, $url, $encode)
 function p202NoStore(): void
 {
 }
+
+// The address off.php looks a cookie-less visitor's last click up by. Empty:
+// LastClickFromAddress then answers "no click" without a query, which is what
+// this harness's reads answer anyway (its mysqli never connects).
+function p202StoredVisitorIp(): string
+{
+    return '';
+}
+
+// connect2.php's click-cookie reader, as it is: the cookie or its -legacy twin.
+function getCookie202($cookieName)
+{
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
+}
