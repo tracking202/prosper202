@@ -10640,8 +10640,12 @@ components:
           description: -1 the campaign's setting, 0 off for this link, 1 on for this link.
         tracker_id_public:
           type: integer
-          readOnly: true
-          description: Random public ID, auto-generated on create
+          description: >-
+            The t202id in the tracking link. A free one is drawn when a
+            create leaves it out; one sent (as p202 sync and import do, to
+            keep a link working on another server) is kept unless another
+            tracker, in any account, holds it, which is a 422: the click
+            endpoints find a tracker by this id alone.
         tracker_time:
           type: integer
           readOnly: true

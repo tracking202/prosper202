@@ -9,6 +9,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\TrackingBaseLookup;
 use Prosper202\Click\TrackingLinkVariables;
+use Prosper202\Setup\TrackerPublicId;
 
 class TrackersController extends Controller
 {
@@ -77,6 +78,9 @@ class TrackersController extends Controller
     #[\Override]
     protected function beforeUpdate(int|string $id, array $payload): array
     {
+        if (array_key_exists('tracker_id_public', $payload)) {
+            $this->assertPublicIdFree((int) $payload['tracker_id_public'], (int) $id);
+        }
         if (array_key_exists('click_cpa', $payload)) {
             return ['click_cpc' => ['type' => 'd', 'value' => null]];
         }
@@ -87,17 +91,54 @@ class TrackersController extends Controller
         return [];
     }
 
+    /**
+     * A sent public id is kept (p202 sync and import carry a tracker's link
+     * to another server) unless another tracker, in any account, holds it:
+     * the click endpoints look a tracker up by that id alone. Without one,
+     * a free id is drawn (TrackerPublicId).
+     */
     #[\Override]
     protected function beforeCreate(array $payload): array
     {
-        $publicId = isset($payload['tracker_id_public']) && (int)$payload['tracker_id_public'] > 0
-            ? (int)$payload['tracker_id_public']
-            : random_int(10_000_000, 999_999_999);
+        if (isset($payload['tracker_id_public']) && (int)$payload['tracker_id_public'] > 0) {
+            $publicId = (int)$payload['tracker_id_public'];
+            $this->assertPublicIdFree($publicId, null);
+        } else {
+            $publicId = $this->guardPublicIdLookup(fn (): int => TrackerPublicId::generate($this->db));
+        }
 
         return [
             'tracker_id_public' => ['type' => 'i', 'value' => $publicId],
             'tracker_time'      => ['type' => 'i', 'value' => time()],
         ];
+    }
+
+    private function assertPublicIdFree(int $publicId, ?int $trackerId): void
+    {
+        if ($publicId <= 0) {
+            throw new ValidationException('Validation failed', [
+                'tracker_id_public' => 'A positive whole number; leave it out and one is chosen',
+            ]);
+        }
+        if ($this->guardPublicIdLookup(fn (): bool => TrackerPublicId::isTaken($this->db, $publicId, $trackerId))) {
+            throw new ValidationException('Validation failed', [
+                'tracker_id_public' => "$publicId is another tracker's public id (the t202id in its link); leave it out and a free one is chosen",
+            ]);
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $lookup
+     * @return T
+     */
+    private function guardPublicIdLookup(callable $lookup): mixed
+    {
+        try {
+            return $lookup();
+        } catch (\RuntimeException $e) {
+            throw new DatabaseException('Tracker public id lookup failed', $e);
+        }
     }
 
     /**

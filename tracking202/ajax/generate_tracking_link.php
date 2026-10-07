@@ -241,7 +241,15 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
 	} else {
-		$tracker_id_public = random_int(1,9) . $tracker_row['tracker_id'] . random_int(1,9);
+		// A digit, the tracker's id, a digit, as every Get Links link has
+		// been -- drawn until no tracker in any account holds it: the click
+		// endpoints find a tracker by this id alone (TrackerPublicId).
+		try {
+			$tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage($db, (int) $tracker_row['tracker_id']);
+		} catch (\RuntimeException $e) {
+			$db->rollback();
+			record_mysql_error('choosing a free tracker public id: ' . $e->getMessage());
+		}
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
 

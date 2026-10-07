@@ -26,7 +26,7 @@ Manage tracking links that tie campaigns, landing pages, PPC accounts, and rotat
 | `click_cpc` | decimal | No | Cost per click, 0 to 99.99999 |
 | `click_cpa` | decimal | No | Cost per action, 0 to 99.99999 |
 | `click_cloaking` | integer | No | `-1` the campaign's setting (default), `0` off for this link, `1` on for this link |
-| `tracker_id_public` | integer | No | Public ID (auto-generated if omitted) |
+| `tracker_id_public` | integer | No | Public ID, the `t202id` in the tracking link (a free one is chosen if omitted). One another tracker holds, in any account, is a `422`: the click endpoints find a tracker by this id alone, so two sharing one would split each other's clicks |
 
 A tracker costs per click or per action, as the cost type on Get Links
 chooses: the redirects charge any tracker with a `click_cpa` per action, so
