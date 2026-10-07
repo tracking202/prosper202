@@ -21,8 +21,6 @@ try {
 
     if ($result->num_rows) {
         if (! $row['processing']) {
-            $snippet = "AND 2c.user_id = " . 1;
-
             $mysql['click_time_from'] = $db->real_escape_string((string)$row['time_from']);
             $mysql['click_time_to'] = $db->real_escape_string((string)$row['time_to']);
             // Atomic compare-and-swap claim: the SELECT above is not a lock, so

@@ -961,6 +961,20 @@ adding a column to a derived table, or a writer to a table one is derived
 from, find the other half. Rows already stale in an install heal only when
 they are re-rolled; nothing re-rolls them by itself.
 
+### 31. A shortcut that returns early skips the work the old path did after
+Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
+`DataEngine::doQuery()` returns at once when the query answers `true`. The
+rows were right; but `doSummary()`, the code that return skips, was also
+where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
+so the cron job's rebuild without curl took its first window, never finished
+it, and never took another — and it read `user_id = 1` while the curl path
+read every account. Nothing failed: the reports simply never got the
+rebuilt history. When a change makes a function skip code it used to run —
+an early return, a fast path, a branch on a new result type — list every
+side effect of the skipped code (flags, counters, cache writes, the "done"
+mark) and move each one to where the new path still runs it;
+`ClickUpgradeIntegrationTest` holds this one.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

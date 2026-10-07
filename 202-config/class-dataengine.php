@@ -720,38 +720,25 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
     /**
      * Roll a single click up into 202_dataengine so reports reflect it.
-     * When no click id is given, the most recent click from the current
-     * visitor IP (last 24h) is used.
+     *
+     * A request that names no click re-rolls none. It used to take "the
+     * visitor's latest click": user 1's newest click in the last 24 hours from
+     * the address in $ip_address. Measured, a cookie-less lpc.php request
+     * from an address re-rolled user 1's click from it. Nothing leaked — the
+     * answer is a bool, and a re-roll writes what the click's own rows say —
+     * but it was a lookup and a rollup for a request that changed no click,
+     * and it read the wrong things: only user 1's clicks, any visitor behind
+     * the same address, and the $ip_address global where the click path's
+     * own address lookups read the address as stored (StoredVisitorIp,
+     * LastClickFromAddress).
      */
     public function setDirtyHour($click_id)
     {
-        global $ip_address, $db;
+        global $db;
 
-        $inet6_ntoa = $this->resolveIpv6Functions();
-
-        if (!isset($click_id) || $click_id == '') {
-            $escapedIp = $db->real_escape_string((string) $ip_address->address);
-
-            if ($inet6_ntoa == '' && $ip_address->type == 'ipv6') {
-                $escapedIp = inet6_aton($escapedIp); // encode for db check
-            }
-
-            $daysago = time() - 86400; // 24 hours
-            $click_sql1 = 'SELECT  202_clicks.click_id
-                           FROM            202_clicks
-                           LEFT JOIN       202_clicks_advance USING (click_id)
-                           LEFT JOIN       202_ips USING (ip_id)
-                           LEFT JOIN       202_ips_v6 ON (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci)
-                           WHERE           IFNULL(' . $inet6_ntoa . '(202_ips_v6.ip_address),202_ips.ip_address)="' . $escapedIp . '"
-                           AND             202_clicks.user_id="1"
-                           AND             202_clicks.click_time >= "' . $daysago . '"
-                           ORDER BY        202_clicks.click_id DESC
-                           LIMIT           1';
-
-            $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-            $click_row1 = $click_result1->fetch_assoc();
-            $click_id = $click_row1 ? $db->real_escape_string((string) ($click_row1['click_id'] ?? '')) : '';
-        }
+        // Sets the IPv6 function globals for the rest of the request, as it
+        // always has.
+        $this->resolveIpv6Functions();
 
         if (!isset($click_id) || $click_id == '') {
             return false;
@@ -831,7 +818,23 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
             '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params
         );
 
-        $this->doQuery($query, $from, $to, $upgrade, $new);
+        $job = "WHERE time_from = '" . $from . "' AND time_to = '" . $to . "'";
+        try {
+            $this->doQuery($query, $from, $to, $upgrade, $new);
+        } catch (RuntimeException $e) {
+            // Released, not finished: the next run takes the window again.
+            if ($upgrade && !$db->query("UPDATE 202_dataengine_job SET processing = '0' " . $job)) {
+                error_log('DataEngine getSummary job release failed: ' . $db->error);
+            }
+            throw $e;
+        }
+        // The window is done. doSummary() marked it, but an INSERT … SELECT
+        // never reaches doSummary() (doQuery() returns at once), so a window
+        // the cron job's processClickUpgrade() took stayed `processing` and
+        // unprocessed for good, and no window after it was ever taken.
+        if ($upgrade && !$db->query("UPDATE 202_dataengine_job SET processing = '0', processed = '1' " . $job)) {
+            error_log('DataEngine getSummary job flag failed: ' . $db->error);
+        }
         return $query . "<br><br>";
     }
 
@@ -980,7 +983,11 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
         if ($result->num_rows && !$row['processing']) {
             $time_from = $db->real_escape_string((string) $row['time_from']);
             $time_to = $db->real_escape_string((string) $row['time_to']);
-            $this->getSummary($time_from, $time_to, "AND 2c.user_id = 1", 1, true);
+            // Every account's clicks in the window, as the curl path's
+            // dej.php rolls them up: this fallback rolled up user 1's only,
+            // so without curl a rebuild left every other account's clicks
+            // out of the reports.
+            $this->getSummary($time_from, $time_to, '', 1, true);
         }
     }
 
