@@ -41,11 +41,11 @@ class LandingPagesController extends Controller
         $this->assignPublicId('landing_page_id_public', $insertId);
     }
 
+    /** A list repairs the account's id-less rows once its request has been checked. */
     #[\Override]
-    public function list(array $params): array
+    protected function beforeListRead(): void
     {
         $this->repairMissingPublicIds();
-        return parent::list($params);
     }
 
     #[\Override]

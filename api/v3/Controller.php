@@ -670,6 +670,10 @@ abstract class Controller
             }
         }
 
+        // Everything the request names has been read and checked; a refused
+        // list has changed nothing.
+        $this->beforeListRead();
+
         $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
         $orderBy = $this->listOrderBy();
 
@@ -1238,6 +1242,15 @@ abstract class Controller
             throw new ValidationException('Failed to encode cursor');
         }
         return rtrim(strtr(base64_encode($json), '+/', '-_'), '=');
+    }
+
+    /**
+     * Runs after list() has read and checked every parameter and before its
+     * first query: the place for work a read needs done first (a repair)
+     * that a refused request must not do.
+     */
+    protected function beforeListRead(): void
+    {
     }
 
     protected function decodeOffsetCursor(string $cursor): int

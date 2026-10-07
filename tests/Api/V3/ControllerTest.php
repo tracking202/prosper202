@@ -134,34 +134,44 @@ final class ControllerTest extends TestCase
         $this->assertSame(20, $result['pagination']['offset']);
     }
 
-    public function testListClampsLimitToMax500(): void
+    /**
+     * limit and offset outside their range are refused, not clamped:
+     * limit=9999 used to answer 500 rows that read as all of them
+     * (StrictIntegerQueryParamsTest covers every list and spelling).
+     *
+     * @return iterable<string, array{string, int}>
+     */
+    public static function outOfRangePaging(): iterable
     {
-        [$ctrl] = $this->createControllerWithDb([
-            'COUNT(*)' => ['total' => 0],
-            'SELECT' => [],
-        ]);
-        $result = $ctrl->list(['limit' => 9999]);
-        $this->assertSame(500, $result['pagination']['limit']);
+        yield 'limit above 500' => ['limit', 9999];
+        yield 'limit below 1' => ['limit', -5];
+        yield 'offset below 0' => ['offset', -10];
     }
 
-    public function testListClampsLimitToMin1(): void
+    /** @dataProvider outOfRangePaging */
+    public function testListRefusesPagingOutsideItsRange(string $param, int $value): void
     {
         [$ctrl] = $this->createControllerWithDb([
             'COUNT(*)' => ['total' => 0],
             'SELECT' => [],
         ]);
-        $result = $ctrl->list(['limit' => -5]);
-        $this->assertSame(1, $result['pagination']['limit']);
+        try {
+            $ctrl->list([$param => $value]);
+            $this->fail("$param=$value was clamped instead of refused");
+        } catch (ValidationException $e) {
+            $this->assertSame([$param], array_keys($e->getFieldErrors()));
+        }
     }
 
-    public function testListClampsOffsetToMin0(): void
+    public function testListAcceptsTheEdgesOfItsRange(): void
     {
         [$ctrl] = $this->createControllerWithDb([
             'COUNT(*)' => ['total' => 0],
             'SELECT' => [],
         ]);
-        $result = $ctrl->list(['offset' => -10]);
-        $this->assertSame(0, $result['pagination']['offset']);
+        $result = $ctrl->list(['limit' => 500, 'offset' => 0]);
+        $this->assertSame([500, 0], [$result['pagination']['limit'], $result['pagination']['offset']]);
+        $this->assertSame(1, $ctrl->list(['limit' => '1'])['pagination']['limit']);
     }
 
     // ─── get() ──────────────────────────────────────────────────────
