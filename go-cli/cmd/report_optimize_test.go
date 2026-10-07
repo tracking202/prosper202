@@ -918,3 +918,348 @@ func TestBadOverrideIsRefusedBeforeTheClassicReport(t *testing.T) {
 		}
 	}
 }
+
+// payoutServer answers the classic breakdown with the demo account's shape: two sources that sell at a loss and one
+// that profits. None has zero conversions, so without a payout nothing is CUT.
+func payoutServer(t *testing.T, classic string, campaigns *int, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.WriteHeader(200)
+			w.Write([]byte(classic))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.WriteHeader(200)
+			if r.URL.Query().Get("type") == "last_touch" {
+				w.Write([]byte(lastTouchModels))
+				return
+			}
+			w.Write([]byte(firstTouchModels))
+		case strings.Contains(r.URL.Path, "/campaigns/"):
+			*campaigns++
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":{"aff_campaign_payout":"160"}}`))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.WriteHeader(200)
+			w.Write([]byte(`{"data":[
+				{"key":"7","name":"ChatGPT Ads","cost":"3171.62","attributed_conversions":"29.05625000","attributed_revenue":"4649.00","roi":46.58,"assisted_conversions":15},
+				{"key":"9","name":"Meta Prospecting","cost":"3201.65","attributed_conversions":"34.20625000","attributed_revenue":"5473.00","roi":70.94,"assisted_conversions":24}],
+				"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+const lastTouchModels = `{"data":[{"model_id":1,"model_name":"Last touch","model_type":"last_touch","status":"active","is_default":true}]}`
+
+// salesServer answers the classic breakdown with classic, the model lists with firstTouchModels and lastTouch, and
+// the attribution breakdown with attr, recording each attribution request.
+func salesServer(t *testing.T, classic, attr, firstTouch, lastTouch string, calls *[]url.Values) *httptest.Server {
+	return httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reports/breakdown") && !strings.Contains(r.URL.Path, "attribution"):
+			w.Write([]byte(classic))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models") && r.URL.Query().Get("type") == "last_touch":
+			w.Write([]byte(lastTouch))
+		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
+			w.Write([]byte(firstTouch))
+		case strings.HasSuffix(r.URL.Path, "/attribution/reports/breakdown"):
+			*calls = append(*calls, r.URL.Query())
+			w.Write([]byte(attr))
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+}
+
+func runSales(t *testing.T, command, classic, attr, lastTouch string, args ...string) (map[string]map[string]interface{}, string, []url.Values) {
+	t.Helper()
+	return runSalesWith(t, command, classic, attr, firstTouchModels, lastTouch, args...)
+}
+
+// runSalesWith is runSales with the account's First touch model list given too.
+func runSalesWith(t *testing.T, command, classic, attr, firstTouch, lastTouch string, args ...string) (map[string]map[string]interface{}, string, []url.Values) {
+	t.Helper()
+	var calls []url.Values
+	srv := salesServer(t, classic, attr, firstTouch, lastTouch, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, stderr, err := executeCommand(append([]string{"report", command, "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
+	if err != nil {
+		t.Fatalf("%s: %v", command, err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	rows := map[string]map[string]interface{}{}
+	for _, r := range resp.Data {
+		rows[fmt.Sprint(r["name"])] = r
+	}
+	return rows, stderr, calls
+}
+
+// Two converting sources at --payout 60, each with 5 converted clicks out of 100 at a $5 CPC: per converted click both
+// make $300 against $500. Repeat Buyers had 10 sales on those clicks (Last touch credits one per sale), so it makes
+// $600 and covers its $6 break-even; One-Off had 6 and still loses money.
+const repeatSales = `{"data":[
+	{"id":"21","name":"Repeat Buyers","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"},
+	{"id":"22","name":"One-Off","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"}]}`
+
+const repeatSalesAttr = `{"data":[
+	{"key":"21","cost":"500.00","attributed_conversions":"1.00000000","roi":-88.0,"assisted_conversions":0,"compare_attributed_conversions":"10.00000000"},
+	{"key":"22","cost":"500.00","attributed_conversions":"1.00000000","roi":-88.0,"assisted_conversions":0,"compare_attributed_conversions":"6.00000000"}],
+	"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`
+
+// With --payout the classic report's converted-click count undervalues a click with several sales, so the check's
+// request carries the Last touch model, whose credits count each row's sales, and the rows are valued per sale.
+func TestPayoutCountsEverySaleWithTheLastTouchModel(t *testing.T) {
+	rows, stderr, calls := runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || calls[0].Get("compare_model_id") != "1" || calls[0].Get("model_id") != "4" {
+		t.Fatalf("the check should read first touch with Last touch (1) as the compare model: %v", calls)
+	}
+	if _, listed := rows["Repeat Buyers"]; listed {
+		t.Errorf("Repeat Buyers makes $600 on its 10 sales against $500, so it isn't a loser: %v", rows)
+	}
+	if !strings.Contains(stderr, "1 row(s) CUT on converted clicks cover their break-even once every sale counts") {
+		t.Errorf("stderr should say a row was dropped once its sales were counted: %q", stderr)
+	}
+	r := rows["One-Off"]
+	if r == nil || r["bucket"] != "CUT" || toFloat(r["sales"]) != 6 || toFloat(r["total_net"]) != -140 {
+		t.Errorf("One-Off: want CUT on 6 sales, total_net 6 × 60 − 500 = -140; got %v", r)
+	}
+	if !strings.Contains(fmt.Sprint(r["reason"]), "breakeven $3.60") {
+		t.Errorf("break-even is 60 × 6/100 = $3.60: %v", r["reason"])
+	}
+
+	// Winners: Repeat Buyers loses money per converted click, so it isn't SCALE there, but it is once its sales count.
+	rows, _, calls = runSales(t, "winners", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || !strings.Contains(calls[0].Get("keys"), "21") {
+		t.Fatalf("winners should read the converting rows that lose per converted click too: %v", calls)
+	}
+	r = rows["Repeat Buyers"]
+	if r == nil || toFloat(r["sales"]) != 10 || toFloat(r["total_net"]) != 100 {
+		t.Errorf("Repeat Buyers: want a winner on 10 sales, total_net +100; got %v", rows)
+	}
+	if _, listed := rows["One-Off"]; listed {
+		t.Errorf("One-Off loses money on its 6 sales too: %v", rows)
+	}
+}
+
+// A default account has a Last touch model and no First touch model. Winners can't run the closer check there, but
+// --payout still counts each row's sales with the Last touch model, so a source profitable only through repeat sales
+// is listed, and one at exactly break-even per converted click is read too.
+func TestWinnersCountSalesWithoutAFirstTouchModel(t *testing.T) {
+	const classic = `{"data":[
+	{"id":"21","name":"Repeat Buyers","total_clicks":"100","total_leads":"5","total_cost":"500.00","total_net":"-100.00"},
+	{"id":"23","name":"Even","total_clicks":"100","total_leads":"5","total_cost":"300.00","total_net":"0.00"}]}`
+	const attr = `{"data":[
+	{"key":"21","cost":"500.00","attributed_conversions":"10.00000000","compare_attributed_conversions":"10.00000000"},
+	{"key":"23","cost":"300.00","attributed_conversions":"7.00000000","compare_attributed_conversions":"7.00000000"}],
+	"totals":{},"meta":{"groups":2,"backfill":null,"cohort":"click"}}`
+	rows, stderr, calls := runSalesWith(t, "winners", classic, attr, `{"data":[]}`, lastTouchModels, "--payout", "60")
+	if len(calls) != 1 || calls[0].Has("model_id") || calls[0].Get("compare_model_id") != "1" {
+		t.Fatalf("without a First touch model the request should still carry Last touch (1) as the compare model: %v", calls)
+	}
+	if keys := calls[0].Get("keys"); !strings.Contains(keys, "21") || !strings.Contains(keys, "23") {
+		t.Errorf("both converting rows that aren't SCALE per converted click are read, the break-even one too: %q", keys)
+	}
+	if r := rows["Repeat Buyers"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["sales"]) != 10 {
+		t.Errorf("Repeat Buyers: 10 sales × 60 − 500 = +100, SCALE; got %v", rows)
+	}
+	if r := rows["Even"]; r == nil || r["bucket"] != "SCALE" || toFloat(r["total_net"]) != 120 {
+		t.Errorf("Even: break-even per converted click (5 × 60 = 300), 7 sales make +120, SCALE; got %v", rows)
+	}
+	if !strings.Contains(stderr, "closer check skipped: no active First touch model") {
+		t.Errorf("stderr should still say the closer check was skipped: %q", stderr)
+	}
+
+	// Without --payout nothing is counted, so the check is skipped as before.
+	_, _, calls = runSalesWith(t, "winners", classic, attr, `{"data":[]}`, lastTouchModels)
+	if len(calls) != 0 {
+		t.Errorf("without --payout or a First touch model winners reads no attribution: %v", calls)
+	}
+}
+
+// Without a Last touch model, or with the check off, --payout counts each converted click as one sale and says so.
+func TestPayoutWithoutSalesCountsSaysSo(t *testing.T) {
+	rows, stderr, calls := runSales(t, "losers", repeatSales, repeatSalesAttr, `{"data":[]}`, "--payout", "60")
+	if len(calls) != 1 || calls[0].Has("compare_model_id") {
+		t.Fatalf("no compare model without a Last touch model: %v", calls)
+	}
+	if rows["Repeat Buyers"] == nil || rows["Repeat Buyers"]["sales"] != nil {
+		t.Errorf("Repeat Buyers stays CUT per converted click, with no sales count: %v", rows)
+	}
+	if !strings.Contains(stderr, "valued each converted click as one sale") || !strings.Contains(stderr, "no active Last touch model") {
+		t.Errorf("stderr should say clicks were counted once and why: %q", stderr)
+	}
+
+	_, stderr, calls = runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels, "--payout", "60", "--no-attribution-check")
+	if len(calls) != 0 || !strings.Contains(stderr, "valued each converted click as one sale") {
+		t.Errorf("with the check off: no attribution request and the note, got %d calls, stderr %q", len(calls), stderr)
+	}
+
+	_, stderr, _ = runSales(t, "losers", repeatSales, repeatSalesAttr, lastTouchModels)
+	if strings.Contains(stderr, "one sale") {
+		t.Errorf("without --payout there is nothing to count: %q", stderr)
+	}
+}
+
+const sellingAtALoss = `{"data":[
+	{"id":"7","name":"ChatGPT Ads","total_clicks":"1124","total_leads":"12","total_cost":"3171.62","total_net":"-1244.62"},
+	{"id":"9","name":"Meta Prospecting","total_clicks":"2605","total_leads":"11","total_cost":"3201.65","total_net":"-1682.65"},
+	{"id":"5","name":"Google Search","total_clicks":"2480","total_leads":"76","total_cost":"5963.94","total_net":"6451.06"}]}`
+
+func runPayoutLosers(t *testing.T, args ...string) (map[string]string, []url.Values, int) {
+	t.Helper()
+	rows, calls, campaigns := runPayoutTriage(t, "losers", sellingAtALoss, args...)
+	buckets := map[string]string{}
+	for name, r := range rows {
+		buckets[name] = fmt.Sprint(r["bucket"])
+	}
+	return buckets, calls, campaigns
+}
+
+// runPayoutTriage runs `report <cmd>` against payoutServer with the given classic rows and returns the listed rows by
+// name.
+func runPayoutTriage(t *testing.T, command, classic string, args ...string) (map[string]map[string]interface{}, []url.Values, int) {
+	t.Helper()
+	var calls []url.Values
+	campaigns := 0
+	srv := payoutServer(t, classic, &campaigns, &calls)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	out, _, err := executeCommand(append([]string{"report", command, "--json", "--breakdown", "source", "--period", "last30"}, args...)...)
+	if err != nil {
+		t.Fatalf("%s: %v", command, err)
+	}
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	rows := map[string]map[string]interface{}{}
+	for _, r := range resp.Data {
+		rows[fmt.Sprint(r["name"])] = r
+	}
+	return rows, calls, campaigns
+}
+
+// Sources that make some sales at a loss aren't CUT without a break-even to compare their CPC with; --payout gives each
+// row its own (payout × its conversion rate) without filtering the report, so the attribution check still runs on them.
+func TestLosersPayoutFindsSourcesThatSellAtALoss(t *testing.T) {
+	if buckets, calls, _ := runPayoutLosers(t); len(buckets) != 0 || len(calls) != 0 {
+		t.Errorf("without a payout nothing sells at zero, so nothing is CUT: got %v (%d attribution calls)", buckets, len(calls))
+	}
+
+	buckets, calls, campaigns := runPayoutLosers(t, "--payout", "160")
+	if buckets["ChatGPT Ads"] != "TEST" || buckets["Meta Prospecting"] != "TEST" {
+		t.Errorf("buckets = %v, want ChatGPT Ads and Meta Prospecting CUT by break-even, then TEST (they start sales)", buckets)
+	}
+	if _, listed := buckets["Google Search"]; listed {
+		t.Errorf("Google Search clears its break-even ($4.90 > $2.40 CPC) and must not be listed: %v", buckets)
+	}
+	if len(calls) != 1 || calls[0].Get("keys") != "7,9" {
+		t.Errorf("the check should read the two CUT rows by key, unfiltered: %v", calls)
+	}
+	if campaigns != 0 {
+		t.Errorf("--payout must not read a campaign's payout; read %d", campaigns)
+	}
+}
+
+// A negative, non-finite or overflowing --payout is refused by both commands before any request, as a validation error
+// (exit 1) with a hint an agent can act on.
+func TestTriageRefusesABadPayoutBeforeAnyRequest(t *testing.T) {
+	for _, command := range []string{"losers", "winners"} {
+		for v, want := range map[string]string{
+			"0": "more than 0", "-5": "more than 0", "-0.01": "more than 0", "NaN": "more than 0", "Inf": "more than 0",
+			"+Inf": "more than 0",
+			"-Inf": "more than 0",
+			// Finite but large: 1e308 × 2 conversions would be +Inf, which JSON can't encode.
+			"1e308": "at most 1000000000", "1000000000.01": "at most 1000000000",
+		} {
+			t.Run(command+" "+v, func(t *testing.T) {
+				requests := 0
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+				defer srv.Close()
+				tmp := t.TempDir()
+				setTestHome(t, tmp)
+				writeTestConfig(t, tmp, srv.URL, "test-key")
+				_, _, err := executeCommand("report", command, "--payout="+v)
+				want := "--payout must be " + want
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("--payout %s should be refused with %q, got %v", v, want, err)
+				}
+				if code := exitCodeForError(err); code != ExitValidation {
+					t.Errorf("exit code = %d, want %d (validation)", code, ExitValidation)
+				}
+				if h := api.HintFor(err); !strings.Contains(h, "revenue per conversion") {
+					t.Errorf("hint = %q, want one naming revenue per conversion", h)
+				}
+				if requests != 0 {
+					t.Errorf("%d requests were made before the refusal", requests)
+				}
+			})
+		}
+	}
+}
+
+// --payout values every sale the command reports: a row profitable at that payout is a winner even when the
+// campaign's recorded income puts it at a loss, and its total_net is conversions × payout − cost.
+func TestWinnersPayoutValuesEachSaleAtThePayout(t *testing.T) {
+	const newsletter = `{"data":[
+	{"id":"11","name":"Newsletter","total_clicks":"400","total_leads":"10","total_cost":"300.00","total_net":"-50.00"}]}`
+	rows, _, _ := runPayoutTriage(t, "winners", newsletter, "--no-attribution-check")
+	if len(rows) != 0 {
+		t.Errorf("at its recorded income Newsletter loses $50, so it isn't a winner: %v", rows)
+	}
+	rows, _, campaigns := runPayoutTriage(t, "winners", newsletter, "--payout", "60", "--no-attribution-check")
+	r, ok := rows["Newsletter"]
+	if !ok || r["bucket"] != "SCALE" {
+		t.Fatalf("at $60 a sale Newsletter makes $300, so it is SCALE: %v", rows)
+	}
+	if toFloat(r["total_net"]) != 300 || toFloat(r["payout"]) != 60 {
+		t.Errorf("total_net = %v, payout = %v; want 10 × 60 − 300 = 300 and the payout it was valued at", r["total_net"], r["payout"])
+	}
+	if campaigns != 0 {
+		t.Errorf("--payout must not read a campaign's payout; read %d", campaigns)
+	}
+}
+
+// With --payout the starter check's first-touch ROI values attributed conversions at the payout too, not at their
+// recorded revenue: at $100 a sale ChatGPT Ads' 29.06 first-touch conversions don't cover its $3,171.62.
+func TestLosersFirstTouchROIUsesThePayout(t *testing.T) {
+	rows, _, _ := runPayoutTriage(t, "losers", sellingAtALoss, "--payout", "100")
+	r := rows["ChatGPT Ads"]
+	if r == nil {
+		t.Fatalf("ChatGPT Ads should be listed: %v", rows)
+	}
+	if roi := toFloat(r["first_touch_roi"]); roi != -8.39 {
+		t.Errorf("first_touch_roi = %v, want (29.05625 × 100 − 3171.62) / 3171.62 = -8.39%%", r["first_touch_roi"])
+	}
+	if reason := fmt.Sprint(r["reason"]); strings.Contains(reason, "ROI") || !strings.Contains(reason, "15 assists") {
+		t.Errorf("held as TEST on its assists only, not on its recorded-revenue ROI: %q", reason)
+	}
+	if r["bucket"] != "TEST" {
+		t.Errorf("bucket = %v, want TEST (15 assists)", r["bucket"])
+	}
+}
+
+func TestClassifyPrefersMaxCPCOverPayout(t *testing.T) {
+	// payout 160 at 1.07% CVR is a $1.71 break-even; --max-cpc 3 is the target when both are set.
+	if b, _ := classify(1124, 12, 3171.62, -1244.62, 2.82, 160, 3); b == "CUT" {
+		t.Errorf("CPC $2.82 is under the $3 --max-cpc target, so it isn't CUT; got %s", b)
+	}
+	if b, _ := classify(1124, 12, 3171.62, -1244.62, 2.82, 160, 0); b != "CUT" {
+		t.Errorf("CPC $2.82 is over the $1.71 payout break-even, so it is CUT; got %s", b)
+	}
+}
