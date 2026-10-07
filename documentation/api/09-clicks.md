@@ -16,8 +16,8 @@ Read-only access to click tracking data.
 | --------- | ---- | ------- | ----------- |
 | `limit` | integer | 50 | Results per page (1-500) |
 | `offset` | integer | 0 | Pagination offset |
-| `time_from` | integer | — | Unix timestamp start filter |
-| `time_to` | integer | — | Unix timestamp end filter |
+| `time_from` | string | — | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
+| `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `aff_campaign_id` | integer | — | Filter by campaign |
 | `ppc_account_id` | integer | — | Filter by PPC account |
 | `landing_page_id` | integer | — | Filter by landing page |

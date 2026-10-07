@@ -554,8 +554,8 @@ p202 click list --all
 | `-l, --limit`       | 50      | Maximum results                      |
 | `-o, --offset`      | 0       | Pagination offset                    |
 | `--page`            |         | Page number (maps to offset)         |
-| `--time_from`       |         | Start timestamp (unix)               |
-| `--time_to`         |         | End timestamp (unix)                 |
+| `--time_from`       |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
+| `--time_to`         |         | End, inclusive: the same forms (a date runs through its last second) |
 | `--aff_campaign_id` |         | Filter by campaign                   |
 | `--ppc_account_id`  |         | Filter by PPC account                |
 | `--landing_page_id` |         | Filter by landing page               |
@@ -603,8 +603,8 @@ p202 conversion list --all
 | `-l, --limit`   | 50      | Maximum results        |
 | `-o, --offset`  | 0       | Pagination offset      |
 | `--campaign_id` |         | Filter by campaign     |
-| `--time_from`   |         | Start timestamp (unix) |
-| `--time_to`     |         | End timestamp (unix)   |
+| `--time_from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
+| `--time_to`     |         | End, inclusive: the same forms |
 | `--click_id`    |         | Only this click's conversions |
 | `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
@@ -766,8 +766,8 @@ All report commands share common time and entity filters.
 | Flag                | Description              |
 |---------------------|--------------------------|
 | `-p, --period`      | Preset: today, yesterday, last7, last30, last90 |
-| `--time_from`       | Start timestamp (unix)   |
-| `--time_to`         | End timestamp (unix)     |
+| `--time_from`       | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset (`2026-10-01T09:30:00Z`) |
+| `--time_to`         | End, inclusive: the same forms (a date runs through its last second) |
 | `--aff_campaign_id` | Filter by campaign       |
 | `--ppc_account_id`  | Filter by PPC account    |
 | `--aff_network_id`  | Filter by aff network    |
@@ -796,6 +796,7 @@ Aggregate totals for the selected time period and filters.
 ```bash
 p202 report summary --period today
 p202 report summary --time_from 1700000000 --time_to 1700100000
+p202 report summary --time_from 2026-09-01 --time_to 2026-09-30
 p202 report summary --all-profiles --period today
 p202 report summary --profiles prod,staging --period today
 p202 report summary --group env:prod --period today

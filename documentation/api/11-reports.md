@@ -18,8 +18,8 @@ All report endpoints accept these filters:
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `time_from` | integer | Unix timestamp start |
-| `time_to` | integer | Unix timestamp end |
+| `time_from` | string | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
+| `time_to` | string | End, inclusive: the same forms; a date runs through its last second |
 | `period` | string | Shortcut: `today`, `yesterday`, `last7`, `last30`, `last90` |
 | `aff_campaign_id` | integer | Filter by campaign |
 | `aff_network_id` | integer | Filter by network |
@@ -29,6 +29,11 @@ All report endpoints accept these filters:
 | `country_id` | integer | Filter by country |
 
 Use either `period` or `time_from`/`time_to`, not both.
+
+A value that is none of those forms is a `422` naming the field, as is a
+`time_from` after `time_to`. (They were read as integers, so `2026-10-01` was
+2026 seconds — January 1970 — and the report silently covered all time; a
+millisecond timestamp covered nothing.)
 
 ## Breakdown Parameters
 

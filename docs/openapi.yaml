@@ -1133,16 +1133,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
-        - name: time_from
-          in: query
-          description: Start timestamp (unix)
-          schema:
-            type: integer
-        - name: time_to
-          in: query
-          description: End timestamp (unix)
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - name: aff_campaign_id
           in: query
           schema:
@@ -1254,14 +1246,8 @@ paths:
           in: query
           schema:
             type: integer
-        - name: time_from
-          in: query
-          schema:
-            type: integer
-        - name: time_to
-          in: query
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - name: click_id
           in: query
           description: |
@@ -1422,8 +1408,8 @@ paths:
       operationId: reportSummary
       parameters:
         - $ref: "#/components/parameters/period"
-        - $ref: "#/components/parameters/timeFrom"
-        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - $ref: "#/components/parameters/filterCampaign"
         - $ref: "#/components/parameters/filterAffNetwork"
         - $ref: "#/components/parameters/filterPpcAccount"
@@ -1498,8 +1484,8 @@ paths:
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/offset"
         - $ref: "#/components/parameters/period"
-        - $ref: "#/components/parameters/timeFrom"
-        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - $ref: "#/components/parameters/filterCampaign"
         - $ref: "#/components/parameters/filterAffNetwork"
         - $ref: "#/components/parameters/filterPpcAccount"
@@ -1550,8 +1536,8 @@ paths:
             default: day
             enum: [hour, day, week, month]
         - $ref: "#/components/parameters/period"
-        - $ref: "#/components/parameters/timeFrom"
-        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - $ref: "#/components/parameters/filterCampaign"
         - $ref: "#/components/parameters/filterAffNetwork"
         - $ref: "#/components/parameters/filterPpcAccount"
@@ -1643,8 +1629,8 @@ paths:
             default: ASC
             enum: [ASC, DESC]
         - $ref: "#/components/parameters/period"
-        - $ref: "#/components/parameters/timeFrom"
-        - $ref: "#/components/parameters/timeTo"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
         - $ref: "#/components/parameters/filterCampaign"
         - $ref: "#/components/parameters/filterAffNetwork"
         - $ref: "#/components/parameters/filterPpcAccount"
@@ -4751,8 +4737,8 @@ paths:
           - ASC
           - DESC
       - $ref: '#/components/parameters/period'
-      - $ref: '#/components/parameters/timeFrom'
-      - $ref: '#/components/parameters/timeTo'
+      - $ref: '#/components/parameters/windowFrom'
+      - $ref: '#/components/parameters/windowTo'
       - $ref: '#/components/parameters/filterCampaign'
       - $ref: '#/components/parameters/filterAffNetwork'
       - $ref: '#/components/parameters/filterPpcAccount'
@@ -8031,15 +8017,15 @@ components:
     attributionTimeFrom:
       name: time_from
       in: query
-      description: Range start, unix seconds.
+      description: "Range start, inclusive: unix seconds; a date (YYYY-MM-DD), from its first second in the account's timezone; or a time with its offset (2026-10-01T09:30:00Z). Anything else is a 422 naming the field. 0 is all time (without time_from the range starts 30 days ago)."
       schema:
-        type: integer
+        type: string
     attributionTimeTo:
       name: time_to
       in: query
-      description: Range end, unix seconds.
+      description: "Range end, inclusive: unix seconds; a date (YYYY-MM-DD), through its last second in the account's timezone; or a time with its offset. A range whose start is after its end is a 422."
       schema:
-        type: integer
+        type: string
     limit:
       name: limit
       in: query
@@ -8062,6 +8048,20 @@ components:
       schema:
         type: string
         enum: [today, yesterday, last7, last30, last90]
+    windowFrom:
+      name: time_from
+      in: query
+      description: "Range start, inclusive: unix seconds; a date (YYYY-MM-DD), from its first second in the account's timezone; or a time with its offset (2026-10-01T09:30:00Z). Anything else is a 422 naming the field."
+      schema:
+        type: string
+        example: "2026-10-01"
+    windowTo:
+      name: time_to
+      in: query
+      description: "Range end, inclusive: unix seconds; a date (YYYY-MM-DD), through its last second in the account's timezone; or a time with its offset. A range whose start is after its end is a 422."
+      schema:
+        type: string
+        example: "2026-10-07"
     timeFrom:
       name: time_from
       in: query

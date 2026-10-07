@@ -9,11 +9,14 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 
 class ConversionsController
 {
     use StatementHelpers;
+    use AccountTimezone;
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -46,14 +49,15 @@ class ConversionsController
             $binds[] = (int)$params['campaign_id'];
             $types .= 'i';
         }
-        if (!empty($params['time_from'])) {
+        [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
+        if ($from !== null) {
             $where[] = 'cl.conv_time >= ?';
-            $binds[] = (int)$params['time_from'];
+            $binds[] = $from;
             $types .= 'i';
         }
-        if (!empty($params['time_to'])) {
+        if ($to !== null) {
             $where[] = 'cl.conv_time <= ?';
-            $binds[] = (int)$params['time_to'];
+            $binds[] = $to;
             $types .= 'i';
         }
 

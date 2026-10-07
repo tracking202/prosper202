@@ -142,8 +142,8 @@ func init() {
 	analyticsCmd.Flags().Int("days", 0, "Relative window in days (ignored when --period is provided)")
 	analyticsCmd.Flags().String("period", "", "Period")
 	enumFlag(analyticsCmd, "period", newEnum(reportPeriods))
-	analyticsCmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	analyticsCmd.Flags().String("time_to", "", "End timestamp (unix)")
+	analyticsCmd.Flags().String("time_from", "", timeFromHelp)
+	analyticsCmd.Flags().String("time_to", "", timeToHelp)
 	analyticsCmd.Flags().String("sort", "", "Sort by")
 	// The *_per_day keys rank --split-at output only; plain analytics refuses them in RunE.
 	enumFlag(analyticsCmd, "sort", newEnum(append(append([]string{}, breakdownSorts...), splitPerDaySorts...), enumAliases(analyticsSortAliases), enumFoldCase()))

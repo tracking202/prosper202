@@ -18,8 +18,8 @@ List, inspect, manually create, and delete conversions.
 | `limit` | integer | 50 | Results per page (1-500) |
 | `offset` | integer | 0 | Pagination offset |
 | `campaign_id` | integer | — | Filter by campaign |
-| `time_from` | integer | — | Unix timestamp start |
-| `time_to` | integer | — | Unix timestamp end |
+| `time_from` | string | — | Start, inclusive: unix seconds, a date (`2026-10-01`, from its first second in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`) |
+| `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
 | `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline`) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |

@@ -15,6 +15,14 @@ var reportCmd = &cobra.Command{
 	Short: "Generate performance reports — summary, breakdown by dimension, time series, and day/week parting",
 }
 
+// timeFromHelp and timeToHelp describe the forms the server reads
+// (Api\V3\Support\TimeBound): a bare 2026-10-01 used to be read as 2026
+// seconds, so the answer was every row.
+const (
+	timeFromHelp = "Start: unix seconds, a date (2026-10-01, from its first second in the account's timezone) or a time with its offset (2026-10-01T09:30:00Z)"
+	timeToHelp   = "End, inclusive: unix seconds, a date (2026-10-01, through its last second in the account's timezone) or a time with its offset"
+)
+
 // collectReportParams gathers the shared filter flags used across report subcommands.
 func collectReportParams(cmd *cobra.Command) map[string]string {
 	params := map[string]string{}
@@ -32,8 +40,8 @@ func collectReportParams(cmd *cobra.Command) map[string]string {
 func addReportFilters(cmd *cobra.Command) {
 	cmd.Flags().StringP("period", "p", "", "Period")
 	enumFlag(cmd, "period", newEnum(reportPeriods))
-	cmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	cmd.Flags().String("time_to", "", "End timestamp (unix)")
+	cmd.Flags().String("time_from", "", timeFromHelp)
+	cmd.Flags().String("time_to", "", timeToHelp)
 	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")

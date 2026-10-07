@@ -108,7 +108,7 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `model_id` | effective | Without it each conversion is read under its campaign's `attribution_model_id` when that model is active, otherwise the account default |
 | `compare_model_id` | | A second model; adds `compare_*` columns |
 | `period` | last 30 days | `today`, `yesterday`, `last7`, `last30`, `last90` |
-| `time_from`, `time_to` | | Unix seconds; exclusive with `period` |
+| `time_from`, `time_to` | | Unix seconds, a date (`2026-10-01`, in the account's timezone; `time_to` runs through its last second) or a time with its offset; `time_from=0` is all time; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
 | `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
 | `keys` | | Only these rows: 1–1000 row keys as `data[].key` returns them, comma-separated. Rows keep the report's order, `meta.groups` counts the matches and `totals` still cover the whole report. Every request computes the whole report, so asking for a few rows by key is one computation where paging is one per page |

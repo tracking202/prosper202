@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 
 class ClicksController
 {
     use StatementHelpers;
+    use AccountTimezone;
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
@@ -24,14 +27,15 @@ class ClicksController
         $binds = [$this->userId];
         $types = 'i';
 
-        if (!empty($params['time_from'])) {
+        [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
+        if ($from !== null) {
             $where[] = 'c.click_time >= ?';
-            $binds[] = (int)$params['time_from'];
+            $binds[] = $from;
             $types .= 'i';
         }
-        if (!empty($params['time_to'])) {
+        if ($to !== null) {
             $where[] = 'c.click_time <= ?';
-            $binds[] = (int)$params['time_to'];
+            $binds[] = $to;
             $types .= 'i';
         }
 

@@ -8,6 +8,9 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\ExportFiles;
 use Prosper202\Attribution\ExportStore;
@@ -33,6 +36,9 @@ use Prosper202\Database\Connection;
  */
 class AttributionController
 {
+    use StatementHelpers;
+    use AccountTimezone;
+
     private const PERIODS = ['today', 'yesterday', 'last7', 'last30', 'last90'];
 
     private Connection $conn;
@@ -275,7 +281,7 @@ class AttributionController
                 throw new ValidationException('Invalid keys', ['keys' => 'A comma-separated list of 1 to ' . AttributionReports::MAX_LIMIT . ' row keys, as data[].key returns them']);
             }
         }
-        [$from, $to] = self::range($params);
+        [$from, $to] = $this->range($params);
         $limit = self::positiveInt($params, 'limit') ?? 100;
         if ($limit > AttributionReports::MAX_LIMIT) {
             throw new ValidationException('limit too large', ['limit' => 'At most ' . AttributionReports::MAX_LIMIT]);
@@ -350,7 +356,7 @@ class AttributionController
     public function journeyMetrics(array $params): array
     {
         self::rejectUnknown($params, ['time_from', 'time_to', 'period']);
-        [$from, $to] = self::range($params);
+        [$from, $to] = $this->range($params);
 
         return [
             'data' => (new AttributionReports($this->conn))->journeyMetrics($this->userId, $from, $to),
@@ -454,7 +460,7 @@ class AttributionController
             }
             $rangeParams[$field] = (string) $value;
         }
-        [$from, $to] = self::range($rangeParams);
+        [$from, $to] = $this->range($rangeParams);
 
         $default = $this->models->defaultRow($this->userId);
         if ($default === null) {
@@ -900,12 +906,12 @@ class AttributionController
     }
 
     /**
-     * The report range: time_from/time_to (unix seconds), or a period, or
-     * the last 30 days.
+     * The report range: time_from/time_to (TimeBound's forms), or a period,
+     * or the last 30 days.
      *
      * @return array{0: int, 1: int}
      */
-    private static function range(array $params): array
+    private function range(array $params): array
     {
         $hasPeriod = isset($params['period']) && $params['period'] !== '';
         $hasTimes = (isset($params['time_from']) && $params['time_from'] !== '') || (isset($params['time_to']) && $params['time_to'] !== '');
@@ -925,8 +931,8 @@ class AttributionController
                 default => throw new ValidationException('Invalid period', ['period' => 'Valid: ' . implode(', ', self::PERIODS)]),
             };
         }
-        $from = self::timestamp($params, 'time_from') ?? $now - 30 * 86400;
-        $to = self::timestamp($params, 'time_to') ?? $now;
+        $from = $this->timestamp($params, 'time_from') ?? $now - 30 * 86400;
+        $to = $this->timestamp($params, 'time_to') ?? $now;
         if ($from > $to) {
             throw new ValidationException('time_from is after time_to', ['time_from' => 'Must not be after time_to']);
         }
@@ -934,17 +940,23 @@ class AttributionController
         return [$from, $to];
     }
 
-    private static function timestamp(array $params, string $field): ?int
+    /**
+     * A bound as TimeBound reads it — unix seconds, a date in the account's
+     * timezone, or a time with its offset — except that 0 is all time: an
+     * absent time_from here is the last 30 days, so 0 is how a caller asks
+     * for every click.
+     */
+    private function timestamp(array $params, string $field): ?int
     {
-        if (!isset($params[$field]) || $params[$field] === '') {
+        $value = $params[$field] ?? null;
+        if ($value === null || $value === '') {
             return null;
         }
-        $v = $params[$field];
-        if ((!is_string($v) && !is_int($v)) || preg_match('/^[0-9]{1,10}$/D', (string) $v) !== 1) {
-            throw new ValidationException('Invalid ' . $field, [$field => 'Unix time in seconds']);
+        if ($value === 0 || $value === '0') {
+            return 0;
         }
 
-        return (int) $v;
+        return TimeBound::parse($params, $field, fn (): string => $this->accountTimezone());
     }
 
     /** @param list<int> $binds */

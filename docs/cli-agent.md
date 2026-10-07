@@ -914,7 +914,7 @@ Rules:
 - If your key carries the stage scope (or policy requires approval), run writes with the global --staged flag: the server records a change id instead of executing, and a person applies it with `p202 change apply <id>`; report the change id instead of claiming the write happened
 - A 403 naming a required scope means the API key is attenuated; switch keys or mint one with `p202 user apikey create <user_id> --scope ...` -- do not vary the command
 - Pipe passwords on stdin for user create / user update --set-password (current password first with --current-password when changing your own); a --user_pass value leaks into shell history
-- Use unix timestamps for time_from/time_to parameters
+- `--time_from`/`--time_to` on report, dashboard, analytics, click list and conversion list take unix seconds, a date (`2026-10-01`: from its first second / through its last, in the account's timezone) or a time with its offset (`2026-10-01T09:30:00Z`); anything else exits 1 naming the flag. `--split-at` windows and LTV take unix seconds
 - Pagination: check pagination.total vs offset+limit to determine if more pages exist
 - The health endpoint (p202 system health) does not require authentication
 - All other endpoints require a valid API key configured via p202 config set-key

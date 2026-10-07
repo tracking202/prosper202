@@ -6,11 +6,14 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 
 class ReportsController
 {
     use StatementHelpers;
+    use AccountTimezone;
 
     private const array BREAKDOWNS = [
         'campaign'     => ['table' => '202_aff_campaigns',      'id' => 'aff_campaign_id',  'name' => 'aff_campaign_name',  'de_id' => 'aff_campaign_id'],
@@ -310,7 +313,7 @@ class ReportsController
             $sortDir = 'ASC';
         }
 
-        $timezone = $this->resolveUserTimezone();
+        $timezone = $this->accountTimezone();
 
         $where = ['de.user_id = ?'];
         $binds = [$this->userId];
@@ -390,7 +393,7 @@ class ReportsController
             $sortDir = 'ASC';
         }
 
-        $timezone = $this->resolveUserTimezone();
+        $timezone = $this->accountTimezone();
 
         $where = ['de.user_id = ?'];
         $binds = [$this->userId];
@@ -460,14 +463,15 @@ class ReportsController
 
     private function applyTimeFilters(array $params, array &$where, array &$binds, string &$types): void
     {
-        if (!empty($params['time_from'])) {
+        [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
+        if ($from !== null) {
             $where[] = 'de.click_time >= ?';
-            $binds[] = (int)$params['time_from'];
+            $binds[] = $from;
             $types .= 'i';
         }
-        if (!empty($params['time_to'])) {
+        if ($to !== null) {
             $where[] = 'de.click_time <= ?';
-            $binds[] = (int)$params['time_to'];
+            $binds[] = $to;
             $types .= 'i';
         }
         if (!empty($params['period'])) {
@@ -502,32 +506,6 @@ class ReportsController
                 $binds[] = (int)$params[$f];
                 $types .= 'i';
             }
-        }
-    }
-
-    private function resolveUserTimezone(): string
-    {
-        $stmt = $this->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
-        $this->bind($stmt, 'i', $this->userId);
-        $this->execute($stmt, 'Failed to resolve timezone');
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new DatabaseException('Failed to resolve timezone');
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        $timezone = trim((string)($row['user_timezone'] ?? ''));
-        if ($timezone === '') {
-            return 'UTC';
-        }
-
-        try {
-            new \DateTimeZone($timezone);
-            return $timezone;
-        } catch (\Throwable) {
-            return 'UTC';
         }
     }
 
