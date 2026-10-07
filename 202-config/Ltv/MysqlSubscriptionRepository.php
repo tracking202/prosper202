@@ -21,7 +21,8 @@ use RuntimeException;
 final class MysqlSubscriptionRepository
 {
     private const INTERVALS = ['day', 'week', 'month', 'year'];
-    private const STATUSES = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
+    /** A subscription's lifecycle states; GET /ltv/subscriptions filters by them. */
+    public const STATUSES = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
 
     /** Months per interval unit, for normalizing amounts to MRR. */
     private const MONTHS_PER_INTERVAL = [
@@ -455,9 +456,8 @@ final class MysqlSubscriptionRepository
      */
     public function listForUser(int $userId, ?string $status = null, int $limit = 50, int $offset = 0): array
     {
-        $statuses = ['trialing', 'active', 'past_due', 'paused', 'canceled'];
-        if ($status !== null && $status !== '' && !in_array($status, $statuses, true)) {
-            throw new RuntimeException('status must be one of: ' . implode(', ', $statuses));
+        if ($status !== null && $status !== '' && !in_array($status, self::STATUSES, true)) {
+            throw new RuntimeException('status must be one of: ' . implode(', ', self::STATUSES));
         }
         $statusWhere = ($status !== null && $status !== '') ? ' AND s.status = ?' : '';
 

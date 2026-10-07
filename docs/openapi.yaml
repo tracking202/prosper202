@@ -6839,7 +6839,13 @@ paths:
         schema:
           type: string
           default: total_revenue
-        description: Column to sort by
+          enum:
+          - total_revenue
+          - order_count
+          - last_activity_time
+          - first_seen_time
+          - mrr
+        description: Column to sort by. Any other value is a 422 naming `sort` and these values (it used to be read as total_revenue).
       - name: dir
         in: query
         schema:
@@ -6848,6 +6854,7 @@ paths:
           enum:
           - ASC
           - DESC
+        description: Either case. Any other value is a 422 (it used to be read as DESC).
       - name: q
         in: query
         schema:
@@ -6857,7 +6864,11 @@ paths:
         in: query
         schema:
           type: string
-        description: Only this segment
+          enum:
+          - repeat
+          - subscribers
+          - at_risk
+        description: Only this segment; any other value is a 422 naming `segment`
       responses:
         '200':
           description: Customers
@@ -7400,7 +7411,12 @@ paths:
         schema:
           type: string
           default: campaign
-        description: Grouping (alias `breakdown`)
+          enum:
+          - campaign
+          - ppc_account
+          - landing_page
+          - product
+        description: Grouping (alias `breakdown`); any other value is a 422 naming the parameter sent
       - $ref: '#/components/parameters/limit'
       - $ref: '#/components/parameters/offset'
       responses:
@@ -7500,7 +7516,12 @@ paths:
         in: query
         schema:
           type: string
-        description: Optional grouping
+          enum:
+          - campaign
+          - ppc_account
+          - landing_page
+          - product
+        description: Optional grouping; any other value is a 422 naming `by`
       responses:
         '200':
           description: Predicted value, optionally per group
@@ -7844,7 +7865,13 @@ paths:
         in: query
         schema:
           type: string
-        description: Only this status
+          enum:
+          - trialing
+          - active
+          - past_due
+          - paused
+          - canceled
+        description: Only this status; any other value is a 422 naming `status`
       responses:
         '200':
           description: Subscriptions
@@ -9091,6 +9118,12 @@ paths:
         in: query
         schema:
           type: string
+          enum:
+          - succeeded
+          - partial
+          - failed
+          - cancelled
+        description: The job's terminal status; any other value is a 422 (it used to answer an empty list)
       - name: from_epoch
         in: query
         schema:

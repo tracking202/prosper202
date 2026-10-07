@@ -816,6 +816,38 @@ final class SyncFeaturesTest extends TestCase
         $this->assertNotEmpty((string)$success['data']['job_id']);
     }
 
+    /**
+     * The audit list's status and both audit reads' format take fixed
+     * lists. An unknown format was answered as json, and a status nothing
+     * is written with answered an empty list that read as "no such jobs";
+     * each is a 422 naming the parameter and its values now.
+     */
+    public function testAuditRefusesAFormatOrStatusNotOnItsList(): void
+    {
+        $store = new ServerStateStore($this->tmpDir);
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, new FakeSyncEngine($store));
+        $formats = ['format' => 'Valid values: json, csv'];
+        $statuses = ['status' => 'Valid values: succeeded, partial, failed, cancelled'];
+        $cases = [
+            'format=xml' => [fn () => $controller->auditList(['format' => 'xml']), $formats],
+            'one record, format=xml' => [fn () => $controller->auditGet('any', ['format' => 'xml']), $formats],
+            'status=success' => [fn () => $controller->auditList(['status' => 'success']), $statuses],
+            'status as a list' => [fn () => $controller->auditList(['status' => ['failed']]), $statuses],
+        ];
+        foreach ($cases as $case => [$call, $errors]) {
+            try {
+                $call();
+                $this->fail("$case was answered");
+            } catch (ValidationException $e) {
+                $this->assertSame($errors, $e->getFieldErrors(), $case);
+            }
+        }
+
+        $csv = $controller->auditList(['format' => 'CSV', 'status' => 'failed']);
+        $this->assertArrayHasKey('csv', $csv, 'the format in either case');
+        $this->assertArrayNotHasKey('csv', $controller->auditList(['format' => '']), 'empty is the json default');
+    }
+
     private function removeDir(string $path): void
     {
         if (!is_dir($path)) {

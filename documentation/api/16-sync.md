@@ -37,6 +37,13 @@ All sync endpoints require admin role and the appropriate sync scope (`sync:read
 | `GET` | `/audit/sync-jobs` | sync:read | List sync job audit records |
 | `GET` | `/audit/sync-jobs/{id}` | sync:read | Get specific audit record |
 
+Both take `format=json` (the default) or `csv`, in either case; the list
+also filters by `actor`, `source`, `target`, `from_epoch`, `to_epoch` and
+`status` — a job's terminal status: `succeeded`, `partial`, `failed` or
+`cancelled`. Any other `format` or `status` is a `422` naming it and its
+values: an unknown format was answered as json, and an unknown status as an
+empty list that read as "no such jobs".
+
 ## Create Sync Job
 
 Pass an `Idempotency-Key` header to prevent duplicate job creation on

@@ -256,8 +256,21 @@ class SyncController
         return $this->store->listChanges($entity, $cursor, $limit, $cursorTtl, $updatedSince, $deletedSince);
     }
 
+    /** The statuses an audit record is written with: a job's terminal ones. */
+    private const AUDIT_STATUSES = ['succeeded', 'partial', 'failed', 'cancelled'];
+
     public function auditList(array $params): array
     {
+        $format = self::auditFormat($params);
+        $status = $params['status'] ?? '';
+        if ($status !== '' && (!is_string($status) || !in_array($status, self::AUDIT_STATUSES, true))) {
+            // A filter nothing can match answered an empty list that read
+            // as "no such jobs" (status=sucess, status=success).
+            throw new ValidationException(
+                'Invalid status',
+                ['status' => 'Valid values: ' . implode(', ', self::AUDIT_STATUSES)]
+            );
+        }
         $filters = [
             'actor' => $params['actor'] ?? '',
             'source' => $params['source'] ?? '',
@@ -268,7 +281,6 @@ class SyncController
         ];
 
         $records = $this->store->listAudit($filters);
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
 
         $response = ['data' => $records];
         if ($format === 'csv') {
@@ -280,12 +292,12 @@ class SyncController
 
     public function auditGet(string $jobId, array $params): array
     {
+        $format = self::auditFormat($params);
         $record = $this->store->getAudit($jobId);
         if ($record === null) {
             throw new NotFoundException('Audit record not found');
         }
 
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
         if ($format === 'csv') {
             return ['data' => $record, 'csv' => $this->toCsv([$record])];
         }
@@ -578,6 +590,27 @@ class SyncController
             $copy['results'] = $this->store->sanitize($copy['results']);
         }
         return $copy;
+    }
+
+    /**
+     * json (the default) or csv, in either case. Anything else used to be
+     * answered as json, so format=xml or a typo read as "the format asked
+     * for" to a caller that then parsed the wrong thing.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function auditFormat(array $params): string
+    {
+        $format = $params['format'] ?? '';
+        if ($format === '') {
+            return 'json';
+        }
+        $format = is_string($format) ? strtolower($format) : '';
+        if ($format !== 'json' && $format !== 'csv') {
+            throw new ValidationException('Invalid format', ['format' => 'Valid values: json, csv']);
+        }
+
+        return $format;
     }
 
     /** @param array<int, array<string, mixed>> $records */

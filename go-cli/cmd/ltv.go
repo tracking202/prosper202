@@ -23,9 +23,10 @@ var ltvCmd = &cobra.Command{
 		"LTV writes cannot be staged: under --staged they are refused before anything is sent.",
 }
 
-// Values the LTV endpoints accept: MysqlLtvRepository's BREAKDOWNS,
+// Values the LTV endpoints accept: MysqlLtvRepository's breakdowns(),
 // CUSTOMER_SORTS and CUSTOMER_SEGMENTS, and MysqlSubscriptionRepository's
-// statuses.
+// STATUSES. The server refuses any other value naming the parameter, and
+// TestLtvListsAreTheServers holds these lists to its.
 var (
 	ltvDimensions           = []string{"campaign", "ppc_account", "landing_page", "product"}
 	ltvCustomerSorts        = []string{"total_revenue", "order_count", "last_activity_time", "first_seen_time", "mrr"}
