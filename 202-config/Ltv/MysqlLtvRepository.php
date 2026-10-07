@@ -100,8 +100,20 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $binds);
         $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return [];
+        }
 
-        return $row ?? [];
+        // Numbers, not the DECIMAL and SUM() strings mysqli hands back
+        // ("80.57000", and "2" for an order count).
+        foreach (['customers', 'total_orders', 'repeat_customers', 'purchasing_customers', 'active_subscriptions'] as $count) {
+            $row[$count] = (int) $row[$count];
+        }
+        foreach (['total_revenue', 'refunded_amount', 'avg_ltv', 'aov', 'repeat_rate', 'mrr'] as $amount) {
+            $row[$amount] = (float) $row[$amount];
+        }
+
+        return $row;
     }
 
     public function customers(

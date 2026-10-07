@@ -189,6 +189,31 @@ final class ControllerTest extends TestCase
         $this->assertSame('Test Item', $result['data']['name']);
     }
 
+    /**
+     * A DECIMAL field is a number in the answer (mysqli hands it back as a
+     * string, "12.50000"), and the version is the hash of what is served:
+     * the same on every read, and the one If-Match is compared with.
+     */
+    public function testADecimalFieldIsANumberAndTheVersionIsOfWhatIsServed(): void
+    {
+        [$ctrl] = $this->createControllerWithDb([
+            'SELECT' => ['item_id' => 9, 'name' => 'Priced', 'user_id' => 1, 'amount' => '12.50000'],
+        ]);
+        $first = $ctrl->get(9)['data'];
+        $this->assertSame(12.5, $first['amount']);
+        $this->assertSame('Priced', $first['name'], 'text stays text');
+        $this->assertSame($first['version'], $ctrl->get(9)['data']['version'], 'the same version on every read');
+
+        RequestContext::setHeaders(['If-Match' => $first['etag']]);
+        try {
+            $method = new \ReflectionMethod($ctrl, 'assertIfMatchSatisfied');
+            $method->invoke($ctrl, $ctrl->get(9)['data']);
+            $this->addToAssertionCount(1);
+        } finally {
+            RequestContext::setHeaders([]);
+        }
+    }
+
     public function testGetAddsVersionAndEtagMetadata(): void
     {
         [$ctrl] = $this->createControllerWithDb([

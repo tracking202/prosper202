@@ -188,7 +188,7 @@ class ClicksController
         while ($row = $result->fetch_assoc()) {
             // Resolved names derive from the visitor (user agent, IP): strip
             // control/bidi characters and cap length before serving them.
-            $rows[] = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS);
+            $rows[] = self::numbers(\Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS));
         }
         $stmt->close();
 
@@ -196,6 +196,25 @@ class ClicksController
             'data' => $rows,
             'pagination' => ['total' => $total, 'limit' => $limit, 'offset' => $offset],
         ];
+    }
+
+    /**
+     * The click's money as numbers: click_cpc and click_payout are DECIMAL
+     * columns, which mysqli hands back as strings ("12.50000") beside ids
+     * that are numbers.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function numbers(array $row): array
+    {
+        foreach (['click_cpc', 'click_payout'] as $money) {
+            if (isset($row[$money]) && is_string($row[$money]) && is_numeric($row[$money])) {
+                $row[$money] = (float) $row[$money];
+            }
+        }
+
+        return $row;
     }
 
     /** A whole number from $min to $max, or the default when absent; anything else is refused. */
@@ -242,7 +261,7 @@ class ClicksController
         // control/bidi characters and cap length before serving them.
         $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, [...self::VISITOR_FIELDS, 'c1', 'c2', 'c3', 'c4']);
 
-        return ['data' => $row];
+        return ['data' => self::numbers($row)];
     }
 
     /**
@@ -269,6 +288,22 @@ class ClicksController
             throw new NotFoundException('Click not found');
         }
 
-        return ['data' => $breakdown['rows'], 'click' => $breakdown['click']];
+        // The ledger's amounts are exact decimal strings (Amount); the API
+        // answers numbers, as GET /clicks does for the same click's figures.
+        $rows = array_map(static function (array $row): array {
+            if (isset($row['amount']) && is_numeric($row['amount'])) {
+                $row['amount'] = (float) $row['amount'];
+            }
+
+            return $row;
+        }, $breakdown['rows']);
+        $click = $breakdown['click'];
+        foreach (['click_payout', 'ledger_value'] as $money) {
+            if (isset($click[$money]) && is_numeric($click[$money])) {
+                $click[$money] = (float) $click[$money];
+            }
+        }
+
+        return ['data' => $rows, 'click' => $click];
     }
 }

@@ -170,15 +170,15 @@ summary (value, payout mode, whether the rows add up to what the reports show).`
 type clickBreakdown struct {
 	Data  []map[string]interface{} `json:"data"`
 	Click struct {
-		ClickID      json.Number `json:"click_id"`
-		PayoutMode   string      `json:"payout_mode"`
-		Lead         bool        `json:"lead"`
-		ClickPayout  string      `json:"click_payout"`
-		LedgerState  string      `json:"ledger_state"`
-		LedgerValue  *string     `json:"ledger_value"`
-		MatchesClick bool        `json:"matches_click"`
-		Rows         json.Number `json:"rows"`
-		CountedRows  json.Number `json:"counted_rows"`
+		ClickID      json.Number  `json:"click_id"`
+		PayoutMode   string       `json:"payout_mode"`
+		Lead         bool         `json:"lead"`
+		ClickPayout  json.Number  `json:"click_payout"` // a number; older servers sent a numeric string, which json.Number also reads
+		LedgerState  string       `json:"ledger_state"`
+		LedgerValue  *json.Number `json:"ledger_value"`
+		MatchesClick bool         `json:"matches_click"`
+		Rows         json.Number  `json:"rows"`
+		CountedRows  json.Number  `json:"counted_rows"`
 	} `json:"click"`
 }
 
@@ -230,7 +230,7 @@ func renderClickConversions(data []byte) error {
 
 	value := "not converted"
 	if b.Click.Lead {
-		value = b.Click.ClickPayout
+		value = b.Click.ClickPayout.String()
 	}
 	fmt.Printf("\nClick %s: %s (%s mode), %s of %s conversions counted.\n",
 		b.Click.ClickID, value, b.Click.PayoutMode, b.Click.CountedRows, b.Click.Rows)
@@ -240,7 +240,7 @@ func renderClickConversions(data []byte) error {
 	case !b.Click.MatchesClick:
 		ledger := "no value"
 		if b.Click.LedgerValue != nil {
-			ledger = *b.Click.LedgerValue
+			ledger = b.Click.LedgerValue.String()
 		}
 		fmt.Printf("Warning: the counted conversions add up to %s, which is not the click's %s. The next conversion on this click recomputes it.\n", ledger, value)
 	}

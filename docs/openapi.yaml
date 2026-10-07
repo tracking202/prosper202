@@ -11183,9 +11183,9 @@ components:
         click_id:
           type: integer
         amount:
-          type: string
+          type: number
           description: The row's amount, exact to five decimals (negative for a reversal).
-          example: "5.00000"
+          example: 5
         payable:
           type: boolean
         deleted:
@@ -11269,13 +11269,13 @@ components:
               type: boolean
               description: The lead flag the reports show.
             click_payout:
-              type: string
+              type: number
               description: The value the reports show.
             ledger_state:
               type: string
               enum: [ledger, pre_ledger]
             ledger_value:
-              type: string
+              type: number
               nullable: true
               description: What the counted rows add up to; null when none counts.
             matches_click:

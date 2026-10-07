@@ -190,6 +190,10 @@ class ConversionsController
     private static function present(array $row): array
     {
         $row['payable'] = (int) $row['payable'] === 1;
+        // DECIMAL, which mysqli hands back as a string ("1.50000").
+        if (isset($row['click_payout']) && is_string($row['click_payout']) && is_numeric($row['click_payout'])) {
+            $row['click_payout'] = (float) $row['click_payout'];
+        }
         $ref = \Prosper202\Conversion\Ledger\SourceRef::parse(isset($row['source_ref']) ? (string) $row['source_ref'] : null);
         $isGoal = $ref !== null && $ref['kind'] === \Prosper202\Conversion\Ledger\SourceRef::GOAL;
         $row['goal_id'] = $isGoal ? $ref['id'] : null;

@@ -1191,9 +1191,30 @@ abstract class Controller
 
     protected function withVersionMetadata(array $row): array
     {
+        $row = $this->numericDecimals($row);
         $version = $this->computeVersionHash($row);
         $row['version'] = $version;
         $row['etag'] = '"' . $version . '"';
+        return $row;
+    }
+
+    /**
+     * A record's DECIMAL fields as numbers. mysqli hands DECIMAL back as a
+     * string, so a campaign's payout read "1.50" and a tracker's CPC
+     * "0.00000" beside integer ids that were numbers. The version is hashed
+     * over this form, the one every caller sees and sends back.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    protected function numericDecimals(array $row): array
+    {
+        foreach ($this->resolveFields() as $col => $def) {
+            if (($def['type'] ?? '') === 'd' && isset($row[$col]) && is_string($row[$col]) && is_numeric($row[$col])) {
+                $row[$col] = (float) $row[$col];
+            }
+        }
+
         return $row;
     }
 
@@ -1201,9 +1222,12 @@ abstract class Controller
     {
         unset($row['version'], $row['etag']);
         ksort($row);
-        $json = json_encode($row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // A stored string that is not UTF-8 is substituted, so the hash is the
+        // same on every read: a failed encode used to hash the clock, a new
+        // version per read, and every If-Match on that record was a 409.
+        $json = json_encode($row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
         if ($json === false) {
-            return sha1((string)microtime(true));
+            throw new \RuntimeException('Could not compute the record version: ' . json_last_error_msg());
         }
         return sha1($json);
     }
