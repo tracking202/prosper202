@@ -114,6 +114,56 @@ class CampaignsController extends Controller
     }
 
     #[\Override]
+    public function list(array $params): array
+    {
+        $this->repairMissingPublicIds();
+        return parent::list($params);
+    }
+
+    #[\Override]
+    public function get(int|string $id): array
+    {
+        $this->repairMissingPublicIds();
+        return parent::get($id);
+    }
+
+    /**
+     * A campaign with no public id cannot be tracked: go.php and the
+     * advanced landing-page code carry acip=<public id>, and the offer
+     * redirects resolve the campaign by it. The setup page gives a new
+     * campaign one with an UPDATE after its INSERT (aff_campaigns.php), so a
+     * campaign whose UPDATE failed, or one from before the column was
+     * filled, has none — NULL, or 0, which is no id either: 0 is not a
+     * rand-id-rand, and every campaign holding it would answer acip=0.
+     *
+     * The landing-page code endpoint gave such a campaign one when it named
+     * it (SetupCodeController), and the API's own reads did not, so the
+     * campaign the API listed had no id to put in a link. Like
+     * LandingPagesController::repairMissingPublicIds(), every read here gives
+     * this account's id-less campaigns the setup page's form first (a random
+     * digit, the row id, a random digit — unique by construction — with a
+     * leading digit that keeps it inside INT UNSIGNED): one indexed UPDATE, a
+     * no-op once every campaign has one. A campaign that has an id is never
+     * touched.
+     *
+     * Public for the landing-page code (SetupCodeController), which writes
+     * the campaign's public id into every outbound link it builds.
+     */
+    public function repairMissingPublicIds(): void
+    {
+        $stmt = $this->prepare(
+            'UPDATE 202_aff_campaigns
+             SET aff_campaign_id_public = CAST(CONCAT(
+                 FLOOR(1 + RAND() * IF(aff_campaign_id >= 10000000, 4, 9)), aff_campaign_id, FLOOR(1 + RAND() * 9)
+             ) AS UNSIGNED)
+             WHERE user_id = ? AND (aff_campaign_id_public IS NULL OR aff_campaign_id_public = 0)'
+        );
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Campaign public id repair failed');
+        $stmt->close();
+    }
+
+    #[\Override]
     public function update(int|string $id, array $payload): array
     {
         $links = $this->linksIn($payload);
