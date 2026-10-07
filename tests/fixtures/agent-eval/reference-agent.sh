@@ -95,6 +95,40 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="skipped") | "line \(.line), subid \(.subid): \(.reason)"] | join("; ") | if . == "" then "none" else . end')"
         fi
         ;;
+    # The Setup section's code and per-source settings (setup-code.json).
+    *"EVAL LP A landing page live"*)
+        # The page's own code, never one composed here: the loader for the
+        # page and the outbound link for the offer button, as the command
+        # returns them.
+        id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL LP A") | .landing_page_id' | head -1)
+        code=$(p202 landing-page code "$id" --json)
+        printf 'Paste this right above the </body> tag of the EVAL LP A page (only that page), per `p202 landing-page code %s`:\n\n%s\n\nUse this as the offer button'"'"'s link (it records the click leaving for the offer):\n%s\n' \
+            "$id" "$(printf '%s' "$code" | jq -r '.data.loader')" "$(printf '%s' "$code" | jq -r '.data.outbound_link')"
+        ;;
+    *"EVAL Adv LP"*)
+        # An advanced page's code exists only for its offers, in the page's order.
+        id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL Adv LP") | .landing_page_id' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign B") | .aff_campaign_id' | head -1)
+        rotator=$(p202 rotator list --json | jq -r '.data[] | select(.name=="EVAL Geo Split") | .id' | head -1)
+        code=$(p202 landing-page code "$id" --offer "campaign:$campaign" --offer "rotator:$rotator" --json)
+        printf 'Per `p202 landing-page code %s --offer campaign:%s --offer rotator:%s`:\n- first button (EVAL Campaign B): %s\n- second button (EVAL Geo Split redirector): %s\n' \
+            "$id" "$campaign" "$rotator" \
+            "$(printf '%s' "$code" | jq -r '.data.offers[0].outbound_link')" "$(printf '%s' "$code" | jq -r '.data.offers[1].outbound_link')"
+        ;;
+    *HasOffers*)
+        # HasOffers' macros: {aff_sub} for the sub id, {payout} for the amount.
+        url=$(p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}' --json | jq -r '.data.simple.postback_url')
+        printf 'Paste this into HasOffers as the server-to-server postback (from `p202 conversion postback-url --subid {aff_sub} --amount {payout}`):\n%s\nHasOffers fills {aff_sub} with the sub id we sent it and {payout} with the payout.\n' "$url"
+        ;;
+    *"{ad_id} macro"*)
+        # A custom variable on the traffic source; the link builder reads it.
+        network=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name=="EVAL Traffic Network") | .ppc_network_id' | head -1)
+        p202 ppc-network variable create "$network" --name 'Ad id' --parameter adid --placeholder '{ad_id}' --idempotency-key "eval-adid-$run_id" --json >/dev/null
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign A") | .aff_campaign_id' | head -1)
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id')
+        link=$(p202 tracker get-url "$tracker" --json | jq -r '.data.direct_url')
+        printf 'Added the variable adid={ad_id} to EVAL Traffic Network (`p202 ppc-network variable create %s`). The EVAL Campaign A tracker'"'"'s link now carries it (`p202 tracker get-url %s`):\n%s\n' "$network" "$tracker" "$link"
+        ;;
     *"first-touch"*"last-touch"*)
         # Which campaign a model credits is the attribution report's answer,
         # per model — the click report cannot tell models apart. Find the

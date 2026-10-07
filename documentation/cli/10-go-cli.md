@@ -89,6 +89,9 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 tracker list` | List trackers |
 | `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`, `--utm_term`, `--utm_content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
+| `p202 landing-page code <id>` | The page's tracking code, as Setup > Get LP Code hands it out: the loader script and the ways out to the offer; an advanced page's offers with `--offer campaign:<id>`/`--offer rotator:<id>`, in order. See [Setup code and traffic-source settings](#setup-code-and-traffic-source-settings) |
+| `p202 ppc-network variable list\|create\|update\|delete` | A traffic source's custom variables, the `parameter=placeholder` pairs its tracking links carry (Setup > Traffic Sources) |
+| `p202 ppc-account pixel list\|create\|update\|delete` | The pixels a traffic source account fires on a conversion, with a Postback's correction URL (Setup > Traffic Sources) |
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
@@ -96,6 +99,8 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
 | `p202 conversion reset-subids` | Clear every conversion of a category (`--aff-network-id`) or one of its campaigns (`--aff-campaign-id`) (the UI's Reset Campaign Subids) |
 | `p202 conversion upload-revenue <file.csv>` | Record a network's revenue report as a new upload batch (the UI's Upload Revenue Reports): columns read from the header or named with `--subid-column`/`--amount-column`; the newest report replaces earlier uploads' values |
+| `p202 conversion postback-url` | The server-to-server postback URL to give your network (Setup > Postback / Pixel), on this install's tracking domain: `--subid` your network's sub id macro, `--amount` a number or its payout macro, `--campaign` for the advanced postback's `cid`, `--scheme`; stdout is the URL alone |
+| `p202 conversion pixel` | The conversion pixel for the thank-you page: `--type simple\|advanced\|universal` (`--iframe` for the universal pixel's iframe), the same value flags; `--json` prints every pixel and postback the page shows |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
 | `p202 conversion create` | Record a conversion on `--click-id` (`--payout`, `--transaction-id`, `--conv-time`); `--status reversed` (with the sale's `--transaction-id`, optionally `--reversal-id`) records a reversal instead. `--customer-id` or `--customer-ref` (+ `--customer-ref-type`, `--customer-crm '{…}'`) links it to an LTV customer, and `--item '{…}'`/`--items-file` add product line items, which need a customer named |
 | `p202 conversion import <file>` | Record a network's conversion export (CSV with a header row, or a JSON array of objects) against the clicks its subids name, for installs whose postbacks were never wired. Columns are auto-detected from common headers (subid: `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2`; payout: `payout`, `commission`, `amount`, `revenue`; transaction id: `transaction_id`, `order_id`, `txid`; time: `date`, `time`, `conversion_date`, `created_at`) and reported on stderr and in `meta.columns`; two candidate headers for one column are refused, and `--subid-column`/`--payout-column`/`--txid-column`/`--time-column` choose. The subid is read as the postback reads it (the click id: digits, no leading zero); rows are `invalid` (with the reason), `duplicate_in_file`, or ready. `--dry-run` sends nothing (`--check-clicks` adds one read-only `GET /clicks/{id}/conversions` per click). Otherwise the clicks are read first, you confirm (`--force` skips; `--staged` records proposals), and each ready row is `POST /conversions` with an `Idempotency-Key` derived from its click, transaction id, payout and time. Rows end `created`, `duplicate` (already on the click), `click_not_found`, `failed` or `staged`; re-running the same file sends only what is not recorded yet; exit 5 if any row failed |
@@ -367,6 +372,60 @@ p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-colu
 Under `--json` each prints the API's answer (for a list in parts, the parts
 put together); otherwise a table of the lines, and a summary on stderr.
 
+## Setup Code and Traffic-Source Settings
+
+The UI's **Setup** section's code and per-source settings, over the
+[Setup API](../api/27-setup.md): what an agent needs to finish a landing-page
+tracker or a conversion-tracking setup without the web UI. Each needs a role
+with `access_to_setup_section`, as the Setup pages do (a role without it is
+exit 2 with a hint naming `p202 user role assign`), and only reaches the
+account's own records.
+
+```bash
+# The landing page's code: loader, then the way out to the offer.
+p202 landing-page code 12
+p202 landing-page code 14 --offer campaign:3 --offer rotator:2   # an advanced page
+p202 landing-page code 12 --json                                 # every snippet as data
+
+# Conversion tracking: the postback for the network, the pixel for the thank-you page.
+p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'
+p202 conversion pixel --type universal
+
+# A traffic source's custom variables, and an account's pixels.
+p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'
+p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?click=[[subid]]&payout=[[payout]]'
+```
+
+- **`landing-page code`** prints the code Get LP Code hands out, built by the
+  same class as the page: the loader script for `</body>` of the page visitors
+  arrive on, then, for a simple page, the outbound link (`go.php?lpip=`), a PHP
+  redirect page and a JavaScript redirect page; for an advanced page each
+  `--offer`'s outbound link (`go.php?acip=` / `go.php?rpi=`) and PHP redirect,
+  in order. Links are scheme-relative (`//host/...`). An advanced page with no
+  `--offer`, a malformed one (refused before any request) or one that is not
+  yours is refused with the next step named. The public id the code carries
+  is accepted as the id (said on stderr).
+- **`conversion postback-url`** and **`conversion pixel`** print what Postback
+  / Pixel shows on the tracking domain. Stdout is the URL or the pixel alone
+  (guidance on stderr), so `URL=$(p202 conversion postback-url --subid ...)`
+  works; `--campaign` chooses the advanced form, and `--type universal` belongs
+  to `pixel`. Values are written in as given; spaces, quotes, `<`, `>`, `\` and
+  `&` are refused.
+- **`ppc-network variable`** edits the extra parameters the source's tracking
+  links carry (`tracker get-url` shows them). Every field is required;
+  characters that would break every link of the source (spaces, `&`, `#`, `?`,
+  `=` in the parameter, the parameter `t202id`) are refused. A removed
+  variable is retired, so recorded clicks keep its values.
+- **`ppc-account pixel`** edits what the account fires on a conversion:
+  `--type-id` 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server,
+  http(s) URLs only), 5 Raw, 6 Bot202 Facebook Pixel Assistant; `--code` the
+  URL(s) or markup; `--correction-url` (Postback only, one per code URL;
+  `--correction-url ''` removes it).
+
+The writes take `--idempotency-key` (create) and `--staged`; the deletes take
+`--dry-run`, `--force` and `--ids`. Under `--json` each command prints the
+API's answer as sent.
+
 ## Config Defaults
 
 Set per-profile defaults for frequently used flags.
@@ -434,8 +493,8 @@ which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
 scope, minting a key with `--scope`, and when it names a role permission
-such as `access_to_update_section`, granting a role with `p202 user role
-assign`; 404 use `list` for ids; 429 back off;
+such as `access_to_update_section` or `access_to_setup_section`, granting a
+role with `p202 user role assign`; 404 use `list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.

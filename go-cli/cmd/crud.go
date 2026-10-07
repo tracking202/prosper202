@@ -1218,6 +1218,16 @@ func init() {
 	var campaignEntity crudEntity
 	for _, e := range entities {
 		cmd := registerCRUD(e)
+		// The Setup section's code and per-source settings (setup_code.go,
+		// traffic_source_settings.go).
+		switch e.Name {
+		case "landing-page":
+			cmd.AddCommand(newLandingPageCodeCmd(e))
+		case "ppc-network":
+			cmd.AddCommand(newPpcNetworkVariableCmd())
+		case "ppc-account":
+			cmd.AddCommand(newPpcAccountPixelCmd())
+		}
 		if e.Name == "tracker" {
 			trackerCmd = cmd
 			trackerEntity = e

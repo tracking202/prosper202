@@ -417,6 +417,37 @@ safe: a marked subid is not marked again, a cleared one clears nothing more,
 and a report uploaded again becomes the newest batch. A list or report that
 stops part-way exits 4 (or 3) and the message says how much stands.
 
+### Finish a landing-page tracker or a conversion setup without the web UI
+
+The UI's Setup section's code and per-source settings. Each needs a role with
+`access_to_setup_section` (a Campaign optimizer or viewer is exit 2, and the
+hint names `p202 user role assign`).
+
+```bash
+# The landing page's tracking code (Setup > Get LP Code).
+p202 landing-page code 12 --json
+# => {"data":{"landing_page_type":"simple","base_url":"//track.example.com/",
+#             "loader":"<script>...landing.php?lpip=6122&t202id=...</script>",
+#             "outbound_link":"//track.example.com/tracking202/redirect/go.php?lpip=6122",
+#             "outbound_php":"<?php ...","outbound_javascript":"<!DOCTYPE html>...","segments":{...}}}
+p202 landing-page code 14 --offer campaign:3 --offer rotator:2 --json   # an advanced page: offers[] in order
+
+# The postback URL to give the network, and the pixel for the thank-you page (Setup > Postback / Pixel).
+p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'    # stdout: the URL alone
+p202 conversion pixel --type universal --json                           # every pixel and postback
+
+# What the traffic source's links carry, and what its account fires (Setup > Traffic Sources).
+p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}' --json
+p202 tracker get-url 56 --json        # the link now ends ...&adid={ad_id}&t202kw=
+p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?click=[[subid]]&payout=[[payout]]' --json
+```
+
+An advanced page (`landing_page_type` 1) needs at least one `--offer`; without
+one the error names the flag and the lists to read ids from. The links are
+scheme-relative, as the page writes them. Values (`--subid`, `--amount`,
+`--parameter`, `--placeholder`) are written into URLs as given, so characters
+that would break them are refused (exit 1, the field named).
+
 ### Mint a least-privilege API key for an agent
 
 ```bash
@@ -618,6 +649,15 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 |------|--------|------|
 | `--ppc_network_name` | (R) | string |
 
+Custom variables (Setup > Traffic Sources > variables):
+
+```
+p202 ppc-network variable list   <ppc_network_id> [--json]
+p202 ppc-network variable create <ppc_network_id> --name S --parameter S --placeholder S [--idempotency-key S] [--json]
+p202 ppc-network variable update <ppc_network_id> <variable_id> [--name S] [--parameter S] [--placeholder S] [--json]
+p202 ppc-network variable delete <ppc_network_id> <variable_id> [--force] [--dry-run] [--json]
+```
+
 #### PPC account fields
 
 | Flag | Create | Type |
@@ -625,6 +665,18 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 | `--ppc_account_name` | (R) | string |
 | `--ppc_network_id` | (R) | string |
 | `--ppc_account_default` | optional | 0/1 |
+
+Pixels (Setup > Traffic Sources > the account's Advanced):
+
+```
+p202 ppc-account pixel list   <ppc_account_id> [--json]
+p202 ppc-account pixel create <ppc_account_id> --type-id 1-6 --code S [--correction-url S] [--idempotency-key S] [--json]
+p202 ppc-account pixel update <ppc_account_id> <pixel_id> [--type-id 1-6] [--code S] [--correction-url S|""] [--json]
+p202 ppc-account pixel delete <ppc_account_id> <pixel_id> [--force] [--dry-run] [--json]
+```
+
+`--type-id`: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server),
+5 Raw, 6 Bot202 Facebook Pixel Assistant. `--correction-url`: Postback only.
 
 #### Tracker fields
 
@@ -667,7 +719,18 @@ hint names the new `tracker_id`: run `tracker get-url` for it, never
 | `--aff_campaign_id` | (R) | string |
 | `--landing_page_nickname` | (R) | string |
 | `--leave_behind_page_url` | optional | string (`update --leave_behind_page_url ""` clears it) |
-| `--landing_page_type` | optional | integer |
+| `--landing_page_type` | optional | integer: 0 simple, 1 advanced |
+
+Landing page code (Setup > Get LP Code):
+
+```
+p202 landing-page code <id> [--offer campaign:N|rotator:N]... [--json]
+```
+
+`data`: `landing_page_type` (`simple`/`advanced`), `base_url`, `loader`, and
+for a simple page `outbound_link`, `outbound_php`, `outbound_javascript`; for
+an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
+`outbound_link`, `outbound_php`); `segments`. Accepts the public id (`lpip=`).
 
 #### Text ad fields
 
@@ -718,6 +781,10 @@ p202 conversion delete-subids <file|-> [--dry-run] [--force] [--json]     # Dele
 p202 conversion reset-subids --aff-network-id N [--aff-campaign-id N] [--dry-run] [--force] [--json]
 p202 conversion upload-revenue <file.csv> [--subid-column H|N] [--amount-column H|N]
                        [--file-name S] [--dry-run] [--force] [--json]     # Upload Revenue Reports
+p202 conversion postback-url [--type simple|advanced] [--campaign N] [--amount S] [--subid S]
+                       [--scheme http|https] [--json]                     # Postback / Pixel: the URL
+p202 conversion pixel  [--type simple|advanced|universal] [--iframe] [--campaign N]
+                       [--amount S] [--subid S] [--scheme http|https] [--json]   # the pixel
 ```
 
 ### Reports
@@ -1075,6 +1142,9 @@ Rules:
 | conversion mark-subids / delete-subids / reset-subids | Yes | A marked subid is answered `already_converted`; a cleared one clears nothing more |
 | conversion upload-revenue | Yes (same file) | Each upload is a new batch whose values replace the earlier batch's for its clicks |
 | --dry-run on the Update commands | Yes | None (the endpoint's own `?dry_run=1`) |
+| landing-page code, conversion postback-url / pixel | Yes | None (reads) |
+| ppc-network variable create / ppc-account pixel create | With `--idempotency-key` | Without a key, adds another each call |
+| ppc-network variable / ppc-account pixel update, delete | Yes | Same state; a second delete is a 404 |
 | any write --staged | No (each staging records a new proposal) | Records a staged change; nothing changes until `change apply` |
 | change apply | No | First call performs the write; a second gets 409 |
 | update | Yes | Same input produces same state |
