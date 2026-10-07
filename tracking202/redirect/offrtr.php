@@ -193,11 +193,11 @@ foreach ($rule_row as $rule) {
 
 				case 'ip':
 					if ($statement) {
-						if (in_array($ip_address, $values)) {
+						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					} else {
-						if (!in_array($ip_address, $values)) {
+						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					}

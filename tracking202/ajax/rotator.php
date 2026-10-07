@@ -83,8 +83,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	// another account would be re-parented or repointed (#164, #173).
 	// Checked for the whole payload before anything is written.
 	$rotatorOwnsRule = [];
-	$refuse = static function (): never {
-		die("ERROR");
+	$refuse = static function (?string $reason = null): never {
+		header('Content-Type: text/plain; charset=utf-8'); // a reason repeats what was typed
+		die($reason === null ? "ERROR" : 'ERROR: ' . $reason);
 	};
 	$destinationOwned = static function (string $type, $value) use ($db, $mysql, $refuse): void {
 		if ($type !== 'campaign' && $type !== 'lp') {
@@ -126,6 +127,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 				if (!p202_rotator_row_exists($db, "SELECT 1 FROM 202_rotator_rules_criteria WHERE id = ? AND rotator_id = ? LIMIT 1", [(int) $criteria['criteria_id'], (int) $rotator_id])) {
 					$refuse();
 				}
+			}
+			if (($criteria['type'] ?? '') === 'ip' && ($reason = \Prosper202\Rotator\IpCriterion::refusal((string) ($criteria['value'] ?? ''))) !== null) {
+				$refuse($reason);
 			}
 		}
 	}
@@ -511,7 +515,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 				foreach ($rule['criteria'] as $criteria) {
 					$type = $db->real_escape_string($criteria['type']);
 					$statement = $db->real_escape_string($criteria['statement']);
-					$value = $db->real_escape_string($criteria['value']);
+					$value = $db->real_escape_string($criteria['type'] === 'ip' ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value'] : $criteria['value']);
 
 					if ($criteria['criteria_id'] != 'none') {
 						$criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";

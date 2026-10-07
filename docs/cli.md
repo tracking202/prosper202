@@ -1189,7 +1189,7 @@ p202 rotator rule-create 5 \
 | `--rule_name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
 | `--status`         | No       | 1 active (default), 0 created paused |
-| `--criteria_json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)` |
+| `--criteria_json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges) |
 | `--redirects_json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
 
 Both JSON fields are checked for syntax before sending, and the server checks

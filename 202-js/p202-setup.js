@@ -814,7 +814,10 @@
                     return;
                 }
                 save.disabled = false;
-                errors.appendChild(flashHtml('bad', 'The rules were not saved. Every rule needs a name, a criterion with a value and a destination, and a split test needs a weight for each destination.'));
+                // "ERROR: <reason>" names what the server refused; a bare
+                // "ERROR" is the general check.
+                var reason = result.indexOf('ERROR: ') === 0 ? result.slice(7) : '';
+                errors.appendChild(flashHtml('bad', reason !== '' ? 'The rules were not saved. ' + reason : 'The rules were not saved. Every rule needs a name, a criterion with a value and a destination, and a split test needs a weight for each destination.'));
                 errors.scrollIntoView({ block: 'center' });
             }).fail(function (xhr) {
                 save.disabled = false;

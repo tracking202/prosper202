@@ -191,7 +191,7 @@ var rotatorDeleteCmd = &cobra.Command{
 // criteriaJSONHint and redirectsJSONHint say what the server takes for a
 // rule's criteria and redirects (RotatorsController::ruleParts).
 const (
-	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `).`
+	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `; ip as single IPv4 or IPv6 addresses, no ranges).`
 	redirectsJSONHint = `A JSON array of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight" (0-100), "name"}: one destination each.`
 )
 
