@@ -97,7 +97,9 @@ if (function_exists('openssl_decrypt')) {
                 'transaction_id'   => $receipt,
                 'use_pixel_payout' => true,
                 'payout'           => (string) $amount,
-                'ip'               => p202ClientIp($_SERVER),
+                // ClickBank's server, not a visitor: no privacy state applies
+                // (and connect.php, this endpoint's bootstrap, has none).
+                'ip'               => \Prosper202\Http\VisitorIp::fromServer($_SERVER),
                 'user_agent'       => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
                 'source'           => \Prosper202\Conversion\Ledger\ConversionSource::CLICKBANK->value,
             ]);

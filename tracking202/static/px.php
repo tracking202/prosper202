@@ -83,7 +83,7 @@ if ($click_id > 0) {
 		// belongs to the campaign's owner may convert for this campaign.
 		$outcome = p202RecordLegacyConversion($db, $click_id, 1, [
 			'user_id'    => (int) $mysql['user_id'],
-			'ip'         => p202ClientIp($_SERVER),
+			'ip'         => p202StoredVisitorIp(),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 			'event_name' => $webEvent['event_name'] ?? null,
 		]);

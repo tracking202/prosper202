@@ -189,6 +189,16 @@ if (!isset($_SESSION['privacy'])) {
 $ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
 
 /**
+ * The visitor's address as every click-path row stores it (StoredVisitorIp):
+ * masked when trackingEnabled() is false. The pixels' "this address's last
+ * click" lookups take it too, so they compare like with like.
+ */
+function p202StoredVisitorIp(): string
+{
+    return \Prosper202\Http\StoredVisitorIp::fromServer($_SERVER, !trackingEnabled());
+}
+
+/**
  * Whether this visitor may be tracked in full: cookies set, the address
  * stored as it arrived. False under the owner's privacy setting — 'all', or
  * 'eu' for a visitor who may be in the European Union (p202VisitorMayBeInEu()).
@@ -2573,7 +2583,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($dbOrSql, $sql = null): never
 {
-    global $server_row, $ip_address; // Add global $ip_address
+    global $server_row;
 
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -2601,8 +2611,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
-    $ipForError = $ip_address ?? \Prosper202\Http\VisitorIp::fromServer($_SERVER);
-    $ip_id = INDEXES::get_ip_id($ipForError);
+    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
@@ -3046,16 +3055,10 @@ function ipAddress($ip_address)
 
 function maskIpAddress($ip)
 {
-
-    if ($ip->type == 'ipv4') {
-        $bits = explode('.', (string) $ip->address);
-        $masked = implode(".", array_slice($bits, 0, 3)) . ".0";
-    } else if ($ip->type == 'ipv6') {
-        $bits = explode(':', (string) $ip->address);
-        $masked = implode(":", array_slice($bits, 0, 3)) . ":0000:0000:0000:0000:0000";
-    }
-    if (isset($masked)) {
-        $ip->address = $masked;
+    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
+    // so the $ip_address global and every stored address agree.
+    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
+        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
     }
 
     return $ip;

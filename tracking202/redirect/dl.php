@@ -465,7 +465,8 @@ $mysql['click_out'] = 1;
 
 
 $ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
-$ip_id = $locationRepo->findOrCreateIp($ip);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 //before we finish filter this click

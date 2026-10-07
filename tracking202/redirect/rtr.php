@@ -552,7 +552,8 @@ $mysql['click_bot'] = $clickIsBot ? '1' : '0';
 $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
 
-$ip_id = INDEXES::get_ip_id($db, $ip_address);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = INDEXES::get_ip_id($db, p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 $countryName = $GeoData['country'] ?? '';

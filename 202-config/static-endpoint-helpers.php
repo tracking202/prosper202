@@ -591,29 +591,6 @@ if (!function_exists('p202LinkConversionIdentity')) {
     }
 }
 
-if (!function_exists('p202ClientIp')) {
-    /**
-     * The client address to store on a conversion row: one valid IP, or ''.
-     *
-     * X-Forwarded-For is a comma-separated chain behind more than one proxy,
-     * and with IPv6 hops it runs well past the 45 characters
-     * 202_conversion_logs.ip holds. Passed through as it was, the INSERT
-     * failed under strict sql_mode and rolled the conversion back — a 500
-     * from pb.php on every retry, silence from px.php. VisitorIp takes the
-     * leftmost hop only when it parses as an address, otherwise REMOTE_ADDR,
-     * otherwise nothing — the same address the click path records, so a
-     * conversion row and its click agree. The header is attacker-supplied,
-     * so the value is for display only and never a security decision
-     * (CLAUDE.md error pattern #16).
-     *
-     * @param array<string,mixed> $server $_SERVER, or a stand-in in tests.
-     */
-    function p202ClientIp(array $server): string
-    {
-        return \Prosper202\Http\VisitorIp::fromServer($server);
-    }
-}
-
 if (!function_exists('p202ClickIdFromRequest')) {
     /**
      * Which click a pixel request names, from the places gpx.php and upx.php
