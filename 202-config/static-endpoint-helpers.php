@@ -536,6 +536,22 @@ if (!function_exists('p202RecordConversion')) {
         // record() after its commit, for this path and every other writer
         // alike, as the conversion.recorded bridge event is.
 
+        // A pixel's product (sku=, product_id=, …) is stored on the
+        // customer's revenue event, and a hit that links to no customer (no
+        // cust=, a click linked to none, no customer c-param) has none. The
+        // API refuses such a body; a pixel has nobody to answer and refusing
+        // would lose the conversion too, so the conversion stands and the
+        // log says what was not stored, findable by click and field.
+        if (!empty($result['ltvDropped'])) {
+            error_log(sprintf(
+                'p202 conversion %d on click %d: %s not stored, no LTV customer is linked to the click'
+                . ' (send cust= on the pixel or postback, or set the account\'s customer c-param)',
+                (int) $result['convId'],
+                $clickId,
+                implode(' and ', $result['ltvDropped'])
+            ));
+        }
+
         return [
             'conv_id' => $result['convId'],
             'duplicate' => $result['duplicate'],

@@ -905,7 +905,6 @@ func TestConversionCreateSendsTheLtvAndReversalFields(t *testing.T) {
 		{[]string{"--reversal-id", "r"}, "add --status reversed", "--reversal-id"},
 		{[]string{"--status", "reversed"}, "needs --transaction-id", "p202 click conversions 123"},
 		{[]string{"--status", "approved", "--transaction-id", "t"}, "--status must be one of", ""},
-		{[]string{"--item", `{"sku":"A"}`}, "line items need a customer", "revenue event"},
 		{[]string{"--customer-id", "4", "--customer-ref", "x"}, "give one", ""},
 		{[]string{"--customer-ref-type", "esp_id"}, "describes --customer-ref", ""},
 		{[]string{"--customer-id", "4", "--customer-crm", `{"email":"a@b.co"}`}, "would be ignored", "p202 ltv customer update"},
@@ -931,6 +930,34 @@ func TestConversionCreateSendsTheLtvAndReversalFields(t *testing.T) {
 		if reqs := srv.seen(); len(reqs) != 0 {
 			t.Errorf("%v: sent %+v", tc.args, reqs)
 		}
+	}
+}
+
+// Whether line items find a customer is the server's to say: one named here,
+// one already linked to the click, or the account's customer c-param. So
+// items with no --customer-* flag are sent, and when the server refuses
+// them (no customer resolved; nothing recorded) the error names the flags
+// that supply one.
+func TestConversionCreateItemsWithoutACustomerAreTheServersToRefuse(t *testing.T) {
+	srv := newLtvServer(t, func(ltvRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"No customer is linked to this conversion, so its items would be stored nowhere: nothing was recorded","field_errors":{"items":"line items are stored on the customer's revenue event, and no customer is linked to this conversion"}}`
+	})
+	_, _, err := executeCommand("conversion", "create", "--click-id", "123", "--item", `{"sku":"A"}`)
+	if err == nil {
+		t.Fatal("a refused create returned no error")
+	}
+	assertJSON(t, srv.only(t).Body, `{"click_id":123,"items":[{"sku":"A"}]}`)
+	if exitCodeForError(err) != ExitValidation {
+		t.Errorf("exit %d, want %d", exitCodeForError(err), ExitValidation)
+	}
+	if h := hintFor(err); !strings.Contains(h, "--customer-ref") || !strings.Contains(h, "p202 ltv customers") {
+		t.Errorf("hint %q names no way to supply a customer", h)
+	}
+
+	// The click's own customer is enough: the server accepts, and so does the CLI.
+	newLtvServer(t, func(ltvRequest) (int, string) { return 201, `{"data":{"conv_id":7}}` })
+	if _, _, err := executeCommand("conversion", "create", "--click-id", "123", "--item", `{"sku":"A"}`); err != nil {
+		t.Fatalf("items on a click with a linked customer: %v", err)
 	}
 }
 

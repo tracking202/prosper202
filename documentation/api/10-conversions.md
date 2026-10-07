@@ -66,8 +66,8 @@ back.
 | `customer_id` | integer | No | The LTV customer the revenue belongs to; it wins over `customer_ref`. Anything but a positive id (`0`, `""`) is a `422` |
 | `customer_ref` | string | No | Your id for the customer: resolved to one, or a customer is created for it. `"0"` is an id like any other; a blank one is a `422` |
 | `customer_ref_type` | string | No | What `customer_ref` is: `email_md5`, `email_sha256`, `esp_id`, `merchant_id`, `subid` or `custom` (the default); read only with `customer_ref` |
-| `customer_crm` | object | No | CRM fields (`first_name`, `last_name`, `email`, `phone`, `company`, `address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country`) applied only when this conversion creates the customer. See [Nested objects](#nested-objects) |
-| `items` | array | No | Product line items on the customer's revenue event: each `{external_product_id or sku, name, quantity, unit_price, amount, price}`. Recorded only when the conversion resolves to a customer — named here, or already linked to the click — and dropped without an error otherwise. See [Nested objects](#nested-objects) |
+| `customer_crm` | object | No | CRM fields (`first_name`, `last_name`, `email`, `phone`, `company`, `address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country`) applied only when this conversion creates the customer. Needs a customer, as `items` does. See [Nested objects](#nested-objects) |
+| `items` | array | No | Product line items on the customer's revenue event: each `{external_product_id or sku, name, quantity, unit_price, amount, price}`. Needs a customer: named here (`customer_ref` or `customer_id`), already linked to the click, or found by the account's customer c-param. See [Line items need a customer](#line-items-need-a-customer) and [Nested objects](#nested-objects) |
 
 Creates are idempotent on `transaction_id`: if a conversion with the same
 `transaction_id` already exists for the given `click_id`, nothing is written
@@ -85,6 +85,33 @@ click's plain conversion) is refused with `409`, naming it in
 `Idempotency-Key` sent with it is not spent. A different sale needs its own
 `transaction_id`. A `409` without `details` is about the `Idempotency-Key`
 instead: a request holding it is still in flight, or one did not finish.
+
+### Line items need a customer
+
+`items` are stored on the customer's revenue event and `customer_crm` on the
+customer record, so both need a customer. One resolves from, in order:
+`customer_id`, `customer_ref` (a customer is created for a new one), the
+customer already linked to the click (an earlier conversion on it named one),
+and the account's customer c-param (LTV settings: which of the click's c1–c4
+carries your customer id, `user_ltv_customer_cparam`). When none does, the conversion is refused with `422`
+naming `items` (and `customer_crm`, when sent) and saying to send
+`customer_ref` or `customer_id`; nothing is written, and an `Idempotency-Key`
+sent with it is not spent. They used to be dropped, the conversion recorded
+without them and answered `201`.
+
+```json
+{"error": true, "status": 422,
+ "message": "No customer is linked to this conversion, so its items would be stored nowhere: nothing was recorded",
+ "field_errors": {"items": "line items are stored on the customer's revenue event, and no customer is linked to this conversion (the click has none, and none was named): send customer_ref (your id for the customer, with customer_ref_type) or customer_id (`p202 ltv customers`) with it. Nothing was recorded."}}
+```
+
+The pixels and postbacks (`gpb.php`, `gpx.php`, `upx.php`) take one product
+as `sku` / `product_id` (+ `product_name`, `qty`, `unit_price`) and a
+customer as `cust` (+ `cust_type`). They have nobody to answer, and refusing
+would lose the conversion as well, so a hit whose product finds no customer
+records the conversion without the product and writes a line to the PHP
+error log: `p202 conversion <conv_id> on click <click_id>: items not stored,
+no LTV customer is linked to the click …`. Send `cust=` on such a pixel.
 
 ### Nested objects
 

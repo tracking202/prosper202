@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -122,7 +123,8 @@ var conversionCreateCmd = &cobra.Command{
 		"conversion with the same --transaction-id instead (--reversal-id is the network's id for it).\n" +
 		"--customer-id or --customer-ref (+ --customer-ref-type, --customer-crm) links it to an LTV\n" +
 		"customer; --item / --items-file add product line items to that customer's revenue event, so\n" +
-		"they need a customer named here.\n\n" +
+		"they need a customer: one named here, one already linked to the click, or the account's\n" +
+		"customer c-param. The server refuses items that find none, and records nothing.\n\n" +
 		"  p202 conversion create --click-id 123 --payout 49 --transaction-id ORD-1 --customer-ref CUST-77 \\\n" +
 		"      --item '{\"sku\":\"PRO-1\",\"quantity\":1,\"unit_price\":49}'\n" +
 		"  p202 conversion create --click-id 123 --status reversed --transaction-id ORD-1",
@@ -179,12 +181,9 @@ var conversionCreateCmd = &cobra.Command{
 			return err
 		}
 		if hasItems {
-			_, byID := body["customer_id"]
-			_, byRef := body["customer_ref"]
-			if !byID && !byRef {
-				return validationError("line items need a customer: name one with --customer-id or --customer-ref").
-					WithHint("Items are stored on the customer's revenue event; a conversion that resolves to no customer records none of them, without an error.")
-			}
+			// The server decides whether a customer resolves: one named here,
+			// one already linked to the click, or the account's customer
+			// c-param. It refuses items that find none (422 naming items).
 			body["items"] = items
 		}
 		c, err := api.NewFromConfig()
@@ -194,7 +193,7 @@ var conversionCreateCmd = &cobra.Command{
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("conversions", body, idemKey)
 		if err != nil {
-			return err
+			return hintConversionCreateError(err)
 		}
 		render(data)
 		if n := conversionCreateNote(data); n != "" {
@@ -202,6 +201,22 @@ var conversionCreateCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// hintConversionCreateError names the flags that supply a customer when the
+// server refuses line items or CRM fields because none resolved: the click is
+// linked to no customer and none was named.
+func hintConversionCreateError(err error) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return err
+	}
+	for _, field := range []string{"items", "customer_crm"} {
+		if _, ok := apiErr.FieldErrors[field]; ok {
+			return withHint(err, "Name the customer with --customer-ref <your id> (and --customer-ref-type), or --customer-id from `p202 ltv customers`.")
+		}
+	}
+	return err
 }
 
 // conversionCreateIdentityFlags name the LTV customer of a conversion.

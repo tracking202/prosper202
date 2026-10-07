@@ -11809,9 +11809,13 @@ components:
         items:
           type: array
           description: |
-            Line items on the customer's revenue event; recorded only when the
-            conversion resolves to a customer, and dropped without an error
-            otherwise.
+            Line items on the customer's revenue event, so they need a
+            customer: `customer_id` or `customer_ref` here, the customer
+            already linked to the click, or the account's customer c-param.
+            When none resolves the conversion is refused (`422` naming
+            `items`, and `customer_crm` when sent, saying to send
+            `customer_ref` or `customer_id`) and nothing is written; they
+            used to be dropped and the conversion answered `201`.
           items:
             $ref: "#/components/schemas/LtvLineItem"
 

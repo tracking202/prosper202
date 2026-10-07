@@ -311,6 +311,11 @@ class ConversionsController
         if (isset($payload['items'])) {
             $data['items'] = $payload['items'];
         }
+        // Line items and CRM fields belong to a customer. When none resolves
+        // (none named, the click linked to none, the account's c-param naming
+        // none) the conversion was recorded without them and answered 201;
+        // the repository refuses instead, before the row is written.
+        $data['ltv_requires_customer'] = true;
 
         // Delegate to the single canonical conversion writer so the V3 API and the
         // legacy postback/pixel endpoints share one transactional, idempotent path
@@ -327,6 +332,8 @@ class ConversionsController
                 throw new NotFoundException($e->getMessage());
             }
             throw new ValidationException($e->getMessage(), ['transaction_id' => $e->getMessage()]);
+        } catch (\Prosper202\Conversion\LtvDataWithoutCustomer $e) {
+            throw new ValidationException($e->getMessage(), $e->fieldErrors());
         } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
             // A real database failure is a 500 even though QueryException
             // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed

@@ -216,6 +216,73 @@ final class NestedBodyValuesIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * Line items live on the customer's revenue event and CRM fields on the
+     * customer: with no customer resolved (none named, the click linked to
+     * none, no customer c-param) they were dropped and the conversion
+     * answered 201. They are refused, naming the field and the identity to
+     * send, and nothing is written; a click already linked to a customer is
+     * enough.
+     */
+    public function testLineItemsOrCrmThatFindNoCustomerAreRefusedWritingNothing(): void
+    {
+        $conversions = new ConversionsController(self::$db, self::USER);
+        $base = ['click_id' => self::CLICKS[2], 'payout' => 30];
+        $items = [['sku' => 'NC-1', 'unit_price' => 15, 'quantity' => 2]];
+
+        self::assertRefusedWritingNothing(
+            fn () => $conversions->create($base + ['transaction_id' => 'NC-1', 'items' => $items]),
+            ['items'],
+            'line items with no customer'
+        );
+        self::assertRefusedWritingNothing(
+            fn () => $conversions->create($base + [
+                'transaction_id' => 'NC-2',
+                'customer_crm' => ['first_name' => 'Ann'],
+            ]),
+            ['customer_crm'],
+            'CRM fields with no customer'
+        );
+        try {
+            $conversions->create($base + ['transaction_id' => 'NC-3', 'items' => $items]);
+            self::fail('line items with no customer were accepted');
+        } catch (ValidationException $e) {
+            self::assertStringContainsString('customer_ref', $e->getFieldErrors()['items']);
+            self::assertStringContainsString('customer_id', $e->getFieldErrors()['items']);
+        }
+
+        // A click an earlier conversion linked to a customer needs no name.
+        $linked = ['click_id' => self::CLICKS[3], 'payout' => 30];
+        $conversions->create($linked + ['transaction_id' => 'NC-L1', 'customer_ref' => 'nested-nc']);
+        $conversions->create($linked + ['transaction_id' => 'NC-L2', 'items' => $items]);
+        $user = self::USER;
+        self::assertSame(
+            [['sku' => 'NC-1', 'quantity' => '2.000', 'primary_ref' => 'nested-nc']],
+            self::rows("SELECT li.sku, li.quantity, c.primary_ref FROM 202_revenue_line_items li
+                JOIN 202_revenue_events e ON e.event_id = li.event_id
+                JOIN 202_customers c ON c.customer_id = e.customer_id
+                WHERE li.user_id = $user")
+        );
+    }
+
+    /**
+     * A pixel has nobody to answer and refusing would lose its conversion
+     * too: without ltv_requires_customer the conversion is recorded, the
+     * product is not, and the result names what was not stored.
+     */
+    public function testAWriterThatCannotBeAnsweredKeepsTheConversionAndIsToldWhatWasNotStored(): void
+    {
+        $repo = new \Prosper202\Conversion\MysqlConversionRepository(new \Prosper202\Database\Connection(self::$db));
+        $result = $repo->record(self::USER, [
+            'click_id' => self::CLICKS[2], 'transaction_id' => 'PX-1', 'payout' => '30', 'source' => 'pixel',
+            'items' => [['sku' => 'PX-SKU', 'unit_price' => 30]],
+        ]);
+
+        self::assertGreaterThan(0, $result['convId'], 'the conversion stands');
+        self::assertSame(['items'], $result['ltvDropped'] ?? null);
+        self::assertSame(0, self::written()['202_revenue_line_items']);
+    }
+
     public function testAConversionWhoseNestedValuesCanBeReadIsStoredAsSent(): void
     {
         $conversions = new ConversionsController(self::$db, self::USER);
