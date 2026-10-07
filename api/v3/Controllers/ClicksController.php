@@ -49,7 +49,7 @@ class ClicksController
             LEFT JOIN 202_clicks_site cs ON c.click_id = cs.click_id
             LEFT JOIN 202_aff_campaigns ac ON c.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = c.user_id
             LEFT JOIN 202_ppc_accounts pa ON c.ppc_account_id = pa.ppc_account_id AND pa.user_id = c.user_id
-            LEFT JOIN 202_ppc_networks pn ON pa.ppc_network_id = pn.ppc_network_id
+            LEFT JOIN 202_ppc_networks pn ON pa.ppc_network_id = pn.ppc_network_id AND pn.user_id = c.user_id
             LEFT JOIN 202_landing_pages lp ON c.landing_page_id = lp.landing_page_id AND lp.user_id = c.user_id
             LEFT JOIN 202_text_ads ta ON ca.text_ad_id = ta.text_ad_id AND ta.user_id = c.user_id
             LEFT JOIN 202_ips ip ON ca.ip_id = ip.ip_id

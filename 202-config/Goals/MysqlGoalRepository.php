@@ -295,11 +295,19 @@ final class MysqlGoalRepository
 
     // ─── Campaign payouts ───────────────────────────────────────────
 
-    /** @return array<int, array<string, mixed>> goal id => the campaign_goals row */
-    public function campaignTerms(int $campaignId): array
+    /**
+     * The account's payable goals on a campaign. $userId is whose terms
+     * apply: a click's campaign id came from a tracker, and nothing stopped
+     * one naming another account's campaign (the API checks linked ids
+     * since 229df10; older clicks remain), so such a click must never be
+     * paid by that account's goal payouts.
+     *
+     * @return array<int, array<string, mixed>> goal id => the campaign_goals row
+     */
+    public function campaignTerms(int $campaignId, int $userId): array
     {
-        $stmt = $this->conn->prepareWrite('SELECT * FROM 202_campaign_goals WHERE campaign_id = ?');
-        $this->conn->bind($stmt, 'i', [$campaignId]);
+        $stmt = $this->conn->prepareWrite('SELECT * FROM 202_campaign_goals WHERE campaign_id = ? AND user_id = ?');
+        $this->conn->bind($stmt, 'ii', [$campaignId, $userId]);
         $out = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
             $out[(int) $row['goal_id']] = $row;
@@ -315,7 +323,7 @@ final class MysqlGoalRepository
             'SELECT cg.campaign_id, cg.goal_id, cg.payout, cg.notify_traffic_source, cg.created_at, cg.updated_at,
                     ac.aff_campaign_name, ac.payout_mode
              FROM 202_campaign_goals cg
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cg.campaign_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cg.campaign_id AND ac.user_id = cg.user_id
              WHERE cg.goal_id = ? AND cg.user_id = ? ORDER BY cg.campaign_id'
         );
         $this->conn->bind($stmt, 'ii', [$goalId, $userId]);
@@ -391,7 +399,7 @@ final class MysqlGoalRepository
         $stmt = $this->conn->prepareWrite(
             "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, cg.created_at AS attached_at
              FROM 202_goals g
-             LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ?
+             LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
              WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL)"
         );
         $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);
@@ -434,7 +442,7 @@ final class MysqlGoalRepository
             $stmt = $this->conn->prepareWrite(
                 "SELECT g.goal_id, g.scope, g.scope_id, g.archived_at, cg.created_at AS attached_at
                  FROM 202_goals g
-                 LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ?
+                 LEFT JOIN 202_campaign_goals cg ON cg.goal_id = g.goal_id AND cg.campaign_id = ? AND cg.user_id = g.user_id
                  WHERE g.user_id = ? AND ((g.scope = 'campaign' AND g.scope_id = ?) OR cg.campaign_id IS NOT NULL)"
             );
             $this->conn->bind($stmt, 'iii', [$campaignId, $userId, $campaignId]);

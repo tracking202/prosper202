@@ -18,25 +18,30 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
     /**
      * Acquisition breakdowns join the customer's first click to a dimension
      * table. All columns here are code-owned constants, never user input.
+     * A dimension row is joined only from the click's own account: a click
+     * names its campaign, traffic source and landing page by id, and nothing
+     * stopped a tracker naming another account's before the API checked
+     * linked ids (229df10). Such a customer drops out of the breakdown, as a
+     * click with no campaign does from GET /reports/breakdown.
      */
     private const ACQUISITION_BREAKDOWNS = [
         'campaign' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_aff_campaigns ref ON ref.aff_campaign_id = ck.aff_campaign_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_aff_campaigns ref ON ref.aff_campaign_id = ck.aff_campaign_id AND ref.user_id = ck.user_id',
             'id' => 'ref.aff_campaign_id',
             'name' => 'ref.aff_campaign_name',
             'spend_col' => 'aff_campaign_id',
         ],
         'ppc_account' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_ppc_accounts ref ON ref.ppc_account_id = ck.ppc_account_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_ppc_accounts ref ON ref.ppc_account_id = ck.ppc_account_id AND ref.user_id = ck.user_id',
             'id' => 'ref.ppc_account_id',
             'name' => 'ref.ppc_account_name',
             'spend_col' => 'ppc_account_id',
         ],
         'landing_page' => [
-            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id
-                       INNER JOIN 202_landing_pages ref ON ref.landing_page_id = ck.landing_page_id',
+            'join' => 'INNER JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = c.user_id
+                       INNER JOIN 202_landing_pages ref ON ref.landing_page_id = ck.landing_page_id AND ref.user_id = ck.user_id',
             'id' => 'ref.landing_page_id',
             'name' => 'ref.landing_page_url',
             'spend_col' => 'landing_page_id',

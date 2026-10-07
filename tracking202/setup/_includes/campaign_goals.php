@@ -443,7 +443,7 @@ function p202_goal_list(mysqli $db, int $userId, int $campaignId): array
     }
     $attached = [];
     $conn = new \Prosper202\Database\Connection($db);
-    foreach ((new \Prosper202\Goals\MysqlGoalRepository($conn))->campaignTerms($campaignId) as $goalId => $term) {
+    foreach ((new \Prosper202\Goals\MysqlGoalRepository($conn))->campaignTerms($campaignId, $userId) as $goalId => $term) {
         $goal = $api->get((int) $goalId)['data'];
         if ($goal['scope'] !== 'campaign') {
             $attached[] = $goal;

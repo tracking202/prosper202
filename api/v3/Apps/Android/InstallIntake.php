@@ -531,9 +531,14 @@ final class InstallIntake
      */
     public function classifyWithClick(AppRegistration $registration, InstallPayload $payload, int $clickId, int $rowId, int $receivedAt, int $now): array
     {
+        // The campaign's app link counts only when the campaign is the
+        // click's own account's: a tracker could name another account's
+        // before the API checked linked ids (229df10), and its link says
+        // nothing about the click owner's apps — such a click reads as
+        // having no campaign, never as a foreign app's.
         $stmt = $this->conn->prepareWrite(
             'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_time, ac.app_registration_id
-             FROM 202_clicks c LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
+             FROM 202_clicks c LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
              WHERE c.click_id = ? LIMIT 1 FOR UPDATE'
         );
         $this->conn->bind($stmt, 'i', [$clickId]);

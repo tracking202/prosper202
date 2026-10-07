@@ -49,22 +49,31 @@ use Prosper202\Database\Connection;
  */
 final class AttributionReports
 {
-    /** @var array<string, array{key: string, name: string, joins: list<string>}> */
+    /**
+     * Each dimension's group key, name and joins. A campaign, traffic source
+     * or landing page is named only from the click's own account
+     * (`dn.user_id = c.user_id`): a click names them by id, and nothing
+     * stopped a tracker naming another account's before the API checked
+     * linked ids (229df10). Such a click is still counted, under its stored
+     * id, with no name — as GET /clicks and the classic reports read it.
+     *
+     * @var array<string, array{key: string, name: string, joins: list<string>}>
+     */
     private const DIMENSIONS = [
         'campaign' => [
             'key' => 'c.aff_campaign_id',
             'name' => 'dn.aff_campaign_name',
-            'joins' => ['LEFT JOIN 202_aff_campaigns dn ON dn.aff_campaign_id = c.aff_campaign_id'],
+            'joins' => ['LEFT JOIN 202_aff_campaigns dn ON dn.aff_campaign_id = c.aff_campaign_id AND dn.user_id = c.user_id'],
         ],
         'traffic_source' => [
             'key' => 'c.ppc_account_id',
             'name' => 'dn.ppc_account_name',
-            'joins' => ['LEFT JOIN 202_ppc_accounts dn ON dn.ppc_account_id = c.ppc_account_id'],
+            'joins' => ['LEFT JOIN 202_ppc_accounts dn ON dn.ppc_account_id = c.ppc_account_id AND dn.user_id = c.user_id'],
         ],
         'landing_page' => [
             'key' => 'c.landing_page_id',
             'name' => 'dn.landing_page_nickname',
-            'joins' => ['LEFT JOIN 202_landing_pages dn ON dn.landing_page_id = c.landing_page_id'],
+            'joins' => ['LEFT JOIN 202_landing_pages dn ON dn.landing_page_id = c.landing_page_id AND dn.user_id = c.user_id'],
         ],
         'keyword' => [
             'key' => 'ca.keyword_id',
@@ -696,7 +705,7 @@ final class AttributionReports
                     cl.payable, cl.deleted, cl.superseded_reason, cl.reverses_conv_id, ac.aff_campaign_name
              FROM 202_attribution_journey_meta jm
              JOIN 202_conversion_logs cl ON cl.conv_id = jm.conv_id AND cl.user_id = jm.user_id
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
              WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
              ORDER BY jm.conv_time DESC, jm.conv_id DESC LIMIT ?'
         );
@@ -745,8 +754,8 @@ final class AttributionReports
                        FROM 202_identity_observations o WHERE o.click_id = j.click_id) AS signals
              FROM 202_attribution_journeys j
              LEFT JOIN 202_clicks c ON c.click_id = j.click_id
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
-             LEFT JOIN 202_ppc_accounts pa ON pa.ppc_account_id = c.ppc_account_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
+             LEFT JOIN 202_ppc_accounts pa ON pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id
              WHERE j.conv_id = ? ORDER BY j.position"
         );
         $this->conn->bind($stmt, 'i', [$convId]);
@@ -1102,23 +1111,29 @@ final class AttributionReports
     /**
      * The name of each group, looked up now: what MAX(name) over the group's
      * rows is in the full computation, since every name table is joined on
-     * its primary key and a row without a value has no name.
+     * its primary key and a row without a value has no name. A name its join
+     * reads only from the click's account is read only from the report's
+     * account here (every click a report sums is that account's), so a key
+     * naming another account's record has no name on either path.
      */
-    private static function nameSql(string $groupBy): string
+    public static function nameSql(string $groupBy, int $userId): string
     {
         if ($groupBy === 'day') {
             return 'g.k';
         }
-        [$table, $id, $name] = self::nameLookup($groupBy);
+        [$table, $id, $name, $owned] = self::nameLookup($groupBy);
 
-        return "IF(g.named = 1, (SELECT dn.`$name` FROM `$table` dn WHERE dn.`$id` = g.k), NULL)";
+        return "IF(g.named = 1, (SELECT dn.`$name` FROM `$table` dn WHERE dn.`$id` = g.k"
+            . ($owned ? ' AND dn.user_id = ' . $userId : '') . '), NULL)';
     }
 
     /**
      * The table, key column and name column a dimension's names come from,
-     * read from its own join so the two cannot disagree.
+     * and whether the name is read only from the click's account, read
+     * from its own join so the two cannot disagree. A join of any other
+     * shape throws: the lookup would not read what the join reads.
      *
-     * @return array{0: string, 1: string, 2: string}
+     * @return array{0: string, 1: string, 2: string, 3: bool}
      */
     public static function nameLookup(string $groupBy): array
     {
@@ -1127,8 +1142,8 @@ final class AttributionReports
             throw new \LogicException('dimension ' . $groupBy . ' has no name column');
         }
         foreach ($d['joins'] as $join) {
-            if (preg_match('/^LEFT JOIN (\w+) dn ON dn\.(\w+) = [\w.]+$/D', $join, $m) === 1) {
-                return [$m[1], $m[2], $n[1]];
+            if (preg_match('/^LEFT JOIN (\w+) dn ON dn\.(\w+) = [\w.]+( AND dn\.user_id = c\.user_id)?$/D', $join, $m) === 1) {
+                return [$m[1], $m[2], $n[1], ($m[3] ?? '') !== ''];
             }
         }
         throw new \LogicException('dimension ' . $groupBy . ' has no name join');
@@ -1151,7 +1166,7 @@ final class AttributionReports
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, $modelId === null);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.conversions, g.revenue, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.conversions, g.revenue, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, SUM(u.credit) AS conversions, SUM(u.revenue) AS revenue, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );
@@ -1186,7 +1201,7 @@ final class AttributionReports
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.clicks, g.cost, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.clicks, g.cost, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, SUM(u.n) AS clicks, SUM(u.cost) AS cost, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );
@@ -1224,7 +1239,7 @@ final class AttributionReports
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.assists, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.assists, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, COALESCE(SUM(u.n), 0) + COUNT(DISTINCT u.conv_id) AS assists, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );

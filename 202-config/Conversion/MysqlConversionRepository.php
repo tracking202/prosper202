@@ -70,7 +70,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
             $whereClause
             ORDER BY cl.conv_time DESC LIMIT ? OFFSET ?";
 
@@ -91,7 +91,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1";
 
         $stmt = $this->conn->prepareRead($sql);
@@ -321,7 +321,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $clickCampaignId = (int) $click['aff_campaign_id'];
-        $terms = $ledger->campaignTerms($clickCampaignId);
+        $terms = $ledger->campaignTerms($clickCampaignId, $userId);
 
         // A reversal names the row it reverses by that row's transaction
         // id. It is its own row with its own key (never tx:<id>, which the
@@ -565,7 +565,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $clickSideUpdate($clickId, $payout);
         }
 
-        $ledger->recompute($clickId, $clickCampaignId);
+        $ledger->recompute($clickId, $clickCampaignId, $userId);
         $ledger->enqueue(array_values(array_filter([$convId, $reverses !== null ? (int) $reverses['conv_id'] : null])), 'recorded');
 
         return [
@@ -827,7 +827,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
-        $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+        $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         $ledger->enqueue([$convId], 'counted_state');
 
         return $clickId;
@@ -957,7 +957,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         if ($click !== null) {
-            $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+            $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         }
         $ledger->enqueue($affected, 'counted_state');
 
@@ -1235,7 +1235,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                     $deleted[] = $convId;
                 }
 
-                $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
                 if ($deleted !== []) {
                     $ledger->enqueue($deleted, 'counted_state');
                 }

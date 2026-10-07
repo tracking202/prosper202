@@ -150,6 +150,12 @@ final class CpcUpdate
      * clicks the person counted, never ones recorded since (see snapshot()).
      * Null only for the check itself.
      *
+     * A click's category and traffic source are read from its campaign and
+     * traffic-source account only when those are the click's own account's:
+     * a tracker could name another account's before the API checked linked
+     * ids (229df10), and that account's row must not decide which of this
+     * account's clicks are repriced. Such a click matches neither filter.
+     *
      * @param array<string, mixed> $values
      * @return array{joins: string, where: string, types: string, params: list<int>}
      */
@@ -157,8 +163,8 @@ final class CpcUpdate
     {
         $joins = ' LEFT JOIN 202_clicks_advance ON (202_clicks_advance.click_id = 202_clicks.click_id)'
             . ' LEFT JOIN 202_clicks_site ON (202_clicks_site.click_id = 202_clicks.click_id)'
-            . ' LEFT JOIN 202_aff_campaigns ON (202_clicks.aff_campaign_id = 202_aff_campaigns.aff_campaign_id)'
-            . ' LEFT JOIN 202_ppc_accounts ON (202_ppc_accounts.ppc_account_id = 202_clicks.ppc_account_id)';
+            . ' LEFT JOIN 202_aff_campaigns ON (202_clicks.aff_campaign_id = 202_aff_campaigns.aff_campaign_id AND 202_aff_campaigns.user_id = 202_clicks.user_id)'
+            . ' LEFT JOIN 202_ppc_accounts ON (202_ppc_accounts.ppc_account_id = 202_clicks.ppc_account_id AND 202_ppc_accounts.user_id = 202_clicks.user_id)';
         $where = ' WHERE 202_clicks.user_id = ? AND 202_clicks.click_time >= ? AND 202_clicks.click_time <= ?';
         $types = 'iii';
         $params = [$userId, (int) $values['from_time'], (int) $values['to_time']];

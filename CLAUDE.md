@@ -679,6 +679,42 @@ hand-kept list of click tables had drifted five tables behind the schema;
 definitions. And a delete is a write the derived sums must hear about —
 `RollupDirty::clicksDeleted()` marks them in the deleting transaction.
 
+### 27. A stored id is a claim about ownership that nothing re-checked
+A click names its campaign, traffic source and landing page by id; a
+conversion takes its click's campaign id; a landing page names a campaign, a
+campaign a category. Until 229df10 no write checked that the named record was
+the writer's own, and the rows those writes made are still in installs. Every
+read that joins the named table on its id alone therefore trusts a claim
+nobody verified — and the reads that did were not only name leaks
+(`report breakdown`, GET /conversions and the attribution and LTV reports
+named another account's campaign; the LTV recommender handed another account's
+offer URL to this account's customer). A conversion on such a click was
+recorded at the other account's payout, in its payout mode; an install was
+refused as `foreign_click` because the other account's campaign was linked to
+its own app, with that registration's id in the reason; a category CPC update
+or conversion reset chose which of this account's clicks to touch by the
+other account's campaign row. The scope check on the *driving* row (`WHERE
+c.user_id = ?`) was there every time, and read as if it covered the joins.
+
+The rule that holds: a row of another account named by id reads as naming
+nothing — `AND ref.user_id = row.user_id` in the ON clause, as
+`ReportsController::dimensionJoin()` does — so the row is still counted and the
+name, the payout or the setting simply is not there. `AccountScopedJoinTest`
+walks the tree's SQL for joins, comma joins and subqueries onto any table the
+schema gives a user_id, and refuses by name what it cannot read.
+
+What that floor does not see, and still needs the question asked by hand:
+a *lookup* rather than a join (`SELECT payout_mode … FROM 202_aff_campaigns
+WHERE aff_campaign_id = ?` with an id read from a click — that is how the
+payout one shipped, two calls away from any join); a table owned through its
+parent, which has no user_id to tie (traffic-source variables reached
+through an account's `ppc_network_id`, rotator rules through a rotator); and
+SQL a runtime builder assembles, which the test runs only for the builders
+it names. Whenever an id read from one row selects another row, ask whose
+the second row is, and whether anything the answer decides — a name, a
+payout, a setting, which rows a bulk write touches — would differ if it were
+someone else's.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
