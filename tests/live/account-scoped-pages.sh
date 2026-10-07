@@ -195,6 +195,28 @@ else
     say "Slack notices: not checked (set P202_SLACK_CAPTURE_URL and P202_SLACK_CAPTURE_FILE)"
 fi
 
+if [ -n "${P202_API_KEY:-}" ]; then
+    say "legacy API (api/v1, api/v2) as user 1's key"
+    apiget() { # LABEL PATH — a GET with the key, no session
+        [ -n "$ONLY" ] && [[ "$1" != *$ONLY* ]] && return
+        local f code
+        f=$(fname "$1")
+        code=$(curl -sS "$BASE/$2&apikey=$P202_API_KEY" -o "$f" -w '%{http_code}')
+        check "$1" "$f" "$code"
+    }
+    apiget "API v1: the WordPress feed" "api/v1/reports/?type=get_data_for_wp"
+    # The reports answer 500 before any SQL runs (a TypeError under strict
+    # types since f78e8c0); their SQL is LegacyApiAccountScopeIntegrationTest's.
+    for v in v1 v2; do
+        for t in text_ads landing_pages; do
+            code=$(curl -sS "$BASE/api/$v/reports/?type=$t&apikey=$P202_API_KEY" -o /dev/null -w '%{http_code}')
+            echo "    api/$v reports type=$t answers HTTP $code"
+        done
+    done
+else
+    say "legacy API: not checked (set P202_API_KEY to user 1's key)"
+fi
+
 say "summary"
 echo "  $PASS passed, $FAIL failed"
 if [ ${#LEAKED[@]} -gt 0 ]; then

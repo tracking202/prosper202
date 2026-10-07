@@ -16,6 +16,9 @@ declare(strict_types=1);
  *                   ids its statement lists
  *   lists           the filter menus: ReportPrefsStore::lists() and
  *                   p202_overview_filter_lists()
+ *   api-v1:<report> / api-v2:<report>
+ *                   the legacy API's reportQuery() for text_ads or
+ *                   landing_pages, and v1's getDataForWP() (get_data_for_wp)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_REPORT_USER,
  *       P202_TEST_FROM, P202_TEST_TO (the window, unix seconds)
  * Prints "RETURNED <json>", or "THREW <class>: <message>".
@@ -35,15 +38,23 @@ if ($dbName === '' || $userId <= 0 || $from <= 0 || $to <= 0) {
 $host = (string) (getenv('P202_TEST_DB_HOST') ?: '127.0.0.1');
 $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 
-/** connect.php inside a function: see report-read-failure-runner.php. */
-function boot_app(string $root): void
+/**
+ * connect.php inside a function: see report-read-failure-runner.php. The
+ * legacy API boots as its endpoints do, on connect2.php, beside which its
+ * functions file declares helpers connect.php's own files also declare.
+ */
+function boot_app(string $root, bool $legacyApi): void
 {
     $prev = error_reporting(0);
     ob_start();
-    require_once $root . '/202-config/connect.php';
-    require_once $root . '/202-config/class-dataengine.php';
-    require_once $root . '/202-config/ReportSummaryForm.class.php';
-    require_once $root . '/202-config/functions-ui-overview.php';
+    if ($legacyApi) {
+        require_once $root . '/202-config/connect2.php';
+    } else {
+        require_once $root . '/202-config/connect.php';
+        require_once $root . '/202-config/class-dataengine.php';
+        require_once $root . '/202-config/ReportSummaryForm.class.php';
+        require_once $root . '/202-config/functions-ui-overview.php';
+    }
     ob_end_clean();
     error_reporting($prev);
     $config = ['dbname', 'dbhost', 'dbhostro', 'dbuser', 'dbpass', 'mchost', 'root'];
@@ -61,7 +72,7 @@ $GLOBALS['dbuser'] = (string) (getenv('P202_TEST_DB_USER') ?: 'root');
 $GLOBALS['dbpass'] = (string) (getenv('P202_TEST_DB_PASS') ?: '');
 $GLOBALS['mchost'] = '';
 $_SERVER += ['SERVER_NAME' => 'localhost', 'REQUEST_URI' => '/account-scope', 'SCRIPT_URL' => '/account-scope', 'REMOTE_ADDR' => '127.0.0.1'];
-boot_app($root);
+boot_app($root, str_starts_with($reader, 'api-'));
 
 $db = DB::getInstance()->getConnection();
 $at = $db->query('SELECT DATABASE()');
@@ -123,6 +134,29 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
+    } elseif (preg_match('/^api-(v1|v2):(text_ads|landing_pages|get_data_for_wp)$/D', $reader, $m) === 1) {
+        // The legacy API's functions, as GET /api/<version>/reports/ calls
+        // them. v1 and v2 declare the same functions: one version per
+        // process. The reports cannot run as the files stand: the endpoint
+        // hands its window to date() and real_escape_string() alike, which
+        // strict types make a TypeError whichever type it is (since
+        // f78e8c0, on every report request). So the file is loaded without
+        // its declare(strict_types=1) -- every other byte as written -- and
+        // the reports run the SQL they would run once that is repaired.
+        $source = file_get_contents($root . '/api/' . $m[1] . '/functions.php');
+        $loose = preg_replace('/declare\(strict_types=1\);/', '', (string) $source, 1, $declares);
+        if ($declares !== 1) {
+            throw new RuntimeException('the legacy API file no longer declares strict types: load it as it is');
+        }
+        $copy = tempnam(sys_get_temp_dir(), 'p202-legacy-api-');
+        file_put_contents($copy, $loose);
+        require $copy;
+        unlink($copy);
+        $result = match ($m[2]) {
+            'text_ads' => reportQuery($db, 'text_ads', 'text_ad_id', 'text_ad_name', (string) $userId, $from, $to),
+            'landing_pages' => reportQuery($db, 'landing_pages', 'landing_page_id', 'landing_page', (string) $userId, $from, $to),
+            'get_data_for_wp' => getDataForWP($db, (string) $userId),
+        };
     } else {
         throw new InvalidArgumentException("no reader named '$reader'");
     }

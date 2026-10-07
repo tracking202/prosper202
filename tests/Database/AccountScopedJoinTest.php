@@ -110,7 +110,6 @@ final class AccountScopedJoinTest extends TestCase
     // account's record, and is left to the change that owns the file).
 
     private const TRACKING_PATH = 'tracking path (a redirect or static endpoint resolving public ids from the URL): follows a tracker\'s, landing page\'s or rotator rule\'s stored id to another account\'s record; reported, not changed here';
-    private const LEGACY_API = 'legacy API v1/v2 report: names another account\'s landing page or campaign when a click names one';
     private const CRON = 'daily-email cron (the cron work owns it): names another account\'s campaign when a click names one';
 
     /**
@@ -319,17 +318,6 @@ final class AccountScopedJoinTest extends TestCase
         '202-cronjobs/daily-email.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns AS `2ca` USING ( aff_campaign_id ) WHERE `2c`.click_time' => self::CRON,
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns AS `2ca` USING ( aff_campaign_id ) WHERE `2c`.aff_campaign_id' => self::CRON,
-        ],
-        'api/v1/functions.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_landing_pages LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) WHERE 202_landing_pages.user_id = \'{0}\'' => self::LEGACY_API,
-            'no user_id tie | 202_landing_pages | `2lp`.landing_page_id = `2c`.landing_page_id' => self::LEGACY_API,
-            'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca`' => self::LEGACY_API,
-            'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca` #2' => self::LEGACY_API,
-        ],
-        'api/v2/functions.php' => [
-            'no user_id tie | 202_landing_pages | `2lp`.landing_page_id = `2c`.landing_page_id' => self::LEGACY_API,
-            'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca`' => self::LEGACY_API,
-            'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca` #2' => self::LEGACY_API,
         ],
         'tracking202/redirect/cl.php' => [
             'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,
