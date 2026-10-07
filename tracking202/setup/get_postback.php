@@ -33,13 +33,16 @@ $campaignOptions = p202_setup_campaign_options($db, (int) $_SESSION['user_id']);
 
 /** The snippets for the defaults: no amount, no campaign, no sub id. */
 $root = $scheme . '://' . $domain . $base . 'tracking202/static/';
+// Prosper202\Setup\PostbackCode builds them, as it does for the REST API
+// (GET /conversions/postback-code); the script rebuilds the same strings.
+$built = \Prosper202\Setup\PostbackCode::snippets($root, '', '', '');
 $snippets = [
-	'simple_pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=&subid=" />',
-	'simple_postback' => $root . 'gpb.php?amount=&subid=',
-	'advanced_pixel' => '<img height="1" width="1" border="0" style="display: none;" src="' . $root . 'gpx.php?amount=&cid=&subid=" />',
-	'advanced_postback' => $root . 'gpb.php?amount=&cid=&subid=',
-	'universal_js' => "<script>\n var vars202={amount:\"\",cid:\"\",subid:\"\"};(function(d, s) {\n \tvar js, upxf = d.getElementsByTagName(s)[0], load = function(url, id) {\n \t\tif (d.getElementById(id)) {return;}\n \t\tif202 = d.createElement(\"iframe\");if202.src = url;if202.id = id;if202.height = 1;if202.width = 0;if202.frameBorder = 1;if202.scrolling = \"no\";if202.noResize = true;\n \t\tupxf.parentNode.insertBefore(if202, upxf);\n \t};\n \tload(\"" . $root . "upx.php?amount=\"+vars202['amount']+\"&cid=\"+vars202['cid']+\"&subid=\"+vars202['subid'], \"upxif\");\n }(document, \"script\"));</script>\n<noscript>\n \t<iframe height=\"1\" width=\"1\" border=\"0\" style=\"display: none;\" frameborder=\"0\" scrolling=\"no\" src=\"" . $root . "upx.php?amount=&cid=&subid=\" seamless></iframe>\n</noscript>",
-	'universal_iframe' => '<iframe height="1" width="1" border="0" style="display: none;" frameborder="0" scrolling="no" src="' . $root . 'upx.php?amount=&subid=" seamless></iframe>',
+	'simple_pixel' => $built['simple']['pixel'],
+	'simple_postback' => $built['simple']['postback_url'],
+	'advanced_pixel' => $built['advanced']['pixel'],
+	'advanced_postback' => $built['advanced']['postback_url'],
+	'universal_js' => $built['universal']['javascript'],
+	'universal_iframe' => $built['universal']['iframe'],
 ];
 
 template_top('Pixel And Postback URLs');

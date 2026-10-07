@@ -66,7 +66,10 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 
 	echo '<p class="form-text mt-0">Test every link yourself before you run traffic to it.</p>';
 
-	$javascript_code = generateTrackingLoaderSnippet((string) $landing_page_row['landing_page_id_public']);
+	// The snippets are Prosper202\Setup\LandingPageCode's, which the REST API
+	// (GET /landing-pages/{id}/code?offers=…) hands out too.
+	$codeBase = '//' . getTrackingDomain() . get_absolute_url();
+	$javascript_code = \Prosper202\Setup\LandingPageCode::loader($codeBase, (string) $landing_page_row['landing_page_id_public']);
 	echo '<h3 class="p202-section__title">1. Landing page code</h3>'
 		. '<p>Put this right above the <code>&lt;/body&gt;</code> tag of <strong>only</strong> the page your visitors first arrive on, not in a template every page of the site includes.</p>';
 	echo p202_setup_code_box($javascript_code, ['long' => true]);
@@ -94,24 +97,8 @@ $offer = static fn (string $name, int $n): string => (string) ($_POST[$name . $n
 					$campaign_slack .= $aff_campaign_row['aff_campaign_name'].'\n';
 				}
 
-				$outbound_go = '//' . getTrackingDomain() . get_absolute_url(). 'tracking202/redirect/go.php?acip=' . $aff_campaign_row['aff_campaign_id_public'];
-				$outbound_php = '
-<?php
-
-// -------------------------------------------------------------------
-//
-// Tracking202 PHP Redirection, created on ' . date('D M, Y',time()) .'
-//
-// This PHP code is to be used for the following campaign:
-// ' . $aff_campaign_row['aff_campaign_name'] . ' on ' . $landing_page_row['landing_page_url'] . '
-//
-// -------------------------------------------------------------------
-
-$tracking202outbound = \'//'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/off.php?acip='.$aff_campaign_row['aff_campaign_id_public'].'&pci=\'.$_COOKIE[\'tracking202pci\'];
-
-header(\'location: \'.$tracking202outbound);
-
-?>';
+				$outbound_go = \Prosper202\Setup\LandingPageCode::campaignOutboundLink($codeBase, (string) $aff_campaign_row['aff_campaign_id_public']);
+				$outbound_php = \Prosper202\Setup\LandingPageCode::campaignOutboundPhp($codeBase, (string) $aff_campaign_row['aff_campaign_id_public'], (string) $aff_campaign_row['aff_campaign_name'], (string) $landing_page_row['landing_page_url'], time());
 				echo '<h4 class="h6 mt-3">Offer ' . $count . ': campaign ' . p202_setup_e($aff_campaign_row['aff_campaign_name']) . '</h4>';
 				echo p202_setup_code_box($outbound_go, ['label' => 'Outbound link']);
 				echo '<details class="p202-disclosure mb-3"><summary>PHP redirect <span class="p202-disclosure__hint">cloaks the affiliate link</span></summary>'
@@ -131,24 +118,8 @@ header(\'location: \'.$tracking202outbound);
 					continue;
 				}
 
-				$outbound_go = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?rpi=' . $rotator_row['public_id'];
-				$outbound_php = '
-<?php
-
-// -------------------------------------------------------------------
-//
-// Tracking202 PHP Redirection, created on ' . date('D M, Y',time()) .'
-//
-// This PHP code is to be used for the following campaign:
-// ' . $rotator_row['name'] . ' on ' . $landing_page_row['landing_page_url'] . '
-//
-// -------------------------------------------------------------------
-
-$tracking202outbound = \'//'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/offrtr.php?rpi='.$rotator_row['public_id'].'\';
-
-header(\'location: \'.$tracking202outbound);
-
-?>';
+				$outbound_go = \Prosper202\Setup\LandingPageCode::rotatorOutboundLink($codeBase, (string) $rotator_row['public_id']);
+				$outbound_php = \Prosper202\Setup\LandingPageCode::rotatorOutboundPhp($codeBase, (string) $rotator_row['public_id'], (string) $rotator_row['name'], (string) $landing_page_row['landing_page_url'], time());
 				echo '<h4 class="h6 mt-3">Offer ' . $count . ': redirector ' . p202_setup_e($rotator_row['name']) . '</h4>';
 				echo p202_setup_code_box($outbound_go, ['label' => 'Outbound link']);
 				echo '<details class="p202-disclosure mb-3"><summary>PHP redirect <span class="p202-disclosure__hint">cloaks the destination</span></summary>'

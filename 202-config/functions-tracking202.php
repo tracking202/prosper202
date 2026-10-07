@@ -2988,17 +2988,8 @@ function getSecureStatus(): bool
  */
 function generateTrackingLoaderSnippet(string $landing_page_id_public): string
 {
-    return '<script>
-	(function(d, s) {
-		var upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
-			if (d.getElementById(id)) {return;}
-			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
-			upxf.parentNode.insertBefore(if202, upxf);
-		};
-		var t = new URLSearchParams(window.location.search).get("t202id") || "";
-		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '&t202id=" + encodeURIComponent(t), "upxif");
-	}(document, "script"));
-	</script>';
+    // Prosper202\Setup\LandingPageCode builds it, for the pages and the API.
+    return \Prosper202\Setup\LandingPageCode::loader('//' . getTrackingDomain() . get_absolute_url(), $landing_page_id_public);
 }
 
 /**
@@ -3011,27 +3002,7 @@ function generateTrackingLoaderSnippet(string $landing_page_id_public): string
  */
 function getDynamicContentSegments(): array
 {
-    return [
-        't202Country'      => "Visitor's Country",
-        't202CountryCode'  => "Visitor's Country Code",
-        't202Region'       => "Visitor's Region/State",
-        't202City'         => "Visitor's City",
-        't202Postal'       => "Visitor's Postal/Zip Code",
-        't202Browser'      => "Visitor's Browser",
-        't202OS'           => "Visitor's Operating System",
-        't202Device'       => "Visitor's Device Type",
-        't202ISP'          => "Visitor's ISP",
-        't202kw'           => 'Value passed in t202kw',
-        't202c1'           => 'Value passed in C1',
-        't202c2'           => 'Value passed in C2',
-        't202c3'           => 'Value passed in C3',
-        't202c4'           => 'Value passed in C4',
-        't202utm_source'   => 'Value passed in utm_source',
-        't202utm_medium'   => 'Value passed in utm_medium',
-        't202utm_term'     => 'Value passed in utm_term',
-        't202utm_content'  => 'Value passed in utm_content',
-        't202utm_campaign' => 'Value passed in utm_campaign',
-    ];
+    return \Prosper202\Setup\LandingPageCode::SEGMENTS;
 }
 
 /**

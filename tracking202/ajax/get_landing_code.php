@@ -65,9 +65,13 @@ $error = [];
 
 	if ($_POST['method_of_promotion'] == 'landingpage') {
 
-	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/go.php?lpip=' . $landing_page_row['landing_page_id_public'];
+	// The snippets are Prosper202\Setup\LandingPageCode's, which the REST API
+	// (GET /landing-pages/{id}/code) hands out too.
+	$codeBase = '//' . getTrackingDomain() . get_absolute_url();
+	$publicId = (string) $landing_page_row['landing_page_id_public'];
+	$affiliate_link = \Prosper202\Setup\LandingPageCode::simpleOutboundLink($codeBase, $publicId);
 
-	$javascript_code = generateTrackingLoaderSnippet((string) $landing_page_row['landing_page_id_public']);
+	$javascript_code = \Prosper202\Setup\LandingPageCode::loader($codeBase, $publicId);
 
 	echo '<p class="form-text mt-0">Test every link yourself before you run traffic to it.</p>';
 
@@ -79,29 +83,7 @@ $error = [];
 		. '<p>Choose one of the three. The simplest is the outbound link: use it as the link to the offer on your page.</p>';
 	echo p202_setup_code_box($affiliate_link, ['label' => 'Option 1: outbound redirect link']);
 
-	$affiliate_link = '//' . getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'];
-	$html['affiliate_link'] = htmlentities($affiliate_link);
-
-	$outbound_php = '<?php
-
-  // -------------------------------------------------------------------
-  //
-  // Tracking202 PHP Redirection, created on ' . date('D M, Y',time()) .'
-  //
-  // This PHP code is to be used for the following landing page.
-  // ' . $landing_page_row['landing_page_url'] . '
-  //
-  // -------------------------------------------------------------------
-
-  if (isset($_COOKIE[\'tracking202outbound\'])) {
-	$tracking202outbound = $_COOKIE[\'tracking202outbound\'];
-  } else {
-	$tracking202outbound = \''.$html['affiliate_link'].'&pci=\'.$_COOKIE[\'tracking202pci\'];
-  }
-
-  header(\'location: \'.$tracking202outbound);
-
-?>';
+	$outbound_php = \Prosper202\Setup\LandingPageCode::simpleOutboundPhp($codeBase, $publicId, (string) $landing_page_row['landing_page_url'], time());
 
 	echo '<details class="p202-disclosure mb-3" data-p202-remember="setup-lp-code-php">'
 		. '<summary>Option 2: outbound PHP redirect <span class="p202-disclosure__hint">cloaks your affiliate link; needs PHP on your server</span></summary>'
@@ -110,41 +92,7 @@ $error = [];
 		. p202_setup_code_box($outbound_php, ['long' => true])
 		. '</div></details>';
 
-	$outbound_javascript = '
-<!DOCTYPE html>
-<html>
-<head>
-	<title>GO</title>
-</head>
-<body>
-
-<!-- PLACE OTHER LANDING PAGE CLICK THROUGH CONVERSION TRACKING PIXELS HERE -->
-
-<!-- NOW THE TRACKING202 REDIRECTS OUT -->
-<script type="text/javascript">
-if (readCookie(\'tracking202outbound\') != \'\') {
-	window.location=readCookie(\'tracking202outbound\');
-} else {
-	window.location=\'//'. getTrackingDomain() . get_absolute_url().'tracking202/redirect/lp.php?lpip=' . $landing_page_row['landing_page_id_public'] .'\';
-}
-
-function readCookie(name) {
-	var nameEQ = name + "=";
-	var ca = document.cookie.split(\';\');
-	for(var i=0;i < ca.length;i++) {
-		var c = ca[i];
-		while (c.charAt(0)==\' \') c = c.substring(1,c.length);
-		if (c.indexOf(nameEQ) == 0) return urldecode(c.substring(nameEQ.length,c.length));
-	}
-	return false;
-}
-
-function urldecode(url) {
-	  return decodeURIComponent(url.replace(/\+/g, \' \'));
-}
-</script>
-</body>
-</html>';
+	$outbound_javascript = \Prosper202\Setup\LandingPageCode::simpleOutboundJavascript($codeBase, $publicId);
 
 	echo '<details class="p202-disclosure mb-3" data-p202-remember="setup-lp-code-js">'
 		. '<summary>Option 3: outbound JavaScript redirect <span class="p202-disclosure__hint">lets other tracking tags fire first</span></summary>'
