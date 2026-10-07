@@ -30,7 +30,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     $auth = new AUTH();
     $auth->set_timezone($_SESSION['user_timezone']);
 
-    $ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
+    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
     $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];

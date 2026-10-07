@@ -98,7 +98,7 @@ $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
 
 AUTH::set_timezone($rotator_row['user_timezone']);
 
-$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);

@@ -13,7 +13,8 @@ $strProtocol = 'http';
 }
 
 // Process geo/UA data once (previously duplicated in both _.t202Data and t202Data)
-$data = getGeoData($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
+$visitorIp = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+$data = getGeoData($visitorIp);
 if($data['country']==='Unknown country')
     $data['country']='';
 if($data['country_code']==='non')
@@ -30,7 +31,7 @@ $detect = new DeviceDetect();
 $ua = $detect->getUserAgent();
 $result = $parser->parse($ua);
 
-$IspData = getIspData($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
+$IspData = getIspData($visitorIp);
 if($IspData==="Unknown ISP/Carrier")
     $data['isp']='';
 else

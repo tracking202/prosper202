@@ -575,22 +575,18 @@ class AUTH
     }
 
     /**
-     * Return the trust-aware client IP, validated. connect.php normalizes the
-     * real client address into HTTP_X_FORWARDED_FOR (CF-Connecting-IP, X-Real-IP,
-     * …) but on a direct request — or a proxy that doesn't strip client-supplied
-     * forwarding headers — that value can be attacker-controlled garbage or
-     * longer than the 255-char log column. Validate it as an IP and fall back to
-     * REMOTE_ADDR, so the throttle key and audit log only ever see a real IP.
+     * The visitor's address, validated (VisitorIp: the forwarding headers
+     * the click path reads, the leftmost hop, REMOTE_ADDR when that is not an
+     * address), or '0.0.0.0' when the request carries none — so the throttle
+     * key and the audit log only ever see a real IP that fits their column.
+     * It is the address the client claims; see VisitorIp for what that may
+     * and may not decide.
      */
     public static function client_ip(): string
     {
-        foreach ([$_SERVER['HTTP_X_FORWARDED_FOR'] ?? '', $_SERVER['REMOTE_ADDR'] ?? ''] as $candidate) {
-            $candidate = trim((string) $candidate);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                return $candidate;
-            }
-        }
-        return '0.0.0.0';
+        $ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+
+        return $ip !== '' ? $ip : '0.0.0.0';
     }
 
     /**
