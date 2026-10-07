@@ -278,6 +278,11 @@ final class UpdateEndpointsInstanceTest extends TestCase
             $this->assertSame(422, $status, json_encode($bad) . ': ' . json_encode($answer));
             $this->assertNotEmpty($answer['field_errors'] ?? []);
         }
+        // An entry is named by its position, as every list in a body is
+        // (items.0.unit_price): not subids[1].
+        [$status, $answer] = $this->post('/conversions/subids', ['subids' => ['940001', true]]);
+        $this->assertSame(422, $status, json_encode($answer));
+        $this->assertSame(['subids.1'], array_keys($answer['field_errors'] ?? []));
     }
 
     public function testDeletingSubidsClearsTheirConversionsThroughTheLedger(): void

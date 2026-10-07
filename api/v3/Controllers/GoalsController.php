@@ -387,7 +387,7 @@ final class GoalsController
         $specs = [];
         $seen = [];
         foreach ($goals as $i => $g) {
-            $path = 'goals[' . $i . ']';
+            $path = 'goals.' . $i;
             if (!is_array($g) || array_is_list($g)) {
                 throw new ValidationException('Invalid goal', [$path => 'must be an object']);
             }
@@ -408,7 +408,7 @@ final class GoalsController
             }
             $clean = [];
             foreach ($versions as $j => $v) {
-                $vp = $path . '.versions[' . $j . ']';
+                $vp = $path . '.versions.' . $j;
                 if (!is_array($v) || array_is_list($v)) {
                     throw new ValidationException('Invalid version', [$vp => 'must be an object']);
                 }
@@ -460,12 +460,12 @@ final class GoalsController
         $ids = [];
         foreach ($rawEvents as $i => $e) {
             try {
-                $event = GoalEvent::fromArray($e, 'events[' . $i . ']');
+                $event = GoalEvent::fromArray($e, 'events.' . $i);
             } catch (InvalidGoalDefinition $ex) {
                 throw new ValidationException('Invalid event', $ex->errors());
             }
             if (isset($ids[$event->eventId])) {
-                throw new ValidationException('Invalid event', ['events[' . $i . '].event_id' => 'event id "' . $event->eventId . '" appears twice']);
+                throw new ValidationException('Invalid event', ['events.' . $i . '.event_id' => 'event id "' . $event->eventId . '" appears twice']);
             }
             $ids[$event->eventId] = true;
             $events[] = $event;

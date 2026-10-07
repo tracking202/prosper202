@@ -31,8 +31,9 @@ the same thing.
   is a `422`, never the write.
 - **Strict input.** An unknown field is a `422` naming it (a misspelled
   filter must not widen an update to every click); an id that is not a whole
-  number, a subid list item that is not a string or integer, a CPC with more
-  than five decimals — each is refused under its field, never cast.
+  number, a subid list item that is not a string or integer (named by its
+  position, `subids.3`), a CPC with more than five decimals — each is refused
+  under its field, never cast.
 - **Not stageable.** `?staged=1` is a `422`. Run the dry run, then the write.
 - **Safe to send again.** Marking a converted subid adds nothing, clearing a
   cleared one clears nothing, a CPC confirm that no longer counts the same

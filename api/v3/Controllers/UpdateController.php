@@ -584,7 +584,7 @@ final class UpdateController
         $blank = true;
         foreach ($items as $i => $item) {
             if (!is_string($item) && !is_int($item)) {
-                $errors['subids[' . $i . ']'] = 'must be a string or an integer subid, got ' . get_debug_type($item);
+                $errors['subids.' . $i] = 'must be a string or an integer subid, got ' . get_debug_type($item);
                 continue;
             }
             if (trim((string) $item) !== '') {

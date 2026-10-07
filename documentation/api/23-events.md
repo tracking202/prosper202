@@ -91,8 +91,11 @@ curl -X POST https://your-domain.com/api/v3/events \
 | `events` | 1–100 events: `event_id` (required), `name` (required), `occurred_at` (unix seconds, default now), `properties`, `revenue`, `transaction_id` |
 
 `received_at` and `revenue_trusted` are the server's and are refused in the
-body; any other unknown field is a `422` naming it. `201` when an event was
-stored, `200` when every event was a duplicate:
+body; any other unknown field is a `422` naming it. A refused event field is
+named by the event's position in the list, the way every list in a body is
+(`items.0.unit_price` on a conversion): `events.1.event_id`,
+`events.0.properties.plan`. `201` when an event was stored, `200` when every
+event was a duplicate:
 
 ```json
 {"data": {
