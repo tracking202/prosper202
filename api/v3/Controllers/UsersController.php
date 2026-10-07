@@ -100,7 +100,7 @@ class UsersController
             FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC'
         );
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -117,7 +117,7 @@ class UsersController
         );
         $this->bind($stmt, 'i', $id);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -128,7 +128,7 @@ class UsersController
         $this->bind($stmt, 'i', $id);
         $this->execute($stmt, 'Roles query failed');
         $roles = [];
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Roles query failed');
         while ($r = $result->fetch_assoc()) {
             $roles[] = $r;
         }
@@ -177,7 +177,7 @@ class UsersController
         $installHash = '';
         $hashStmt = $this->prepare('SELECT install_hash FROM 202_users WHERE user_id = 1 LIMIT 1');
         $this->execute($hashStmt, 'Lookup failed');
-        $hashRow = $hashStmt->get_result()->fetch_assoc();
+        $hashRow = $this->resultOf($hashStmt, 'Lookup failed')->fetch_assoc();
         $hashStmt->close();
         if ($hashRow && isset($hashRow['install_hash'])) {
             $installHash = (string) $hashRow['install_hash'];
@@ -491,7 +491,7 @@ class UsersController
         $stmt = $this->prepare('SELECT role_id FROM 202_roles WHERE role_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $roleId);
         $this->execute($stmt, 'Role lookup failed');
-        $role = $stmt->get_result()->fetch_assoc();
+        $role = $this->resultOf($stmt, 'Role lookup failed')->fetch_assoc();
         $stmt->close();
         if (!$role) {
             throw new ValidationException('Unknown role_id', ['role_id' => 'Role does not exist']);
@@ -529,7 +529,7 @@ class UsersController
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             // Mask key: show first 8 chars only
@@ -741,7 +741,7 @@ class UsersController
         $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ? AND api_key = ? LIMIT 1');
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -773,7 +773,7 @@ class UsersController
         );
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {

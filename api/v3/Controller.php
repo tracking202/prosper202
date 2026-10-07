@@ -489,7 +489,7 @@ abstract class Controller
             $stmt = $this->prepare($countSql);
             $this->bind($stmt, $types, ...$binds);
             $this->execute($stmt, 'Count query failed');
-            $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+            $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
             $stmt->close();
         } else {
             $result = $this->db->query($countSql);
@@ -508,7 +508,7 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -557,7 +557,10 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        // A failed get_result() is a database error, not "no such record":
+        // read as one, an update or a delete would answer 404 for a row that
+        // exists, and bulk-upsert would create a second copy of it.
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -1042,25 +1045,20 @@ abstract class Controller
         return null;
     }
 
+    /**
+     * Whether this resource's table has $column. A probe that fails does not
+     * know, and says so by throwing: answered "no column", a list's
+     * updated_since/deleted_since filter was dropped and every row answered
+     * as though filtered (CLAUDE.md #11: a predicate must not answer when it
+     * does not know).
+     */
     protected function hasColumn(string $column): bool
     {
         $sql = sprintf('SHOW COLUMNS FROM %s LIKE ?', $this->tableName());
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return false;
-        }
+        $stmt = $this->prepare($sql);
         $this->bind($stmt, 's', $column);
-        // @phpstan-ignore-next-line mysqli_stmt::execute checked here; graceful fallback (returns false) on schema probe, must not throw via Connection::execute
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return false;
-        }
-        $row = $result->fetch_assoc();
+        $this->execute($stmt, 'Column probe failed');
+        $row = $this->resultOf($stmt, 'Column probe failed')->fetch_assoc();
         $stmt->close();
         return (bool)$row;
     }

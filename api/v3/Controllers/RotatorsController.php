@@ -26,13 +26,13 @@ class RotatorsController
         $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
         $this->bind($stmt, 'i', $this->userId);
         $this->execute($stmt, 'Count query failed');
-        $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+        $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?');
         $this->bind($stmt, 'iii', $this->userId, $limit, $offset);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -47,7 +47,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE id = ? AND user_id = ? LIMIT 1');
         $this->bind($stmt, 'ii', $id, $this->userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -60,7 +60,7 @@ class RotatorsController
         $this->execute($stmt, 'Query failed');
         $rules = [];
         $ruleIds = [];
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Query failed');
         while ($r = $result->fetch_assoc()) {
             $r['criteria'] = [];
             $r['redirects'] = [];
@@ -76,7 +76,7 @@ class RotatorsController
             $cStmt = $this->prepare("SELECT id, rotator_id, rule_id, type, statement, value FROM 202_rotator_rules_criteria WHERE rule_id IN ($placeholders)");
             $this->bind($cStmt, $types, ...$ruleIds);
             $this->execute($cStmt, 'Query failed');
-            $cr = $cStmt->get_result();
+            $cr = $this->resultOf($cStmt, 'Query failed');
             while ($c = $cr->fetch_assoc()) {
                 $rules[$c['rule_id']]['criteria'][] = $c;
             }
@@ -85,7 +85,7 @@ class RotatorsController
             $rStmt = $this->prepare("SELECT id, rule_id, redirect_url, redirect_campaign, redirect_lp, auto_monetizer, weight, name FROM 202_rotator_rules_redirects WHERE rule_id IN ($placeholders)");
             $this->bind($rStmt, $types, ...$ruleIds);
             $this->execute($rStmt, 'Query failed');
-            $rr = $rStmt->get_result();
+            $rr = $this->resultOf($rStmt, 'Query failed');
             while ($rd = $rr->fetch_assoc()) {
                 $rules[$rd['rule_id']]['redirects'][] = $rd;
             }
@@ -106,7 +106,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $candidate);
         $this->execute($stmt, 'Public id lookup failed');
-        $taken = $stmt->get_result()->fetch_assoc();
+        $taken = $this->resultOf($stmt, 'Public id lookup failed')->fetch_assoc();
         $stmt->close();
 
         return $taken === null || $taken === false;
@@ -658,7 +658,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
         $this->bind($stmt, 'ii', $ruleId, $rotatorId);
         $this->execute($stmt, 'Rule lookup failed');
-        $rule = $stmt->get_result()->fetch_assoc();
+        $rule = $this->resultOf($stmt, 'Rule lookup failed')->fetch_assoc();
         $stmt->close();
         if (!$rule) {
             throw new NotFoundException('Rule not found for rotator');

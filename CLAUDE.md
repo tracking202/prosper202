@@ -17,6 +17,10 @@ whatever the statement guarded, in silence), and Go's `json.Marshal` assigned
 to `_` (renders nothing, exits 0). When a false return is
 *indistinguishable from a legitimate empty answer*, the failure is silent by
 construction — that is the tell, not the function name.
+`UncheckedGetResultTest` now holds every `get_result()`/`store_result()` in
+the tree to "tested for false in the next statement, and refused"
+(`StatementHelpers::resultOf()` in api/v3); legacy pages that predate it are
+listed and must only shrink.
 
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
