@@ -172,9 +172,9 @@ func runForecast(cmd *cobra.Command, args []string) error {
 			history = "last30"
 		} else {
 			switch history {
-			case "today", "yesterday", "last7", "last30":
+			case "today", "yesterday", "last7", "last14", "last30", "thismonth", "lastmonth":
 			default:
-				return validationError("--interval hour supports --history today, yesterday, last7, or last30; longer windows exceed the API's 2000-bucket limit and would drop the most recent hours")
+				return validationError("--interval hour supports --history today, yesterday, last7, last14, last30, thismonth or lastmonth; longer windows exceed the API's 2000-bucket limit and would drop the most recent hours")
 			}
 		}
 	}
@@ -239,6 +239,12 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	data, err := c.Get("reports/timeseries", params)
 	if err != nil {
 		return fmt.Errorf("fetching historical data: %w", err)
+	}
+	// A cut series is missing its most recent buckets, the ones a forecast
+	// anchors on (--history alltime or thisyear by day can pass the cap).
+	if w := timeseriesTruncationWarning(data, interval); w != "" {
+		return validationError("the --history %s series is longer than the server returns in one response, so its most recent buckets are missing", history).
+			WithHint("Use a shorter --history (e.g. last90) or a coarser --interval (week or month).")
 	}
 
 	// Build forecast config. Metrics that cannot go negative (counts,

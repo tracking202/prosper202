@@ -19,7 +19,8 @@ class LtvBreakdownCommand extends BaseCommand
         parent::configure();
         $this->setDescription('LTV by acquisition source (campaign, ppc_account, landing_page) or by product')
             ->addOption('by', 'b', InputOption::VALUE_REQUIRED, 'Dimension: campaign, ppc_account, landing_page, product', 'campaign')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last30, last90')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
+                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Window start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Window end (unix)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page (max 500)')

@@ -2079,7 +2079,13 @@ paths:
     get:
       tags: [Reports]
       summary: Performance summary
-      description: Aggregate metrics for the selected time period and filters.
+      description: >-
+        Aggregate metrics for the selected time period and filters. Every
+        report endpoint takes the Analyze pages' filters, which combine; a
+        parameter the endpoint does not take, a list where one value goes, or
+        a value outside a filter's form is a 422 whose `field_errors` names
+        the parameter (they used to be ignored, and the answer covered
+        everything).
       operationId: reportSummary
       parameters:
         - $ref: "#/components/parameters/period"
@@ -2091,6 +2097,17 @@ paths:
         - $ref: "#/components/parameters/filterPpcNetwork"
         - $ref: "#/components/parameters/filterLandingPage"
         - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
       responses:
         "200":
           description: Summary metrics
@@ -2101,6 +2118,8 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/ReportMetrics"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /reports/breakdown:
     get:
@@ -2113,6 +2132,15 @@ paths:
         with `offset` neither skips nor repeats a row; a rolling `period`
         moves with the clock and new traffic changes the sort values, so page
         a fixed `time_from`/`time_to` window for a consistent read.
+
+        Each row is one stored value of the dimension; clicks with no value
+        for it (no referer, no c1, not matched by a rotator rule) are in the
+        summary and in no row. `ip` is the visitor's address (IPv6 decoded),
+        `referer` the referring domain, `referer_url` the whole URL,
+        `device_type` Desktop/Mobile/Tablet/Bot, `rotator_rule` the rule that
+        matched (its rows also carry `rotator_id`). Names of visitor-authored
+        dimensions (keyword, city, region, isp, browser, platform, device,
+        ip, referer, referer_url, c1-c4, utm_*) are sanitized on the way out.
       operationId: reportBreakdown
       parameters:
         - name: breakdown
@@ -2136,22 +2164,42 @@ paths:
               - device
               - isp
               - text_ad
+              - ip
+              - referer
+              - referer_url
+              - device_type
+              - c1
+              - c2
+              - c3
+              - c4
+              - utm_source
+              - utm_medium
+              - utm_campaign
+              - utm_term
+              - utm_content
+              - rotator
+              - rotator_rule
         - name: sort
           in: query
+          description: Any metric a row carries; anything else is a 422 naming them.
           schema:
             type: string
             default: total_clicks
             enum:
               - total_clicks
+              - total_click_throughs
               - total_leads
               - total_income
               - total_cost
               - total_net
-              - roi
               - epc
+              - avg_cpc
               - conv_rate
+              - roi
+              - cpa
         - name: sort_dir
           in: query
+          description: Either case; anything else is a 422.
           schema:
             type: string
             default: DESC
@@ -2167,6 +2215,17 @@ paths:
         - $ref: "#/components/parameters/filterPpcNetwork"
         - $ref: "#/components/parameters/filterLandingPage"
         - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
       responses:
         "200":
           description: Breakdown results
@@ -2185,6 +2244,11 @@ paths:
                               type: integer
                             name:
                               type: string
+                              nullable: true
+                              description: Null only for an `ip` whose IPv6 row is gone.
+                            rotator_id:
+                              type: integer
+                              description: "`rotator_rule` rows only: the rule's rotator."
                         - $ref: "#/components/schemas/ReportMetrics"
                   breakdown:
                     type: string
@@ -2192,6 +2256,8 @@ paths:
                     type: array
                     items:
                       type: string
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /reports/timeseries:
     get:
@@ -2219,6 +2285,17 @@ paths:
         - $ref: "#/components/parameters/filterPpcNetwork"
         - $ref: "#/components/parameters/filterLandingPage"
         - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
       responses:
         "200":
           description: Timeseries data
@@ -2312,6 +2389,17 @@ paths:
         - $ref: "#/components/parameters/filterPpcNetwork"
         - $ref: "#/components/parameters/filterLandingPage"
         - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
       responses:
         "200":
           description: Day-parting rows
@@ -2443,6 +2531,82 @@ paths:
           description: Rotator deleted
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /rotators/{id}/stats:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Rotators, Reports]
+      summary: A rotator's report
+      description: >-
+        The Overview's Rotator Breakdown for one rotator: its totals, each of
+        its rules (the rule a click matched, from 202_clicks_rotator) and its
+        default (the clicks no rule matched), over the report window and
+        filters. Every rule is listed, one without clicks at zero; a rule
+        since deleted that still has clicks in the window follows with
+        `rule_name: null, deleted: true`, so the rules and the default add up
+        to the totals. Needs read scope on `rotators` and on `reports`.
+      operationId: rotatorStats
+      parameters:
+        - $ref: "#/components/parameters/period"
+        - $ref: "#/components/parameters/windowFrom"
+        - $ref: "#/components/parameters/windowTo"
+        - $ref: "#/components/parameters/filterCampaign"
+        - $ref: "#/components/parameters/filterAffNetwork"
+        - $ref: "#/components/parameters/filterPpcAccount"
+        - $ref: "#/components/parameters/filterPpcNetwork"
+        - $ref: "#/components/parameters/filterLandingPage"
+        - $ref: "#/components/parameters/filterCountry"
+        - $ref: "#/components/parameters/filterTextAd"
+        - $ref: "#/components/parameters/filterRegion"
+        - $ref: "#/components/parameters/filterIsp"
+        - $ref: "#/components/parameters/filterBrowser"
+        - $ref: "#/components/parameters/filterPlatform"
+        - $ref: "#/components/parameters/filterDeviceType"
+        - $ref: "#/components/parameters/filterMethodOfPromotion"
+        - $ref: "#/components/parameters/filterShow"
+        - $ref: "#/components/parameters/filterKeyword"
+        - $ref: "#/components/parameters/filterIp"
+        - $ref: "#/components/parameters/filterReferer"
+      responses:
+        "200":
+          description: The rotator's figures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      rotator:
+                        type: object
+                        properties:
+                          id: {type: integer}
+                          name: {type: string}
+                      totals:
+                        $ref: "#/components/schemas/ReportMetrics"
+                      rules:
+                        type: array
+                        items:
+                          allOf:
+                            - type: object
+                              properties:
+                                rule_id: {type: integer}
+                                rule_name: {type: string, nullable: true}
+                                status: {type: integer, nullable: true}
+                                deleted:
+                                  type: boolean
+                                  description: True for a rule since deleted that has clicks in the window
+                            - $ref: "#/components/schemas/ReportMetrics"
+                      default:
+                        $ref: "#/components/schemas/ReportMetrics"
+        "403":
+          description: The key lacks `rotators:read` or `reports:read`.
+        "404":
+          description: The account has no rotator with this id.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /rotators/{id}/rules:
     parameters:
@@ -5437,6 +5601,17 @@ paths:
       - $ref: '#/components/parameters/filterPpcNetwork'
       - $ref: '#/components/parameters/filterLandingPage'
       - $ref: '#/components/parameters/filterCountry'
+      - $ref: '#/components/parameters/filterTextAd'
+      - $ref: '#/components/parameters/filterRegion'
+      - $ref: '#/components/parameters/filterIsp'
+      - $ref: '#/components/parameters/filterBrowser'
+      - $ref: '#/components/parameters/filterPlatform'
+      - $ref: '#/components/parameters/filterDeviceType'
+      - $ref: '#/components/parameters/filterMethodOfPromotion'
+      - $ref: '#/components/parameters/filterShow'
+      - $ref: '#/components/parameters/filterKeyword'
+      - $ref: '#/components/parameters/filterIp'
+      - $ref: '#/components/parameters/filterReferer'
       responses:
         '200':
           description: One row per weekday (`day_of_week` 0 = Monday … 6 = Sunday, `day_name`) with the same metrics
@@ -9311,10 +9486,10 @@ components:
     attributionPeriod:
       name: period
       in: query
-      description: A named range; exclusive with time_from/time_to. Without either, the last 30 days.
+      description: A named range, as the reports' `period` (calendar ones at the account's midnight; alltime from the first click); exclusive with time_from/time_to. Without either, the last 30 days.
       schema:
         type: string
-        enum: [today, yesterday, last7, last30, last90]
+        enum: [today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime]
     attributionTimeFrom:
       name: time_from
       in: query
@@ -9345,10 +9520,14 @@ components:
     period:
       name: period
       in: query
-      description: Predefined time period
+      description: >-
+        A named window. The calendar ones (today, yesterday, thismonth,
+        lastmonth, thisyear, lastyear) start at a midnight in the account's
+        timezone; lastN is the last N×24 hours to now; alltime has no bound.
+        Sent with time_from/time_to, both bounds apply. Anything else is a 422.
       schema:
         type: string
-        enum: [today, yesterday, last7, last30, last90]
+        enum: [today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime]
     windowFrom:
       name: time_from
       in: query
@@ -9405,6 +9584,77 @@ components:
       in: query
       schema:
         type: integer
+    filterTextAd:
+      name: text_ad_id
+      in: query
+      description: Filter by text ad. 0 or empty is no filter; anything but a whole number is a 422.
+      schema:
+        type: integer
+    filterRegion:
+      name: region_id
+      in: query
+      description: Filter by region (the id of a `breakdown=region` row)
+      schema:
+        type: integer
+    filterIsp:
+      name: isp_id
+      in: query
+      description: Filter by ISP/carrier (the id of a `breakdown=isp` row)
+      schema:
+        type: integer
+    filterBrowser:
+      name: browser_id
+      in: query
+      description: Filter by browser (the id of a `breakdown=browser` row)
+      schema:
+        type: integer
+    filterPlatform:
+      name: platform_id
+      in: query
+      description: Filter by platform/OS (the id of a `breakdown=platform` row)
+      schema:
+        type: integer
+    filterDeviceType:
+      name: device_type
+      in: query
+      description: "Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `breakdown=device_type` rows); every device model of that type."
+      schema:
+        type: integer
+    filterMethodOfPromotion:
+      name: method_of_promotion
+      in: query
+      description: Only direct-link clicks (no landing page) or only landing-page clicks
+      schema:
+        type: string
+        enum: [directlink, landingpage]
+    filterShow:
+      name: show
+      in: query
+      description: "Which clicks count, as the Analyze pages' show menu: all (default), real (not filtered), filtered, filtered_bot (filtered as bots), leads (converted)."
+      schema:
+        type: string
+        enum: [all, real, filtered, filtered_bot, leads]
+    filterKeyword:
+      name: keyword
+      in: query
+      description: Clicks whose keyword contains this text, case-insensitive; % and _ are literal. At most 255 characters.
+      schema:
+        type: string
+        maxLength: 255
+    filterIp:
+      name: ip
+      in: query
+      description: Clicks from this one address, IPv4 or IPv6 (any spelling of an IPv6 address). Not an address is a 422.
+      schema:
+        type: string
+        example: 2001:db8::1
+    filterReferer:
+      name: referer
+      in: query
+      description: Clicks whose referring URL contains this text, case-insensitive; % and _ are literal. At most 255 characters.
+      schema:
+        type: string
+        maxLength: 255
 
     # App postback filters (list + report)
     postbackRegistrationId:
@@ -11627,7 +11877,7 @@ components:
           minimum: 1
         period:
           type: string
-          enum: [today, yesterday, last7, last30, last90]
+          enum: [today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime]
         time_from:
           type: integer
           description: Unix seconds; with time_to, instead of period. Default the last 30 days.

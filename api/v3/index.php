@@ -594,6 +594,15 @@ try {
         $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
             $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator_rule'); }, $setupSection]);
+        // A rotator's report — its totals, each rule and its default — as the
+        // Overview's Rotator Breakdown shows it (ReportsController::
+        // rotatorStats). The path is the rotators area; the figures are
+        // report data, so a key needs read scope on both, as
+        // /clicks/{id}/conversions needs it on clicks and conversions.
+        $router->get('/rotators/{id}/stats', function ($ctx) use ($crud, $auth, $queryParams) {
+            $auth->requireScope('reports:read');
+            return $crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats((int)$ctx['id'], $queryParams);
+        });
 
         // ── Multi-touch attribution ──────────────────────────────────────
         // Gated by the same role permissions as the session pages (plan
@@ -970,7 +979,7 @@ try {
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
                 'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
-                'rotators'      => '/rotators',
+                'rotators'      => '/rotators[/{id}/rules|/{id}/stats]',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',

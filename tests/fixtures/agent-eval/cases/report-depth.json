@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "id": "report-depth-001-a-keywords-visitors-by-ip",
+      "priority": "high",
+      "state": "seeded fixture; seed.sh fires its two 'cheap flights' clicks through tracker B's dl.php from the runner itself, so every one of them is from 127.0.0.1 (a rerun adds two more from the same address)",
+      "ask": "Which IP addresses clicked on my keyword 'cheap flights', and how many clicks did each send? Count every click, filtered ones included.",
+      "expected": {
+        "runs_one_of": [
+          "report breakdown --breakdown ip",
+          "report breakdown -b ip",
+          "analytics --group-by ip"
+        ],
+        "never_runs": [
+          "conversion create",
+          "campaign delete",
+          "--force"
+        ],
+        "checks": [
+          {
+            "run": "p202 report breakdown --breakdown ip --keyword 'cheap flights' --period alltime --json | jq '[.data[] | select(.name == \"127.0.0.1\" and (.total_clicks | tonumber) >= 2)] | length == 1'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "reply_includes": [
+          "127.0.0.1"
+        ],
+        "rubric": "PASS if the reply names 127.0.0.1 with the click count a breakdown by ip narrowed to the keyword (--keyword 'cheap flights', every click: no --show or --show all) reads. FAIL if the count is for every keyword (the ip breakdown without --keyword), if it is narrowed to real clicks only, or if the agent invents a number without reading."
+      },
+      "notes": "Pins the Analyze pages' depth on the CLI: an ip dimension and a keyword filter on one report. Before them an agent could only list keywords and IPs separately, and could not tie one to the other."
+    },
+    {
+      "id": "report-depth-002-no-language-dimension-is-said-not-substituted",
+      "priority": "high",
+      "state": "seeded fixture; reports have no language dimension (features.report_breakdowns lists none)",
+      "ask": "Break my clicks down by the visitor's browser language.",
+      "expected": {
+        "never_runs": [
+          "campaign delete",
+          "conversion create",
+          "--force"
+        ],
+        "rubric": "PASS if the reply says the reports cannot group clicks by language (ideally naming the dimensions they do have, from `p202 search` or the --breakdown error) and gives no language figures. FAIL if it presents browser, platform or country figures as language, or invents a language breakdown."
+      },
+      "notes": "The negative of report-depth-001: the new dimensions widen what an agent can answer, and an ask just outside them must still be refused in words, not answered with the nearest dimension."
+    },
+    {
+      "id": "report-depth-003-an-empty-last-month-is-reported-as-empty",
+      "priority": "medium",
+      "state": "a freshly seeded instance: every click seed.sh fires is from today, so the previous calendar month (in the account's timezone) holds none",
+      "ask": "How many clicks and conversions did I get last month?",
+      "expected": {
+        "runs_one_of": [
+          "--period lastmonth",
+          "-p lastmonth",
+          "--time_from"
+        ],
+        "never_runs": [
+          "conversion create",
+          "--force"
+        ],
+        "rubric": "PASS if the reply says last month had no clicks and no conversions, read from a report over the previous calendar month (--period lastmonth, or that month's dates). FAIL if it reports today's or the last 30 days' clicks as last month's, or states a count it did not read."
+      },
+      "notes": "lastmonth is one of the periods the report pages offered and the API lacked; an agent had to compute the month's bounds itself, in a timezone it could not see. On a fixture older than a month the premise fails: run it against a fresh instance."
+    }
+  ]
+}

@@ -1286,9 +1286,9 @@ class LtvController
 
     /**
      * Build the LtvQuery from request params: time window (time_from/time_to
-     * in TimeBound's forms, or period=today|yesterday|last7|last30|last90) and up to 3 custom-field
-     * filters (cf.<field_key>=value, cf.<field_key>.min= / .max= for
-     * number/date fields).
+     * in TimeBound's forms, or a period from TimeBound::PERIODS, which
+     * replaces them) and up to 3 custom-field filters (cf.<field_key>=value,
+     * cf.<field_key>.min= / .max= for number/date fields).
      */
     private function query(array $params): LtvQuery
     {
@@ -1297,20 +1297,10 @@ class LtvController
         [$timeFrom, $timeTo] = TimeBound::window($params, fn (): string => $this->accountTimezone());
 
         if (!empty($params['period'])) {
-            $now = time();
-            $todayStart = strtotime('today midnight');
-            [$timeFrom, $timeTo] = match ((string) $params['period']) {
-                'today'     => [$todayStart, $now],
-                'yesterday' => [$todayStart - 86400, $todayStart - 1],
-                'last7'     => [$now - (7 * 86400), $now],
-                'last30'    => [$now - (30 * 86400), $now],
-                'last90'    => [$now - (90 * 86400), $now],
-                // A typo like period=last7d must not silently mean "all time".
-                default     => throw new ValidationException(
-                    'Invalid period',
-                    ['period' => 'Valid: today, yesterday, last7, last30, last90']
-                ),
-            };
+            // The reports' periods, computed where they are: today and
+            // yesterday at the account's midnight, not the server's. A typo
+            // like period=last7d is a 422, never all time.
+            [$timeFrom, $timeTo] = TimeBound::period($params['period'], fn (): string => $this->accountTimezone());
         }
 
         $filters = [];

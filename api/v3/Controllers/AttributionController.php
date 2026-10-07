@@ -39,7 +39,8 @@ class AttributionController
     use StatementHelpers;
     use AccountTimezone;
 
-    private const PERIODS = ['today', 'yesterday', 'last7', 'last30', 'last90'];
+    /** The reports' periods (TimeBound::PERIODS); alltime is from the first click. */
+    private const PERIODS = TimeBound::PERIODS;
 
     private Connection $conn;
     private ModelRepository $models;
@@ -920,16 +921,13 @@ class AttributionController
         }
         $now = time();
         if ($hasPeriod) {
-            $period = (string) $params['period'];
-            $todayStart = strtotime('today midnight');
-            return match ($period) {
-                'today' => [$todayStart, $now],
-                'yesterday' => [$todayStart - 86400, $todayStart - 1],
-                'last7' => [$now - 7 * 86400, $now],
-                'last30' => [$now - 30 * 86400, $now],
-                'last90' => [$now - 90 * 86400, $now],
-                default => throw new ValidationException('Invalid period', ['period' => 'Valid: ' . implode(', ', self::PERIODS)]),
-            };
+            // TimeBound computes every report's periods: today and yesterday
+            // at the account's midnight, as the attribution pages draw them,
+            // not the server's. alltime has no bounds, which this report's
+            // range reads as 0 (all time, as time_from=0 is) to now.
+            [$from, $to] = TimeBound::period($params['period'], fn (): string => $this->accountTimezone(), $now, self::PERIODS);
+
+            return [$from ?? 0, $to ?? $now];
         }
         $from = $this->timestamp($params, 'time_from') ?? $now - 30 * 86400;
         $to = $this->timestamp($params, 'time_to') ?? $now;

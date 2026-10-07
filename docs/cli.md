@@ -455,7 +455,7 @@ p202 campaign list --with-stats --period last90 --min-clicks 1
 | Flag | Description |
 |------|-------------|
 | `--with-stats` | Add `total_clicks`, `total_leads`, `total_income`, `total_cost` and `total_net` (Clicks, Conversions, Revenue, Cost, Profit in tables) to every row; a campaign with no traffic in the window gets `0`s |
-| `--period <p>` | Window: `today`, `yesterday`, `last7`, `last30`, `last90` (default `last30`) |
+| `--period <p>` | Window: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` (default `last30`) |
 | `--days <n>` | Window of the last N days instead; `--period` wins when both are given (as in `analytics`) |
 | `--min-clicks <n>` | Only campaigns with at least N clicks in the window; searches every page, so no `--page/--limit/--offset` |
 
@@ -909,13 +909,14 @@ safe to run again.
 
 ## Reports
 
-All report commands share common time and entity filters.
+All report commands (`report summary|breakdown|timeseries|daypart|weekpart|crosstab|breakeven|losers|winners`,
+`analytics`, `dashboard`, `rotator stats`, `campaign optimize`) share the window and the Analyze pages' filters.
 
 ### Common report flags
 
 | Flag                | Description              |
 |---------------------|--------------------------|
-| `-p, --period`      | Preset: today, yesterday, last7, last30, last90 |
+| `-p, --period`      | Preset: today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime. Calendar presets start at the account's midnight (its timezone); lastN is N×24 hours to now |
 | `--time_from`       | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset (`2026-10-01T09:30:00Z`) |
 | `--time_to`         | End, inclusive: the same forms (a date runs through its last second) |
 | `--aff_campaign_id` | Filter by campaign       |
@@ -924,6 +925,21 @@ All report commands share common time and entity filters.
 | `--ppc_network_id`  | Filter by PPC network    |
 | `--landing_page_id` | Filter by landing page   |
 | `--country_id`      | Filter by country        |
+| `--text_ad_id`      | Filter by text ad        |
+| `--region_id`       | Filter by region (the id of a `--breakdown region` row) |
+| `--isp_id`          | Filter by ISP/carrier (the id of a `--breakdown isp` row) |
+| `--browser_id`      | Filter by browser (the id of a `--breakdown browser` row) |
+| `--platform_id`     | Filter by platform/OS (the id of a `--breakdown platform` row) |
+| `--device_type`     | Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot |
+| `--method_of_promotion` | `directlink` or `landingpage` |
+| `--show`            | Which clicks count: `all` (default), `real` (not filtered), `filtered`, `filtered_bot`, `leads` (converted) |
+| `--keyword`         | Keyword contains this text (case-insensitive; `%` and `_` are literal) |
+| `--ip`              | One IPv4 or IPv6 address, exactly |
+| `--referer`         | Referring URL contains this text (case-insensitive) |
+
+A filter the server does not know, or a malformed value (`--ip 999.1.1.1`), is a
+validation error naming it; `--show`, `--method_of_promotion` and `--period` are
+checked before anything is sent. An id of `0` is no filter.
 
 ### Dashboard
 
@@ -969,6 +985,8 @@ Performance broken down by a dimension.
 ```bash
 p202 report breakdown --breakdown campaign --period last7
 p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limit 10
+p202 report breakdown --breakdown referer --period lastmonth --show real --device_type 2
+p202 report breakdown --breakdown ip --keyword "running shoes" --period thismonth
 ```
 
 | Flag               | Default       | Description                |
@@ -976,12 +994,14 @@ p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limi
 | `-b, --breakdown`  | campaign      | Dimension (see below)      |
 | `-s, --sort`       | total_clicks  | Sort column                |
 | `--sort_dir`       | DESC          | Sort direction: ASC or DESC |
-| `-l, --limit`      | 50            | Maximum results            |
+| `-l, --limit`      | 50            | Maximum results (1–500)    |
 | `-o, --offset`     | 0             | Pagination offset          |
 
-**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad (aliases: lp, source, network, offer, geo). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
+**Breakdown dimensions:** campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer (the referring domain), referer_url (the whole URL), device_type (Desktop/Mobile/Tablet/Bot), c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule (aliases: lp, source, network, offer, geo, referrer, referrer_url, rule). The server advertises its own list as `features.report_breakdowns` in `/capabilities`; a value missing from the CLI's list is sent when the server lists it.
 
-**Sort columns:** total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate
+A row is one stored value; clicks with no value for the dimension (no referer, no c1, no rotator rule) are in `report summary` only. A rotator's default is not a rule: `p202 rotator stats <id>` shows it.
+
+**Sort columns:** total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa (aliases: clicks, conversions, revenue, profit, cost, …). An unknown sort is refused by name; older servers ranked it by clicks.
 
 Rows tied on the sort column come back in id order, so paging with `--offset` neither skips nor repeats a row.
 
@@ -1022,9 +1042,10 @@ The sides are rarely the same length, so compare the `_per_day` columns: 6,500 c
 against 2,080 over 26.5 days is −68% in total but −23% per day. The table shows the clicks columns and
 the percent changes; `--json` and `--csv` carry every column, and `--fields` picks any of them.
 
-- **Window**: `--period last7|last30|last90`, `--days N`, or `--time_from <unix>` with an optional
-  `--time_to <unix>` (default now); with none of them, `last90`. `today` and `yesterday` are refused
-  (their bounds follow the server's midnight), and so is `--time_to` alone.
+- **Window**: `--period last7|last14|last30|last90`, `--days N`, or `--time_from <unix>` with an optional
+  `--time_to <unix>` (default now); with none of them, `last90`. The calendar periods (`today`,
+  `yesterday`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`) are refused (their bounds follow the
+  account's midnight, which the CLI cannot see), as are `alltime` (no start) and `--time_to` alone.
 - **Order**: by the absolute change in clicks, largest first. `--sort clicks|conversions|revenue` ranks
   by another metric's change, `--sort clicks_per_day` (or `conversions_per_day`, `revenue_per_day`) by
   the change in its per-day rate; `--sort-dir ASC` reverses; `--limit`/`--offset` apply to the ranked rows.
@@ -1115,6 +1136,7 @@ Each row carries the point forecast, `lower_bound`/`upper_bound`, and quantile c
 p202 rotator list
 p202 rotator list --all
 p202 rotator get 5
+p202 rotator stats 5 --period last30          # totals, each rule, and the default
 p202 rotator create --name "Geo Split"
 p202 rotator update 5 --name "Geo Split v2" --default_url "https://fallback.example.com"
 p202 rotator delete 5
@@ -1131,6 +1153,19 @@ p202 rotator delete --ids 5,6 --force
 The default is one destination: give at most one of the three. On `update`,
 giving one replaces the default whatever its kind (a campaign default becomes a
 URL default), as the Redirectors page does.
+
+### Rotator stats
+
+`p202 rotator stats <id>` is the Overview's Rotator Breakdown for one rotator
+(`GET /rotators/{id}/stats`): `totals`, one row per rule (`rule_id`,
+`rule_name`, `status`, `deleted`) and `default` (the clicks no rule matched),
+each with every report metric. It takes the report window and filters
+(`--period`, `--show real`, `--keyword`, …). The rules and the default add up
+to the totals; a rule deleted since, with clicks in the window, is listed with
+`deleted: true`. A click counts for the rule that matched it — the Overview
+page counted by the chosen redirect's id, so its per-rule rows can differ.
+Needs read scope on rotators and reports. `--breakdown rotator_rule` gives
+every rule of every rotator in one breakdown, without the defaults.
 
 ### Create a rule
 
@@ -1223,7 +1258,7 @@ p202 attribution queue
 | `--group-by`      | campaign | campaign, traffic_source, landing_page, keyword, c1–c4, country, device, day |
 | `--model`         | effective | A model id; without it each conversion uses its campaign's override, else the account default |
 | `--compare-model` |          | A second model, side by side |
-| `--period`        | last 30 days | today, yesterday, last7, last30, last90 |
+| `--period`        | last 30 days | today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime |
 | `--time-from/--time-to` |    | Unix seconds (exclusive with `--period`) |
 | `--limit`         | 100      | Rows, 1–1000 |
 

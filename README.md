@@ -408,8 +408,9 @@ recover from a failure without a person in the loop. So:
   and flag, with its allowed values, in one call.
 - **Valid values are always spelled out.** Every flag that takes a fixed set
   lists it in its help, and a wrong value is refused before any request with
-  the full list: `--period must be one of: today, yesterday, last7, last30,
-  last90; got "last31"`.
+  the full list: `--period must be one of: today, yesterday, last7, last14,
+  last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime; got
+  "last31"`.
 - **Writes can wait for a person.** `--staged` records any write as a
   proposal that someone reviews and runs with `p202 change apply`, `--dry-run`
   previews deletes and bulk edits, and API keys can be scoped down to

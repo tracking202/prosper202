@@ -20,8 +20,11 @@ var analyticsSortAliases = map[string]string{
 	"cost":        "total_cost",
 }
 
-// reportPeriods are the windows ReportsController::applyTimeFilters knows; it reads any other value as all time.
-var reportPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
+// reportPeriods are the named windows the server knows (TimeBound::PERIODS),
+// in the report pages' order; it refuses any other value with a 422. The
+// calendar ones (today, yesterday, this/last month, this/last year) start at a
+// midnight in the account's timezone; lastN is the N days up to now.
+var reportPeriods = []string{"today", "yesterday", "last7", "last14", "last30", "last90", "thismonth", "lastmonth", "thisyear", "lastyear", "alltime"}
 
 // applyReportWindow maps --period, --days and --time_from/--time_to onto report
 // params: --period wins, and --days applies only without an explicit range.
@@ -151,12 +154,7 @@ func init() {
 	enumFlag(analyticsCmd, "sort-dir", sortDirEnum())
 	analyticsCmd.Flags().StringP("limit", "l", "", "Max results")
 	analyticsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	analyticsCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
-	analyticsCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
-	analyticsCmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
-	analyticsCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
-	analyticsCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
-	analyticsCmd.Flags().String("country_id", "", "Filter by country ID")
+	addReportFilterFlags(analyticsCmd)
 
 	rootCmd.AddCommand(analyticsCmd)
 }

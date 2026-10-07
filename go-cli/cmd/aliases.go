@@ -113,11 +113,14 @@ func compareNum(a float64, op string, b float64) bool {
 // dimensionAliases maps short/friendly breakdown dimension names to the API
 // field the backend expects. Identity entries are accepted as-is.
 var dimensionAliases = map[string]string{
-	"lp":      "landing_page",
-	"source":  "ppc_account",
-	"network": "aff_network",
-	"offer":   "campaign",
-	"geo":     "country",
+	"lp":           "landing_page",
+	"source":       "ppc_account",
+	"network":      "aff_network",
+	"offer":        "campaign",
+	"geo":          "country",
+	"referrer":     "referer",
+	"referrer_url": "referer_url",
+	"rule":         "rotator_rule",
 }
 
 // breakdownDimensions are the dimensions ReportsController::BREAKDOWNS
@@ -127,6 +130,8 @@ var dimensionAliases = map[string]string{
 var breakdownDimensions = []string{
 	"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword",
 	"country", "city", "region", "browser", "platform", "device", "isp", "text_ad",
+	"ip", "referer", "referer_url", "device_type", "c1", "c2", "c3", "c4",
+	"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "rotator", "rotator_rule",
 }
 
 // dimensionEnum is a --breakdown/--group-by flag's accepted values.
@@ -166,10 +171,11 @@ var metricAliases = map[string]string{
 
 // Sort columns each report endpoint accepts (ReportsController's
 // ALLOWED_SORTS, DAYPART_ALLOWED_SORTS, WEEKPART_ALLOWED_SORTS) and the
-// metric columns a breakdown row carries (METRIC_FIELDS).
+// metric columns a breakdown row carries (METRIC_FIELDS). A breakdown sorts by
+// any metric column its rows carry.
 var (
-	breakdownSorts = []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"}
 	metricColumns  = []string{"total_clicks", "total_click_throughs", "total_leads", "total_income", "total_cost", "total_net", "epc", "avg_cpc", "conv_rate", "roi", "cpa"}
+	breakdownSorts = metricColumns
 	daypartSorts   = append([]string{"hour_of_day"}, metricColumns...)
 	weekpartSorts  = append([]string{"day_of_week"}, metricColumns...)
 	sortDirections = []string{"ASC", "DESC"}

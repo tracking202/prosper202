@@ -20,7 +20,8 @@ class LtvCustomersCommand extends BaseCommand
         parent::configure();
         $this->setDescription('List customers with LTV rollups, or show one customer in full (CRM, aliases, custom fields, recent revenue)')
             ->addArgument('id', InputArgument::OPTIONAL, 'Customer ID for a detail view')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last30, last90')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
+                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)')
             ->addOption('sort', null, InputOption::VALUE_REQUIRED, 'Sort: total_revenue, order_count, last_activity_time, first_seen_time, mrr')

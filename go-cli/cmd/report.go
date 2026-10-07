@@ -23,13 +23,30 @@ const (
 	timeToHelp   = "End, inclusive: unix seconds, a date (2026-10-01, through its last second in the account's timezone) or a time with its offset"
 )
 
-// collectReportParams gathers the shared filter flags used across report subcommands.
+// reportWindowFlags are the window every report takes.
+var reportWindowFlags = []string{"period", "time_from", "time_to"}
+
+// reportFilterFlags are the filters every report endpoint takes besides the
+// window (Api\V3\Support\ReportFilter), in its order: the Analyze pages'
+// filters. A server refuses one it does not know with a 422 naming it.
+var reportFilterFlags = []string{
+	"aff_campaign_id", "aff_network_id", "ppc_account_id", "ppc_network_id", "landing_page_id", "country_id",
+	"text_ad_id", "region_id", "isp_id", "browser_id", "platform_id", "device_type",
+	"method_of_promotion", "show", "keyword", "ip", "referer",
+}
+
+// reportShowValues are the Analyze pages' "show" menu (ReportFilter::SHOW).
+var reportShowValues = []string{"all", "real", "filtered", "filtered_bot", "leads"}
+
+// promotionMethods are ReportFilter::METHODS_OF_PROMOTION.
+var promotionMethods = []string{"directlink", "landingpage"}
+
+// collectReportParams gathers the shared window and filter flags used across
+// report subcommands; a flag the command does not have reads its configured
+// default, if any.
 func collectReportParams(cmd *cobra.Command) map[string]string {
 	params := map[string]string{}
-	flags := []string{"period", "time_from", "time_to",
-		"aff_campaign_id", "ppc_account_id", "aff_network_id",
-		"ppc_network_id", "landing_page_id", "country_id"}
-	for _, f := range flags {
+	for _, f := range append(append([]string{}, reportWindowFlags...), reportFilterFlags...) {
 		if v := getStringFlagOrDefault(cmd, "report", f); v != "" {
 			params[f] = v
 		}
@@ -42,12 +59,30 @@ func addReportFilters(cmd *cobra.Command) {
 	enumFlag(cmd, "period", newEnum(reportPeriods))
 	cmd.Flags().String("time_from", "", timeFromHelp)
 	cmd.Flags().String("time_to", "", timeToHelp)
+	addReportFilterFlags(cmd)
+}
+
+// addReportFilterFlags registers reportFilterFlags on a report command.
+func addReportFilterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
 	cmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
 	cmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
 	cmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
 	cmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
 	cmd.Flags().String("country_id", "", "Filter by country ID")
+	cmd.Flags().String("text_ad_id", "", "Filter by text ad ID")
+	cmd.Flags().String("region_id", "", "Filter by region ID (the id of a `--breakdown region` row)")
+	cmd.Flags().String("isp_id", "", "Filter by ISP/carrier ID (the id of a `--breakdown isp` row)")
+	cmd.Flags().String("browser_id", "", "Filter by browser ID (the id of a `--breakdown browser` row)")
+	cmd.Flags().String("platform_id", "", "Filter by platform (OS) ID (the id of a `--breakdown platform` row)")
+	cmd.Flags().String("device_type", "", "Filter by device type ID: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot (the ids of `--breakdown device_type` rows)")
+	cmd.Flags().String("method_of_promotion", "", "Only direct-link clicks or only landing-page clicks: {values}")
+	enumFlag(cmd, "method_of_promotion", newEnum(promotionMethods))
+	cmd.Flags().String("show", "", "Which clicks count (default all): {values}; real = not filtered, filtered_bot = filtered as bots, leads = converted")
+	enumFlag(cmd, "show", newEnum(reportShowValues))
+	cmd.Flags().String("keyword", "", "Only clicks whose keyword contains this text (case-insensitive)")
+	cmd.Flags().String("ip", "", "Only clicks from this one IP address, IPv4 or IPv6")
+	cmd.Flags().String("referer", "", "Only clicks whose referring URL contains this text (case-insensitive)")
 }
 
 var reportSummaryCmd = &cobra.Command{
@@ -283,7 +318,7 @@ func init() {
 	addMultiProfileFlags(reportSummaryCmd)
 
 	addReportFilters(reportBreakdownCmd)
-	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension")
+	reportBreakdownCmd.Flags().StringP("breakdown", "b", "", "Dimension (rows are one per stored value; clicks without one, e.g. no referer, are in `report summary` only)")
 	enumFlag(reportBreakdownCmd, "breakdown", dimensionEnum(breakdownDimensions))
 	reportBreakdownCmd.Flags().String("group-by", "", "Alias for --breakdown (matches `analytics --group-by`)")
 	enumFlag(reportBreakdownCmd, "group-by", dimensionEnum(breakdownDimensions))

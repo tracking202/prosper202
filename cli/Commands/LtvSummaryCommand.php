@@ -21,7 +21,8 @@ class LtvSummaryCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Realized LTV totals — customers, revenue, avg LTV, AOV, repeat rate, MRR')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last30, last90')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
+                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
     }

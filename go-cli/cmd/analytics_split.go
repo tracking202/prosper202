@@ -20,15 +20,16 @@ import (
 // reportNow is the clock report windows resolve "now" against; tests pin it.
 var reportNow = time.Now
 
-// analyticsFilterFlags are the entity filters analytics passes to reports/breakdown.
-var analyticsFilterFlags = []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"}
+// analyticsFilterFlags are the filters analytics passes to reports/breakdown:
+// every report filter (reportFilterFlags).
+var analyticsFilterFlags = reportFilterFlags
 
 // splitDefaultPeriod is the window --split-at compares when none is given.
 const splitDefaultPeriod = "last90"
 
 // splitPeriodDays are the periods whose bounds the CLI can compute exactly
 // (now minus N days, as ReportsController::applyTimeFilters does).
-var splitPeriodDays = map[string]int64{"last7": 7, "last30": 30, "last90": 90}
+var splitPeriodDays = map[string]int64{"last7": 7, "last14": 14, "last30": 30, "last90": 90}
 
 // splitPerDaySorts are the --sort keys that rank --split-at rows by per-day change.
 var splitPerDaySorts = []string{"clicks_per_day", "conversions_per_day", "revenue_per_day"}
@@ -134,11 +135,15 @@ func splitWindowFromFlags(cmd *cobra.Command) (splitSpan, string, error) {
 	if p := params["period"]; p != "" {
 		n, ok := splitPeriodDays[p]
 		if !ok {
-			if p == "today" || p == "yesterday" {
-				return splitSpan{}, "", validationError("--period %s cannot be split: its bounds follow the server's midnight, which the CLI cannot see", p).
-					WithHint("Pass the window as unix seconds (--time_from <unix> --time_to <unix>), or use --days N or --period last7.")
+			if p == "alltime" {
+				return splitSpan{}, "", validationError("--period alltime cannot be split: it has no start, so the before side would be unbounded").
+					WithHint("Start the window with --time_from <unix> (the end defaults to now), or use --days N or --period last90.")
 			}
-			return splitSpan{}, "", validationError("invalid --period %q with --split-at; valid: last7, last30, last90", p).
+			if containsString(reportPeriods, p) {
+				return splitSpan{}, "", validationError("--period %s cannot be split: its bounds follow the account's midnight, which the CLI cannot see", p).
+					WithHint("Pass the window as unix seconds (--time_from <unix> --time_to <unix>), or use --days N or --period last7, last14, last30 or last90.")
+			}
+			return splitSpan{}, "", validationError("invalid --period %q with --split-at; valid: last7, last14, last30, last90", p).
 				WithHint("For any other window use --days N or --time_from/--time_to (unix seconds).")
 		}
 		return splitSpan{now - n*86400, now}, "--period " + p, nil

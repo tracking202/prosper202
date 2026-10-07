@@ -533,7 +533,7 @@ mask catch what you did not.
 | `--all-metrics` | off | Coherent clicks/leads/income/cost/net; excludes `--metric`, seasonal and event flags |
 | `--horizon`, `-n` | 7 | Up to 365 |
 | `--interval`, `-i` | day | hour, day, week, month |
-| `--history` (`--period`, `--days`) | last90 (last30 hourly) | Hourly is limited to today/yesterday/last7/last30 |
+| `--history` (`--period`, `--days`) | last90 (last30 hourly) | Hourly is limited to today/yesterday/last7/last14/last30/thismonth/lastmonth; a history longer than the server returns in one response (2000 buckets, e.g. `alltime` by day on an old account) is refused rather than forecast without its most recent buckets |
 | `--method` | auto | auto, ensemble, linear, sma, wma, holtwinters |
 | `--window` | auto | SMA/WMA window |
 | `--confidence` | 0.95 | Snaps to 50/80/90% bands (section 4) |

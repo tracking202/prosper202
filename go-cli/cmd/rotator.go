@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -71,6 +72,44 @@ var rotatorGetCmd = &cobra.Command{
 		}
 		data, err := c.Get("rotators/"+args[0], nil)
 		if err != nil {
+			return err
+		}
+		render(data)
+		return nil
+	},
+}
+
+var rotatorStatsCmd = &cobra.Command{
+	Use:   "stats <id>",
+	Short: "Show a rotator's performance: its totals, each rule, and its default (clicks no rule matched)",
+	Long: "The Overview's Rotator Breakdown for one rotator, from GET /rotators/{id}/stats: clicks, leads, income,\n" +
+		"cost, net, EPC, conversion rate and ROI for the rotator, for each of its rules (the rule the click matched),\n" +
+		"and for its default. The rules and the default add up to the totals; a rule since deleted that still has\n" +
+		"clicks in the window is listed with deleted: true. Takes the window and the filters every report takes.\n" +
+		"Needs a key with read scope on rotators and reports.",
+	Example: "  p202 rotator stats 3 --period last30\n" +
+		"  p202 rotator stats 3 --period yesterday --show real",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := validateID(args[0])
+		if err != nil {
+			return withHint(err, "Pass the rotator's id from `p202 rotator list`.")
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("rotators/"+id+"/stats", collectReportParams(cmd))
+		if err != nil {
+			// A missing rotator is "Rotator not found"; a server that
+			// predates the endpoint answers the router's bare "Not found".
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == 404 {
+				if strings.Contains(strings.ToLower(apiErr.Message), "rotator") {
+					return withHint(err, "No rotator %s on this account; `p202 rotator list` shows the ids.", id)
+				}
+				return withHint(err, "This server has no GET /rotators/{id}/stats; upgrade it to read rotator stats.")
+			}
 			return err
 		}
 		render(data)
@@ -332,7 +371,9 @@ func init() {
 	rotatorRuleUpdateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
 	rotatorRuleUpdateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_url":"...","weight":"50","name":"A"}]`)
 
-	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)
+	addReportFilters(rotatorStatsCmd)
+
+	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorStatsCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)
 	rotatorCmd.AddCommand(rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd)
 	rootCmd.AddCommand(rotatorCmd)
 }

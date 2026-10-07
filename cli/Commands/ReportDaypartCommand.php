@@ -18,7 +18,8 @@ class ReportDaypartCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Get performance by hour of day')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last30, last90')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
+                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp (unix)')
             ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa', 'hour_of_day')
