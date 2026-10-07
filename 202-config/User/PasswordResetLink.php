@@ -20,9 +20,9 @@ use Prosper202\Click\TrackingDomain;
  * request's Host is the requester's to choose, and this email goes to
  * someone else (RequestHost's docblock draws that line).
  *
- * The stored address is user 1's user_tracking_domain, which the installer
- * writes as the URL the install was set up on and only the account settings
- * change, read the way every tracking link reads it (TrackingBaseUrl::build:
+ * The stored address is user 1's user_tracking_domain, which only the
+ * account settings write (the installer leaves it empty, measured on a fresh
+ * install), read the way every tracking link reads it (TrackingBaseUrl::build:
  * a stored scheme kept, otherwise the request's). When none is stored there
  * is no address to trust, and the email carries the key without a link
  * (base() answers null).

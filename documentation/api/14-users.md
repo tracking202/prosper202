@@ -84,7 +84,7 @@ row.
 
 | Field | Values | Set on |
 | ----- | ------ | ------ |
-| `user_tracking_domain` | host such as `track.example.com`; `""` uses this install's own domain | Personal settings |
+| `user_tracking_domain` | host such as `track.example.com`; `""` (what the installer leaves) builds a page's links on the address the page was opened on, and what is sent elsewhere on the server's own name ([FAQ](../tutorials-and-guides/11-frequently-asked-questions-faq.md#does-the-installer-set-my-tracking-domain)) | Personal settings |
 | `user_daily_email` | hour `00`-`23` in your time zone, or `""` for never | Personal settings |
 | `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
 | `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
