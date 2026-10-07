@@ -90,7 +90,14 @@ table() { python3 "$HERE/html-table.py" "$1" "$2"; }
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 NOW=$(date +%s)
+# Ten minutes ago, or just after the account's newest click if that is
+# later: the click history shows the newest 50, and an instance other passes
+# clicked through in the last ten minutes pushed these off its first page
+# (offer-rotator-routing alone makes dozens).
+NEWEST=$(Q "SELECT COALESCE(MAX(click_time), 0) FROM 202_clicks WHERE user_id = $OWNER")
 T=$((NOW - 600))
+[ "$NEWEST" -ge "$T" ] && T=$((NEWEST + 1))
+[ "$T" -gt "$NOW" ] && T=$NOW
 R=950001; A=950002; N=950003
 CLICKS="$R,$A,$N"
 ACIP_R=950100; ACIP_A=950101
@@ -169,7 +176,7 @@ cp "$OUT/body" "$OUT/bd-a.json"
 eq "$(field "len(d['data'])")" "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$A")" "every ledger row of the click is listed"
 eq "$(field "[r['conv_id'] for r in d['data']]")" "$(Q "SELECT CONCAT('[', GROUP_CONCAT(conv_id ORDER BY conv_id SEPARATOR ', '), ']') FROM 202_conversion_logs WHERE click_id=$A")" "oldest first, by conversion id"
 eq "$(field "[(r['source'], r['amount'], r['counted'], r['not_counted_reason']) for r in d['data']]")" \
-   '[["goal", "1.00000", true, null], ["goal", "0.00000", false, "unpaid"], ["goal", "4.00000", true, null], ["postback", "5.00000", true, null], ["postback", "2.00000", true, null], ["api", "-5.00000", true, null]]' \
+   '[["goal", 1, true, null], ["goal", 0, false, "unpaid"], ["goal", 4, true, null], ["postback", 5, true, null], ["postback", 2, true, null], ["api", -5, true, null]]' \
    "goals, the unpaid one left out, both sales and the reversal netting A-1"
 eq "$(field "[r['linked_to']['label'] for r in d['data'] if r['source'] == 'goal']")" '["Goal \"Install\" v1", "Goal \"Tutorial\" v1", "Goal \"Level 3\" v1"]' "each goal row is named with its version"
 eq "$(field "[r['event_name'] for r in d['data'] if r['source'] == 'goal']")" '["first_open", "tutorial_complete", "level_reached"]' "with the event that reached it"
@@ -177,7 +184,7 @@ eq "$(field "d['data'][5]['linked_to']['label']")" "Reverses conversion $(Q "SEL
 eq "$(field "d['data'][5]['transaction_id']")" "A-1" "and carries its transaction id"
 eq "$(field "d['data'][1]['explanation']")" "Tracked, not paid: an outcome the campaign does not pay for, or an event recorded for visibility." "the unpaid row says why in a sentence"
 eq "$(field "[d['click']['payout_mode'], d['click']['click_payout'], d['click']['ledger_value'], d['click']['matches_click'], d['click']['counted_rows'], d['click']['rows']]")" \
-   '["accumulate", "7.00000", "7.00000", true, 5, 6]' "the click's value is what its counted rows add up to"
+   '["accumulate", 7, 7, true, 5, 6]' "the click's value is what its counted rows add up to"
 eq "$(field "str(sum(round(float(r['amount'])*100000) for r in d['data'] if r['counted']))")" \
    "$(Q "SELECT CAST(ROUND(click_payout*100000) AS SIGNED) FROM 202_clicks WHERE click_id=$A")" "summed here, the counted amounts are the click's value to the last digit"
 
@@ -226,12 +233,14 @@ say "p202 click conversions and p202 conversion list (Go CLI)"
 CLIHOME="$OUT/clihome"; mkdir -p "$CLIHOME"
 p202() { HOME="$CLIHOME" "$P202_BIN" "$@"; }
 p202 config set-url "$BASE" >/dev/null && p202 config set-key "$P202_API_KEY" >/dev/null
-p202 click conversions $A > "$OUT/go-a.txt" 2> "$OUT/go-a.err"
+# --table: under an AI agent (AI_AGENT, CLAUDECODE, ...) the CLI prints JSON
+# unless a format is asked for, and these lines read the table.
+p202 --table click conversions $A > "$OUT/go-a.txt" 2> "$OUT/go-a.err"
 eq "$?" 0 "p202 click conversions exits 0"
 has "$OUT/go-a.txt" "unpaid" "the table names the unpaid row's reason"
 has "$OUT/go-a.txt" 'Goal "Level 3" v1' "and the goal it came from"
-has "$OUT/go-a.txt" "Click $A: 7.00000 (accumulate mode), 5 of 6 conversions counted." "and ends with the click's value"
-p202 click conversions $R > "$OUT/go-r.txt" 2>&1
+has "$OUT/go-a.txt" "Click $A: 7 (accumulate mode), 5 of 6 conversions counted." "and ends with the click's value"
+p202 --table click conversions $R > "$OUT/go-r.txt" 2>&1
 has "$OUT/go-r.txt" "superseded (replace)" "the superseded row says how"
 has "$OUT/go-r.txt" "deleted" "the deleted row says so"
 p202 --json click conversions $A > "$OUT/go-a.json" 2>/dev/null
@@ -254,7 +263,7 @@ else
   pcli config:set-url "$BASE" >/dev/null && pcli config:set-key "$P202_API_KEY" >/dev/null
   pcli click:conversions $A > "$OUT/php-a.txt" 2>&1
   eq "$?" 0 "click:conversions exits 0"
-  has "$OUT/php-a.txt" "Click $A: 7.00000 (accumulate mode), 5 of 6 conversions counted." "and ends with the same line as the Go CLI"
+  has "$OUT/php-a.txt" "Click $A: 7 (accumulate mode), 5 of 6 conversions counted." "and ends with the same line as the Go CLI"
   has "$OUT/php-a.txt" "unpaid" "with the same reasons"
   pcli click:conversions $A --json > "$OUT/php-a.json" 2>&1
   eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])))" "$OUT/php-a.json" "$OUT/bd-a.json")" True "--json is the API's answer unchanged"
