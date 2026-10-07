@@ -349,10 +349,8 @@ function setCache($key, $value, $exp = null)
 // ipAddress() function has been moved to functions.php - using that implementation instead
 // to avoid duplicate function declaration errors
 
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
+// inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
+// renders an address (HtmlReportFormatter) can be loaded without this file.
 
 function inet6_aton($ip)
 {

@@ -64,6 +64,12 @@ function record_mysql_error($dbOrSql, $sql = null): never
     die();
 }
 
+/** A packed IPv6 address as text (inet_ntop(), quiet on a malformed value). */
+function inet6_ntoa($ip)
+{
+    return @inet_ntop($ip);
+}
+
 function dollar_format($amount, $currency = null, $cpv = false)
 {
     setlocale(LC_MONETARY, 'en_US.UTF-8');

@@ -3,22 +3,13 @@
 declare(strict_types=1);
 
 namespace {
-    // The formatter delegates money rendering to the global dollar_format()
-    // helper (defined in 202-config/functions-tracking202.php, which cannot
-    // be loaded without the full web bootstrap). Provide a minimal stand-in.
-    if (!function_exists('dollar_format')) {
-        function dollar_format($amount, $currency = null, $cpv = false)
-        {
-            return ($currency ?? '$') . number_format((float) $amount, 2);
-        }
-    }
-
-    if (!function_exists('inet6_ntoa')) {
-        function inet6_ntoa($ip)
-        {
-            return inet_ntop($ip);
-        }
-    }
+    // The formatter renders money with dollar_format() and addresses with
+    // inet6_ntoa(), both in functions-tracking202.php, which loads without
+    // the web bootstrap. This used to define stand-ins at file load instead:
+    // run in one process with a suite that loads connect.php (PHPUnit loads
+    // every file in a directory first), the real definitions then failed to
+    // redeclare them, and the run ended rc=255 with no report.
+    require_once dirname(__DIR__, 2) . '/202-config/functions-tracking202.php';
 }
 
 namespace Tests\DataEngine {
