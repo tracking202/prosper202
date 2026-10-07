@@ -62,6 +62,7 @@ final class LtvFieldErrorsTest extends TestCase
             'Customer alias claim failed and winner not found' => 'a write the database did not keep',
             'Product upsert did not yield a product_id' => 'a write the database did not keep',
             'Customer insert did not yield a customer_id' => 'a write the database did not keep',
+            'A SELECT of three casts returned no row' => 'ledgerDecimals(): a read of no table',
         ],
         '202-config/Ltv/MysqlEngagementRepository.php' => [
             'event source must be api or site' => 'an argument of the code, never of a request',

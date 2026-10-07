@@ -230,6 +230,18 @@ func HintFor(err error) string {
 				"and a read-only one may only be sent with the value the record already has (for `p202 import`, remove them " +
 				"from the file's records). If a p202 command sent them by itself, the CLI and the server differ in version: " +
 				"compare `p202 --version` with `p202 system version`."
+		// A key that already recorded a request answers a retry of that request; a
+		// different body under it is refused (an Idempotency-Key, an LTV event's
+		// idempotency_key, a subscription event's transaction id). Retrying the
+		// same command repeats the refusal.
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "Already used for"):
+			return "Nothing was written: that key already recorded a different request (the message says what differs). " +
+				"A retry must send exactly what the first request sent; a different event needs its own --idempotency-key " +
+				"(a subscription renewal or refund without one, its own --transaction-id)."
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "Already recorded as conversion"):
+			return "Nothing was written: the click already has a conversion under that transaction id, and this request states a different sale. " +
+				"A re-send must state what was recorded (`p202 click conversions <click_id>` shows it); a different sale needs its own " +
+				"--transaction-id; `p202 conversion create --click-id <id> --status reversed --transaction-id <id>` takes the recorded one back."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
 		case apiErr.Status == 400 || apiErr.Status == 422:

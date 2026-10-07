@@ -1766,6 +1766,12 @@ paths:
         conversion per click (a repeat is a duplicate), and a `replace`
         campaign records a row each time.
 
+        A repeat is that sale only when it states what was recorded: a
+        `payout` (as the ledger stores it), `conv_time`, customer or `items`
+        it sends that differ from the recorded conversion's is a `422`
+        naming `transaction_id`, with what differs in the message; nothing
+        is written and an `Idempotency-Key` sent with it is not spent.
+
         A deleted conversion keeps its place in the click's ledger, so a
         conversion that repeats one — the same `transaction_id`, the same
         reversal, or an `accumulate` click's plain conversion — is not
@@ -8110,10 +8116,14 @@ paths:
                     old period end and occurred_at.
                 idempotency_key:
                   type: string
+                  description: Makes a retried renewal or refund a replay (`changed` false). Another amount,
+                    occurred_at, currency or transaction_id under it is a 422 naming idempotency_key, and nothing is
+                    written; left out, the amount, time and currency are not compared.
                 transaction_id:
                   type: string
                   maxLength: 255
-                  description: The billing system's charge id; without an idempotency_key it makes a retry a replay.
+                  description: The billing system's charge id; without an idempotency_key it makes a retry a replay,
+                    and another amount, occurred_at or currency under it is a 422 naming transaction_id.
               required:
               - event_type
               additionalProperties: false
@@ -8173,10 +8183,17 @@ paths:
                     $ref: '#/components/schemas/LtvLineItem'
                 idempotency_key:
                   type: string
+                  maxLength: 191
+                  description: Your id for the event. The same request again answers 200 with the first event
+                    (`duplicate`); a different request under it (another amount, event_type, customer, items,
+                    external_ref or transaction_id, or a currency or occurred_at it sends) is a 422 naming
+                    idempotency_key, and nothing is written.
                 external_ref:
                   type: string
+                  maxLength: 255
                 transaction_id:
                   type: string
+                  maxLength: 255
                 customer_id:
                   type: integer
                 customer_ref:
@@ -8201,7 +8218,7 @@ paths:
                     type: object
                     additionalProperties: true
         '200':
-          description: 'A replay of the same `idempotency_key` (`duplicate: true`)'
+          description: 'A replay of the same request under its `idempotency_key` (`duplicate: true`)'
           content:
             application/json:
               schema:

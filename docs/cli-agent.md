@@ -406,11 +406,15 @@ the server's now. Pass `--timezone` when the network writes local times.
 Statuses after step 3: `created`, `duplicate` (already on the click, or a
 deleted conversion's transaction id, which is never recorded again; not sent,
 or answered by the server with `duplicate: true` or a `409` naming the deleted
-conversion), `click_not_found`, `failed` (with the server's message),
+conversion), `conflict` (the click has the row's transaction id with another
+payout or time; not sent, or refused by the server with a 422 naming
+`transaction_id`), `click_not_found`, `failed` (with the server's message),
 `staged` (under `--staged`), plus `invalid` and `duplicate_in_file` from the
-plan. Any `failed` row means exit 5 with every row still in `data`. Fix the
-cause and run the same command again: rows already recorded come back
-`duplicate`, so only the failures are sent. Exit 2/3 during the read means
+plan. Any `failed` or `conflict` row means exit 5 with every row still in
+`data`. Fix the cause and run the same command again: rows already recorded
+come back `duplicate`, so only the failures are sent. A `conflict` is fixed in
+the file or in the ledger, not by re-running: its reason names the recorded
+conversion and what differs. Exit 2/3 during the read means
 nothing was written. A server without `GET /clicks/{id}/conversions` (older
 than 1.9.76) is refused before any write.
 
@@ -1042,9 +1046,14 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
   always sent as a list. The server holds the same list: a name it never
   sends is a 422 naming `events.<i>` with the names, never a webhook that
   receives nothing.
-- `ltv revenue record --idempotency-key K` again answers the first event with
-  `duplicate: true` (and a note on stderr) and records nothing; `void:`,
-  `void-nc:`, `reinstate:`, `backfill:` and `sub:` keys are reserved.
+- `ltv revenue record --idempotency-key K` again, with the same flags, answers
+  the first event with `duplicate: true` (and a note on stderr) and records
+  nothing. The same key with a different amount, customer, items, references,
+  or a currency or time that was sent, is exit 1 with a 422 naming
+  `idempotency_key` and what differs, and records nothing: a second charge
+  needs its own key. `ltv subscription event` holds its `--idempotency-key`
+  (or `--transaction-id`) the same way. `void:`, `void-nc:`, `reinstate:`,
+  `backfill:` and `sub:` keys are reserved.
 - `ltv subscription event` addresses the subscription by its external id in
   the URL path, which the server matches as sent: an id needing URL escaping
   (a space, `/`, `%`, …) is refused before sending.

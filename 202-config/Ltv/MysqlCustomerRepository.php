@@ -229,25 +229,124 @@ final class MysqlCustomerRepository
     }
 
     /**
-     * The existing ledger event for a caller idempotency key, if any —
-     * checked BEFORE resolving identity on API ingest, so a replay carrying
-     * a new customer_ref returns the original event's owner instead of
-     * minting an orphan customer.
+     * The existing ledger event for a caller idempotency key, if any, with
+     * what it recorded — checked BEFORE resolving identity on API ingest, so
+     * a replay never creates a customer, and compared with the request
+     * (RevenueReplay): the key only locates the event, and a retry is the
+     * same request only when what it states is what the event recorded.
      *
-     * @return array{event_id: int, customer_id: int}|null
+     * @return array{event_id: int, customer_id: int, event_type: string, amount: string, currency: string,
+     *               occurred_at: int, external_ref: ?string, transaction_id: ?string}|null
      */
     public function findEventByIdempotencyKey(int $userId, string $idempotencyKey): ?array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT event_id, customer_id FROM 202_revenue_events
+            'SELECT event_id, customer_id, event_type, amount, currency, occurred_at, external_ref, transaction_id
+             FROM 202_revenue_events
              WHERE user_id = ? AND idempotency_key = ? LIMIT 1'
         );
         $this->conn->bind($stmt, 'is', [$userId, $idempotencyKey]);
         $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
 
-        return $row !== null
-            ? ['event_id' => (int) $row['event_id'], 'customer_id' => (int) $row['customer_id']]
-            : null;
+        return [
+            'event_id' => (int) $row['event_id'],
+            'customer_id' => (int) $row['customer_id'],
+            'event_type' => (string) $row['event_type'],
+            'amount' => (string) $row['amount'],
+            'currency' => (string) $row['currency'],
+            'occurred_at' => (int) $row['occurred_at'],
+            'external_ref' => $row['external_ref'] !== null ? (string) $row['external_ref'] : null,
+            'transaction_id' => $row['transaction_id'] !== null ? (string) $row['transaction_id'] : null,
+        ];
+    }
+
+    /**
+     * A ledger event's line items as stored, in the order they were written,
+     * each with its product's external id (`sku:<sku>` for a product keyed
+     * by its sku, as upsertProduct() keys it).
+     *
+     * @return list<array{external_product_id: ?string, sku: ?string, name: ?string, quantity: string,
+     *                    unit_price: ?string, amount: string}>
+     */
+    public function lineItemsOfEvent(int $userId, int $eventId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT p.external_product_id, li.sku, li.product_name, li.quantity, li.unit_price, li.amount
+             FROM 202_revenue_line_items li
+             LEFT JOIN 202_products p ON p.product_id = li.product_id AND p.user_id = li.user_id
+             WHERE li.user_id = ? AND li.event_id = ?
+             ORDER BY li.line_item_id'
+        );
+        $this->conn->bind($stmt, 'ii', [$userId, $eventId]);
+
+        return array_map(static fn (array $row): array => [
+            'external_product_id' => $row['external_product_id'] !== null ? (string) $row['external_product_id'] : null,
+            'sku' => $row['sku'] !== null ? (string) $row['sku'] : null,
+            'name' => $row['product_name'] !== null ? (string) $row['product_name'] : null,
+            'quantity' => (string) $row['quantity'],
+            'unit_price' => $row['unit_price'] !== null ? (string) $row['unit_price'] : null,
+            'amount' => (string) $row['amount'],
+        ], $this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * What the ledger's columns store for these numbers: an event or line
+     * amount (decimal(16,5)), a quantity (decimal(12,3)) and a unit price
+     * (decimal(14,5)), as MySQL converts the bound double -- the conversion
+     * insertRevenueEvent() and insertLineItems() make, so a number sent again
+     * reads exactly as it was stored. PHP's round() is not that conversion:
+     * measured over 20,000 values, it disagreed with the stored decimal on
+     * 100 (a double just below a half rounds down in MySQL), where this
+     * disagreed on none.
+     *
+     * @return array{amount: string, quantity: string, unit_price: string}
+     */
+    public function ledgerDecimals(float $amount, float $quantity = 0.0, float $unitPrice = 0.0): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT CAST(? AS DECIMAL(16,5)) AS amount, CAST(? AS DECIMAL(12,3)) AS quantity,
+                    CAST(? AS DECIMAL(14,5)) AS unit_price'
+        );
+        $this->conn->bind($stmt, 'ddd', [$amount, $quantity, $unitPrice]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new RuntimeException('A SELECT of three casts returned no row');
+        }
+
+        return [
+            'amount' => (string) $row['amount'],
+            'quantity' => (string) $row['quantity'],
+            'unit_price' => (string) $row['unit_price'],
+        ];
+    }
+
+    /**
+     * The customer an alias names now (merges followed), or null when none
+     * does. Creates nothing: a replay compares the customer it names with the
+     * one its key recorded before anything is resolved.
+     *
+     * @param string $typeField the body field that holds the type, which a refusal names
+     * @param string $valueField the body field that holds the value
+     */
+    public function findCustomerByAlias(
+        int $userId,
+        ?string $aliasType,
+        string $aliasValue,
+        string $typeField = 'customer_ref_type',
+        string $valueField = 'customer_ref'
+    ): ?int {
+        $aliasValue = trim($aliasValue);
+        if ($aliasValue === '') {
+            return null;
+        }
+        $aliasType = $this->normalizeAliasType($aliasType, $typeField);
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, $valueField);
+        $owner = $this->aliasCustomerId($userId, $aliasType, hash('sha256', $aliasValue, true));
+
+        return $owner !== null ? $this->followMergePointer($owner) : null;
     }
 
     /**

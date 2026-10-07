@@ -314,6 +314,23 @@ final class MysqlSubscriptionRepository
                     $idempotencyKey = $scoped;
                 }
 
+                // A key that recorded an event is a replay only for the same
+                // request. It only located the event: a renewal resent under
+                // the same key or transaction id with another amount answered
+                // `changed: false` and the money was dropped (CLAUDE.md #15).
+                // Under the row lock, so a concurrent event cannot slip in.
+                if ($idempotencyKey !== '') {
+                    $this->refuseADifferentEvent(
+                        $userId,
+                        $idempotencyKey,
+                        $payload,
+                        $ledgerAmount,
+                        $currency,
+                        $occurredAt,
+                        $transactionId
+                    );
+                }
+
                 $event = $this->customers->insertRevenueEvent($userId, $customerId, [
                     'event_type' => $isRefund ? 'refund' : 'renewal',
                     'amount' => $ledgerAmount,
@@ -386,6 +403,60 @@ final class MysqlSubscriptionRepository
                 'customerId' => $customerId,
             ];
         });
+    }
+
+    /**
+     * Refuse a renewal or refund whose key (idempotency_key, else the
+     * transaction id) already recorded a different one, naming the field the
+     * key came from. What a stored event holds is compared as RevenueReplay
+     * compares a revenue event: the amount, currency and occurred_at when
+     * the request states them (left out, they mean the subscription's amount,
+     * the account's currency and now), and the transaction id always. The
+     * event type and the subscription are part of the key itself.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function refuseADifferentEvent(
+        int $userId,
+        string $key,
+        array $payload,
+        float $ledgerAmount,
+        string $currency,
+        int $occurredAt,
+        string $transactionId
+    ): void {
+        $existing = $this->customers->findEventByIdempotencyKey($userId, $key);
+        if ($existing === null) {
+            return;
+        }
+        $stated = ['transaction_id' => $transactionId !== '' ? $transactionId : null];
+        if (isset($payload['amount'])) {
+            $stated['amount'] = $ledgerAmount;
+        }
+        if (isset($payload['currency']) && trim((string) $payload['currency']) !== '') {
+            $stated['currency'] = $currency;
+        }
+        if (isset($payload['occurred_at'])) {
+            $stated['occurred_at'] = $occurredAt;
+        }
+        $differences = (new RevenueReplay($this->customers))->differences($userId, $existing, $stated);
+        if ($differences === []) {
+            return;
+        }
+        $field = trim((string) ($payload['idempotency_key'] ?? '')) !== '' ? 'idempotency_key' : 'transaction_id';
+        $what = implode('; ', array_map(
+            static fn (string $name, string $difference): string => $name . ' ' . $difference,
+            array_keys($differences),
+            $differences
+        ));
+        throw new LtvInputException(
+            $field,
+            'This ' . $field . ' already recorded event ' . $existing['event_id'] . ' on this subscription for a'
+                . ' different request (' . $what . '). Nothing was recorded: resend the original request to replay'
+                . ' it, or send a new ' . $field . ' for a different ' . $existing['event_type'] . '.',
+            'Already used for event ' . $existing['event_id'] . ' with a different '
+                . implode(', ', array_keys($differences)) . '; send a new ' . $field . ' for a different one'
+        );
     }
 
     /**

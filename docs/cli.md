@@ -811,6 +811,7 @@ Each row gets a status and, where it is not imported, a `reason`:
 | `duplicate_in_file` | an earlier row has the same click and transaction id, or, without a transaction id, the same click. Like the postback, an id-less conversion converts its click once. |
 | `created` | recorded; `conv_id` and `recorded_payout` are the server's |
 | `duplicate` | already on the click (same transaction id, or an id-less row on a click that already converted), or the server matched or replayed an earlier one. Nothing new was recorded. |
+| `conflict` | the click already has the row's transaction id with another payout or time; `reason` names the conversion and what differs. Not sent (or refused by the server), nothing recorded, exit 5: correct the row, or reverse the recorded sale and give the row its own transaction id. |
 | `click_not_found` | no click with that id in this account |
 | `failed` | `reason` is the server's error, or `not sent: ...` after a lost connection |
 | `staged` | under `--staged`: a proposal; `change_id` is what `p202 change apply` takes |

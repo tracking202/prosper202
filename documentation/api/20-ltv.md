@@ -32,7 +32,9 @@ fields, companies), or sends it on (webhooks).
 - **No `Idempotency-Key`.** LTV writes do not honor the header. Their own
   keys make a retry safe: `idempotency_key` on revenue, `transaction_id` or
   `idempotency_key` on a subscription's renewal or refund, the reference on
-  an upsert (customers, subscriptions, products).
+  an upsert (customers, subscriptions, products). A key replays only the
+  request it recorded: the same key with a different body is a `422` naming
+  the key and what differs, and records nothing.
 - **Deletes preview.** `DELETE …?dry_run=1` on any LTV delete answers what
   it would remove and keep (`"dry_run": true`, the record, the cascade) and
   writes nothing.
@@ -129,7 +131,7 @@ p202 ltv subscriptions --status past_due
 | `event_type` | `purchase` (default), `one_time`, `refund`, `chargeback` or `adjustment`. Renewals go through subscriptions |
 | `currency` | The account's (the default); any other is a `422` |
 | `occurred_at` | Unix seconds (default now) |
-| `idempotency_key` | Your id for the event: the same key again records nothing and answers `200` with the first event and `"duplicate": true` |
+| `idempotency_key` | Your id for the event: the same request again records nothing and answers `200` with the first event and `"duplicate": true`; a different request under it is a `422` |
 | `external_ref`, `transaction_id` | Your references, kept on the event |
 | `items` | Line items, read as a conversion's are ([Nested objects](10-conversions.md#nested-objects)) |
 | the customer keys | Required; see [Naming the customer](#naming-the-customer) |
@@ -137,10 +139,29 @@ p202 ltv subscriptions --status past_due
 A refund or chargeback is sent positive and stored negative. A negative
 `purchase` or `one_time` is a `422`: negative money is a refund, chargeback
 or adjustment (a negative purchase would count an order while draining
-revenue). `201` with `{event_id, customer_id, duplicate: false}`; the same
-`idempotency_key` again answers `200` with `duplicate: true`, even when the
-body changed (the key names the event). A customer created for a write that
-is then refused (a bad line item) is rolled back with it.
+revenue). `201` with `{event_id, customer_id, duplicate: false}`. A customer
+created for a write that is then refused (a bad line item) is rolled back
+with it.
+
+The same `idempotency_key` again is a replay only when it is the same
+request: `200` with the first event and `duplicate: true`, nothing written.
+A different request under the key is a `422` naming `idempotency_key`, whose
+message lists what differs (`amount recorded 10.00000, sent 99.50000`), and
+nothing is written; it used to answer `200 duplicate` with the first event,
+so a second charge sent under the first one's key was dropped without a
+word. Compared with what the event recorded:
+
+- always, a left-out field standing for its default: `event_type`
+  (`purchase`), `amount` (as the ledger stores it, so `"10.000"` is `10`),
+  the customer (by `customer_id` or by `customer_ref`, merges followed),
+  `items` (none), `external_ref` and `transaction_id` (none);
+- only when sent: `currency` and `occurred_at`, whose absence means the
+  account's currency and now, which a retry cannot be held to;
+- never: `customer_crm`, which only describes a customer the write creates,
+  and a line item's catalog `price`.
+
+The same holds for two requests racing on one key: the one that loses is
+answered with the winner's event only if it sent the winner's request.
 
 ```bash
 p202 ltv revenue record --customer-ref CUST-77 --amount 49.00 --idempotency-key ORD-1001 \
@@ -171,8 +192,14 @@ subscription's own — extends the paid-through period to
 `current_period_end` or one interval on, and reactivates it), `refund`
 (negative revenue) or `cancel` (no money moves). `transaction_id` or
 `idempotency_key` makes a retried renewal or refund a replay, answered with
-`"changed": false`. An unknown subscription is a `404`. Percent-encode an id
-that holds a character a path escapes.
+`"changed": false`. The key (the `idempotency_key`, else the
+`transaction_id`) replays only the event it recorded: another `amount`,
+`occurred_at` or `currency`, or another `transaction_id` under an
+`idempotency_key`, is a `422` naming the field the key came from, and
+records nothing. Left out, the amount, time and currency are not compared
+(they mean the subscription's amount, now and the account's currency). An
+unknown subscription is a `404`. Percent-encode an id that holds a
+character a path escapes.
 
 ```bash
 p202 ltv subscription upsert --external-sub-id sub_123 --customer-ref CUST-77 --amount 29 --interval month
@@ -282,5 +309,6 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `customer_ref` / `customer_ref_type` | Not a string, a malformed email digest, or a type off the list | Your id as a string; a type from the list |
 | `422` `source_customer_id` / `source_company_id` | Merging a record into itself, or a source the account does not have | Pick the other record (`p202 ltv customers`, `p202 ltv companies`) |
 | `422` `idempotency_key` | A reserved prefix (`void:`, `sub:`, …) | Your own id for the event |
+| `422` `idempotency_key` (or `transaction_id` on a subscription event): "Already used for … with a different amount" | The key recorded a different request; the message lists what differs. Nothing was written | A retry sends exactly the first request; a different event gets its own key |
 | `404` | A customer, subscription, product, field, webhook or company of another account, or none | List them first (`p202 ltv customers`, `subscriptions`, `products`, …) |
 | `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first | Leave the product; merge the companies, or pick another name; retry the merge |

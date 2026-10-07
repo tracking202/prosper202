@@ -845,7 +845,9 @@ var ltvRevenueRecordCmd = &cobra.Command{
 	Long: "Appends one event to the customer's revenue ledger (source api) and updates their totals.\n" +
 		"Refunds and chargebacks are sent positive and stored negative; a negative amount is only an\n" +
 		"adjustment. Renewals go through `p202 ltv subscription event`. --idempotency-key makes a retry\n" +
-		"safe: the same key again records nothing and answers with the first event (duplicate: true).\n\n" +
+		"safe: the same request again records nothing and answers with the first event (duplicate:\n" +
+		"true). A different request under a used key (another amount, customer, items, ...) is refused\n" +
+		"naming idempotency_key and what differs, and records nothing: a different event needs its own key.\n\n" +
 		"  p202 ltv revenue record --customer-ref CUST-77 --amount 49.00 --idempotency-key ORD-1001 \\\n" +
 		"      --item '{\"sku\":\"PRO-1\",\"quantity\":1,\"unit_price\":49}'",
 	Args: cobra.NoArgs,
@@ -1063,7 +1065,8 @@ var ltvSubscriptionEventCmd = &cobra.Command{
 	Long: "renewal adds a renewal to the ledger (the subscription's amount unless --amount), extends the\n" +
 		"paid-through period and reactivates it; refund adds negative revenue; cancel marks it canceled\n" +
 		"and moves no money. --idempotency-key (or --transaction-id) makes a retried renewal or refund\n" +
-		"safe; a repeat answers changed: false.\n\n" +
+		"safe; a repeat answers changed: false. A different amount, time or transaction id under a used\n" +
+		"key is refused, naming the key, and records nothing.\n\n" +
 		"  p202 ltv subscription event sub_123 --type renewal --transaction-id ch_889",
 	Args: cobra.ExactArgs(1),
 	RunE: ltvWrite(func(cmd *cobra.Command, args []string) error {
@@ -1344,7 +1347,7 @@ func init() {
 	ltvRevenueRecordCmd.Flags().String("currency", "", "Currency code; must be the account currency (default it)")
 	ltvRevenueRecordCmd.Flags().String("occurred-at", "", "When it happened, unix seconds (default now)")
 	addLtvItemFlags(ltvRevenueRecordCmd)
-	ltvRevenueRecordCmd.Flags().String("idempotency-key", "", "Your id for this event: the same key again records nothing and answers with the first event")
+	ltvRevenueRecordCmd.Flags().String("idempotency-key", "", "Your id for this event: the same request again records nothing and answers with the first event; a different one under it is refused")
 	ltvRevenueRecordCmd.Flags().String("external-ref", "", "Your reference for the event (an order number)")
 	ltvRevenueRecordCmd.Flags().String("transaction-id", "", "The payment's transaction id")
 	ltvRevenueCmd.AddCommand(ltvRevenueRecordCmd)
@@ -1375,7 +1378,7 @@ func init() {
 	ltvSubscriptionEventCmd.Flags().String("amount", "", "Renewal or refund amount (default the subscription's amount)")
 	ltvSubscriptionEventCmd.Flags().String("currency", "", "Currency code; must be the account currency (default it)")
 	ltvSubscriptionEventCmd.Flags().String("occurred-at", "", "When it happened, unix seconds (default now)")
-	ltvSubscriptionEventCmd.Flags().String("idempotency-key", "", "Your id for this renewal or refund: the same key again records nothing")
+	ltvSubscriptionEventCmd.Flags().String("idempotency-key", "", "Your id for this renewal or refund: the same request again records nothing; a different one under it is refused")
 	ltvSubscriptionEventCmd.Flags().String("transaction-id", "", "The payment's transaction id (also makes a retry safe when there is no key)")
 	ltvSubscriptionEventCmd.Flags().String("period-end", "", "Renewal only: the new paid-through time, unix seconds (default one interval on)")
 	ltvSubscriptionCmd.AddCommand(ltvSubscriptionUpsertCmd, ltvSubscriptionEventCmd)

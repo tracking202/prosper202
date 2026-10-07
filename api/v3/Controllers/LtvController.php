@@ -30,6 +30,7 @@ use Prosper202\Ltv\RecordNotFoundException;
 use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
+use Prosper202\Ltv\RevenueReplay;
 use Prosper202\Ltv\SubscriptionNotFoundException;
 use Prosper202\Validation\OutboundUrlException;
 
@@ -484,7 +485,9 @@ class LtvController
     /**
      * Record a clickless revenue event (ESP order, membership charge,
      * Shopify order pushed server-side). source='api'; idempotent on the
-     * caller-supplied idempotency_key.
+     * caller-supplied idempotency_key: the same request again answers the
+     * event it recorded, and a different request under that key is refused
+     * (RevenueReplay says what is compared).
      */
     public function recordRevenue(array $payload): array
     {
@@ -498,9 +501,20 @@ class LtvController
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
             + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
             + LtvBody::identity($payload)
+            + LtvBody::revenueReferences($payload)
+        );
+        // Read before anything is written or replayed: a replay compares the
+        // customer it names with the one its key recorded.
+        $customerIdSent = QueryInt::param(
+            $payload,
+            'customer_id',
+            0,
+            1,
+            PHP_INT_MAX,
+            'an LTV customer id (see `p202 ltv customers`)'
         );
 
-        return $this->wrap(function () use ($payload): array {
+        return $this->wrap(function () use ($payload, $customerIdSent): array {
             $eventType = strtolower(trim((string) ($payload['event_type'] ?? 'purchase')));
             if (!in_array($eventType, ['purchase', 'one_time', 'refund', 'chargeback', 'adjustment'], true)) {
                 throw new ValidationException(
@@ -543,15 +557,57 @@ class LtvController
                 MysqlCustomerRepository::assertExternalIdempotencyKey($idempotencyKey);
             }
 
+            // What this request states, as the event would store it, for a
+            // replay to be compared with (RevenueReplay): a key located the
+            // event and nothing compared the request to it, so a key reused
+            // for a different sale answered 200 `duplicate: true` and the
+            // sale was dropped (CLAUDE.md #15).
+            $stated = [
+                'event_type' => $eventType,
+                'amount' => $amount,
+                'external_ref' => isset($payload['external_ref']) ? (string) $payload['external_ref'] : null,
+                'transaction_id' => isset($payload['transaction_id']) ? (string) $payload['transaction_id'] : null,
+                'customer' => $customerIdSent > 0
+                    ? ['id' => $customerIdSent]
+                    : [
+                        'ref' => trim((string) ($payload['customer_ref'] ?? '')),
+                        'type' => isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : null,
+                    ],
+                'items' => $items,
+            ];
+            if (isset($payload['currency'])) {
+                $stated['currency'] = $currency;
+            }
+            if (isset($payload['occurred_at'])) {
+                $stated['occurred_at'] = $occurredAt;
+            }
+            if ($customerIdSent <= 0 && $stated['customer']['ref'] === '') {
+                // Named no one: refused as a new event would be, replay or not.
+                throw new ValidationException(
+                    'customer_id or customer_ref is required',
+                    ['customer_ref' => 'Identify the customer this revenue belongs to']
+                );
+            }
+
             try {
-                $result = $this->conn->transaction(function () use ($eventType, $amount, $currency, $occurredAt, $payload, $items, $now, $idempotencyKey): array {
-                    // Idempotent replay FIRST: a replay carrying a different
-                    // (or brand-new) customer_ref must return the original
-                    // event and its owner, not resolve/create a customer for
-                    // a write that will never happen.
+                $result = $this->conn->transaction(function () use (
+                    $eventType,
+                    $amount,
+                    $currency,
+                    $occurredAt,
+                    $payload,
+                    $items,
+                    $now,
+                    $idempotencyKey,
+                    $stated
+                ): array {
+                    // Idempotent replay FIRST: a replay must not resolve or
+                    // create a customer for a write that will never happen.
+                    // It is a replay only when it is the same request.
                     if ($idempotencyKey !== null) {
                         $existing = $this->customers->findEventByIdempotencyKey($this->userId, $idempotencyKey);
                         if ($existing !== null) {
+                            $this->refuseADifferentRequest($idempotencyKey, $existing, $stated);
                             return ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
                         }
                     }
@@ -600,6 +656,9 @@ class LtvController
                         ['idempotency_key' => 'Duplicate in flight']
                     );
                 }
+                // The winner was a different request: this one is refused,
+                // not answered with the winner's event.
+                $this->refuseADifferentRequest((string) $idempotencyKey, $existing, $stated);
                 $result = ['eventId' => $existing['event_id'], 'inserted' => false, 'customerId' => $existing['customer_id']];
             }
 
@@ -622,6 +681,36 @@ class LtvController
                 ],
             ];
         });
+    }
+
+    /**
+     * Refuse a request whose idempotency_key recorded a different one,
+     * naming what differs. Nothing is written: the event stands as it was
+     * recorded, and the caller either resends that body to replay it or
+     * sends a new key for a different event.
+     *
+     * @param array{event_id: int, customer_id: int, event_type: string, amount: string, currency: string,
+     *              occurred_at: int, external_ref: ?string, transaction_id: ?string} $existing
+     * @param array<string, mixed> $stated
+     */
+    private function refuseADifferentRequest(string $key, array $existing, array $stated): void
+    {
+        $differences = (new RevenueReplay($this->customers))->differences($this->userId, $existing, $stated);
+        if ($differences === []) {
+            return;
+        }
+        $what = implode('; ', array_map(
+            static fn (string $field, string $difference): string => $field . ' ' . $difference,
+            array_keys($differences),
+            $differences
+        ));
+        throw new ValidationException(
+            'idempotency_key "' . $key . '" already recorded revenue event ' . $existing['event_id']
+                . ' for a different request (' . $what . '). Nothing was recorded: resend the original request to'
+                . ' replay that event, or send a new idempotency_key to record a different one.',
+            ['idempotency_key' => 'Already used for revenue event ' . $existing['event_id'] . ' with a different '
+                . implode(', ', array_keys($differences)) . '; send a new key for a different event']
+        );
     }
 
     public function upsertSubscription(array $payload): array

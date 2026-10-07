@@ -334,6 +334,21 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+The same failure without a hash: a key that *locates* a record nobody then
+compares the request with. `POST /ltv/revenue` found the event its
+`idempotency_key` had recorded, a subscription renewal the event under its key
+or transaction id, `POST /conversions` the row its transaction id names — and
+each answered the first record (`duplicate: true`, `changed: false`) to a
+request stating another amount, customer or line items. A second charge sent
+under the first one's key, or a corrected payout under the same transaction
+id, was dropped with a 2xx. Where the stored record holds what the request
+stated, the record is the fingerprint: compare the request with it
+(`RevenueReplay`), refuse a difference naming the key and what differs, and
+decide field by field what absence means — a fixed default (no items, a
+purchase) is compared, a moving one (now, the account's currency, the
+campaign's payout) only when sent. A client that pre-reads to skip duplicates
+(`p202 conversion import`) makes the same lookup and owes the same comparison.
+
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Every value a security decision keys on must be split into what the peer
 proved and what the request merely *claimed*. Two instances shipped in one

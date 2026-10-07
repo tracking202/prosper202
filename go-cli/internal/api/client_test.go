@@ -538,6 +538,29 @@ func TestHintForAFieldTheServerRefuses(t *testing.T) {
 	}
 }
 
+// A key that recorded a different request, and a transaction id that is a
+// different sale, are refused for good: "fix the fields and retry" would
+// repeat the refusal, so the hint says what a retry must send and what a
+// different event needs.
+func TestHintForAKeyThatRecordedADifferentRequest(t *testing.T) {
+	for _, msg := range []string{
+		"Already used for revenue event 7 with a different amount; send a new key for a different event",
+		"Already used for event 7 with a different amount; send a new idempotency_key for a different one",
+		"Already used for a different request",
+	} {
+		h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"idempotency_key": msg}})
+		if !strings.Contains(h, "Nothing was written") || !strings.Contains(h, "exactly what the first request sent") || !strings.Contains(h, "--idempotency-key") {
+			t.Errorf("field error %q: hint = %q", msg, h)
+		}
+	}
+	h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{
+		"transaction_id": "Already recorded as conversion 9 with a different payout; a different sale needs its own transaction_id",
+	}})
+	if !strings.Contains(h, "p202 click conversions") || !strings.Contains(h, "--status reversed") || !strings.Contains(h, "--transaction-id") {
+		t.Errorf("a different sale: hint = %q", h)
+	}
+}
+
 // A body (or If-Match) read from an older version of the record is a 409
 // that says so; the generic 409 hint ("a matching record already exists,
 // update it") is wrong advice for it.

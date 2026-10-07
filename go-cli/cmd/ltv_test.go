@@ -574,6 +574,33 @@ func TestLtvRevenueRecordSendsExactNumbersAndItems(t *testing.T) {
 	}
 }
 
+// The server refuses a different request under a used key (422 naming
+// idempotency_key); the command exits as a validation error with a hint that
+// says what a retry and a different event each need, not "retry".
+func TestLtvKeyReusedForADifferentEventIsExplained(t *testing.T) {
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"idempotency_key \"ORD-1\" already recorded revenue event 9 for a different request (amount recorded 10.00000, sent 99.50000).","field_errors":{"idempotency_key":"Already used for revenue event 9 with a different amount; send a new key for a different event"}}`
+	})
+	_, _, err := executeCommand("ltv", "revenue", "record", "--customer-ref", "CUST-77", "--amount", "99.50", "--idempotency-key", "ORD-1")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("revenue: %v, exit %d", err, exitCodeForError(err))
+	}
+	if h := hintFor(err); !strings.Contains(h, "exactly what the first request sent") || !strings.Contains(h, "--idempotency-key") {
+		t.Errorf("revenue hint = %q", h)
+	}
+
+	newLtvServer(t, func(ltvRequest) (int, string) {
+		return 422, `{"error":true,"status":422,"message":"This transaction_id already recorded event 4 on this subscription for a different request (amount recorded 25.00000, sent 30.00000).","field_errors":{"transaction_id":"Already used for event 4 with a different amount; send a new transaction_id for a different one"}}`
+	})
+	_, _, err = executeCommand("ltv", "subscription", "event", "sub_1", "--type", "renewal", "--transaction-id", "ch_1", "--amount", "30")
+	if err == nil || exitCodeForError(err) != ExitValidation {
+		t.Fatalf("subscription event: %v, exit %d", err, exitCodeForError(err))
+	}
+	if h := hintFor(err); !strings.Contains(h, "--transaction-id") || !strings.Contains(h, "Nothing was written") {
+		t.Errorf("subscription event hint = %q", h)
+	}
+}
+
 func TestLtvRevenueRecordRefusesBadInputBeforeAnyRequest(t *testing.T) {
 	dir := t.TempDir()
 	itemsFile := filepath.Join(dir, "items.json")

@@ -220,6 +220,26 @@ final class LtvBody
     }
 
     /**
+     * A revenue event's own references, as 202_revenue_events stores them:
+     * external_ref and transaction_id in varchar(255), idempotency_key in
+     * varchar(191). Each was cast with (string), so an object was stored as
+     * the text "Array" (as a key, one every other object-keyed request then
+     * shared), and a key past 191 characters was the database's to refuse.
+     *
+     * @param array<array-key, mixed> $payload
+     * @return array<string, string>
+     */
+    public static function revenueReferences(array $payload): array
+    {
+        $errors = [];
+        self::text($payload, 'external_ref', 255, $errors, ': your reference for the event, e.g. an order number');
+        self::text($payload, 'transaction_id', 255, $errors, ': the payment\'s transaction id');
+        self::text($payload, 'idempotency_key', 191, $errors, ': your id for the event, e.g. an order or charge id');
+
+        return $errors;
+    }
+
+    /**
      * An alias: a value (the identifier, required) and a type, one of
      * MysqlCustomerRepository::ALIAS_TYPES (custom when left out); an email
      * digest must be one.

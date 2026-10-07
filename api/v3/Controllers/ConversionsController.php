@@ -372,6 +372,14 @@ class ConversionsController
                 ['conv_id' => $convId, 'click_id' => $clickId, 'deleted' => true]
             );
         }
+        // A duplicate is this sale again only when what it states is what
+        // the recorded conversion holds. The ledger key (the transaction id)
+        // located the row and nothing compared the request to it, so the
+        // same transaction id with another payout or customer answered 201
+        // `duplicate: true` and the change was dropped (CLAUDE.md #15).
+        if ($duplicate && $convId > 0) {
+            $this->refuseADifferentSale($convId, $clickId, $payload, $data, (string) ($recorded['dedupeKey'] ?? ''));
+        }
 
         // A customer_ref on an authenticated request is the operator's own
         // statement, so it links the click into the identity graph without
@@ -403,6 +411,125 @@ class ConversionsController
         }
 
         return $response;
+    }
+
+    /**
+     * Refuse a request that matched a recorded conversion's ledger key but
+     * states a different sale, naming what differs; nothing was written.
+     *
+     * Compared when the request states it (each is stored as sent): the
+     * payout (negated for a reversal, as the writer negates it), conv_time,
+     * the customer it names (Prosper202\Ltv\RevenueReplay, merges followed)
+     * and its line items, against the conversion's revenue event. Left out,
+     * the payout and the time mean the campaign's or the click's payout and
+     * now, which a retry cannot be held to; customer_crm only describes a
+     * customer the write creates. The postback and pixel paths keep the
+     * first statement of a sale, as networks resend theirs; this is the
+     * API's answer to its own caller.
+     *
+     * @param array<string, mixed> $payload the body as sent
+     * @param array<string, mixed> $data what record() was given
+     */
+    private function refuseADifferentSale(
+        int $convId,
+        int $clickId,
+        array $payload,
+        array $data,
+        string $dedupeKey
+    ): void {
+        $statesConvTime = array_key_exists('conv_time', $payload) && $payload['conv_time'] !== null;
+        $statesAnything = array_key_exists('payout', $data) || $statesConvTime || isset($data['customer_id'])
+            || isset($data['customer_ref']) || isset($data['items']);
+        if (!$statesAnything) {
+            return; // it states nothing a recorded sale could differ in
+        }
+        $conn = new \Prosper202\Database\Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'SELECT click_payout, conv_time, customer_id, reverses_conv_id FROM 202_conversion_logs
+             WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$convId, $this->userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new DatabaseException(
+                'Conversion ' . $convId . ' matched this request but could not be read to compare it'
+            );
+        }
+
+        $differences = [];
+        if (array_key_exists('payout', $data)) {
+            $sent = \Prosper202\Conversion\Ledger\Amount::toUnits($data['payout']);
+            if ($row['reverses_conv_id'] !== null) {
+                $sent = -abs($sent);
+            }
+            $kept = \Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['click_payout']);
+            if ($sent !== $kept) {
+                $differences['payout'] = 'recorded ' . \Prosper202\Conversion\Ledger\Amount::fromUnits($kept)
+                    . ', sent ' . \Prosper202\Conversion\Ledger\Amount::fromUnits($sent);
+            }
+        }
+        if ($statesConvTime && (int) $data['conv_time'] !== (int) $row['conv_time']) {
+            $differences['conv_time'] = 'recorded ' . (int) $row['conv_time'] . ', sent ' . (int) $data['conv_time'];
+        }
+
+        $replay = new \Prosper202\Ltv\RevenueReplay(new \Prosper202\Ltv\MysqlCustomerRepository($conn));
+        if (isset($data['customer_id']) || isset($data['customer_ref'])) {
+            $customer = isset($data['customer_id'])
+                ? ['id' => (int) $data['customer_id']]
+                : ['ref' => (string) $data['customer_ref'], 'type' => $data['customer_ref_type'] ?? null];
+            $recorded = $row['customer_id'] !== null ? (int) $row['customer_id'] : null;
+            try {
+                $difference = $replay->customerDifference($this->userId, $recorded, $customer);
+            } catch (\Prosper202\Ltv\LtvInputException $e) {
+                // A customer_ref_type off the list or a malformed digest: a
+                // new conversion refuses it in the repository, which a
+                // duplicate never reaches.
+                throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
+            }
+            if ($difference !== null) {
+                $differences['customer'] = $difference;
+            }
+        }
+        if (isset($data['items']) && is_array($data['items'])) {
+            $eventStmt = $conn->prepareWrite(
+                'SELECT event_id, amount FROM 202_revenue_events WHERE conv_id = ? AND user_id = ? LIMIT 1'
+            );
+            $conn->bind($eventStmt, 'ii', [$convId, $this->userId]);
+            $event = $conn->fetchOne($eventStmt);
+            $difference = $replay->itemsDifference(
+                $this->userId,
+                $event !== null ? (int) $event['event_id'] : null,
+                array_values($data['items']),
+                $event !== null ? (float) $event['amount'] : (float) $row['click_payout']
+            );
+            if ($difference !== null) {
+                $differences['items'] = $difference;
+            }
+        }
+        if ($differences === []) {
+            return;
+        }
+
+        if (str_starts_with($dedupeKey, 'tx:')) {
+            $sale = 'The sale with transaction_id "' . substr($dedupeKey, 3) . '" on click ' . $clickId;
+        } elseif (str_starts_with($dedupeKey, 'rev:')) {
+            $sale = 'This reversal on click ' . $clickId;
+        } else {
+            $sale = 'Click ' . $clickId . '\'s conversion without a transaction_id';
+        }
+        $what = implode('; ', array_map(
+            static fn (string $field, string $difference): string => $field . ' ' . $difference,
+            array_keys($differences),
+            $differences
+        ));
+        throw new ValidationException(
+            $sale . ' is already recorded as conversion ' . $convId . ', and this request states a'
+                . ' different sale (' . $what . '). Nothing was recorded: send it as recorded to get conversion '
+                . $convId . ' back, send a different sale with its own transaction_id, or take this one back with'
+                . ' status "reversed".',
+            ['transaction_id' => 'Already recorded as conversion ' . $convId . ' with a different '
+                . implode(', ', array_keys($differences)) . '; a different sale needs its own transaction_id']
+        );
     }
 
     /**
