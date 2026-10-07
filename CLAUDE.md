@@ -1473,6 +1473,12 @@ where a check quietly fails to check what it appears to.
   suspecting the component that differs most visibly, diff the versions of
   everything on the path (`php -v` against the workflow's `php-version`),
   and read the server log the job uploads — the 404 was on its first page.
+  The database is the same trap: this sandbox runs MariaDB and CI MySQL 8.0,
+  and `SHOW CREATE TABLE` spells an unsigned int `int(10) unsigned` on one
+  and `int unsigned` on the other (MySQL dropped display widths in 8.0.19),
+  so an upgrade test that asserted the MariaDB spelling passed here and
+  failed in CI. Assert a column's shape with a pattern that admits both, or
+  read `information_schema.COLUMNS` instead of the DDL text.
 - **A tier that reports PASS with no output did not run.** Putting the
   scratchpad's `bin/` on PATH to reach a `phpcs` shim also put a stub `php`
   there — left over from an old cron-clock experiment, and one that echoes and

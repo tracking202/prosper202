@@ -52,7 +52,9 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
         $db->query('DROP TABLE IF EXISTS 202_users_pref');
         $this->assertTrue($db->query(UserTables::usersPref()->createStatement));
         $fresh = (string) $db->query('SHOW CREATE TABLE 202_users_pref')->fetch_row()[1];
-        $this->assertStringContainsString('`user_delete_data_before` int(10) unsigned DEFAULT NULL', $fresh);
+        // MariaDB writes the display width (int(10)); MySQL 8.0.19 and later
+        // do not (int), which is what CI's MySQL 8.0 prints.
+        $this->assertMatchesRegularExpression('/`user_delete_data_before` int(?:\(10\))? unsigned DEFAULT NULL,/', $fresh);
 
         // The 1.9.75 shape: the column is not there yet, and the install
         // scheduled a deletion by id.
