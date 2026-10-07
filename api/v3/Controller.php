@@ -185,6 +185,92 @@ abstract class Controller
         return $clean;
     }
 
+    // ─── Linked Records ──────────────────────────────────────────────
+
+    /**
+     * The records a Setup field links to: field => [table, id column,
+     * deleted column, what it is, where its ids are listed]. The tracker
+     * page's own list (generate_tracking_link.php), and the checks of the
+     * other Setup pages ("not authorized to add a campaign to another
+     * user's network").
+     */
+    private const LINKED_RECORDS = [
+        'aff_network_id'  => ['202_aff_networks', 'aff_network_id', 'aff_network_deleted', 'category', 'GET /aff-networks'],
+        'aff_campaign_id' => ['202_aff_campaigns', 'aff_campaign_id', 'aff_campaign_deleted', 'campaign', 'GET /campaigns'],
+        'landing_page_id' => ['202_landing_pages', 'landing_page_id', 'landing_page_deleted', 'landing page', 'GET /landing-pages'],
+        'text_ad_id'      => ['202_text_ads', 'text_ad_id', 'text_ad_deleted', 'text ad', 'GET /text-ads'],
+        'ppc_network_id'  => ['202_ppc_networks', 'ppc_network_id', 'ppc_network_deleted', 'traffic source', 'GET /ppc-networks'],
+        'ppc_account_id'  => ['202_ppc_accounts', 'ppc_account_id', 'ppc_account_deleted', 'traffic source account', 'GET /ppc-accounts'],
+        'rotator_id'      => ['202_rotators', 'id', null, 'redirector', 'GET /rotators'],
+    ];
+
+    /**
+     * A linked id names one of the caller's own live records, as the Setup
+     * pages require. The API took every one as sent, so a key could file its
+     * campaign under another account's category or build a tracker on
+     * another account's campaign, account, landing page, ad or redirector.
+     *
+     * Only fields the payload sets are read. On an update, a value the
+     * record already holds is not read either: re-sending what a record has
+     * (a full PUT, a sync) must not fail because its campaign was removed
+     * since. 0 is "none" for a link the record may go without, and refused
+     * for one it requires.
+     *
+     * @param array<string, mixed>      $clean   validatePayload()'s output
+     * @param array<string, mixed>|null $current the row an update changes
+     * @throws ValidationException naming each field
+     */
+    protected function assertLinksOwned(array $clean, ?array $current = null): void
+    {
+        $fields = $this->resolveFields();
+        $errors = [];
+        foreach (self::LINKED_RECORDS as $field => [$table, $column, $deletedColumn, $what, $listedBy]) {
+            if (!array_key_exists($field, $clean) || !isset($fields[$field]) || $field === $this->primaryKey()) {
+                continue;
+            }
+            $id = (int)$clean[$field];
+            if ($current !== null && array_key_exists($field, $current) && (int)$current[$field] === $id) {
+                continue;
+            }
+            if ($id === 0 && !($fields[$field]['required'] ?? false)) {
+                continue;
+            }
+            if ($id <= 0) {
+                $errors[$field] = "Field '$field' must be the id of a $what of yours ($listedBy lists them)";
+                continue;
+            }
+            if (!$this->ownsLiveRecord($table, $column, $deletedColumn, $id)) {
+                $errors[$field] = "$what $id is not one of yours, or it was removed ($listedBy lists them)";
+            }
+        }
+        if ($errors) {
+            throw new ValidationException('Validation failed', $errors);
+        }
+    }
+
+    /**
+     * Whether $id is a live row of this user's. Table and column names come
+     * from LINKED_RECORDS, never from the request. A failed lookup throws:
+     * "not yours" would refuse a valid id for a database failure.
+     */
+    private function ownsLiveRecord(string $table, string $column, ?string $deletedColumn, int $id): bool
+    {
+        $sql = "SELECT 1 FROM $table WHERE $column = ? AND user_id = ?"
+            . ($deletedColumn !== null ? " AND COALESCE($deletedColumn, 0) = 0" : '') . ' LIMIT 1';
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, 'ii', $id, $this->userId);
+        $this->execute($stmt, 'Ownership lookup failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Ownership lookup failed');
+        }
+        $found = $result->fetch_row() !== null;
+        $stmt->close();
+
+        return $found;
+    }
+
     // ─── Lifecycle Hooks ─────────────────────────────────────────────
 
     /**
@@ -489,6 +575,7 @@ abstract class Controller
     public function create(array $payload): array
     {
         $clean = $this->validatePayload($payload, requireRequired: true);
+        $this->assertLinksOwned($clean);
         $extras = $this->beforeCreate($clean);
 
         $columns = [];
@@ -577,6 +664,7 @@ abstract class Controller
         $currentData = (array)$current['data'];
         $this->assertIfMatchSatisfied($currentData);
         $clean = $this->validatePayload($payload);
+        $this->assertLinksOwned($clean, $currentData);
         $extras = $this->beforeUpdate($id, $clean);
 
         $sets = [];
@@ -831,7 +919,12 @@ abstract class Controller
                         $results[] = ['index' => $index, 'status' => 'created', 'data' => $created['data']];
                     } catch (\Throwable $e) {
                         $summary['error']++;
-                        $results[] = ['index' => $index, 'status' => 'error', 'message' => $e->getMessage()];
+                        $failed = ['index' => $index, 'status' => 'error', 'message' => $e->getMessage()];
+                        // "Validation failed" alone does not say which field.
+                        if ($e instanceof ValidationException && $e->getFieldErrors() !== []) {
+                            $failed['field_errors'] = $e->getFieldErrors();
+                        }
+                        $results[] = $failed;
                     }
                 }
             });

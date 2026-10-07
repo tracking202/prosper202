@@ -969,6 +969,10 @@ p202 import <entity> <file> [--dry-run] [--skip-errors] [--json]
 
 Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
+Linked ids in an import file are sent as they are, and the server accepts only ids of the key's
+own live records (422 naming the field otherwise): an export from another account or server
+imports with `p202 sync`, which maps them, not with `import`.
+
 ### Multi-server workflows
 
 ```

@@ -43,6 +43,16 @@ info:
     check runs before the handler, so `?dry_run=1` and `?staged=1` are
     refused as the write is. Denials are `403` naming the permission.
 
+    ## Linked Records
+    A Setup record links only to the caller's own live records, as the Setup
+    pages require: a campaign's `aff_network_id`, a traffic source account's
+    `ppc_network_id`, a landing page's and text ad's `aff_campaign_id` (and
+    a text ad's `landing_page_id`), and a tracker's `aff_campaign_id`,
+    `ppc_account_id`, `landing_page_id`, `text_ad_id` and `rotator_id`.
+    Another account's id, or a removed record's, is a `422` naming the field
+    in `field_errors`; `0` is "none" where the link is optional. An update
+    re-sending the value the record already holds is not checked again.
+
     ## Idempotent Creates
     Single POST creates across the operator surface (CRUD entities,
     conversions, rotators and rules, attribution models and exports, users)

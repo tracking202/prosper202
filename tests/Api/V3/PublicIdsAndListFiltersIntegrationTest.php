@@ -73,10 +73,15 @@ final class PublicIdsAndListFiltersIntegrationTest extends TestCase
         if (self::$db === null) {
             self::markTestSkipped('No test database configured (P202_TEST_DB_HOST).');
         }
-        foreach (['202_landing_pages', '202_aff_campaigns'] as $table) {
+        foreach (['202_landing_pages', '202_aff_campaigns', '202_aff_networks'] as $table) {
             self::$db->query("DELETE FROM $table WHERE user_id = " . self::USER);
         }
+        // Campaigns go in one of the caller's own categories.
+        self::assertTrue(self::$db->query('INSERT INTO 202_aff_networks SET user_id = ' . self::USER . ", aff_network_name = 'pub', aff_network_time = 0"), (string) self::$db->error);
+        $this->network = (int) self::$db->insert_id;
     }
+
+    private int $network = 0;
 
     private static function assertRandIdRand(int $id, mixed $publicId): void
     {
@@ -87,7 +92,7 @@ final class PublicIdsAndListFiltersIntegrationTest extends TestCase
     private function campaign(): int
     {
         $row = (new CampaignsController(self::$db, self::USER))->create([
-            'aff_campaign_name' => 'pub', 'aff_campaign_url' => 'https://o.example', 'aff_campaign_payout' => 1, 'aff_network_id' => 1,
+            'aff_campaign_name' => 'pub', 'aff_campaign_url' => 'https://o.example', 'aff_campaign_payout' => 1, 'aff_network_id' => $this->network,
         ])['data'];
         self::assertRandIdRand((int) $row['aff_campaign_id'], $row['aff_campaign_id_public']);
 

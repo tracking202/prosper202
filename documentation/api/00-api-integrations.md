@@ -78,6 +78,23 @@ refusal is `403` naming the permission: `This account's role does not have
 the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user role`).
 Forecast events have no Setup page and are not gated.
 
+### Linked Records
+
+A Setup record links only to the caller's own live records, as the Setup pages
+require. `aff_network_id` on a campaign, `ppc_network_id` on a traffic source
+account, `aff_campaign_id` on a landing page, `aff_campaign_id` and
+`landing_page_id` on a text ad, and every id on a tracker (`aff_campaign_id`,
+`ppc_account_id`, `landing_page_id`, `text_ad_id`, `rotator_id`) must name a
+record of the key's user that has not been removed; otherwise the write is a
+`422` whose `field_errors` names the field (`category 12 is not one of yours,
+or it was removed (GET /aff-networks lists them)`). `0` means "none" for a link
+the record may go without (a tracker's landing page, a text ad's campaign) and
+is refused for one it requires (a campaign's category, a tracker's campaign).
+An update that re-sends the value a record already holds is not checked again,
+so a record whose campaign was removed since can still be saved. In
+`bulk-upsert`, a refused row is an `error` row carrying the same `field_errors`;
+the other rows are written.
+
 ## Common Headers
 
 | Header | Direction | Description |

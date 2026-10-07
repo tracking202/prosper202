@@ -1370,6 +1370,10 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 `export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 `import` currently supports one entity at a time and strips immutable fields before create requests.
+It sends linked ids (`aff_network_id`, `aff_campaign_id`, …) as they are in the file, and the server
+takes only ids of the importing account's own live records, so a file exported from another
+account or server is refused row by row with the field named. To copy between servers use
+`p202 sync`, which maps each linked id to the target's.
 
 ## Multi-server workflows
 
