@@ -227,13 +227,44 @@ func resetAllFlags(cmd *cobra.Command) {
 	}
 }
 
-// confirmPrompt asks a yes/no question and reads the answer from stdin.
+// confirmAction asks a yes/no question and reads the answer from stdin.
 // The prompt goes to stderr so it stays visible when stdout is captured
 // (interactive shell) or piped, and never pollutes data output.
-func confirmPrompt(format string, args ...interface{}) bool {
-	fmt.Fprintf(os.Stderr, format+" [y/N] ", args...)
+//
+// A "no" (or a bare Enter) is (false, nil): the caller cancels and exits 0,
+// because the person answered. Reaching the end of stdin before any answer
+// is an error instead: nobody could answer — an agent, a script, a pipe —
+// and exiting 0 with nothing done read as success to every one of them.
+// The error names the flag that answers the question in advance.
+func confirmAction(cmd *cobra.Command, format string, args ...interface{}) (bool, error) {
+	question := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "%s [y/N] ", question)
 	var answer string
-	_, _ = fmt.Scanln(&answer)
+	// fmt.Fscanln, not a bufio.Reader: the interactive shell reads its own
+	// commands from the same stdin, and a buffered reader would swallow them.
+	if _, err := fmt.Fscanln(os.Stdin, &answer); errors.Is(err, io.EOF) {
+		fmt.Fprintln(os.Stderr)
+		return false, unansweredConfirmationError(cmd, question)
+	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes"
+	return answer == "y" || answer == "yes", nil
+}
+
+// unansweredConfirmationError is the failure confirmAction reports when stdin
+// ended before an answer: nothing was done, and the hint names how to answer
+// ahead of time on this command.
+func unansweredConfirmationError(cmd *cobra.Command, question string) error {
+	var ways []string
+	if cmd != nil && cmd.Flags().Lookup("force") != nil {
+		ways = append(ways, "re-run with --force to go ahead without the question")
+	}
+	if cmd != nil && cmd.Flags().Lookup("dry-run") != nil {
+		ways = append(ways, "--dry-run shows what it would do first")
+	}
+	hint := "Run it from a terminal to answer the question."
+	if len(ways) > 0 {
+		hint = capitalize(strings.Join(ways, "; ")) + "."
+	}
+	return validationError("%q needs a yes, and stdin ended before an answer (no terminal attached?); nothing was done", question).
+		WithHint(hint)
 }

@@ -310,9 +310,15 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		if api.StagedMode() {
 			return stageDeletes(c, spec.endpoint, ids)
 		}
-		if !force && !confirmPrompt("Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Delete %d %s%s%s?", len(ids), spec.plural, spec.cascadeMany, spec.context)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		deleted, failed := 0, 0
 		for _, id := range ids {
@@ -346,9 +352,15 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 	if api.StagedMode() {
 		return stageDeletes(c, spec.endpoint, []string{id})
 	}
-	if !force && !confirmPrompt("Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context) {
-		fmt.Fprintln(os.Stderr, "Cancelled.")
-		return nil
+	if !force {
+		ok, err := confirmAction(cmd, "Delete %s %s%s%s?", spec.noun, id, spec.cascadeOne, spec.context)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "Cancelled.")
+			return nil
+		}
 	}
 	if err := c.Delete(spec.endpoint + "/" + id); err != nil {
 		return err

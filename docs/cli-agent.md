@@ -37,7 +37,7 @@ Deliberately **not** markers: `TERM_PROGRAM`, `VSCODE_*` and `CURSOR_TRACE_ID` (
 ## Key principles
 
 1. **JSON is automatic; `--json` pins it** -- Table output is for humans, and a detected agent gets JSON without flags (see [Output](#output-agents-get-json-without-asking)). In scripts you write down, or anything that may run outside the agent, still pass `--json`: an explicit flag does not depend on the environment, and it gives you the exact API response with stable, parseable structure.
-2. **Preview deletes with `--dry-run`; perform them with `--force`** -- Every delete command takes `--dry-run`, which returns what would be removed (the record, soft/hard mode, and cascade counts) without deleting; use it before any delete you are not certain about. The actual delete needs `--force` because interactive confirmation prompts hang a non-interactive process.
+2. **Preview deletes with `--dry-run`; perform them with `--force`** -- Every delete command takes `--dry-run`, which returns what would be removed (the record, soft/hard mode, and cascade counts) without deleting; use it before any delete you are not certain about. The actual delete needs `--force`: without a terminal to answer the confirmation, the command fails (exit 1, `validation`) naming `--force` and `--dry-run`, and deletes nothing.
 3. **Never rely on table column order** -- Use JSON and parse the response fields by name.
 4. **Do not rely on interactive password prompts** -- In non-interactive runs, pass the password explicitly: `--user_pass "thepassword"`.
 5. **On failure, read the hint** -- Every error carries a category, exit code, and (almost always) a `hint` naming the next action. Follow it instead of guessing at flags. See [Error handling](#error-handling).

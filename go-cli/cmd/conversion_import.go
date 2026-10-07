@@ -1026,7 +1026,11 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 		total, without := importPayoutTotal(rows, importReady)
 		fmt.Fprintf(os.Stderr, "%d conversion(s) will be recorded: %s in payouts from the file, %d at the campaign's default payout. %s. `--dry-run --check-clicks` lists every row.\n",
 			ready, total, without, describeImportCounts(countImportStatuses(rows)))
-		if !confirmPrompt("Import %d conversion(s)?", ready) {
+		ok, err := confirmAction(cmd, "Import %d conversion(s)?", ready)
+		if err != nil {
+			return err
+		}
+		if !ok {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}

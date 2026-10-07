@@ -265,7 +265,7 @@ func runReplaceURLUndo(cmd *cobra.Command) error {
 		return nil
 	}
 	record := undoManifest{Profile: target.Profile, BaseURL: target.BaseURL, UndoOf: path}
-	return applyURLChanges(c, plan, force, record,
+	return applyURLChanges(cmd, c, plan, force, record,
 		"Rows with status failed carry the server error. Fix it and re-run the same --undo: restored slots are skipped as already restored, so only the failures are retried.")
 }
 

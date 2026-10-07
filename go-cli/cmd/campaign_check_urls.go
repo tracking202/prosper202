@@ -544,9 +544,15 @@ func newCampaignCheckURLsCmd() *cobra.Command {
 			if withHTTP {
 				hosts, urls := countURLTargets(checks)
 				fmt.Fprintf(os.Stderr, "Warning: --http sends a request to up to %d offer URL(s) on %d host(s). Affiliate networks may record each one as a click on your account.\n", urls, hosts)
-				if !force && !confirmPrompt("Send up to %d HTTP request(s)?", urls) {
-					fmt.Fprintln(os.Stderr, "Cancelled; nothing was checked. Drop --http to check hosts without sending any request.")
-					return nil
+				if !force {
+					ok, err := confirmAction(cmd, "Send up to %d HTTP request(s)?", urls)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						fmt.Fprintln(os.Stderr, "Cancelled; nothing was checked. Drop --http to check hosts without sending any request.")
+						return nil
+					}
 				}
 			}
 

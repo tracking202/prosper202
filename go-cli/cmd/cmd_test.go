@@ -4845,16 +4845,17 @@ func TestUserIdentityKeyRotateWithoutForceAsksAndCancels(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	// No answer on stdin reads as "no".
-	stdout, _, err := executeCommand("user", "identity-key", "rotate", "7")
+	answerPrompts(t, "n\n")
+	stdout, stderr, err := executeCommand("user", "identity-key", "rotate", "7")
 	if err != nil {
 		t.Fatalf("identity-key rotate error: %v", err)
 	}
 	if called {
 		t.Error("rotate reached the server without confirmation")
 	}
-	if !strings.Contains(stdout, "Cancelled.") {
-		t.Errorf("expected a cancellation, got:\n%s", stdout)
+	// stderr: stdout carries data only, and this notice used to land there.
+	if !strings.Contains(stderr, "Cancelled.") || strings.Contains(stdout, "Cancelled") {
+		t.Errorf("expected the cancellation on stderr only; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 }
 

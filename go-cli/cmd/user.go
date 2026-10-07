@@ -232,9 +232,15 @@ var userRoleRemoveCmd = &cobra.Command{
 			return stageDeletes(c, "users/"+args[0]+"/roles", []string{roleID})
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Remove role %s from user %s?", roleID, args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Remove role %s from user %s?", roleID, args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		if err := c.Delete("users/" + args[0] + "/roles/" + roleID); err != nil {
 			return err
@@ -340,9 +346,15 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			return stageDeletes(c, "users/"+args[0]+"/api-keys", []string{args[1]})
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete API key for user %s?", args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Delete API key for user %s?", args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		if err := c.Delete("users/" + args[0] + "/api-keys/" + args[1]); err != nil {
 			return err
@@ -448,8 +460,13 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			if !force {
 				// Prompt via the shared helper so the question and the outcome go
 				// to stderr; this command renders a JSON result on stdout, which
-				// the prompt text used to corrupt.
-				if !confirmPrompt("Delete old API key for user %s?", userID) {
+				// the prompt text used to corrupt. The new key exists by now, so
+				// an unanswerable question keeps the old one instead of failing
+				// a rotate that already happened; the result reports it.
+				ok, err := confirmAction(cmd, "Delete old API key for user %s?", userID)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Kept the old key: no answer could be read. Delete it with `p202 user apikey delete`, or pass --force (delete) or --keep-old (keep) next time.")
+				} else if !ok {
 					fmt.Fprintln(os.Stderr, "Skipping old key deletion.")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
@@ -569,9 +586,16 @@ var userIdentityKeyRotateCmd = &cobra.Command{
 		}
 		// A proposal changes nothing until someone applies it, so only a
 		// direct rotate asks first.
-		if !api.StagedMode() && !force && !confirmPrompt("Rotate the identity linking key for user %s? Every cust_sig signed with the current key stops linking.", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
+		if !api.StagedMode() && !force {
+			ok, err := confirmAction(cmd, "Rotate the identity linking key for user %s? Every cust_sig signed with the current key stops linking.", args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				// stderr: stdout carries data only (TestCancelledDeletesKeepStdoutClean).
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		data, err := c.Post("users/"+args[0]+"/identity-key/rotate", map[string]interface{}{})
 		if err != nil {

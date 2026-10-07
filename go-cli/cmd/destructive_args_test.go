@@ -3,6 +3,8 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -81,9 +83,25 @@ func TestBlankOrNonNumericIDsAreRejectedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+// answerPrompts feeds answer to every confirmation the test's command asks,
+// as a person at a terminal would type it. Without it stdin ends at once,
+// which is the unanswered path (TestUnansweredDeletesFailAndSendNothing).
+func answerPrompts(t *testing.T, answer string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(path, []byte(answer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	withStdin(t, f)
+}
+
 // Cancelling a delete must not print to stdout: these commands are scripted, and
-// "Cancelled." landing in a piped stdout corrupts the caller's data stream. With
-// no terminal attached the confirmation read fails, which is the cancel path.
+// "Cancelled." landing in a piped stdout corrupts the caller's data stream.
 func TestCancelledDeletesKeepStdoutClean(t *testing.T) {
 	cases := []struct {
 		name string
@@ -105,6 +123,7 @@ func TestCancelledDeletesKeepStdoutClean(t *testing.T) {
 			setTestHome(t, home)
 			srv := newRecordingServer(t)
 			writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+			answerPrompts(t, "n\n")
 
 			stdout, stderr, err := executeCommand(tc.args...)
 			if err != nil {
@@ -125,12 +144,76 @@ func TestCancelledDeletesKeepStdoutClean(t *testing.T) {
 	}
 }
 
+// With nobody to answer — an agent, a script, a closed stdin — a delete that
+// asks must fail and say how to answer in advance. It used to print
+// "Cancelled." and exit 0, which every caller read as a successful delete.
+func TestUnansweredDeletesFailAndSendNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"campaign delete", []string{"campaign", "delete", "7"}},
+		{"campaign bulk delete", []string{"campaign", "delete", "--ids", "7,8"}},
+		{"rotator rule-delete", []string{"rotator", "rule-delete", "7", "9"}},
+		{"user role remove", []string{"user", "role", "remove", "7", "2"}},
+		{"user apikey delete", []string{"user", "apikey", "delete", "7", "k"}},
+		{"goal campaign remove", []string{"goal", "campaign", "remove", "7", "9"}},
+		{"identity-key rotate", []string{"user", "identity-key", "rotate", "7"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setTestHome(t, home)
+			srv := newRecordingServer(t)
+			writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+			answerPrompts(t, "")
+
+			stdout, stderr, err := executeCommand(tc.args...)
+			if err == nil {
+				t.Fatalf("an unanswered confirmation must fail; stderr = %q", stderr)
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			if !strings.Contains(err.Error(), "nothing was done") {
+				t.Errorf("error should say nothing happened: %v", err)
+			}
+			if hint := hintFor(err); !strings.Contains(hint, "--force") {
+				t.Errorf("hint should name --force: %q", hint)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("stdout must stay empty on failure: %q", stdout)
+			}
+			for _, req := range srv.seen() {
+				if !strings.HasPrefix(req, "GET") {
+					t.Fatalf("an unanswered confirmation still sent %s", req)
+				}
+			}
+		})
+	}
+}
+
+// Deletes that preview also say so in the hint.
+func TestUnansweredDeleteHintNamesDryRun(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	srv := newRecordingServer(t)
+	writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+	answerPrompts(t, "")
+
+	_, _, err := executeCommand("campaign", "delete", "7")
+	if hint := hintFor(err); !strings.Contains(hint, "--dry-run") {
+		t.Errorf("hint should name --dry-run: %q", hint)
+	}
+}
+
 // The confirmation question itself must also stay off stdout.
 func TestConfirmationPromptDoesNotWriteToStdout(t *testing.T) {
 	home := t.TempDir()
 	setTestHome(t, home)
 	srv := newRecordingServer(t)
 	writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+	answerPrompts(t, "n\n")
 
 	stdout, stderr, err := executeCommand("rotator", "rule-delete", "7", "9")
 	if err != nil {
@@ -185,6 +268,7 @@ func TestDeleteWordingIsPreserved(t *testing.T) {
 			setTestHome(t, home)
 			srv := newRecordingServer(t)
 			writeTestConfig(t, home, srv.URL, "test-api-key-1234")
+			answerPrompts(t, "n\n")
 
 			_, stderr, err := executeCommand(tc.args...)
 			if err != nil {
