@@ -687,6 +687,8 @@ hint names the new `tracker_id`: run `tracker get-url` for it, never
 p202 click list [--limit 50] [--offset 0] [--time_from T] [--time_to T]
                 [--aff_campaign_id N] [--ppc_account_id N] [--landing_page_id N] [--all]
                 [--click_lead 0|1] [--click_bot 0|1] [--json]
+p202 click list --follow [--limit 10] [--interval 5s] [--stop-after 10m] [--ndjson]
+                # the Spy page: newest clicks, then one JSON line per new click; bound it with --stop-after
 p202 click get <id> [--json]
 p202 click conversions <id> [--json]   # every conversion on the click, counted or not and why
 p202 click update-cpc --from YYYY-MM-DD --to YYYY-MM-DD --cpc D

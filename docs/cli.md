@@ -561,6 +561,8 @@ p202 click list
 p202 click list --limit 100 --time_from 1700000000 --time_to 1700100000
 p202 click list --aff_campaign_id 5 --click_lead 1
 p202 click list --all
+p202 click list --follow                         # the Spy page: newest 10, then each new click
+p202 click list --follow --ndjson --stop-after 10m
 ```
 
 | Flag                | Default | Description                          |
@@ -576,6 +578,16 @@ p202 click list --all
 | `--click_lead`      |         | 0 = clicks only, 1 = conversions only |
 | `--click_bot`       |         | 0 = human, 1 = bot                   |
 | `--all`             | false   | Fetch all rows across pages          |
+| `--follow`          |         | Print the newest `--limit` clicks (default 10), then each new click as it arrives |
+| `--interval`        | 5s      | With `--follow`: how often to poll (at least 1s) |
+| `--stop-after`      | 0       | With `--follow`: stop after this long (`0` follows until interrupted) |
+
+`--follow` is the Spy page. It prints each click once, in time order: JSON
+output (`--json`, `--ndjson`, or chosen for an agent) is one object per line.
+Each poll re-reads the 15 seconds behind the newest click it has seen, so a
+click whose row is written a moment after a later click's still appears. A
+failed poll ends it with that error's exit code (2–4); `--all`, `--offset`,
+`--page`, `--time_from`, `--time_to` and `--csv` are refused with it.
 
 ### Get a click
 
