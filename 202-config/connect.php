@@ -431,16 +431,17 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
     //	include_once(ROOT_PATH . '/202-cronjobs/index.php'); 
 }
 
-//set token to prevent CSRF attacks. A token that is set but is not a
-//non-empty string (blanked, false, an array) is seeded again: every guard
-//(AUTH::csrf_token_matches()) refuses one, so keeping it would refuse every
-//form this session posts until sign-out. 128 bits from the CSPRNG, as
-//p202_standalone_wizard_token() mints the pre-login pages' token; the md5 of
-//uniqid() this replaced took 31 bits from the CSPRNG (random_int up to
-//mt_getrandmax()) and the rest from the clock and lcg_value().
-if (!isset($_SESSION['token']) || !is_string($_SESSION['token']) || $_SESSION['token'] === '') {
+//set token to prevent CSRF attacks. A token that is set but not usable
+//(blanked, false, an array) is seeded again: every guard
+//(AUTH::csrf_token_matches()) refuses one, by the same AUTH::csrf_token_usable(),
+//so keeping it would refuse every form this session posts until sign-out.
+//128 bits from the CSPRNG, as p202_standalone_wizard_token() mints the
+//pre-login pages' token; the md5 of uniqid() this replaced took 31 bits from
+//the CSPRNG (random_int up to mt_getrandmax()) and the rest from the clock
+//and lcg_value().
+if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
     withWritableSession(static function (): void {
-        if (!isset($_SESSION['token']) || !is_string($_SESSION['token']) || $_SESSION['token'] === '') {
+        if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
             $_SESSION['token'] = bin2hex(random_bytes(16));
         }
     });

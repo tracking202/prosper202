@@ -51,8 +51,6 @@ final class AccountPostRequiresTokenTest extends TestCase
     private const KNOWN_UNGUARDED = [
         // Validates a key the installer is about to save; writes nothing.
         '202-account/ajax/validate-apikey.php',
-        // Snoozes the update banner for this session only; writes no row.
-        '202-account/ajax/delay-alert.php',
     ];
 
     private static function root(): string

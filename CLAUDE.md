@@ -130,9 +130,29 @@ no-login-yet situation, one directory over — did not, and the repair
 RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
 open that page) is exactly when the gap was open.
 `tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
-`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number is the one
-to know: 74 files in the tree read `$_POST` and 27 check a token. That sweep
-is open; anything that adds a POST handler should be held to it.
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number was 74
+files reading `$_POST` and 27 checking a token. The sweep is closed: of the
+body readers that called no guard, one wrote — the update banner's snooze,
+posted by `fetch()`, which the jQuery prefilter that attaches the token never
+sees (a prefilter is a guard only for the transport it hooks).
+`PostReadersCheckTokenTest` now fails on any served file that reads `$_POST`
+or `$_REQUEST` and calls no guard, unless it is listed with the reason it
+needs none; the list only shrinks. It asks per file, so a second handler in a
+guarded file is the per-area tests' to hold.
+
+The guards themselves were the other half. Twenty-nine sites compared the
+token inline as `hash_equals((string) ($_SESSION['token'] ?? ''), (string)
+($_POST['token'] ?? ''))` (and Setup › Mobile Apps kept a second token of its
+own), and `hash_equals('', '')` is true: a session whose
+token was blanked let a token-less POST through, while the pages that called
+`AUTH::check_csrf_token()` refused it — #5 again, the sibling that did not
+get the fix. Every guard now goes through `AUTH::csrf_token_matches()`, which
+refuses an empty or non-string token on either side;
+`SessionTokenComparedOnlyByAuthTest` refuses a comparison of the session
+token anywhere else. Failing closed has a cost to pay in the same change: a
+session holding an unusable token would be refused on every form until
+sign-out, so `connect.php` seeds a new one whenever the token is not a
+non-empty string (`tests/live/session-token-reseed.sh`).
 
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
