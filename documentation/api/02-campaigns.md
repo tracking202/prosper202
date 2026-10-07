@@ -51,6 +51,12 @@ cleared URL disables the fallback (an outage then answers with an error
 page). A link that gets no click between the change and an outage still
 falls back to its old URL.
 
+**Changing `aff_network_id`.** The reports file each click under the
+category its campaign was in when the click was rolled up, so moving a
+campaign to another category queues every click it has for the cron job to
+roll up again; the breakdowns by category show them under the new one from
+its next run (`GET /system/dataengine` counts what is still queued).
+
 ## Example: Create Campaign
 
 ```bash

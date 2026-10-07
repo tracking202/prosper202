@@ -273,6 +273,28 @@ python3 "$FORM_BODY" "$P" ppc_account_name "pixel_type_id[]=1" "pixel_code[]=htt
 post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/restore.html" --data-binary "@$OUT/.body"
 eq "$(Q "SELECT pixel_code FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "https://pixel.example/p2.gif" "(the image pixel is back)"
 
+say "traffic sources: an account moved to another source queues its clicks for the report rollup"
+# A click's report row keeps the source it was rolled up under, and the
+# breakdowns group by it (CLAUDE.md #30): a move queues the account's clicks
+# for the cron job's re-roll; a save that keeps the source queues nothing.
+eq "$(Q "SELECT COUNT(*) FROM 202_dirty_hours WHERE ppc_account_id=$ACC")" "0" "the saves above, which kept the source, queued nothing"
+Q "INSERT INTO 202_ppc_networks (user_id, ppc_network_name, ppc_network_time) VALUES ($OWNER, 'EVAL Moved Source', UNIX_TIMESTAMP())"
+SRC2=$(Q "SELECT ppc_network_id FROM 202_ppc_networks WHERE ppc_network_name='EVAL Moved Source'")
+get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+python3 "$FORM_BODY" "$P" ppc_account_name "ppc_network_id=$SRC2" > "$OUT/.body" || bad "the account form is on the edit page"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/a-move.html" --data-binary "@$OUT/.body"
+msgs "$OUT/a-move.html"
+eq "$(Q "SELECT ppc_network_id FROM 202_ppc_accounts WHERE ppc_account_id=$ACC")" "$SRC2" "the account moved to the other source"
+eq "$(Q "SELECT CONCAT(aff_campaign_id,'|',click_time_from,'|',processed+0) FROM 202_dirty_hours WHERE ppc_account_id=$ACC AND user_id=$OWNER")" "0|0|0" \
+   "and every click it has up to now is queued for the report rollup"
+# Back under its source for the passes below.
+get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+python3 "$FORM_BODY" "$P" ppc_account_name "ppc_network_id=$SRC" > "$OUT/.body"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/a-move-back.html" --data-binary "@$OUT/.body"
+eq "$(Q "SELECT ppc_network_id FROM 202_ppc_accounts WHERE ppc_account_id=$ACC")" "$SRC" "(the account is back under its source)"
+Q "DELETE FROM 202_dirty_hours WHERE user_id=$OWNER"
+Q "DELETE FROM 202_ppc_networks WHERE ppc_network_id=$SRC2"
+
 say "traffic sources: custom variables (a token is required now)"
 ajax "$AJAX/custom_variables.php" "$OUT/v-csrf.txt" --data-urlencode "post_vars=1" --data-urlencode "ppc_network_id=$SRC" \
   --data-urlencode "vars[0][id]=false" --data-urlencode "vars[0][name]=Forged" --data-urlencode "vars[0][parameter]=f" --data-urlencode "vars[0][placeholder]={f}"
@@ -322,6 +344,22 @@ post "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$OUT/c-edit.html" --
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_name=EVAL Campaign A" \
   --data-urlencode "aff_campaign_url=https://offer.example/?sub=[[subid]]" --data-urlencode "aff_campaign_payout=15" --data-urlencode "aff_campaign_cloaking=0"
 eq "$(Q "SELECT CONCAT(aff_campaign_payout,'|',aff_campaign_cloaking) FROM 202_aff_campaigns WHERE aff_campaign_id=$CAMP")" "15.00|0" "the edit saved payout and cloaking"
+eq "$(Q "SELECT COUNT(*) FROM 202_dirty_hours WHERE aff_campaign_id=$CAMP")" "0" "an edit that keeps the category queues no report re-roll"
+Q "INSERT INTO 202_aff_networks (user_id, aff_network_name, aff_network_time) VALUES ($OWNER, 'EVAL Moved Category', UNIX_TIMESTAMP())"
+NET2=$(Q "SELECT aff_network_id FROM 202_aff_networks WHERE aff_network_name='EVAL Moved Category'")
+get "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$P"
+python3 "$FORM_BODY" "$P" aff_campaign_name "aff_network_id=$NET2" > "$OUT/.body" || bad "the campaign form is on the edit page"
+post "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$OUT/c-move.html" --data-binary "@$OUT/.body"
+msgs "$OUT/c-move.html"
+eq "$(Q "SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id=$CAMP")" "$NET2" "a campaign moved to another category is saved"
+eq "$(Q "SELECT CONCAT(ppc_account_id,'|',click_time_from,'|',processed+0) FROM 202_dirty_hours WHERE aff_campaign_id=$CAMP AND user_id=$OWNER")" "0|0|0" \
+   "and every click it has up to now is queued for the report rollup"
+get "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$P"
+python3 "$FORM_BODY" "$P" aff_campaign_name "aff_network_id=$NET" > "$OUT/.body"
+post "$SETUP/aff_campaigns.php?edit_aff_campaign_id=$CAMP" "$OUT/c-move-back.html" --data-binary "@$OUT/.body"
+eq "$(Q "SELECT aff_network_id FROM 202_aff_campaigns WHERE aff_campaign_id=$CAMP")" "$NET" "(the campaign is back in its category)"
+Q "DELETE FROM 202_dirty_hours WHERE user_id=$OWNER"
+Q "DELETE FROM 202_aff_networks WHERE aff_network_id=$NET2"
 get "$SETUP/aff_campaigns.php?copy_aff_campaign_id=$CAMP" "$P"; T=$(token_of "$P")
 has "$P" 'value="EVAL Campaign A (Copy)"' "copy prefills a named copy"
 post "$SETUP/aff_campaigns.php?copy_aff_campaign_id=$CAMP" "$OUT/c-copy.html" --data-urlencode "token=$T" --data-urlencode "aff_campaign_id=$CAMP" \

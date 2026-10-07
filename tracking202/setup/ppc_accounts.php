@@ -198,6 +198,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// Cast to int: this id is interpolated into SQL without quotes, where
 			// real_escape_string() would not prevent injection in a numeric context.
 			$the_ppc_account_id = (int)($db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id']);
+            // An account moved to another traffic source: its clicks' report
+            // rows keep the source they were rolled up under until they are
+            // rolled up again, so they are queued for the cron job
+            // (RollupRefresh). The account is saved either way; a queue that
+            // fails is logged.
+            $sourceBefore = (int) ($ppc_old_account_row['ppc_network_id'] ?? 0);
+            if ($editing == true && $ppc_account_result && $sourceBefore !== (int) $mysql['ppc_network_id']) {
+                try {
+                    $rollupConn = new \Prosper202\Database\Connection($db);
+                    $owner = (int) $mysql['user_id'];
+                    \Prosper202\DataEngine\RollupRefresh::account($rollupConn, $owner, $the_ppc_account_id, time());
+                } catch (\Throwable $e) {
+                    error_log('ppc_accounts.php: traffic source account ' . $the_ppc_account_id . ' moved source,'
+                        . ' but its clicks were not queued for the report rollup: ' . $e->getMessage());
+                }
+            }
 			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
 			// (After the insert_id capture above: markDirty's queries reset it.)

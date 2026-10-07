@@ -932,6 +932,24 @@ offset in force at its own instant (`LocalTime::secondsSql()` /
 it cannot see PHP that does the same with one offset, which is this entry's
 job.
 
+### 30. A copied value is stale from the moment its source changes
+A click's report row (202_dataengine) copies two values from Setup, not from
+the click: its account's traffic source and its campaign's category. The
+rollup's `ON DUPLICATE KEY UPDATE` refreshed fourteen of its forty-two
+columns — `ppc_network_id` and `text_ad_id` not among them — and nothing
+re-rolled a moved account's older clicks, so after an account moved to
+another source the API's breakdown (which groups by the row's copy) put six
+of seven clicks under the old source while the Overview (which looks the
+account's source up) put all seven under the new one; and rows rolled up
+before #27's joins were tied kept another account's source for good. A
+denormalized copy needs both halves: every re-derivation writes every
+column it derives (`ClickRollupSql::refreshedColumns()`, pinned by
+`ClickRollupSqlTest`), and every writer of the source queues the copies
+for re-derivation (`RollupRefresh`, from the Setup pages and the API). When
+adding a column to a derived table, or a writer to a table one is derived
+from, find the other half. Rows already stale in an install heal only when
+they are re-rolled; nothing re-rolls them by itself.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

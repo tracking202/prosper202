@@ -34,15 +34,6 @@ final class DataEngineTest extends TestCase
         );
     }
 
-    public function testSlimEngineRefreshesLandingPageOnDuplicate(): void
-    {
-        self::assertStringContainsString(
-            'updateLandingPageId: true',
-            $this->source,
-            'Postbacks must refresh landing_page_id when the click already exists'
-        );
-    }
-
     public function testEmptyClickIdReturnsEarly(): void
     {
         self::assertStringContainsString(
