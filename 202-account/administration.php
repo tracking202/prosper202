@@ -82,7 +82,17 @@ if (isset($_POST['autocron'])) {
 		p202_account_redirect('202-account/administration.php#autocron');
 	}
 
-	$cron = callAutoCron($endpoint);
+	// Registering needs this install's address, and a read of it that fails
+	// throws rather than register the server's own name
+	// (p202StoredTrackingDomain()): said here, the setting left as it was,
+	// as Personal Settings says it for the daily email.
+	try {
+		$cron = callAutoCron($endpoint);
+	} catch (Throwable $e) {
+		error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
+		p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
+		p202_account_redirect('202-account/administration.php#autocron');
+	}
 
 	if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
 		$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron'] == true ? '1' : '0');
