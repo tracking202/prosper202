@@ -28,6 +28,33 @@ final class TrackingLinkPartsTest extends TestCase
         self::assertSame('http://p202.local/', TrackingBaseUrl::build('', $server, self::root()));
     }
 
+    /**
+     * A URL handed back to the requester (a page's links, the API's): with
+     * no domain stored, the host the request came in on, port included —
+     * not the port the server listens on behind a proxy or a published
+     * container port. A URL sent to anyone else keeps build()'s fallback
+     * above.
+     */
+    public function testAnEmptyDomainAnswersTheRequesterOnTheHostItUsed(): void
+    {
+        $server = [
+            'SERVER_NAME' => 'internal', 'SERVER_PORT' => '8080', 'DOCUMENT_ROOT' => self::root(),
+            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https',
+        ];
+        self::assertSame('proxy.example:9443', TrackingBaseUrl::domainForResponse('', $server));
+        self::assertSame('https://proxy.example:9443/', TrackingBaseUrl::buildForResponse('', $server, self::root()));
+        $built = TrackingBaseUrl::build('', $server, self::root());
+        self::assertSame('https://internal:8080/', $built, 'build() is unchanged');
+
+        self::assertSame('track.example.com', TrackingBaseUrl::domainForResponse('http://track.example.com/', $server));
+        $stored = TrackingBaseUrl::buildForResponse('http://track.example.com/', $server, self::root());
+        self::assertSame('http://track.example.com/', $stored);
+
+        unset($server['HTTP_HOST']);
+        $noHost = TrackingBaseUrl::domainForResponse('', $server);
+        self::assertSame('internal:8080', $noHost, 'no Host header: the server');
+    }
+
     public function testAHostOnlyDomainGetsTheRequestsScheme(): void
     {
         $server = ['SERVER_NAME' => 'internal', 'SERVER_PORT' => '443', 'HTTPS' => 'on', 'DOCUMENT_ROOT' => self::root()];

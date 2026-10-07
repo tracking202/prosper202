@@ -16,6 +16,12 @@ use Prosper202\Click\TrackingBaseUrl;
  * GET /conversions/postback-code) can never disagree about where this
  * install is.
  *
+ * With no domain stored it is this install on the origin the request came
+ * in on, as the setup pages' getTrackingDomain() is: the answer goes back to
+ * the caller, and the server's own name and port are not an address a
+ * caller behind a proxy or a published container port can reach
+ * (TrackingBaseUrl::domainForResponse()).
+ *
  * Requires StatementHelpers in the using class.
  */
 trait TrackingBaseLookup
@@ -27,7 +33,7 @@ trait TrackingBaseLookup
      */
     protected function trackingBaseUrl(?array $server = null): string
     {
-        return TrackingBaseUrl::build($this->trackingDomain(), $server ?? $_SERVER, dirname(__DIR__, 3));
+        return TrackingBaseUrl::buildForResponse($this->trackingDomain(), $server ?? $_SERVER, dirname(__DIR__, 3));
     }
 
     /** user 1's tracking domain, which getTrackingDomain() builds every UI link on; '' when unset. */

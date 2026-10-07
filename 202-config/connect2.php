@@ -2844,19 +2844,15 @@ function p202DeclineSpeculativeRequest(): never
     die();
 }
 
+/**
+ * The tracking domain (`host[:port]`) of a URL handed back to the requester:
+ * user 1's stored one, or the host this request arrived at
+ * (TrackingBaseUrl::domainForResponse()). The functions-tracking202.php
+ * copy's twin; its callers are listed in RequestHostSourceTest.
+ */
 function getTrackingDomain(): string
 {
     global $db;
-
-    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
-    // Sanitize to prevent host header injection — allow only valid hostname characters
-    $tracking_domain = preg_replace('/[^a-zA-Z0-9.\-:]/', '', $raw_server_name);
-
-    // Add port if non-standard (not 80/443)
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
-    if ($port != 80 && $port != 443) {
-        $tracking_domain .= ':' . $port;
-    }
 
     $tracking_domain_sql = "
 		SELECT
@@ -2866,14 +2862,18 @@ function getTrackingDomain(): string
 		WHERE
 			`user_id`='1'
 	";
-    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
-        // host[:port] only: a stored full URL doubled the scheme in every
-        // link built from it (see TrackingDomain).
-        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
+    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql);
+    if (!$tracking_domain_result instanceof \mysqli_result) {
+        // Read as "none stored", every URL would name the request's host
+        // instead of the domain the account configured.
+        throw new \RuntimeException('Unable to read the tracking domain');
     }
-    return $tracking_domain;
+    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
+    $stored = is_array($tracking_domain_row) ? (string) ($tracking_domain_row['user_tracking_domain'] ?? '') : '';
+
+    // host[:port] only: a stored full URL doubled the scheme in every link
+    // built from it (see TrackingDomain).
+    return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
 }
 
 function updateLpClickDataForRotator($redirect_id, $click_id, $rotator_id, $rule_id)

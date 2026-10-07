@@ -142,10 +142,16 @@ final class TrackerUrlIntegrationTest extends TestCase
         return $id;
     }
 
-    /** @param array<string, mixed> $params */
-    private function url(int $id, array $params = []): array
+    /**
+     * @param array<string, mixed> $params
+     * @param array<string, mixed> $server what the request adds to or changes in the default server values
+     */
+    private function url(int $id, array $params = [], array $server = []): array
     {
-        $server = ['SERVER_NAME' => 'internal', 'SERVER_PORT' => '443', 'HTTPS' => 'on', 'DOCUMENT_ROOT' => dirname(__DIR__, 3)];
+        $server += [
+            'SERVER_NAME' => 'internal', 'SERVER_PORT' => '443', 'HTTPS' => 'on',
+            'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+        ];
 
         return (new TrackersController(self::$db, self::USER))->getTrackingUrl($id, $params, $server)['data'];
     }
@@ -174,6 +180,29 @@ final class TrackerUrlIntegrationTest extends TestCase
         self::setDomain('');
         $data = $this->url($this->tracker(0));
         self::assertStringStartsWith('https://internal/tracking202/redirect/dl.php?t202id=', $data['direct_url']);
+    }
+
+    /**
+     * The host the request came in on, not the server's own name and port:
+     * behind a proxy (or a published container port) internal:8080 is not an
+     * address anyone the link is given to can reach. A stored domain still
+     * wins.
+     */
+    public function testAnEmptyDomainUsesTheHostTheRequestCameIn(): void
+    {
+        self::setDomain('');
+        $id = $this->tracker(0);
+        $proxied = [
+            'SERVER_PORT' => '8080', 'HTTPS' => '',
+            'HTTP_HOST' => 'proxy.example:9443', 'HTTP_X_FORWARDED_PROTO' => 'https',
+        ];
+        self::assertStringStartsWith(
+            'https://proxy.example:9443/tracking202/redirect/dl.php?t202id=',
+            $this->url($id, [], $proxied)['direct_url']
+        );
+        self::setDomain('track.example.com');
+        $stored = $this->url($id, [], $proxied)['direct_url'];
+        self::assertStringStartsWith('https://track.example.com/tracking202/', $stored);
     }
 
     public function testAnotherAccountsLandingPageIsNotLinked(): void

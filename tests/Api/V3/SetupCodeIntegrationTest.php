@@ -140,6 +140,23 @@ final class SetupCodeIntegrationTest extends TestCase
         self::assertSame('//server.example/', $data['base_url']);
     }
 
+    /**
+     * With no domain stored, the code is on the host the request came in on:
+     * behind a proxy, or a container whose port is published elsewhere, the
+     * server's own name and port (server.example:8080) are not an address
+     * the caller can reach, and the code built on them was a dead link.
+     */
+    public function testWithNoDomainTheCodeIsOnTheHostTheRequestCameIn(): void
+    {
+        self::setTrackingDomain('');
+        $server = ['SERVER_PORT' => 8080, 'HTTP_HOST' => 'proxy.example:9443'] + self::server();
+        $data = $this->controller()->landingPageCode($this->ids['simple_mine'], [], $server, self::NOW)['data'];
+        self::assertSame('//proxy.example:9443/', $data['base_url']);
+        $postback = $this->controller()->postbackCode([], $server)['data'];
+        $url = $postback['simple']['postback_url'];
+        self::assertStringStartsWith('https://proxy.example:9443/tracking202/static/', $url);
+    }
+
     public function testAnAdvancedPageGetsTheCodeForEachOfferInOrder(): void
     {
         $id = $this->ids['advanced_mine'];

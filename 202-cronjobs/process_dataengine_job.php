@@ -41,10 +41,16 @@ try {
                 return;
             }
 
+            // The server calls itself, so the address is this install's
+            // stored one (or the server's own name), never the Host header
+            // of whatever request reached the cron: getTrackingDomain()
+            // answers that for URLs handed back to the requester, and here it
+            // would have the server fetch a host the caller chose.
+            $base = p202TrackingBaseUrl();
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;
-                $urls[] = 'http://' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
+                $urls[] = $base . '202-cronjobs/dej.php?s=' . $i . '&e=' . $nextval;
             }
 
 
