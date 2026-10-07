@@ -49,9 +49,16 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         ],
     ];
 
-    private const CUSTOMER_SORTS = [
+    /**
+     * The orders GET /ltv/customers takes (`sort`, `dir`). Public so the
+     * controller names them when it refuses another; the Go CLI's
+     * ltvCustomerSorts and sortDirections are held to these lists
+     * (TestLtvListsAreTheServers).
+     */
+    public const CUSTOMER_SORTS = [
         'total_revenue', 'order_count', 'last_activity_time', 'first_seen_time', 'mrr',
     ];
+    public const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
     /**
      * Actionable customer segments. Each is a self-contained WHERE fragment
@@ -73,6 +80,21 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
     public function __construct(private Connection $conn)
     {
+    }
+
+    /** The segments customers() filters by. @return list<string> */
+    public static function customerSegments(): array
+    {
+        return array_keys(self::CUSTOMER_SEGMENTS);
+    }
+
+    /**
+     * What breakdown() (and predict()'s `by`) groups by: the acquisition
+     * dimensions, and product. @return list<string>
+     */
+    public static function breakdowns(): array
+    {
+        return [...array_keys(self::ACQUISITION_BREAKDOWNS), 'product'];
     }
 
     public function summary(LtvQuery $query): array
@@ -125,10 +147,19 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         ?string $search = null,
         ?string $segment = null
     ): array {
+        // Refused, never replaced: an unknown sort read as total_revenue and
+        // an unknown direction as DESC, so `sort=revenue` came back ranked by
+        // revenue-the-default and read as the order asked for (CLAUDE.md #4).
+        // LtvController refuses both first, naming the parameter.
         if (!in_array($sortBy, self::CUSTOMER_SORTS, true)) {
-            $sortBy = 'total_revenue';
+            throw new RuntimeException(
+                'Invalid sort: ' . $sortBy . ' (expected ' . implode(', ', self::CUSTOMER_SORTS) . ')'
+            );
         }
-        $sortDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
+        $sortDir = strtoupper($sortDir);
+        if (!in_array($sortDir, self::SORT_DIRECTIONS, true)) {
+            throw new RuntimeException('Invalid dir: ' . $sortDir . ' (expected ASC or DESC)');
+        }
 
         [$joins, $where, $types, $binds] = $this->buildCustomerScope($query);
 

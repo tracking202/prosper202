@@ -217,6 +217,26 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         yield 'an IP range, which the redirects never matched' => $ip('203.0.113.0/24');
         yield 'an IP criterion with no address' => $ip(' , ');
         yield 'a status that is not 0 or 1' => [['status' => '1.5'], 'status'];
+        // A typo inside an entry was dropped and the rule written without
+        // it: "weigth": 40 stored the default weight of 100.
+        $url = ['redirect_url' => 'https://a.example/'];
+        $device = ['type' => 'device', 'statement' => 'is', 'value' => 'desktop'];
+        yield 'a typo inside a redirect' => [['redirects' => [$url + ['weigth' => '40']]], 'redirects.0.weigth'];
+        yield 'a typo inside a criterion' => [['criteria' => [$device + ['valeu' => 'x']]], 'criteria.0.valeu'];
+        yield 'a key of the second redirect' => [['redirects' => [$url, $url + ['url' => 'x']]], 'redirects.1.url'];
+        yield 'another rule\'s id inside a redirect' => [
+            ['redirects' => [$url + ['rule_id' => 999999]]],
+            'redirects.0.rule_id',
+        ];
+        yield 'an id no redirect of this rule has' => [['redirects' => [$url + ['id' => 999999]]], 'redirects.0.id'];
+        yield 'another rotator\'s id inside a criterion' => [
+            ['criteria' => [$device + ['rotator_id' => 999999]]],
+            'criteria.0.rotator_id',
+        ];
+        yield 'the monetizer on a redirect that is not it' => [
+            ['redirects' => [$url + ['auto_monetizer' => '1']]],
+            'redirects.0.auto_monetizer',
+        ];
     }
 
     /** @dataProvider refusedRules */
@@ -240,5 +260,95 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         self::assertSame('1', (string) self::$db->query("SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id = $id")->fetch_row()[0], 'no rule was created');
         self::assertSame($before, self::$db->query("SELECT COUNT(*) FROM 202_rotator_rules_redirects WHERE rule_id = $ruleId")->fetch_row()[0], 'the rule kept its redirects');
         self::assertSame('https://keep.example/', (string) self::$db->query("SELECT redirect_url FROM 202_rotator_rules_redirects WHERE rule_id = $ruleId")->fetch_row()[0]);
+    }
+
+    /**
+     * A rule read with GET can be sent back whole, as every resource can:
+     * its id and rotator_id, and each criterion's and redirect's id,
+     * rotator_id, rule_id and auto_monetizer, are accepted with the rule's
+     * own values and refused with any other; a create refuses them.
+     */
+    public function testARuleReadWithGetCanBeSentBackWhole(): void
+    {
+        $campaign = self::campaign(self::USER);
+        $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
+        $this->rotators()->createRule($id, [
+            'rule_name' => 'us', 'splittest' => 1,
+            'criteria' => [
+                ['type' => 'country', 'statement' => 'is', 'value' => 'United States(US)'],
+                ['type' => 'device', 'value' => 'mobile'],
+            ],
+            'redirects' => [
+                ['redirect_url' => 'https://a.example/', 'weight' => 60, 'name' => 'A'],
+                ['redirect_campaign' => $campaign, 'weight' => 40, 'name' => 'B'],
+            ],
+        ]);
+        $read = $this->rotators()->listRules($id)['data'][0];
+        $ruleId = (int) $read['id'];
+
+        $after = $this->rotators()->updateRule($id, $ruleId, $read)['data']['rules'][0];
+        $content = static fn (array $rule): array => [
+            $rule['rule_name'], $rule['splittest'], $rule['status'],
+            array_map(static fn (array $c): array => [$c['type'], $c['statement'], $c['value']], $rule['criteria']),
+            array_map(static fn (array $r): array => array_values(array_intersect_key($r, array_flip(
+                ['redirect_url', 'redirect_campaign', 'redirect_lp', 'auto_monetizer', 'weight', 'name']
+            ))), $rule['redirects']),
+        ];
+        self::assertSame($content($read), $content($after), 'the rule is as it was');
+
+        // Another value of a read-only key is refused, not ignored; so is a
+        // GET body read before the entries were rewritten (their ids moved).
+        foreach (['top-level id' => ['id' => $ruleId + 1] + $after, 'stale entry ids' => $read] as $case => $body) {
+            try {
+                $this->rotators()->updateRule($id, $ruleId, $body);
+                self::fail("$case was accepted");
+            } catch (ValidationException $e) {
+                self::assertNotSame([], $e->getFieldErrors(), $case);
+            }
+        }
+
+        // A create is the server's to number.
+        try {
+            $this->rotators()->createRule($id, $after);
+            self::fail('a GET body was accepted as a new rule');
+        } catch (ValidationException $e) {
+            self::assertSame(['id', 'rotator_id'], array_keys($e->getFieldErrors()));
+        }
+    }
+
+    /**
+     * Setup > Redirectors can make a rule redirect the auto-monetizer: no
+     * destination, auto_monetizer set. A GET body carrying it is sent back
+     * as it was, not refused for wanting a destination; naming a destination
+     * beside it is refused, since it would be two kinds at once.
+     */
+    public function testAnAutoMonetizerRedirectSurvivesTheRoundTrip(): void
+    {
+        $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
+        $rule = ['rule_name' => 'm', 'redirects' => [['redirect_url' => 'https://a.d/']]];
+        $made = $this->rotators()->createRule($id, $rule);
+        $ruleId = (int) $made['data']['rules'][0]['id'];
+        // As tracking202/ajax/rotator.php saves a monetizer redirect.
+        self::assertTrue(self::$db->query(
+            "INSERT INTO 202_rotator_rules_redirects SET rule_id = $ruleId,"
+            . " auto_monetizer = true, weight = '50', name = 'mon'"
+        ));
+
+        $read = $this->rotators()->listRules($id)['data'][0];
+        $this->rotators()->updateRule($id, $ruleId, $read);
+        $rows = self::$db->query(
+            'SELECT redirect_url, redirect_campaign, redirect_lp, auto_monetizer, weight, name'
+            . " FROM 202_rotator_rules_redirects WHERE rule_id = $ruleId ORDER BY id"
+        )->fetch_all();
+        self::assertSame([['https://a.d/', null, null, null, '100', ''], [null, null, null, '1', '50', 'mon']], $rows);
+
+        $read = $this->rotators()->listRules($id)['data'][0];
+        $read['redirects'][1]['redirect_url'] = 'https://b.example/';
+        try {
+            $this->rotators()->updateRule($id, $ruleId, $read);
+            self::fail('a redirect that was the monetizer and a URL at once was accepted');
+        } catch (ValidationException $e) {
+            self::assertSame(['redirects.1.auto_monetizer'], array_keys($e->getFieldErrors()));
+        }
     }
 }

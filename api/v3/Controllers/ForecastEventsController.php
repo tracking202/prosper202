@@ -18,8 +18,10 @@ class ForecastEventsController extends Controller
     {
         return [
             'event_name'          => ['type' => 's', 'required' => true, 'max_length' => 255],
-            'event_date'          => ['type' => 's', 'required' => true, 'max_length' => 10],
-            'end_date'            => ['type' => 's', 'nullable' => true, 'max_length' => 10],
+            // DATE columns: a real YYYY-MM-DD day (Controller::isDate()).
+            // end_date is cleared with null; "" is refused, not stored.
+            'event_date'          => ['type' => 's', 'format' => 'date', 'required' => true],
+            'end_date'            => ['type' => 's', 'format' => 'date', 'nullable' => true],
             'recurrence'          => ['type' => 's', 'max_length' => 10, 'allowed' => ['none', 'monthly', 'yearly', 'custom']],
             'impact_type'         => ['type' => 's', 'max_length' => 10, 'allowed' => ['boost', 'suppress', 'neutral']],
             'expected_impact_pct' => ['type' => 'd', 'nullable' => true, 'range' => [-999999.99, 999999.99]],

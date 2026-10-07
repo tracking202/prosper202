@@ -201,7 +201,12 @@ abstract class Controller
      *  - 'd': a finite number (a JSON number or a numeric string) within the
      *    field's 'range';
      *  - 's': a string, or a JSON integer as its digits; never a bool, a
-     *    fraction, a list or an object.
+     *    fraction, a list or an object;
+     *  - 's' with 'format' => 'date' (a DATE column): a real calendar day
+     *    written YYYY-MM-DD, years 1000-9999 (the column's range). '' is not
+     *    a date: under strict SQL mode MySQL answered it with an error (a
+     *    500), and without it stored 0000-00-00. A DATE column that can hold
+     *    NULL is cleared with null, as any nullable field is.
      *
      * @param array<array-key, mixed> $payload the request body as decoded
      * @param array<string, mixed>|null $current the record an update changes
@@ -256,28 +261,41 @@ abstract class Controller
                 continue;
             }
 
+            // A field with a range names it in every refusal, not only for
+            // a value that parsed: a 20-digit string is past PHP's int range
+            // before it is past the column's, and "must be a whole number"
+            // left the caller to guess which numbers would do.
+            $range = $def['range'] ?? null;
+            $inRange = static fn (int|float $n): bool => $range === null || ($n >= $range[0] && $n <= $range[1]);
+            $rangeText = $range === null ? '' : " from {$range[0]} to {$range[1]}";
             switch ($def['type']) {
                 case 'i':
                     $int = self::wholeNumber($value);
-                    if ($int === null) {
-                        $errors[$col] = "Field '$col' must be a whole number";
-                    } elseif (isset($def['range']) && ($int < $def['range'][0] || $int > $def['range'][1])) {
-                        $errors[$col] = "Field '$col' must be a whole number from {$def['range'][0]} to {$def['range'][1]}";
+                    if ($int === null || !$inRange($int)) {
+                        $errors[$col] = "Field '$col' must be a whole number" . $rangeText;
                     } else {
                         $clean[$col] = $int;
                     }
                     break;
                 case 'd':
-                    $number = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)) ? (float) $value : null;
-                    if ($number === null || !is_finite($number)) {
-                        $errors[$col] = "Field '$col' must be a finite number";
-                    } elseif (isset($def['range']) && ($number < $def['range'][0] || $number > $def['range'][1])) {
-                        $errors[$col] = "Field '$col' must be a number from {$def['range'][0]} to {$def['range'][1]}";
+                    $numeric = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value));
+                    $number = $numeric ? (float) $value : null;
+                    if ($number === null || !is_finite($number) || !$inRange($number)) {
+                        $errors[$col] = "Field '$col' must be "
+                            . ($range === null ? 'a finite number' : 'a number' . $rangeText);
                     } else {
                         $clean[$col] = $number;
                     }
                     break;
                 case 's':
+                    if (($def['format'] ?? null) === 'date') {
+                        if (is_string($value) && self::isDate($value)) {
+                            $clean[$col] = $value;
+                        } else {
+                            $errors[$col] = self::dateFieldError($col, $def);
+                        }
+                        break;
+                    }
                     if (!is_string($value) && !is_int($value)) {
                         $errors[$col] = "Field '$col' must be a string";
                         break;
@@ -306,6 +324,32 @@ abstract class Controller
         }
 
         return $clean;
+    }
+
+    /**
+     * A calendar day as a DATE column stores it: YYYY-MM-DD, a day that
+     * exists (2026-02-30 does not), in the years a DATE holds (1000-9999).
+     * Nothing else: no time, no other separator, no surrounding space.
+     */
+    protected static function isDate(string $value): bool
+    {
+        if (preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/D', $value, $m) !== 1) {
+            return false;
+        }
+
+        return (int) $m[1] >= 1000 && checkdate((int) $m[2], (int) $m[3], (int) $m[1]);
+    }
+
+    /**
+     * What a date field says when it refuses a value: the form it takes,
+     * and how to clear it where it can be cleared.
+     *
+     * @param array<string, mixed> $def
+     */
+    private static function dateFieldError(string $col, array $def): string
+    {
+        return "Field '$col' must be a date written YYYY-MM-DD, a day that exists (e.g. 2026-11-27)"
+            . (($def['nullable'] ?? false) ? '; send null to clear it' : '');
     }
 
     /**
@@ -521,6 +565,10 @@ abstract class Controller
                 $errors[$key] = 'Must be a whole number';
             } elseif ($type === 'd' && !is_numeric($value)) {
                 $errors[$key] = 'Must be a number';
+            } elseif (($fields[$field]['format'] ?? null) === 'date' && !self::isDate((string) $value)) {
+                // A date column compared with 'garbage' matches nothing, and
+                // the empty list read as "no events that day".
+                $errors[$key] = 'Must be a date written YYYY-MM-DD';
             }
         }
         if ($errors !== []) {

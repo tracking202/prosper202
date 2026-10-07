@@ -72,14 +72,22 @@ class LtvController
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
+            $chosen = self::choices($params, [
+                'sort' => MysqlLtvRepository::CUSTOMER_SORTS,
+                'dir' => MysqlLtvRepository::SORT_DIRECTIONS,
+                'segment' => MysqlLtvRepository::customerSegments(),
+            ]);
+            $sort = $chosen['sort'] ?? 'total_revenue';
+            $dir = $chosen['dir'] ?? 'DESC';
+            $segment = $chosen['segment'];
             $result = $this->ltv->customers(
                 $this->query($params),
-                (string) ($params['sort'] ?? 'total_revenue'),
-                (string) ($params['dir'] ?? 'DESC'),
+                $sort,
+                $dir,
                 $limit,
                 $offset,
                 isset($params['q']) ? (string) $params['q'] : null,
-                isset($params['segment']) ? (string) $params['segment'] : null
+                $segment
             );
 
             return [
@@ -120,7 +128,10 @@ class LtvController
     public function breakdown(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $by = (string) ($params['by'] ?? $params['breakdown'] ?? 'campaign');
+            // `breakdown` is the older name of `by`; whichever is sent is
+            // the one a refusal names.
+            $byKey = array_key_exists('by', $params) ? 'by' : 'breakdown';
+            $by = self::choices($params, [$byKey => MysqlLtvRepository::breakdowns()])[$byKey] ?? 'campaign';
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
@@ -139,7 +150,7 @@ class LtvController
     public function predict(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $by = isset($params['by']) && trim((string) $params['by']) !== '' ? (string) $params['by'] : null;
+            $by = self::choices($params, ['by' => MysqlLtvRepository::breakdowns()])['by'];
 
             return ['data' => $this->ltv->predict($this->query($params), $by)];
         });
@@ -1073,9 +1084,7 @@ class LtvController
         return $this->wrap(function () use ($params): array {
             $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
             $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
-            $status = isset($params['status']) && trim((string) $params['status']) !== ''
-                ? trim((string) $params['status'])
-                : null;
+            $status = self::choices($params, ['status' => MysqlSubscriptionRepository::STATUSES])['status'];
             $result = $this->subscriptions->listForUser($this->userId, $status, $limit, $offset);
 
             return [
@@ -1344,6 +1353,46 @@ class LtvController
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Query parameters that each take one of a fixed list: absent or '' is
+     * null (the caller's default), one of the list is that value, and
+     * anything else is a 422 naming the parameter and its list — every bad
+     * one at once — the way ReportsController refuses a sort. `sort`/`dir`
+     * on GET /ltv/customers used to fall back to total_revenue/DESC without
+     * a word, so a misspelled order came back 200 ranked by something else;
+     * `segment`, `by` and `status` were refused with a message but no field
+     * to fix. `dir` is read in either case, as the reports read `sort_dir`.
+     *
+     * @param array<string, mixed> $params
+     * @param array<string, list<string>> $lists parameter => its values
+     * @return array<string, ?string> parameter => the value, or null
+     */
+    private static function choices(array $params, array $lists): array
+    {
+        $chosen = [];
+        $errors = [];
+        foreach ($lists as $name => $valid) {
+            $value = $params[$name] ?? '';
+            if ($value === '') {
+                $chosen[$name] = null;
+                continue;
+            }
+            if (is_string($value) && $name === 'dir') {
+                $value = strtoupper($value);
+            }
+            if (!is_string($value) || !in_array($value, $valid, true)) {
+                $errors[$name] = 'Valid values: ' . implode(', ', $valid);
+                continue;
+            }
+            $chosen[$name] = $value;
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid ' . implode(', ', array_keys($errors)), $errors);
+        }
+
+        return $chosen;
+    }
 
     /**
      * Build the LtvQuery from request params: time window (time_from/time_to

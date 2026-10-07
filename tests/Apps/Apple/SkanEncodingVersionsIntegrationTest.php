@@ -126,6 +126,68 @@ final class SkanEncodingVersionsIntegrationTest extends TestCase
         self::assertSame(['993', '993', '993'], array_column(self::history(), 'app_id'));
     }
 
+    /**
+     * A body read with GET can be sent back whole, as every CRUD resource's
+     * can: the keys GET answers that no write sets (encoding_id, user_id,
+     * effective_at, version, etag) are accepted with the encoding's own
+     * values and refused with any other. assertRawBody() refused each of
+     * them, so the round trip that works for a campaign was a 422 here.
+     *
+     * Sent back unchanged it is still a write, retired and restarted like
+     * any other (the retire is unconditional by design: a skipped one loses
+     * a meaning without a word), so the history holds the same meaning
+     * twice, which decodes as once.
+     */
+    public function testAGetBodySentBackWholeIsAccepted(): void
+    {
+        $this->registration(3);
+        $trial = $this->goal('trial', '1.00');
+        $purchase = $this->goal('purchase', '5.00');
+        $encodings = new AppSkanEncodingsController(self::$db, 1);
+        $made = $encodings->create(
+            ['registration_id' => 3, 'fine_value' => 10, 'goal_id' => $trial, 'revenue_override' => 7.5]
+        );
+        $id = (int) $made['data']['encoding_id'];
+
+        $read = $encodings->get($id)['data'];
+        self::assertSame('7.50000', $read['revenue_override']);
+        $meaning = static fn (array $e): array => array_intersect_key($e, array_flip(
+            ['encoding_id', 'registration_id', 'fine_value', 'coarse_value', 'goal_id', 'revenue_override', 'user_id']
+        ));
+        $after = $encodings->update($id, $read)['data'];
+        self::assertSame($meaning($read), $meaning($after), 'sent back unchanged, it means what it meant');
+        self::assertCount(1, self::history());
+        $kept = self::history()[0];
+        self::assertSame(
+            [$trial, 10, '7.50000'],
+            [(int) $kept['goal_id'], (int) $kept['fine_value'], $kept['revenue_override']]
+        );
+
+        // Another value of a read-only key is refused, not ignored.
+        $read = $encodings->get($id)['data'];
+        foreach (['effective_at' => 1, 'encoding_id' => $id + 1, 'user_id' => 2] as $key => $other) {
+            try {
+                $encodings->update($id, [$key => $other] + $read);
+                self::fail("expected another $key to be refused");
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertSame([$key], array_keys($e->getFieldErrors()));
+            }
+        }
+
+        // A GET body that carries a change makes it.
+        $changed = $encodings->update($id, ['goal_id' => $purchase] + $read)['data'];
+        self::assertSame($purchase, (int) $changed['goal_id']);
+        self::assertCount(2, self::history());
+
+        // And on a create, every read-only key is the server's to set.
+        try {
+            $encodings->create(['fine_value' => 11, 'goal_id' => $trial, 'registration_id' => 3, 'encoding_id' => 99]);
+            self::fail('expected encoding_id on a create to be refused');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertStringContainsString('set by the server', $e->getFieldErrors()['encoding_id'] ?? '');
+        }
+    }
+
     public function testAnAccountWideMeaningIsKeptAsAppZero(): void
     {
         $trial = $this->goal('trial', '1.00', 'account', 0);

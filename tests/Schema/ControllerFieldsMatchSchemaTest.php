@@ -26,7 +26,10 @@ use Prosper202\Database\SchemaInstaller;
  *    integer type's, or a DECIMAL(M,D)'s ±(10^(M-D) - 10^-D)); BIGINT
  *    UNSIGNED stops at PHP_INT_MAX, which is all mysqli can bind;
  *  - a writable 's' field on a character column declares a max_length no
- *    longer than the column's (or 'allowed' values that all fit).
+ *    longer than the column's (or 'allowed' values that all fit);
+ *  - a writable field on a DATE column declares 'format' => 'date' (and no
+ *    other column carries it), and no writable field sits on a temporal
+ *    column validatePayload() has no format for.
  *
  * Read-only fields are not written by the base class, so only their columns'
  * existence is held. Installs the schema into the scratch database named by
@@ -134,6 +137,25 @@ final class ControllerFieldsMatchSchemaTest extends TestCase
                 } elseif (!self::sameRange($def['range'], $range)) {
                     $problems[] = "$name: 'range' is " . self::describe($def['range']) . ' but the column holds ' . self::describe($range);
                 }
+            }
+            // A temporal column takes a value only in its own form, and
+            // MySQL answers any other one under strict mode with an error —
+            // a 500 for "" in a DATE (PUT /forecast-events/{id} {"end_date":
+            // ""}). validatePayload() knows one such form, 'date'; a field on
+            // any other temporal type needs one taught to it first.
+            $format = $def['format'] ?? null;
+            $dataType = (string) $column['DATA_TYPE'];
+            if ($dataType === 'date' && $format !== 'date') {
+                $problems[] = "$name: a DATE column; declare 'format' => 'date' "
+                    . 'so a value that is not a day is a 422, not a 500';
+            } elseif (in_array($dataType, ['datetime', 'timestamp', 'time', 'year'], true)) {
+                $problems[] = "$name: a writable {$column['COLUMN_TYPE']} column, and validatePayload() "
+                    . 'has no format for one; add it there before declaring the field';
+            }
+            if ($format !== null && !($format === 'date' && $dataType === 'date' && $type === 's')) {
+                $problems[] = "$name: 'format' => " . var_export($format, true)
+                    . " on a '$type' field over a {$column['COLUMN_TYPE']} column; "
+                    . "only 'date' on an 's' field over a DATE column is read";
             }
             if ($type === 's' && $column['CHARACTER_MAXIMUM_LENGTH'] !== null && in_array($column['DATA_TYPE'], ['char', 'varchar'], true)) {
                 $columnMax = (int) $column['CHARACTER_MAXIMUM_LENGTH'];

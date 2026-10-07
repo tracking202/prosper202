@@ -8,6 +8,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
 use Prosper202\Rotator\IpCriterion;
@@ -142,6 +143,20 @@ class RotatorsController
 
     /** A rule's keys, on create and update alike. */
     private const RULE_FIELDS = ['rule_name', 'splittest', 'status', 'criteria', 'redirects'];
+
+    /**
+     * What GET answers for a rule, and for each of its criteria and
+     * redirects, that no write sets. As for every resource, a body read with
+     * GET can be sent back whole: on an update each is accepted only with
+     * the value the rule holds, and refused with any other; on a create,
+     * each is refused. A criterion's or redirect's `id` must be one of this
+     * rule's own (the entries are written afresh, so it names nothing else).
+     */
+    private const RULE_READ_ONLY = ['id', 'rotator_id'];
+    private const CRITERION_FIELDS = ['type', 'statement', 'value'];
+    private const CRITERION_READ_ONLY = ['id', 'rotator_id', 'rule_id'];
+    private const REDIRECT_FIELDS = ['redirect_url', 'redirect_campaign', 'redirect_lp', 'weight', 'name'];
+    private const REDIRECT_READ_ONLY = ['id', 'rule_id', 'auto_monetizer'];
 
     /**
      * @param array<string, mixed> $payload
@@ -369,12 +384,126 @@ class RotatorsController
     }
 
     /**
+     * The keys of each criterion and redirect, refused by name (field key
+     * `redirects.0.weigth`, the form ruleParts() names an entry's fields
+     * in). Only the top-level body was checked, so a typo inside an entry
+     * was dropped and the rule written without it: `"weigth": 40` stored the
+     * default weight of 100 and answered 200 (CLAUDE.md #4). Every entry's
+     * keys are checked before any entry is read, and all refusals are
+     * reported together.
+     *
+     * The read-only keys GET answers are held to the rule's own values
+     * ($current: the rule as get() answers it; null on a create, where each
+     * is refused). An entry whose shape is wrong (not a list, not an object)
+     * is left to ruleParts(), which refuses it.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed>|null $current
+     */
+    private static function refuseNestedKeys(array $payload, ?array $current): void
+    {
+        $lists = [
+            'criteria' => [self::CRITERION_FIELDS, self::CRITERION_READ_ONLY, 'a rule criterion'],
+            'redirects' => [self::REDIRECT_FIELDS, self::REDIRECT_READ_ONLY, 'a rule redirect'],
+        ];
+        $errors = [];
+        foreach ($lists as $list => [$fields, $readOnly, $what]) {
+            $entries = $payload[$list] ?? null;
+            if (!is_array($entries) || !array_is_list($entries)) {
+                continue;
+            }
+            $held = [];
+            foreach ((array) ($current[$list] ?? []) as $entry) {
+                if (is_array($entry) && isset($entry['id'])) {
+                    $held[(string) $entry['id']] = $entry;
+                }
+            }
+            foreach ($entries as $i => $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $at = "$list.$i.";
+                $writable = array_diff_key($entry, array_flip($readOnly));
+                foreach (PayloadKeys::unknown($writable, $fields, $what) as $key => $message) {
+                    $errors[$at . $key] = $message;
+                }
+                foreach ($readOnly as $key) {
+                    if (!array_key_exists($key, $entry)) {
+                        continue;
+                    }
+                    if ($current === null) {
+                        $errors[$at . $key] = 'is set by the server: omit it when creating';
+                        continue;
+                    }
+                    if (!self::holds($key, $entry, $current, $held)) {
+                        $which = $key === 'id' ? "as the id of one of this rule's $list" : 'with the value the rule holds';
+                        $errors[$at . $key] = "is read-only: send it only $which (as GET returns it), or omit it";
+                    }
+                }
+            }
+        }
+        if ($errors !== []) {
+            $message = count($errors) === 1 ? 'Unknown or read-only field' : 'Unknown or read-only fields';
+            throw new ValidationException($message, $errors);
+        }
+    }
+
+    /**
+     * Whether an entry's read-only $key holds what the rule holds: `id` one
+     * of the rule's own entries, `rotator_id`/`rule_id` the rule's, and a
+     * redirect's `auto_monetizer` what the redirect with that id holds (null
+     * for a redirect with no id: one the API writes is never the monetizer).
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $rule
+     * @param array<string, array<string, mixed>> $held the rule's entries by id
+     */
+    private static function holds(string $key, array $entry, array $rule, array $held): bool
+    {
+        $value = $entry[$key];
+        return match ($key) {
+            'id' => self::heldEntry($entry, $held) !== null,
+            'rotator_id' => PayloadKeys::same($value, $rule['rotator_id'] ?? null),
+            'rule_id' => PayloadKeys::same($value, $rule['id'] ?? null),
+            'auto_monetizer' => PayloadKeys::same($value, self::heldEntry($entry, $held)['auto_monetizer'] ?? null),
+            default => false,
+        };
+    }
+
+    /**
+     * The rule's own entry an entry names by `id`, or null.
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, array<string, mixed>> $held
+     * @return array<string, mixed>|null
+     */
+    private static function heldEntry(array $entry, array $held): ?array
+    {
+        $id = $entry['id'] ?? null;
+        if (!is_scalar($id)) {
+            return null;
+        }
+        foreach ($held as $heldId => $heldEntry) {
+            if (PayloadKeys::same($id, (string) $heldId)) {
+                return $heldEntry;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * A rule's criteria and redirects, checked whole before anything is
      * written. Each entry must be an object: an update that skipped a
      * malformed entry wrote the rest and said nothing (CLAUDE.md #4).
      *
+     * A redirect read with GET from one the Setup page made the
+     * auto-monetizer carries `auto_monetizer` (refuseNestedKeys() has held
+     * it to that redirect's own value) and no destination; sent back, it is
+     * kept as the auto-monetizer rather than refused for wanting one.
+     *
      * @param array<string, mixed> $payload
-     * @return array{criteria: ?list<array{type: string, statement: string, value: string}>, redirects: ?list<array{url: ?string, campaign: ?int, lp: ?int, weight: string, name: string}>}
+     * @return array{criteria: ?list<array{type: string, statement: string, value: string}>, redirects: ?list<array{url: ?string, campaign: ?int, lp: ?int, monetizer: ?string, weight: string, name: string}>}
      */
     private function ruleParts(array $payload): array
     {
@@ -436,7 +565,19 @@ class RotatorsController
                 if (!is_array($r)) {
                     throw new ValidationException('Each redirect must be an object', [$at => 'Expected {"redirect_url"|"redirect_campaign"|"redirect_lp", "weight", "name"}']);
                 }
-                $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.");
+                $monetizer = $r['auto_monetizer'] ?? null;
+                if ($monetizer !== null) {
+                    $destination = $this->destination($r, self::REDIRECT_KEYS, false, "$at.");
+                    if (array_filter($destination, static fn ($v): bool => $v !== null) !== []) {
+                        throw new ValidationException('A redirect is the auto-monetizer or a destination', [
+                            "$at.auto_monetizer" => 'This redirect is the auto-monetizer (set on Setup > Redirectors): '
+                                . 'send it without a destination to keep it, or without auto_monetizer to give it one',
+                        ]);
+                    }
+                    $destination['monetizer'] = (string) $monetizer;
+                } else {
+                    $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.") + ['monetizer' => null];
+                }
                 $weight = $r['weight'] ?? 100;
                 if ((!is_int($weight) && !is_string($weight)) || preg_match('/^(?:100|[1-9]?[0-9])$/D', (string)$weight) !== 1) {
                     throw new ValidationException('Invalid weight', ["$at.weight" => 'A whole number from 0 to 100']);
@@ -466,15 +607,29 @@ class RotatorsController
         $insert->close();
     }
 
-    /** @param list<array{url: ?string, campaign: ?int, lp: ?int, weight: string, name: string}> $redirects */
+    /** @param list<array{url: ?string, campaign: ?int, lp: ?int, monetizer: ?string, weight: string, name: string}> $redirects */
     private function insertRedirects(int $ruleId, array $redirects): void
     {
         if ($redirects === []) {
             return;
         }
-        $insert = $this->prepare('INSERT INTO 202_rotator_rules_redirects (rule_id, redirect_url, redirect_campaign, redirect_lp, weight, name) VALUES (?, ?, ?, ?, ?, ?)');
+        $insert = $this->prepare(
+            'INSERT INTO 202_rotator_rules_redirects'
+            . ' (rule_id, redirect_url, redirect_campaign, redirect_lp, auto_monetizer, weight, name)'
+            . ' VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
         foreach ($redirects as $r) {
-            $this->bind($insert, 'isiiss', $ruleId, $r['url'], $r['campaign'], $r['lp'], $r['weight'], $r['name']);
+            $this->bind(
+                $insert,
+                'isiisss',
+                $ruleId,
+                $r['url'],
+                $r['campaign'],
+                $r['lp'],
+                $r['monetizer'],
+                $r['weight'],
+                $r['name']
+            );
             $this->execute($insert, 'Failed to insert redirect');
         }
         $insert->close();
@@ -543,7 +698,13 @@ class RotatorsController
 
     public function createRule(int $rotatorId, array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
+        \Api\V3\Support\PayloadKeys::refuseUnknown(
+            $payload,
+            [...self::RULE_FIELDS, ...self::RULE_READ_ONLY],
+            'a redirector rule'
+        );
+        self::refuseChangedReadOnly($payload, null, self::RULE_READ_ONLY);
+        self::refuseNestedKeys($payload, null);
         $this->get($rotatorId);
 
         $ruleName = self::ruleOrRotatorName($payload, 'rule_name', true);
@@ -572,23 +733,26 @@ class RotatorsController
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
-        $this->get($rotatorId);
+        \Api\V3\Support\PayloadKeys::refuseUnknown(
+            $payload,
+            [...self::RULE_FIELDS, ...self::RULE_READ_ONLY],
+            'a redirector rule'
+        );
 
-        // get() above proved the rotator is the caller's; the rule must be its.
-        $stmt = $this->prepare('SELECT 1 FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
-        $this->bind($stmt, 'ii', $ruleId, $rotatorId);
-        $this->execute($stmt, 'Rule lookup failed');
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            throw new DatabaseException('Rule lookup failed');
+        // get() proves the rotator is the caller's and lists its rules: the
+        // rule must be one of them. It is also what the read-only keys of a
+        // GET body sent back are held to.
+        $rule = null;
+        foreach ($this->get($rotatorId)['data']['rules'] as $candidate) {
+            if ((int) $candidate['id'] === $ruleId) {
+                $rule = $candidate;
+            }
         }
-        $rule = $result->fetch_row();
-        $stmt->close();
         if ($rule === null) {
             throw new NotFoundException('Rule not found for rotator');
         }
+        self::refuseChangedReadOnly($payload, $rule, self::RULE_READ_ONLY);
+        self::refuseNestedKeys($payload, $rule);
 
         $setParts = [];
         $binds = [];

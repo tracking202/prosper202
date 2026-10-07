@@ -207,6 +207,7 @@ final class SourceScanTest extends TestCase
             'tests/Api/V3/ServerStateStoreRateLimitTest.php' => 1,
             'tests/Api/V3/StagedChangeRetentionTest.php' => 1,
             'tests/Api/V3/StagedChangesControllerTest.php' => 2,
+            'tests/Api/V3/SyncConflictTest.php' => 1,
             'tests/Apps/Android/AndroidDatabase.php' => 1,
             'tests/Apps/Android/CampaignLinkChangeFeedTest.php' => 1,
             'tests/Apps/Android/Integrity/FakeGoogle.php' => 1,

@@ -150,9 +150,12 @@ field, and nothing is written:
   number (`5.0`), or a string of digits with an optional sign (`"42"`,
   `"-3"`), within the column's range (an id column holds 0–16777215).
   `"1.5"`, `"1e3"`, `" 7"`, `true` and a 20-digit string are refused; they
-  were stored as 1, 1000, 7, 1 and 9223372036854775807.
+  were stored as 1, 1000, 7, 1 and 9223372036854775807. Every refusal names
+  the range, whatever was wrong with the value (`"Field 'lead_days' must be a
+  whole number from -2147483648 to 2147483647"`).
 - **Decimals** are a finite JSON number or numeric string within the column's
-  range (`aff_campaign_payout` holds up to 999999.99); `"1e400"` is refused.
+  range (`aff_campaign_payout` holds up to 999999.99); `"1e400"` is refused,
+  and the refusal names the range.
 - **Strings** are a JSON string (a JSON integer is taken as its digits) no
   longer than the field's limit, which is the column's own (names of
   categories, traffic sources and their accounts and campaigns hold 50
@@ -413,6 +416,24 @@ Empty response body.
 
 - Sync operations: **30 requests per minute** (per user)
 - Bulk-upsert operations: **60 requests per minute** (per user)
+
+## Server-Side State
+
+Idempotency records, staged changes, sync jobs and their audit, sync
+manifests, rate-limit buckets and metrics live in a directory on the server,
+not in the database: `P202_SERVER_STATE_DIR` when it is set, otherwise
+`p202-api-v3-state-<hash>` in the system temp directory, where the hash is of
+the database host and name, so two instances on one host keep their own. A
+process that runs without the configuration in scope uses
+`p202-api-v3-state-unscoped` and logs that it does; it used to use the
+pre-1.9.75 shared directory, which the next instance installed on the host
+then adopted as its own.
+
+**Reinstalling into a database of the same name on the same host keeps that
+directory**, and with it the previous install's state: a retried
+`Idempotency-Key` it recorded replays the old response, and its staged
+changes are listed to the new install's users. Before reinstalling that
+way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
 
 ## Resource Endpoints Overview
 

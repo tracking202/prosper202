@@ -562,7 +562,13 @@ repeats — with one exception: a goal that counts `within` `"from":
 device such a goal is always ineligible (`no_click`) and the value would
 never be set. A goal an encoding depends on (directly or through `after`)
 cannot be edited into that shape, or archived. The old fields `event_name`
-and `revenue` are refused by name. The report decodes to each goal's name.
+and `revenue` are refused by name. A body read with `GET` can be sent back
+whole with `PUT`, as for every other resource: `encoding_id`, `user_id`,
+`effective_at`, `version` and `etag` are accepted with the encoding's own
+values and refused with any other (a stale `version` is the `409` an
+`If-Match` would give), and a create refuses each of them. They used to be
+refused on every update, so the round trip was a `422` here alone. The
+report decodes to each goal's name.
 Setup › Mobile Apps still asks for an event and a revenue: it finds (or
 creates) the app's plain goal for the event and stores the revenue as the
 override; any other goal can be encoded through the API or

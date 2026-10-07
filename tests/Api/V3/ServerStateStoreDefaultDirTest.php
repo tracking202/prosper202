@@ -105,6 +105,61 @@ final class ServerStateStoreDefaultDirTest extends TestCase
         }
     }
 
+    /**
+     * A process with no database identity (a test run, a script that loads
+     * the configuration inside a function) wrote the legacy directory — the
+     * one a new instance with no directory of its own adopts. So the next
+     * instance installed on the host took that process's state as its own:
+     * measured, its users were replayed the identity-less process's
+     * idempotent create and listed its staged DELETE to apply. The fallback
+     * has its own directory now, and a new instance finds nothing there.
+     *
+     * Run in a child PHP with its own TMPDIR: sys_get_temp_dir() is fixed
+     * for a process, and this host's real temp dir may hold a legacy
+     * directory the test must not adopt or delete.
+     */
+    public function testAProcessWithNoIdentityDoesNotWriteWhatTheNextNewInstanceAdopts(): void
+    {
+        $tmp = sys_get_temp_dir() . '/p202-state-tmpdir-' . bin2hex(random_bytes(4));
+        mkdir($tmp, 0700, true);
+        $this->createdDirs[] = $tmp;
+        $autoload = dirname(__DIR__, 3) . '/vendor/autoload.php';
+        $code = 'require ' . var_export($autoload, true) . ';' . <<<'PHP'
+            use Api\V3\Support\ServerStateStore;
+            $scope = ServerStateStore::idempotencyScopeForUser(1);
+            $unscoped = new ServerStateStore();
+            $unscoped->putIdempotent($scope, 'k-1', ['data' => ['id' => 999]], 'fp');
+            $unscoped->stageWriteChange(1, ['change_id' => 'chg-1', 'method' => 'DELETE', 'path' => '/campaigns/1',
+                'status' => 'staged', 'created_at_epoch' => time()]);
+            $GLOBALS['dbhost'] = 'db.example:3306';
+            $GLOBALS['dbname'] = 'brand_new';
+            $fresh = new ServerStateStore();
+            echo json_encode([
+                'unscoped' => $unscoped->baseDir(),
+                'fresh' => $fresh->baseDir(),
+                'replay' => $fresh->lookupIdempotent($scope, 'k-1', 'fp')['state'],
+                'staged' => array_column($fresh->listStagedChangesForUser(1), 'change_id'),
+            ]);
+            PHP;
+        $env = getenv();
+        unset($env['P202_SERVER_STATE_DIR']);
+        $env['TMPDIR'] = $tmp;
+        $command = [PHP_BINARY, '-d', 'error_log=' . $tmp . '/php.log', '-r', $code];
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
+        self::assertIsResource($process);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        proc_close($process);
+        $seen = json_decode($out, true);
+        self::assertIsArray($seen, "the child answered: $out $err");
+
+        self::assertSame('miss', $seen['replay'], 'the new instance replays nothing it did not record');
+        self::assertSame([], $seen['staged'], 'and lists no staged change it was not given');
+        self::assertSame($tmp . '/p202-api-v3-state-unscoped', $seen['unscoped'], 'the fallback is not adopted');
+        self::assertDirectoryDoesNotExist($tmp . '/p202-api-v3-state', 'nothing wrote the legacy directory');
+        self::assertStringStartsWith($tmp . '/p202-api-v3-state-', $seen['fresh']);
+    }
+
     public function testExplicitEnvOverrideWins(): void
     {
         $GLOBALS['dbname'] = 'p202_state_test_env';

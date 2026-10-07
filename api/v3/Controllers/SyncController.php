@@ -6,6 +6,8 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
@@ -264,8 +266,21 @@ class SyncController
         return $this->store->listChanges($entity, $cursor, $limit, $cursorTtl, $updatedSince, $deletedSince);
     }
 
+    /** The statuses an audit record is written with: a job's terminal ones. */
+    private const AUDIT_STATUSES = ['succeeded', 'partial', 'failed', 'cancelled'];
+
     public function auditList(array $params): array
     {
+        $format = self::auditFormat($params);
+        $status = $params['status'] ?? '';
+        if ($status !== '' && (!is_string($status) || !in_array($status, self::AUDIT_STATUSES, true))) {
+            // A filter nothing can match answered an empty list that read
+            // as "no such jobs" (status=sucess, status=success).
+            throw new ValidationException(
+                'Invalid status',
+                ['status' => 'Valid values: ' . implode(', ', self::AUDIT_STATUSES)]
+            );
+        }
         $filters = [
             'actor' => $params['actor'] ?? '',
             'source' => $params['source'] ?? '',
@@ -276,7 +291,6 @@ class SyncController
         ];
 
         $records = $this->store->listAudit($filters);
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
 
         $response = ['data' => $records];
         if ($format === 'csv') {
@@ -288,12 +302,12 @@ class SyncController
 
     public function auditGet(string $jobId, array $params): array
     {
+        $format = self::auditFormat($params);
         $record = $this->store->getAudit($jobId);
         if ($record === null) {
             throw new NotFoundException('Audit record not found');
         }
 
-        $format = strtolower(trim((string)($params['format'] ?? 'json')));
         if ($format === 'csv') {
             return ['data' => $record, 'csv' => $this->toCsv([$record])];
         }
@@ -369,6 +383,7 @@ class SyncController
                 $summary = $this->summarizeJobResults($results);
                 $job['results'] = $results;
                 $job['error'] = null;
+                $job['conflict'] = null;
                 $job['next_run_at'] = null;
                 // Re-read the persisted flag: a cancel may have landed while
                 // execute() was running and our in-memory copy is stale.
@@ -409,13 +424,21 @@ class SyncController
             $job = $this->store->getJob($jobId) ?? $job;
             $attempts = (int)($job['attempts'] ?? 1);
             $maxAttempts = max(1, (int)($job['max_attempts'] ?? 3));
-            $job['error'] = $e->getMessage();
+            // Named, not "Internal server error": a remote refusal's own
+            // getMessage() is that sentence (RemoteApiException).
+            $job['error'] = $e instanceof RemoteApiException ? $e->describe() : $e->getMessage();
             $job['results'] = null;
+            // A write the target refused with a 409 is not retried by the
+            // job: the retry re-reads the target and force-writes over the
+            // change the 409 protected (CLAUDE.md #13). The record is named
+            // so the caller can look before re-running.
+            $conflict = $e instanceof SyncRecordException ? $e->conflict : null;
+            $job['conflict'] = $conflict;
 
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
                 $this->store->incrementMetric('jobs_cancelled', 1);
-            } elseif ($attempts < $maxAttempts) {
+            } elseif ($conflict === null && $attempts < $maxAttempts) {
                 $job['status'] = 'queued';
                 $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
                 $job['next_run_at'] = time() + $backoff;
@@ -428,7 +451,12 @@ class SyncController
             }
 
             $this->store->saveJob($job);
-            $this->store->appendJobEvent($jobId, 'error', 'Job execution error', ['error' => $e->getMessage()]);
+            $this->store->appendJobEvent(
+                $jobId,
+                'error',
+                'Job execution error',
+                ['error' => $job['error']] + ($conflict !== null ? ['conflict' => $conflict] : [])
+            );
         } finally {
             $releaseLock();
         }
@@ -555,6 +583,7 @@ class SyncController
             'skipped' => 0,
             'failed' => 0,
             'pruned' => 0,
+            'conflicted' => 0,
         ];
 
         foreach ($perEntity as $entityResult) {
@@ -565,6 +594,7 @@ class SyncController
             $summary['skipped'] += (int)($entityResult['skipped'] ?? 0);
             $summary['failed'] += (int)($entityResult['failed'] ?? 0);
             $summary['pruned'] += (int)($entityResult['pruned'] ?? 0);
+            $summary['conflicted'] += (int)($entityResult['conflicted'] ?? 0);
         }
 
         return $summary;
@@ -586,6 +616,27 @@ class SyncController
             $copy['results'] = $this->store->sanitize($copy['results']);
         }
         return $copy;
+    }
+
+    /**
+     * json (the default) or csv, in either case. Anything else used to be
+     * answered as json, so format=xml or a typo read as "the format asked
+     * for" to a caller that then parsed the wrong thing.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function auditFormat(array $params): string
+    {
+        $format = $params['format'] ?? '';
+        if ($format === '') {
+            return 'json';
+        }
+        $format = is_string($format) ? strtolower($format) : '';
+        if ($format !== 'json' && $format !== 'csv') {
+            throw new ValidationException('Invalid format', ['format' => 'Valid values: json, csv']);
+        }
+
+        return $format;
     }
 
     /** @param array<int, array<string, mixed>> $records */

@@ -2768,8 +2768,16 @@ paths:
       summary: Update a rule
       description: >-
         Replaces the fields it sends among rule_name, splittest, status,
-        criteria and redirects (any other field is a 422). PATCH is accepted
-        as the same operation.
+        criteria and redirects (any other field is a 422, and so is any key
+        inside a criterion or redirect the endpoint does not take, named
+        like `redirects.0.weigth`). A rule read with GET can be sent back
+        whole: its id and rotator_id, and each entry's id, rotator_id,
+        rule_id and auto_monetizer, are accepted with the rule's own values
+        and refused with any other (an entry id must be one of this rule's;
+        the entries are written afresh, so a body read before an earlier
+        update names ids that are gone). A create refuses them. A redirect
+        that carries the auto_monetizer it holds, and no destination, stays
+        the auto-monetizer. PATCH is accepted as the same operation.
       operationId: updateRotatorRule
       requestBody:
         required: true
@@ -4748,7 +4756,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: An encoding for this conversion value already exists for this registration
+          description: An encoding for this conversion value already exists for this registration, or the body's version (or an If-Match) is not the encoding's current one
           content:
             application/json:
               schema:
@@ -6482,11 +6490,12 @@ paths:
                 event_date:
                   type: string
                   format: date
-                  description: Start date, YYYY-MM-DD
+                  description: 'Start date, YYYY-MM-DD, a day that exists (years 1000-9999). Anything else, "" included, is a 422.'
                 end_date:
                   type: string
                   format: date
                   nullable: true
+                  description: 'End date, YYYY-MM-DD, as event_date. null clears it; "" is a 422 (it reached the database and answered 500 before).'
                 recurrence:
                   type: string
                   enum:
@@ -6667,11 +6676,12 @@ paths:
                 event_date:
                   type: string
                   format: date
-                  description: Start date, YYYY-MM-DD
+                  description: 'Start date, YYYY-MM-DD, a day that exists (years 1000-9999). Anything else, "" included, is a 422.'
                 end_date:
                   type: string
                   format: date
                   nullable: true
+                  description: 'End date, YYYY-MM-DD, as event_date. null clears it; "" is a 422 (it reached the database and answered 500 before).'
                 recurrence:
                   type: string
                   enum:
@@ -6829,7 +6839,13 @@ paths:
         schema:
           type: string
           default: total_revenue
-        description: Column to sort by
+          enum:
+          - total_revenue
+          - order_count
+          - last_activity_time
+          - first_seen_time
+          - mrr
+        description: Column to sort by. Any other value is a 422 naming `sort` and these values (it used to be read as total_revenue).
       - name: dir
         in: query
         schema:
@@ -6838,6 +6854,7 @@ paths:
           enum:
           - ASC
           - DESC
+        description: Either case. Any other value is a 422 (it used to be read as DESC).
       - name: q
         in: query
         schema:
@@ -6847,7 +6864,11 @@ paths:
         in: query
         schema:
           type: string
-        description: Only this segment
+          enum:
+          - repeat
+          - subscribers
+          - at_risk
+        description: Only this segment; any other value is a 422 naming `segment`
       responses:
         '200':
           description: Customers
@@ -7390,7 +7411,12 @@ paths:
         schema:
           type: string
           default: campaign
-        description: Grouping (alias `breakdown`)
+          enum:
+          - campaign
+          - ppc_account
+          - landing_page
+          - product
+        description: Grouping (alias `breakdown`); any other value is a 422 naming the parameter sent
       - $ref: '#/components/parameters/limit'
       - $ref: '#/components/parameters/offset'
       responses:
@@ -7490,7 +7516,12 @@ paths:
         in: query
         schema:
           type: string
-        description: Optional grouping
+          enum:
+          - campaign
+          - ppc_account
+          - landing_page
+          - product
+        description: Optional grouping; any other value is a 422 naming `by`
       responses:
         '200':
           description: Predicted value, optionally per group
@@ -7834,7 +7865,13 @@ paths:
         in: query
         schema:
           type: string
-        description: Only this status
+          enum:
+          - trialing
+          - active
+          - past_due
+          - paused
+          - canceled
+        description: Only this status; any other value is a 422 naming `status`
       responses:
         '200':
           description: Subscriptions
@@ -8754,7 +8791,15 @@ paths:
       tags:
       - Sync
       summary: Get a sync job
-      description: Admin only, with the `sync:read` scope.
+      description: >-
+        Admin only, with the `sync:read` scope. `error` names the record a
+        run without skip_errors stopped at and why (a remote refusal by the
+        status and message the other instance answered). A write the target
+        refused with 409 is a conflict: it is listed under each entity's
+        `conflicts` (entity, key, operation, target_id, reason, `written:
+        false`) and counted in `conflicted`, and a job it stops fails at once
+        with the record in `conflict` - it is never retried by itself, since
+        a retry would force the source over the change the 409 protected.
       operationId: syncGetJob
       parameters:
       - name: id
@@ -9081,6 +9126,12 @@ paths:
         in: query
         schema:
           type: string
+          enum:
+          - succeeded
+          - partial
+          - failed
+          - cancelled
+        description: The job's terminal status; any other value is a 422 (it used to answer an empty list)
       - name: from_epoch
         in: query
         schema:
@@ -9960,7 +10011,8 @@ components:
         a field that cannot hold NULL, a whole number that is not one (`"1.5"`,
         `"1e3"`, 20 digits) or is outside the column's range, a non-finite or
         out-of-range decimal, and a string longer than its column are each a
-        422. A `null` clears a field that can hold NULL.
+        422; a refused number's message names the field's range. A `null`
+        clears a field that can hold NULL.
       content:
         application/json:
           schema:
@@ -12895,8 +12947,26 @@ components:
         `coarse_value` clears it, and must arrive together with the
         replacement value of the other kind so the encoding still maps
         exactly one value. `revenue_override: null` goes back to the goal's
-        own value; `goal_id` cannot be null.
+        own value; `goal_id` cannot be null. A body read with GET can be
+        sent back whole: `encoding_id`, `user_id`, `effective_at`, `version`
+        and `etag` are accepted with the encoding's own values and refused
+        with any other (a stale `version` is a 409).
       properties:
+        encoding_id:
+          type: integer
+          description: Read-only; only the encoding's own id.
+        user_id:
+          type: integer
+          description: Read-only; only the encoding's own owner.
+        effective_at:
+          type: integer
+          description: Read-only; only the value GET answered.
+        version:
+          type: string
+          description: Read-only; the version GET answered, or 409 Version mismatch.
+        etag:
+          type: string
+          description: Read-only; as version.
         registration_id:
           type: integer
         fine_value:
