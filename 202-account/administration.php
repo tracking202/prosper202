@@ -22,6 +22,12 @@ AUTH::require_user();
  * it before writing and says so when it refuses. The AutoCron and MaxMind
  * switches were AJAX posts from the classic shell's scripts; they are plain
  * forms now, posting the same fields (`autocron` 1/0, `maxmind` true/false).
+ *
+ * Click-data retention (the automatic deletion days and the one-off deletion
+ * marker) is the install's, kept on user 1's preferences because that is the
+ * only row the cron job reads; any admin's save lands there, as through
+ * /api/v3/system/retention. AutoCron and ISP lookup stay on the signed-in
+ * user's row, which is the one the redirects read for that user's trackers.
  */
 
 if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
@@ -155,7 +161,9 @@ if (isset($_POST['database_management'])) {
 			if (isset($clickid_row['click_id'])) {
 				$mysql['user_delete_data_clickid'] = $db->real_escape_string((string) $clickid_row['click_id']);
 
-				$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+				// On user 1's row: the cron job reads the marker there only
+				// (ClearOldClicks()); on another admin's row it deleted nothing.
+				$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '1'";
 				if ($db->query($sql)) {
 					if ($slack)
 						$slack->push('click_data_deleted', ['user' => $username, 'date' => $postedDate]);
@@ -180,7 +188,9 @@ if (isset($_POST['auto_database_management'])) {
 		$fieldErrors['auto_database_management'] = 'Enter a whole number of days, or 0 to keep all click data.';
 	} else {
 		$mysql['auto_database_management'] = $db->real_escape_string((string) (int) $postedDays);
-		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+		// User 1's row, where AutoOptimizeDatabase() reads it (as
+		// PUT /api/v3/system/retention writes it).
+		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '1'";
 		if ($db->query($sql)) {
 			p202_account_flash('ok', (int) $postedDays === 0
 				? 'Automatic deletion is off; click data is kept.'
@@ -232,12 +242,12 @@ if (!is_array($pref_row)) {
 	$pref_row = [];
 }
 
-/** When the pending deletion marker points, as a date; null when none is set. */
+/** When the pending deletion marker points, as a date; null when none is set. The marker is user 1's, which the cron job reads. */
 function p202_admin_erase_date(): ?string
 {
-	global $db, $mysql;
+	global $db;
 
-	$sql = "SELECT click_time FROM `202_clicks` WHERE click_id <= (SELECT user_delete_data_clickid FROM `202_users_pref` WHERE user_id='" . $mysql['user_own_id'] . "') ORDER BY click_id DESC LIMIT 1";
+	$sql = "SELECT click_time FROM `202_clicks` WHERE click_id <= (SELECT user_delete_data_clickid FROM `202_users_pref` WHERE user_id='1') ORDER BY click_id DESC LIMIT 1";
 
 	$result = $db->query($sql);
 	$row = $result ? $result->fetch_array(MYSQLI_ASSOC) : null;
@@ -303,7 +313,7 @@ function CronJobLastExecution($datetime, $full = false)
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $self = get_absolute_url() . '202-account/administration.php';
 $eraseDate = p202_admin_erase_date();
-$autoDays = (string) ($_POST['auto_database_management'] ?? ($pref_row['user_auto_database_optimization_days'] ?? '0'));
+$autoDays = (string) ($_POST['auto_database_management'] ?? ($user_row['user_auto_database_optimization_days'] ?? '0'));
 $autoCronOn = !empty($pref_row['auto_cron']);
 $maxmindOn = !empty($pref_row['maxmind_isp']);
 $geoDirShown = getenv('P202_GEO_DIR') ?: getTrackingDomain() . get_absolute_url() . '202-config/geo/';
