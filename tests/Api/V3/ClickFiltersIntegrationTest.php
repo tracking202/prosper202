@@ -109,8 +109,11 @@ final class ClickFiltersIntegrationTest extends TestCase
         $ipB = self::q("INSERT INTO 202_ips SET ip_address = '198.51.100.8'");
         $refNews = self::q("INSERT INTO 202_site_urls SET site_domain_id = 0, site_url_address = 'https://news.example/story'");
         $refSearch = self::q("INSERT INTO 202_site_urls SET site_domain_id = 0, site_url_address = 'https://search.example/?q=x'");
-        $mobileType = (int) self::$db->query("SELECT type_id FROM 202_device_types WHERE type_name = 'Mobile' LIMIT 1")->fetch_row()[0];
-        self::assertGreaterThan(0, $mobileType, 'the schema seeds device types');
+        // The installer's DataSeeder writes these; SchemaInstaller alone does not.
+        self::q('INSERT IGNORE INTO 202_device_types (type_id, type_name)'
+            . " VALUES (1, 'Desktop'), (2, 'Mobile'), (3, 'Tablet'), (4, 'Bot')");
+        $mobileType = (int) (self::$db->query("SELECT type_id FROM 202_device_types WHERE type_name = 'Mobile' LIMIT 1")->fetch_row()[0] ?? 0);
+        self::assertGreaterThan(0, $mobileType, 'the Mobile device type is there');
         $phone = self::q("INSERT INTO 202_device_models SET device_name = 'cf-phone', device_type = $mobileType");
         self::$ids = compact('netA', 'netB', 'campA', 'campB', 'source', 'account', 'phone') + ['mobileType' => $mobileType];
 
