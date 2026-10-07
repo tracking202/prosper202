@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 $slack = false;
 
@@ -126,6 +127,26 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$refuse();
 				}
 			}
+		}
+	}
+
+	// Saving the set removes every saved rule it leaves out (the DELETE
+	// below), and the page offers a rule's remove button only to a role
+	// with remove_rotator_rule (setup/rotator.php): a save that would remove
+	// one needs that permission too, checked before anything is written.
+	if (!$userObj->hasPermission('remove_rotator_rule')) {
+		$keptRules = [];
+		foreach ($_POST['data'] as $rule) {
+			if ((string) ($rule['rule_id'] ?? '') !== 'none') {
+				$keptRules[] = (int) $rule['rule_id'];
+			}
+		}
+		$removedSql = 'SELECT 1 FROM 202_rotator_rules WHERE rotator_id = ?'
+			. ($keptRules === [] ? '' : ' AND id NOT IN (' . implode(', ', array_fill(0, count($keptRules), '?')) . ')')
+			. ' LIMIT 1';
+		if (p202_rotator_row_exists($db, $removedSql, array_merge([(int) $rotator_id], $keptRules))) {
+			http_response_code(403);
+			die("This account's role does not have the 'remove_rotator_rule' permission.");
 		}
 	}
 

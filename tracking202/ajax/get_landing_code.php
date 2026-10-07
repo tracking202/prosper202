@@ -4,6 +4,7 @@ include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 /*
  * The code for a simple landing page: Setup › Get LP Code (and the Dynamic

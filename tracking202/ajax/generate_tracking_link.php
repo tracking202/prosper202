@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 // validate session token before any state change
 if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {

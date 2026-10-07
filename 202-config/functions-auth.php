@@ -299,6 +299,25 @@ class AUTH
         }
     }
 
+    /**
+     * Refuse the request unless the signed-in user's role has every one of
+     * $permissions: 403 naming the first one missing. For the endpoints a
+     * page posts to: the page gates its form (access_to_setup_section, a
+     * remove_* button), and an endpoint that asks for nothing answers any
+     * signed-in role that posts to it directly (CLAUDE.md #5).
+     * SetupAjaxRequiresPermissionTest holds the Setup pages' endpoints to it.
+     */
+    public static function require_permissions(string ...$permissions): void
+    {
+        global $userObj;
+        foreach ($permissions as $permission) {
+            if (!$userObj instanceof \User || !$userObj->hasPermission($permission)) {
+                http_response_code(403);
+                die("This account's role does not have the '" . htmlspecialchars($permission, ENT_QUOTES, 'UTF-8') . "' permission.");
+            }
+        }
+    }
+
     public static function require_valid_api_key()
     {
         $candidateIds = array_unique(array_filter([

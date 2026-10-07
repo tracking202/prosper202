@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);

@@ -3,6 +3,9 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+// The variables dialog opens only for a role with remove_traffic_source
+// (ppc_accounts.php renders its button inside that check).
+AUTH::require_permissions('access_to_setup_section', 'remove_traffic_source');
 
 /*
  * A traffic source's custom variables: saved and cleared from the variables
