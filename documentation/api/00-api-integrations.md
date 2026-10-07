@@ -69,13 +69,17 @@ limit that user — a scope can narrow a key further, never past its role:
 | `POST`/`PUT` on `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules), and their `bulk-upsert` | `access_to_setup_section` | every Setup page |
 | `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
 | The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
+| The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
+| A traffic source's custom variables, reads included: `/ppc-networks/{id}/variables` | `remove_traffic_source` and `access_to_setup_section` | Traffic Sources' variables dialog, shown only to a role with both |
 | Attribution reports and models | `view_attribution_reports`, `manage_attribution_models` | Attribution |
 
 The check runs before the handler, so a `?dry_run=1` preview and a
 `?staged=1` proposal are refused exactly as the write is, and a staged change
-is applied with the applier's permissions. Reads are not gated by role. A
-refusal is `403` naming the permission: `This account's role does not have
-the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user role`).
+is applied with the applier's permissions. Reads are not gated by role,
+except the Setup code, pixels and variables above, which only the Setup pages
+show. A refusal is `403` naming the permission: `This account's role does not
+have the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user
+role`).
 Forecast events have no Setup page and are not gated.
 
 ### Linked Records
@@ -339,6 +343,7 @@ Empty response body.
 | Clicks | Read-only (list + detail) | [Clicks](09-clicks.md) |
 | Conversions | List, get, create, delete | [Conversions](10-conversions.md) |
 | Update | Past clicks' CPC, mark/delete/reset subids, revenue report upload (with `?dry_run=1`) | [Update](26-update.md) |
+| Setup | Landing-page code, conversion pixels and postback URLs, a traffic source's custom variables, an account's pixels | [Setup](27-setup.md) |
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |

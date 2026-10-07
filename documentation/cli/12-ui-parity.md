@@ -22,16 +22,16 @@ record links only to the caller's own records
 | Page | API | CLI | |
 | ---- | --- | --- | - |
 | Traffic Sources: sources and accounts | `/ppc-networks`, `/ppc-accounts` | `p202 ppc-network …`, `p202 ppc-account …` | ✅ |
-| Traffic Sources: an account's pixels, a source's custom variables | — | — | ✗ the variables are read into tracking links (`tracker get-url`) but cannot be edited |
+| Traffic Sources: an account's pixels, a source's custom variables | `/ppc-accounts/{id}/pixels`, `/ppc-networks/{id}/variables` ([Setup API](../api/27-setup.md)) | `p202 ppc-account pixel list\|create\|update\|delete`, `p202 ppc-network variable list\|create\|update\|delete` | ✅ |
 | Categories | `/aff-networks` | `p202 aff-network …` | ◐ DNI networks (a hosted service) are not offered |
 | Campaigns | `/campaigns` (+ `attribution_model_id`, `app_registration_id`) | `p202 campaign …`, `campaign clone`, `campaign check-urls`, `campaign replace-url` | ✅ |
 | Landing Pages | `/landing-pages` | `p202 landing-page …` | ✅ |
 | Text Ads | `/text-ads` | `p202 text-ad …` | ✅ |
 | Redirector: redirectors, rules, criteria | `/rotators`, `/rotators/{id}/rules` | `p202 rotator …`, `rotator rule-create/update/delete`, `rotator criteria-values`, `rotator test`, `rotator trace` | ◐ criteria values that come from a hosted list for some types |
 | Mobile Apps (incl. goals, SKAN encodings, integrity) | `/apps/…`, `/goals/…` | `p202 app …`, `p202 goal …` | ✅ |
-| Get LP Code | — | — | ✗ |
+| Get LP Code | `GET /landing-pages/{id}/code` (`?offers=campaign:12,rotator:3` for an advanced page) | `p202 landing-page code <id>` (`--offer`) | ✅ |
 | Get Links | `POST /trackers`, `GET /trackers/{id}/url` (`t202kw`, `c1`–`c4`, `utm_*`, the source's custom variables) | `p202 tracker create`, `tracker create-with-url`, `tracker get-url`, `tracker bulk-urls` | ✅ |
-| Postback/Pixel | — | `p202 conversion postback-url` | ◐ the postback URL only; not the pixel snippets |
+| Postback/Pixel | `GET /conversions/postback-code` | `p202 conversion postback-url`, `p202 conversion pixel` (`--type simple\|advanced\|universal`, `--iframe`) | ✅ |
 
 ## Overview
 

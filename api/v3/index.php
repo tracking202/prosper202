@@ -327,6 +327,51 @@ try {
             return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams);
         });
 
+        // ── Setup: its code, a traffic source's variables, an account's pixels
+        // Get LP Code, Postback / Pixel, and Traffic Sources' custom
+        // variables and account pixels: what those pages hand out and edit,
+        // built by the classes the pages build theirs with
+        // (Prosper202\Setup\LandingPageCode, PostbackCode) and held to the
+        // pages' rules. Every route asks for access_to_setup_section
+        // ($setupSection, above), reads included: these pages are the only
+        // place the code, the variables and the pixels are shown. The
+        // variables dialog opens only for a role with remove_traffic_source
+        // as well (ppc_accounts.php renders its button, and the variables it
+        // edits, inside that check), so the variables routes ask for both,
+        // the narrower first, as the deletes above do. Registered before the
+        // /conversions routes, whose GET /conversions/{id} would otherwise
+        // answer GET /conversions/postback-code. SetupRoutesPermissionTest
+        // holds all of this.
+        //
+        // A path id is digits the int cast leaves unchanged: (int) '1e3' is
+        // 1000, and '12abc' would act on 12.
+        $setupId = static function (array $ctx, string $key = 'id'): int {
+            $n = \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
+            if ($n === 0) {
+                throw new \Api\V3\Exception\NotFoundException('Not found: ' . json_encode((string) $ctx[$key]) . ' is not an id');
+            }
+            return $n;
+        };
+        $router->group('', function (Router $r) use ($crud, $queryParams, $setupId) {
+            $code = \Api\V3\Controllers\SetupCodeController::class;
+            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode($setupId($ctx), $queryParams));
+            $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
+        }, [$setupSection]);
+        $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+            $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
+            $r->get('', fn($ctx) => $crud($vars)->list($setupId($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . $setupId($ctx) . '/variables', $payload, fn() => $crud($vars)->create($setupId($ctx), $payload)));
+            $r->put('/{variableId}', fn($ctx) => $crud($vars)->update($setupId($ctx), $setupId($ctx, 'variableId'), $payload));
+            $r->delete('/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'variableId'))));
+        }, [$setupRemove['ppc-networks'], $setupSection]);
+        $router->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+            $pixels = \Api\V3\Controllers\PpcAccountPixelsController::class;
+            $r->get('', fn($ctx) => $crud($pixels)->list($setupId($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . $setupId($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create($setupId($ctx), $payload)));
+            $r->put('/{pixelId}', fn($ctx) => $crud($pixels)->update($setupId($ctx), $setupId($ctx, 'pixelId'), $payload));
+            $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'pixelId'))));
+        }, [$setupSection]);
+
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
         $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
@@ -917,6 +962,7 @@ try {
                 'ppc_accounts'  => '/ppc-accounts',
                 'trackers'      => '/trackers',
                 'landing_pages' => '/landing-pages',
+                'setup'         => '/landing-pages/{id}/code, /conversions/postback-code, /ppc-networks/{id}/variables, /ppc-accounts/{id}/pixels',
                 'text_ads'      => '/text-ads',
                 'forecast_events' => '/forecast-events',
                 'clicks'        => '/clicks',
@@ -955,6 +1001,19 @@ try {
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
+        // The Setup variables and pixels deletes ask for their groups'
+        // permissions (remove_traffic_source and access_to_setup_section;
+        // access_to_setup_section) in middleware, which runs from the main
+        // match before this router is consulted; their handlers check
+        // nothing more.
+        $previewRouter->delete('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworkVariablesController::class)->deletePreview(
+            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
+            \Api\V3\Controllers\GoalsController::pathId($ctx['variableId'])
+        ));
+        $previewRouter->delete('/ppc-accounts/{id}/pixels/{pixelId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountPixelsController::class)->deletePreview(
+            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
+            \Api\V3\Controllers\GoalsController::pathId($ctx['pixelId'])
+        ));
         // The real DELETE checks manage_attribution_models inside its handler
         // (the group middleware only asks for view_attribution_reports), so
         // the preview repeats it, as the users previews repeat requireAdmin.
@@ -1034,6 +1093,20 @@ try {
     $stageableRouter->group('/conversions', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->delete('/{id}', $stageable);
+    });
+    // A traffic source's variables and an account's pixels are Setup records
+    // like the CRUD entities they hang off: stageable, and applied through
+    // the real route, whose permission middleware (access_to_setup_section,
+    // and remove_traffic_source for the variables) runs against the applier.
+    $stageableRouter->group('/ppc-networks/{id}/variables', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{variableId}', $stageable);
+        $r->delete('/{variableId}', $stageable);
+    });
+    $stageableRouter->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($stageable) {
+        $r->post('', $stageable);
+        $r->put('/{pixelId}', $stageable);
+        $r->delete('/{pixelId}', $stageable);
     });
     $stageableRouter->group('/rotators', function (Router $r) use ($stageable) {
         $r->post('', $stageable);

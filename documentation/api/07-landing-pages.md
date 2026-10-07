@@ -11,6 +11,7 @@ Manage landing pages used between the traffic source and the destination.
 | `POST` | `/landing-pages` | Create a landing page |
 | `PUT` | `/landing-pages/{id}` | Update a landing page |
 | `DELETE` | `/landing-pages/{id}` | Delete a landing page |
+| `GET` | `/landing-pages/{id}/code` | The page's tracking code, as Setup › Get LP Code hands it out ([Setup API](27-setup.md)) |
 
 ## Fields
 
@@ -28,6 +29,11 @@ redirects carry (`lpip=`): a random digit, the page id, a random digit, as the
 setup page makes it. Landing pages created through this API before it set one
 had none, so no code could track them; reading them through the API gives each
 one its id.
+
+`landing_page_type` is 0 for a simple page (one campaign) and 1 for an
+advanced one (several offers); `GET /landing-pages/{id}/code` makes the code
+for either (an advanced page's with `?offers=campaign:<id>,rotator:<id>`),
+described in the [Setup API](27-setup.md).
 
 ## Example
 

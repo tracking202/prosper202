@@ -479,6 +479,25 @@ returns one per campaign without a request per campaign.
 |----------------------|----------|--------------|
 | `--ppc_network_name` | Yes      | Network name |
 
+A traffic source's custom variables — the extra `parameter=placeholder` pairs
+its tracking links carry, edited in Setup › Traffic Sources › variables:
+
+```bash
+p202 ppc-network variable list 3
+p202 ppc-network variable create 3 --name 'Ad id' --parameter adid --placeholder '{ad_id}'
+p202 ppc-network variable update 3 7 --placeholder '{{ad.id}}'
+p202 ppc-network variable delete 3 7 --dry-run      # then --force
+```
+
+`tracker get-url` writes the live ones into every link of the source's
+accounts; a parameter that is a built-in token (c1-c4, utm_*, t202kw, t202ref,
+t202b) sets that token's default instead. Every field is required and not
+blank; spaces, `&`, `#`, `?`, an `=` in the parameter, and the parameter
+`t202id` are refused (they would break every link). A removed variable is
+retired: clicks already recorded keep its values. Needs a role with
+`remove_traffic_source` and `access_to_setup_section` (Super user or Admin):
+the page shows its variables dialog only to such a role.
+
 ### PPC account (`p202 ppc-account`)
 
 | Flag | Required | Description |
@@ -486,6 +505,24 @@ returns one per campaign without a request per campaign.
 | `--ppc_account_name` | Yes | Account name |
 | `--ppc_network_id` | Yes | PPC network ID |
 | `--ppc_account_default` | No | Set as default account (0/1) |
+
+The pixels an account fires when one of its clicks converts (Setup › Traffic
+Sources › the account's Advanced):
+
+```bash
+p202 ppc-account pixel list 4
+p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?click=[[subid]]&payout=[[payout]]'
+p202 ppc-account pixel create 4 --type-id 1 --code 'https://ads.example/px.gif?c=[[subid]]'
+p202 ppc-account pixel update 4 9 --correction-url 'https://network.example/fix?tx=[[transactionid]]'
+p202 ppc-account pixel update 4 9 --correction-url ''    # removes it
+p202 ppc-account pixel delete 4 9 --force
+```
+
+`--type-id`: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server),
+5 Raw (markup as given), 6 Bot202 Facebook Pixel Assistant. For every type but
+Raw, `--code` is the pixel's URL (several separated by spaces); a Postback's
+must be http(s). `--correction-url` goes on a Postback only, one URL per code
+URL in the same order. A removed pixel goes with its correction URL.
 
 ### Tracker (`p202 tracker`)
 
@@ -536,7 +573,23 @@ not combinable with `--page`/`--limit`/`--offset`).
 | `--aff_campaign_id` | Yes | Campaign ID |
 | `--landing_page_nickname` | Yes | Landing page nickname |
 | `--leave_behind_page_url` | No | Leave-behind page URL (on update, `""` clears it) |
-| `--landing_page_type` | No | Landing page type |
+| `--landing_page_type` | No | Landing page type: 0 simple (one campaign), 1 advanced (several offers) |
+
+The page's tracking code, as Setup › Get LP Code hands it out:
+
+```bash
+p202 landing-page code 12                                      # a simple page
+p202 landing-page code 14 --offer campaign:3 --offer rotator:2  # an advanced page's offers, in order
+p202 landing-page code 12 --json                               # every snippet as data
+```
+
+It prints the loader script for the page (above `</body>` of only the page
+visitors arrive on), then the way out: for a simple page the outbound link
+(`go.php?lpip=`), a PHP redirect page and a JavaScript redirect page; for an
+advanced page each offer's outbound link (`go.php?acip=` / `go.php?rpi=`) and
+PHP redirect. The links are scheme-relative (`//host/...`), as the page writes
+them. An advanced page needs at least one `--offer`; the public id the code
+carries (`lpip=`) is accepted too.
 
 ### Text ad (`p202 text-ad`)
 
@@ -811,6 +864,22 @@ p202 conversion delete --ids 789,790,791 --force
 ```
 
 `--ids` performs bulk delete in one CLI command and returns non-zero when any ID fails.
+
+### Get the postback URL and the conversion pixel
+
+```bash
+p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'   # stdout: the URL alone
+p202 conversion postback-url --campaign 12 --subid '#s2#'              # the advanced postback (cid)
+p202 conversion pixel                                                 # the image pixel for the thank-you page
+p202 conversion pixel --type universal [--iframe]                     # the smart pixel
+p202 conversion pixel --json                                          # every pixel and postback the page shows
+```
+
+What Setup › Postback / Pixel shows, on this install's tracking domain.
+`--subid` is your network's sub id macro and `--amount` a number or its
+payout macro (empty pays the campaign's payout), written in as given;
+`--campaign` fills the advanced pixel's `cid`; `--scheme http|https` overrides
+the protocol. Stdout is the URL or pixel alone, the guidance on stderr.
 
 ### Update subids and upload revenue reports
 

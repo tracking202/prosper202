@@ -62,8 +62,11 @@ class LandingPagesController extends Controller
      * there, the setup page's way (rand-id-rand, a leading digit that fits
      * INT UNSIGNED), before answering: one indexed UPDATE, a no-op once
      * every page has one. Rows that have an id are never touched.
+     *
+     * Public for the landing-page code (SetupCodeController), which reads
+     * the public id it writes into every snippet.
      */
-    private function repairMissingPublicIds(): void
+    public function repairMissingPublicIds(): void
     {
         $stmt = $this->prepare(
             'UPDATE 202_landing_pages

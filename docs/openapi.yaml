@@ -137,6 +137,8 @@ tags:
     description: Click data (read-only)
   - name: Conversions
     description: Conversion tracking
+  - name: Setup
+    description: The UI's Setup section's code and per-source settings — a landing page's tracking code (Get LP Code), the conversion pixels and postback URLs (Postback / Pixel), a traffic source's custom variables and an account's pixels (Traffic Sources). Role permission `access_to_setup_section` on every route, and `remove_traffic_source` as well on a traffic source's variables (Setup > Traffic Sources shows its variables dialog only to a role with it)
   - name: Update
     description: The UI's Update section — set past clicks' CPC, mark subids converted, delete subids, reset a campaign's subids, upload a revenue report. Role permission `access_to_update_section` (and `delete_individual_subids` to delete subids); every write has a `?dry_run=1` preview
   - name: Reports
@@ -8863,6 +8865,398 @@ paths:
         '422':
           $ref: '#/components/responses/ValidationError'
 
+  # ─── Setup ──────────────────────────────────────────────────────────
+  # The UI's Setup section's code and per-source settings. Every route asks
+  # for the role permission `access_to_setup_section` (as every Setup page
+  # does) and the path's scope area; the variables routes ask for
+  # `remove_traffic_source` first (as the Traffic Sources page does before
+  # it shows the variables dialog).
+
+  /landing-pages/{id}/code:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Setup]
+      summary: Get a landing page's tracking code
+      description: |
+        What Setup > Get LP Code hands out for the landing page, built by the
+        class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
+        byte for byte: the loader script for the page itself, and the ways out
+        to the offer. The snippets start from `base_url`, the tracker link's base
+        (user 1's tracking domain, or this server's name and port when none is
+        set, plus the install directory) written scheme-relative (`//host/...`)
+        as the page writes it, so they work on an http or an https landing page.
+
+        A simple page (`landing_page_type` 0) links out to its own campaign:
+        `outbound_link` (go.php?lpip=), `outbound_php` (a PHP redirect page) and
+        `outbound_javascript` (a JavaScript redirect page). Its campaign must be
+        live; `offers` is refused.
+
+        An advanced page (`landing_page_type` 1) links out to the offers named
+        in `offers`, in order: each gets `outbound_link` (go.php?acip= for a
+        campaign, go.php?rpi= for a redirector) and `outbound_php` (off.php or
+        offrtr.php). Without `offers` the request is refused with the page's
+        sentence ("Please select an affiliate campaign or rotator"); an offer
+        that is not the caller's, or was removed, is refused by position.
+
+        The landing page must be the caller's and not removed (404 otherwise).
+        A landing page or campaign without a public id is given one first, as
+        a read of the landing page through the API does. Any other query
+        parameter is refused with 422.
+      operationId: getLandingPageCode
+      parameters:
+        - name: offers
+          in: query
+          required: false
+          description: >-
+            An advanced page's offers, comma separated, in the order they
+            appear on the page: `campaign:<aff_campaign_id>` or
+            `rotator:<rotator id>`, at most 100. No spaces.
+          schema:
+            type: string
+            pattern: "^(campaign|rotator):[1-9][0-9]{0,9}(,(campaign|rotator):[1-9][0-9]{0,9})*$"
+            example: "campaign:12,rotator:3"
+      responses:
+        "200":
+          description: The landing page's code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LandingPageCode"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/postback-code:
+    get:
+      tags: [Setup]
+      summary: Get the conversion pixels and postback URLs
+      description: |
+        What Setup > Postback / Pixel shows, for the values given (all empty
+        by default, as the page renders them), built by the class the page
+        uses (`Prosper202\Setup\PostbackCode`); the page's script writes the
+        same strings, which a test holds equal. The base is the tracker
+        link's (`base_url` ends in `tracking202/static/`).
+
+        - `simple`: the image pixel (gpx.php) and the server-to-server
+          postback URL (gpb.php), each with `amount` and `subid`;
+        - `advanced`: the same with `cid` (`campaign_id`), the campaign a
+          conversion is recorded under when a visitor clicked several;
+        - `universal`: the smart pixel (upx.php), which also fires the
+          account's traffic-source pixels, as a JavaScript tag (with a
+          `<noscript>` fallback) and as an iframe.
+
+        `amount` and `subid` are written in as given — a number or the
+        network's macro such as `{payout}`, `{aff_sub}`, `#s2#` or `[=SID=]` —
+        so what would break a URL, an HTML attribute or a JavaScript string is
+        refused: whitespace, quotes, `<`, `>`, `\`, `&` and control characters.
+        `campaign_id` must be one of the caller's live campaigns in a live
+        category (the page's list). Any other query parameter is refused.
+      operationId: getPostbackCode
+      parameters:
+        - name: amount
+          in: query
+          required: false
+          description: A number, or the network's payout macro. Empty pays the campaign's payout.
+          schema:
+            type: string
+            maxLength: 255
+            example: "{payout}"
+        - name: subid
+          in: query
+          required: false
+          description: The network's sub id macro. Empty leaves `subid=` for you to fill.
+          schema:
+            type: string
+            maxLength: 255
+            example: "{aff_sub}"
+        - name: campaign_id
+          in: query
+          required: false
+          description: The advanced pixel's `cid`.
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]{0,9}$"
+        - name: scheme
+          in: query
+          required: false
+          description: The URLs' scheme; by default the one the tracking domain is reached on.
+          schema:
+            type: string
+            enum: [http, https]
+      responses:
+        "200":
+          description: The pixels and postback URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PostbackCode"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /ppc-networks/{id}/variables:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Setup]
+      summary: List a traffic source's custom variables
+      description: |
+        The live custom variables of the traffic source (the PPC network):
+        the extra `parameter=placeholder` pairs its tracking links carry
+        (`GET /trackers/{id}/url` writes them after `t202id`). A variable whose
+        parameter is a built-in token (c1-c4, utm_*, t202ref, t202b, t202kw)
+        sets that token's default instead. The traffic source must be the
+        caller's and not removed.
+
+        Every variables route needs the role permissions
+        `remove_traffic_source` and `access_to_setup_section` (Super user and
+        Admin have both): Setup > Traffic Sources shows the variables dialog,
+        and the variables it edits, only to a role with both. A role without
+        them is answered `403` naming `remove_traffic_source` first.
+      operationId: listPpcNetworkVariables
+      responses:
+        "200":
+          description: The variables, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PpcNetworkVariable"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Setup]
+      summary: Add a custom variable to a traffic source
+      description: |
+        Every field is required and not blank, as the Setup dialog requires.
+        Beyond the dialog, what would break every link of the source is
+        refused, because the link builder writes the parameter and the
+        placeholder into the link as given: more than 255 characters, spaces,
+        `&`, `#`, `?` or control characters, an `=` in the parameter, and the
+        parameter `t202id` (the link's own id). Unknown fields are refused.
+        Takes an `Idempotency-Key`; stageable with `?staged=1`.
+      operationId: createPpcNetworkVariable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcNetworkVariableWrite"
+      responses:
+        "201":
+          description: Variable created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PpcNetworkVariable"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /ppc-networks/{id}/variables/{variableId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: variableId
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      tags: [Setup]
+      summary: Change a traffic source's custom variable
+      description: >-
+        Changes the fields it sends (at least one), held to the create's
+        rules. The variable must be a live one of this traffic source. PATCH
+        is accepted as the same operation; stageable with `?staged=1`.
+      operationId: updatePpcNetworkVariable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcNetworkVariableWrite"
+      responses:
+        "200":
+          description: Variable updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PpcNetworkVariable"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Setup]
+      summary: Remove a traffic source's custom variable
+      description: >-
+        Retires the variable (soft delete), as the Setup dialog retires a row
+        it no longer lists: new links stop carrying it, and clicks already
+        recorded with it keep their values. Stageable with `?staged=1`.
+      operationId: deletePpcNetworkVariable
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Variable removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /ppc-accounts/{id}/pixels:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+    get:
+      tags: [Setup]
+      summary: List a traffic source account's pixels
+      description: |
+        The pixels the account fires when one of its clicks converts, with
+        their type's name and, for a Postback pixel, its correction URL. The
+        account must be the caller's, not removed, and filed under one of the
+        caller's traffic sources.
+      operationId: listPpcAccountPixels
+      responses:
+        "200":
+          description: The pixels, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PpcAccountPixel"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Setup]
+      summary: Add a pixel to a traffic source account
+      description: |
+        As the account form saves one: a type and a code are required (the
+        code is trimmed). The type must be one of `202_pixel_types` (1 Image,
+        2 Iframe, 3 Javascript, 4 Postback — server to server, 5 Raw,
+        6 Bot202 Facebook Pixel Assistant). For every type except Raw the code
+        is the URL from the pixel's src, several separated by spaces; a
+        Postback's must be http(s), the only URLs the postback sender calls.
+        `correction_url` goes on a Postback pixel only, one URL per code URL in
+        the same order (the form's check). Unknown fields are refused. Takes
+        an `Idempotency-Key`; stageable with `?staged=1`.
+      operationId: createPpcAccountPixel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcAccountPixelWrite"
+      responses:
+        "201":
+          description: Pixel created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PpcAccountPixel"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /ppc-accounts/{id}/pixels/{pixelId}:
+    parameters:
+      - $ref: "#/components/parameters/resourceId"
+      - name: pixelId
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      tags: [Setup]
+      summary: Change a traffic source account's pixel
+      description: >-
+        Changes the fields it sends (at least one); the pixel that results is
+        held to the create's rules. A pixel that stops being a Postback keeps
+        no correction URL; `correction_url: ""` removes one. PATCH is accepted
+        as the same operation; stageable with `?staged=1`.
+      operationId: updatePpcAccountPixel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PpcAccountPixelWrite"
+      responses:
+        "200":
+          description: Pixel updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PpcAccountPixel"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/dryRun"
+      tags: [Setup]
+      summary: Remove a pixel from a traffic source account
+      description: >-
+        Hard delete, with the pixel's correction URL, as the account form
+        erases a pixel it no longer lists. Stageable with `?staged=1`.
+      operationId: deletePpcAccountPixel
+      responses:
+        "200":
+          description: Dry-run preview (`dry_run=1`) — the delete was not performed.
+        "204":
+          description: Pixel removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     BearerAuth:
@@ -9209,6 +9603,190 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    # ── Setup ──────────────────────────────────────────────────────────
+
+    LandingPageCode:
+      type: object
+      properties:
+        landing_page_id:
+          type: integer
+        landing_page_id_public:
+          type: integer
+          description: The id the code carries (lpip=)
+        landing_page_type:
+          type: string
+          enum: [simple, advanced]
+        landing_page_nickname:
+          type: string
+        landing_page_url:
+          type: string
+        base_url:
+          type: string
+          description: Where every snippet starts, scheme-relative
+          example: "//track.example.com/"
+        loader:
+          type: string
+          description: The script to put right above </body> of only the page visitors first arrive on
+        aff_campaign_id:
+          type: integer
+          description: Simple page only — the campaign it links out to
+        outbound_link:
+          type: string
+          description: Simple page only — Option 1, the outbound link (go.php?lpip=)
+          example: "//track.example.com/tracking202/redirect/go.php?lpip=6122"
+        outbound_php:
+          type: string
+          description: Simple page only — Option 2, a PHP redirect page (lp.php?lpip=, or the tracking202outbound cookie)
+        outbound_javascript:
+          type: string
+          description: Simple page only — Option 3, a JavaScript redirect page
+        offers:
+          type: array
+          description: Advanced page only — one per offer asked for, in order
+          items:
+            type: object
+            properties:
+              position:
+                type: integer
+              type:
+                type: string
+                enum: [campaign, rotator]
+              id:
+                type: integer
+              public_id:
+                type: integer
+              name:
+                type: string
+              outbound_link:
+                type: string
+                example: "//track.example.com/tracking202/redirect/go.php?acip=3121"
+              outbound_php:
+                type: string
+                description: A PHP redirect page to off.php (campaign) or offrtr.php (redirector)
+        segments:
+          type: object
+          description: The elements the loader fills on the page (Dynamic Content Segments), name => what it shows
+          additionalProperties:
+            type: string
+
+    PostbackCode:
+      type: object
+      properties:
+        scheme:
+          type: string
+          enum: [http, https]
+        base_url:
+          type: string
+          example: "https://track.example.com/tracking202/static/"
+        amount:
+          type: string
+        subid:
+          type: string
+        campaign_id:
+          type: integer
+          nullable: true
+        simple:
+          type: object
+          properties:
+            pixel:
+              type: string
+              example: '<img height="1" width="1" border="0" style="display: none;" src="https://track.example.com/tracking202/static/gpx.php?amount=&subid={aff_sub}" />'
+            postback_url:
+              type: string
+              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&subid={aff_sub}"
+        advanced:
+          type: object
+          properties:
+            pixel:
+              type: string
+            postback_url:
+              type: string
+              example: "https://track.example.com/tracking202/static/gpb.php?amount={payout}&cid=12&subid={aff_sub}"
+        universal:
+          type: object
+          properties:
+            javascript:
+              type: string
+              description: The JavaScript smart pixel, with a <noscript> iframe fallback
+            iframe:
+              type: string
+
+    PpcNetworkVariable:
+      type: object
+      properties:
+        ppc_variable_id:
+          type: integer
+        ppc_network_id:
+          type: integer
+        name:
+          type: string
+          description: Shown in reports
+        parameter:
+          type: string
+          description: The link's parameter
+          example: adid
+        placeholder:
+          type: string
+          description: What the traffic source fills in
+          example: "{ad_id}"
+
+    PpcNetworkVariableWrite:
+      type: object
+      description: All three on create; any of them on update.
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        parameter:
+          type: string
+          maxLength: 255
+          description: No whitespace, &, #, ?, = or control characters; not t202id
+        placeholder:
+          type: string
+          maxLength: 255
+          description: No whitespace, &, #, ? or control characters
+      required: [name, parameter, placeholder]
+
+    PpcAccountPixel:
+      type: object
+      properties:
+        pixel_id:
+          type: integer
+        ppc_account_id:
+          type: integer
+        pixel_type_id:
+          type: integer
+          enum: [1, 2, 3, 4, 5, 6]
+        pixel_type:
+          type: string
+          nullable: true
+          example: Postback
+        pixel_code:
+          type: string
+          example: "https://network.example/pb?click=[[subid]]&payout=[[payout]]"
+        correction_url:
+          type: string
+          description: Postback pixels only; empty when there is none
+
+    PpcAccountPixelWrite:
+      type: object
+      description: pixel_type_id and pixel_code on create; any field on update.
+      properties:
+        pixel_type_id:
+          description: 1 Image, 2 Iframe, 3 Javascript, 4 Postback (server to server), 5 Raw, 6 Bot202 Facebook Pixel Assistant
+          oneOf:
+            - type: integer
+            - type: string
+              pattern: "^[1-9][0-9]{0,2}$"
+        pixel_code:
+          type: string
+          maxLength: 65535
+        correction_url:
+          type: string
+          maxLength: 2048
+          description: Postback pixels only; "" removes it
+      required: [pixel_type_id, pixel_code]
+
     # ── Common ─────────────────────────────────────────────────────────
 
     Error:
