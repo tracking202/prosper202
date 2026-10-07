@@ -9625,7 +9625,9 @@ components:
       description: >-
         A named window. The calendar ones (today, yesterday, thismonth,
         lastmonth, thisyear, lastyear) start at a midnight in the account's
-        timezone; lastN is the last N×24 hours to now; alltime has no bound.
+        timezone; lastN is today so far and the N whole days before it, from
+        that day's midnight (the report pages' Last N Days); alltime has no
+        bound.
         Sent with time_from/time_to, both bounds apply. Anything else is a 422.
       schema:
         type: string

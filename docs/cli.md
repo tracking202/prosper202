@@ -921,7 +921,7 @@ All report commands (`report summary|breakdown|timeseries|daypart|weekpart|cross
 
 | Flag                | Description              |
 |---------------------|--------------------------|
-| `-p, --period`      | Preset: today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime. Calendar presets start at the account's midnight (its timezone); lastN is N×24 hours to now |
+| `-p, --period`      | Preset: today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime. Calendar presets start at the account's midnight (its timezone); lastN is today and the N whole days before it, from that day's midnight |
 | `--time_from`       | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset (`2026-10-01T09:30:00Z`) |
 | `--time_to`         | End, inclusive: the same forms (a date runs through its last second) |
 | `--aff_campaign_id` | Filter by campaign       |

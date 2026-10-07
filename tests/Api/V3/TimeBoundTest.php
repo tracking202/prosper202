@@ -98,10 +98,11 @@ final class TimeBoundTest extends TestCase
         yield 'today starts at the account\'s midnight' => ['today', '2026-10-06 00:00:00', '2026-10-06 23:25:00'];
         yield 'yesterday is the account\'s whole day before'
             => ['yesterday', '2026-10-05 00:00:00', '2026-10-05 23:59:59'];
-        yield 'last7 is 7 days to the second' => ['last7', '2026-09-29 23:25:00', '2026-10-06 23:25:00'];
-        yield 'last14' => ['last14', '2026-09-22 23:25:00', '2026-10-06 23:25:00'];
-        yield 'last30' => ['last30', '2026-09-06 23:25:00', '2026-10-06 23:25:00'];
-        yield 'last90' => ['last90', '2026-07-08 23:25:00', '2026-10-06 23:25:00'];
+        yield 'last7 is today and the 7 whole days before, as the pages count it'
+            => ['last7', '2026-09-29 00:00:00', '2026-10-06 23:25:00'];
+        yield 'last14' => ['last14', '2026-09-22 00:00:00', '2026-10-06 23:25:00'];
+        yield 'last30' => ['last30', '2026-09-06 00:00:00', '2026-10-06 23:25:00'];
+        yield 'last90' => ['last90', '2026-07-08 00:00:00', '2026-10-06 23:25:00'];
         yield 'thismonth runs from the 1st to now' => ['thismonth', '2026-10-01 00:00:00', '2026-10-06 23:25:00'];
         yield 'lastmonth is the whole previous month' => ['lastmonth', '2026-09-01 00:00:00', '2026-09-30 23:59:59'];
         yield 'thisyear runs from January 1 to now' => ['thisyear', '2026-01-01 00:00:00', '2026-10-06 23:25:00'];
@@ -162,15 +163,20 @@ final class TimeBoundTest extends TestCase
         self::assertSame('2026-02-01 00:00:00 / 2026-02-28 23:59:59', $wall($from) . ' / ' . $wall($to));
     }
 
-    public function testARollingPeriodNeverAsksForTheTimezone(): void
+    public function testOnlyAlltimeNeverAsksForTheTimezone(): void
     {
         $tz = static function (): string {
             throw new \LogicException('asked');
         };
-        foreach (['last7', 'last14', 'last30', 'last90', 'alltime'] as $period) {
-            TimeBound::period($period, $tz, self::NOW);
+        self::assertSame([null, null], TimeBound::period('alltime', $tz, self::NOW));
+        foreach (['last7', 'last14', 'last30', 'last90'] as $period) {
+            try {
+                TimeBound::period($period, $tz, self::NOW);
+                self::fail("$period did not ask for the zone its days are counted in");
+            } catch (\LogicException) {
+                $this->addToAssertionCount(1);
+            }
         }
-        $this->addToAssertionCount(1);
     }
 
     public function testAnUnknownPeriodNamesTheValidOnes(): void

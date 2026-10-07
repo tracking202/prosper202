@@ -221,9 +221,16 @@ final class ReportFilterTest extends TestCase
     public function testAPeriodIsTheSharedOneAndAlltimeHasNoBound(): void
     {
         self::assertSame([[], [], ''], self::applied(['period' => 'alltime']));
-        [$where, $binds] = self::applied(['period' => 'last14']);
+        [$where, $binds] = self::applied(['period' => 'last14'], 'America/New_York');
         self::assertSame(['de.click_time >= ?', 'de.click_time <= ?'], $where);
-        self::assertSame(14 * 86400, $binds[1] - $binds[0]);
+        // The pages' last 14 days: from midnight 14 days ago in the account's
+        // zone to now, not 14 times 24 hours back from now.
+        $ny = new \DateTimeZone('America/New_York');
+        self::assertSame(
+            (new \DateTimeImmutable('@' . $binds[1]))->setTimezone($ny)->setTime(0, 0, 0)->modify('-14 days')->getTimestamp(),
+            $binds[0]
+        );
+        self::assertEqualsWithDelta(time(), $binds[1], 5, 'to now');
         foreach (['last7d', '0', 'Today'] as $bad) {
             try {
                 self::applied(['period' => $bad]);
@@ -244,10 +251,12 @@ final class ReportFilterTest extends TestCase
         };
         $where = $binds = [];
         $types = '';
-        ReportFilter::apply(['period' => 'last30', 'aff_campaign_id' => '1'], $tz, $where, $binds, $types);
-        self::assertSame(0, $reads, 'a rolling period needs no timezone');
+        ReportFilter::apply(['period' => 'alltime', 'aff_campaign_id' => '1'], $tz, $where, $binds, $types);
+        self::assertSame(0, $reads, 'all time has no bound to place in a day');
+        ReportFilter::apply(['period' => 'last30'], $tz, $where, $binds, $types);
+        self::assertSame(1, $reads, 'last 30 days starts at a midnight of the account\'s zone');
         ReportFilter::apply(['time_from' => '2026-10-01', 'period' => 'thismonth'], $tz, $where, $binds, $types);
-        self::assertSame(1, $reads, 'a date bound and a calendar period share one read');
+        self::assertSame(2, $reads, 'a date bound and a calendar period share one read');
     }
 
     public function testUnknownParametersAndListsAreRefusedByName(): void

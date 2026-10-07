@@ -36,14 +36,18 @@ final class TimeBound
 
     /**
      * The named periods, in the range picker's order (last90 is the API's
-     * own addition). lastN is the N days up to now, to the second.
+     * own addition). lastN is the pages' "last N days": today so far and the
+     * N whole days before it, from midnight N days ago in the account's zone
+     * (Tracking202\Report\ReportWindow), not N times 24 hours to the
+     * second, which the API used to count -- so `--period last7` and the
+     * page's Last 7 Days differed by up to a day of clicks.
      */
     public const PERIODS = [
         'today', 'yesterday', 'last7', 'last14', 'last30', 'last90',
         'thismonth', 'lastmonth', 'thisyear', 'lastyear', 'alltime',
     ];
 
-    /** lastN periods: whole days back from now. */
+    /** lastN periods: the whole days before today, today included after them. */
     private const ROLLING_DAYS = ['last7' => 7, 'last14' => 14, 'last30' => 30, 'last90' => 90];
 
     private function __construct()
@@ -55,7 +59,7 @@ final class TimeBound
      * neither). A value that is not one of PERIODS is a 422 naming it — a
      * typo like last7d must never fall through to all time.
      *
-     * @param callable(): string $timezone the account's timezone; asked only for a calendar period
+     * @param callable(): string $timezone the account's timezone; asked for every period but alltime
      * @param ?int $now the clock, for tests; time() when null
      * @param list<string> $allowed the periods this caller accepts (default all of PERIODS)
      * @return array{0: ?int, 1: ?int}
@@ -70,9 +74,6 @@ final class TimeBound
             throw new ValidationException('Invalid period', ['period' => 'Valid: ' . implode(', ', $allowed)]);
         }
         $now ??= time();
-        if (isset(self::ROLLING_DAYS[$period])) {
-            return [$now - self::ROLLING_DAYS[$period] * 86400, $now];
-        }
         if ($period === 'alltime') {
             return [null, null];
         }
@@ -80,6 +81,10 @@ final class TimeBound
         $today = (new \DateTimeImmutable('@' . $now))
             ->setTimezone(new \DateTimeZone($timezone()))
             ->setTime(0, 0, 0);
+        if (isset(self::ROLLING_DAYS[$period])) {
+            // Calendar days, as the pages count them: midnight N days ago.
+            return [$today->modify('-' . self::ROLLING_DAYS[$period] . ' days')->getTimestamp(), $now];
+        }
         $month = $today->modify('first day of this month');
         $year = $today->setDate((int) $today->format('Y'), 1, 1);
 

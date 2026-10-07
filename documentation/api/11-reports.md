@@ -61,7 +61,7 @@ the forms above is a `422` too, as is a `time_from` after `time_to`.
 | -------- | ------ |
 | `today` | From midnight today, in the account's timezone, to now |
 | `yesterday` | Yesterday, midnight to midnight, in the account's timezone (23 or 25 hours across a clock change) |
-| `last7`, `last14`, `last30`, `last90` | The last 7/14/30/90 × 24 hours, to now |
+| `last7`, `last14`, `last30`, `last90` | Today so far and the 7/14/30/90 whole days before it, from that day's midnight in the account's timezone — the report pages' Last 7/14/30 Days (until now these were 7/14/30/90 × 24 hours to the second, up to a day short of the page) |
 | `thismonth` | From the 1st of this month (account's timezone) to now |
 | `lastmonth` | The whole previous month |
 | `thisyear` | From January 1 (account's timezone) to now |

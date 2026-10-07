@@ -284,7 +284,7 @@ the answer is a tree (`data[].children[]`), and a group's clicks with no value
 at the next level are its child with `id: null` (`[no keyword]` in the table),
 so every group is the sum of its children. A breakdown leaves those clicks out.
 
-Periods: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime`. The calendar ones start at midnight in the account's timezone (`today` used to be the server's day); `lastN` is N×24 hours up to now. A filter or value the server does not take is a validation error naming it (`--ip 999.1.1.1`, `--aff_campaign_id abc`), never silently ignored.
+Periods: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime`. The calendar ones start at midnight in the account's timezone (`today` used to be the server's day); `lastN` is today so far and the N whole days before it, from that day's midnight — what the report pages' Last N Days count. A filter or value the server does not take is a validation error naming it (`--ip 999.1.1.1`, `--aff_campaign_id abc`), never silently ignored.
 
 ### Read performance over time
 

@@ -23,7 +23,8 @@ var analyticsSortAliases = map[string]string{
 // reportPeriods are the named windows the server knows (TimeBound::PERIODS),
 // in the report pages' order; it refuses any other value with a 422. The
 // calendar ones (today, yesterday, this/last month, this/last year) start at a
-// midnight in the account's timezone; lastN is the N days up to now.
+// midnight in the account's timezone, and so do lastN's: today and the N
+// whole days before it, as the report pages count them.
 var reportPeriods = []string{"today", "yesterday", "last7", "last14", "last30", "last90", "thismonth", "lastmonth", "thisyear", "lastyear", "alltime"}
 
 // applyReportWindow maps --period, --days and --time_from/--time_to onto report
@@ -142,7 +143,7 @@ var analyticsCmd = &cobra.Command{
 func init() {
 	analyticsCmd.Flags().String("group-by", "", "Breakdown dimension")
 	enumFlag(analyticsCmd, "group-by", dimensionEnum(breakdownDimensions))
-	analyticsCmd.Flags().Int("days", 0, "Relative window in days (ignored when --period is provided)")
+	analyticsCmd.Flags().Int("days", 0, "Relative window: the last N×24 hours, ending now (ignored when --period is provided; --period lastN counts whole days from a midnight)")
 	analyticsCmd.Flags().String("period", "", "Period")
 	enumFlag(analyticsCmd, "period", newEnum(reportPeriods))
 	analyticsCmd.Flags().String("time_from", "", timeFromHelp)

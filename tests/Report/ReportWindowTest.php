@@ -35,7 +35,7 @@ final class ReportWindowTest extends TestCase
     /** @return iterable<string, array{string}> */
     public static function calendarPeriods(): iterable
     {
-        foreach (['today', 'yesterday', 'thismonth', 'lastmonth', 'thisyear', 'lastyear'] as $p) {
+        foreach (['today', 'yesterday', 'last7', 'last14', 'last30', 'thismonth', 'lastmonth', 'thisyear', 'lastyear'] as $p) {
             yield $p => [$p];
         }
     }
