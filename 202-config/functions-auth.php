@@ -193,6 +193,19 @@ class AUTH
         self::$passwordColumnChecked = true;
     }
 
+    /**
+     * The account whose Prosper202 license key this user's session is held
+     * to (require_valid_api_key()): the user's own when it has a key or no
+     * install, else the install's first active user that has one.
+     *
+     * A lookup that fails throws, naming the user. A failed prepare answered
+     * the user's own id -- the same value as "no user of this install has a
+     * key" -- and begin_user_session() keeps the answer for the whole
+     * session: one transient database error at sign-in held a sub-user's
+     * every page to its own, empty key, and every page sent the session to
+     * api-key-required.php for a license key the install already has
+     * (CLAUDE.md #11: a lookup that cannot answer must not answer).
+     */
     private static function determineAccountOwnerId(array $user_row): int
     {
         $userId = (int) ($user_row['user_id'] ?? 0);
@@ -203,17 +216,23 @@ class AUTH
             return $userId;
         }
 
+        $failed = 'Unable to read whose license key user ' . $userId . "'s session is held to";
         $database = DB::getInstance();
         $db = $database->getConnection();
-        $stmt = $db->prepare('SELECT user_id FROM 202_users WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1 AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != "" ORDER BY user_id ASC LIMIT 1');
-        if (!$stmt) {
-            return $userId;
-        }
+        try {
+            $stmt = $db->prepare('SELECT user_id FROM 202_users WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1 AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != "" ORDER BY user_id ASC LIMIT 1');
+            if ($stmt === false) {
+                throw new \RuntimeException($failed . ': ' . $db->error);
+            }
 
-        self::bind($stmt, 's', $installHash);
-        self::execute($stmt, 'Unable to execute API owner lookup query');
-        $ownerRow = self::resultOf($stmt, 'Unable to read the API owner lookup')->fetch_assoc();
-        $stmt->close();
+            self::bind($stmt, 's', $installHash);
+            self::execute($stmt, $failed);
+            $ownerRow = self::resultOf($stmt, $failed)->fetch_assoc();
+            $stmt->close();
+        } catch (\mysqli_sql_exception $e) {
+            // Strict reporting throws MySQL's sentence; name whose read it was.
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
+        }
 
         if ($ownerRow && isset($ownerRow['user_id'])) {
             return (int) $ownerRow['user_id'];
@@ -222,25 +241,38 @@ class AUTH
         return $userId;
     }
 
+    /**
+     * A user's Prosper202 license key, '' when it has none. A read that
+     * fails throws: '' sent the session to api-key-required.php as though
+     * the install had no key (CLAUDE.md #11).
+     */
     private static function lookupApiKeyForUser(int $userId): string
     {
         if ($userId <= 0) {
             return '';
         }
 
+        $failed = 'Unable to read the license key of user ' . $userId;
         $user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key FROM 202_users_pref LEFT JOIN 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='" . $userId . "'";
-        $user_result = _mysqli_query($user_sql);
-        if ($user_result) {
-            $user_row = $user_result->fetch_assoc();
-            return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
+        try {
+            $user_result = _mysqli_query($user_sql);
+        } catch (\mysqli_sql_exception $e) {
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
         }
+        if (!$user_result instanceof \mysqli_result) {
+            throw new \RuntimeException($failed);
+        }
+        $user_row = $user_result->fetch_assoc();
 
-        return '';
+        return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
     }
 
     public static function begin_user_session(array $user_row): void
     {
-        $writer = static function () use ($user_row): void {
+        // Read before the session is written: a lookup that throws leaves
+        // the request signed out, rather than signed in without an owner.
+        $accountOwnerId = self::determineAccountOwnerId($user_row);
+        $writer = static function () use ($user_row, $accountOwnerId): void {
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_regenerate_id(true);
             }
@@ -254,7 +286,7 @@ class AUTH
             $_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'] ?? null;
             $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
             $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
-            $_SESSION['account_owner_id'] = self::determineAccountOwnerId($user_row);
+            $_SESSION['account_owner_id'] = $accountOwnerId;
         };
 
         if (function_exists('withWritableSession')) {
