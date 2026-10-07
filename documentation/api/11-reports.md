@@ -124,6 +124,8 @@ Buckets come oldest first, at most 2000 per response. Next to `data`, `interval`
 
 ## Daypart / Weekpart Parameters
 
+Hours and weekdays are the account's (`timezone` in the response). The Day Parting and Week Parting pages read the same clock, so for the same window and filters they show the same figures.
+
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `sort` | string | `hour_of_day` / `day_of_week` | Metric to sort by |

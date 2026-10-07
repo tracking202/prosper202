@@ -557,6 +557,17 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 				break;
 		}
 
+		// Stepped through the account's zone, the page's default
+		// (AUTH::set_timezone()), whose days and hours the chart's groups
+		// are (DataEngine::getChart()). The callers pass DateTime('@…'),
+		// which is UTC: the points were UTC days and hours, so the chart of
+		// an account east of UTC started on the day before its window, and
+		// an hourly chart west of UTC had no point for the first hours of
+		// its window, whose clicks were drawn nowhere.
+		$zone = new \DateTimeZone(date_default_timezone_get());
+		$fromdate = (clone $fromdate)->setTimezone($zone);
+		$todate = (clone $todate)->setTimezone($zone);
+
 		return new \DatePeriod(
 			$fromdate,
 			new \DateInterval($set),

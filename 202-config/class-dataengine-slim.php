@@ -28,13 +28,12 @@ if (!class_exists('DataEngine')) {
                 self::$db = null;
             }
 
-            // Make MySQL use the timezone chosen by the user.
-            $timezone = new DateTimeZone(date_default_timezone_get());
-            $offsetHours = round($timezone->getOffset(new DateTime()) / 3600);
-
-            if ($offsetHours != 0 && self::$db !== null) {
-                self::$db->query("SET time_zone = '" . $offsetHours . ":00'");
-            }
+            // The connection's zone is left alone. This used to SET it to the
+            // signed-in user's offset today, rounded to whole hours, for the
+            // rest of the request — and without the sign for a zone east of
+            // UTC, which MariaDB refuses ("Unknown or incorrect time zone:
+            // '5:00'"), so it held for zones west of UTC only. The rollup it
+            // runs reads no clock.
         }
 
         /**

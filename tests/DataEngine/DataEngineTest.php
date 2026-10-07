@@ -52,12 +52,18 @@ final class DataEngineTest extends TestCase
         );
     }
 
-    public function testDataEngineSetsMysqlTimezone(): void
+    /**
+     * It did, to the user's offset today rounded to whole hours, and for the
+     * rest of the request; east of UTC without the sign, which MySQL
+     * refuses. The rollup reads no clock, and the reports read the
+     * account's with LocalTime (tests/DataEngine/TimeGroupingIntegrationTest).
+     */
+    public function testSlimEngineLeavesTheConnectionsZoneAlone(): void
     {
-        self::assertStringContainsString(
-            'SET time_zone',
+        self::assertDoesNotMatchRegularExpression(
+            '/\btime_zone\b/i',
             $this->source,
-            'DataEngine must set MySQL timezone for correct time-based aggregation'
+            'The slim engine must not set the connection\'s time zone'
         );
     }
 
