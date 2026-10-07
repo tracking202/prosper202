@@ -11,6 +11,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
 
@@ -612,8 +613,8 @@ abstract class Controller
 
     public function list(array $params): array
     {
-        $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+        $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
         // Absent and '' are no cursor; anything else is decoded or refused.
         // This was !empty(), and empty('0') is true, so cursor=0 was no
         // cursor and answered page one, where every other malformed cursor
@@ -622,7 +623,9 @@ abstract class Controller
         if ($cursor !== '') {
             $offset = $this->decodeOffsetCursor(is_string($cursor) ? $cursor : '');
         }
-        $cursorTtl = max(60, min(86400, (int)($params['cursor_ttl'] ?? 3600)));
+        $cursorTtl = QueryInt::param($params, 'cursor_ttl', 3600, 60, 86400, 'seconds the next_cursor stays valid');
+        $updatedSince = QueryInt::param($params, 'updated_since', -1, 0, PHP_INT_MAX, 'a unix time');
+        $deletedSince = QueryInt::param($params, 'deleted_since', -1, 0, PHP_INT_MAX, 'a unix time');
         $selectExpr = implode(', ', $this->selectColumns());
 
         $where = [];
@@ -649,20 +652,20 @@ abstract class Controller
             $types .= $bindType;
         }
 
-        if (isset($params['updated_since']) && $params['updated_since'] !== '') {
+        if ($updatedSince >= 0) {
             $updatedColumn = $this->detectTimestampColumn(['updated_at', 'updated_time', 'last_modified', 'modified_at']);
             if ($updatedColumn !== null) {
                 $where[] = "$updatedColumn >= ?";
-                $binds[] = (int)$params['updated_since'];
+                $binds[] = $updatedSince;
                 $types .= 'i';
             }
         }
 
-        if (isset($params['deleted_since']) && $params['deleted_since'] !== '' && $this->deletedColumn() !== null) {
+        if ($deletedSince >= 0 && $this->deletedColumn() !== null) {
             $deletedColumn = $this->detectTimestampColumn(['deleted_at', 'deleted_time', 'removed_at']);
             if ($deletedColumn !== null) {
                 $where[] = "$deletedColumn >= ?";
-                $binds[] = (int)$params['deleted_since'];
+                $binds[] = $deletedSince;
                 $types .= 'i';
             }
         }

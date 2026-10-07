@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
+use Api\V3\Support\QueryInt;
 
 class SyncController
 {
@@ -152,8 +153,8 @@ class SyncController
             throw new NotFoundException('Sync job not found');
         }
 
-        $limit = max(1, min(500, (int)($params['limit'] ?? 100)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = QueryInt::param($params, 'limit', 100, 1, 500, 'events per page');
+        $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'events to skip');
 
         return $this->store->listJobEvents($jobId, $offset, $limit);
     }
@@ -248,10 +249,12 @@ class SyncController
         }
 
         $cursor = isset($params['cursor']) ? (string)$params['cursor'] : null;
-        $limit = max(1, min(1000, (int)($params['limit'] ?? 200)));
-        $cursorTtl = max(60, min(86400, (int)($params['cursor_ttl'] ?? 3600)));
-        $updatedSince = isset($params['updated_since']) ? (int)$params['updated_since'] : null;
-        $deletedSince = isset($params['deleted_since']) ? (int)$params['deleted_since'] : null;
+        $limit = QueryInt::param($params, 'limit', 200, 1, 1000, 'changes per page');
+        $cursorTtl = QueryInt::param($params, 'cursor_ttl', 3600, 60, 86400, 'seconds the next_cursor stays valid');
+        $updatedSince = QueryInt::param($params, 'updated_since', -1, 0, PHP_INT_MAX, 'a unix time');
+        $deletedSince = QueryInt::param($params, 'deleted_since', -1, 0, PHP_INT_MAX, 'a unix time');
+        $updatedSince = $updatedSince >= 0 ? $updatedSince : null;
+        $deletedSince = $deletedSince >= 0 ? $deletedSince : null;
 
         return $this->store->listChanges($entity, $cursor, $limit, $cursorTtl, $updatedSince, $deletedSince);
     }
@@ -263,8 +266,8 @@ class SyncController
             'source' => $params['source'] ?? '',
             'target' => $params['target'] ?? '',
             'status' => $params['status'] ?? '',
-            'from_epoch' => isset($params['from_epoch']) ? (int)$params['from_epoch'] : null,
-            'to_epoch' => isset($params['to_epoch']) ? (int)$params['to_epoch'] : null,
+            'from_epoch' => self::epochOrNull($params, 'from_epoch'),
+            'to_epoch' => self::epochOrNull($params, 'to_epoch'),
         ];
 
         $records = $this->store->listAudit($filters);
@@ -644,5 +647,18 @@ class SyncController
                 ['queue' => "Limit {$maxQueuedPerPair} reached for pair; wait for current jobs to complete"]
             );
         }
+    }
+
+    /**
+     * An audit-list time bound: a unix time, or null when absent. It was
+     * `(int)`, so `from_epoch=yesterday` was 0 and listed everything.
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function epochOrNull(array $params, string $name): ?int
+    {
+        $epoch = QueryInt::param($params, $name, -1, 0, PHP_INT_MAX, 'a unix time');
+
+        return $epoch >= 0 ? $epoch : null;
     }
 }

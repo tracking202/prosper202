@@ -343,6 +343,18 @@ resource does not have, text for a whole-number field, a list instead of one
 value — never an unfiltered answer: a misspelled filter used to return every
 row with a `200`.
 
+### Whole-number query parameters
+
+`limit`, `offset`, `cursor_ttl`, `updated_since`, `deleted_since`,
+`from_epoch`/`to_epoch`, and the LTV reads' `days` and `months` take a whole
+number within the range the endpoint documents (a list's `limit` is 1–500,
+`offset` 0 or more, `cursor_ttl` 60–86400 seconds; the times are unix
+seconds). Anything else is a `422` naming the parameter and its range:
+`limit=1000`, `limit=abc`, `offset=-1`, `updated_since=2026-10-01`. Absent or
+empty is the default. These used to be cast and clamped, so `limit=1000`
+answered 500 rows that read as all of them and `updated_since=yesterday`
+answered every row.
+
 ### Single Resource
 
 ```json

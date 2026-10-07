@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\QueryInt;
 
 class RotatorsController
 {
@@ -20,8 +21,8 @@ class RotatorsController
 
     public function list(array $params): array
     {
-        $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+        $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
         $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
         $this->bind($stmt, 'i', $this->userId);
