@@ -741,7 +741,7 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--status reversed`| No       | Record a reversal of the click's conversion with this `--transaction_id` instead |
 | `--reversal-id`    | No       | The network's id for the reversal (with `--status reversed`) |
 | `--customer-id` / `--customer-ref` | No | The LTV customer (one of them); `--customer-ref-type` says what the ref is, `--customer-crm '{…}'` seeds a customer the ref creates |
-| `--item` / `--items-file` | No | Product line items (JSON objects) on the customer's revenue event; they need a customer named here |
+| `--item` / `--items-file` | No | Product line items (JSON objects) on the customer's revenue event; they need a customer — named here, already linked to the click, or the account's customer c-param — or the server refuses them (`422` naming `items`) and records nothing |
 
 ```bash
 p202 conversion create --click_id 12345 --payout 49 --transaction_id ORD-1 \

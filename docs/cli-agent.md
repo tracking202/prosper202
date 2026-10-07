@@ -808,7 +808,7 @@ p202 conversion get    <id> [--json]
 p202 conversion create --click_id N [--payout F] [--transaction_id S] [--conv-time T] [--idempotency-key S]
                        [--status reversed [--reversal-id S]]      # a reversal of the sale with --transaction_id
                        [--customer-id N | --customer-ref S [--customer-ref-type T] [--customer-crm JSON]]
-                       [--item JSON]... | [--items-file FILE]     # line items: need a customer named here
+                       [--item JSON]... | [--items-file FILE]     # line items: need a customer (named here, linked to the click, or the c-param); none -> 422 items, nothing written
                        [--json]
 p202 conversion import <file.csv|file.json> [--dry-run [--check-clicks]] [--force]
                        [--subid-column H] [--payout-column H] [--txid-column H] [--time-column H]
@@ -1039,7 +1039,9 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
 - `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
   sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`
   takes the known names or `*` (every event, including future ones), and is
-  always sent as a list.
+  always sent as a list. The server holds the same list: a name it never
+  sends is a 422 naming `events.<i>` with the names, never a webhook that
+  receives nothing.
 - `ltv revenue record --idempotency-key K` again answers the first event with
   `duplicate: true` (and a note on stderr) and records nothing; `void:`,
   `void-nc:`, `reinstate:`, `backfill:` and `sub:` keys are reserved.
