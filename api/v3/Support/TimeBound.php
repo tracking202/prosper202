@@ -21,13 +21,78 @@ use Api\V3\Exception\ValidationException;
  * - a time with its offset, 2026-10-01T09:30:00Z or …+02:00.
  *
  * Anything else is a 422 naming the field. 0 is no bound, as it always was.
+ *
+ * `period` is the named window the report pages' range picker offers, and
+ * period() is the one place it is computed. A calendar period (today,
+ * yesterday, this/last month, this/last year) starts at a midnight in the
+ * ACCOUNT's timezone, as the date forms above do: today and yesterday were
+ * strtotime('today midnight') in each controller, which is the server's
+ * midnight, so a New York account asking at 23:30 its time for "yesterday"
+ * got a window that ended four hours into its yesterday.
  */
 final class TimeBound
 {
     private const FORMATS = "Unix seconds, a date (YYYY-MM-DD, in the account's timezone) or a time with its offset (2026-10-01T09:30:00Z)";
 
+    /**
+     * The named periods, in the range picker's order (last90 is the API's
+     * own addition). lastN is the N days up to now, to the second.
+     */
+    public const PERIODS = [
+        'today', 'yesterday', 'last7', 'last14', 'last30', 'last90',
+        'thismonth', 'lastmonth', 'thisyear', 'lastyear', 'alltime',
+    ];
+
+    /** lastN periods: whole days back from now. */
+    private const ROLLING_DAYS = ['last7' => 7, 'last14' => 14, 'last30' => 30, 'last90' => 90];
+
     private function __construct()
     {
+    }
+
+    /**
+     * A named period's bounds, both inclusive; null is no bound (alltime has
+     * neither). A value that is not one of PERIODS is a 422 naming it — a
+     * typo like last7d must never fall through to all time.
+     *
+     * @param callable(): string $timezone the account's timezone; asked only for a calendar period
+     * @param ?int $now the clock, for tests; time() when null
+     * @param list<string> $allowed the periods this caller accepts (default all of PERIODS)
+     * @return array{0: ?int, 1: ?int}
+     */
+    public static function period(
+        mixed $period,
+        callable $timezone,
+        ?int $now = null,
+        array $allowed = self::PERIODS
+    ): array {
+        if (!is_string($period) || !in_array($period, $allowed, true)) {
+            throw new ValidationException('Invalid period', ['period' => 'Valid: ' . implode(', ', $allowed)]);
+        }
+        $now ??= time();
+        if (isset(self::ROLLING_DAYS[$period])) {
+            return [$now - self::ROLLING_DAYS[$period] * 86400, $now];
+        }
+        if ($period === 'alltime') {
+            return [null, null];
+        }
+
+        $today = (new \DateTimeImmutable('@' . $now))
+            ->setTimezone(new \DateTimeZone($timezone()))
+            ->setTime(0, 0, 0);
+        $month = $today->modify('first day of this month');
+        $year = $today->setDate((int) $today->format('Y'), 1, 1);
+
+        return match ($period) {
+            'today'     => [$today->getTimestamp(), $now],
+            // Calendar arithmetic, not 86400 seconds: across a DST change
+            // yesterday is 23 or 25 hours long.
+            'yesterday' => [$today->modify('-1 day')->getTimestamp(), $today->getTimestamp() - 1],
+            'thismonth' => [$month->getTimestamp(), $now],
+            'lastmonth' => [$month->modify('-1 month')->getTimestamp(), $month->getTimestamp() - 1],
+            'thisyear'  => [$year->getTimestamp(), $now],
+            'lastyear'  => [$year->modify('-1 year')->getTimestamp(), $year->getTimestamp() - 1],
+        };
     }
 
     /**

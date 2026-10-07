@@ -82,4 +82,113 @@ final class TimeBoundTest extends TestCase
         self::assertSame([5, 10], TimeBound::window(['time_from' => '5', 'time_to' => '10'], $tz));
         self::assertFalse($asked, 'a query per request for nothing');
     }
+
+    // ─── named periods ──────────────────────────────────────────────
+
+    /** 2026-10-07 03:25:00 UTC: 23:25 on the 6th in New York, 03:25 on the 7th in UTC. */
+    private const NOW = 1791343500;
+
+    /**
+     * New York wall times, inclusive.
+     *
+     * @return iterable<string, array{0: string, 1: ?string, 2: ?string}>
+     */
+    public static function periods(): iterable
+    {
+        yield 'today starts at the account\'s midnight' => ['today', '2026-10-06 00:00:00', '2026-10-06 23:25:00'];
+        yield 'yesterday is the account\'s whole day before'
+            => ['yesterday', '2026-10-05 00:00:00', '2026-10-05 23:59:59'];
+        yield 'last7 is 7 days to the second' => ['last7', '2026-09-29 23:25:00', '2026-10-06 23:25:00'];
+        yield 'last14' => ['last14', '2026-09-22 23:25:00', '2026-10-06 23:25:00'];
+        yield 'last30' => ['last30', '2026-09-06 23:25:00', '2026-10-06 23:25:00'];
+        yield 'last90' => ['last90', '2026-07-08 23:25:00', '2026-10-06 23:25:00'];
+        yield 'thismonth runs from the 1st to now' => ['thismonth', '2026-10-01 00:00:00', '2026-10-06 23:25:00'];
+        yield 'lastmonth is the whole previous month' => ['lastmonth', '2026-09-01 00:00:00', '2026-09-30 23:59:59'];
+        yield 'thisyear runs from January 1 to now' => ['thisyear', '2026-01-01 00:00:00', '2026-10-06 23:25:00'];
+        yield 'lastyear is the whole previous year' => ['lastyear', '2025-01-01 00:00:00', '2025-12-31 23:59:59'];
+        yield 'alltime has no bounds' => ['alltime', null, null];
+    }
+
+    /** @dataProvider periods */
+    public function testAPeriodIsComputedInTheAccountsTimezone(string $period, ?string $from, ?string $to): void
+    {
+        $at = static fn (?string $wall): ?int => $wall === null ? null
+            : (new \DateTimeImmutable($wall, new \DateTimeZone('America/New_York')))->getTimestamp();
+        self::assertSame([$at($from), $at($to)], TimeBound::period($period, self::newYork(...), self::NOW));
+    }
+
+    public function testEveryPeriodIsListedAndComputed(): void
+    {
+        $listed = [];
+        foreach (self::periods() as [$period]) {
+            $listed[] = $period;
+        }
+        self::assertSame(TimeBound::PERIODS, $listed);
+    }
+
+    /**
+     * The before/after of moving today and yesterday off the server's clock:
+     * the controllers computed them with strtotime('today midnight'), the
+     * server's midnight. At 23:25 in New York the server (UTC) is already on
+     * the next day, so "today" was the account's last 35 minutes of
+     * tomorrow's date and its real today was "yesterday".
+     */
+    public function testTodayAndYesterdayAreNotTheServersDays(): void
+    {
+        $serverToday = (new \DateTimeImmutable('@' . self::NOW))->setTime(0, 0)->getTimestamp(); // UTC midnight
+        [$from] = TimeBound::period('today', self::newYork(...), self::NOW);
+        self::assertNotSame($serverToday, $from);
+        self::assertSame(
+            $serverToday - 86400 + 4 * 3600,
+            $from,
+            'New York\'s midnight of the 6th is 04:00 UTC on the 6th'
+        );
+
+        [$from, $to] = TimeBound::period('yesterday', self::newYork(...), self::NOW);
+        self::assertSame(86400 - 1, $to - $from);
+    }
+
+    public function testYesterdayAcrossTheClockChangeIsItsRealLength(): void
+    {
+        // 2026-11-01 is the US fall-back day: 25 hours long.
+        $now = (new \DateTimeImmutable('2026-11-02 12:00:00', new \DateTimeZone('America/New_York')))->getTimestamp();
+        [$from, $to] = TimeBound::period('yesterday', self::newYork(...), $now);
+        self::assertSame(25 * 3600, $to - $from + 1);
+        // And lastmonth on March 31 is February, whole.
+        $now = (new \DateTimeImmutable('2026-03-31 12:00:00', new \DateTimeZone('America/New_York')))->getTimestamp();
+        [$from, $to] = TimeBound::period('lastmonth', self::newYork(...), $now);
+        $wall = static fn (int $at): string => (new \DateTimeImmutable('@' . $at))
+            ->setTimezone(new \DateTimeZone('America/New_York'))->format('Y-m-d H:i:s');
+        self::assertSame('2026-02-01 00:00:00 / 2026-02-28 23:59:59', $wall($from) . ' / ' . $wall($to));
+    }
+
+    public function testARollingPeriodNeverAsksForTheTimezone(): void
+    {
+        $tz = static function (): string {
+            throw new \LogicException('asked');
+        };
+        foreach (['last7', 'last14', 'last30', 'last90', 'alltime'] as $period) {
+            TimeBound::period($period, $tz, self::NOW);
+        }
+        $this->addToAssertionCount(1);
+    }
+
+    public function testAnUnknownPeriodNamesTheValidOnes(): void
+    {
+        foreach (['last7d', 'Today', '', 7, ['today']] as $bad) {
+            try {
+                TimeBound::period($bad, self::newYork(...), self::NOW);
+                self::fail('accepted ' . var_export($bad, true));
+            } catch (ValidationException $e) {
+                self::assertSame('Valid: ' . implode(', ', TimeBound::PERIODS), $e->getFieldErrors()['period']);
+            }
+        }
+        // A caller may narrow the set; the message names its own list.
+        try {
+            TimeBound::period('thisyear', self::newYork(...), self::NOW, ['today', 'last7']);
+            self::fail('a period outside the caller\'s set was accepted');
+        } catch (ValidationException $e) {
+            self::assertSame('Valid: today, last7', $e->getFieldErrors()['period']);
+        }
+    }
 }

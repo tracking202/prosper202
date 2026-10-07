@@ -8,6 +8,7 @@ Manage traffic rotators with rules, criteria, and weighted redirects for split t
 | ------ | ---- | ----------- |
 | `GET` | `/rotators` | List rotators (paginated) |
 | `GET` | `/rotators/{id}` | Get rotator with all nested rules |
+| `GET` | `/rotators/{id}/stats` | The rotator's totals, each rule and its default over a window (needs `reports:read` too; see [Reports › Rotator stats](11-reports.md#rotator-stats)) |
 | `POST` | `/rotators` | Create a rotator |
 | `PUT` | `/rotators/{id}` | Update a rotator |
 | `DELETE` | `/rotators/{id}` | Delete rotator and all rules (cascading) |

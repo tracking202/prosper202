@@ -107,7 +107,7 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `group_by` | `campaign` | `campaign`, `traffic_source`, `landing_page`, `keyword`, `c1`–`c4`, `country`, `device`, `day` |
 | `model_id` | effective | Without it each conversion is read under its campaign's `attribution_model_id` when that model is active, otherwise the account default |
 | `compare_model_id` | | A second model; adds `compare_*` columns |
-| `period` | last 30 days | `today`, `yesterday`, `last7`, `last30`, `last90` |
+| `period` | last 30 days | `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` — the reports' periods ([Reports › Periods](11-reports.md#periods)): calendar ones start at the account's midnight; `alltime` is from the first click |
 | `time_from`, `time_to` | | Unix seconds, a date (`2026-10-01`, in the account's timezone; `time_to` runs through its last second) or a time with its offset; `time_from=0` is all time; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
 | `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
