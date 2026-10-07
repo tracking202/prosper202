@@ -76,13 +76,37 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 ## Preference Fields
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `user_tracking_domain` | string | Custom tracking domain |
-| `user_account_currency` | string | 3-letter currency code |
-| `user_slack_incoming_webhook` | string | Slack webhook URL for notifications |
-| `user_daily_email` | string | Daily email digest (`on` or `off`) |
-| `ipqs_api_key` | string | IPQualityScore API key for fraud detection |
+`PUT /users/{id}/preferences` takes any subset of these. Each value is held to
+the rule of the settings page that owns it, before anything is written; a key
+not in this table is refused with `422` naming it rather than dropped, and a
+free-text value given as `""` clears it. `GET` returns the whole preferences
+row.
+
+| Field | Values | Set on |
+| ----- | ------ | ------ |
+| `user_tracking_domain` | host such as `track.example.com`; `""` uses this install's own domain | Personal settings |
+| `user_daily_email` | hour `00`-`23` in your time zone, or `""` for never | Personal settings |
+| `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
+| `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
+| `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter) | Personal settings |
+| `user_pref_privacy` | `disabled`, `eu`, `all` | Personal settings |
+| `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
+| `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
+| `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
+| `user_pref_time_predefined` | `today`, `yesterday`, `last7`, `last14`, `last30`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` | report pages |
+| `user_pref_limit` | `10`, `25`, `50`, `75`, `100`, `150`, `200` | report pages |
+| `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
+| `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
+| `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
+| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
+| `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
+| `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |
+| `user_ltv_rec_fatigue` | `times,days` such as `3,21`, `0` for off, `""` for the defaults | LTV › Settings |
+
+Not covered here: the daily email's send time is registered with the hosted
+mail scheduler when Personal settings saves it; a change made here is stored
+but not re-registered, so set the hour on that page if the email must move.
 
 ## Examples
 

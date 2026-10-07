@@ -1162,13 +1162,19 @@ p202 user prefs update 1 \
   --user_account_currency "USD"
 ```
 
-| Flag                             | Description                 |
-|----------------------------------|-----------------------------|
-| `--user_tracking_domain`         | Tracking domain             |
-| `--user_account_currency`        | Currency (3-letter code)    |
-| `--user_slack_incoming_webhook`  | Slack webhook URL           |
-| `--user_daily_email`             | Daily email: on or off      |
-| `--ipqs_api_key`                 | IPQS fraud detection key    |
+Every preference the settings pages set has a flag; `p202 user prefs update --help`
+lists each with the values it takes, and a value outside them is refused before any
+request. A free-text flag given `""` clears it.
+
+| Flag | Values |
+|------|--------|
+| `--user_tracking_domain` | host, e.g. `trk.example.com`; `""` uses the install's own domain |
+| `--user_daily_email` | `never`, `00`-`23` (hour, your time zone) |
+| `--user_account_currency` | 3-letter code; re-prices every campaign's payout into it |
+| `--user_keyword_searched_or_bidded`, `--user_pref_referer_data`, `--user_pref_dynamic_bid`, `--user_pref_privacy`, `--user_pref_cloak_referer`, `--user_pref_ad_settings` | Personal settings' choices |
+| `--user_pref_time_predefined`, `--user_pref_limit`, `--user_cpc_or_cpv`, `--chart_time_range` | report and chart defaults |
+| `--user_slack_incoming_webhook`, `--ipqs_api_key`, `--cb_key`, `--zaxaa_api_signature`, `--jvzoo_ipn_secret_key` | Integrations (a value here stays in shell history) |
+| `--user_ltv_customer_cparam`, `--user_ltv_personalization_fields`, `--user_ltv_score_weights`, `--user_ltv_rec_fatigue` | LTV › Settings |
 
 ## Export and import
 

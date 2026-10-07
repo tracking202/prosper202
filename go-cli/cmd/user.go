@@ -677,32 +677,16 @@ var userPrefsGetCmd = &cobra.Command{
 
 var userPrefsUpdateCmd = &cobra.Command{
 	Use:   "update <user_id>",
-	Short: "Update user preferences",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		body := map[string]interface{}{}
-		for _, f := range []string{
-			"user_tracking_domain", "user_account_currency",
-			"user_slack_incoming_webhook", "user_daily_email", "ipqs_api_key",
-		} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				body[f] = v
-			}
-		}
-		if len(body) == 0 {
-			return validationError("no preferences specified; pass at least one flag to update")
-		}
-		data, err := c.Put("users/"+args[0]+"/preferences", body)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
+	Short: "Update user preferences (profile, report defaults, integration keys, LTV settings)",
+	Long: "Sets the preferences the settings pages set: Personal settings (time zone is on `user update`), the report\n" +
+		"defaults, Integrations' network keys and LTV › Settings. Each value is checked against the page's own choices\n" +
+		"before any request; a free-text value given as \"\" clears it. Changing --user_account_currency re-prices every\n" +
+		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service.",
+	Example: "  p202 user prefs update 1 --user_daily_email 07 --user_pref_time_predefined last7\n" +
+		"  p202 user prefs update 1 --user_tracking_domain \"\"     # back to this install's own domain\n" +
+		"  p202 user prefs update 1 --user_account_currency EUR",
+	Args: cobra.ExactArgs(1),
+	RunE: runUserPrefsUpdate,
 }
 
 func init() {
@@ -746,12 +730,7 @@ func init() {
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")
 	userAPIKeyRotateCmd.Flags().Bool("force-config-update", false, "Update local config even if current key does not match old key")
 
-	// Preferences flags
-	userPrefsUpdateCmd.Flags().String("user_tracking_domain", "", "Tracking domain")
-	userPrefsUpdateCmd.Flags().String("user_account_currency", "", "Currency (3-letter code)")
-	userPrefsUpdateCmd.Flags().String("user_slack_incoming_webhook", "", "Slack webhook URL")
-	userPrefsUpdateCmd.Flags().String("user_daily_email", "", "Daily email: on/off")
-	userPrefsUpdateCmd.Flags().String("ipqs_api_key", "", "IPQS fraud detection API key")
+	registerPrefFlags(userPrefsUpdateCmd)
 
 	// Wire up subcommands
 	userRoleCmd.AddCommand(userRoleListCmd, userRoleAssignCmd, userRoleRemoveCmd)

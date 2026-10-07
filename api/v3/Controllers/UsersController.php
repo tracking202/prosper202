@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
+use Api\V3\HttpException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Database\Connection;
+use Prosper202\User\CurrencyChange;
+use Prosper202\User\ExchangeRates;
+use Prosper202\User\PreferenceRules;
 
 class UsersController
 {
@@ -710,6 +715,24 @@ class UsersController
         if (!$row) {
             throw new NotFoundException('User preferences not found');
         }
+
+        // chart_time_range is the Overview chart's, read from 202_charts
+        // where the chart reads it; the 202_users_pref column of that name
+        // is read by nothing (see updatePreferences()).
+        $stmt = $this->prepare('SELECT chart_time_range FROM 202_charts WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Query failed');
+        $chart = $stmt->get_result();
+        if ($chart === false) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
+        $chartRow = $chart->fetch_assoc();
+        $stmt->close();
+        if ($chartRow) {
+            $row['chart_time_range'] = $chartRow['chart_time_range'];
+        }
+
         return ['data' => $row];
     }
 
@@ -757,60 +780,114 @@ class UsersController
         return in_array($currency, self::SUPPORTED_CURRENCIES, true) ? $currency : self::DEFAULT_CURRENCY;
     }
 
-    public function updatePreferences(int $userId, array $payload): array
+    /**
+     * Write preferences, each held to the rule of the page that owns it
+     * (Prosper202\User\PreferenceRules). A key that is not a preference this
+     * endpoint writes is refused by name rather than dropped.
+     *
+     * Side effects the pages have, kept here:
+     * - `user_account_currency` re-prices the account's campaigns into the
+     *   new currency (Personal settings does; the API used to relabel them);
+     *   the rates are fetched first, and the currency, the payouts and every
+     *   other preference in the request land in one transaction;
+     * - changing `cb_key` resets `cb_verified`, as Integrations does;
+     * - `chart_time_range` is the Overview chart's resolution, which lives in
+     *   202_charts — the column of that name in 202_users_pref is read by
+     *   nothing, so writing it changed nothing.
+     *
+     * Not repeated: account.php also writes several of these to memcache
+     * keys under the user id. The only one any request reads back is
+     * user_pref_privacy_, and connect2.php reads it under the tracker id,
+     * so those keys are never what a redirect sees.
+     *
+     * @param (callable(string, string, string): mixed)|null $rate
+     *   (account currency, campaign currency, payout) => the exchange
+     *   service's answer; null asks the live service
+     */
+    public function updatePreferences(int $userId, array $payload, ?callable $rate = null): array
     {
-        $this->getPreferences($userId);
-
-        $allowedFields = [
-            'user_pref_limit' => 'i', 'user_pref_time_predefined' => 's',
-            'user_tracking_domain' => 's', 'user_cpc_or_cpv' => 's',
-            'user_account_currency' => 's', 'user_slack_incoming_webhook' => 's',
-            'user_pref_cloak_referer' => 's', 'user_daily_email' => 's',
-            'ipqs_api_key' => 's', 'chart_time_range' => 's',
-        ];
-
-        // Refused here, not normalised on the way out. The read path resolves
-        // an unrenderable code to USD so no page prints "XYZ10.00", but that
-        // is a repair for rows already stored — applying it to a write would
-        // answer 200 and quietly keep a currency the caller did not choose
-        // (error pattern #4). The check belongs at the layer that accepts the
-        // value (#12), and it names what it will take.
-        if (array_key_exists('user_account_currency', $payload)) {
-            $raw = $payload['user_account_currency'];
-            $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
-            if (!in_array($currency, self::SUPPORTED_CURRENCIES, true)) {
-                throw new ValidationException('Validation failed', [
-                    'user_account_currency' => 'Must be one of: '
-                        . implode(', ', self::SUPPORTED_CURRENCIES),
-                ]);
-            }
-            $payload['user_account_currency'] = $currency;
-        }
-
-        $sets = [];
-        $binds = [];
-        $types = '';
-
-        foreach ($allowedFields as $f => $t) {
-            if (array_key_exists($f, $payload)) {
-                $sets[] = "$f = ?";
-                $binds[] = $payload[$f];
-                $types .= $t;
-            }
-        }
-
-        if (empty($sets)) {
+        $current = $this->getPreferences($userId)['data'];
+        if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
+        [$clean, $errors] = PreferenceRules::validate($payload, self::SUPPORTED_CURRENCIES);
+        if ($errors !== []) {
+            throw new ValidationException('Validation failed', $errors);
+        }
 
-        $binds[] = $userId;
-        $types .= 'i';
+        $conn = new Connection($this->db);
+        $chartRange = $clean['chart_time_range'] ?? null;
+        unset($clean['chart_time_range']);
 
-        $stmt = $this->prepare('UPDATE 202_users_pref SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
-        $this->bind($stmt, $types, ...$binds);
-        $this->execute($stmt, 'Preferences update failed');
-        $stmt->close();
+        $currencyUpdates = [];
+        if (isset($clean['user_account_currency'])) {
+            $currency = (string) $clean['user_account_currency'];
+            $rate ??= ExchangeRates::foreignPayout(...);
+            try {
+                $currencyUpdates = CurrencyChange::plan(
+                    $conn,
+                    $userId,
+                    $currency,
+                    (string) ($current['user_account_currency'] ?? ''),
+                    static fn (string $campaignCurrency, string $payout): mixed => $rate($currency, $campaignCurrency, $payout)
+                );
+            } catch (\RuntimeException $e) {
+                throw new HttpException(
+                    'The currency was not changed: re-pricing the campaigns needs the exchange rate service, and ' . $e->getMessage(),
+                    502,
+                    $e
+                );
+            }
+        }
+        if (array_key_exists('cb_key', $clean) && $clean['cb_key'] !== (string) ($current['cb_key'] ?? '')) {
+            $clean['cb_verified'] = 0;
+        }
 
-        return $this->getPreferences($userId);
+        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates): void {
+            if ($clean !== []) {
+                $sets = [];
+                $types = '';
+                foreach ($clean as $column => $value) {
+                    $sets[] = '`' . $column . '` = ?';
+                    $types .= is_int($value) ? 'i' : 's';
+                }
+                $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET ' . implode(', ', $sets) . ' WHERE `user_id` = ?');
+                $conn->bind($stmt, $types . 'i', [...array_values($clean), $userId]);
+                $conn->executeUpdate($stmt);
+            }
+            CurrencyChange::apply($conn, $currencyUpdates);
+            if ($chartRange !== null) {
+                $this->saveChartRange($conn, $userId, (string) $chartRange);
+            }
+        });
+
+        try {
+            return $this->getPreferences($userId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('preferences', $e);
+        }
     }
+
+    /**
+     * The Overview chart's resolution, where the chart reads it. An account
+     * without a chart row (one the API created) gets the installer's
+     * default chart with it, so the setting is not a write to nothing.
+     */
+    private function saveChartRange(Connection $conn, int $userId, string $range): void
+    {
+        $stmt = $conn->prepareWrite('SELECT 1 FROM `202_charts` WHERE `user_id` = ? LIMIT 1');
+        $conn->bind($stmt, 'i', [$userId]);
+        if ($conn->fetchOne($stmt) !== null) {
+            $stmt = $conn->prepareWrite('UPDATE `202_charts` SET `chart_time_range` = ? WHERE `user_id` = ?');
+            $conn->bind($stmt, 'si', [$range, $userId]);
+            $conn->executeUpdate($stmt);
+            return;
+        }
+        $stmt = $conn->prepareWrite('INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)');
+        $conn->bind($stmt, 'iss', [$userId, self::DEFAULT_CHART, $range]);
+        $conn->executeInsert($stmt);
+    }
+
+    /** install.php's default Overview chart: clicks, click-throughs and leads for all campaigns. */
+    private const DEFAULT_CHART = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
 }

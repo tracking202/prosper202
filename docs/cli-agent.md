@@ -803,9 +803,10 @@ p202 user identity-key rotate <user_id> [--force] [--json]
                        # cust_sig = hex(HMAC-SHA256(key, "<cust_type>:<cust>")); rotating stops old signatures linking
 
 p202 user prefs get    <user_id> [--json]
-p202 user prefs update <user_id> [--user_tracking_domain S]
-                       [--user_account_currency S] [--user_slack_incoming_webhook S]
-                       [--user_daily_email S] [--ipqs_api_key S] [--json]
+p202 user prefs update <user_id> [--user_tracking_domain S] [--user_daily_email never|00..23]
+                       [--user_account_currency CODE] [--user_pref_time_predefined R] [--user_pref_limit N]
+                       [--user_pref_privacy disabled|eu|all] [--cb_key S] [--user_ltv_score_weights S] ... [--json]
+                       # every settings-page preference; --help lists each with its values; "" clears free text
 ```
 
 ### Data portability

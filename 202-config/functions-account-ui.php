@@ -183,47 +183,15 @@ function p202_account_save_profile(\Prosper202\Database\Connection $conn, int $u
  */
 function p202_account_save_currency(\Prosper202\Database\Connection $conn, int $userId, string $currency, string $storedCurrency, callable $rate): void
 {
-    $updates = [];
-    if ($storedCurrency !== $currency) {
-        $stmt = $conn->prepareWrite('SELECT `aff_campaign_id`, `aff_campaign_payout`, `aff_campaign_currency`, `aff_campaign_foreign_payout` FROM `202_aff_campaigns` WHERE `aff_campaign_deleted` = 0 AND `user_id` = ?');
-        $conn->bind($stmt, 'i', [$userId]);
-        $converted = static function (string $campaignCurrency, string $payout) use ($rate): string {
-            if ((float) $payout == 0.0) {
-                return '0';
-            }
-            $answer = $rate($campaignCurrency, $payout);
-            $value = is_array($answer) ? ($answer['exchange_payout'] ?? null) : null;
-            if (!is_numeric($value) || (float) $value <= 0) {
-                throw new RuntimeException('The exchange rate service did not answer with a payout for ' . $campaignCurrency . ' ' . $payout . '.');
-            }
-            return (string) $value;
-        };
-        foreach ($conn->fetchAll($stmt) as $row) {
-            $id = (int) $row['aff_campaign_id'];
-            $payout = (string) $row['aff_campaign_payout'];
-            $foreign = (string) $row['aff_campaign_foreign_payout'];
-            $campaignCurrency = (string) $row['aff_campaign_currency'];
-            if ((float) $foreign == 0.0) {
-                // Still in its own currency: keep the original, show the converted.
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_foreign_payout` = ?, `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'ssii', [$payout, $converted($campaignCurrency, $payout), $id, $userId]];
-            } elseif ($currency === $campaignCurrency) {
-                // Back to its own currency: the original returns.
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ?, `aff_campaign_foreign_payout` = \'0.00\' WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$foreign, $id, $userId]];
-            } else {
-                $updates[] = ['UPDATE `202_aff_campaigns` SET `aff_campaign_payout` = ? WHERE `aff_campaign_id` = ? AND `user_id` = ?', 'sii', [$converted($campaignCurrency, $foreign), $id, $userId]];
-            }
-        }
-    }
-
+    // Rates first, outside the transaction; then the currency and every
+    // re-priced campaign together. PUT /users/{id}/preferences runs the
+    // same two steps (Prosper202\User\CurrencyChange).
+    $updates = \Prosper202\User\CurrencyChange::plan($conn, $userId, $currency, $storedCurrency, $rate);
     $conn->transaction(static function () use ($conn, $userId, $currency, $updates): void {
         $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET `user_account_currency` = ? WHERE `user_id` = ?');
         $conn->bind($stmt, 'si', [$currency, $userId]);
         $conn->executeUpdate($stmt);
-        foreach ($updates as [$sql, $types, $values]) {
-            $stmt = $conn->prepareWrite($sql);
-            $conn->bind($stmt, $types, $values);
-            $conn->executeUpdate($stmt);
-        }
+        \Prosper202\User\CurrencyChange::apply($conn, $updates);
     });
 }
 

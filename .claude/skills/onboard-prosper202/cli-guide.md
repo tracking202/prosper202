@@ -23,7 +23,7 @@ full flag list; add `--json` for machine-parseable output.
 
 - `--user_tracking_domain` — tracking domain
 - `--user_account_currency` — 3-letter currency code
-- `--user_daily_email` — `on`/`off`
+- `--user_daily_email` — the hour to send it, `00`-`23` in the user's time zone, or `never`
 - `--user_slack_incoming_webhook` — Slack webhook URL
 - `--ipqs_api_key` — IPQS fraud key
 

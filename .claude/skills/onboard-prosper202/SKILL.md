@@ -54,7 +54,7 @@ otherwise ask):
 $P202 user prefs update <user_id> \
   --user_tracking_domain="<domain>" \
   --user_account_currency="<USD|EUR|...>" \
-  --user_daily_email="<on|off>"
+  --user_daily_email="<00-23, the hour to send it, or never>"
 ```
 
 ## 3. First working tracker

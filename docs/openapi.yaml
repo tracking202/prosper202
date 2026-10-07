@@ -3106,7 +3106,10 @@ paths:
     put:
       tags: [Users]
       summary: Update user preferences
-      description: Self or admin. Any subset of fields may be sent.
+      description: >-
+        Self, or a user you may manage. Any subset of the fields below, each
+        checked against the settings page that owns it; an unknown key is a
+        422 naming it.
       operationId: updatePreferences
       requestBody:
         required: true
@@ -10036,27 +10039,51 @@ components:
 
     UserPreferencesUpdate:
       type: object
+      additionalProperties: false
+      description: >-
+        Any subset. Each value is checked against the page that owns it
+        (Prosper202\User\PreferenceRules); a key not listed here is refused
+        by name with 422, never dropped. A free-text value given as "" clears
+        it.
       properties:
-        user_pref_limit:
-          type: integer
-        user_pref_time_predefined:
-          type: string
         user_tracking_domain:
           type: string
-        user_cpc_or_cpv:
-          type: string
-        user_account_currency:
-          type: string
-        user_slack_incoming_webhook:
-          type: string
-        user_pref_cloak_referer:
-          type: string
+          maxLength: 255
+          description: Host links are built on, e.g. track.example.com; "" uses this install's own.
         user_daily_email:
           type: string
-        ipqs_api_key:
+          pattern: "^([01][0-9]|2[0-3])?$"
+          description: Hour (00-23, your time zone) the daily email is sent; "" never.
+        user_keyword_searched_or_bidded: {type: string, enum: [searched, bidded]}
+        user_pref_referer_data: {type: string, enum: [browser, t202ref]}
+        user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
+        user_pref_privacy: {type: string, enum: [disabled, eu, all]}
+        user_pref_cloak_referer: {type: string, enum: [origin, never]}
+        user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
+        user_account_currency:
           type: string
+          description: >-
+            One of UsersController::SUPPORTED_CURRENCIES. Re-prices every
+            campaign's payout into it through the exchange-rate service, as
+            Personal settings does, in the same transaction as the rest of
+            the request; 502 and nothing written when the service gives no
+            rate.
+        user_pref_time_predefined: {type: string, enum: [today, yesterday, last7, last14, last30, thismonth, lastmonth, thisyear, lastyear, alltime]}
+        user_pref_limit: {type: integer, enum: [10, 25, 50, 75, 100, 150, 200]}
+        user_cpc_or_cpv: {type: string, enum: [cpc, cpv]}
         chart_time_range:
           type: string
+          enum: [hours, days]
+          description: The Overview chart's resolution, kept in 202_charts where the chart reads it.
+        user_slack_incoming_webhook: {type: string, description: An https:// URL; "" stops Slack notifications.}
+        ipqs_api_key: {type: string, maxLength: 250}
+        cb_key: {type: string, maxLength: 250, description: ClickBank secret key; changing it resets cb_verified.}
+        zaxaa_api_signature: {type: string, maxLength: 250}
+        jvzoo_ipn_secret_key: {type: string, maxLength: 250}
+        user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
+        user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}
+        user_ltv_score_weights: {type: string, description: "volume:N,time:N,scroll:N,video:N,recency:N summing to 100; \"\" the defaults."}
+        user_ltv_rec_fatigue: {type: string, pattern: "^(\\d{1,3}(,\\d{1,4})?)?$", description: "times,days; 0 off; \"\" the defaults."}
 
     UserResponse:
       type: object
