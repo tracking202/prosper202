@@ -63,6 +63,15 @@ later reviewer, including yourself. This specific shape is now enforced by
 list, put it in `202-config/PHPStan/Rules/` and register it in
 `phpstan.neon.dist` — a rule that is not registered never runs.
 
+The write half shipped too: `$this->guard(fn () => CpcUpdate::labels(…,
+$ownership))` handed a captured copy to `labels()`'s `array &$errors`, so the
+refusal of another account's campaign id landed in the arrow function's copy
+and the request answered 200 — found by the instance test, not by reading.
+`ForbidByRefArgumentFromCaptureRule` reports a captured variable (arrow
+function, or a closure's by-value `use`) passed to a by-reference parameter
+and never read again in that body; a callee it cannot resolve is not seen,
+so a function that reports through a reference is called outside a closure.
+
 ### 9. Tests that mock the seam under test
 When the new code *is* the wiring — a dispatcher, an adapter, a callback
 that re-enters the router — a unit test that injects a fake for that wiring
