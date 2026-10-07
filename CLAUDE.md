@@ -22,6 +22,14 @@ the tree to "tested for false in the next statement, and refused"
 (`StatementHelpers::resultOf()` in api/v3); legacy pages that predate it are
 listed and must only shrink.
 
+Testing for false is half of it; what the false *becomes* is the other.
+`AUTH::accountTimezone()` tested every step and answered `null` for a failed
+read — the same `null` as "no account row" — and its caller had a plausible
+use for `null` (keep the zone the session took at sign-in), so a database
+error had every report page count "today" in a stale zone with nothing said,
+while the test listed it as graceful. A fallback that reads like an answer is
+the silent case again; it throws now.
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
@@ -120,6 +128,20 @@ still the author's to check. Free-form is a decision, not a default: an
 object keyed by the account's own names (`custom_fields`) or stored as sent
 (an integration's `config`) is registered with why, and its values are still
 read strictly.
+
+A drop can also wait for a lookup. POST /conversions read `items` strictly
+and then, inside the repository, dropped them when no customer resolved —
+documented, and still a 201 for a sale whose line items were stored nowhere.
+A check that can only be made after a lookup (does any customer resolve?)
+belongs where the lookup is, before the write: the API asks the repository to
+refuse (`ltv_requires_customer`, a 422 naming `items`), and a path with
+nobody to answer (a pixel, where refusing would lose the conversion too)
+keeps what it can and logs what it dropped. "Permissive for forward
+compatibility" is the same drop when the future already has a spelling:
+webhook event names were checked only for their form so later versions'
+events would need no edit, while `*` already subscribed to those — so
+`revenue.recoded` made a hook that received nothing, answered 201. Ask what
+the permissive check buys that the explicit escape hatch does not.
 
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
@@ -253,6 +275,14 @@ every other read of the key with what it decides. When a flag's *absence*
 is the common case, find every reader and check they agree on what absence
 means; a notice-silencing rewrite preserves whichever meaning was there.
 
+State found where this install's own state would be is the same question.
+`ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
+instance's place, on the theory that it was that instance's pre-upgrade
+state; nothing in it says whose it is, so another install's idempotency
+record replayed here and its staged DELETE was listed to apply against this
+database. Data whose owner cannot be shown resolves to "not ours": leave it,
+and say how the owner carries it over.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw
@@ -332,6 +362,19 @@ owner emailed a genuine key on a link to the stranger's host. The link is
 now the stored tracking domain (`PasswordResetLink`), with no link at all
 when none is stored. Before taking a host, a scheme or a path from the
 request, ask who will follow the URL.
+
+A fallback names an address too, and the same question decides it.
+`getTrackingDomain()` fell back to `SERVER_NAME` and `SERVER_PORT` — where the
+server listens, which behind a reverse proxy or a published container port
+nobody else reaches — so every link a page showed on an install with no
+tracking domain was dead; and the same helper built the URLs the dataengine
+cron fetches from itself, where the request's Host would have had the server
+fetch a host the caller chose. One value cannot serve both readers: a URL
+handed back to the requester takes the host the requester used
+(`TrackingBaseUrl::domainForResponse()`), a URL the server fetches or sends
+on takes the stored domain or the server's own name
+(`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
+`getTrackingDomain()` caller with why its URL goes back to the requester.
 
 ### 17. A key derived from an identity must be injective
 When a value exists to tell two things apart, every transform between the
