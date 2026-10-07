@@ -45,6 +45,11 @@ use Tests\Attribution\Support\AttributionDatabase;
  *   and a CPC range update. Each is compared while the hours are dirty (the
  *   report computes them exactly) and after the rollup re-summed them.
  *
+ * - A click its conversion's journey lost but a credit still names, both
+ *   rewritten and marked (its credit's hour is marked when it is resolved)
+ *   and made young (its credit's hour stays dirty); and both click-data
+ *   deletions, the hours they touch marked in their transactions.
+ *
  * Every comparison that covers summed hours also asserts the rollup served
  * some, or a report that silently fell back to the full computation would
  * pass it.
@@ -461,6 +466,107 @@ final class RollupMatchesFullComputationTest extends TestCase
             self::assertGreaterThan(0, $journeysServed, "$label: and journey hours");
         }
         self::assertSame(0, (int) self::scalar('SELECT COUNT(*) FROM 202_clicks_advance ca LEFT JOIN 202_clicks c ON c.click_id = ca.click_id WHERE c.click_id IS NULL AND ca.click_id < ' . intdiv($maxId, 2)), 'no clicks_advance row outlived its click below the marker');
+    }
+
+    /**
+     * A credited click its conversion's journey does not hold — a journey
+     * that lost a position keeps that position's credits, and the tenants
+     * carry such journeys — in a conversion hour apart from the click's own
+     * hours, and in no other journey. Null when the tenant has none.
+     *
+     * @return array{click: int, conv_time: int, campaign: int}|null
+     */
+    private function creditOutsideItsJourney(int $beforeTime): ?array
+    {
+        $rows = self::all(
+            "SELECT cr.click_id, cr.conv_time, MIN(c.aff_campaign_id) AS campaign
+             FROM 202_attribution_credits cr
+             JOIN 202_attribution_models m ON m.model_id = cr.model_id AND m.user_id = 1
+             JOIN 202_clicks c ON c.click_id = cr.click_id
+             WHERE cr.conv_time < $beforeTime
+               AND NOT EXISTS (SELECT 1 FROM 202_attribution_journeys j WHERE j.click_id = cr.click_id)
+               AND NOT EXISTS (SELECT 1 FROM 202_clicks h WHERE h.click_id = cr.click_id AND h.click_time DIV 3600 = cr.conv_time DIV 3600)
+             GROUP BY cr.click_id, cr.conv_time
+             ORDER BY cr.click_id LIMIT 1"
+        );
+
+        return $rows === [] ? null : ['click' => (int) $rows[0]['click_id'], 'conv_time' => (int) $rows[0]['conv_time'], 'campaign' => (int) $rows[0]['campaign']];
+    }
+
+    /** @return int hours the rollup served, over every variant */
+    private function compareAround(string $label, array $models, int $time): int
+    {
+        $served = 0;
+        $window = [$time - 3 * 86400, $time + 3 * 86400];
+        foreach (['campaign', 'traffic_source', 'day'] as $dim) {
+            foreach ([[null, null], [$models['first'], null], [$models['linear'], $models['default']]] as [$m, $c]) {
+                $served += $this->assertSameAnswer("$label, $dim", 1, $m, $c, $models['default'], $dim, ...$window);
+            }
+        }
+
+        return $served;
+    }
+
+    /**
+     * A changed click is resolved into the hours of everything the rollup
+     * summed it into: its own rows, the conversions whose journeys hold it,
+     * and the conversions whose credits name it. Read from the journeys
+     * alone, the hour of a credit whose journey lost the click stayed clean,
+     * and once the click was resolved the rollup served that hour stale.
+     */
+    public function testAResolvedClickMarksTheHourOfACreditItsJourneyLost(): void
+    {
+        $t = $this->generate(23, ['conversions' => 300, 'span' => 45 * 86400, 'campaigns' => 8]);
+        $this->buildRollup($t['now']);
+        $built = (int) self::scalar('SELECT built_through_hour FROM 202_attribution_rollup_state WHERE user_id = 1');
+        $x = $this->creditOutsideItsJourney(($built - 72) * 3600);
+        self::assertNotNull($x, 'the tenant has a credit whose journey lost its click, in an hour the rollup summed');
+        $hour = intdiv($x['conv_time'], 3600);
+        self::assertSame(0, (int) self::scalar("SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1 AND hour_from <= $hour AND hour_to >= $hour"), 'its conversion hour is clean');
+        self::assertGreaterThan(0, $this->compareAround('summed', $t['models'], $x['conv_time']), 'the rollup serves that hour');
+
+        $before = $this->fullComputation([$x['conv_time'] - 3 * 86400, $x['conv_time'] + 3 * 86400], $t['models']['first'], $t['models']['linear']);
+        // What off.php does to a click leaving its landing page: it takes a
+        // campaign, marked in the same transaction.
+        $this->conn->transaction(function () use ($x): void {
+            self::fixture('UPDATE 202_clicks SET aff_campaign_id = ' . ($x['campaign'] === 1 ? 2 : 1) . ' WHERE click_id = ' . $x['click']);
+            RollupDirty::click($this->conn, 1, $x['click']);
+        });
+        self::assertNotSame($before, $this->fullComputation([$x['conv_time'] - 3 * 86400, $x['conv_time'] + 3 * 86400], $t['models']['first'], $t['models']['linear']), 'the credit moved to another campaign');
+
+        $resolved = (new AttributionRollup($this->conn, static fn (): int => $t['now']))->resolveDirtyClicks(PHP_INT_MAX);
+        self::assertSame(1, $resolved);
+        self::assertGreaterThan(0, (int) self::scalar("SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1 AND hour_from <= $hour AND hour_to >= $hour"), 'the credit\'s conversion hour is marked');
+        $this->compareAround('resolved', $t['models'], $x['conv_time']);
+        $this->buildRollup($t['now']);
+        self::assertGreaterThan(0, $this->compareAround('summed again', $t['models'], $x['conv_time']), 'the rollup serves it again');
+    }
+
+    /**
+     * An hour whose rows hold a click younger than the seal is summed but
+     * left dirty, because the redirects rewrite a young click without a
+     * mark (RollupDirty::HOT_PATH_SECONDS). The credits hold clicks too: a
+     * young click a credit names, outside its journey, must keep the
+     * conversion's hour dirty as one in the journey does.
+     */
+    public function testAnHourWhoseCreditNamesAYoungClickStaysDirty(): void
+    {
+        $t = $this->generate(23, ['conversions' => 300, 'span' => 45 * 86400, 'campaigns' => 8]);
+        $x = $this->creditOutsideItsJourney($t['now'] - AttributionRollup::SEAL_SECONDS - 3 * 86400);
+        self::assertNotNull($x, 'the tenant has a credit whose journey lost its click');
+        // The click is recorded again a minute before the rollup's clock: young.
+        self::fixture('UPDATE 202_clicks SET click_time = ' . ($t['now'] - 60) . ' WHERE click_id = ' . $x['click']);
+        $this->buildRollup($t['now']);
+        $hour = intdiv($x['conv_time'], 3600);
+        $built = (int) self::scalar('SELECT built_through_hour FROM 202_attribution_rollup_state WHERE user_id = 1');
+        self::assertLessThan($built, $hour, 'the conversion hour was summed');
+        self::assertGreaterThan(0, (int) self::scalar("SELECT COUNT(*) FROM 202_attribution_rollup_dirty WHERE user_id = 1 AND hour_from <= $hour AND hour_to >= $hour"), 'and left dirty: a credit there names a young click');
+
+        // What off.php does to a young click, unmarked.
+        $before = $this->fullComputation([$x['conv_time'] - 3 * 86400, $x['conv_time'] + 3 * 86400], $t['models']['first'], $t['models']['linear']);
+        self::fixture('UPDATE 202_clicks SET aff_campaign_id = ' . ($x['campaign'] === 1 ? 2 : 1) . ' WHERE click_id = ' . $x['click']);
+        self::assertNotSame($before, $this->fullComputation([$x['conv_time'] - 3 * 86400, $x['conv_time'] + 3 * 86400], $t['models']['first'], $t['models']['linear']), 'the young click\'s campaign moved the reports');
+        $this->compareAround('a young credited click rewritten without a mark', $t['models'], $x['conv_time']);
     }
 
     /**

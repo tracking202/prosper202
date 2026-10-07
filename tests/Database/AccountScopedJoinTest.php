@@ -138,7 +138,7 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_clicks | c.click_id = j.click_id {$joins} #2' => self::JOURNEY_TOUCH,
         ],
         '202-config/Attribution/AttributionRollup.php' => [
-            'no user_id tie | 202_attribution_journey_meta | jm.conv_id = j.conv_id' => self::DIRTY_MARKS,
+            'no user_id tie | 202_clicks | c.click_id = cr.click_id' => self::JOURNEY_TOUCH,
             'no user_id tie | 202_clicks | c.click_id = cr.click_id {$joins}' => self::JOURNEY_TOUCH,
             'no user_id tie | 202_clicks | c.click_id = cr.click_id {$joins} #2' => self::JOURNEY_TOUCH,
             'no user_id tie | 202_clicks | c.click_id = j.click_id {$joins}' => self::JOURNEY_TOUCH,
