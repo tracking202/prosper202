@@ -2633,27 +2633,37 @@ function record_mysql_error($dbOrSql, $sql = null): never
     die();
 }
 
+/**
+ * The key of the entry that takes this visit, each entry's chance its
+ * 'weight' over the sum of the weights: the one chooser for a rotator rule's
+ * redirects (rtr.php and offrtr.php).
+ *
+ * A weight that is not a positive number takes no share, as a 0 does — a
+ * blank one threw a TypeError from the sum. When no entry has a share, the
+ * first entry takes the visit; that was the intent all along, but the zeroes
+ * had already been unset, so it returned null and the visitor got a blank
+ * page.
+ */
 function getSplitTestValue(array $values)
 {
-    $sum = 0;
+    $weights = [];
 
     foreach ($values as $key => $value) {
-        if ($value['weight'] == 0) {
-            unset($values[$key]);
-        } else {
-            $sum += $value['weight'];
+        $weight = is_numeric($value['weight'] ?? null) ? (int) $value['weight'] : 0;
+        if ($weight > 0) {
+            $weights[$key] = $weight;
         }
     }
 
-    if ($sum < 1) {
+    if ($weights === []) {
         // No positively-weighted entries; nothing eligible to split-test.
         return array_key_first($values);
     }
 
-    $rand = mt_rand(1, (int) $sum);
+    $rand = mt_rand(1, array_sum($weights));
 
-    foreach ($values as $key => $value) {
-        $rand -= $value['weight'];
+    foreach ($weights as $key => $weight) {
+        $rand -= $weight;
         if ($rand <= 0) {
             return $key;
         }
