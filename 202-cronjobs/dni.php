@@ -13,9 +13,10 @@ try {
 		if ($results && $results->num_rows > 0) {
 			$row = $results->fetch_assoc();
 
-			// validate install_hash with constant-time comparison
-			if (!hash_equals((string)$row['install_hash'], (string)($_GET['hash'] ?? ''))) {
-				die("Unautorized!");
+			// The registering account's install hash, constant-time, and never
+			// an empty one: hash_equals('', '') is true (InstallHash).
+			if (!\Prosper202\User\InstallHash::matches($row['install_hash'] ?? null, $_GET['hash'] ?? null)) {
+				die("Unauthorized!");
 			}
 
 			if ($_GET['processed'] == 'false') {

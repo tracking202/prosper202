@@ -9,9 +9,11 @@ try {
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
 	$result = $db->query($hash);
-	$row = $result->fetch_assoc();
+	$row = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
 
-	if (!isset($_GET['hash']) || !hash_equals((string)$row['install_hash'], (string)$_GET['hash'])) {
+	// User 1's install hash, constant-time, and never an empty one
+	// (InstallHash: hash_equals('', '') is true).
+	if (!\Prosper202\User\InstallHash::matches($row['install_hash'] ?? null, $_GET['hash'] ?? null)) {
 		die("Unauthorized!");
 	}
 
@@ -24,7 +26,9 @@ try {
 	if (!$user_row['user_daily_email']) {
 		die();
 	}
-	$domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
+	// This install's address as the hosted service is told it everywhere
+	// else (p202TrackingBaseUrl()); $protocol was never defined here.
+	$domain = rtrim(p202TrackingBaseUrl(), '/');
 	$data = ['to' => $user_row['user_email'], 'domain' => $domain, 'campaigns' => []];
 	$ids = [];
 
