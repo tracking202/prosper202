@@ -45,24 +45,39 @@ final class LocalTime
     /**
      * The column's wall-clock time in $timezone as seconds since the local
      * 1970-01-01 00:00:00: the column plus the offset in force at its value.
+     *
+     * $column is a column reference, or one multiplied by a whole number
+     * (`r.bucket * 3600`, an hour number read as the hour's first second).
+     *
+     * The CASE asks about the newest change first. Report rows are mostly
+     * recent, so a row stops at the first or second arm; asked oldest
+     * first, every row of this year walked the zone's whole history (117
+     * arms for New York) before it matched, which made a grouped read of a
+     * million rows four times slower than FROM_UNIXTIME() rather than a
+     * quarter slower (measured on MariaDB 10.11).
+     *
+     * The sum is taken over the column read as SIGNED. The time columns are
+     * mostly INT UNSIGNED, and MySQL refuses an unsigned sum that comes out below
+     * zero ("BIGINT UNSIGNED value is out of range") rather than answering:
+     * one row stamped 0 — a bad import — in a zone west of UTC failed the
+     * whole report it was in.
      */
     public static function secondsSql(string $column, string $timezone, ?int $now = null): string
     {
-        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/D', $column) !== 1) {
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?(?: \* [1-9][0-9]{0,8})?$/D', $column) !== 1) {
             throw new \InvalidArgumentException("Not a column reference: $column");
         }
         $offsets = self::offsets($timezone, $now ?? time());
+        $signed = "CAST($column AS SIGNED)";
         if (count($offsets) === 1) {
-            return "($column + {$offsets[0][1]})";
+            return "($signed + {$offsets[0][1]})";
         }
         $case = 'CASE';
-        $previous = $offsets[0][1];
-        foreach (array_slice($offsets, 1) as [$from, $offset]) {
-            $case .= " WHEN $column < $from THEN $previous";
-            $previous = $offset;
+        foreach (array_reverse(array_slice($offsets, 1)) as [$from, $offset]) {
+            $case .= " WHEN $column >= $from THEN $offset";
         }
 
-        return "($column + $case ELSE $previous END)";
+        return "($signed + $case ELSE {$offsets[0][1]} END)";
     }
 
     /**
@@ -70,13 +85,26 @@ final class LocalTime
      * first; the first applies from the beginning of time. Consecutive changes
      * that keep the offset (an abbreviation or a DST flag alone) are merged.
      *
+     * A zone PHP reads as an abbreviation or an offset ('GMT', 'EST', 'CET',
+     * '+05:30') has no history: getTransitions() answers false for it, and
+     * DateTime holds it at one offset, which is the offset here too. 'GMT'
+     * is what the report engine puts in force when the session names no
+     * zone (the cron), and this threw for it.
+     *
      * @return non-empty-list<array{0: int, 1: int}> [effective from, offset in seconds]
      */
     public static function offsets(string $timezone, int $now): array
     {
-        $transitions = (new \DateTimeZone($timezone))->getTransitions(0, $now + self::HORIZON_SECONDS);
+        $zone = new \DateTimeZone($timezone);
+        $transitions = $zone->getTransitions(0, $now + self::HORIZON_SECONDS);
         if ($transitions === false || $transitions === []) {
-            throw new \RuntimeException("PHP lists no UTC offset for the time zone $timezone");
+            // getLocation() is false for exactly those; a named zone whose
+            // history PHP could not list is not one offset forever.
+            if ($zone->getLocation() !== false) {
+                throw new \RuntimeException("PHP lists no UTC offset for the time zone $timezone");
+            }
+
+            return [[0, $zone->getOffset(new \DateTimeImmutable('@' . $now))]];
         }
         $offsets = [];
         foreach ($transitions as $transition) {
