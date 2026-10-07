@@ -188,15 +188,40 @@ if (!isset($_SESSION['privacy'])) {
 // read back, each with its own fallback and none validating it).
 $ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
 
+/**
+ * Whether this visitor may be tracked in full: cookies set, the address
+ * stored as it arrived. False under the owner's privacy setting — 'all', or
+ * 'eu' for a visitor who may be in the European Union (p202VisitorMayBeInEu()).
+ */
 function trackingEnabled(): bool
 {
-    $trackingEnabled = true;
+    return \Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'] ?? 'disabled', p202VisitorMayBeInEu(...));
+}
 
-    if ($_SESSION['privacy'] === 'all' || ($_SESSION['privacy'] === 'eu' && $_SESSION['is_european_union'])) {
-        $trackingEnabled = false;
+/**
+ * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
+ * their address places them outside the European Union, it does.
+ *
+ * The check used to read $_SESSION['is_european_union'], which nothing ever
+ * set: every request under 'eu' raised an undefined-key warning and tracked
+ * EU visitors in full — cookies set, the address stored — which is what the
+ * setting promises not to do. Only a positive "not in the EU" lifts privacy:
+ * an address GeoIP cannot place, or one in a European country outside the
+ * EU (getGeoData() reports those as "Unknown"), is treated as possibly EU,
+ * and so is everyone when the GeoIP library is missing (getGeoData() then
+ * answers false for every address without looking). Asked once per request.
+ */
+function p202VisitorMayBeInEu(): bool
+{
+    static $mayBe = null;
+    if ($mayBe === null) {
+        $answer = class_exists(\GeoIp2\Database\Reader::class)
+            ? (getGeoData(\Prosper202\Http\VisitorIp::fromServer($_SERVER))['is_european_union'] ?? null)
+            : null;
+        $mayBe = \Prosper202\Http\PrivacyMode::mayBeInEu($answer);
     }
 
-    return $trackingEnabled;
+    return $mayBe;
 }
 
 function _mysqli_query($dbOrSql, $sql = null)
