@@ -23,6 +23,15 @@ class ConversionsController
     }
 
     /**
+     * The campaign a name is read from: the conversion's, only when it is
+     * the conversion's own account's. A conversion takes its click's
+     * campaign id, and nothing stopped a tracker naming another account's
+     * campaign before the API checked linked ids (229df10); such a row is
+     * served with no campaign name, as GET /clicks serves its click.
+     */
+    private const CAMPAIGN_JOIN = 'LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id';
+
+    /**
      * The columns a conversion is served with: the row, its campaign's name,
      * and its provenance in the ledger (what produced it, what that is,
      * whether it is paid, and what replaced or reverses it). Whether a row
@@ -114,9 +123,9 @@ class ConversionsController
         $total = (int)$this->result($stmt)->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = 'SELECT ' . self::COLUMNS . "
+        $sql = 'SELECT ' . self::COLUMNS . '
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            ' . self::CAMPAIGN_JOIN . "
             $whereClause
             ORDER BY cl.conv_time DESC, cl.conv_id DESC LIMIT ? OFFSET ?";
 
@@ -146,7 +155,7 @@ class ConversionsController
     {
         $sql = 'SELECT ' . self::COLUMNS . '
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            ' . self::CAMPAIGN_JOIN . '
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1';
 
         $stmt = $this->prepare($sql);

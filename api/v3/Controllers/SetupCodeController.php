@@ -356,8 +356,8 @@ final class SetupCodeController
     }
 
     /**
-     * One of the account's live campaigns, in a live category: the ones the
-     * pages' campaign lists offer (p202_setup_campaign_options()).
+     * One of the account's live campaigns, in a live category of its own: the
+     * ones the pages' campaign lists offer (p202_setup_campaign_options()).
      *
      * @return array<string, mixed>|null
      */
@@ -366,7 +366,7 @@ final class SetupCodeController
         $stmt = $this->prepare(
             'SELECT ac.aff_campaign_id, ac.aff_campaign_id_public, ac.aff_campaign_name
              FROM 202_aff_campaigns ac
-             INNER JOIN 202_aff_networks an ON an.aff_network_id = ac.aff_network_id
+             INNER JOIN 202_aff_networks an ON an.aff_network_id = ac.aff_network_id AND an.user_id = ac.user_id
              WHERE ac.aff_campaign_id = ? AND ac.user_id = ? AND ac.aff_campaign_deleted = 0 AND an.aff_network_deleted = 0
              LIMIT 1'
         );

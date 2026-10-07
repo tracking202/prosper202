@@ -184,9 +184,13 @@ final class AppInstallsController
         }
         $clickId = self::intParam($params, 'click_id', 0, 1, PHP_INT_MAX);
 
+        // The click's campaign links it to an app only when the campaign is
+        // this account's: a tracker could name another account's before the
+        // API checked linked ids (229df10), and that campaign's link says
+        // nothing about this account's apps (InstallIntake reads it the same).
         $stmt = $this->prepare(
             'SELECT c.click_id, c.click_time, ac.app_registration_id FROM 202_clicks c
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
              WHERE c.click_id = ? AND c.user_id = ? LIMIT 1'
         );
         $this->bind($stmt, 'ii', $clickId, $this->userId);

@@ -356,7 +356,10 @@ final class SubidBatch
     /**
      * The clicks a reset clears: the converted clicks of the campaign, or of
      * every campaign in the category — a click that is a lead, or holds a
-     * live conversion row.
+     * live conversion row. A click's category is its campaign's only when
+     * the campaign is the click's own account's (a tracker could name
+     * another account's before the API checked linked ids, 229df10): that
+     * account's row never decides which of this account's sales are cleared.
      *
      * @return list<array{click_id: int, click_time: int}>
      */
@@ -369,7 +372,7 @@ final class SubidBatch
             $scopeId = $campaignId;
         } else {
             $select = "SELECT c.click_id, c.click_time FROM 202_clicks AS c
-                INNER JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id
+                INNER JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                 WHERE c.user_id = ? AND ac.aff_network_id = ?
                 AND (c.click_lead = 1 OR EXISTS (SELECT 1 FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0))";
             $scopeId = $networkId;
