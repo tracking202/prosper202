@@ -10,7 +10,8 @@
 #   - a role that is not shown campaign data is drawn no chart (403), as the
 #     Overview leaves it out;
 #   - a chart whose query fails answers 500 in the Overview's words, where the
-#     exception went uncaught.
+#     exception went uncaught;
+#   - its points are the window's days or hours (returnRanges()), no more.
 #
 # It creates two users through the API (named "oc-<time>"), writes rollup
 # rows for them and for the signed-in account straight into 202_dataengine
@@ -109,6 +110,12 @@ say "the chart is the signed-in account's clicks"
 code=$(chart "$OUT/jar" "$OUT/c0.json" --data-urlencode "chart_time_range=days")
 eq "$code" "200" "the switch answers the chart"
 BEFORE=$(clicks_charted "$OUT/c0.json")
+# Today is one day: the points ran a day (or an hour) past the window.
+eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['categories']), {len(s['data']) for s in d['json']['series']})" "$OUT/c0.json")" \
+   "1 {1}" "today by day is one point, and every line has one value"
+code=$(chart "$OUT/jar" "$OUT/c0h.json" --data-urlencode "chart_time_range=hours")
+eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); c=d['categories']; print(c[0][-7:], c[-1][-7:])" "$OUT/c0h.json")" \
+   "12:00AM 11:00PM" "today by hour runs from midnight to 11 pm, not to the next midnight"
 # Another account's clicks, and then two of this account's, rolled up now.
 for u in "oc-a-$STAMP" "oc-b-$STAMP"; do
     code=$(api POST /users "{\"user_name\":\"$u\",\"user_email\":\"$u@example.test\",\"user_pass\":\"ocPass$STAMP\"}")
