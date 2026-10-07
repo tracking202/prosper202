@@ -27,6 +27,22 @@ Config constants, DB connections, and other resources must be initialized before
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
+`empty()` is the same fallback spelled as a presence test. `empty('0')` is
+true, so `if (!empty($params['period']))` read period=0 as "no period" and
+the LTV reads answered 200 over the default window as though it were the one
+asked for; the same test made `campaign_id=0` on GET /conversions no filter
+(every campaign's conversions), `cursor=0` page one, and a `customer_ref` of
+`"0"` (a real id where a system counts from 0) no customer. Presence is
+`isset()`/`array_key_exists()` plus an explicit comparison with the value
+that means "none" (`''`, `null`); whatever remains is read, or refused naming
+the parameter. `ForbidFalsyRequestParamTestRule` reports a truthiness test
+(`empty()`, `?:`, `!`, a bare condition, `&&`/`||`, `== false`) of an
+element of `$params`, `$payload` or a request superglobal in `api/`. The
+name is the whole heuristic: a value copied into another variable, put
+through `trim()` first, or read outside `api/` (a repository handed the
+payload) is not seen — and a flag is not a value, so `(bool)` and
+`filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so.
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 

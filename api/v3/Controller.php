@@ -432,8 +432,13 @@ abstract class Controller
     {
         $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
         $offset = max(0, (int)($params['offset'] ?? 0));
-        if (!empty($params['cursor'])) {
-            $offset = $this->decodeOffsetCursor((string)$params['cursor']);
+        // Absent and '' are no cursor; anything else is decoded or refused.
+        // This was !empty(), and empty('0') is true, so cursor=0 was no
+        // cursor and answered page one, where every other malformed cursor
+        // is a 422 — a pager handed it would restart instead of stopping.
+        $cursor = $params['cursor'] ?? '';
+        if ($cursor !== '') {
+            $offset = $this->decodeOffsetCursor(is_string($cursor) ? $cursor : '');
         }
         $cursorTtl = max(60, min(86400, (int)($params['cursor_ttl'] ?? 3600)));
         $selectExpr = implode(', ', $this->selectColumns());

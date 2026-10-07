@@ -72,6 +72,10 @@ rules:
     - Prosper202\PHPStan\Rules\UncheckedTransactionBoundaryRule
     # CLAUDE.md #4 — silent data loss on malformed input.
     - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
+    # …and a request parameter tested by truthiness: empty('0') is true, so
+    # LTV's period=0 answered over the default window and GET
+    # /conversions?campaign_id=0 with every campaign's conversions.
+    - Prosper202\PHPStan\Rules\ForbidFalsyRequestParamTestRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
     - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
     # CLAUDE.md #7 — bind_param type string mismatches.
