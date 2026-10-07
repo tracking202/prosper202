@@ -205,14 +205,16 @@ var conversionCreateCmd = &cobra.Command{
 
 // hintConversionCreateError names the flags that supply a customer when the
 // server refuses line items or CRM fields because none resolved: the click is
-// linked to no customer and none was named.
+// linked to no customer and none was named. Only that refusal: the same field
+// is also refused for its shape ("items" that is not a list), where naming a
+// customer would not help.
 func hintConversionCreateError(err error) error {
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
 		return err
 	}
 	for _, field := range []string{"items", "customer_crm"} {
-		if _, ok := apiErr.FieldErrors[field]; ok {
+		if msg, ok := apiErr.FieldErrors[field]; ok && strings.Contains(msg, "no customer is linked") {
 			return withHint(err, "Name the customer with --customer-ref <your id> (and --customer-ref-type), or --customer-id from `p202 ltv customers`.")
 		}
 	}
