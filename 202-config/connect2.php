@@ -2992,11 +2992,17 @@ function p202LogRedirectHit(string $endpoint, string $decision): void
         'ep=' . $endpoint,
         'decision=' . $decision,
         'method=' . $h('REQUEST_METHOD'),
-        'ip=' . $h('REMOTE_ADDR'),
-        // The header as it arrived (display only), beside the address the
-        // click path resolved from it.
-        'xff=' . str_replace(["\t", "\n", "\r"], ' ', \Prosper202\Http\VisitorIp::forwardedForAsSent($_SERVER)),
-        'visitor_ip=' . \Prosper202\Http\VisitorIp::fromServer($_SERVER),
+        // Every address masked to its /24 (/48), whatever the privacy
+        // setting: this is a diagnostic log in the temp directory, which
+        // tells two hits of one click apart by their headers, and wrote each
+        // visitor's address in full while it was on. The forwarded chain is
+        // masked element by element; what is not an address shows as '?'.
+        'ip=' . \Prosper202\Http\StoredVisitorIp::mask(trim($h('REMOTE_ADDR'))),
+        'xff=' . implode(',', array_map(
+            static fn (string $hop): string => \Prosper202\Http\StoredVisitorIp::mask(trim($hop)) ?: '?',
+            array_filter(explode(',', \Prosper202\Http\VisitorIp::forwardedForAsSent($_SERVER)), static fn (string $hop): bool => trim($hop) !== '')
+        )),
+        'visitor_ip=' . \Prosper202\Http\StoredVisitorIp::mask(\Prosper202\Http\VisitorIp::fromServer($_SERVER)),
         'sec_purpose=' . $h('HTTP_SEC_PURPOSE'),
         'purpose=' . $h('HTTP_PURPOSE'),
         'x_purpose=' . $h('HTTP_X_PURPOSE'),
