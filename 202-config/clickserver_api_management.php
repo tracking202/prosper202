@@ -17,7 +17,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
 	// account could switch off a domain licensed to another (#165, #173).
 	$storedKey = p202_clickserver_stored_key($db, (int) ($_SESSION['user_id'] ?? 0));
 	$refusal = p202_clickserver_switch_refusal(
-		hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? '')),
+		AUTH::check_csrf_token(),
 		isset($userObj) && is_object($userObj) && $userObj->hasPermission('access_to_clickservers'),
 		$storedKey,
 		(string) ($_POST['clickserver_id'] ?? ''),

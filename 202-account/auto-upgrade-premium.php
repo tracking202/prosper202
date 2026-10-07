@@ -45,13 +45,13 @@ $FilesUpdated = null;
 $time_from = '';
 $token_refused = false;
 
-if (($_POST['start_upgrade'] ?? '') === '1' && !hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+if (($_POST['start_upgrade'] ?? '') === '1' && !AUTH::check_csrf_token()) {
 	// The classic page ignored a bad token in silence and showed the form
 	// again, which reads as "nothing happened, try again".
 	$token_refused = true;
 }
 
-if (($_POST['start_upgrade'] ?? '') === '1' && hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+if (($_POST['start_upgrade'] ?? '') === '1' && AUTH::check_csrf_token()) {
 
     // A client that gives up (a proxy's read timeout, a closed tab) must not
     // stop the download, the file swap or the ladder halfway.

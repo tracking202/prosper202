@@ -24,10 +24,10 @@ use PHPUnit\Framework\TestCase;
  * So this reads each <form method="post"> in the Setup sources, bounds it at
  * its own </form>, and asserts the token field is rendered inside it; and it
  * derives the AJAX endpoints from the Setup sources themselves (every
- * tracking202/ajax/*.php they name) and asserts each carries the session
- * token comparison. It is a source check — tests/live/setup-pages.sh is the
- * proof over HTTP that the refusals really happen (403 or "ERROR", and no
- * row written) for the endpoints that write.
+ * tracking202/ajax/*.php they name) and asserts each calls
+ * AUTH::check_csrf_token(), read as a call. It is a source check —
+ * tests/live/setup-pages.sh is the proof over HTTP that the refusals really
+ * happen (403 or "ERROR", and no row written) for the endpoints that write.
  */
 final class SetupPostsRequireTokenTest extends TestCase
 {
@@ -40,8 +40,16 @@ final class SetupPostsRequireTokenTest extends TestCase
         'name="csrf_token"',
     ];
 
-    /** The session-token comparison an endpoint must make. */
-    private const GUARD = "hash_equals((string) (\$_SESSION['token'] ?? ''), (string) (\$_POST['token'] ?? ''))";
+    /**
+     * The token check an endpoint must call, as significant tokens:
+     * AUTH::check_csrf_token(), the app's one comparison, which fails closed
+     * on an empty session token. The inline copy these endpoints used to
+     * carry — hash_equals() of the session token and the posted one, both
+     * cast from `?? ''` — passed a token-less request whenever the session
+     * held an empty token (hash_equals('', '') is true);
+     * SessionTokenComparedOnlyByAuthTest keeps it from coming back.
+     */
+    private const GUARD = ['AUTH', '::', 'check_csrf_token', '(', ')'];
 
     /** The classic page U4 left alone (the MTA rewrite replaces it). */
     private const NOT_MIGRATED = ['tracking202/setup/attribution_models.php', 'tracking202/setup/templates/attribution_models.php', 'tracking202/setup/AttributionController.php'];
@@ -146,14 +154,71 @@ final class SetupPostsRequireTokenTest extends TestCase
         $unguarded = [];
         foreach ($endpoints as $name) {
             $source = (string) file_get_contents(self::root() . '/tracking202/ajax/' . $name . '.php');
-            // Spacing is not part of the comparison: `(string)(…)` and
-            // `(string) (…)` are the same expression.
-            $squeeze = static fn (string $code): string => (string) preg_replace('~\s+~', '', $code);
-            if (!str_contains($squeeze($source), $squeeze(self::GUARD))) {
+            foreach (self::rebindings($source) as $problem) {
+                $unguarded[] = "$name $problem";
+            }
+            if (!self::callsTheGuard($source)) {
                 $unguarded[] = $name;
             }
         }
-        self::assertSame([], $unguarded, 'these endpoints a Setup page posts to do not compare the session token');
+        self::assertSame([], $unguarded, 'these endpoints a Setup page posts to do not call AUTH::check_csrf_token()');
+    }
+
+    /** @return list<\PhpToken> the source's tokens without whitespace and comments */
+    private static function significant(string $source): array
+    {
+        return array_values(array_filter(\PhpToken::tokenize($source), static fn (\PhpToken $t): bool => !$t->isIgnorable()));
+    }
+
+    /**
+     * Whether the source calls AUTH::check_csrf_token(), read as a call:
+     * the class named exactly AUTH (or \AUTH) before `::`, then the name and
+     * an empty argument list, outside comments. `MyAUTH::check_csrf_token()`
+     * and `Other\AUTH::check_csrf_token()` carry the same name and are other
+     * classes (CLAUDE.md #21: a name is not a call site); a comment that
+     * quotes the call is not one either.
+     */
+    private static function callsTheGuard(string $source): bool
+    {
+        $tokens = self::significant($source);
+        foreach ($tokens as $i => $token) {
+            if (!$token->is([T_STRING, T_NAME_FULLY_QUALIFIED]) || ltrim($token->text, '\\') !== self::GUARD[0]) {
+                continue;
+            }
+            $call = array_map(static fn (?\PhpToken $t): string => $t === null ? '' : $t->text, array_slice($tokens, $i + 1, count(self::GUARD) - 1));
+            if ($call === array_slice(self::GUARD, 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A namespace declaration or an import can make `AUTH` another class, and
+     * neither is visible at the call; both are refused by name.
+     *
+     * @return list<string>
+     */
+    private static function rebindings(string $source): array
+    {
+        $tokens = self::significant($source);
+        $problems = [];
+        foreach ($tokens as $i => $token) {
+            // `namespace\X` lexes as one T_NAME_RELATIVE token, so T_NAMESPACE is a declaration.
+            if ($token->is(T_NAMESPACE)) {
+                $problems[] = 'declares a namespace at line ' . $token->line;
+            }
+            if ($token->is(T_USE) && ($tokens[$i - 1]->text ?? '') !== ')') {
+                $statement = '';
+                for ($j = $i + 1; isset($tokens[$j]) && $tokens[$j]->text !== ';' && $tokens[$j]->text !== '{'; $j++) {
+                    $statement .= $tokens[$j]->text . ' ';
+                }
+                if (preg_match('/(^|\\\\|\s)AUTH\s*(;|$|,)/i', $statement) || preg_match('/\bas\s+AUTH\b/i', $statement)) {
+                    $problems[] = 'imports a name the guard is read by: use ' . trim($statement);
+                }
+            }
+        }
+        return $problems;
     }
 
     /**
@@ -236,11 +301,12 @@ final class SetupPostsRequireTokenTest extends TestCase
         self::assertSame(1, preg_match('/function p202_dni_require_token\(\): void\s*\{(.*?)\n\}/s', $source, $fn), 'the requirement is a function of the file');
         $squeezed = (string) preg_replace('/\s+/', '', $fn[1]);
         self::assertSame(
-            "if((\$_SERVER['REQUEST_METHOD']??'')!=='POST'||!hash_equals((string)(\$_SESSION['token']??''),(string)(\$_POST['token']??''))){http_response_code(403);die('Invalidtoken,pleasereloadthepageandtryagain.');}",
+            "if((\$_SERVER['REQUEST_METHOD']??'')!=='POST'||!AUTH::check_csrf_token()){http_response_code(403);die('Invalidtoken,pleasereloadthepageandtryagain.');}",
             $squeezed,
-            'p202_dni_require_token() is exactly a POST check and the session-token comparison, and ends the request'
+            'p202_dni_require_token() is exactly a POST check and the session-token check, and ends the request'
         );
         self::assertSame(1, substr_count($source, 'function p202_dni_require_token('), 'declared once');
+        self::assertSame([], self::rebindings($source), "$file: AUTH in the requirement is the global class");
 
         // And the page asks for those actions with a POST, which the shell's
         // prefilter gives the token.

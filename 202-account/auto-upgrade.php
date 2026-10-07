@@ -69,7 +69,7 @@ if (($_POST['start_upgrade'] ?? '') === '1') {
     set_time_limit(0);
 
 	// validate token
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$log .= "You must use our forms to submit data.\n";
 		$error = true;
 	}

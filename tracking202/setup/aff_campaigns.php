@@ -56,7 +56,7 @@ $goalErrors = [];
 if ($goalPost) {
 	$goalCampaignId = (int) ($_GET['edit_aff_campaign_id'] ?? 0);
 	$goalAction = (string) $_POST['goal_action'];
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$goalErrors['goal'] = 'Invalid or expired form token. Please reload the page and try again.';
 	} else {
 		$goalOwnerStmt = $db->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
@@ -101,7 +101,7 @@ if ($goalPost) {
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$error['token'] = '<div class="error">Invalid or expired form token. Please reload the page and try again.</div>';
 	}
 
@@ -319,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 if (isset($_GET['delete_aff_campaign_id'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');
 		die();
 	}

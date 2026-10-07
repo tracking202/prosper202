@@ -50,7 +50,7 @@ while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$error['token'] = 'Invalid or expired form token. Please reload the page and try again.';
 	}
 
@@ -254,7 +254,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 if (isset($_GET['delete_ppc_network_id'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		die();
 	}
@@ -286,7 +286,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
 if (isset($_GET['delete_ppc_account_id'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		die();
 	}

@@ -24,11 +24,13 @@ use PHPUnit\Framework\TestCase;
  *
  *   - A file that reads $_POST or $_REQUEST calls AUTH::check_csrf_token() —
  *     the app's one implementation, executed in AuthClassTest and in
- *     PreLoginPostRequiresTokenTest — or calls hash_equals() with the
- *     session token and the posted token as its two arguments. The call is
- *     read as a call: `AUTH::` directly before the name (not `->`, not
- *     `MyAUTH::`), in a file that declares no namespace and imports nothing
- *     named AUTH.
+ *     PreLoginPostRequiresTokenTest. The call is read as a call: `AUTH::`
+ *     directly before the name (not `->`, not `MyAUTH::`), in a file that
+ *     declares no namespace and imports nothing named AUTH. An inline
+ *     hash_equals() of the session token and the posted one used to count
+ *     too; it passed a token-less request whenever the session held an
+ *     empty token (hash_equals('', '') is true), and
+ *     SessionTokenComparedOnlyByAuthTest now refuses it anywhere in the tree.
  *   - Every `<form method="post">` in those files carries the token inside its
  *     own bounds: p202_account_token_field(), or a hidden input named token.
  *
@@ -106,15 +108,6 @@ final class AccountPostRequiresTokenTest extends TestCase
         return false;
     }
 
-    /** `[ 'token' ]` directly after the superglobal at $i. */
-    private static function indexesToken(array $tokens, int $i): bool
-    {
-        return ($tokens[$i + 1][1] ?? '') === '['
-            && ($tokens[$i + 2][0] ?? 0) === T_CONSTANT_ENCAPSED_STRING
-            && in_array($tokens[$i + 2][1], ["'token'", '"token"'], true)
-            && ($tokens[$i + 3][1] ?? '') === ']';
-    }
-
     /**
      * Whether the file calls a guard this test recognises.
      *
@@ -130,7 +123,6 @@ final class AccountPostRequiresTokenTest extends TestCase
                 continue;
             }
             $before = $tokens[$i - 1][1] ?? '';
-            $beforeId = $tokens[$i - 1][0] ?? 0;
 
             // AUTH::check_csrf_token() — the class named exactly AUTH, global.
             if ($text === 'check_csrf_token' && $before === '::' && ($tokens[$i + 1][1] ?? '') === '(' && ($tokens[$i + 2][1] ?? '') === ')') {
@@ -138,40 +130,6 @@ final class AccountPostRequiresTokenTest extends TestCase
                 $classText = ltrim($class[1], '\\');
                 if (in_array($class[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true) && $classText === 'AUTH') {
                     $found[] = 'AUTH::check_csrf_token()';
-                }
-                continue;
-            }
-
-            // hash_equals(<session token>, <posted token>) — a plain function
-            // call, the session token in the first argument and the posted one
-            // in the second.
-            if ($text === 'hash_equals' && ($tokens[$i + 1][1] ?? '') === '('
-                && !in_array($before, ['->', '?->', '::', '\\'], true) && $beforeId !== T_FUNCTION && $beforeId !== T_NEW) {
-                $depth = 0;
-                $argument = 0;
-                $sessionIn = null;
-                $postIn = null;
-                for ($j = $i + 1; $j < $count; $j++) {
-                    $t = $tokens[$j][1];
-                    if ($t === '(' || $t === '[') {
-                        $depth++;
-                    } elseif ($t === ')' || $t === ']') {
-                        $depth--;
-                        if ($depth === 0) {
-                            break;
-                        }
-                    } elseif ($t === ',' && $depth === 1) {
-                        $argument++;
-                    } elseif ($tokens[$j][0] === T_VARIABLE && self::indexesToken($tokens, $j)) {
-                        if ($t === '$_SESSION') {
-                            $sessionIn = $sessionIn ?? $argument;
-                        } elseif ($t === '$_POST' || $t === '$_REQUEST') {
-                            $postIn = $postIn ?? $argument;
-                        }
-                    }
-                }
-                if ($sessionIn === 0 && $postIn === 1 && $argument === 1) {
-                    $found[] = 'hash_equals($_SESSION[token], $_POST[token])';
                 }
             }
         }
@@ -387,8 +345,9 @@ final class AccountPostRequiresTokenTest extends TestCase
         $source = (string) file_get_contents(self::root() . '/202-config/clickserver_api_management.php');
         $code = (string) preg_replace('/\s+/', '', implode('', array_map(static fn (\PhpToken $t): string => $t->is([T_COMMENT, T_DOC_COMMENT]) ? '' : $t->text, \PhpToken::tokenize($source))));
         $this->assertStringNotContainsString("\$_POST['api_key']", $code, 'the posted key is not read');
-        $this->assertStringContainsString("\$storedKey=p202_clickserver_stored_key(\$db,(int)(\$_SESSION['user_id']??0));\$refusal=p202_clickserver_switch_refusal(hash_equals((string)(\$_SESSION['token']??''),(string)(\$_POST['token']??'')),isset(\$userObj)&&is_object(\$userObj)&&\$userObj->hasPermission('access_to_clickservers'),\$storedKey,", $code,
+        $this->assertStringContainsString("\$storedKey=p202_clickserver_stored_key(\$db,(int)(\$_SESSION['user_id']??0));\$refusal=p202_clickserver_switch_refusal(AUTH::check_csrf_token(),isset(\$userObj)&&is_object(\$userObj)&&\$userObj->hasPermission('access_to_clickservers'),\$storedKey,", $code,
             'the endpoint decides with the session token, the permission and the stored key');
+        $this->assertSame([], self::rebindings(self::tokens($source)), 'the AUTH the endpoint calls is the global class');
         $this->assertStringContainsString("if(\$refusal!==null){http_response_code(\$refusal[0]);echo\$refusal[1];return;}if(clickserver_api_domain_act_deact(\$storedKey,", $code,
             'a refusal ends the request before the switch, which uses the stored key');
         $this->assertSame(1, substr_count($code, 'clickserver_api_domain_act_deact(') - substr_count($code, 'functionclickserver_api_domain_act_deact('), 'one switch call');

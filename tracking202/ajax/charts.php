@@ -22,7 +22,7 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// validate CSRF token before any state change
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		http_response_code(403);
 		exit;
 	}

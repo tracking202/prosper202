@@ -658,16 +658,31 @@ class AUTH
      */
     public static function check_csrf_token(): bool
     {
-        $sessionToken = (string) ($_SESSION['token'] ?? '');
-        $postedToken = (string) ($_POST['token'] ?? '');
-        // Fail closed when either side is empty. Otherwise hash_equals('', '')
-        // would return true and let a request through if the session token was
-        // never seeded (session start/write failure, or a legacy entry point
-        // that bypasses connect.php).
-        if ($sessionToken === '' || $postedToken === '') {
+        return self::csrf_token_matches($_POST['token'] ?? null);
+    }
+
+    /**
+     * Whether $submitted is this session's anti-CSRF token: the app's one
+     * comparison, for a token that arrives other than as $_POST['token'] (a
+     * Setup delete link's `?token=`, a form whose field is named otherwise).
+     *
+     * Fails closed. hash_equals('', '') is true, so the inline copies this
+     * replaced — `hash_equals((string) ($_SESSION['token'] ?? ''), (string)
+     * ($_POST['token'] ?? ''))` — let a token-less request through whenever
+     * the session held an empty token: connect.php reseeds a token that is
+     * not set, not one that is set to ''. Measured live: with the stored
+     * token blanked, a Setup add, a Setup delete link, set_user_prefs, charts
+     * and the redirector's rule save all wrote on a request that carried no
+     * token. A token that is not a non-empty string on either side — never
+     * seeded, blanked, an array posted as token[] — matches nothing.
+     */
+    public static function csrf_token_matches(mixed $submitted): bool
+    {
+        $sessionToken = $_SESSION['token'] ?? null;
+        if (!is_string($sessionToken) || $sessionToken === '' || !is_string($submitted) || $submitted === '') {
             return false;
         }
-        return hash_equals($sessionToken, $postedToken);
+        return hash_equals($sessionToken, $submitted);
     }
 
     /**

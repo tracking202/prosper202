@@ -20,7 +20,7 @@ AUTH::require_permissions('access_to_setup_section');
  * announces the generation to Slack, and nothing asked for a token before
  * U4. The page posts through jQuery, whose prefilter attaches it.
  */
-if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+if (!AUTH::check_csrf_token()) {
 	http_response_code(403);
 	die('Invalid token, please reload the page and try again.');
 }

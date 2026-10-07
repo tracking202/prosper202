@@ -35,7 +35,7 @@ if (isset($_GET['autocomplete']) && isset($_GET['type']) && isset($_GET['query']
 if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST['data'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		die("ERROR");
 	}
 
