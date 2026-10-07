@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,9 +19,8 @@ class ReportTimeseriesCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Get performance over time')
-            ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Interval: hour, day, week, month', 'day')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
-                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Interval: ' . ServerLists::list(ServerLists::TIMESERIES_INTERVALS), 'day')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
             ->addOption('aff_campaign_id', null, InputOption::VALUE_REQUIRED, 'Filter by campaign ID')

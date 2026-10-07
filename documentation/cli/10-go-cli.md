@@ -21,7 +21,7 @@ make all          # Cross-compile for all platforms
 
 The binary is output as `p202` (or `p202.exe` on Windows).
 
-Note that this Go binary is distinct from the PHP/Symfony Console CLI entrypoint at `bin/p202`. Because both share the name `p202`, they can collide on your `PATH`. To avoid ambiguity, invoke each by its full path (e.g. `./go-cli/p202 ...` for the Go CLI vs `./bin/p202 ...` for the PHP CLI), or rename the Go binary.
+Note that this Go binary is distinct from the legacy PHP/Symfony Console CLI entrypoint at `bin/p202`, which covers a subset of these commands with `noun:verb` names (`report:breakdown` where this one has `report breakdown`). Because both share the name `p202`, they can collide on your `PATH`; `p202 --version` tells them apart (the PHP one prints `p202 legacy PHP CLI (bin/p202)` and points back here). To avoid ambiguity, invoke each by its full path (e.g. `./go-cli/p202 ...` for the Go CLI vs `./bin/p202 ...` for the PHP CLI), or rename the Go binary. Both read `~/.p202/config.json`: the PHP CLI uses this CLI's active profile, so `p202 config set-url`/`set-key` here configure both.
 
 ## Configuration
 

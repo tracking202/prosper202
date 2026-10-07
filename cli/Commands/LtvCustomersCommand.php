@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
@@ -20,11 +21,10 @@ class LtvCustomersCommand extends BaseCommand
         parent::configure();
         $this->setDescription('List customers with LTV rollups, or show one customer in full (CRM, aliases, custom fields, recent revenue)')
             ->addArgument('id', InputArgument::OPTIONAL, 'Customer ID for a detail view')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
-                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)')
-            ->addOption('sort', null, InputOption::VALUE_REQUIRED, 'Sort: total_revenue, order_count, last_activity_time, first_seen_time, mrr')
+            ->addOption('sort', null, InputOption::VALUE_REQUIRED, 'Sort: ' . ServerLists::list(ServerLists::LTV_CUSTOMER_SORTS))
             ->addOption('dir', null, InputOption::VALUE_REQUIRED, 'Sort direction: ASC or DESC')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page (max 500)')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Pagination offset');

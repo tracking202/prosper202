@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,15 +19,11 @@ class ReportBreakdownCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Get performance breakdown by dimension')
-            ->addOption('breakdown', 'b', InputOption::VALUE_REQUIRED, 'Dimension: campaign, aff_network, ppc_account, '
-                . 'ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, '
-                . 'ip, referer, referer_url, device_type, c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, '
-                . 'utm_term, utm_content, rotator, rotator_rule', 'campaign')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
-                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('breakdown', 'b', InputOption::VALUE_REQUIRED, 'Dimension: ' . ServerLists::list(ServerLists::breakdownDimensions()), 'campaign')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
-            ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort by: total_clicks, total_leads, total_income, total_cost, total_net, roi, epc, conv_rate', 'total_clicks')
+            ->addOption('sort', 's', InputOption::VALUE_REQUIRED, 'Sort by: ' . ServerLists::list(ServerLists::BREAKDOWN_SORTS), 'total_clicks')
             ->addOption('sort_dir', null, InputOption::VALUE_REQUIRED, 'Sort direction: ASC or DESC', 'DESC')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max results', '50')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Offset', '0')

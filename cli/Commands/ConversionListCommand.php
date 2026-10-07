@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -24,13 +25,9 @@ class ConversionListCommand extends BaseCommand
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
             ->addOption('click_id', null, InputOption::VALUE_REQUIRED, 'Only this click\'s conversions (click:conversions explains its value)')
-            ->addOption('source', null, InputOption::VALUE_REQUIRED, 'Only conversions from this source: ' . implode(', ', self::SOURCES))
+            ->addOption('source', null, InputOption::VALUE_REQUIRED, 'Only conversions from this source: ' . ServerLists::list(ServerLists::conversionSources()))
             ->addOption('goal', null, InputOption::VALUE_REQUIRED, 'Only this goal\'s outcomes, every version (a goal id)');
     }
-
-    /** What a ledger row's source can be (ConversionSource), in the server's order. */
-    public const SOURCES = ['pixel', 'postback', 'universal_pixel', 'api', 'subid_upload', 'revenue_upload',
-        'legacy_pixel', 'clickbank', 'app_install', 'goal', 'legacy_baseline'];
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
@@ -56,8 +53,8 @@ class ConversionListCommand extends BaseCommand
         }
         $source = $input->getOption('source');
         if ($source !== null) {
-            if (!in_array($source, self::SOURCES, true)) {
-                throw new \RuntimeException(sprintf('--source must be one of %s, got "%s"', implode(', ', self::SOURCES), (string) $source));
+            if (!in_array($source, ServerLists::conversionSources(), true)) {
+                throw new \RuntimeException(sprintf('--source must be one of %s, got "%s"', ServerLists::list(ServerLists::conversionSources()), (string) $source));
             }
             $params['source'] = $source;
         }

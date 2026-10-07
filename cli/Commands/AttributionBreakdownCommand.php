@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Prosper202\Attribution\AttributionReports;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
@@ -22,8 +23,7 @@ class AttributionBreakdownCommand extends BaseCommand
             ->addOption('group_by', 'g', InputOption::VALUE_REQUIRED, 'Dimension: ' . implode(', ', AttributionReports::dimensions()), 'campaign')
             ->addOption('model_id', 'm', InputOption::VALUE_REQUIRED, 'Model (default: each campaign\'s override, else the account default)')
             ->addOption('compare_model_id', null, InputOption::VALUE_REQUIRED, 'A second model, side by side')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'today, yesterday, last7, last14, last30, last90, '
-                . 'thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Unix start time')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Unix end time')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-1000 (default 100)')

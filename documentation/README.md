@@ -63,7 +63,7 @@
 - [Forecasting Guide](cli/11-forecasting.md) — how `p202 forecast` works, with worked examples: bands, ensemble, coherent metrics, seasonality, level shifts, transient masking
 - [What the UI does, through the API and `p202`](cli/12-ui-parity.md) — every web page, the REST route and the `p202` command that does the same, and what still needs the browser
 
-A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands); it does not yet have a dedicated reference page here.
+A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands): a subset of the Go CLI's, with `noun:verb` names, kept for the scripts that call it by that path. Its `--version` line and `list` say it is the legacy CLI and point back to the Go CLI reference above; it reads the Go CLI's active profile from `~/.p202/config.json`. It has no reference page of its own.
 
 ### Tutorials and Guides
 

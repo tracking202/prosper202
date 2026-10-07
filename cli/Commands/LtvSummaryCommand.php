@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -21,8 +22,7 @@ class LtvSummaryCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Realized LTV totals — customers, revenue, avg LTV, AOV, repeat rate, MRR')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
-                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
     }

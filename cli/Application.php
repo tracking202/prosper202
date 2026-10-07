@@ -6,12 +6,42 @@ namespace P202Cli;
 
 use Symfony\Component\Console\Application as ConsoleApplication;
 
+/**
+ * The legacy PHP CLI, bin/p202.
+ *
+ * Two command-line tools answer to `p202`: this one, and the Go CLI in
+ * go-cli/ (documentation/cli/10-go-cli.md), which is the primary one: it has
+ * the command set the documentation describes, with profiles, staged writes,
+ * dry-run deletes and agent-readable errors, none of which this one has; this
+ * one covers a subset, with Symfony-style `noun:verb` names. Nothing here
+ * said which was which, so the name, the --version line and the head of
+ * `list` now say it, and point at the Go CLI.
+ * bin/p202 stays where it is: scripts call it by that path.
+ */
 class Application extends ConsoleApplication
 {
+    public const NAME = 'p202 legacy PHP CLI (bin/p202) - Prosper202';
+
+    public const VERSION = '1.0.0';
+
+    /** Where the full command set is. */
+    public const GO_CLI_POINTER = 'The full command set is the Go CLI: go-cli/ (build with `make -C go-cli build`), '
+        . 'documented in documentation/cli/10-go-cli.md.';
+
     public function __construct()
     {
-        parent::__construct('p202 - Prosper202 CLI', '1.0.0');
+        parent::__construct(self::NAME, self::VERSION);
         $this->registerCommands();
+    }
+
+    /**
+     * The --version line and the head of `list` and the bare command:
+     * which CLI this is, and where the other one is.
+     */
+    #[\Override]
+    public function getLongVersion(): string
+    {
+        return parent::getLongVersion() . "\n" . self::GO_CLI_POINTER;
     }
 
     private function registerCommands(): void
