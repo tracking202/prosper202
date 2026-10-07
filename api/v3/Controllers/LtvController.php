@@ -10,6 +10,7 @@ use Api\V3\Exception\LostIdempotencyRaceException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\QueryInt;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Database\Connection;
@@ -69,8 +70,8 @@ class LtvController
     public function customers(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $result = $this->ltv->customers(
                 $this->query($params),
                 (string) ($params['sort'] ?? 'total_revenue'),
@@ -94,9 +95,15 @@ class LtvController
     public function cohorts(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $months = max(1, min(24, (int) ($params['months'] ?? 6)));
+            $months = QueryInt::param($params, 'months', 6, 1, 24, 'acquisition months, newest first');
+            // Months are the account's calendar months, as the reports' days are.
+            $zone = $this->accountTimezone();
 
-            return ['data' => $this->ltv->cohorts($this->userId, $months), 'months' => $months];
+            return [
+                'data' => $this->ltv->cohorts($this->userId, $months, null, $zone),
+                'months' => $months,
+                'timezone' => $zone,
+            ];
         });
     }
 
@@ -114,8 +121,8 @@ class LtvController
     {
         return $this->wrap(function () use ($params): array {
             $by = (string) ($params['by'] ?? $params['breakdown'] ?? 'campaign');
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
             return [
                 'data' => $this->ltv->breakdown($this->query($params), $by, $limit, $offset),
@@ -141,8 +148,8 @@ class LtvController
     public function products(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $stmt = $this->conn->prepareRead(
                 'SELECT product_id, external_product_id, sku, name, price, currency, created_at, updated_at
                  FROM 202_products WHERE user_id = ?
@@ -159,7 +166,7 @@ class LtvController
         $this->requireCustomer($customerId);
 
         return $this->wrap(function () use ($customerId, $params): array {
-            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
+            $days = QueryInt::param($params, 'days', 90, 1, 365, 'days of engagement');
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
 
             return [
@@ -271,9 +278,9 @@ class LtvController
     public function abm(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $days = QueryInt::param($params, 'days', 90, 1, 365, 'days of engagement');
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
 
             return [
@@ -291,7 +298,7 @@ class LtvController
         }
 
         return $this->wrap(function () use ($company, $params): array {
-            $days = max(1, min(365, (int) ($params['days'] ?? 90)));
+            $days = QueryInt::param($params, 'days', 90, 1, 365, 'days of engagement');
             $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
 
             return [
@@ -910,8 +917,8 @@ class LtvController
     public function listCompanies(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $result = (new MysqlCompanyRepository($this->conn))->listWithRollups($this->userId, $limit, $offset);
 
             return [
@@ -1011,8 +1018,8 @@ class LtvController
     public function listSubscriptions(array $params): array
     {
         return $this->wrap(function () use ($params): array {
-            $limit = max(1, min(500, (int) ($params['limit'] ?? 50)));
-            $offset = max(0, (int) ($params['offset'] ?? 0));
+            $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+            $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
             $status = isset($params['status']) && trim((string) $params['status']) !== ''
                 ? trim((string) $params['status'])
                 : null;

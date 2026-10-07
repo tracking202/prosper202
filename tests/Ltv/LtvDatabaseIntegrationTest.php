@@ -1283,6 +1283,35 @@ CHILD;
         self::assertSame(22.5, (float) $cohorts[0]['ltv_per_customer']);
     }
 
+    /**
+     * A cohort is a calendar month of the account's zone, and the window
+     * starts at that zone's first of the month. 03:00 UTC on 1 November is
+     * 23:00 on 31 October in New York: the window used to start at date()'s
+     * midnight and the grouping to use the database session's zone, so a New
+     * York account counted this customer in November.
+     */
+    public function testCohortMonthsAreTheAccountsCalendarMonths(): void
+    {
+        $this->insertClick(8100);
+        p202RecordConversion(self::$db, $this->log(8100), '', true, '12.0', 'TZ-1', ['customer_ref' => 'tz-1'], []);
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'), 'the conversion recorded its revenue');
+        self::$db->query('UPDATE 202_customers SET first_seen_time = ' . gmmktime(3, 0, 0, 11, 1, 2023));
+        // 00:00 on 1 November in New York, an hour after it was first seen there.
+        self::$db->query('UPDATE 202_revenue_events SET occurred_at = ' . gmmktime(4, 0, 0, 11, 1, 2023));
+        $ltv = new \Prosper202\Ltv\MysqlLtvRepository(self::$conn);
+        $now = gmmktime(12, 0, 0, 12, 10, 2023);
+
+        $utc = $ltv->cohorts(1, 2, $now, 'UTC');
+        self::assertSame(['2023-11'], array_column($utc, 'cohort_month'), 'in UTC the customer arrived in November');
+        self::assertSame(12.0, (float) $utc[0]['m0']);
+
+        self::assertSame([], $ltv->cohorts(1, 2, $now, 'America/New_York'), 'in New York October is outside November and December');
+        $ny = $ltv->cohorts(1, 3, $now, 'America/New_York');
+        self::assertSame(['2023-10'], array_column($ny, 'cohort_month'), 'and is its own cohort when the window reaches it');
+        self::assertSame(12.0, $ny[0]['m0'], 'bought within the month it arrived, on its wall clock');
+        self::assertSame([1, 12.0, 0.0, 12.0], [$ny[0]['customers'], $ny[0]['total_revenue'], $ny[0]['m5_plus'], $ny[0]['ltv_per_customer']], 'numbers, not DECIMAL strings');
+    }
+
     public function testNextOfferRebuildAndScoringEndToEnd(): void
     {
         foreach ([[7, 'Offer A'], [8, 'Offer B'], [9, 'Offer C'], [10, 'Offer D']] as [$id, $name]) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Database\Connection;
+use Prosper202\Report\LocalTime;
 use RuntimeException;
 
 /**
@@ -244,35 +245,54 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
      * since acquisition. Shows how fast LTV pays back — the number that
      * decides how aggressively acquisition can be financed.
      *
+     * The months are $timezone's calendar months (LocalTime): the window used
+     * to start at date()'s first of the month, in whatever zone the PHP
+     * process ran, while the rows were grouped by FROM_UNIXTIME() in the
+     * database session's zone, so a customer acquired near a month's edge
+     * could be counted in the window and grouped into the month before it —
+     * an extra, partial cohort the window never asked for.
+     *
+     * @param string $timezone the account's zone (a name PHP knows)
      * @return list<array<string, mixed>> newest cohort first; keys
      *         cohort_month (Y-m), customers, m0..m4, m5_plus,
      *         total_revenue, ltv_per_customer
      */
-    public function cohorts(int $userId, int $months = 6, ?int $now = null): array
+    public function cohorts(int $userId, int $months = 6, ?int $now = null, string $timezone = 'UTC'): array
     {
         $months = max(1, min(24, $months));
         $now = $now ?? time();
-        $windowStart = strtotime(date('Y-m-01', $now) . ' -' . ($months - 1) . ' months');
+        $windowStart = (new \DateTimeImmutable('@' . $now))
+            ->setTimezone(new \DateTimeZone($timezone))
+            ->modify('first day of this month')
+            ->setTime(0, 0, 0)
+            ->modify('-' . ($months - 1) . ' months')
+            ->getTimestamp();
 
-        // Bucket = whole months between acquisition and the revenue event
-        // (clamped at 0: idempotent imports can carry occurred_at slightly
-        // before first_seen). LEFT JOIN keeps zero-revenue cohorts visible.
-        $bucket = 'GREATEST(TIMESTAMPDIFF(MONTH, FROM_UNIXTIME(c.first_seen_time), FROM_UNIXTIME(re.occurred_at)), 0)';
+        // Bucket = whole months between acquisition and the revenue event, on
+        // the account's wall clock (clamped at 0: idempotent imports can
+        // carry occurred_at slightly before first_seen). LEFT JOIN keeps
+        // zero-revenue cohorts visible.
+        $firstSeen = LocalTime::datetimeSql('c.first_seen_time', $timezone, $now);
+        $occurred = LocalTime::datetimeSql('re.occurred_at', $timezone, $now);
         $stmt = $this->conn->prepareRead(
-            "SELECT DATE_FORMAT(FROM_UNIXTIME(c.first_seen_time), '%Y-%m') AS cohort_month,
-                    COUNT(DISTINCT c.customer_id) AS customers,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 0 THEN re.amount END), 0) AS m0,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 1 THEN re.amount END), 0) AS m1,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 2 THEN re.amount END), 0) AS m2,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 3 THEN re.amount END), 0) AS m3,
-                    COALESCE(SUM(CASE WHEN {$bucket} = 4 THEN re.amount END), 0) AS m4,
-                    COALESCE(SUM(CASE WHEN {$bucket} >= 5 THEN re.amount END), 0) AS m5_plus,
-                    COALESCE(SUM(re.amount), 0) AS total_revenue
-             FROM 202_customers c
-             LEFT JOIN 202_revenue_events re
-                    ON re.customer_id = c.customer_id AND re.user_id = c.user_id
-             WHERE c.user_id = ? AND c.merged_into_customer_id IS NULL
-               AND c.first_seen_time >= ?
+            "SELECT DATE_FORMAT(t.first_seen_local, '%Y-%m') AS cohort_month,
+                    COUNT(DISTINCT t.customer_id) AS customers,
+                    COALESCE(SUM(CASE WHEN t.bucket = 0 THEN t.amount END), 0) AS m0,
+                    COALESCE(SUM(CASE WHEN t.bucket = 1 THEN t.amount END), 0) AS m1,
+                    COALESCE(SUM(CASE WHEN t.bucket = 2 THEN t.amount END), 0) AS m2,
+                    COALESCE(SUM(CASE WHEN t.bucket = 3 THEN t.amount END), 0) AS m3,
+                    COALESCE(SUM(CASE WHEN t.bucket = 4 THEN t.amount END), 0) AS m4,
+                    COALESCE(SUM(CASE WHEN t.bucket >= 5 THEN t.amount END), 0) AS m5_plus,
+                    COALESCE(SUM(t.amount), 0) AS total_revenue
+             FROM (
+                 SELECT c.customer_id, re.amount, {$firstSeen} AS first_seen_local,
+                        GREATEST(TIMESTAMPDIFF(MONTH, {$firstSeen}, {$occurred}), 0) AS bucket
+                 FROM 202_customers c
+                 LEFT JOIN 202_revenue_events re
+                        ON re.customer_id = c.customer_id AND re.user_id = c.user_id
+                 WHERE c.user_id = ? AND c.merged_into_customer_id IS NULL
+                   AND c.first_seen_time >= ?
+             ) t
              GROUP BY cohort_month
              ORDER BY cohort_month DESC"
         );
@@ -280,9 +300,15 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
 
         $rows = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {
+            // Numbers, not the DECIMAL columns' strings, as ltv_per_customer
+            // already was.
             $customers = (int) $row['customers'];
+            $row['customers'] = $customers;
+            foreach (['m0', 'm1', 'm2', 'm3', 'm4', 'm5_plus', 'total_revenue'] as $money) {
+                $row[$money] = (float) $row[$money];
+            }
             $row['ltv_per_customer'] = $customers > 0
-                ? round(((float) $row['total_revenue']) / $customers, 5)
+                ? round($row['total_revenue'] / $customers, 5)
                 : 0.0;
             $rows[] = $row;
         }

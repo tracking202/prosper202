@@ -7416,7 +7416,11 @@ paths:
       tags:
       - LTV
       summary: Lifetime value by acquisition cohort
-      description: Needs the `ltv:read` scope.
+      description: >-
+        Customers grouped by the calendar month they were first seen, with
+        their revenue bucketed by whole months since then, both counted in
+        the account's timezone (returned as `timezone`). A `months` that is
+        not a whole number from 1 to 24 is a 422. Needs the `ltv:read` scope.
       operationId: ltvCohorts
       parameters:
       - name: months
@@ -7440,8 +7444,15 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                  months:
+                    type: integer
+                  timezone:
+                    type: string
+                    description: The account's timezone, whose calendar months the cohorts are
         '403':
           $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
 
   /ltv/mrr:
     get:
