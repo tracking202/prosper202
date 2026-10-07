@@ -17,7 +17,7 @@
         ],
         "checks": [
           {
-            "run": "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1); since=$(( $(date +%s) - 86400 )); p202 click list --aff_campaign_id \"$c\" --all --json | jq --argjson since \"$since\" '[.data[] | select(.click_time >= $since) | .click_cpc] | length > 0 and unique == [\"0.15000\"]'",
+            "run": "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1); since=$(( $(date +%s) - 86400 )); p202 click list --aff_campaign_id \"$c\" --all --json | jq --argjson since \"$since\" '[.data[] | select(.click_time >= $since) | .click_cpc] | length > 0 and unique == [0.15]'",
             "includes": [
               "true"
             ]
