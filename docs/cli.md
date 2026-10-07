@@ -624,6 +624,17 @@ p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
 | `--click_id`       | Yes      | Click ID to attribute    |
 | `--payout`         | No       | Payout amount            |
 | `--transaction_id` | No       | Transaction ID (dedup)   |
+| `--conv-time`      | No       | When it converted, unix seconds (default now) |
+| `--status reversed`| No       | Record a reversal of the click's conversion with this `--transaction_id` instead |
+| `--reversal-id`    | No       | The network's id for the reversal (with `--status reversed`) |
+| `--customer-id` / `--customer-ref` | No | The LTV customer (one of them); `--customer-ref-type` says what the ref is, `--customer-crm '{…}'` seeds a customer the ref creates |
+| `--item` / `--items-file` | No | Product line items (JSON objects) on the customer's revenue event; they need a customer named here |
+
+```bash
+p202 conversion create --click_id 12345 --payout 49 --transaction_id ORD-1 \
+    --customer-ref CUST-77 --item '{"sku":"PRO-1","quantity":1,"unit_price":49}'
+p202 conversion create --click_id 12345 --status reversed --transaction_id ORD-1
+```
 
 A transaction id the click already has records nothing: the answer is that
 conversion, with `"duplicate": true` beside `data` under `--json`. One whose
@@ -1090,6 +1101,86 @@ address.
 | `--run-at` | now | Unix seconds |
 | `--webhook-url`, `--webhook-secret` | none, generated | https only |
 | `--output` / `-O` (download) | stdout | Write the CSV to a file |
+
+## Customer lifetime value (LTV)
+
+Reads:
+
+```bash
+p202 ltv summary --period last30
+p202 ltv customers --search acme --segment repeat          # repeat | subscribers | at_risk
+p202 ltv customers --cf plan=pro --cf score.min=50 --all   # custom-field filters; every page
+p202 ltv customers 42                                      # one customer in full
+p202 ltv breakdown --by product --cf plan=pro
+p202 ltv predict --by campaign
+p202 ltv cohorts --months 12
+p202 ltv products --limit 100
+```
+
+`--cf key=value` matches a custom field; `--cf key.min=N` and `--cf
+key.max=N` bound a number or date field (at most 3 filters, on summary,
+customers, breakdown and predict). `p202 ltv fields list` shows the keys.
+
+Customer records. A record flag (`--first-name`, `--last-name`, `--email`,
+`--phone`, `--company`, `--address-line1`, `--address-line2`, `--city`,
+`--region`, `--postal-code`, `--country`) given `""` clears that field; one
+not given is left as it is. `--field key=value` sets a custom field (`key=`
+clears it), `--alias type=value` adds an identifier.
+
+```bash
+p202 ltv customer upsert --customer-ref CUST-77 --email ada@example.com --field plan=pro
+p202 ltv customer update 42 --phone "" --city London
+p202 ltv customer merge 42 --from 57 --force          # 57's history moves to 42; not reversible
+p202 ltv customer erase 42 --dry-run                  # what goes, what stays
+p202 ltv customer erase 42 --force
+p202 ltv customer alias add 42 --type esp_id --value 48213
+p202 ltv customer alias remove 42 7 --force
+```
+
+`erase` is a GDPR-style erasure, not a delete: name, email, phone, company,
+address, aliases, custom-field values and personalization tokens are removed
+and the record is anonymized, while its revenue events and subscriptions stay
+(LTV totals do not change).
+
+Companies:
+
+```bash
+p202 ltv company create --name "Acme Corp" --domain acme.com   # 409 when the name or domain is taken
+p202 ltv company update 3 --domain ""                          # clear the auto-attach domain
+p202 ltv company merge 3 --from 9 --force
+p202 ltv company delete 9 --dry-run                            # `refused` says why it would not delete
+```
+
+Data from other systems (each names its customer with `--customer-id` or
+`--customer-ref`):
+
+```bash
+p202 ltv revenue record --customer-ref CUST-77 --amount 49.00 --idempotency-key ORD-1001 \
+    --item '{"sku":"PRO-1","quantity":1,"unit_price":49}'
+p202 ltv revenue record --customer-id 42 --amount 10 --event-type refund
+p202 ltv engagement-event record --customer-ref CUST-77 --event demo_requested
+p202 ltv subscription upsert --external-sub-id sub_123 --customer-ref CUST-77 --amount 29 --interval month
+p202 ltv subscription event sub_123 --type renewal --transaction-id ch_889
+p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49
+p202 ltv next-offer impression 42 --campaign-id 7
+```
+
+Settings:
+
+```bash
+p202 ltv fields create --key plan --type select --option free --option pro
+p202 ltv fields update 3 --label "Plan tier" --required
+p202 ltv fields delete 3 --dry-run                     # and how many customers' values go with it
+p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
+p202 ltv webhooks delete 4 --force
+p202 ltv integrations create --provider klaviyo --config '{"list_id":"XyZ"}'
+p202 ltv integrations delete 2 --force
+```
+
+`webhooks create` prints the signing secret once; it cannot be read back.
+Every LTV write refuses the global `--staged` flag before sending anything
+(the server stages none of them); every LTV delete takes `--dry-run`,
+`--force` and `--ids`.
 
 ## Users
 

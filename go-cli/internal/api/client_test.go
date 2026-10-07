@@ -163,6 +163,45 @@ func TestPutSendsJSONBody(t *testing.T) {
 	}
 }
 
+// PATCH is a write like PUT: it carries the JSON body, and --staged stamps it
+// (after confirming the server stages writes) rather than letting it run.
+func TestPatchSendsJSONBodyAndIsStampedLikeAnyWrite(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/capabilities") {
+			w.Write([]byte(`{"data":{"features":{"staged_writes":true}}}`))
+			return
+		}
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		body, _ := io.ReadAll(r.Body)
+		gotBody = nil
+		json.Unmarshal(body, &gotBody)
+		w.Write([]byte(`{"data":{"customer_id":42}}`))
+	}))
+	defer srv.Close()
+	defer SetStagedMode(false)
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Patch("ltv/customers/42", map[string]string{"phone": ""}); err != nil {
+		t.Fatalf("Patch() error: %v", err)
+	}
+	if gotMethod != "PATCH" || !strings.HasSuffix(gotPath, "/ltv/customers/42") || gotQuery != "" {
+		t.Errorf("request = %s %s?%s", gotMethod, gotPath, gotQuery)
+	}
+	if v, ok := gotBody["phone"]; !ok || v != "" {
+		t.Errorf("body = %v, want the empty phone sent as a clear", gotBody)
+	}
+
+	SetStagedMode(true)
+	if _, err := c.Patch("ltv/customers/42", map[string]string{"phone": "1"}); err != nil {
+		t.Fatalf("staged Patch() error: %v", err)
+	}
+	if gotMethod != "PATCH" || gotQuery != "staged=1" {
+		t.Errorf("staged request = %s ?%s, want staged=1", gotMethod, gotQuery)
+	}
+}
+
 func TestDeleteSendsDeleteMethod(t *testing.T) {
 	var gotMethod, gotPath string
 

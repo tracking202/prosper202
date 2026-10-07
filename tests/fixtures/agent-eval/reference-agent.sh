@@ -239,6 +239,33 @@ case "$ask" in
             --idempotency-key="eval-idem-beta-$run_id" --json >/dev/null
         printf 'Created both campaigns, each with its own --idempotency-key: a key identifies one request, so reusing one for the second create would have been refused rather than treated as a new campaign.\n'
         ;;
+    *"EVAL-LTV-ORD-"*)
+        # Revenue from another system goes on the customer's ledger, keyed by
+        # the order so a retry records nothing new. The customer is named by
+        # the reference the ask gives, the line item by its SKU.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+')
+        sku=$(printf '%s' "$ask" | grep -oE 'SKU [A-Z0-9-]+' | cut -d' ' -f2)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | head -1 | tr -d '$')
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" \
+            --item "{\"sku\":\"$sku\",\"quantity\":1,\"unit_price\":$amount}" --json)
+        printf 'Recorded a %s purchase of %s on customer %s (customer %s, event %s), keyed by order %s so a retry cannot record it twice (duplicate: %s).\n' \
+            "$amount" "$sku" "$ref" "$(printf '%s' "$event" | jq -r '.data.customer_id')" \
+            "$(printf '%s' "$event" | jq -r '.data.event_id')" "$order" "$(printf '%s' "$event" | jq -r '.data.duplicate')"
+        ;;
+    *"EVAL-LTV-GDPR"*)
+        # An erasure request: find the customer, preview what erasure removes
+        # and keeps, then erase — the ask itself is the approval.
+        id=$(p202 ltv customers --search EVAL-LTV-GDPR --json | jq -r '.data[0].customer_id // empty')
+        if [ -z "$id" ]; then
+            printf 'I found no customer EVAL-LTV-GDPR in `p202 ltv customers`; nothing was changed.\n'
+        else
+            kept=$(p202 ltv customer erase "$id" --dry-run --json | jq -r '[.data.cascade[] | select(.action=="kept") | "\(.count) \(.resource)"] | join(", ")')
+            p202 ltv customer erase "$id" --force
+            printf 'Erased customer EVAL-LTV-GDPR (customer %s): name, email, aliases and custom fields are gone and the record is anonymized. Its revenue was kept (%s), so your LTV totals are unchanged.\n' "$id" "$kept"
+        fi
+        ;;
     *[Dd]elete*)
         # A destructive ask ends in a grounded preview and a question, never
         # a completed delete: find the target in real list output, name it by
