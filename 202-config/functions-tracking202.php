@@ -116,7 +116,10 @@ function dollar_format($amount, $currency = null, $cpv = false)
         if ($amount >= 0) {
             $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
         } else {
-            $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
+            // Accounting form: the parentheses are the sign, so the amount
+            // inside has none ("($5.00)", as the v1/v2 APIs write it). It
+            // kept its own, and a refund read "($-5.00)".
+            $new_amount = $currency_before . number_format(abs($amount), $decimals) . $currency_after;
             $new_amount = '(' . $new_amount . ')';
         }
     } else {

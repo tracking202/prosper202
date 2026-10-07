@@ -297,7 +297,7 @@ eq "$(get "${BD_URL#/}" "$OUT/ui-a.html")" 200 "the breakdown fragment answers"
 table "$OUT/ui-a.html" click-conversions-table > "$OUT/ui-a.tsv"
 eq "$(grep -c '^0	#' "$OUT/ui-a.tsv")" 6 "it lists all six conversions"
 eq "$(awk -F'\t' '$2 ~ /^#/ {print $4 "|" substr($5,1,index($5" "," ")-1)}' "$OUT/ui-a.tsv" | tr '\n' ' ')" \
-   '$1.00|counted $0.00|unpaid $4.00|counted $5.00|counted $2.00|counted ($-5.00)|counted ' "with the API's amounts and verdicts, in order"
+   '$1.00|counted $0.00|unpaid $4.00|counted $5.00|counted $2.00|counted ($5.00)|counted ' "with the API's amounts and verdicts, in order"
 eq "$(awk -F'\t' '$2 == "Counted toward the click" {print $4}' "$OUT/ui-a.tsv")" '$7.00' "and adds up to the click's value"
 has "$OUT/ui-a.html" 'Goal &quot;Level 3&quot; v1' "each goal is named"
 get "tracking202/ajax/click_conversions.php?click_id=$R" "$OUT/ui-r.html" > /dev/null
@@ -331,7 +331,7 @@ group_rows() {
 CAMPAIGN=4; LANDINGPAGE=5; TRANSACTION=35; GOALSOURCE=37
 # The accumulate click four levels deep: campaign, landing page, transaction,
 # then what produced each transaction's rows.
-FOUR_ACCUMULATE='breakdown accumulate|1|1|$7.00|$0.25 [No Landing Page]|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 A-1|0|0|$0.00|$0.00 API|0|0|($-5.00)|$0.00 Postback|0|0|$5.00|$0.00 A-2|1|1|$2.00|$0.25 Postback|1|1|$2.00|$0.25 '
+FOUR_ACCUMULATE='breakdown accumulate|1|1|$7.00|$0.25 [No Landing Page]|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 A-1|0|0|$0.00|$0.00 API|0|0|($5.00)|$0.00 Postback|0|0|$5.00|$0.00 A-2|1|1|$2.00|$0.25 Postback|1|1|$2.00|$0.25 '
 FOUR_DOWNLOAD='A-1|API A-1|Postback A-2|Postback [No transaction ID]|Goal: Install [No transaction ID]|Goal: Level 3'
 
 say "Group Overview's Transaction ID level sums the rows"
@@ -356,7 +356,7 @@ hasnt "$OUT/go-plain.html" "data-p202-ledger-note" "and says nothing when none i
 say "Group Overview's Goal / source level"
 overview "group_1=$CAMPAIGN&group_2=$GOALSOURCE&group_3=0&group_4=0&range=last7&user_pref_show=all" "$OUT/go-src"
 eq "$(group_rows 'breakdown accumulate' "$OUT/go-src.tsv" | tr '\n' ' ')" \
-   'breakdown accumulate|1|1|$7.00|$0.25 API|0|0|($-5.00)|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 Postback|1|1|$7.00|$0.25 ' \
+   'breakdown accumulate|1|1|$7.00|$0.25 API|0|0|($5.00)|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 Postback|1|1|$7.00|$0.25 ' \
    "each paid goal on its own row, the unpaid Tutorial nowhere, the postbacks \$7 and the API reversal -\$5"
 eq "$(group_rows 'breakdown replace' "$OUT/go-src.tsv" | tr '\n' ' ')" \
    'breakdown replace|2|1|$6.00|$0.50 [Not converted]|1|0|$0.00|$0.25 Postback|1|1|$6.00|$0.25 ' \
