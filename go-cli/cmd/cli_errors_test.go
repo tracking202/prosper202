@@ -223,3 +223,24 @@ func TestConflictHintsAreSpecificPerCause(t *testing.T) {
 		})
 	}
 }
+
+// A class-wide hint names the failing command's own list/update sibling
+// where the tree has one, and keeps its generic words where it does not.
+func TestHintForNamesTheSiblingCommand(t *testing.T) {
+	old := activeCommandPath
+	defer func() { activeCommandPath = old }()
+
+	activeCommandPath = "p202 campaign get"
+	if got := hintFor(&api.APIError{Status: 404}); !strings.Contains(got, "Run `p202 campaign list`") || strings.Contains(got, "...") {
+		t.Errorf("404 from campaign get: hint = %q", got)
+	}
+	activeCommandPath = "p202 tracker create"
+	if got := hintFor(&api.APIError{Status: 409}); !strings.Contains(got, "`p202 tracker list`") || !strings.Contains(got, "`p202 tracker update`") {
+		t.Errorf("409 from tracker create: hint = %q", got)
+	}
+	// `ltv customer` has no list (it is `ltv customers`): no invented command.
+	activeCommandPath = "p202 ltv customer update"
+	if got := hintFor(&api.APIError{Status: 404}); strings.Contains(got, "p202 ltv customer list") || !strings.Contains(got, "`... list`") {
+		t.Errorf("404 from ltv customer update: hint = %q", got)
+	}
+}

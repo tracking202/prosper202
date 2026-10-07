@@ -192,7 +192,7 @@ func unknownInputHint(err error) string {
 // validation errors from a known command.
 func hintFor(err error) string {
 	if hint := api.HintFor(err); hint != "" {
-		return hint
+		return siblingCommandHint(hint)
 	}
 	if hint := unknownInputHint(err); hint != "" {
 		return hint
@@ -201,4 +201,34 @@ func hintFor(err error) string {
 		return fmt.Sprintf("Run `%s --help` for the flags this command accepts.", strings.TrimSpace(activeCommandPath))
 	}
 	return ""
+}
+
+// siblingCommandHint names the command a class-wide hint leaves as "the
+// matching `... list`" (or `... update`): the failing command's sibling, when
+// the tree has one under that name. `p202 campaign get 9` that answers 404
+// says `p202 campaign list`; a command whose group has no such sibling keeps
+// the generic words rather than naming a command that does not exist.
+func siblingCommandHint(hint string) string {
+	if activeCommandPath == "" || !strings.Contains(hint, "`... ") {
+		return hint
+	}
+	parts := strings.Fields(activeCommandPath)
+	if len(parts) < 3 {
+		return hint
+	}
+	group, rest, err := rootCmd.Find(parts[1 : len(parts)-1])
+	if err != nil || group == nil || len(rest) != 0 {
+		return hint
+	}
+	for _, verb := range []string{"list", "update"} {
+		for _, sub := range group.Commands() {
+			if sub.Name() == verb {
+				named := "`" + sub.CommandPath() + "`"
+				hint = strings.ReplaceAll(hint, "the matching `... "+verb+"`", named)
+				hint = strings.ReplaceAll(hint, "`... "+verb+"`", named)
+				break
+			}
+		}
+	}
+	return hint
 }
