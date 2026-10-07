@@ -365,6 +365,17 @@ parse errors, and the docblock says so rather than guarding against them.
 When a classifier keys on adjacency, ask what the language lets sit
 between the variable and the thing that acts on it.
 
+The same blindness, one token wide: `RollupWritersAreMarkedTest` read each
+string literal alone, so the cron job's
+`explode(',', '202_clicks,202_clicks_advance,…')` and its
+``"DELETE FROM `$table`"`` were neither a write naming a summed table nor a
+bare table name, and the job that deleted every click table passed as
+writing none — the rollup kept sums for deleted clicks. A string is what PHP
+assembles: the scan now joins literals across `.`, reads interpolations and
+heredocs, resolves class constants through the file's imports, and reports
+a write whose table it cannot read as `unread` instead of as no write.
+Measured on 25 planted spellings: the old scan saw 8.
+
 ### 21. Naming a thing is not being guarded by it
 
 `versionsComparedIn()` reported which versions a gate's condition compares
