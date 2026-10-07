@@ -986,23 +986,11 @@ class UsersController
     /**
      * The Overview chart's resolution, where the chart reads it. An account
      * without a chart row (one the API created) gets the installer's
-     * default chart with it, so the setting is not a write to nothing.
+     * default chart with it, so the setting is not a write to nothing
+     * (OverviewChart, which the Overview's own chart writes go through).
      */
     private function saveChartRange(Connection $conn, int $userId, string $range): void
     {
-        $stmt = $conn->prepareWrite('SELECT 1 FROM `202_charts` WHERE `user_id` = ? LIMIT 1');
-        $conn->bind($stmt, 'i', [$userId]);
-        if ($conn->fetchOne($stmt) !== null) {
-            $stmt = $conn->prepareWrite('UPDATE `202_charts` SET `chart_time_range` = ? WHERE `user_id` = ?');
-            $conn->bind($stmt, 'si', [$range, $userId]);
-            $conn->executeUpdate($stmt);
-            return;
-        }
-        $stmt = $conn->prepareWrite('INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)');
-        $conn->bind($stmt, 'iss', [$userId, self::DEFAULT_CHART, $range]);
-        $conn->executeInsert($stmt);
+        \Prosper202\Report\OverviewChart::saveRange($conn, $userId, $range);
     }
-
-    /** install.php's default Overview chart: clicks, click-throughs and leads for all campaigns. */
-    private const DEFAULT_CHART = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
 }
