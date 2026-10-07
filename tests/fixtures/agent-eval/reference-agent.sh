@@ -436,6 +436,39 @@ case "$ask" in
             "$(printf '%s' "$out" | jq -r '.meta.summary.failed')"
         printf '%s' "$out" | jq -r '.data[] | "- row \(.row) (\(.transaction_id // "no transaction id"), \(.payout // "default payout")): \(.status)\(if .reason then ": \(.reason)" else "" end)"'
         ;;
+    *"EVAL-LTV-ORD-"*"add-on"*)
+        # A second charge on an order already on the ledger (ltv-005). The
+        # order's key belongs to the first charge, and the server refuses a
+        # different request under it, naming idempotency_key; the add-on is a
+        # new event and takes a key of its own, derived from the order so a
+        # retry of the add-on replays it.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+' | head -1)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | tail -1 | tr -d '$')
+        if refused=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" --json 2>&1 >/dev/null); then
+            printf 'The server took a %s charge under order %s'"'"'s own key, which it should have refused; check the ledger before trusting it.\n' "$amount" "$order"
+            exit 1
+        fi
+        reason=$(printf '%s' "$refused" | jq -r '.error.message' 2>/dev/null)
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order-ADDON" --external-ref "$order" --json)
+        printf 'Recorded the %s add-on charge on customer %s (event %s) under its own key %s-ADDON. Sent under the order'"'"'s key %s it was refused, since that key holds the first charge (%s); the original purchase is untouched.\n' \
+            "$amount" "$ref" "$(printf '%s' "$event" | jq -r '.data.event_id')" "$order" "$order" "$reason"
+        ;;
+    *"re-sent"*"EVAL-LTV-ORD-"*)
+        # A charge the billing system re-sent after a timeout (ltv-006): the
+        # same request under the same key is a replay, answered with the first
+        # event and nothing written.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+' | head -1)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | head -1 | tr -d '$')
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" --json)
+        printf 'Sent the %s charge for order %s again under its key: the server answered duplicate: %s with event %s, so customer %s has it once and nothing new was written.\n' \
+            "$amount" "$order" "$(printf '%s' "$event" | jq -r '.data.duplicate')" \
+            "$(printf '%s' "$event" | jq -r '.data.event_id')" "$ref"
+        ;;
     *"EVAL-LTV-ORD-"*)
         # Revenue from another system goes on the customer's ledger, keyed by
         # the order so a retry records nothing new. The customer is named by
