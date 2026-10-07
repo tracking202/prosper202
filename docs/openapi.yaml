@@ -117,6 +117,8 @@ tags:
     description: Click data (read-only)
   - name: Conversions
     description: Conversion tracking
+  - name: Update
+    description: The UI's Update section — set past clicks' CPC, mark subids converted, delete subids, reset a campaign's subids, upload a revenue report. Role permission `access_to_update_section` (and `delete_individual_subids` to delete subids); every write has a `?dry_run=1` preview
   - name: Reports
     description: Performance reports
   - name: Rotators
@@ -1397,6 +1399,239 @@ paths:
           description: Conversion deleted
         "404":
           $ref: "#/components/responses/NotFound"
+
+  # ─── Update (the UI's Update section) ────────────────────────────────
+
+  /clicks/cpc:
+    post:
+      tags: [Update]
+      summary: Set what a set of past clicks cost (Update CPC)
+      description: |
+        The Update CPC page as one call in two steps. The clicks are the
+        account's clicks made between `from` 00:00:00 and `to` 23:59:59 in
+        the account's time zone (`user_timezone`; answered as `timezone`),
+        narrowed by any of the id filters (0 or absent: every one) and by
+        `method_of_promotion`. Every filter id must be the account's: another
+        account's id is a 422, never widened to "every".
+
+        **Check** with `?dry_run=1`: nothing is written, and the answer counts
+        the clicks (`matching`) and names the highest click id among them
+        (`through_click_id`). **Update** by sending the same body with
+        `expect_clicks` (the check's `matching`) and `through_click_id`: in
+        one transaction the clicks up to that id are counted again under a
+        lock, and only if they still number `expect_clicks` is every one of
+        them set to `cpc`, with the data engine's dirty hours and the
+        attribution rollup marked. A click recorded after the check (a higher
+        id) is never changed. When the count moved, nothing is written and the
+        answer is a `409` whose `details` carry the new `matching` and
+        `through_click_id` to confirm. A write without `expect_clicks` and
+        `through_click_id` is a `422`.
+
+        Needs the role permission `access_to_update_section` (as the page
+        does) and `clicks:write` scope, for the check too. Not stageable
+        (`?staged=1` is a `422`). Unknown fields are refused, so a misspelled
+        filter cannot widen the update.
+      operationId: updateClickCpc
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClickCpcUpdate"
+      responses:
+        "200":
+          description: "The check (`dry_run: true`), or the update made"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClickCpcUpdateResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `clicks:write`.
+        "409":
+          description: |
+            The selection no longer counts `expect_clicks`; nothing was
+            written. `details`: `expect_clicks` (what was confirmed),
+            `matching` and `through_click_id` (the check again, to confirm).
+            Also the account's stored time zone is not one the server knows.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/subids:
+    post:
+      tags: [Update]
+      summary: Mark subids converted (Update Subids)
+      description: |
+        Each subid's click is recorded as converted at its campaign's
+        payout, through the conversion ledger (`source: subid_upload`), once
+        per click: a click that is already a lead is answered
+        `already_converted` and nothing is added, so sending the same list
+        twice is safe. A converting click is no longer filtered.
+
+        Every item is reported in `lines` with its 1-based position in the
+        list (blank items skipped, but counted in positions): `marked`
+        (`would_mark` in a dry run), `already_converted`, `not_found` (no
+        click of this account), `not_a_subid` (not a click id: digits, no
+        leading zero) or `duplicate_in_list` (`first_line` names the earlier
+        item). The counts name every status, 0 included.
+
+        A dry run reads each click's lead flag; the ledger can still answer
+        `already_converted` for a click it calls `would_mark` — one in an
+        accumulate-mode campaign whose conversion was deleted, since a deleted
+        conversion keeps its place.
+
+        Needs `access_to_update_section` and `conversions:write`. At most
+        5,000 subids per request. Not stageable. Each click is its own
+        transaction: if one fails, the clicks before it stay marked and the
+        answer is a `500` saying how many and that sending the list again is
+        safe.
+      operationId: markSubidsConverted
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubidList"
+      responses:
+        "200":
+          description: Every subid's outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubidMarkResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:write`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/subids/delete:
+    post:
+      tags: [Update]
+      summary: Delete subids (Delete Subids)
+      description: |
+        The reverse of marking: every live conversion of each subid's click is
+        cleared through the ledger (soft-deleted, its revenue voided, the
+        click's value recomputed, so it is no longer a lead), and the click is
+        no longer filtered. The click itself stays. A subid of another
+        account is left alone (`not_found`). Statuses as for
+        `POST /conversions/subids`, with `cleared` (`would_clear` in a dry
+        run, where each line also carries `conversions`, its live
+        conversions, and the answer their total).
+
+        Needs `access_to_update_section` **and** `delete_individual_subids`
+        (the page's two permissions; a Campaign manager has the first only),
+        and `conversions:write`. At most 5,000 subids per request. Not
+        stageable. Sending the same list twice is safe.
+      operationId: deleteSubids
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubidList"
+      responses:
+        "200":
+          description: Every subid's outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubidDeleteResponse"
+        "403":
+          description: The role lacks `access_to_update_section` or `delete_individual_subids`, or the key lacks `conversions:write`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/subids/reset:
+    post:
+      tags: [Update]
+      summary: Reset a category's or a campaign's subids (Reset Campaign Subids)
+      description: |
+        Clears every conversion of the category (`aff_network_id`, required),
+        or of one campaign in it (`aff_campaign_id`), so a report uploaded by
+        mistake can be uploaded again: each converted click (a lead, or one
+        holding a live conversion) is cleared through the ledger, and the
+        data engine is told to rebuild the hours from the earliest of them
+        to now. Clicks stay. Both ids must be the account's, and the campaign
+        in the category. A dry run counts the clicks (`matching`).
+
+        Needs `access_to_update_section` and `conversions:write`. Not
+        stageable. Sending it again is safe: it clears what is left.
+      operationId: resetSubids
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubidReset"
+      responses:
+        "200":
+          description: How many clicks were (or would be) cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubidResetResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:write`.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /conversions/uploads:
+    post:
+      tags: [Update]
+      summary: Upload a network's revenue report (Upload Revenue Reports)
+      description: |
+        Every line of the CSV is recorded as a conversion of a new upload
+        batch on its subid's click (`source: revenue_upload`), at the line's
+        commission: a click's lines in one report are summed, and the newest
+        report replaces what earlier reports and conversions set for that
+        click, so uploading a corrected report fixes the old one. The lines
+        write no LTV purchase and emit no conversion event.
+
+        The columns are named by 0-based index or by header (case is
+        ignored); either may be left out when the header names it plainly
+        (subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission:
+        `commission`, `payout`, `revenue`, `amount`, `earning`, `sale`,
+        `income`), and `columns.guessed` says which were. The first line is
+        read as the header when its subid cell is not a click id. Every line
+        is accounted for, as the page accounts for it: `recorded`
+        (`would_record`) counts the recorded lines and `totals` sums them per
+        click, and `lines` lists each line that was not recorded — `skipped`
+        with the reason, or the `header`.
+
+        Needs `access_to_update_section` and `conversions:write`. The body
+        may be up to 8 MB (every other route takes 1 MB). Not stageable.
+        Each line is its own transaction: if one fails, the lines before it
+        stand as rows of the batch and the answer is a `500` naming the batch
+        and saying that uploading the report again is safe.
+      operationId: uploadRevenueReport
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevenueUpload"
+      responses:
+        "200":
+          description: The batch and every line's outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevenueUploadResponse"
+        "403":
+          description: The role lacks `access_to_update_section`, or the key lacks `conversions:write`.
+        "413":
+          description: The body is over 8 MB.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   # ─── Reports ─────────────────────────────────────────────────────────
 
@@ -8046,6 +8281,19 @@ components:
       schema:
         type: string
         enum: ["1", "true", "yes", "0", "false", "no"]
+    writeDryRun:
+      name: dry_run
+      in: query
+      required: false
+      description: |
+        Preview the write without performing it: `dry_run=1` answers what
+        the write would do (`dry_run: true` in `data`) and writes nothing,
+        after the same permission and scope checks as the write. An
+        unrecognized value is a `422`, never the write. It goes in the query
+        string; in the body it is refused.
+      schema:
+        type: string
+        enum: ["1", "true", "yes", "0", "false", "no"]
     resourceId:
       name: id
       in: path
@@ -9416,6 +9664,219 @@ components:
               type: integer
             counted_rows:
               type: integer
+
+    # ── Update (the UI's Update section) ───────────────────────────────
+
+    ClickCpcUpdate:
+      type: object
+      required: [from, to, cpc]
+      properties:
+        from:
+          type: string
+          description: The first day, YYYY-MM-DD, in the account's time zone (from 00:00:00).
+          example: "2026-10-01"
+        to:
+          type: string
+          description: The last day, YYYY-MM-DD, in the account's time zone (to 23:59:59).
+          example: "2026-10-07"
+        cpc:
+          description: |
+            What each click cost, in dollars: up to two whole digits and five
+            decimals (at most 99.99999, what `click_cpc` holds). A string is
+            read exactly; a JSON number only when it is exactly a value of
+            five decimals or fewer (`0.125` is, `0.123456` is a 422).
+          oneOf:
+            - type: string
+              example: "0.25"
+            - type: number
+        aff_network_id: {type: integer, description: "Only this category's campaigns (GET /aff-networks); 0 or absent: every one."}
+        aff_campaign_id: {type: integer, description: "Only this campaign (GET /campaigns); 0 or absent: every one."}
+        ppc_network_id: {type: integer, description: "Only this traffic source (GET /ppc-networks); 0 or absent: every one."}
+        ppc_account_id: {type: integer, description: "Only this traffic source account (GET /ppc-accounts); 0 or absent: every one."}
+        landing_page_id: {type: integer, description: "Only this landing page (GET /landing-pages); 0 or absent: every one."}
+        text_ad_id: {type: integer, description: "Only this text ad (GET /text-ads); 0 or absent: every one."}
+        method_of_promotion:
+          type: string
+          enum: ["", directlink, landingpage]
+          description: Direct links only, landing pages only, or both ("", the default).
+        expect_clicks:
+          type: integer
+          minimum: 0
+          description: Required to write — the check's `matching`. Ignored in a dry run.
+        through_click_id:
+          type: integer
+          minimum: 0
+          description: Required to write — the check's `through_click_id`. Ignored in a dry run.
+
+    ClickCpcUpdateResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            matching: {type: integer, description: "The clicks counted: by the check, or the count the update confirmed."}
+            through_click_id: {type: integer, description: "The highest click id among them (0 when none)."}
+            updated:
+              type: integer
+              description: |
+                Only on an update: the clicks whose cost changed (a click that
+                already cost this much is not counted).
+            cpc: {type: string, description: "The CPC as stored, five decimals.", example: "0.25000"}
+            from: {type: string}
+            to: {type: string}
+            from_time: {type: integer, description: "The window's first second, unix time."}
+            to_time: {type: integer, description: "The window's last second, unix time."}
+            timezone: {type: string, description: "The account's time zone the days were read in.", example: America/New_York}
+            filters:
+              type: object
+              description: Each filter as applied, `{id, name}` (id 0 and "Every …" when not narrowed), and `method_of_promotion` as `{value, name}`.
+              additionalProperties:
+                type: object
+
+    SubidList:
+      type: object
+      required: [subids]
+      properties:
+        subids:
+          type: array
+          maxItems: 5000
+          description: |
+            One subid (a click id) per item, as strings or integers; items are
+            trimmed and blank ones skipped. Any other type is a 422.
+          items:
+            oneOf:
+              - type: string
+              - type: integer
+          example: ["940001", "940002"]
+
+    SubidLine:
+      type: object
+      properties:
+        line: {type: integer, description: "The item's 1-based position in `subids`."}
+        subid: {type: string}
+        click_id: {type: integer, nullable: true}
+        status:
+          type: string
+          enum: [marked, would_mark, cleared, would_clear, already_converted, not_found, not_a_subid, duplicate_in_list]
+        first_line: {type: integer, description: "For duplicate_in_list: the earlier item with the same click."}
+        conversions: {type: integer, description: "In a delete dry run: the click's live conversions."}
+
+    SubidMarkResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            marked: {type: integer, description: "Absent in a dry run, which counts would_mark."}
+            would_mark: {type: integer}
+            already_converted: {type: integer}
+            not_found: {type: integer}
+            not_a_subid: {type: integer}
+            duplicate_in_list: {type: integer}
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/SubidLine"
+
+    SubidDeleteResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            cleared: {type: integer, description: "The account's clicks cleared. Absent in a dry run, which counts would_clear."}
+            would_clear: {type: integer}
+            conversions: {type: integer, description: "In a dry run: the live conversions the delete would clear."}
+            not_found: {type: integer}
+            not_a_subid: {type: integer}
+            duplicate_in_list: {type: integer}
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/SubidLine"
+
+    SubidReset:
+      type: object
+      required: [aff_network_id]
+      properties:
+        aff_network_id: {type: integer, description: "The category whose subids to reset (GET /aff-networks)."}
+        aff_campaign_id: {type: integer, description: "Only this campaign of the category (GET /campaigns); 0 or absent: every campaign in it."}
+
+    SubidResetResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            matching: {type: integer, description: "In a dry run: the converted clicks the reset would clear."}
+            cleared: {type: integer, description: "On a reset: the clicks cleared."}
+            aff_network: {type: object, properties: {id: {type: integer}, name: {type: string}}}
+            aff_campaign: {type: object, nullable: true, properties: {id: {type: integer}, name: {type: string}}}
+
+    RevenueUpload:
+      type: object
+      required: [csv]
+      properties:
+        csv:
+          type: string
+          description: The report's text, a CSV with a header line (comma-separated, double-quoted fields).
+          example: "Sub ID,Order,Commission\n940001,A-1,$1.50\n"
+        file_name:
+          type: string
+          description: The name the upload batch is listed under (at most 255 characters kept); default "api-upload.csv".
+        subid_column:
+          description: The subid column, a 0-based index or a header name. Guessed from the header when absent.
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: string
+        amount_column:
+          description: The commission column, a 0-based index or a header name. Guessed from the header when absent.
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: string
+
+    RevenueUploadResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            dry_run: {type: boolean}
+            batch_id: {type: integer, nullable: true, description: "The upload batch (null in a dry run)."}
+            recorded: {type: integer, description: "Lines recorded. Absent in a dry run, which counts would_record."}
+            would_record: {type: integer}
+            skipped: {type: integer}
+            columns:
+              type: object
+              properties:
+                subid: {type: object, properties: {index: {type: integer}, header: {type: string}}}
+                amount: {type: object, properties: {index: {type: integer}, header: {type: string}}}
+                guessed: {type: array, items: {type: string}, description: "subid_column and/or amount_column when read from the header."}
+            totals:
+              type: array
+              description: Each click's sum of this report's recorded lines.
+              items:
+                type: object
+                properties:
+                  click_id: {type: integer}
+                  total: {type: string, example: "3.75000"}
+            lines:
+              type: array
+              description: The lines not recorded (skipped, or the header); the recorded ones are in the counts and `totals`.
+              items:
+                type: object
+                properties:
+                  line: {type: integer, description: "The CSV record's number, the header being 1."}
+                  subid: {type: string}
+                  amount: {type: string}
+                  status: {type: string, enum: [skipped, header]}
+                  reason: {type: string, description: "Why a line was skipped (or read as the header)."}
 
     ConversionCreate:
       type: object

@@ -91,6 +91,11 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
 | `p202 click list` | List clicks |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
+| `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
+| `p202 conversion mark-subids <file\|->` | Mark clicks converted from a subid list, one per line (the UI's Update Subids); once per click, safe to repeat |
+| `p202 conversion delete-subids <file\|->` | Clear the conversions of a subid list (the UI's Delete Subids); previews, asks (`--force`), `--dry-run` |
+| `p202 conversion reset-subids` | Clear every conversion of a category (`--aff-network-id`) or one of its campaigns (`--aff-campaign-id`) (the UI's Reset Campaign Subids) |
+| `p202 conversion upload-revenue <file.csv>` | Record a network's revenue report as a new upload batch (the UI's Upload Revenue Reports): columns read from the header or named with `--subid-column`/`--amount-column`; the newest report replaces earlier uploads' values |
 | `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
 | `p202 conversion create` | Record a conversion on `--click-id` (`--payout`, `--transaction-id`, `--conv-time`); `--status reversed` (with the sale's `--transaction-id`, optionally `--reversal-id`) records a reversal instead. `--customer-id` or `--customer-ref` (+ `--customer-ref-type`, `--customer-crm '{…}'`) links it to an LTV customer, and `--item '{…}'`/`--items-file` add product line items, which need a customer named |
 | `p202 conversion import <file>` | Record a network's conversion export (CSV with a header row, or a JSON array of objects) against the clicks its subids name, for installs whose postbacks were never wired. Columns are auto-detected from common headers (subid: `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2`; payout: `payout`, `commission`, `amount`, `revenue`; transaction id: `transaction_id`, `order_id`, `txid`; time: `date`, `time`, `conversion_date`, `created_at`) and reported on stderr and in `meta.columns`; two candidate headers for one column are refused, and `--subid-column`/`--payout-column`/`--txid-column`/`--time-column` choose. The subid is read as the postback reads it (the click id: digits, no leading zero); rows are `invalid` (with the reason), `duplicate_in_file`, or ready. `--dry-run` sends nothing (`--check-clicks` adds one read-only `GET /clicks/{id}/conversions` per click). Otherwise the clicks are read first, you confirm (`--force` skips; `--staged` records proposals), and each ready row is `POST /conversions` with an `Idempotency-Key` derived from its click, transaction id, payout and time. Rows end `created`, `duplicate` (already on the click), `click_not_found`, `failed` or `staged`; re-running the same file sends only what is not recorded yet; exit 5 if any row failed |
@@ -298,6 +303,70 @@ refused key or a lost connection while reading stops the command with its own
 exit code (2 or 3) before anything is written; during the writes it stops
 sending, marks the unsent rows `failed`, and exits 5 with a hint to re-run.
 
+## Update CPC, Subids and Revenue Reports
+
+The UI's **Update** section, over the [Update API](../api/26-update.md). Each
+command checks first with the endpoint's own `?dry_run=1` and writes only
+after that; the ones that change or remove what is recorded ask before
+writing (`--force` skips the question; with no terminal to answer it, the
+command fails rather than reading "no"). `--dry-run` stops after the check.
+None can be staged: `--staged` is refused before any request. They need a
+role with the `access_to_update_section` permission (and
+`delete_individual_subids` for `delete-subids`), as the pages do; a role
+without it is exit 2 with a hint naming `p202 user role assign`.
+
+```bash
+# What did those clicks really cost? Count, confirm, write.
+p202 click update-cpc --from 2026-10-01 --to 2026-10-07 --cpc 0.25 --aff-campaign-id 12
+p202 click update-cpc --from 2026-10-07 --to 2026-10-07 --cpc 0.00125 --ppc-account-id 3 --dry-run
+
+# A network's list of converted subids, one per line (- reads stdin).
+p202 conversion mark-subids subids.txt --dry-run
+p202 conversion mark-subids subids.txt
+p202 conversion delete-subids wrong.txt --force
+
+# Undo a whole campaign's subids, to upload the right ones again.
+p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12
+
+# A commission report: one batch, a click's lines summed, the newest report replacing the last.
+p202 conversion upload-revenue march.csv --dry-run
+p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-column Commission
+```
+
+- **`click update-cpc`** sets the cost of the account's clicks between
+  `--from` 00:00:00 and `--to` 23:59:59 in the account's time zone, narrowed by
+  `--aff-network-id`, `--aff-campaign-id`, `--ppc-network-id`,
+  `--ppc-account-id`, `--landing-page-id`, `--text-ad-id` (0 = every one) and
+  `--method-of-promotion directlink|landingpage`. The check answers how many
+  clicks match and the highest click id; the write carries both and the
+  server changes the clicks only if they still number the same — so a click
+  recorded after the check is never changed, and when the selection moved
+  nothing is written (exit 1, "run the same command again"). `--force` skips
+  the question, never the check. Reports show the new cost once the data
+  engine rebuilds those hours (its cron job).
+- **`conversion mark-subids`** records each subid's click as converted at its
+  campaign's payout (source `subid_upload`), once per click.
+  **`conversion delete-subids`** clears each subid's conversions (the clicks
+  stay). Both read one subid per line and answer every line with the file's
+  line number and a status: `marked`/`cleared` (`would_mark`/`would_clear`),
+  `already_converted`, `not_found` (not a click of this account),
+  `not_a_subid`, `duplicate_in_list`. A list is sent 1,000 lines a request;
+  when one fails, the lines before it stand, the error says which, and
+  running the same command again is safe.
+- **`conversion reset-subids`** clears every converted click of the category,
+  or of one campaign in it; it counts them first.
+- **`conversion upload-revenue`** is the UI's upload, not `conversion
+  import`: the whole report is one batch (at most 8 MB), each click's lines
+  are summed, and the newest report replaces what earlier uploads and
+  conversions set for the click. Columns come from the header when it names
+  them plainly; `--subid-column`/`--amount-column` take a header or a 0-based
+  column number. The table lists the lines not recorded, with the reason; a
+  report that would record nothing is refused (exit 1) with the subid column
+  it read.
+
+Under `--json` each prints the API's answer (for a list in parts, the parts
+put together); otherwise a table of the lines, and a summary on stderr.
+
 ## Config Defaults
 
 Set per-profile defaults for frequently used flags.
@@ -364,7 +433,9 @@ in order of precedence: a hint attached by the command itself (for example,
 which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
-scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
+scope, minting a key with `--scope`, and when it names a role permission
+such as `access_to_update_section`, granting a role with `p202 user role
+assign`; 404 use `list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.

@@ -25,13 +25,20 @@ use Api\V3\HttpException;
  *
  * Carries the original failure as `previous`; the message names the entity so
  * an operator can find the orphaned record.
+ *
+ * $message replaces that sentence where the code that knows can say more: a
+ * batch that stopped part-way (the Update endpoints: a subid list, a revenue
+ * report) names how much of it stands, and whether sending it again is safe
+ * — for those it is, and the default "a retry will create a second one"
+ * would tell the caller the opposite of the truth. The message reaches the
+ * client verbatim, so it must not carry the cause's text.
  */
 final class WriteCommittedException extends HttpException
 {
-    public function __construct(string $entity, ?\Throwable $previous = null)
+    public function __construct(string $entity, ?\Throwable $previous = null, ?string $message = null)
     {
         parent::__construct(
-            sprintf(
+            $message ?? sprintf(
                 'The write to %s completed, but the request could not be finished afterwards. The '
                 . 'record exists — look it up rather than retrying, or a retry will create a second one.',
                 $entity

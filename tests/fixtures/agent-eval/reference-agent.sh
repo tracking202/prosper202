@@ -22,6 +22,79 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # The Update section (update.json). First, because two of the asks say
+    # "delete" or "cost" and must not fall through to the general branches.
+    *"Record that cost"*)
+        # A cost for past clicks: the account's days, not this machine's —
+        # a check answers with the zone it counted in, so ask it first —
+        # narrowed to the one campaign, counted, then written. The write
+        # re-checks the count itself and refuses if it moved.
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign B") | .aff_campaign_id' | head -1)
+        cpc=$(printf '%s' "$ask" | grep -oE 'cost us \$[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+(\.[0-9]+)?$')
+        tz=$(p202 click update-cpc --from "$(date -u +%F)" --to "$(date -u +%F)" --cpc "$cpc" --aff-campaign-id "$campaign" --dry-run --json | jq -r '.data.timezone')
+        today=$(TZ="$tz" date +%F)
+        yesterday=$(TZ="$tz" date -d yesterday +%F)
+        matching=$(p202 click update-cpc --from "$yesterday" --to "$today" --cpc "$cpc" --aff-campaign-id "$campaign" --dry-run --json | jq -r '.data.matching')
+        updated=$(p202 click update-cpc --from "$yesterday" --to "$today" --cpc "$cpc" --aff-campaign-id "$campaign" --force --json | jq -r '.data.updated')
+        printf 'Set the cost of %s click(s) on EVAL Campaign B (campaign %s) to $%s each, from %s through %s in the account'"'"'s time zone (%s); the --dry-run check counted %s first. No other campaign'"'"'s clicks were touched.\n' \
+            "$updated" "$campaign" "$cpc" "$yesterday" "$today" "$tz" "$matching"
+        ;;
+    *"What did each click"*)
+        # A question about cost is a read: the report's own campaign row for
+        # the account's day, never an Update command (not even a check).
+        row=$(p202 report breakdown --breakdown campaign --period today --json | jq -c '[.data[] | select(.name=="EVAL Campaign B")][0] // empty')
+        if [ -z "$row" ]; then
+            printf 'EVAL Campaign B has no clicks today, per `p202 report breakdown --breakdown campaign --period today`, so they cost nothing.\n'
+        else
+            printf 'Per `p202 report breakdown --breakdown campaign --period today`, EVAL Campaign B had %s click(s) today at $%s each on average, $%s in total.\n' \
+                "$(printf '%s' "$row" | jq -r '.total_clicks')" \
+                "$(printf '%s' "$row" | jq -r '(.avg_cpc | tonumber) * 1')" \
+                "$(printf '%s' "$row" | jq -r '(.total_cost | tonumber) * 1')"
+        fi
+        ;;
+    *"/tmp/p202-eval-update-subids.txt"*)
+        # Subids a network says converted: mark them (a subid already marked
+        # is left as it is, so no preview is needed) and pass on, by subid,
+        # every line the command's own answer says matched no click.
+        out=$(p202 conversion mark-subids /tmp/p202-eval-update-subids.txt --json)
+        marked=$(printf '%s' "$out" | jq -r '.data.marked')
+        missing=$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="not_found" or .status=="not_a_subid") | .subid] | join(", ")')
+        if [ -n "$missing" ]; then
+            tail="These matched no click in this account and were not recorded: $missing."
+        else
+            tail="Every subid matched a click."
+        fi
+        printf 'Marked %s subid(s) converted with `p202 conversion mark-subids`. %s\n' "$marked" "$tail"
+        ;;
+    *"/tmp/p202-eval-update-delete.txt"*)
+        # Clearing conversions takes income off the reports: preview it,
+        # name what it would clear, and hand the decision back.
+        out=$(p202 conversion delete-subids /tmp/p202-eval-update-delete.txt --dry-run --json)
+        printf 'I have not deleted anything yet. `p202 conversion delete-subids --dry-run` shows %s subid(s) (click %s) holding %s conversion(s); deleting clears them all: the clicks stay, stop being leads, and their income comes off your reports. Tell me to go ahead and I will run it with --force.\n' \
+            "$(printf '%s' "$out" | jq -r '.data.would_clear')" \
+            "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="would_clear") | .click_id] | join(", ")')" \
+            "$(printf '%s' "$out" | jq -r '.data.conversions')"
+        ;;
+    *"/tmp/p202-eval-update-report.csv"*)
+        # A network's report: read it on the server first (which columns it
+        # took, which lines it cannot record), then load it, and pass on the
+        # lines that were not recorded with the server's own reason.
+        file=/tmp/p202-eval-update-report.csv
+        would=$(p202 conversion upload-revenue "$file" --dry-run --json | jq -r '.data.would_record')
+        if [ "$would" = "0" ]; then
+            printf 'No line of %s matches a click in this account, so nothing was loaded; `p202 conversion upload-revenue %s --dry-run` lists why each line was skipped.\n' "$file" "$file"
+        else
+            out=$(p202 conversion upload-revenue "$file" --force --json)
+            printf 'Loaded %s as upload %s, reading subids from "%s" and amounts from "%s": %s line(s) recorded (%s). Not recorded: %s.\n' \
+                "$file" \
+                "$(printf '%s' "$out" | jq -r '.data.batch_id')" \
+                "$(printf '%s' "$out" | jq -r '.data.columns.subid.header')" \
+                "$(printf '%s' "$out" | jq -r '.data.columns.amount.header')" \
+                "$(printf '%s' "$out" | jq -r '.data.recorded')" \
+                "$(printf '%s' "$out" | jq -r '[.data.totals[] | "click \(.click_id) now \(.total)"] | join(", ")')" \
+                "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="skipped") | "line \(.line), subid \(.subid): \(.reason)"] | join("; ") | if . == "" then "none" else . end')"
+        fi
+        ;;
     *"first-touch"*"last-touch"*)
         # Which campaign a model credits is the attribution report's answer,
         # per model — the click report cannot tell models apart. Find the

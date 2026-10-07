@@ -12,7 +12,7 @@ import (
 
 var clickCmd = &cobra.Command{
 	Use:   "click",
-	Short: "View tracked clicks (inbound visitor events from traffic sources)",
+	Short: "View tracked clicks (inbound visitor events from traffic sources), and set what past clicks cost",
 }
 
 var clickListCmd = &cobra.Command{

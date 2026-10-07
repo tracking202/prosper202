@@ -10,6 +10,10 @@ Read-only access to click tracking data.
 | `GET` | `/clicks/{id}` | Get full details of a single click |
 | `GET` | `/clicks/{id}/conversions` | Every conversion on the click, whether it counts toward the click's value, and why not |
 
+Clicks are recorded by the tracker, never created here. The one write is
+setting what a set of past clicks cost: `POST /clicks/cpc`, in the
+[Update API](26-update.md).
+
 ## Query Parameters (List)
 
 | Parameter | Type | Default | Description |

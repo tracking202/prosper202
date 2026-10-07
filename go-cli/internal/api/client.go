@@ -172,6 +172,10 @@ func HintFor(err error) string {
 		switch {
 		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
+		case apiErr.Status == 403 && strings.Contains(apiErr.Message, "' permission"):
+			// Auth::requirePermission(): the key is fine; its user's role
+			// lacks a permission the pages ask for too.
+			return "The key is valid, but its user's role lacks the permission named above (the UI's pages ask for the same one). An admin can grant a role that has it: `p202 user role list` shows the roles, `p202 user role assign <user_id> <role_id>` grants one; or use the key of a user whose role has it."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
@@ -461,6 +465,25 @@ func (c *Client) PostIdempotent(path string, body interface{}, idempotencyKey st
 	return c.doWithHeaders("POST", path, nil, body, map[string]string{"Idempotency-Key": key})
 }
 
+// UpdateWriteTimeout is how long PostUpdate waits for an answer. The Update
+// endpoints write one transaction per subid or report line, so a long list
+// or a large report takes longer than the 30 seconds every other request
+// gets — and a client that gives up while the server is still writing tells
+// the caller "failed" about a write that is landing.
+const UpdateWriteTimeout = 15 * time.Minute
+
+// PostUpdate sends one of the Update endpoints' requests (POST /clicks/cpc,
+// /conversions/subids, …/delete, …/reset, /conversions/uploads): a POST
+// whose preview is `?dry_run=1` on the write's own route, so it takes query
+// parameters. It waits up to UpdateWriteTimeout, and reads an answer of up to
+// maxDownloadSize, refusing a larger one rather than truncating it (a revenue
+// report's answer lists every line it did not record). A dry run is a read,
+// so --staged never stamps it; the commands refuse --staged for the writes.
+func (c *Client) PostUpdate(path string, params map[string]string, body interface{}) ([]byte, error) {
+	slow := &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport}
+	return c.doWith(slow, "POST", path, params, body, nil, maxDownloadSize, true)
+}
+
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
@@ -551,6 +574,11 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 }
 
 func (c *Client) doLimited(method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
+	return c.doWith(c.http, method, path, params, body, headers, limit, strict)
+}
+
+// doWith is doLimited through a given HTTP client (PostUpdate's waits longer).
+func (c *Client) doWith(httpClient *http.Client, method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()
@@ -621,7 +649,7 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 		req.Header.Set(name, value)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "send_request", Err: err}
 	}

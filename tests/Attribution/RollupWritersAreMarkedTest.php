@@ -57,7 +57,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         'tracking202/redirect/rtr.php' => self::MARKS,
         'tracking202/redirect/off.php' => self::MARKS,
         'tracking202/redirect/offrtr.php' => self::MARKS,
-        'tracking202/update/cpc.php' => self::MARKS,
+        // The Update CPC write, behind the page and POST /api/v3/clicks/cpc.
+        '202-config/Update/CpcUpdate.php' => self::MARKS,
         '202-config/Attribution/ModelRepository.php' => self::ROLLUP,
         '202-config/User/UserDataPurge.php' => self::ROLLUP,
         '202-config/Report/RollupDirty.php' => 'the marks themselves: they read the click rows they mark',
@@ -76,8 +77,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Report/MysqlReportRepository.php' => 'reads',
         'api/v3/Controllers/ReportsController.php' => 'reads',
         'api/v3/Controllers/SystemController.php' => 'counts rows',
-        'tracking202/update/subids.php' => 'writes click_filtered, which no sum reads',
-        'tracking202/update/delete-subids.php' => 'writes click_filtered, which no sum reads',
+        // The subid writes behind the Update pages and the /conversions/subids API.
+        '202-config/Update/SubidBatch.php' => 'writes click_filtered, which no sum reads',
     ];
 
     /** @return array<string, list<string>> file => the statements found */

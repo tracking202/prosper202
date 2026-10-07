@@ -69,53 +69,24 @@ if ($isApply || $isPreview) {
 			// button is the number that changes; when the selection moved (a
 			// click edited into it, or recorded late below the boundary),
 			// nothing is written and the page checks again.
+			// The count, the write and the marks for the reports are
+			// CpcUpdate::apply()'s, which POST /api/v3/clicks/cpc runs too.
 			$snapshot = p202_update_cpc_snapshot($_POST);
 			if ($snapshot === null) {
 				$stale = ['confirmed' => null];
 			} else {
-				$scope = p202_update_cpc_scope($values, $userId, $snapshot['through']);
-				$stale = $conn->transaction(static function () use ($conn, $scope, $values, $userId, $snapshot, &$updated): ?array {
-					$stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching FROM 202_clicks' . $scope['joins'] . $scope['where'] . ' FOR UPDATE');
-					$conn->bind($stmt, $scope['types'], $scope['params']);
-					$row = $conn->fetchOne($stmt);
-					if ($row === null) {
-						// A COUNT always answers one row; none means the read failed.
-						throw new \RuntimeException('Update CPC: counting the clicks returned no row');
-					}
-					if ((int) $row['matching'] !== $snapshot['count']) {
-						return ['confirmed' => $snapshot['count']];
-					}
-
-					$stmt = $conn->prepareWrite('UPDATE 202_clicks' . $scope['joins'] . ' SET 202_clicks.click_cpc = ?' . $scope['where']);
-					$conn->bind($stmt, 's' . $scope['types'], array_merge([(string) $values['cpc']], $scope['params']));
-					$updated = $conn->executeUpdate($stmt);
-
-					// The data engine rebuilds the hours these clicks fall in, for
-					// the slice they were chosen by.
-					$dirty = $conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?, click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?');
-					$conn->bind($dirty, 'iiiiiiiii', [(int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'], (int) $values['to_time'],
-						(int) $values['aff_network_id'], (int) $values['text_ad_id'], (int) $values['landing_page_id'], (int) $values['ppc_network_id']]);
-					$conn->executeUpdate($dirty);
-					// And the attribution report rollup, which sums click_cpc by
-					// hour, for the same range (AttributionRollup rule 2).
-					\Prosper202\Report\RollupDirty::timeRange($conn, $userId, (int) $values['from_time'], (int) $values['to_time']);
-					return null;
-				});
+				$updated = \Prosper202\Update\CpcUpdate::apply($conn, $values, $userId, $snapshot);
+				if ($updated === null) {
+					$stale = ['confirmed' => $snapshot['count']];
+				}
 			}
 		}
 		if ($errors === [] && ($isPreview || $stale !== null)) {
 			// The check, and the check again after a refused confirm: how many
 			// clicks match now, and the highest click id among them, which the
 			// confirm form carries back.
-			$scope = p202_update_cpc_scope($values, $userId);
-			$stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching, COALESCE(MAX(202_clicks.click_id), 0) AS through_click_id FROM 202_clicks' . $scope['joins'] . $scope['where']);
-			$conn->bind($stmt, $scope['types'], $scope['params']);
-			$count = $conn->fetchOne($stmt);
-			if ($count === null) {
-				// A COUNT always answers one row; none means the read failed.
-				throw new \RuntimeException('Update CPC: counting the clicks returned no row');
-			}
-			$matching = (int) $count['matching'];
+			$count = \Prosper202\Update\CpcUpdate::preview($conn, $values, $userId);
+			$matching = $count['matching'];
 			$through = (string) $count['through_click_id'];
 		}
 	}

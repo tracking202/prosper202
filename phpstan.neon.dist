@@ -78,6 +78,10 @@ rules:
     - Prosper202\PHPStan\Rules\BindParamArityRule
     # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
     - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule
+    # …and its write half: a captured copy handed to a by-reference
+    # parameter, so the callee's report is discarded. UpdateController
+    # answered 200 to another account's campaign id this way.
+    - Prosper202\PHPStan\Rules\ForbidByRefArgumentFromCaptureRule
     # CLAUDE.md "Verify your assumptions" — a check that cannot fail is not a
     # check. `assertSame('verified-only', 'verified-only')` stood in for the
     # attribution report suite's only test of the verified-only default.
