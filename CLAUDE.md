@@ -803,6 +803,17 @@ already written will not change. An end-to-end request through the real
 reader (here, a click that matches the rule) is what finds it; reading either
 file alone cannot.
 
+The same split hid a whole Overview table. `DataEngine::doSummary()` writes
+`''` for a missing value (0 in an int column, under the app's empty
+`sql_mode`), but every rollup is now `INSERT … SELECT` (`ClickRollupSql`),
+which never reaches it and writes the LEFT JOIN's NULL; the Overview's
+advanced-landing-page tables asked for `aff_campaign_id IS FALSE`, which NULL
+is not, so no advanced landing page click the rollup wrote was ever listed
+there. In SQL the "none" tests that
+miss NULL are `IS FALSE`, `= 0`, `= ''` and `NOT IN (…)`; on a column a
+LEFT JOIN fills, ask for `IS NULL OR = 0`, and seed tests with the NULL the
+writer actually writes — the account-scope test seeded `0` and stayed green.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids

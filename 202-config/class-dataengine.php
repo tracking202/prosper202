@@ -377,15 +377,22 @@ class DataEngine
         // Fix #3a: use the canonical metric SELECT list (MetricsSql::GROUPED_SELECT)
         // in place of the inline copy. The only join is 202_landing_pages which has
         // no income/cost/clicks columns, so the 2st. prefix in GROUPED_SELECT is safe.
-        $sql = "select landing_page_nickname,
-2st.landing_page_id," . MetricsSql::GROUPED_SELECT . "
+        // Grouped by the page the join found, which is the account's or none
+        // (CLAUDE.md #27): a click naming another account's page is counted
+        // in the one row of clicks with no landing page, the direct links. It
+        // was grouped by the click's own id, so it was a second row, also
+        // named "[direct link]".
+        // The WHERE is its own statement, so the ON clause ends in the string
+        // AccountScopedJoinTest reads.
+        $sql = "select lp.landing_page_nickname,
+lp.landing_page_id," . MetricsSql::GROUPED_SELECT . "
 from 202_dataengine as 2st
-LEFT OUTER JOIN 202_landing_pages USING (landing_page_id, user_id)"
-            . $this->mysql['user_id_query'] . "
+LEFT OUTER JOIN 202_landing_pages AS lp ON (lp.landing_page_id = 2st.landing_page_id AND lp.user_id = 2st.user_id)";
+        $sql .= $this->mysql['user_id_query'] . "
 AND 2st.click_time >= " . $clickFrom . "
 AND 2st.click_time <= " . $clickTo . $click_filtered . "
-group BY landing_page_id
-ORDER BY landing_page_id ASC";
+group BY lp.landing_page_id
+ORDER BY lp.landing_page_id ASC";
 
         return $this->collectRows($sql, $cpv);
     }
@@ -394,26 +401,23 @@ ORDER BY landing_page_id ASC";
     {
         $click_filtered = $this->getAccountOverviewFilters();
 
-        $sql = "SELECT  2c.aff_campaign_id,
-             2ac.aff_campaign_name,
-             SUM(2c.clicks) AS clicks,
-            SUM(2c.click_out) AS click_out,
-            SUM(2c.leads) AS leads,
-            2ac.aff_campaign_payout AS payout,
-            CASE WHEN SUM(clicks) > 0 THEN (SUM(click_out)/SUM(clicks))*100 ELSE 0 END as ctr,
-            SUM(2c.income) AS income,
-            SUM(2c.cost) AS cost,
-            CASE WHEN SUM(clicks) > 0 THEN SUM(income)/SUM(clicks) ELSE 0 END as epc,
-            CASE WHEN SUM(clicks) > 0 THEN (SUM(click_lead)/SUM(clicks))*100 ELSE 0 END as su_ratio,
-            CASE WHEN SUM(clicks) > 0 THEN SUM(cost)/SUM(clicks) ELSE 0 END AS cpc,
-            (SUM(income)-SUM(cost)) AS net,
-            CASE WHEN SUM(cost) > 0 THEN ((SUM(income)-SUM(cost))/SUM(cost)*100) ELSE 0 END as roi
-             FROM 202_dataengine AS 2c
-             LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
-             WHERE 2c.user_id = " . $this->mysql['user_id'] . "
-AND 2c.click_time >= " . $clickFrom . "
-AND 2c.click_time <= " . $clickTo . $click_filtered . "
-             GROUP BY IF(2c.aff_campaign_id is null or 2c.aff_campaign_id = '', '0', 2c.aff_campaign_id)";
+        // Average payout is a figure of the clicks, income over leads, as in
+        // every other table and the totals row under this one. It was the
+        // campaign's configured payout (aff_campaign_payout), under an "Avg
+        // payout" heading, so the row of clicks with no campaign read "$":
+        // dollar_format() of the NULL the join gave it.
+        // Grouped by the campaign the join found, the account's or none
+        // (CLAUDE.md #27).
+        $sql = "SELECT 2ac.aff_campaign_id,
+             2ac.aff_campaign_name," . MetricsSql::GROUPED_SELECT . "
+             FROM 202_dataengine AS 2st
+             LEFT OUTER JOIN 202_aff_campaigns AS 2ac
+               ON (2st.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2st.user_id)
+             WHERE 2st.user_id = " . $this->mysql['user_id'] . "
+AND 2st.click_time >= " . $clickFrom . "
+AND 2st.click_time <= " . $clickTo . $click_filtered . "
+             GROUP BY 2ac.aff_campaign_id
+             ORDER BY 2ac.aff_campaign_id ASC";
 
         return $this->collectRows($sql, $cpv, 'overview');
     }
@@ -425,21 +429,30 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         if ($type == 'alp') {
             $select_by_id = 'landing_page_id';
             $labelSelect = "
-            landing_page_nickname,
+            202_landing_pages.landing_page_nickname,
             2st.landing_page_id,";
+            // Each of the account's advanced landing pages (an inner join:
+            // a click naming another account's page has no page to list it
+            // under, and is counted in the tables above). "No campaign" is
+            // the NULL the rollup writes as well as a 0: the test was IS
+            // FALSE, which NULL is not, so no advanced landing page click
+            // the rollup had written was ever listed here.
             $labelJoins = "
-            LEFT JOIN 202_landing_pages USING (landing_page_id, user_id)";
+            INNER JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2st.landing_page_id
+              AND 202_landing_pages.user_id = 2st.user_id)";
             $typeCondition = "
-            AND 2st.aff_campaign_id IS FALSE
-            AND 2st.landing_page_id IS TRUE";
+            AND (2st.aff_campaign_id IS NULL OR 2st.aff_campaign_id = 0)
+            AND 2st.landing_page_id > 0";
         } else {
             $select_by_id = 'aff_campaign_id';
             $labelSelect = "
             aff_network_name,
-            aff_campaign_name,
+            202_aff_campaigns.aff_campaign_name,
             2st.aff_campaign_id,";
+            // Each of the account's campaigns (an inner join, as above).
             $labelJoins = "
-            LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id)
+            INNER JOIN 202_aff_campaigns ON (202_aff_campaigns.aff_campaign_id = 2st.aff_campaign_id
+              AND 202_aff_campaigns.user_id = 2st.user_id)
             LEFT JOIN 202_aff_networks on (2st.aff_network_id= 202_aff_networks.`aff_network_id` AND 202_aff_networks.user_id = 2st.user_id)";
             $typeCondition = "
             AND 2st.aff_campaign_id IS TRUE";
@@ -455,8 +468,8 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             . $typeCondition . "
         AND 2st.click_time >= '" . $clickFrom . "'
         AND 2st.click_time <= '" . $clickTo . "'
-        group BY " . $select_by_id . "
-        ORDER BY " . $select_by_id . " ASC";
+        group BY 2st." . $select_by_id . "
+        ORDER BY 2st." . $select_by_id . " ASC";
 
         $click_result = $this->reportQuery($click_sql);
 
@@ -488,7 +501,7 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
             . " AND 2st.{$select_by_id} IN (" . implode(",", $ids) . ")";
 
         if ($type == 'alp') {
-            $ppc_sql .= " AND 2st.aff_campaign_id IS FALSE";
+            $ppc_sql .= " AND (2st.aff_campaign_id IS NULL OR 2st.aff_campaign_id = 0)";
         }
 
         $ppc_sql .= "
