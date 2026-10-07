@@ -81,6 +81,31 @@ cannot say whether a value was read — a hand-read body field is still the
 author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
 ones that exist).
 
+The same drop lived one level down. With every top-level key refused, the
+objects and lists inside a body were still read by hand, for the keys the
+reader knew, and cast: on POST /conversions a line item's `unit_pirce`
+stored the line at 0 and a unit price of `"abc"` stored 0,
+`customer_crm.frist_name` was dropped, a customer's `aliases.0.tpye` made a
+custom alias, `"events": "revenue.recorded"` (a string, not a list)
+subscribed a webhook to every event, and `"prune_denylist": "campaigns"`
+protected nothing from a sync prune — each answered 2xx. A nested value goes
+through `PayloadKeys::objectErrors()`, `listErrors()` or `valueListErrors()`
+(field keys name its place: `items.0.unit_pirce`) inside a
+`PayloadKeys::refuse()` statement before anything reads it, with its values
+held to what their columns hold (`LtvBody` for the LTV shapes).
+`NestedBodyValuesAreCheckedTest` reports a structure use of `$payload['K']`
+— an index into it, `foreach`, `?? []`, `(array)`, an array function's
+argument — with no such check first: in the function, through every caller
+of a private helper, or through the handlers registered for a repository
+that reads it. The name is the heuristic again: a value copied into another
+variable first, one passed on whole with no structure use, and a body under
+another name (`$data` in MysqlConversionRepository, `$entry` in the sync
+profile reader) are not seen, so a handler that hands a nested value on is
+still the author's to check. Free-form is a decision, not a default: an
+object keyed by the account's own names (`custom_fields`) or stored as sent
+(an integration's `config`) is registered with why, and its values are still
+read strictly.
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 

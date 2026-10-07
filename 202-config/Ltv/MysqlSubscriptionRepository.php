@@ -438,7 +438,11 @@ final class MysqlSubscriptionRepository
             throw new RuntimeException('A customer is required: pass customer_id or customer_ref');
         }
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
-        $crm = isset($payload['customer_crm']) && is_array($payload['customer_crm']) ? $payload['customer_crm'] : [];
+        $crm = $payload['customer_crm'] ?? [];
+        if (!is_array($crm)) {
+            // Read as none, it answered 201 with the customer created bare.
+            throw new RuntimeException('customer_crm must be an object of CRM fields');
+        }
 
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now);
 

@@ -70,7 +70,11 @@ final class MysqlIntegrationRepository
                 $row['config'] = null;
                 $row['config_invalid'] = true;
             } else {
-                $row['config'] = $decoded;
+                // Decoded to arrays, `{}` is [] and would be served as the
+                // list `[]`: the settings are an object, so empty ones are
+                // the empty object (rows written before create() stored them
+                // as `{}` hold `[]`).
+                $row['config'] = $decoded === [] ? new \stdClass() : $decoded;
             }
         }
 
@@ -93,7 +97,10 @@ final class MysqlIntegrationRepository
 
         $encodedConfig = null;
         if ($config !== null) {
-            $encodedConfig = json_encode($config);
+            // A request body decodes `{}` to [], which encodes as the list
+            // `[]`, and GET then served a list where the settings object
+            // was: empty settings are stored as the empty object.
+            $encodedConfig = json_encode($config === [] ? new \stdClass() : $config);
             if ($encodedConfig === false) {
                 throw new RuntimeException('config could not be encoded as JSON');
             }

@@ -6928,43 +6928,67 @@ paths:
                   description: What customer_ref is (email, external id, …)
                 email:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 first_name:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 last_name:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 phone:
                   type: string
+                  nullable: true
+                  maxLength: 50
                 company:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 address_line1:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 address_line2:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 city:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 region:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 postal_code:
                   type: string
+                  nullable: true
+                  maxLength: 20
                 country:
                   type: string
+                  nullable: true
+                  maxLength: 2
+                  description: A two-letter country code, e.g. US
                 aliases:
                   type: array
+                  description: Each alias as `POST /ltv/customers/{id}/aliases` takes one; any other key is a 422
+                    naming it (`aliases.0.tpye`).
                   items:
-                    type: object
-                    properties:
-                      type:
-                        type: string
-                        default: custom
-                      value:
-                        type: string
-                    required:
-                    - value
+                    $ref: '#/components/schemas/LtvAlias'
                 custom_fields:
                   type: object
                   additionalProperties: true
-                  description: Custom field values by field key
-              additionalProperties: true
+                  description: >-
+                    Custom field values by field key: free-form by design, keyed by the account's own fields
+                    (`GET /ltv/fields`), so a key that names no field is a 422. Each value is one value of its
+                    field's type, null or "" to clear it; an object or a list is a 422 (one was stored as the
+                    text "Array").
+              description: >-
+                The CRM fields are read as `customer_crm`'s are (`LtvCustomerCrm`): a string or null (null or ""
+                clears it), at most as long as its column, and an email must be one.
+              additionalProperties: false
       responses:
         '201':
           description: The customer, as `GET /ltv/customers/{id}` shows it
@@ -7026,43 +7050,67 @@ paths:
               properties:
                 email:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 first_name:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 last_name:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 phone:
                   type: string
+                  nullable: true
+                  maxLength: 50
                 company:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 address_line1:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 address_line2:
                   type: string
+                  nullable: true
+                  maxLength: 255
                 city:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 region:
                   type: string
+                  nullable: true
+                  maxLength: 100
                 postal_code:
                   type: string
+                  nullable: true
+                  maxLength: 20
                 country:
                   type: string
+                  nullable: true
+                  maxLength: 2
+                  description: A two-letter country code, e.g. US
                 aliases:
                   type: array
+                  description: Each alias as `POST /ltv/customers/{id}/aliases` takes one; any other key is a 422
+                    naming it (`aliases.0.tpye`).
                   items:
-                    type: object
-                    properties:
-                      type:
-                        type: string
-                        default: custom
-                      value:
-                        type: string
-                    required:
-                    - value
+                    $ref: '#/components/schemas/LtvAlias'
                 custom_fields:
                   type: object
                   additionalProperties: true
-                  description: Custom field values by field key
-              additionalProperties: true
+                  description: >-
+                    Custom field values by field key: free-form by design, keyed by the account's own fields
+                    (`GET /ltv/fields`), so a key that names no field is a 422. Each value is one value of its
+                    field's type, null or "" to clear it; an object or a list is a 422 (one was stored as the
+                    text "Array").
+              description: >-
+                The CRM fields are read as `customer_crm`'s are (`LtvCustomerCrm`): a string or null (null or ""
+                clears it), at most as long as its column, and an email must be one.
+              additionalProperties: false
       responses:
         '200':
           description: The updated customer
@@ -7267,7 +7315,9 @@ paths:
       summary: Map an external identifier to a customer
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
         an `idempotency_key` field instead) and have no `dry_run` preview. A value already mapped to another customer
-        is a 422 naming that customer; merge them instead.
+        is a 422 naming that customer; merge them instead. The body is one alias, read as each of a customer's
+        `aliases` is, so a value that is not a string (an object was stored as the alias "Array") or a type that is
+        not one of the list is a 422 naming it.
       operationId: ltvAddAlias
       parameters:
       - name: id
@@ -7281,15 +7331,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                type:
-                  type: string
-                  default: custom
-                value:
-                  type: string
-              required:
-              - value
+              $ref: '#/components/schemas/LtvAlias'
       responses:
         '201':
           description: The customer
@@ -7591,16 +7633,26 @@ paths:
           application/json:
             schema:
               type: object
+              description: >-
+                A product as a line item names one (`LtvLineItem`'s product fields, by the same rules):
+                external_product_id or sku is required, a price is a number from 0 to 999999999.99999 (a price of
+                "abc" was stored as 0), and a name or sku longer than its column is a 422, not cut.
               properties:
                 external_product_id:
                   type: string
+                  maxLength: 191
                 sku:
                   type: string
+                  maxLength: 191
                 name:
                   type: string
+                  maxLength: 255
                 price:
                   type: number
-              additionalProperties: true
+                  nullable: true
+                  minimum: 0
+                  maximum: 999999999.99999
+              additionalProperties: false
       responses:
         '201':
           description: '`product_id`'
@@ -7946,7 +7998,9 @@ paths:
                   type: integer
                 grace_days:
                   type: integer
-              additionalProperties: true
+                customer_crm:
+                  $ref: '#/components/schemas/LtvCustomerCrm'
+              additionalProperties: false
       responses:
         '201':
           description: '`subscriptionId` and `customerId`'
@@ -8055,8 +8109,7 @@ paths:
                 items:
                   type: array
                   items:
-                    type: object
-                    additionalProperties: true
+                    $ref: '#/components/schemas/LtvLineItem'
                 idempotency_key:
                   type: string
                 external_ref:
@@ -8070,9 +8123,11 @@ paths:
                 customer_ref_type:
                   type: string
                   description: What customer_ref is (email, external id, …)
+                customer_crm:
+                  $ref: '#/components/schemas/LtvCustomerCrm'
               required:
               - amount
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '201':
           description: 'Recorded (`duplicate: false`)'
@@ -8118,6 +8173,9 @@ paths:
                 event:
                   type: string
                   description: Alias `event_name`
+                event_name:
+                  type: string
+                  description: Another name for `event`
                 value:
                   type: number
                   nullable: true
@@ -8130,9 +8188,11 @@ paths:
                 customer_ref_type:
                   type: string
                   description: What customer_ref is (email, external id, …)
+                customer_crm:
+                  $ref: '#/components/schemas/LtvCustomerCrm'
               required:
               - event
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '201':
           description: '`engagement_id` and `customer_id`'
@@ -8199,7 +8259,10 @@ paths:
                   type: array
                   items:
                     type: string
-              additionalProperties: true
+                  description: A select field's choices, each a string that is not blank. Any other field type, or
+                    options that are not a list of strings, is a 422 (an object's keys were dropped and a list inside
+                    it stored as the choice "Array").
+              additionalProperties: false
       responses:
         '201':
           description: '`field_id`'
@@ -8248,7 +8311,8 @@ paths:
                   type: array
                   items:
                     type: string
-              additionalProperties: true
+                  description: A select field's full new list of choices, each a string that is not blank.
+              additionalProperties: false
       responses:
         '200':
           description: Updated
@@ -8329,7 +8393,9 @@ paths:
                   type: array
                   items:
                     type: string
-                  description: e.g. customer.updated, subscription.changed
+                  description: e.g. customer.updated, subscription.changed. Omitted, null or [] is every event this
+                    version sends, and `["*"]` also takes later ones. Anything but a list of strings is a 422 (a
+                    lone string was read as no list, and subscribed the hook to every event).
               required:
               - url
               additionalProperties: true
@@ -8514,9 +8580,11 @@ paths:
                 config:
                   type: object
                   additionalProperties: true
+                  description: The provider's settings, stored as sent and free-form by design (any keys). It must be
+                    an object; a list is a 422.
               required:
               - provider
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '201':
           description: The integration
@@ -8574,23 +8642,15 @@ paths:
               type: object
               properties:
                 source:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                from:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `source`; send one of the two
                 target:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                to:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `target`; send one of the two
                 entity:
                   type: string
                   default: all
@@ -8614,21 +8674,7 @@ paths:
                   type: boolean
                 prune_preview:
                   type: boolean
-                dry_run:
-                  type: boolean
-                skip_errors:
-                  type: boolean
-                force_update:
-                  type: boolean
-                max_attempts:
-                  type: integer
-                  minimum: 1
-                  maximum: 10
-                  default: 3
-              required:
-              - source
-              - target
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '200':
           description: What a sync would create, update and collide on
@@ -8730,23 +8776,15 @@ paths:
               type: object
               properties:
                 source:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                from:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `source`; send one of the two
                 target:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                to:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `target`; send one of the two
                 entity:
                   type: string
                   default: all
@@ -8760,31 +8798,33 @@ paths:
                   - text-ads
                   - rotators
                   - trackers
-                collision_mode:
-                  type: string
-                  enum:
-                  - warn
-                  - manual
-                  default: warn
                 prune:
                   type: boolean
                 prune_preview:
                   type: boolean
+                prune_allowlist:
+                  $ref: '#/components/schemas/SyncEntityList'
+                prune_denylist:
+                  $ref: '#/components/schemas/SyncEntityList'
+                confirmation_token:
+                  type: string
+                  description: Required with `prune` (from a `prune_preview` plan)
                 dry_run:
                   type: boolean
                 skip_errors:
                   type: boolean
                 force_update:
                   type: boolean
+                incremental:
+                  type: boolean
+                updated_since:
+                  type: string
                 max_attempts:
                   type: integer
                   minimum: 1
                   maximum: 10
                   default: 3
-              required:
-              - source
-              - target
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '202':
           description: The job (credentials never echoed)
@@ -8991,23 +9031,15 @@ paths:
               type: object
               properties:
                 source:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                from:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `source`; send one of the two
                 target:
-                  type: object
-                  properties:
-                    url:
-                      type: string
-                    api_key:
-                      type: string
-                  required:
-                  - url
+                  $ref: '#/components/schemas/SyncProfile'
+                to:
+                  $ref: '#/components/schemas/SyncProfile'
+                  description: Another name for `target`; send one of the two
                 entity:
                   type: string
                   default: all
@@ -9021,31 +9053,33 @@ paths:
                   - text-ads
                   - rotators
                   - trackers
-                collision_mode:
-                  type: string
-                  enum:
-                  - warn
-                  - manual
-                  default: warn
                 prune:
                   type: boolean
                 prune_preview:
                   type: boolean
+                prune_allowlist:
+                  $ref: '#/components/schemas/SyncEntityList'
+                prune_denylist:
+                  $ref: '#/components/schemas/SyncEntityList'
+                confirmation_token:
+                  type: string
+                  description: Required with `prune` (from a `prune_preview` plan)
                 dry_run:
                   type: boolean
                 skip_errors:
                   type: boolean
                 force_update:
                   type: boolean
+                incremental:
+                  type: boolean
+                updated_since:
+                  type: string
                 max_attempts:
                   type: integer
                   minimum: 1
                   maximum: 10
                   default: 3
-              required:
-              - source
-              - target
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '202':
           description: The job (credentials never echoed)
@@ -11577,9 +11611,119 @@ components:
                   status: {type: string, enum: [skipped, header]}
                   reason: {type: string, description: "Why a line was skipped (or read as the header)."}
 
+    LtvCustomerCrm:
+      type: object
+      additionalProperties: false
+      description: |
+        CRM fields applied when the call creates the customer. Each is a
+        string (a whole number is read as its digits) or null, at most as
+        long as its column; any other key is a 422 naming it
+        (`customer_crm.frist_name`).
+      properties:
+        first_name: {type: string, nullable: true, maxLength: 100}
+        last_name: {type: string, nullable: true, maxLength: 100}
+        email: {type: string, nullable: true, maxLength: 255, format: email}
+        phone: {type: string, nullable: true, maxLength: 50}
+        company: {type: string, nullable: true, maxLength: 255}
+        address_line1: {type: string, nullable: true, maxLength: 255}
+        address_line2: {type: string, nullable: true, maxLength: 255}
+        city: {type: string, nullable: true, maxLength: 100}
+        region: {type: string, nullable: true, maxLength: 100}
+        postal_code: {type: string, nullable: true, maxLength: 20}
+        country:
+          type: string
+          nullable: true
+          maxLength: 2
+          description: A two-letter country code, e.g. US
+
+    LtvLineItem:
+      type: object
+      additionalProperties: false
+      description: |
+        A product line item on the customer's revenue event. Any other key is
+        a 422 naming it with its place (`items.0.unit_pirce`). A number is a
+        JSON number or a string holding one; anything else is refused, never
+        stored as 0. The lines of a negative event are stored negative,
+        amount and quantity, whichever sign is sent.
+      properties:
+        external_product_id:
+          type: string
+          maxLength: 191
+          description: The product's key. This or `sku` is required.
+        sku:
+          type: string
+          maxLength: 191
+          description: >-
+            With no `external_product_id` the sku is the product's key, stored
+            as `sku:<sku>`, so it has at most 187 characters.
+        name:
+          type: string
+          maxLength: 255
+        quantity:
+          type: number
+          minimum: 0.001
+          maximum: 999999999.999
+          default: 1
+        unit_price:
+          type: number
+          nullable: true
+          minimum: -999999999.99999
+          maximum: 999999999.99999
+        amount:
+          type: number
+          nullable: true
+          minimum: -99999999999.99999
+          maximum: 99999999999.99999
+          description: Default `unit_price × quantity`, which must fit too.
+        price:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 999999999.99999
+          description: The product's list price in the catalog.
+
+    LtvAlias:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        type:
+          type: string
+          default: custom
+          enum: [email_md5, email_sha256, esp_id, merchant_id, subid, custom]
+        value:
+          type: string
+          maxLength: 255
+          description: The identifier; an email_md5 or email_sha256 value is its hex digest.
+
+    SyncProfile:
+      type: object
+      additionalProperties: false
+      description: An instance to sync from or to. Any other key is a 422 naming it (`source.nmae`).
+      properties:
+        url:
+          type: string
+        api_key:
+          type: string
+        name:
+          type: string
+          description: What the job and its audit record call it (default its URL)
+      required:
+      - url
+
+    SyncEntityList:
+      type: array
+      description: >-
+        Entity names. A value that is not a list, or a name that is not an
+        entity (`prune_denylist.0`), is a 422.
+      items:
+        type: string
+        enum: [aff-networks, ppc-networks, ppc-accounts, campaigns, landing-pages, text-ads, rotators, trackers]
+
     ConversionCreate:
       type: object
       required: [click_id]
+      additionalProperties: false
       properties:
         click_id:
           type: integer
@@ -11607,6 +11751,27 @@ components:
         reversal_id:
           type: string
           description: The network's id for the reversal. Without one, a sale can be reversed once.
+        customer_id:
+          type: integer
+          minimum: 1
+          description: The LTV customer the revenue belongs to; it wins over `customer_ref`.
+        customer_ref:
+          type: string
+          description: Your id for the customer, resolved to one or created.
+        customer_ref_type:
+          type: string
+          enum: [email_md5, email_sha256, esp_id, merchant_id, subid, custom]
+          default: custom
+        customer_crm:
+          $ref: "#/components/schemas/LtvCustomerCrm"
+        items:
+          type: array
+          description: |
+            Line items on the customer's revenue event; recorded only when the
+            conversion resolves to a customer, and dropped without an error
+            otherwise.
+          items:
+            $ref: "#/components/schemas/LtvLineItem"
 
     ConversionResponse:
       type: object

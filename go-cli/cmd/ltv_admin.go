@@ -249,8 +249,9 @@ var ltvWebhooksCreateCmd = &cobra.Command{
 		if cmd.Flags().Changed("events") {
 			// Each name was checked against the list in PersistentPreRunE;
 			// what is left is the shape of the list as a whole. It is
-			// always sent as an array: the server reads anything else as
-			// "no events" and subscribes the hook to all of them.
+			// always sent as an array, the one shape the server takes (it
+			// refuses any other; servers before that read anything else as
+			// "no events" and subscribed the hook to all of them).
 			var events []string
 			seen := map[string]bool{}
 			for _, e := range strings.Split(enumValue(cmd, "events"), ",") {

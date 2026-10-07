@@ -72,8 +72,9 @@ var ltvCRMFields = []struct{ flag, field, usage string }{
 }
 
 // ltvCRMKeys are the customer_crm keys the server applies when an ingest
-// call creates the customer (MysqlCustomerRepository::insertCustomer); it
-// ignores any other key without a word, so others are refused here.
+// call creates the customer (MysqlCustomerRepository::insertCustomer). The
+// server refuses any other key by name (servers before that ignored it
+// without a word), so others are refused here, before the round trip.
 var ltvCRMKeys = func() []string {
 	keys := make([]string, 0, len(ltvCRMFields))
 	for _, f := range ltvCRMFields {
@@ -270,7 +271,7 @@ func ltvCRMObject(raw string) (map[string]interface{}, error) {
 	for _, key := range keys {
 		value := crm[key]
 		if !containsString(ltvCRMKeys, key) {
-			return nil, validationError("--customer-crm has a field %q, which the server would ignore", key).
+			return nil, validationError("--customer-crm has a field %q, which is not a CRM field", key).
 				WithHint("CRM fields: %s.", strings.Join(ltvCRMKeys, ", "))
 		}
 		if _, ok := value.(string); !ok {
@@ -357,9 +358,9 @@ func addLtvItemFlags(cmd *cobra.Command) {
 }
 
 // ltvItems collects --item / --items-file into the items array, checking
-// each item the way the server would only after a round trip — or would
-// not at all: an unknown key is ignored there, and a quantity of "two" is
-// read as 0.
+// each item before the round trip the server would answer it with (servers
+// before nested bodies were checked ignored an unknown key and read a
+// quantity of "two" as 0).
 func ltvItems(cmd *cobra.Command) ([]interface{}, bool, error) {
 	inline, _ := cmd.Flags().GetStringArray("item")
 	file, _ := cmd.Flags().GetString("items-file")
@@ -405,7 +406,7 @@ func ltvItems(cmd *cobra.Command) ([]interface{}, bool, error) {
 		sort.Strings(keys)
 		for _, k := range keys {
 			if !containsString(ltvItemKeys, k) {
-				return nil, false, validationError("line item %d has a field %q, which the server would ignore", i+1, k).
+				return nil, false, validationError("line item %d has a field %q, which is not a line item field", i+1, k).
 					WithHint("Line item fields: %s.", strings.Join(ltvItemKeys, ", "))
 			}
 			switch k {

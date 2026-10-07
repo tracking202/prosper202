@@ -9,6 +9,7 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\RemoteApiException;
 use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use Api\V3\Support\QueryInt;
@@ -499,6 +500,20 @@ class SyncController
 
     private function resolveSyncOptions(array $payload): array
     {
+        // Lists of entity names. Anything that was not an array was read as
+        // an empty list, and a name the engine does not know matched
+        // nothing, so `"prune_denylist": "campaigns"` protected no
+        // campaign from the prune it was sent to stop (CLAUDE.md #4).
+        $entities = SyncEngine::supportedEntities();
+        $entity = static fn (mixed $name): ?string => is_string($name) && in_array(trim($name), $entities, true)
+            ? null
+            : 'must be an entity name: one of ' . implode(', ', $entities);
+        $what = 'entity names, e.g. ["campaigns"] (one of ' . implode(', ', $entities) . ')';
+        PayloadKeys::refuse(
+            PayloadKeys::valueListErrors($payload, 'prune_allowlist', $what, $entity)
+            + PayloadKeys::valueListErrors($payload, 'prune_denylist', $what, $entity)
+        );
+
         return [
             'dry_run' => (bool)($payload['dry_run'] ?? false),
             'skip_errors' => (bool)($payload['skip_errors'] ?? false),
@@ -507,8 +522,8 @@ class SyncController
             'prune' => (bool)($payload['prune'] ?? false),
             'prune_preview' => (bool)($payload['prune_preview'] ?? false),
             'confirmation_token' => (string)($payload['confirmation_token'] ?? ''),
-            'prune_allowlist' => is_array($payload['prune_allowlist'] ?? null) ? $payload['prune_allowlist'] : [],
-            'prune_denylist' => is_array($payload['prune_denylist'] ?? null) ? $payload['prune_denylist'] : [],
+            'prune_allowlist' => $payload['prune_allowlist'] ?? [],
+            'prune_denylist' => $payload['prune_denylist'] ?? [],
             'updated_since' => isset($payload['updated_since']) ? (string)$payload['updated_since'] : '',
         ];
     }
@@ -530,8 +545,31 @@ class SyncController
         }
     }
 
+    /** What a source or target profile carries; resolveProfileEntry() reads them. */
+    private const PROFILE_KEYS = ['url', 'api_key', 'name'];
+
     private function resolveProfiles(array $payload, bool $requireApiKey = true): array
     {
+        // A profile is an object of PROFILE_KEYS, each a string (or null,
+        // read as not given): a key it does not take was dropped (`nmae`
+        // named the job by its URL), and each side is named once, by
+        // `source` or its alias `from` (`target` or `to`): with both, the
+        // alias was dropped without a word.
+        $text = static fn (array $profile): array => array_map(
+            static fn (): string => 'must be a string',
+            array_filter($profile, static fn (mixed $value): bool => $value !== null && !is_string($value))
+        );
+        $errors = PayloadKeys::objectErrors($payload, 'source', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'from', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'target', self::PROFILE_KEYS, 'a sync profile', $text)
+            + PayloadKeys::objectErrors($payload, 'to', self::PROFILE_KEYS, 'a sync profile', $text);
+        foreach (['source' => 'from', 'target' => 'to'] as $side => $alias) {
+            if (isset($payload[$side], $payload[$alias])) {
+                $errors[$alias] = "is another name for $side: send one of them";
+            }
+        }
+        PayloadKeys::refuse($errors);
+
         $source = $this->resolveProfileEntry($payload['source'] ?? $payload['from'] ?? null, 'source', $requireApiKey);
         $target = $this->resolveProfileEntry($payload['target'] ?? $payload['to'] ?? null, 'target', $requireApiKey);
 
