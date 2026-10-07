@@ -21,19 +21,29 @@ class ConfigShowCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $config = new Config();
-        $data = $config->all();
 
-        // Mask API key
-        if (isset($data['api_key']) && strlen($data['api_key']) > 8) {
-            $data['api_key'] = substr($data['api_key'], 0, 4) . '...' . substr($data['api_key'], -4);
+        // The settings this CLI uses, not the file: the file is shared with
+        // the Go CLI and holds every profile's key. Printed whole, entry by
+        // entry, it showed `profiles: Array` with a PHP warning; printed any
+        // deeper it would show those keys unmasked. A key of 8 characters or
+        // fewer was printed in full; it is starred now, as the Go CLI does.
+        $url = $config->getUrl();
+        $key = $config->getApiKey();
+        if (strlen($key) > 8) {
+            $key = substr($key, 0, 4) . '...' . substr($key, -4);
+        } elseif ($key !== '') {
+            $key = str_repeat('*', strlen($key));
         }
 
         $output->writeln("<info>Config file:</info> " . $config->configPath());
-        foreach ($data as $k => $v) {
-            $output->writeln("<info>$k:</info> $v");
+        $profile = $config->profileName();
+        if ($profile !== null) {
+            $output->writeln("<info>profile:</info> $profile (shared with the Go CLI)");
         }
+        $output->writeln('<info>url:</info> ' . ($url === '' ? '(not set)' : $url));
+        $output->writeln('<info>api_key:</info> ' . ($key === '' ? '(not set)' : $key));
 
-        if (empty($data)) {
+        if ($url === '' && $key === '') {
             $output->writeln('<comment>No configuration set. Run config:set-url and config:set-key first.</comment>');
         }
 

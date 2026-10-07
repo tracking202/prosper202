@@ -1709,8 +1709,10 @@ paths:
         - $ref: "#/components/parameters/offset"
         - name: campaign_id
           in: query
+          description: Only this campaign's conversions. Anything but a positive id (0 included) is a 422 naming campaign_id.
           schema:
             type: integer
+            minimum: 1
         - $ref: "#/components/parameters/windowFrom"
         - $ref: "#/components/parameters/windowTo"
         - name: click_id

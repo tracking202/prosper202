@@ -28,9 +28,14 @@ var evalRunCmd = &cobra.Command{
 		"in tests/fixtures/agent-eval/cases/.\n\n" +
 		"The agent command must read the ask, drive `p202` (the one on PATH — that\n" +
 		"is the capture shim), print the agent's reply to stdout, and exit 0.\n" +
+		"The shim records each command's exit status: runs_one_of credits only a\n" +
+		"command that exited 0 (or the case's runs_one_of_exit), and names the\n" +
+		"status of a matching command that failed; never_runs counts every\n" +
+		"attempt. Each result's commands_failed counts what did not exit 0.\n" +
 		"Rubric grading is optional: --judge-cmd receives {id, ask, rubric, reply,\n" +
-		"commands} as JSON on stdin and must print a line starting with PASS or\n" +
-		"FAIL; without it, rubric cases report needs_judge instead of pass.\n\n" +
+		"commands, runs} as JSON on stdin (runs: each command with its exit_code)\n" +
+		"and must print a line starting with PASS or FAIL; without it, rubric\n" +
+		"cases report needs_judge instead of pass.\n\n" +
 		"Exit codes: 0 when nothing failed; 5 (partial_failure) when cases failed\n" +
 		"or errored — results are still on stdout.",
 	Args: cobra.NoArgs,

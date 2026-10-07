@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -21,8 +22,7 @@ class ReportSummaryCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Get overall performance summary')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last14, '
-                . 'last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp (unix)')
             ->addOption('aff_campaign_id', null, InputOption::VALUE_REQUIRED, 'Filter by campaign ID')

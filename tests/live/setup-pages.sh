@@ -226,6 +226,53 @@ eq "$(Q "SELECT ppc_account_name FROM 202_ppc_accounts WHERE ppc_account_id=$ACC
 eq "$(Q "SELECT COUNT(*) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "1" "the pixel was updated in place"
 eq "$(Q "SELECT pixel_code FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "https://pixel.example/p2.gif" "with its new code"
 
+say "traffic sources: a Raw pixel is the same bytes after every save"
+# \n and \\ inside a script. The edit form read a Raw pixel through
+# stripslashes(), so each save of the account, changing nothing, wrote it
+# back a level of backslashes shorter. Each save here submits the account
+# form's own fields, as the page rendered them (form-body.py).
+FORM_BODY="$(dirname "${BASH_SOURCE[0]}")/form-body.py"
+RAW='<script>var s = "line\nbreak", p = "C:\\dir\\f", q = '"'"'it\'"'"'s'"'"';</script>'
+RAW_HEX=$(printf '%s' "$RAW" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
+get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+python3 "$FORM_BODY" "$P" ppc_account_name "pixel_type_id[]=5" "pixel_code[]=$RAW" > "$OUT/.body" || bad "the account form is on the edit page"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/raw-0.html" --data-binary "@$OUT/.body"
+eq "$(Q "SELECT HEX(pixel_code) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC AND pixel_type_id=5")" "$RAW_HEX" "the Raw pixel is stored as typed"
+for n in 1 2; do
+  get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+  python3 "$FORM_BODY" "$P" ppc_account_name > "$OUT/.body" || bad "the account form is on the edit page"
+  post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/raw-$n.html" --data-binary "@$OUT/.body"
+  eq "$LAST_REDIRECTS" "1" "save $n of the form as shown is accepted"
+  eq "$(Q "SELECT HEX(pixel_code) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "$RAW_HEX" "and leaves the Raw pixel the same bytes"
+done
+eq "$(Q "SELECT COUNT(*) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "1" "still one pixel"
+
+say "traffic sources: the only pixel can be removed"
+# The form's first row has no remove button: clearing its code removes the
+# pixel. The handler built its DELETE only inside the branch for a listed
+# pixel, so with none listed nothing was deleted and the pixel kept firing.
+get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+python3 "$FORM_BODY" "$P" ppc_account_name "pixel_code[]=" > "$OUT/.body" || bad "the account form is on the edit page"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/rm.html" --data-binary "@$OUT/.body"
+msgs "$OUT/rm.html"
+eq "$LAST_REDIRECTS" "1" "the save is accepted"
+eq "$(Q "SELECT COUNT(*) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "0" "and the account has no pixel left"
+get "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$P"
+hasnt "$P" 'C:\\dir' "editing the account shows no pixel code"
+
+say "traffic sources: a pixel code with no type is refused, not dropped"
+python3 "$FORM_BODY" "$P" ppc_account_name "pixel_type_id[]=" "pixel_code[]=https://pixel.example/typeless.gif" > "$OUT/.body"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/typeless.html" --data-binary "@$OUT/.body"
+msgs "$OUT/typeless.html"
+has "$OUT/typeless.html" "A pixel code needs its pixel type" "the refusal is said"
+has "$OUT/typeless.html" "https://pixel.example/typeless.gif" "keeping the code that was typed"
+eq "$(Q "SELECT COUNT(*) FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "0" "and storing nothing"
+
+# Put the pixel back for the passes below.
+python3 "$FORM_BODY" "$P" ppc_account_name "pixel_type_id[]=1" "pixel_code[]=https://pixel.example/p2.gif" > "$OUT/.body"
+post "$SETUP/ppc_accounts.php?edit_ppc_account_id=$ACC" "$OUT/restore.html" --data-binary "@$OUT/.body"
+eq "$(Q "SELECT pixel_code FROM 202_ppc_account_pixels WHERE ppc_account_id=$ACC")" "https://pixel.example/p2.gif" "(the image pixel is back)"
+
 say "traffic sources: custom variables (a token is required now)"
 ajax "$AJAX/custom_variables.php" "$OUT/v-csrf.txt" --data-urlencode "post_vars=1" --data-urlencode "ppc_network_id=$SRC" \
   --data-urlencode "vars[0][id]=false" --data-urlencode "vars[0][name]=Forged" --data-urlencode "vars[0][parameter]=f" --data-urlencode "vars[0][placeholder]={f}"

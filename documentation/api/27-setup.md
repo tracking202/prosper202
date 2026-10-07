@@ -146,6 +146,15 @@ URL, and a removed pixel is erased with its correction URL. Beyond the form:
 the type must be one `202_pixel_types` names, and a Postback's URLs must be
 http(s) — the only ones the postback sender calls.
 
+A code is stored as sent (only trimmed) and fired as stored: a Raw pixel's
+backslashes, `"a\\nb"` in a script included, read back byte for byte. The
+account form keeps them too (it read a Raw pixel through `stripslashes()`,
+so every save of the account lost a level of backslashes), stores the CRLF
+line breaks a browser submits as `\n`, refuses a code with no type, and
+removes a pixel whose code is cleared — the only pixel included, which it
+used to leave firing. Deleting the last pixel here is `DELETE` on its id,
+as for any other.
+
 ```bash
 curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"pixel_type_id":4,"pixel_code":"https://network.example/pb?click=[[subid]]&payout=[[payout]]"}' \

@@ -2,6 +2,8 @@
 
 A command-line tool for managing a Prosper202 tracking instance. Distributed as a single static binary with zero dependencies.
 
+This is the Go CLI (`go-cli/`). The repository also ships a legacy PHP CLI at `bin/p202` that answers to the same name with a subset of these commands and `noun:verb` names; if `p202 --version` prints `p202 legacy PHP CLI (bin/p202)`, the `p202` on your `PATH` is that one.
+
 ## Installation
 
 ### Download a prebuilt binary

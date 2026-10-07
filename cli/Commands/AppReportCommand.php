@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use Api\V3\Controllers\AppReportController;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -20,9 +21,10 @@ class AppReportCommand extends BaseCommand
 {
     protected static $defaultName = 'app:report';
 
-    private const SHARED_GROUPINGS = ['day', 'registration', 'platform'];
-    private const IOS_GROUPINGS = ['ad-network', 'source', 'country', 'version', 'protocol', 'conversion-type'];
-    private const ANDROID_GROUPINGS = ['campaign', 'match-state', 'integrity-state', 'ctit-flag', 'goal'];
+    // The server's own lists (P202Cli\ServerLists says why).
+    private const SHARED_GROUPINGS = AppReportController::SHARED_GROUPINGS;
+    private const IOS_GROUPINGS = AppReportController::IOS_GROUPINGS;
+    private const ANDROID_GROUPINGS = AppReportController::ANDROID_GROUPINGS;
     private const SHARED_FILTERS = ['time_from', 'time_to', 'registration_id', 'registration_ids'];
     private const IOS_FILTERS = ['signature', 'protocol', 'conversion_type', 'ad_network_id', 'country_code', 'source_identifier', 'postback_version', 'did_win'];
 

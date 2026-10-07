@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -28,8 +29,8 @@ class AppNotificationsCommand extends BaseCommand
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max results', '50')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Offset', '0')
             ->addOption('registration_id', null, InputOption::VALUE_REQUIRED, 'Only this app\'s postbacks')
-            ->addOption('status', null, InputOption::VALUE_REQUIRED, 'pending, sent, failed, cancelled or suppressed')
-            ->addOption('kind', null, InputOption::VALUE_REQUIRED, 'reached, correction or retraction')
+            ->addOption('status', null, InputOption::VALUE_REQUIRED, ServerLists::list(ServerLists::appNotificationStatuses()))
+            ->addOption('kind', null, InputOption::VALUE_REQUIRED, ServerLists::list(\Api\V3\Controllers\AppNotificationsController::KINDS))
             ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Queued at or after (unix)')
             ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Queued at or before (unix)');
     }

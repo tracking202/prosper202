@@ -337,9 +337,19 @@ curl -H "Authorization: Bearer <api-key>" https://your-server/api/v3/campaigns
 
 ## CLI Tools
 
-### PHP CLI (`bin/p202`)
+Two command-line tools answer to `p202`. The **Go CLI** (`go-cli/`, below)
+is the primary one: it has the full command set, profiles, staged writes,
+dry-run deletes and agent-readable errors. The **legacy PHP CLI** (`bin/p202`)
+covers a subset with `noun:verb` command names, and says so: its
+`--version` line and `list` name it and point at the Go CLI. Both read
+`~/.p202/config.json`, and the PHP CLI uses the Go CLI's active profile, so
+a server set up with either is the one both use. Call each by its path
+(`./go-cli/p202`, `./bin/p202`) when both are on your `PATH`.
 
-Symfony Console CLI for managing remote Prosper202 installations.
+### Legacy PHP CLI (`bin/p202`)
+
+Symfony Console CLI for managing remote Prosper202 installations; a subset of
+the Go CLI's commands. It stays at `bin/p202` for the scripts that call it.
 
 ```bash
 # Configure

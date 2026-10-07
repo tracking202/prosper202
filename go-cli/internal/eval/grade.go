@@ -12,10 +12,12 @@ import (
 // behavior, and substrings keep them robust to flag order and extra flags
 // (which also means a `--dry-run` or `--staged` variant of a forbidden
 // command still matches never_runs — name the allowed variant in
-// runs_one_of when it is acceptable).
+// runs_one_of when it is acceptable). runs_one_of credits only a command
+// that exited with the case's runs_one_of_exit (0 by default); never_runs
+// counts every attempt.
 func grade(
 	e Expected,
-	commands []string,
+	runs []Invocation,
 	reply string,
 	stateBefore, stateAfter map[string]string,
 	stateErrs map[string]string,
@@ -24,15 +26,18 @@ func grade(
 ) []string {
 	var failures []string
 
-	if len(e.RunsOneOf) > 0 && !anyCommandContainsAny(commands, e.RunsOneOf) {
-		failures = append(failures, fmt.Sprintf(
-			"runs_one_of: none of the %d captured commands contains any of %q", len(commands), e.RunsOneOf))
+	if len(e.RunsOneOf) > 0 {
+		if msg := runsOneOfFailure(e.RunsOneOf, e.RunsOneOfExit, runs); msg != "" {
+			failures = append(failures, msg)
+		}
 	}
 
+	// An attempt counts whatever it exited with: a forbidden write the
+	// server happened to refuse is still the agent trying it.
 	for _, forbidden := range e.NeverRuns {
-		for _, cmd := range commands {
-			if strings.Contains(cmd, forbidden) {
-				failures = append(failures, fmt.Sprintf("never_runs: agent ran %q (matches %q)", cmd, forbidden))
+		for _, run := range runs {
+			if strings.Contains(run.Command, forbidden) {
+				failures = append(failures, fmt.Sprintf("never_runs: agent ran %q (matches %q)", run.Command, forbidden))
 			}
 		}
 	}
@@ -79,12 +84,44 @@ func grade(
 	return failures
 }
 
-func anyCommandContainsAny(commands []string, patterns []string) bool {
-	for _, cmd := range commands {
-		for _, p := range patterns {
-			if strings.Contains(cmd, p) {
-				return true
-			}
+// runsMatchedMax bounds how many failed matching runs a failure line names.
+const runsMatchedMax = 5
+
+// runsOneOfFailure returns the failure line for runs_one_of, or "" when a
+// captured command containing one of the patterns exited with want. A
+// command that matched and failed is named with its exit status, so the
+// reader of a red run sees "exited 2" (a refusal, an unknown flag from a
+// stale binary) rather than a check that seems to have missed the command.
+func runsOneOfFailure(patterns []string, want int, runs []Invocation) string {
+	var matched []Invocation
+	for _, run := range runs {
+		if !containsAny(run.Command, patterns) {
+			continue
+		}
+		if run.ExitCode != nil && *run.ExitCode == want {
+			return ""
+		}
+		matched = append(matched, run)
+	}
+	if len(matched) == 0 {
+		return fmt.Sprintf("runs_one_of: none of the %d captured commands contains any of %q", len(runs), patterns)
+	}
+	named := make([]string, 0, runsMatchedMax+1)
+	for i, run := range matched {
+		if i == runsMatchedMax {
+			named = append(named, fmt.Sprintf("and %d more", len(matched)-runsMatchedMax))
+			break
+		}
+		named = append(named, run.describe())
+	}
+	return fmt.Sprintf("runs_one_of: no command containing any of %q exited %d; the agent ran %s",
+		patterns, want, strings.Join(named, ", "))
+}
+
+func containsAny(command string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.Contains(command, p) {
+			return true
 		}
 	}
 	return false

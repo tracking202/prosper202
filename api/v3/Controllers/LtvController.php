@@ -1296,11 +1296,18 @@ class LtvController
         // cast with (int) was 2026 seconds, and the window covered all time.
         [$timeFrom, $timeTo] = TimeBound::window($params, fn (): string => $this->accountTimezone());
 
-        if (!empty($params['period'])) {
+        // Absent and '' are no period, as ReportFilter reads them; every
+        // other value is a period or a 422. This was !empty(), and empty('0')
+        // is true, so period=0 named no period at all: the answer came back
+        // 200 over the default window (all time), reading as the window asked
+        // for, where period=1 was refused. 0 is not one of TimeBound::PERIODS
+        // and means nothing here, so it is refused with the list.
+        $period = $params['period'] ?? '';
+        if ($period !== '') {
             // The reports' periods, computed where they are: today and
             // yesterday at the account's midnight, not the server's. A typo
             // like period=last7d is a 422, never all time.
-            [$timeFrom, $timeTo] = TimeBound::period($params['period'], fn (): string => $this->accountTimezone());
+            [$timeFrom, $timeTo] = TimeBound::period($period, fn (): string => $this->accountTimezone());
         }
 
         $filters = [];

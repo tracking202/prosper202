@@ -53,9 +53,17 @@ class ConversionsController
         $binds = [$this->userId];
         $types = 'i';
 
-        if (!empty($params['campaign_id'])) {
+        // Read as its siblings below read theirs. It was !empty(), and
+        // empty('0') is true, so campaign_id=0 (`--aff_campaign_id 0`) was no
+        // filter and answered with every campaign's conversions; a value that
+        // was not a number was cast to 0 and answered with none.
+        if (array_key_exists('campaign_id', $params)) {
+            $campaignId = self::positiveId($params['campaign_id']);
+            if ($campaignId === null) {
+                throw new ValidationException('Invalid conversion filter: campaign_id', ['campaign_id' => 'Must be a positive integer campaign id (see `p202 campaign list`)']);
+            }
             $where[] = 'cl.campaign_id = ?';
-            $binds[] = (int)$params['campaign_id'];
+            $binds[] = $campaignId;
             $types .= 'i';
         }
         [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
@@ -251,13 +259,29 @@ class ConversionsController
         // LTV: optional customer identity + product line items. An invalid
         // customer_ref_type or malformed items array is rejected by the
         // repository with an explicit error — never silently dropped.
-        if (!empty($payload['customer_id'])) {
-            $data['customer_id'] = (int)$payload['customer_id'];
+        // Given means present and not null. These were !empty(), and
+        // empty('0') is true: customer_ref "0" (a real id where a system
+        // counts from 0) was dropped and the revenue landed on whatever the
+        // click resolved to, and customer_id 0 or "x" named no one, silently.
+        if (isset($payload['customer_id'])) {
+            $customerId = self::positiveId($payload['customer_id']);
+            if ($customerId === null) {
+                throw new ValidationException('customer_id must be a positive integer', ['customer_id' => 'An LTV customer id (see `p202 ltv customers`)']);
+            }
+            $data['customer_id'] = $customerId;
         }
-        if (!empty($payload['customer_ref'])) {
+        if (isset($payload['customer_ref'])) {
+            if (!is_scalar($payload['customer_ref']) || trim((string) $payload['customer_ref']) === '') {
+                throw new ValidationException('customer_ref must be a non-empty string', ['customer_ref' => 'Your id for the customer']);
+            }
             $data['customer_ref'] = (string)$payload['customer_ref'];
-            if (!empty($payload['customer_ref_type'])) {
-                $data['customer_ref_type'] = (string)$payload['customer_ref_type'];
+            if (isset($payload['customer_ref_type'])) {
+                if (!is_string($payload['customer_ref_type'])) {
+                    throw new ValidationException('customer_ref_type must be a string', ['customer_ref_type' => 'email_md5, email_sha256, esp_id, merchant_id, subid or custom']);
+                }
+                // The repository refuses a type it does not know and reads ''
+                // as its default, custom (normalizeAliasType()).
+                $data['customer_ref_type'] = $payload['customer_ref_type'];
             }
         }
         if (isset($payload['customer_crm'])) {

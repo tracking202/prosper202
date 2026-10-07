@@ -2,6 +2,8 @@
 
 This document describes how to use the `p202` CLI from an AI agent, automation script, or LLM tool-use context. The CLI was explicitly designed for both human operators and programmatic consumers.
 
+It is the Go CLI (`go-cli/`). A legacy PHP CLI at `bin/p202` answers to the same name with a subset of the commands, `noun:verb` names and none of what follows (JSON for agents, the error envelope, staged writes); `p202 --version` prints `p202 legacy PHP CLI (bin/p202)` when that is the one on `PATH`.
+
 ## Output: agents get JSON without asking
 
 When `p202` detects that an AI agent is running it, **every command prints compact, single-line JSON on stdout and every failure prints the JSON error envelope on stderr**, with no `--json` needed. A person at a terminal still gets tables, and nothing is printed to say which was chosen (stderr stays quiet); `p202 config show` reports it.

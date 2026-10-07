@@ -21,7 +21,7 @@ make all          # Cross-compile for all platforms
 
 The binary is output as `p202` (or `p202.exe` on Windows).
 
-Note that this Go binary is distinct from the PHP/Symfony Console CLI entrypoint at `bin/p202`. Because both share the name `p202`, they can collide on your `PATH`. To avoid ambiguity, invoke each by its full path (e.g. `./go-cli/p202 ...` for the Go CLI vs `./bin/p202 ...` for the PHP CLI), or rename the Go binary.
+Note that this Go binary is distinct from the legacy PHP/Symfony Console CLI entrypoint at `bin/p202`, which covers a subset of these commands with `noun:verb` names (`report:breakdown` where this one has `report breakdown`). Because both share the name `p202`, they can collide on your `PATH`; `p202 --version` tells them apart (the PHP one prints `p202 legacy PHP CLI (bin/p202)` and points back here). To avoid ambiguity, invoke each by its full path (e.g. `./go-cli/p202 ...` for the Go CLI vs `./bin/p202 ...` for the PHP CLI), or rename the Go binary. Both read `~/.p202/config.json`: the PHP CLI uses this CLI's active profile, so `p202 config set-url`/`set-key` here configure both.
 
 ## Configuration
 
@@ -153,7 +153,7 @@ All entities support standard CRUD operations (`list`, `get`, `create`, `update`
 - `user apikey create` takes `--scope` to mint least-privilege keys (`*`, `read`, `write`, `stage`, or `<area>:read`/`<area>:write`/`<area>:stage` tokens — `read,stage` is the propose-only agent shape), and `user apikey rotate` carries the old key's scope onto the replacement (`features.api_key_scopes`).
 - `user identity-key get` shows the key your own server signs customer ids with (`cust_sig = hex(HMAC-SHA256(key, "<cust_type>:<cust>"))`); `user identity-key rotate` replaces it after a confirmation (`--force` skips it, `--staged` proposes it instead).
 
-For teams shipping an AI agent on top of the CLI, `p202 eval run` executes behavioral snapshot evals: it hands each case's ask to a pluggable agent command, captures every `p202` invocation the agent makes via a PATH shim, re-reads instance state, and grades expectations (commands run, state unchanged/changed, reply contents, optional judged rubric). Cases follow the shape in `.claude/skills/p202-agent-evals/SKILL.md`; a starter suite ships in `tests/fixtures/agent-eval/cases/`. Exit code 0 when clean, 5 (`partial_failure`) when cases fail — results stay on stdout.
+For teams shipping an AI agent on top of the CLI, `p202 eval run` executes behavioral snapshot evals: it hands each case's ask to a pluggable agent command, captures every `p202` invocation the agent makes via a PATH shim, re-reads instance state, and grades expectations (commands run, state unchanged/changed, reply contents, optional judged rubric). The shim records each command's exit status: `runs_one_of` credits only a matching command that exited 0 (or the case's `runs_one_of_exit`, for an error-path case whose point is the refusal) and names the status of one that failed, `never_runs` counts every attempt, and each result's `commands_failed` counts what did not exit 0. Cases follow the shape in `.claude/skills/p202-agent-evals/SKILL.md`; a starter suite ships in `tests/fixtures/agent-eval/cases/`. Exit code 0 when clean, 5 (`partial_failure`) when cases fail — results stay on stdout.
 
 ## Multi-Profile Management
 
