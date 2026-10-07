@@ -975,14 +975,19 @@ class LtvController
         PayloadKeys::refuseUnknown($payload, ['url', 'webhook_url', 'events'], 'a webhook');
         // A list of event names. Anything else was read as no list, which
         // subscribes to every event: `"events": "revenue.recorded"` made a
-        // hook for all five. Which names exist is the repository's to say
-        // (it checks their form, and stays open to names a later version
-        // sends).
+        // hook for all five. And each name one this install sends: a name
+        // checked only for its form (`revenue.recoded`) made a hook that
+        // receives nothing, answered 201. '*' is every event, later ones
+        // included (MysqlWebhookRepository::KNOWN_EVENTS).
         PayloadKeys::refuse(PayloadKeys::valueListErrors(
             $payload,
             'events',
             'event names, e.g. ["revenue.recorded"] (omit it, or send [], for every event)',
-            static fn (mixed $event): ?string => is_string($event) ? null : 'must be an event name (a string)'
+            static fn (mixed $event): ?string => match (true) {
+                !is_string($event) => 'must be an event name (a string)',
+                $event === '*' => null,
+                default => MysqlWebhookRepository::unknownEventReason($event),
+            }
         ));
         $url = trim((string) ($payload['url'] ?? $payload['webhook_url'] ?? ''));
         if ($url === '') {

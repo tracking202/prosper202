@@ -8435,9 +8435,13 @@ paths:
                   type: array
                   items:
                     type: string
-                  description: e.g. customer.updated, subscription.changed. Omitted, null or [] is every event this
-                    version sends, and `["*"]` also takes later ones. Anything but a list of strings is a 422 (a
-                    lone string was read as no list, and subscribed the hook to every event).
+                  description: The events to deliver, each one this install sends — `customer.updated`,
+                    `revenue.recorded`, `subscription.changed`, `conversion.recorded`, `engagement.recorded` — or
+                    `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
+                    this version sends. Any other name is a 422 naming it by position (`events.0`) with the list (a
+                    name checked only for its form, `revenue.recoded`, made a hook that received nothing), and
+                    anything but a list of strings is a 422 (a lone string was read as no list, and subscribed the
+                    hook to every event).
               required:
               - url
               additionalProperties: true
