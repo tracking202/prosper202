@@ -66,8 +66,10 @@ final class UncheckedGetResultTest extends TestCase
      * an unchecked one is reported wherever it is.
      */
     private const GRACEFUL = [
-        '202-config/functions-auth.php::accountTimezone' =>
-            'An unread zone answers null, which set_timezone() reads as "keep the zone the session holds": the page counts days in the zone captured at sign-in, as every page did before it read the account\'s.',
+        // AUTH::accountTimezone() was listed here: an unread zone answered
+        // null, which set_timezone() read as "keep the session's zone", so a
+        // failed read counted a page's days in a stale zone with nothing
+        // said. It throws now (AUTH::resultOf()).
         'api/v3/Controllers/CapabilitiesController.php::loadClickServerKey' =>
             'Fails closed: a key that cannot be read is no key, so the shell capability is denied; /capabilities still answers.',
     ];

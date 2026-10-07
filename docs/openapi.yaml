@@ -1282,9 +1282,9 @@ paths:
         A landing-page tracker links to the landing page's URL with t202id added
         (before any #fragment); a rotator tracker to tracking202/redirect/rtr.php;
         any other to tracking202/redirect/dl.php. The base is user 1's tracking
-        domain, or this server's name and port when none is set, plus the install
-        directory; a domain stored with a scheme keeps it, otherwise the request's
-        scheme is used. After t202id come the traffic source's custom variables
+        domain, or the host this request arrived at (port included) when none is
+        set, plus the install directory; a domain stored with a scheme keeps it,
+        otherwise the request's scheme is used. After t202id come the traffic source's custom variables
         (parameter=placeholder), then each built-in token that has a value, and
         t202kw always. Values are written into the link as given and may not
         contain &, #, ?, whitespace or control characters; any other query
@@ -3363,7 +3363,7 @@ paths:
         1000 events, and an answer of at most 10,000 outcomes: an evaluation
         that reaches more is refused (`422`, field `events`) as soon as it
         passes the budget. An event's `revenue` is at most ±999999.99999
-        (`422` naming `events[i].revenue`). A read (`goals:read` suffices;
+        (`422` naming `events.<i>.revenue`, the event by its position). A read (`goals:read` suffices;
         never staged).
       operationId: evaluateGoals
       requestBody:
@@ -8435,9 +8435,13 @@ paths:
                   type: array
                   items:
                     type: string
-                  description: e.g. customer.updated, subscription.changed. Omitted, null or [] is every event this
-                    version sends, and `["*"]` also takes later ones. Anything but a list of strings is a 422 (a
-                    lone string was read as no list, and subscribed the hook to every event).
+                  description: The events to deliver, each one this install sends — `customer.updated`,
+                    `revenue.recorded`, `subscription.changed`, `conversion.recorded`, `engagement.recorded` — or
+                    `["*"]` alone, which also takes the events later versions add. Omitted, null or [] is every event
+                    this version sends. Any other name is a 422 naming it by position (`events.0`) with the list (a
+                    name checked only for its form, `revenue.recoded`, made a hook that received nothing), and
+                    anything but a list of strings is a 422 (a lone string was read as no list, and subscribed the
+                    hook to every event).
               required:
               - url
               additionalProperties: true
@@ -9315,8 +9319,8 @@ paths:
         class the page builds its code with (`Prosper202\Setup\LandingPageCode`),
         byte for byte: the loader script for the page itself, and the ways out
         to the offer. The snippets start from `base_url`, the tracker link's base
-        (user 1's tracking domain, or this server's name and port when none is
-        set, plus the install directory) written scheme-relative (`//host/...`)
+        (user 1's tracking domain, or the host this request arrived at when none
+        is set, plus the install directory) written scheme-relative (`//host/...`)
         as the page writes it, so they work on an http or an https landing page.
 
         A simple page (`landing_page_type` 0) links out to its own campaign:
@@ -11809,9 +11813,13 @@ components:
         items:
           type: array
           description: |
-            Line items on the customer's revenue event; recorded only when the
-            conversion resolves to a customer, and dropped without an error
-            otherwise.
+            Line items on the customer's revenue event, so they need a
+            customer: `customer_id` or `customer_ref` here, the customer
+            already linked to the click, or the account's customer c-param.
+            When none resolves the conversion is refused (`422` naming
+            `items`, and `customer_crm` when sent, saying to send
+            `customer_ref` or `customer_id`) and nothing is written; they
+            used to be dropped and the conversion answered `201`.
           items:
             $ref: "#/components/schemas/LtvLineItem"
 

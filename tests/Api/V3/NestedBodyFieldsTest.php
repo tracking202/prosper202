@@ -243,6 +243,16 @@ final class NestedBodyFieldsTest extends TestCase
             ['url' => 'https://hooks.example.com/x', 'events' => ['revenue.recorded', ['x' => 1]]],
             ['events.1'],
         ];
+        // A name of the right form that this install never sends made a
+        // hook that receives nothing, answered 201.
+        yield 'webhook: an event this install never sends' => [
+            'webhook',
+            [
+                'url' => 'https://hooks.example.com/x',
+                'events' => ['revenue.recoded', 'customer.updated', 'lead.scored'],
+            ],
+            ['events.0', 'events.2'],
+        ];
         yield 'integration: config that is a list' => [
             'integration',
             ['provider' => 'klaviyo', 'config' => [1, 2]],

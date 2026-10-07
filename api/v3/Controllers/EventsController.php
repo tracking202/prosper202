@@ -71,7 +71,7 @@ final class EventsController
         $events = [];
         $errors = [];
         foreach ($raw as $i => $e) {
-            $path = 'events[' . $i . ']';
+            $path = 'events.' . $i;
             if (!is_array($e) || ($e !== [] && array_is_list($e))) {
                 $errors[$path] = 'must be an object';
                 continue;

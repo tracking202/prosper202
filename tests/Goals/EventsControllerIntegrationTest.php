@@ -52,11 +52,11 @@ final class EventsControllerIntegrationTest extends TestCase
         }
         self::assertSame(['events'], array_keys($this->refused(['click_id' => 100, 'events' => []])));
         self::assertSame(['events'], array_keys($this->refused(['click_id' => 100, 'events' => array_fill(0, EventsController::MAX_EVENTS + 1, $ok)])));
-        self::assertSame(['events[0].received_at', 'events[0].revenue_trusted'], array_keys($this->refused(['click_id' => 100, 'events' => [
+        self::assertSame(['events.0.received_at', 'events.0.revenue_trusted'], array_keys($this->refused(['click_id' => 100, 'events' => [
             $ok + ['received_at' => 1, 'revenue_trusted' => true],
         ]])));
-        self::assertArrayHasKey('events[1].event_id', $this->refused(['click_id' => 100, 'events' => [$ok, ['name' => 'x']]]));
-        self::assertArrayHasKey('events[0].occurred_at', $this->refused(['click_id' => 100, 'events' => [$ok + ['occurred_at' => '1700000000']]]));
+        self::assertArrayHasKey('events.1.event_id', $this->refused(['click_id' => 100, 'events' => [$ok, ['name' => 'x']]]));
+        self::assertArrayHasKey('events.0.occurred_at', $this->refused(['click_id' => 100, 'events' => [$ok + ['occurred_at' => '1700000000']]]));
         self::assertSame(0, (int) self::$db->query('SELECT COUNT(*) AS n FROM 202_goal_events')->fetch_assoc()['n'], 'nothing refused was stored');
     }
 

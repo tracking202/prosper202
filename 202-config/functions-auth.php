@@ -389,8 +389,9 @@ class AUTH
      * zone's today until the user signed in again, while GET /reports/*
      * (api/v3 AccountTimezone) used the new one. The account's row is read
      * once a request and the session's copy refreshed with it; a zone that
-     * is empty or that PHP does not know is UTC, as the API reads it, and a
-     * failed read keeps the session's zone rather than failing the page.
+     * is empty or that PHP does not know is UTC, as the API reads it. A read
+     * that fails throws (accountTimezone()): kept, the session's zone was a
+     * guess every report page counted its days in with nothing to say so.
      */
     public static function set_timezone($user_timezone)
     {
@@ -407,35 +408,45 @@ class AUTH
         date_default_timezone_set($user_timezone);
     }
 
-    /** The account's zone (UTC when unset or unknown), or null when it could not be read. */
+    /**
+     * The account's zone: UTC when it is unset or not a zone PHP knows, null
+     * when there is no account row (the session outlived its user, and keeps
+     * its own zone) or no database in this process at all.
+     *
+     * A read that fails throws, naming the account. It answered null, which
+     * set_timezone() reads as "keep the session's zone", for a failed
+     * prepare, execute or get_result() and for any exception at all: one
+     * transient database error made a report page count "today" in the zone
+     * captured at sign-in, which may no longer be the account's, with
+     * nothing in a log (CLAUDE.md #1, #11). The API's AccountTimezone
+     * refuses the same failure; a page whose days cannot be placed now
+     * fails the same way.
+     */
     private static function accountTimezone(int $userId): ?string
     {
         if (isset(self::$accountTimezones[$userId])) {
             return self::$accountTimezones[$userId];
         }
+        if (!class_exists('DB', false)) {
+            return null;
+        }
+        $failed = 'Unable to read the time zone of account ' . $userId;
+        $db = DB::getInstance()->getConnection();
+        if (!$db instanceof \mysqli) {
+            throw new \RuntimeException($failed . ': no database connection');
+        }
         try {
-            if (!class_exists('DB', false)) {
-                return null;
-            }
-            $db = DB::getInstance()->getConnection();
-            if (!$db instanceof \mysqli) {
-                return null;
-            }
             $stmt = $db->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
             if ($stmt === false) {
-                return null;
+                throw new \RuntimeException($failed . ': ' . $db->error);
             }
             self::bind($stmt, 'i', $userId);
-            self::execute($stmt, 'Unable to read the account time zone');
-            $result = $stmt->get_result();
-            if ($result === false) {
-                $stmt->close();
-                return null;
-            }
-            $row = $result->fetch_assoc();
+            self::execute($stmt, $failed);
+            $row = self::resultOf($stmt, $failed)->fetch_assoc();
             $stmt->close();
-        } catch (\Throwable) {
-            return null;
+        } catch (\mysqli_sql_exception $e) {
+            // Strict reporting throws MySQL's sentence; name whose read it was.
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
         }
         if ($row === null) {
             return null;

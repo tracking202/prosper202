@@ -154,16 +154,21 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        conv_time, campaign_id, click_time, and the legacy columns
      *        time_difference, ip, pixel_type, user_agent.
      *        LTV keys (all optional): customer_id, customer_ref +
-     *        customer_ref_type, customer_crm, items.
+     *        customer_ref_type, customer_crm, items; ltv_requires_customer
+     *        (true = refuse items or customer_crm when no customer resolves,
+     *        rather than record the conversion without them).
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
      *        Runs inside the transaction after the insert. It must not write
      *        click_lead or click_payout (ClickValueWritersTest enforces it):
      *        the recompute that follows owns both.
-     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, deleted?: bool, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, deleted?: bool, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float, ltvDropped?: list<string>}
      *         A duplicate of a keyed row names the row it matched (convId,
      *         dedupeKey) and says whether it is deleted: a deleted row keeps
      *         its key, so the same conversion is not recorded again.
+     *         ltvDropped names the LTV fields of a recorded row that were
+     *         stored nowhere because no customer resolved.
      * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
+     * @throws LtvDataWithoutCustomer when ltv_requires_customer is set and items or customer_crm have no customer
      */
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
     {
@@ -444,6 +449,24 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // unlinked, exactly as before the LTV feature.
         $customerId = empty($data['skip_ltv']) ? $this->resolveCustomer($userId, $clickId, $data, $convTime) : null;
 
+        // Line items and CRM fields belong to a customer (its revenue event,
+        // its record). With none resolved they have nowhere to go: a caller
+        // that can be answered asked to be refused, here, before the row is
+        // written (the transaction rolls back what the click lock and
+        // ensureManaged() touched); a pixel keeps its conversion, and the
+        // result names what was not stored so it can say so.
+        $ltvDropped = [];
+        if ($customerId === null && empty($data['skip_ltv'])) {
+            foreach (['items', 'customer_crm'] as $field) {
+                if (!empty($data[$field])) {
+                    $ltvDropped[] = $field;
+                }
+            }
+            if ($ltvDropped !== [] && !empty($data['ltv_requires_customer'])) {
+                throw new LtvDataWithoutCustomer($ltvDropped);
+            }
+        }
+
         $columns = ['click_id', 'transaction_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time'];
         $types = 'isisiii';
         $values = [$clickId, $transactionId, $campaignId, Amount::fromUnits($amountUnits), $userId, $clickTime, $convTime];
@@ -578,6 +601,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'reversesConvId' => $reverses !== null ? (int) $reverses['conv_id'] : null,
             // threaded out for the post-commit bridge emit (closure locals)
             'campaignId' => $campaignId, 'clickTime' => $clickTime, 'payout' => $payout,
+            // LTV fields recorded nowhere, as no customer resolved
+            'ltvDropped' => $ltvDropped,
         ];
     }
 

@@ -1338,14 +1338,15 @@ class ServerStateStore implements QuotaStore
             // silence (error pattern #3).
             //
             // The unscoped path is NOT $legacy. It was, and $legacy is what a
-            // new instance adopts below when it has no directory of its own:
-            // every process without an identity (a test run, a script that
-            // loads the configuration inside a function) kept writing the
-            // directory the next instance installed on the host would take as
-            // its own — its idempotency records replayed to that instance's
-            // users, its staged changes listed for them to apply. Measured:
-            // an identity-less store's create replayed, and its staged DELETE
-            // listed, in a brand-new instance on another database.
+            // new instance with no directory of its own used to adopt (it no
+            // longer adopts anything, below): every process without an
+            // identity (a test run, a script that loads the configuration
+            // inside a function) kept writing the directory the next instance
+            // installed on the host took as its own — its idempotency records
+            // replayed to that instance's users, its staged changes listed for
+            // them to apply. Measured: an identity-less store's create
+            // replayed, and its staged DELETE listed, in a brand-new instance
+            // on another database.
             global $dbname, $dbhost;
             if (!is_string($dbname) || trim($dbname) === '') {
                 $unscoped = $legacy . '-unscoped';
@@ -1365,14 +1366,35 @@ class ServerStateStore implements QuotaStore
         }
         $scoped = $legacy . '-' . substr(sha1($identity), 0, 12);
 
-        // One-time adoption of the pre-scoping directory so in-flight sync
-        // jobs and staged changes survive the upgrade. On a host that really
-        // does run several instances, the first one upgraded adopts the
-        // shared history — no worse than the sharing that preceded it. No
-        // process of this version writes $legacy (an identity-less one uses
-        // the -unscoped path above), so what is adopted is only what a
-        // version before the scoping left there.
-        //
+        // The pre-scoping directory is never adopted. This renamed it into
+        // place for an instance with no directory of its own, so in-flight
+        // staged changes and sync jobs would survive the upgrade. But nothing
+        // in it says whose it is: every install on the host wrote it before
+        // the scoping, one still on an older version still does, and in a
+        // temp dir anyone can create it. What it holds decides things — an
+        // Idempotency-Key recorded there replayed another install's response
+        // to this one's caller and executed nothing; a staged change recorded
+        // there was listed for this install's users to apply, against this
+        // install's database (measured: both, in a brand-new instance on
+        // another database). State that cannot be attributed must not
+        // resolve to "ours" (CLAUDE.md #11), so it is left where it is and
+        // the log says so once a process, naming the way an operator who
+        // knows it is theirs carries it over.
+        if (!is_dir($scoped) && is_dir($legacy)) {
+            static $legacyNoted = [];
+            if (!isset($legacyNoted[$scoped])) {
+                $legacyNoted[$scoped] = true;
+                error_log(sprintf(
+                    'p202: the shared API state directory %s is not adopted: nothing in it says which install'
+                    . ' wrote it. This instance uses %s. If it holds this install\'s own staged changes and'
+                    . ' sync jobs (an upgrade from before 1.9.75), move it there before the next request, or'
+                    . ' set P202_SERVER_STATE_DIR to it.',
+                    $legacy,
+                    $scoped
+                ));
+            }
+        }
+
         // Not covered, by design of the key: an instance reinstalled into a
         // database of the same name on the same host has the same identity,
         // and so takes over the state its predecessor left (an idempotency
@@ -1381,33 +1403,6 @@ class ServerStateStore implements QuotaStore
         // changes (202_users.install_hash), read from the database on every
         // construction; until then, a reinstall should set
         // P202_SERVER_STATE_DIR or remove the directory this resolves to.
-        if (!is_dir($scoped) && is_dir($legacy)) {
-            // A failed adoption must not silently strand the old directory's
-            // staged changes, sync jobs, and idempotency records: keep using
-            // the legacy path so in-flight work stays reachable, and say so.
-            if (!@rename($legacy, $scoped)) {
-                // The likeliest reason a rename fails here is that another
-                // worker racing the same first-request-after-upgrade already
-                // performed it, which is a win, not an error: returning
-                // $legacy would have this worker recreate the old directory
-                // and write state that no later request reads. Re-check the
-                // destination before falling back; clearstatcache keeps the
-                // answer from being served out of anything cached earlier in
-                // the request.
-                clearstatcache(true, $scoped);
-                if (is_dir($scoped)) {
-                    return $scoped;
-                }
-                error_log(sprintf(
-                    'p202: could not adopt legacy API state dir %s into %s (%s); continuing to use the legacy path. '
-                    . 'Set P202_SERVER_STATE_DIR to choose a location explicitly.',
-                    $legacy,
-                    $scoped,
-                    (error_get_last()['message'] ?? 'unknown error')
-                ));
-                return $legacy;
-            }
-        }
         return $scoped;
     }
 

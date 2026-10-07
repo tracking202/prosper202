@@ -271,7 +271,7 @@ eq "$(field "list(d['field_errors'])")" '["colour"]' "by name"
 eq "$(api POST /events "{\"click_id\":\"1e3\",\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\"}]}")" 422 "a click id the int cast would rewrite"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\",\"received_at\":1,\"revenue_trusted\":true}]}")" 422 \
    "received_at and revenue_trusted are the server's"
-eq "$(field "sorted(d['field_errors'])")" '["events[0].received_at", "events[0].revenue_trusted"]' "each named"
+eq "$(field "sorted(d['field_errors'])")" '["events.0.received_at", "events.0.revenue_trusted"]' "each named"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[{\"name\":\"signup\"}]}")" 422 "an event without an id"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[]}")" 422 "no events"
 eq "$(api POST /events "{\"click_id\":999999999,\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\"}]}")" 404 "an unknown click"

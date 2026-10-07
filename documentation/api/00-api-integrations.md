@@ -429,6 +429,17 @@ process that runs without the configuration in scope uses
 pre-1.9.75 shared directory, which the next instance installed on the host
 then adopted as its own.
 
+**The pre-1.9.75 shared directory (`p202-api-v3-state`, no hash) is never
+adopted.** An instance with no directory of its own used to rename it into
+place, and nothing in it says which install wrote it: another install's
+recorded `Idempotency-Key` replayed its response here and executed nothing,
+and its staged changes were listed here to apply against this database. It
+is left where it is, and the server log names it once a process ("… is not
+adopted …") with the directory this instance uses. If it really holds this
+install's own staged changes and sync jobs (an upgrade from before 1.9.75),
+move it to that directory before the next request, or point
+`P202_SERVER_STATE_DIR` at it.
+
 **Reinstalling into a database of the same name on the same host keeps that
 directory**, and with it the previous install's state: a retried
 `Idempotency-Key` it recorded replays the old response, and its staged
@@ -453,6 +464,7 @@ way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
+| LTV | Customers, revenue, subscriptions, products, custom fields, companies, webhooks; LTV reads (summary, cohorts, MRR, predict, ABM) | [LTV](20-ltv.md) |
 | Apps | The app registry (iOS and Android), Apple SKAdNetwork and AdAttributionKit postbacks, SKAN encodings, report | [App measurement](19-app-measurement.md) |
 | Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |

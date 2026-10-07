@@ -219,29 +219,18 @@ function p202TrackingBaseUrl(): string
     return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(), $_SERVER, dirname(__DIR__));
 }
 
+/**
+ * The tracking domain (`host[:port]`) of the links, snippets and postback
+ * URLs a page shows the person who asked for it: the stored one, or the host
+ * this request arrived at (TrackingBaseUrl::domainForResponse(), which says
+ * why not the server's own name and port). Its callers are listed, each with
+ * why its URL goes back to the requester, in RequestHostSourceTest; a URL
+ * sent to anyone else is p202TrackingBaseUrl(). Keep in step with the
+ * connect2.php copy.
+ */
 function getTrackingDomain(): string
 {
-    // Keep in sync with the connect2.php variant of this function: SERVER_NAME
-    // does not exist for CLI runs (cron workers) — the declared string return
-    // type would turn the missing key into a fatal TypeError — and the raw
-    // value is sanitized against host-header injection.
-    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
-    $tracking_domain = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string) $raw_server_name);
-
-    // Add port if non-standard (not 80/443)
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
-    if ($port != 80 && $port != 443) {
-        $tracking_domain .= ':' . $port;
-    }
-
-    $stored = p202StoredTrackingDomain();
-    if ($stored !== '') {
-        // host[:port] only: a stored full URL doubled the scheme in every
-        // link built from it (see TrackingDomain).
-        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize($stored) ?: $tracking_domain;
-    }
-    
-    return $tracking_domain;
+    return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
 }
 
 // the above, if true, are options to turn on specific filtering techniques.

@@ -11,8 +11,9 @@ use Prosper202\Http\RequestHost;
  * hands out starts with: `scheme://host[:port]/<install path>/`.
  *
  * The setup pages build it as 'http://' . getTrackingDomain() .
- * get_absolute_url(): the tracking domain is user 1's preference, or this
- * server's own name when it is empty, and the path is where the install
+ * get_absolute_url(): the tracking domain is user 1's preference, or the
+ * host the request arrived at when it is empty (domainForResponse(); it was
+ * this server's own name and port), and the path is where the install
  * sits under the document root. The API built its own from the CALLER's
  * preference and nothing else, so on a fresh install (an empty domain)
  * every tracking URL was a 404, a host-only domain — the form Personal
@@ -78,6 +79,53 @@ final class TrackingBaseUrl
     }
 
     /**
+     * The tracking domain of a URL handed back to the requester, `host[:port]`:
+     * the stored domain when there is one, otherwise the host this request
+     * arrived at (requestHost()).
+     *
+     * getTrackingDomain() fell back to the server's own name and port, which
+     * is the address the web server listens on, not the one a browser
+     * reaches: behind a reverse proxy or a Docker port mapping the links,
+     * snippets and postback URLs on every page carried the internal port
+     * (http://example.com:8080/… when the site answers on 443, or
+     * http://localhost/… when the container's 80 is published on 8080) —
+     * measured, the API's tracker URL and the setup pages all named
+     * 127.0.0.1:8128 for a request that came in as proxy.example:9443. The
+     * Host header is the address the requester used, so in the requester's
+     * own response it is the one that works, and a forged one misleads only
+     * the forger (CLAUDE.md #16). Anything sent to someone else — an email,
+     * the hosted service, the server calling itself — takes the stored
+     * domain instead (p202TrackingBaseUrl(), PasswordResetLink).
+     *
+     * @param string $storedDomain user 1's user_tracking_domain, as stored
+     * @param array<string, mixed> $server normally $_SERVER
+     */
+    public static function domainForResponse(string $storedDomain, array $server): string
+    {
+        $stored = TrackingDomain::normalize($storedDomain);
+
+        return $stored !== '' ? $stored : self::requestHost($server);
+    }
+
+    /**
+     * build() for a URL handed back to the requester: with no stored domain,
+     * this install on the request's own origin (forRequest()) rather than on
+     * the server's name and port (domainForResponse() says why).
+     *
+     * @param string $storedDomain user 1's user_tracking_domain, as stored
+     * @param array<string, mixed> $server normally $_SERVER
+     * @param string $installRoot the install's directory on disk
+     */
+    public static function buildForResponse(string $storedDomain, array $server, string $installRoot): string
+    {
+        if (TrackingDomain::normalize($storedDomain) === '') {
+            return self::forRequest($server, $installRoot);
+        }
+
+        return self::build($storedDomain, $server, $installRoot);
+    }
+
+    /**
      * This install on the origin the request arrived at:
      * `scheme://host[:port]/<install path>/`.
      *
@@ -127,8 +175,8 @@ final class TrackingBaseUrl
     }
 
     /**
-     * The server's own name, as getTrackingDomain() falls back to it: only
-     * host characters, and the port when it is not 80 or 443.
+     * The server's own name: only host characters, and the port when it is
+     * not 80 or 443. build()'s fallback, for the URLs sent to someone else.
      *
      * @param array<string, mixed> $server
      */

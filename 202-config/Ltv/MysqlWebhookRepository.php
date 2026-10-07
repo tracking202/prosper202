@@ -19,11 +19,15 @@ use RuntimeException;
 final class MysqlWebhookRepository
 {
     /**
-     * Known event names — a documentation/UI listing, NOT a validation
-     * allowlist. Validation is well-formedness only (assertEventName), so a
-     * webhook registered with the '*' wildcard receives events added by
-     * future versions without re-registration, and new emitters need no
-     * repository edits.
+     * The events this install sends: every name an emitter passes
+     * (LtvController::enqueueEvent(), EventBridge::emit()/emitIfEnabled()),
+     * which WebhookEventsAreKnownTest holds it to, and the names a webhook may
+     * subscribe to (create() refuses any other). It was a listing only, with
+     * well-formedness the only check, so `revenue.recoded` made a hook that
+     * subscribed to nothing and answered 201 (CLAUDE.md #4). A subscriber
+     * that wants the events later versions add registers '*', which is
+     * stored as subscribe-all and needs no edit here; a new emitter adds its
+     * name here.
      */
     public const KNOWN_EVENTS = [
         'customer.updated',
@@ -115,10 +119,10 @@ final class MysqlWebhookRepository
     }
 
     /**
-     * Well-formedness rule for event names (not a membership check): a
-     * namespaced lowercase slug such as "conversion.recorded". Deliberately
-     * permissive about WHICH events exist so future emitters and versions
-     * need no repository edits — see KNOWN_EVENTS for the current listing.
+     * Well-formedness rule for event names: a namespaced lowercase slug such
+     * as "conversion.recorded". What enqueue() checks of an emitter's name
+     * (which emitters may send is KNOWN_EVENTS, held by a test); create()
+     * also requires the name to be one of KNOWN_EVENTS.
      *
      * @throws RuntimeException when the name is not a namespaced slug
      */
@@ -130,13 +134,27 @@ final class MysqlWebhookRepository
     }
 
     /**
+     * Why a subscription name is refused, or null when it is one this install
+     * sends: a name it never sends would make a hook that receives nothing.
+     */
+    public static function unknownEventReason(string $event): ?string
+    {
+        if (in_array($event, self::KNOWN_EVENTS, true)) {
+            return null;
+        }
+
+        return '"' . $event . '" is not an event this install sends (' . implode(', ', self::KNOWN_EVENTS)
+            . '); "*" subscribes to every event, including ones later versions add';
+    }
+
+    /**
      * Register a webhook endpoint. Returns [webhook_id, secret] — the secret
      * is generated server-side and shown once.
      *
-     * @param list<string> $events well-formed event names (see KNOWN_EVENTS
-     *        for the current listing), or ['*'] to subscribe to every current
-     *        AND future event — stored as '', which enqueue() already treats
-     *        as subscribe-all. [] defaults to KNOWN_EVENTS.
+     * @param list<string> $events names from KNOWN_EVENTS, or ['*'] to
+     *        subscribe to every current AND future event — stored as '',
+     *        which enqueue() already treats as subscribe-all. [] defaults to
+     *        KNOWN_EVENTS. Any other name is refused, nothing written.
      * @return array{webhookId: int, secret: string}
      */
     public function create(int $userId, string $url, array $events): array
@@ -157,6 +175,10 @@ final class MysqlWebhookRepository
         } else {
             foreach ($events as $event) {
                 self::assertEventName($event);
+                $unknown = self::unknownEventReason($event);
+                if ($unknown !== null) {
+                    throw new RuntimeException($unknown);
+                }
             }
             $subscribedEvents = implode(',', $events);
         }

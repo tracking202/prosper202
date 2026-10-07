@@ -22,6 +22,30 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # LTV webhooks and line items (ltv.json). First: the line-item ask says
+    # "keyword" and names an EVAL-LTV-ORD- order, which later branches take.
+    *"eval-ltv-revenue"*)
+        # One event, named from the list the server sends; the secret is in
+        # this response and nowhere else.
+        out=$(p202 ltv webhooks create --url https://hooks.example.com/eval-ltv-revenue --events revenue.recorded --json)
+        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed with X-P202-Signature (sha256 HMAC of the body); the secret is shown only now, so store it: %s\n' \
+            "$(printf '%s' "$out" | jq -r '.data.webhook_id')" "$(printf '%s' "$out" | jq -r '.data.secret')"
+        ;;
+    *"eval ltv items"*)
+        # Line items are stored on an LTV customer's revenue; with none known
+        # the server refuses them (422 naming items) and writes nothing. Say
+        # so and ask, rather than invent a customer to get the item stored.
+        click=$(p202 click list --keyword "eval ltv items" --json | jq -r '[.data[].click_id] | max // empty')
+        if [ -z "$click" ]; then
+            printf 'I found no click with the keyword "eval ltv items" (`p202 click list --keyword`); nothing was recorded.\n'
+        elif err=$(p202 conversion create --click-id "$click" --payout 25.00 --transaction-id EVAL-LTV-ORD-7 \
+                --item '{"sku":"EVAL-WIDGET","quantity":1,"unit_price":25}' --json 2>&1 >/dev/null); then
+            printf 'Recorded order EVAL-LTV-ORD-7 ($25.00, one EVAL-WIDGET) on click %s: the click is linked to an LTV customer, whose revenue holds the line item.\n' "$click"
+        else
+            printf 'I did not record order EVAL-LTV-ORD-7 on click %s. A line item is stored on an LTV customer'"'"'s revenue, no customer is linked to this click, and the server refused the item (%s); nothing was written. Tell me the customer'"'"'s id in your system and I will record the sale with it (--customer-ref), or say so and I will record the $25.00 conversion without the line item.\n' \
+                "$click" "$(printf '%s' "$err" | jq -r '.error.field_errors.items // .error.message' 2>/dev/null | cut -c1-160)"
+        fi
+        ;;
     # Tracking links, the key's identity and rotator URL rules
     # (setup-links.json). First: the asks name campaigns and "add".
     *"Google Ads fills in the keyword"*)

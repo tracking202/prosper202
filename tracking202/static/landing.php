@@ -6,11 +6,12 @@ header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
 header("Pragma: no-cache");
 include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php');
-if ( isset( $_SERVER["HTTPS"] ) && strtolower( (string) $_SERVER["HTTPS"] ) == "on" ) {
-$strProtocol = 'https';
-} else {
-$strProtocol = 'http';
-}
+// The script calls this install back on the scheme the page loaded it over.
+// HTTPS alone is unset behind a TLS-terminating proxy, and an http:// call
+// from an https page is blocked as mixed content; p202_request_is_https()
+// believes the proxy, as every other URL of this install's does.
+require_once substr(__DIR__, 0, -19) . '/202-config/request-https.php';
+$strProtocol = p202_request_is_https($_SERVER) ? 'https' : 'http';
 
 // Process geo/UA data once (previously duplicated in both _.t202Data and t202Data)
 $visitorIp = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
