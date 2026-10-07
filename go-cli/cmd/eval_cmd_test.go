@@ -101,6 +101,68 @@ func TestEvalRunAllPassingExitsZero(t *testing.T) {
 	}
 }
 
+// The incident: a stale p202 answered every command with an unknown-flag
+// error, and a case whose runs_one_of named that command — with a rubric,
+// so no other check ran — read needs_judge, which does not fail the job. A
+// command that exited non-zero no longer satisfies runs_one_of: the case
+// fails, the run exits 5, and the failure names the command and its status.
+func TestEvalRunAMatchingCommandThatFailedFailsTheCase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("eval runner needs a POSIX shell")
+	}
+	dir := t.TempDir()
+	setTestHome(t, t.TempDir())
+
+	stale := filepath.Join(dir, "p202-stale")
+	if err := os.WriteFile(stale, []byte("#!/bin/sh\necho \"Error [validation]: unknown flag: --keyword\" >&2\nexit 2\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	casesFile := filepath.Join(dir, "cases.json")
+	if err := os.WriteFile(casesFile, []byte(`[{"id":"keywords-1","priority":"high","ask":"top keywords?","expected":{
+  "runs_one_of":["report breakdown"],
+  "rubric":"PASS if the keywords come from the report. FAIL otherwise."}}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := executeCommand("eval", "run",
+		"--cases", casesFile,
+		"--agent-cmd", `p202 report breakdown --keyword shoes 2>/dev/null; echo "no keywords"`,
+		"--p202-bin", stale,
+		"--json")
+	if err == nil {
+		t.Fatalf("expected a partial_failure error; stdout:\n%s", stdout)
+	}
+	if code := exitCodeForError(err); code != ExitPartialFailure {
+		t.Errorf("exit code = %d, want %d", code, ExitPartialFailure)
+	}
+	var out struct {
+		Data []struct {
+			Status         string   `json:"status"`
+			Failures       []string `json:"failures"`
+			Commands       int      `json:"commands"`
+			CommandsFailed int      `json:"commands_failed"`
+		} `json:"data"`
+		Summary struct {
+			Fail       int `json:"fail"`
+			NeedsJudge int `json:"needs_judge"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if out.Summary.Fail != 1 || out.Summary.NeedsJudge != 0 || len(out.Data) != 1 {
+		t.Fatalf("summary = %+v, data = %+v; want the case failed, not needs_judge", out.Summary, out.Data)
+	}
+	r := out.Data[0]
+	if r.Status != "fail" || len(r.Failures) != 1 ||
+		!strings.Contains(r.Failures[0], `"p202 report breakdown --keyword shoes" exited 2`) {
+		t.Errorf("result = %+v, want one failure naming the command and exit 2", r)
+	}
+	if r.Commands != 1 || r.CommandsFailed != 1 {
+		t.Errorf("commands = %d, commands_failed = %d; want 1 and 1", r.Commands, r.CommandsFailed)
+	}
+}
+
 func TestEvalRunErrorContract(t *testing.T) {
 	stubBin, casesFile := writeEvalFixture(t)
 	tmp := t.TempDir()

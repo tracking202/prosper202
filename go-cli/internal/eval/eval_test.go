@@ -35,6 +35,9 @@ case "$1 $2" in
   "campaign delete") echo deleted ;;
   "report summary") echo '{"data":{"total_clicks":6,"total_net":12.5}}' ;;
   "change list") echo '{"data":[{"change_id":"chg_x","status":"staged"}]}' ;;
+  "report breakdown") echo 'Error [validation]: unknown flag: --keyword' >&2; exit 2 ;;
+  "system login-log") echo '{"error":{"category":"auth","message":"Admin access required."}}' >&2; exit 2 ;;
+  "echo stdin") cat ;;
   *) echo '{"data":[]}' ;;
 esac
 `

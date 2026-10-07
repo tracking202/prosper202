@@ -76,6 +76,18 @@ One JSON object per case, in a file per flow (e.g. `evals/reporting.json`):
   when the route *is* the behavior (a read before an answer, a write that
   must never happen). When a passing run takes an unexpected but correct
   route, widen the set — don't re-pin to the route observed.
+- `runs_one_of` credits only a command that **exited 0**. A matching command
+  that failed — refused, a flag the binary does not know, a 404 — is not
+  the command the case asked for, and the failure line names it with its
+  status (`"p202 report breakdown --keyword x" exited 2`). Before this, a
+  stale binary that answered "unknown flag" to every command satisfied the
+  check by being invoked, and a case with a rubric read `needs_judge`. An
+  error-path case whose point *is* the refusal sets `"runs_one_of_exit": 2`
+  (or whatever status the refusal returns): the command must then have run
+  and returned exactly that, so a success, or an unknown flag (exit 1),
+  does not pass it.
+- `never_runs` counts every attempt, whatever it exited with: a forbidden
+  write the server happened to refuse is still the agent trying it.
 - A `rubric` is one PASS and one FAIL condition that no response satisfies
   both of, naming the fixture fact that decides it.
 
@@ -87,9 +99,11 @@ Grade three things, in this order:
    `p202 change list --json`, `report summary --json`. A write case passes
    only if the entity exists with the asserted fields; a refusal case only
    if state is byte-identical to before.
-2. **The commands the agent ran** (from its transcript): `never_runs` is a
-   hard fail on match; destructive commands must show `--dry-run` or
-   `--staged` before any `--force`.
+2. **The commands the agent ran** (from its transcript, with each one's exit
+   status): `never_runs` is a hard fail on match, attempted or completed;
+   `runs_one_of` is satisfied only by a matching command that exited 0 (or
+   the case's `runs_one_of_exit`); destructive commands must show
+   `--dry-run` or `--staged` before any `--force`.
 3. **The rendered reply**: `reply_includes` / `reply_omits` for strings that
    must or must not appear (regulated numbers, the injection text, no raw
    API keys). Everything else about wording is the rubric's job.
@@ -121,9 +135,14 @@ Grade three things, in this order:
 
 The CLI ships the runner: `p202 eval run`. It performs each case's `setup`,
 hands the `ask` to `--agent-cmd` (stdin and `$P202_EVAL_ASK`), captures
-every `p202` invocation the agent makes via a PATH shim (any agent that
-shells out to `p202` is captured — no adapter), re-reads state, grades, and
-prints results plus a summary (exit 0 clean, exit 5 on failures).
+every `p202` invocation the agent makes, and the status each one exits
+with, via a PATH shim (any agent that shells out to `p202` is captured — no
+adapter), re-reads state, grades, and prints results plus a summary (exit 0
+clean, exit 5 on failures). Each result carries `commands` (invocations
+captured) and `commands_failed` (those that did not exit 0); a run where
+every case shows all its commands failed is a broken binary or
+configuration, not an agent problem — check `--p202-bin` and
+`p202 config test` first.
 
 ```bash
 go-cli/p202 eval run \
@@ -136,8 +155,9 @@ go-cli/p202 eval run \
 The agent command's contract: read the ask, drive the `p202` found on PATH
 (that is the capture shim), print the agent's reply to stdout, exit 0.
 `--judge-cmd` is optional and provider-agnostic: it receives
-`{id, ask, rubric, reply, commands}` as JSON on stdin and must print a line
-starting with `PASS` or `FAIL`; without it, rubric cases report
+`{id, ask, rubric, reply, commands, runs}` as JSON on stdin (`runs` is each
+command with its `exit_code`, `null` when it never finished) and must print
+a line starting with `PASS` or `FAIL`; without it, rubric cases report
 `needs_judge` instead of silently passing. Iterate on one case with
 `--only <id>`; gate CI on `--priority critical,high`.
 
