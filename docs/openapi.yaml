@@ -4748,7 +4748,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: An encoding for this conversion value already exists for this registration
+          description: An encoding for this conversion value already exists for this registration, or the body's version (or an If-Match) is not the encoding's current one
           content:
             application/json:
               schema:
@@ -12884,8 +12884,26 @@ components:
         `coarse_value` clears it, and must arrive together with the
         replacement value of the other kind so the encoding still maps
         exactly one value. `revenue_override: null` goes back to the goal's
-        own value; `goal_id` cannot be null.
+        own value; `goal_id` cannot be null. A body read with GET can be
+        sent back whole: `encoding_id`, `user_id`, `effective_at`, `version`
+        and `etag` are accepted with the encoding's own values and refused
+        with any other (a stale `version` is a 409).
       properties:
+        encoding_id:
+          type: integer
+          description: Read-only; only the encoding's own id.
+        user_id:
+          type: integer
+          description: Read-only; only the encoding's own owner.
+        effective_at:
+          type: integer
+          description: Read-only; only the value GET answered.
+        version:
+          type: string
+          description: Read-only; the version GET answered, or 409 Version mismatch.
+        etag:
+          type: string
+          description: Read-only; as version.
         registration_id:
           type: integer
         fine_value:
