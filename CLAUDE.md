@@ -1134,6 +1134,12 @@ Check here before burning time on tooling failures.
   on the tracked files works but prints an "ignored paths" warning (exit
   1); use `git add -f` or ignore the warning after confirming the files
   staged with `git status`.
+- **`docs/openapi.yaml` is read as YAML only by `scripts/check-openapi-yaml.py`**
+  (the ladder's `openapi` tier and the OpenAPI Spec workflow). Every PHP test
+  that pairs the spec with the router reads it line by line, so a plain-scalar
+  description containing `: ` made the file unparseable for every OpenAPI tool
+  with all of them green. Write a description that holds a colon as a `>-`
+  block or quote it.
 - **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
   test ./...`); the repo root is not a Go module. The forecast package's
   acceptance suites take ~40s; `-short` skips them.

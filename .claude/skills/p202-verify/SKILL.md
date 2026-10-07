@@ -57,6 +57,7 @@ subset, because the tier that matters is the one that touches your path.
 | `sdk/ios-attribution/**` | swift (`swift build && swift test`, mirroring the Swift SDK job); SKIP with the toolchain hint when `swift` is absent |
 | `sdk/android-attribution/**`, `tests/fixtures/app-sdk-contract/**` | kotlin (`gradle -p sdk/android-attribution -Pp202.android=false :core:test`, mirroring the Android SDK job); SKIP when `java` or `gradle` is absent |
 | `.github/workflows/**` | actionlint, which is CI's workflow gate; a workflow-only change previously selected nothing that could see an invalid action input |
+| `docs/openapi.yaml`, `scripts/check-openapi-yaml.py` | openapi (`scripts/check-openapi-yaml.py`, mirroring the OpenAPI Spec job): the spec parses as YAML with no key given twice. The PHP tests that pair the spec with the router read it line by line, so an edit that left it unparseable for every OpenAPI tool selected nothing that noticed; SKIP when `python3` has no `yaml` module |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
 An unregistered PHPStan rule never runs. A rule that fires on correct code
@@ -119,6 +120,7 @@ Tiers, in order, with the command each wraps:
 9. `actionlint` — `actionlint` over `.github/workflows/`, selected when a workflow changes
 10. `swift` — `cd sdk/ios-attribution && swift build && swift test`, selected when that directory changes
 11. `kotlin` — `gradle -p sdk/android-attribution -Pp202.android=false :core:test` (`P202_GRADLE` names another Gradle), selected when the SDK or the shared vectors change. Gradle exits 0 when no test ran, so fewer than 30 executed tests is FAIL.
+12. `openapi` — `python3 scripts/check-openapi-yaml.py docs/openapi.yaml`, selected when the spec or the script changes: the file parses as YAML, has an `openapi` version and non-empty `paths`, and gives no key twice in one mapping (a loader otherwise keeps the last without a word)
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -126,16 +128,16 @@ caps it at 128M and PHPStan dies parsing the intl stubs, reporting FAIL for a
 reason that has nothing to do with the change. `scripts/check-code-patterns.sh`
 passes the same 512M for the same reason.
 
-Tiers 11 and 12 are not scripted because they need a live instance and a
+Tiers 13 and 14 are not scripted because they need a live instance and a
 decision about what to exercise. Do them by hand:
 
-11. **Live end-to-end.** Stand up an instance with
+13. **Live end-to-end.** Stand up an instance with
    `tests/fixtures/agent-eval/ci/install-instance.sh`, seed it with
    `tests/fixtures/agent-eval/seed.sh`, then drive the actual path a user
    would take. Reports stay empty until the dataengine cron runs; the seeder
    triggers `202-cronjobs/dej.php` itself. If an instance is already up in
    this session, there is no excuse to skip this.
-12. **Agent eval.** If the change is agent-facing, add a case under
+14. **Agent eval.** If the change is agent-facing, add a case under
    `tests/fixtures/agent-eval/cases/` and run it. Grading is on final state,
    not on transcript wording.
 

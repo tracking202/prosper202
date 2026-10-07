@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin openapi"
 
 usage() {
     cat <<'EOF'
@@ -243,6 +243,12 @@ reason_for() {
             [ -d sdk/android-attribution ] || { echo "sdk/android-attribution/ not in this tree"; return; }
             have java || { echo "no JDK (java) on PATH; the SDK's core needs only a JDK 17+"; return; }
             have "${P202_GRADLE:-gradle}" || { echo "gradle not on PATH (set P202_GRADLE, or install Gradle 8.14 from services.gradle.org)"; return; }
+            ;;
+        openapi)
+            [ -f docs/openapi.yaml ] || { echo "docs/openapi.yaml not in this tree"; return; }
+            [ -x scripts/check-openapi-yaml.py ] || { echo "scripts/check-openapi-yaml.py missing or not executable"; return; }
+            have python3 || { echo "python3 not on PATH"; return; }
+            python3 -c 'import yaml' >/dev/null 2>&1 || { echo "python3 has no yaml module (pip install pyyaml==6.0.2, the version CI's OpenAPI job installs)"; return; }
             ;;
     esac
     echo ""
@@ -1037,6 +1043,15 @@ run_kotlin() {
     return 0
 }
 
+# Mirrors the OpenAPI spec job (.github/workflows/openapi.yml): the spec
+# parses as YAML with no key given twice in one mapping. The PHP tests that
+# pair the spec with the router read it line by line, so a description that
+# made the whole file unparseable for every OpenAPI tool left every one of
+# them green, and nothing else in this ladder read it.
+run_openapi() {
+    python3 scripts/check-openapi-yaml.py docs/openapi.yaml
+}
+
 # ------------------------------------------------- tiers from the diff
 
 tiers_from_diff() {
@@ -1071,6 +1086,7 @@ tiers_from_diff() {
     echo "$files" | grep -q '^sdk/ios-attribution/'         && tiers="$tiers swift"
     echo "$files" | grep -qE '^(sdk/android-attribution/|tests/fixtures/app-sdk-contract/)' && tiers="$tiers kotlin"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
+    echo "$files" | grep -qE '^(docs/openapi\.yaml|scripts/check-openapi-yaml\.py)$' && tiers="$tiers openapi"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }
 
@@ -1099,7 +1115,7 @@ if [ "$MODE" = probe ]; then
         fi
     done
     echo
-    echo "Not scripted: live end-to-end, agent eval. Do these by hand (SKILL.md steps 8-9)."
+    echo "Not scripted: live end-to-end, agent eval. Do these by hand (SKILL.md tiers 13-14)."
     exit 0
 fi
 

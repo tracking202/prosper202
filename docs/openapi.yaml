@@ -8000,7 +8000,8 @@ paths:
                   type: number
                   minimum: 0
                   maximum: 999999999.99999
-                  description: What one billing period charges (0 for a free plan). Required: the upsert replaces the
+                  description: >-
+                    What one billing period charges (0 for a free plan). Required, because the upsert replaces the
                     subscription, and without an amount it stored 0 and took the MRR with it. A JSON number or a
                     string holding one.
                 currency:

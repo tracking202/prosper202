@@ -181,6 +181,21 @@ else
     no "--since includes uncommitted changes as well as commits" "got '$both_plan'"
 fi
 
+# The spec is read as YAML by its own tier and by nothing else, so an edit
+# to it alone has to select that tier, and a PHP change must not.
+if printf '%s' "$both_plan" | grep -qw openapi; then
+    no "a change that leaves the spec alone does not select openapi" "got '$both_plan'"
+else
+    ok "a change that leaves the spec alone does not select openapi"
+fi
+( cd "$repo" && mkdir -p docs && printf 'openapi: 3.0.3\n' > docs/openapi.yaml ) >/dev/null 2>&1
+spec_plan=$(plan_of --since HEAD)
+if printf '%s' "$spec_plan" | grep -qw openapi; then
+    ok "an edit to docs/openapi.yaml selects the openapi tier"
+else
+    no "an edit to docs/openapi.yaml selects the openapi tier" "got '$spec_plan'"
+fi
+
 # A bad ref must fail loudly. Selecting nothing would be the same silent
 # empty scope report this option exists to remove.
 out=$( cd "$repo" && "$SCRIPT" --since no-such-ref --plan 2>&1 ); rc=$?
