@@ -173,26 +173,16 @@ function grab_timeframe($unused = null): array
     return $time;
 }
 
-function getTrackingDomain(): string
+/**
+ * The tracking domain as stored for the signed-in user, or for the primary
+ * account without a session (CLI cron workers), like the connect2.php
+ * variant — otherwise CLI could never resolve a configured domain and URL
+ * builders would degrade to 'localhost'. '' when none is set, and when the
+ * schema does not exist yet (_mysqli_query() answers false during install).
+ * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
+ */
+function p202StoredTrackingDomain(): string
 {
-    // Keep in sync with the connect2.php variant of this function: SERVER_NAME
-    // does not exist for CLI runs (cron workers) — the declared string return
-    // type would turn the missing key into a fatal TypeError — and the raw
-    // value is sanitized against host-header injection.
-    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
-    $tracking_domain = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string) $raw_server_name);
-
-    // Add port if non-standard (not 80/443)
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
-    if ($port != 80 && $port != 443) {
-        $tracking_domain .= ':' . $port;
-    }
-
-    // Use the logged-in user's configured tracking domain; without a session
-    // (CLI cron workers) fall back to the primary account, like the
-    // connect2.php variant — otherwise CLI could never resolve a configured
-    // domain and URL builders would degrade to 'localhost'. _mysqli_query
-    // returns false (handled below) when the schema doesn't exist yet.
     $lookup_user_id = (isset($_SESSION['user_id']) && !empty($_SESSION['user_id']))
         ? (string) $_SESSION['user_id']
         : '1';
@@ -208,15 +198,47 @@ function getTrackingDomain(): string
 			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
 	";
     $tracking_domain_result = _mysqli_query($tracking_domain_sql);
-    
-    if ($tracking_domain_result && $tracking_domain_row = $tracking_domain_result->fetch_assoc()) {
-        if (isset($tracking_domain_row['user_tracking_domain']) && 
-            is_string($tracking_domain_row['user_tracking_domain']) && 
-            strlen($tracking_domain_row['user_tracking_domain']) > 0) {
-            // host[:port] only: a stored full URL doubled the scheme in every
-            // link built from it (see TrackingDomain).
-            $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
-        }
+    $row = $tracking_domain_result ? $tracking_domain_result->fetch_assoc() : null;
+
+    return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
+}
+
+/**
+ * This install's tracking base, `scheme://host[:port]/<install path>/`:
+ * TrackingBaseUrl::build() over the stored tracking domain, the base every
+ * API link is built on (a stored scheme kept, the request's otherwise).
+ * callAutoCron(), registerDailyEmail(), getDNIHost() and the account home's
+ * deeplink pixel hand it to the hosted service, which calls the install back
+ * there. They took the scheme from SERVER_PROTOCOL, which is "HTTP/1.1" or
+ * "HTTP/2.0" and never names https, so every install was registered as
+ * http://, and a site served only over HTTPS was called back where nothing
+ * answers.
+ */
+function p202TrackingBaseUrl(): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(), $_SERVER, dirname(__DIR__));
+}
+
+function getTrackingDomain(): string
+{
+    // Keep in sync with the connect2.php variant of this function: SERVER_NAME
+    // does not exist for CLI runs (cron workers) — the declared string return
+    // type would turn the missing key into a fatal TypeError — and the raw
+    // value is sanitized against host-header injection.
+    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
+    $tracking_domain = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string) $raw_server_name);
+
+    // Add port if non-standard (not 80/443)
+    $port = $_SERVER['SERVER_PORT'] ?? 80;
+    if ($port != 80 && $port != 443) {
+        $tracking_domain .= ':' . $port;
+    }
+
+    $stored = p202StoredTrackingDomain();
+    if ($stored !== '') {
+        // host[:port] only: a stored full URL doubled the scheme in every
+        // link built from it (see TrackingDomain).
+        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize($stored) ?: $tracking_domain;
     }
     
     return $tracking_domain;
@@ -2163,9 +2185,7 @@ function changelogPremium(): array
 
 function callAutoCron($endpoint)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = $protocol . '' . getTrackingDomain() . get_absolute_url();
-    $domain = base64_encode($domain);
+    $domain = base64_encode(p202TrackingBaseUrl());
 
     // Initiate curl
     $ch = curl_init();
@@ -2190,9 +2210,7 @@ function callAutoCron($endpoint)
 
 function registerDailyEmail($time, $timezone, $hash)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
-    $domain = base64_encode($domain);
+    $domain = base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
 
     if ($time) {
         $date = new DateTime($time . ':00:00', new DateTimeZone($timezone));
@@ -2252,9 +2270,7 @@ function tagUserByNetwork($install_hash, $type, $network)
 
 function getDNIHost(): string
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
-    return base64_encode($domain);
+    return base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
 }
 
 function getAllDniNetworks($install_hash)

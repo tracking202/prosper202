@@ -585,13 +585,14 @@ $mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 
 if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 	// The visitor's last click by the address the click path stored
-	// (p202StoredVisitorIp). The window is unchanged: click_time >= 30, i.e.
-	// any time, as the query has always read it.
+	// (p202StoredVisitorIp), within the last 30 days as the pixels' fallback
+	// looks. The query read `click_time >= 30` (1970, so any click ever from
+	// the address), which could hand this visit a click from years before.
 	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
 		new \Prosper202\Database\Connection($db),
 		p202StoredVisitorIp(),
 		(int) $user_id,
-		30
+		time() - 2592000
 	);
 
 	if ($click_row1 && !empty($click_row1['click_id'])) {

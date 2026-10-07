@@ -63,7 +63,7 @@ $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string) ($user_row['u
 //now this sets it
 AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 
-if ($_GET['t202id']) {
+if (!empty($_GET['t202id'])) {
 	//grab tracker data if avaliable
 	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
 
@@ -126,11 +126,11 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "bidded":
 		#try to get the bidded keyword first
-		if ($_GET['OVKEY']) { //if this is a Y! keyword
+		if (!empty($_GET['OVKEY'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVKEY'];
-		} elseif ($_GET['t202kw']) {
+		} elseif (!empty($_GET['t202kw'])) {
 			$keyword = (string)$_GET['t202kw'];
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (!empty($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = (string)$_GET['target_passthrough'];
 		} else { //if this is a zango, or more keyword
 			$keyword = (string)$_GET['keyword'];
@@ -140,35 +140,35 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 		#try to get the searched keyword
 		if (!empty($referer_query['q'])) {
 			$keyword = $referer_query['q'];
-		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
+		} elseif (!empty($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (!empty($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = (string)$_GET['target_passthrough'];
-		} elseif ($_GET['keyword']) { //if this is a zango, or more keyword
+		} elseif (!empty($_GET['keyword'])) { //if this is a zango, or more keyword
 			$keyword = (string)$_GET['keyword'];
-		} elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
+		} elseif (!empty($_GET['search_word'])) { //if this is a eniro, or more keyword
 			$keyword = (string)$_GET['search_word'];
-		} elseif ($_GET['query']) { //if this is a naver, or more keyword
+		} elseif (!empty($_GET['query'])) { //if this is a naver, or more keyword
 			$keyword = (string)$_GET['query'];
-		} elseif ($_GET['encquery']) { //if this is a aol, or more keyword
+		} elseif (!empty($_GET['encquery'])) { //if this is a aol, or more keyword
 			$keyword = (string)$_GET['encquery'];
-		} elseif ($_GET['terms']) { //if this is a about.com, or more keyword
+		} elseif (!empty($_GET['terms'])) { //if this is a about.com, or more keyword
 			$keyword = (string)$_GET['terms'];
-		} elseif ($_GET['rdata']) { //if this is a viola, or more keyword
+		} elseif (!empty($_GET['rdata'])) { //if this is a viola, or more keyword
 			$keyword = (string)$_GET['rdata'];
-		} elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
+		} elseif (!empty($_GET['qs'])) { //if this is a virgilio, or more keyword
 			$keyword = (string)$_GET['qs'];
-		} elseif ($_GET['wd']) { //if this is a baidu, or more keyword
+		} elseif (!empty($_GET['wd'])) { //if this is a baidu, or more keyword
 			$keyword = (string)$_GET['wd'];
-		} elseif ($_GET['text']) { //if this is a yandex, or more keyword
+		} elseif (!empty($_GET['text'])) { //if this is a yandex, or more keyword
 			$keyword = (string)$_GET['text'];
-		} elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
+		} elseif (!empty($_GET['szukaj'])) { //if this is a wp.pl, or more keyword
 			$keyword = (string)$_GET['szukaj'];
-		} elseif ($_GET['qt']) { //if this is a O*net, or more keyword
+		} elseif (!empty($_GET['qt'])) { //if this is a O*net, or more keyword
 			$keyword = (string)$_GET['qt'];
-		} elseif ($_GET['k']) { //if this is a yam, or more keyword
+		} elseif (!empty($_GET['k'])) { //if this is a yam, or more keyword
 			$keyword = (string)$_GET['k'];
-		} elseif ($_GET['words']) { //if this is a Rambler, or more keyword
+		} elseif (!empty($_GET['words'])) { //if this is a Rambler, or more keyword
 			$keyword = (string)$_GET['words'];
 		} else {
 			$keyword = (string)$_GET['t202kw'];

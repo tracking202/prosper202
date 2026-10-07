@@ -3,7 +3,6 @@ include_once(str_repeat("../", 1) . '202-config/connect.php');
 
 AUTH::require_user();
 
-$strProtocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') === true ? 'https://' : 'http://';
 
 // Get Started checklist progress. Each step is checked off once the user has
 // done it, and the whole card is hidden once all three are complete (it's no
@@ -160,6 +159,6 @@ template_top('Prosper202 ClickServer');  ?>
         </section>
     </div>
 </div>
-<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode($strProtocol . getTrackingDomain() . get_absolute_url()); ?>" width="1" height="1" alt="" class="position-absolute">
+<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode(p202TrackingBaseUrl()); ?>" width="1" height="1" alt="" class="position-absolute">
 
 <?php template_bottom(); ?>
