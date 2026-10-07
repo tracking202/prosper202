@@ -157,6 +157,17 @@ class ReportsController
     /** What a breakdown takes besides the window and the filters. */
     private const array BREAKDOWN_PARAMS = ['breakdown', 'sort', 'sort_dir', 'limit', 'offset'];
 
+    /**
+     * Dimensions whose rows belong to an account: a click names one of them
+     * by id, and nothing stopped a tracker naming another account's (the
+     * API checks it on write since 229df10; older rows remain). Joined only
+     * within the click's own account, as GET /clicks joins its names, so a
+     * report never shows another account's campaign, source or redirector.
+     */
+    private const array ACCOUNT_DIMENSIONS = [
+        'campaign', 'aff_network', 'ppc_account', 'ppc_network', 'landing_page', 'text_ad', 'rotator',
+    ];
+
     /** What a group report takes besides the window and the filters. */
     private const array GROUPS_PARAMS = ['by', 'sort', 'sort_dir'];
 
@@ -336,7 +347,7 @@ class ReportsController
 
         $idSql = "ref.{$bd['id']}";
         $nameSql = $bd['name_sql'] ?? "ref.{$bd['name']}";
-        $join = $bd['join'] ?? "INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}";
+        $join = self::dimensionJoin($breakdownType);
         $group = $bd['group'] ?? "ref.{$bd['id']}, ref.{$bd['name']}";
         $extraSelect = '';
         foreach ($bd['extra'] ?? [] as $alias => $expr) {
@@ -450,9 +461,7 @@ class ReportsController
             );
             // Left joins: a click with no value at this level stays in its
             // parent's totals, as the page's "[No …]" row.
-            $joins[] = str_replace('INNER JOIN', 'LEFT JOIN', $alias(
-                $bd['join'] ?? "INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}"
-            ));
+            $joins[] = str_replace('INNER JOIN', 'LEFT JOIN', $alias(self::dimensionJoin($level)));
             $select[] = $alias("ref.{$bd['id']}") . " AS l{$n}_id";
             $select[] = $alias($bd['name_sql'] ?? "ref.{$bd['name']}") . " AS l{$n}_name";
             foreach ($bd['extra'] ?? [] as $key => $expr) {
@@ -524,6 +533,28 @@ class ReportsController
             'by' => $levels,
             'available_breakdowns' => array_keys(self::BREAKDOWNS),
         ];
+    }
+
+    /**
+     * A dimension's join onto 202_dataengine `de` as the alias `ref`: its own
+     * `join` when it has one, else its table on its id, within the click's
+     * account for ACCOUNT_DIMENSIONS (a rule through its rotator, which is
+     * the account's).
+     */
+    private static function dimensionJoin(string $dimension): string
+    {
+        $bd = self::BREAKDOWNS[$dimension];
+        if (isset($bd['join'])) {
+            return $bd['join'];
+        }
+        $on = "de.{$bd['de_id']} = ref.{$bd['id']}";
+        if (in_array($dimension, self::ACCOUNT_DIMENSIONS, true)) {
+            $on .= ' AND ref.user_id = de.user_id';
+        } elseif ($dimension === 'rotator_rule') {
+            $on .= ' AND ref.rotator_id IN (SELECT ro.id FROM 202_rotators ro WHERE ro.user_id = de.user_id)';
+        }
+
+        return "INNER JOIN {$bd['table']} ref ON $on";
     }
 
     /** @return array{clicks: int, click_out: int, leads: int, income: int, cost: int} */

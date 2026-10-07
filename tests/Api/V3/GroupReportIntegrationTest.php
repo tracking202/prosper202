@@ -223,6 +223,24 @@ final class GroupReportIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * A click that names another account's campaign (a tracker made before
+     * the API checked linked ids) is reported under no campaign: neither a
+     * breakdown nor a group shows the other account's name.
+     */
+    public function testAnotherAccountsCampaignIsNeverNamed(): void
+    {
+        self::click(self::USER, self::$ids['theirs'], self::$ids['shoes'], '1.00000');
+        $controller = new ReportsController(self::$db, self::USER);
+        $names = array_column($controller->breakdown(['breakdown' => 'campaign'])['data'], 'name');
+        self::assertNotContains('Theirs', $names, 'a breakdown named another account\'s campaign');
+        $groups = $controller->groups(['by' => 'campaign']);
+        self::assertNotContains('Theirs', array_column($groups['data'], 'name'));
+        $none = end($groups['data']);
+        self::assertSame([null, '1'], [$none['id'], $none['total_clicks']], 'the click is counted, under no campaign');
+        self::assertSame('6', $groups['totals']['total_clicks']);
+    }
+
     public function testTooManyGroupsIsRefusedNotCut(): void
     {
         $u = self::USER;
