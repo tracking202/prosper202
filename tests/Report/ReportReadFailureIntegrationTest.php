@@ -62,7 +62,18 @@ final class ReportReadFailureIntegrationTest extends TestCase
         self::user(self::USER);
         self::row('202_users_pref', ['user_id' => self::USER, 'user_pref_time_predefined' => 'today']);
         // One click the per-source report finds, so its second query (the
-        // traffic-source accounts) runs.
+        // traffic-source accounts) runs: on the account's own advanced
+        // landing page, which the report lists clicks under (a page that is
+        // not the account's, or not there, has no heading to list one under).
+        self::row('202_landing_pages', [
+            'landing_page_id' => self::LANDING_PAGE,
+            'user_id' => self::USER,
+            'aff_campaign_id' => 0,
+            'landing_page_type' => 1,
+            'landing_page_nickname' => 'Read failure page',
+            'landing_page_url' => 'https://page.example/',
+            'landing_page_time' => time(),
+        ]);
         self::row('202_dataengine', [
             'user_id' => self::USER,
             'click_id' => 99003101,
@@ -91,6 +102,7 @@ final class ReportReadFailureIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         self::q('DELETE FROM 202_dataengine WHERE user_id = ' . self::USER);
+        self::q('DELETE FROM 202_landing_pages WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_users WHERE user_id = ' . self::USER);
         self::q('DELETE FROM 202_mysql_errors WHERE user_id = ' . self::USER);
