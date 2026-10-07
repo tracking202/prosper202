@@ -9960,7 +9960,8 @@ components:
         a field that cannot hold NULL, a whole number that is not one (`"1.5"`,
         `"1e3"`, 20 digits) or is outside the column's range, a non-finite or
         out-of-range decimal, and a string longer than its column are each a
-        422. A `null` clears a field that can hold NULL.
+        422; a refused number's message names the field's range. A `null`
+        clears a field that can hold NULL.
       content:
         application/json:
           schema:

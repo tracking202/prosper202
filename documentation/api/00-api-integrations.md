@@ -150,9 +150,12 @@ field, and nothing is written:
   number (`5.0`), or a string of digits with an optional sign (`"42"`,
   `"-3"`), within the column's range (an id column holds 0–16777215).
   `"1.5"`, `"1e3"`, `" 7"`, `true` and a 20-digit string are refused; they
-  were stored as 1, 1000, 7, 1 and 9223372036854775807.
+  were stored as 1, 1000, 7, 1 and 9223372036854775807. Every refusal names
+  the range, whatever was wrong with the value (`"Field 'lead_days' must be a
+  whole number from -2147483648 to 2147483647"`).
 - **Decimals** are a finite JSON number or numeric string within the column's
-  range (`aff_campaign_payout` holds up to 999999.99); `"1e400"` is refused.
+  range (`aff_campaign_payout` holds up to 999999.99); `"1e400"` is refused,
+  and the refusal names the range.
 - **Strings** are a JSON string (a JSON integer is taken as its digits) no
   longer than the field's limit, which is the column's own (names of
   categories, traffic sources and their accounts and campaigns hold 50

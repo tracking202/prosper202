@@ -709,12 +709,32 @@ final class ControllerTest extends TestCase
         [$ctrl] = $this->createControllerWithDb();
         $this->assertSame(255, $ctrl->testValidatePayload(['rank' => '255'])['rank']);
         $this->assertSame(0, $ctrl->testValidatePayload(['rank' => 0])['rank']);
-        foreach (['256', -1, 1000.0] as $sent) {
+        // A value that is no whole number at all is refused with the range
+        // too: a 20-digit string is past PHP's int range before it is past
+        // the column's, and "must be a whole number" alone left the caller
+        // guessing which numbers would do.
+        foreach (['256', -1, 1000.0, '99999999999999999999', 1e20, '1.5', 'abc', ''] as $sent) {
             try {
                 $ctrl->testValidatePayload(['rank' => $sent]);
                 $this->fail('expected ' . var_export($sent, true) . ' to be out of range');
             } catch (ValidationException $e) {
                 $this->assertSame(['rank' => "Field 'rank' must be a whole number from 0 to 255"], $e->getFieldErrors());
+            }
+        }
+    }
+
+    public function testValidatePayloadNamesADecimalFieldsRangeForAnyRefusedValue(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        foreach (['100', '1e400', 'abc', true] as $sent) {
+            try {
+                $ctrl->testValidatePayload(['ratio' => $sent]);
+                $this->fail('expected ' . var_export($sent, true) . ' to be refused');
+            } catch (ValidationException $e) {
+                $this->assertSame(
+                    ['ratio' => "Field 'ratio' must be a number from -99.99 to 99.99"],
+                    $e->getFieldErrors()
+                );
             }
         }
     }

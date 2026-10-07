@@ -255,23 +255,28 @@ abstract class Controller
                 continue;
             }
 
+            // A field with a range names it in every refusal, not only for
+            // a value that parsed: a 20-digit string is past PHP's int range
+            // before it is past the column's, and "must be a whole number"
+            // left the caller to guess which numbers would do.
+            $range = $def['range'] ?? null;
+            $inRange = static fn (int|float $n): bool => $range === null || ($n >= $range[0] && $n <= $range[1]);
+            $rangeText = $range === null ? '' : " from {$range[0]} to {$range[1]}";
             switch ($def['type']) {
                 case 'i':
                     $int = self::wholeNumber($value);
-                    if ($int === null) {
-                        $errors[$col] = "Field '$col' must be a whole number";
-                    } elseif (isset($def['range']) && ($int < $def['range'][0] || $int > $def['range'][1])) {
-                        $errors[$col] = "Field '$col' must be a whole number from {$def['range'][0]} to {$def['range'][1]}";
+                    if ($int === null || !$inRange($int)) {
+                        $errors[$col] = "Field '$col' must be a whole number" . $rangeText;
                     } else {
                         $clean[$col] = $int;
                     }
                     break;
                 case 'd':
-                    $number = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)) ? (float) $value : null;
-                    if ($number === null || !is_finite($number)) {
-                        $errors[$col] = "Field '$col' must be a finite number";
-                    } elseif (isset($def['range']) && ($number < $def['range'][0] || $number > $def['range'][1])) {
-                        $errors[$col] = "Field '$col' must be a number from {$def['range'][0]} to {$def['range'][1]}";
+                    $numeric = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value));
+                    $number = $numeric ? (float) $value : null;
+                    if ($number === null || !is_finite($number) || !$inRange($number)) {
+                        $errors[$col] = "Field '$col' must be "
+                            . ($range === null ? 'a finite number' : 'a number' . $rangeText);
                     } else {
                         $clean[$col] = $number;
                     }

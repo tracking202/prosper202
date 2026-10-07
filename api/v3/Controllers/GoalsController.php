@@ -854,10 +854,12 @@ final class GoalsController
         } elseif (is_string($value) && preg_match('/^(0|[1-9]\d{0,18})$/D', $value) === 1 && (string) (int) $value === $value) {
             $id = (int) $value;
         } else {
-            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number' . ($allowZero ? '' : ' greater than 0')]);
+            $id = null;
         }
-        if ($id < 0 || (!$allowZero && $id === 0) || $id > 4294967295) {
-            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number' . ($allowZero ? '' : ' greater than 0')]);
+        // The range is named whatever was wrong: a 20-digit id is refused for
+        // the same reason 0 is, and the message is what says which ids exist.
+        if ($id === null || $id < 0 || (!$allowZero && $id === 0) || $id > 4294967295) {
+            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number from ' . ($allowZero ? '0' : '1') . ' to 4294967295']);
         }
 
         return $id;
