@@ -21,6 +21,20 @@ try {
 
     if ($result->num_rows) {
         if (! $row['processing']) {
+            // The server calls itself: on the install's stored domain (user
+            // 1's — never the session's: this URL is public, and every
+            // signed-in user sets their own domain, so a session-dependent
+            // read let any of them choose the host fetched below) when there
+            // is one, else on the listener that served this request, pinned
+            // to its address so the call never leaves this machine whatever
+            // name the request claimed (SelfCall says why). Read before the
+            // window is claimed, so a read that fails cannot strand it.
+            $storedDomain = p202StoredTrackingDomain(1);
+            $base = \Prosper202\DataEngine\SelfCall::base($storedDomain, $_SERVER, dirname(__DIR__));
+            // Every option the calls are made with: nothing here may add to
+            // or override them (a redirect followed would leave the pin).
+            $selfCallOptions = \Prosper202\DataEngine\SelfCall::curlOptions($storedDomain, $_SERVER);
+
             $mysql['click_time_from'] = $db->real_escape_string((string)$row['time_from']);
             $mysql['click_time_to'] = $db->real_escape_string((string)$row['time_to']);
             // Atomic compare-and-swap claim: the SELECT above is not a lock, so
@@ -39,15 +53,6 @@ try {
                 return;
             }
 
-            // The server calls itself: on the stored domain when there is
-            // one, else on the listener that served this request, pinned to
-            // its address so the call never leaves this machine whatever
-            // name the request claimed (SelfCall says why).
-            $storedDomain = p202StoredTrackingDomain();
-            $base = \Prosper202\DataEngine\SelfCall::base($storedDomain, $_SERVER, dirname(__DIR__));
-            // Every option the calls are made with: nothing here may add to
-            // or override them (a redirect followed would leave the pin).
-            $selfCallOptions = \Prosper202\DataEngine\SelfCall::curlOptions($storedDomain, $_SERVER);
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;

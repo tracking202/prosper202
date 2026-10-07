@@ -146,6 +146,41 @@ final class SelfCallTest extends TestCase
         self::assertSame(['attacker.example:80:127.0.0.1'], SelfCall::curlOptions('', $server)[CURLOPT_RESOLVE]);
     }
 
+    /**
+     * The rebuild's URL is public, and every signed-in user sets their own
+     * tracking domain on Personal Settings. Read for the session's user, it
+     * let any account choose the host the server fetched — and a call on a
+     * stored domain follows redirects. The cron reads the install's (user
+     * 1's), and before it claims the window, so a read that throws cannot
+     * leave the window claimed with nothing to release it.
+     */
+    public function testTheRebuildReadsTheInstallsDomainBeforeItClaimsTheWindow(): void
+    {
+        $path = dirname(__DIR__, 2) . '/202-cronjobs/process_dataengine_job.php';
+        $tokens = array_values(array_filter(
+            token_get_all((string) file_get_contents($path)),
+            static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+        ));
+        $reads = [];
+        $claim = null;
+        foreach ($tokens as $i => $t) {
+            if (is_array($t) && $t[0] === T_STRING && $t[1] === 'p202StoredTrackingDomain') {
+                $call = '';
+                for ($j = $i + 1; $j < count($tokens) && $tokens[$j] !== ')'; $j++) {
+                    $call .= is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+                }
+                $reads[] = [$call . ')', $t[2]];
+            }
+            if ($claim === null && is_array($t) && $t[0] === T_CONSTANT_ENCAPSED_STRING && str_contains($t[1], "SET processing = '1'")) {
+                $claim = $t[2];
+            }
+        }
+        self::assertCount(1, $reads, 'the rebuild reads the stored domain once');
+        self::assertSame('(1)', $reads[0][0], 'the install\'s domain, named; never the session\'s');
+        self::assertNotNull($claim, 'the window claim is not where this test looks');
+        self::assertLessThan($claim, $reads[0][1], 'the domain is read before the window is claimed');
+    }
+
     public function testARunWithNoListenerBuildsTheBaseAsBeforeAndPinsNothing(): void
     {
         // The PHP CLI: no SERVER_NAME, no SERVER_PORT.

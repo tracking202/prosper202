@@ -186,12 +186,17 @@ function grab_timeframe($unused = null): array
  * builders would degrade to 'localhost'. '' when none is set, and when the
  * schema does not exist yet (_mysqli_query() answers false during install).
  * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
+ *
+ * $userId names the account instead. Whatever the server itself calls must
+ * name one: every signed-in user sets their own domain on Personal
+ * Settings, and a session-dependent read let any of them choose the host
+ * the report rebuild fetched (process_dataengine_job.php reads user 1's).
  */
-function p202StoredTrackingDomain(): string
+function p202StoredTrackingDomain(?int $userId = null): string
 {
-    $lookup_user_id = (isset($_SESSION['user_id']) && !empty($_SESSION['user_id']))
-        ? (string) $_SESSION['user_id']
-        : '1';
+    $lookup_user_id = $userId !== null
+        ? (string) $userId
+        : ((isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) ? (string) $_SESSION['user_id'] : '1');
 
     $database = DB::getInstance();
     $db = $database->getConnection();
