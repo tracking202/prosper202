@@ -2397,15 +2397,19 @@ class UPGRADE
                     if ($row['redirect_url'] != null) {
                         $redirect_name = "URL: <a href=" . $row['redirect_url'] . ">link</a>";
                     } else if ($row['redirect_campaign'] != null) {
-                        $redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '" . $row['redirect_campaign'] . "'";
+                        // The name is stored on the redirect, so it is read only
+                        // from the rule's own account (CLAUDE.md #27): a rule
+                        // could name another account's campaign or page, whose
+                        // name this copied into a redirect every report shows.
+                        $redirect_type_sql = "SELECT ac.aff_campaign_name FROM 202_aff_campaigns AS ac INNER JOIN 202_rotators AS ro ON (ro.id = '" . (int) $row['rotator_id'] . "' AND ro.user_id = ac.user_id) WHERE ac.aff_campaign_id = '" . (int) $row['redirect_campaign'] . "'";
                         $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
-                        $redirect_name = "Campaign: " . $redirect_type_row['aff_campaign_name'];
+                        $redirect_name = "Campaign: " . ($redirect_type_row['aff_campaign_name'] ?? '');
                     } else if ($row['redirect_lp'] != null) {
-                        $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '" . $row['redirect_lp'] . "'";
+                        $redirect_type_sql = "SELECT lp.landing_page_nickname FROM 202_landing_pages AS lp INNER JOIN 202_rotators AS ro ON (ro.id = '" . (int) $row['rotator_id'] . "' AND ro.user_id = lp.user_id) WHERE lp.landing_page_id = '" . (int) $row['redirect_lp'] . "'";
                         $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
-                        $redirect_name = "Landing page: " . $redirect_type_row['landing_page_nickname'];
+                        $redirect_name = "Landing page: " . ($redirect_type_row['landing_page_nickname'] ?? '');
                     } else if ($row['auto_monetizer'] != null) {
                         $redirect_name = "Auto Monetizer";
                     }
