@@ -10,6 +10,8 @@ use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\LtvBody;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Api\V3\Support\QueryInt;
@@ -221,10 +223,18 @@ class ConversionsController
         // Every key below is read; anything else was dropped with a 201 — a
         // misspelled `transaction_id` recorded the sale without the id that
         // dedupes its retries (CLAUDE.md #4).
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+        PayloadKeys::refuseUnknown($payload, [
             'click_id', 'transaction_id', 'conv_time', 'payout', 'status', 'reversal_id',
             'customer_id', 'customer_ref', 'customer_ref_type', 'customer_crm', 'items',
         ], 'a conversion');
+        // And the objects inside it, as strictly: the repository read the
+        // keys of a line item and of customer_crm it knew and cast them, so
+        // `unit_pirce` stored no price, a unit_price of "abc" stored 0 and
+        // `frist_name` no name, each answered 201 (CLAUDE.md #4).
+        PayloadKeys::refuse(
+            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+        );
         // Read strictly: (int) made "12abc" click 12 and "abc" no click, and
         // a conv_time of "2026-10-07" the 2026th second of 1970.
         $clickId = QueryInt::required($payload, 'click_id', 1, PHP_INT_MAX, 'the click the conversion is recorded on');
@@ -267,8 +277,8 @@ class ConversionsController
             }
         }
 
-        // LTV: optional customer identity + product line items. An invalid
-        // customer_ref_type or malformed items array is rejected by the
+        // LTV: optional customer identity + product line items, whose shape
+        // was checked above. An unknown customer_ref_type is rejected by the
         // repository with an explicit error — never silently dropped.
         // Given means present and not null. These were !empty(), and
         // empty('0') is true: customer_ref "0" (a real id where a system
@@ -296,15 +306,9 @@ class ConversionsController
             }
         }
         if (isset($payload['customer_crm'])) {
-            if (!is_array($payload['customer_crm'])) {
-                throw new ValidationException('customer_crm must be an object', ['customer_crm' => 'Must be an object of CRM fields']);
-            }
             $data['customer_crm'] = $payload['customer_crm'];
         }
         if (isset($payload['items'])) {
-            if (!is_array($payload['items'])) {
-                throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
-            }
             $data['items'] = $payload['items'];
         }
 

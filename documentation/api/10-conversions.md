@@ -66,8 +66,8 @@ back.
 | `customer_id` | integer | No | The LTV customer the revenue belongs to; it wins over `customer_ref`. Anything but a positive id (`0`, `""`) is a `422` |
 | `customer_ref` | string | No | Your id for the customer: resolved to one, or a customer is created for it. `"0"` is an id like any other; a blank one is a `422` |
 | `customer_ref_type` | string | No | What `customer_ref` is: `email_md5`, `email_sha256`, `esp_id`, `merchant_id`, `subid` or `custom` (the default); read only with `customer_ref` |
-| `customer_crm` | object | No | CRM fields (`first_name`, `last_name`, `email`, `phone`, `company`, `address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country`) applied only when this conversion creates the customer |
-| `items` | array | No | Product line items on the customer's revenue event: each `{external_product_id or sku, name, quantity, unit_price, amount, price}`. Recorded only when the conversion resolves to a customer — named here, or already linked to the click — and dropped without an error otherwise |
+| `customer_crm` | object | No | CRM fields (`first_name`, `last_name`, `email`, `phone`, `company`, `address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country`) applied only when this conversion creates the customer. See [Nested objects](#nested-objects) |
+| `items` | array | No | Product line items on the customer's revenue event: each `{external_product_id or sku, name, quantity, unit_price, amount, price}`. Recorded only when the conversion resolves to a customer — named here, or already linked to the click — and dropped without an error otherwise. See [Nested objects](#nested-objects) |
 
 Creates are idempotent on `transaction_id`: if a conversion with the same
 `transaction_id` already exists for the given `click_id`, nothing is written
@@ -85,6 +85,31 @@ click's plain conversion) is refused with `409`, naming it in
 `Idempotency-Key` sent with it is not spent. A different sale needs its own
 `transaction_id`. A `409` without `details` is about the `Idempotency-Key`
 instead: a request holding it is still in flight, or one did not finish.
+
+### Nested objects
+
+`customer_crm` and each entry of `items` are read as strictly as the body
+itself: a key they do not take is a `422` naming it with its place in the
+body (`customer_crm.frist_name`, `items.0.unit_pirce`), every refused field
+is listed in one answer, and nothing is written. They used to be read for
+the keys the server knew, so a misspelled key was dropped and the
+conversion answered `201` without it.
+
+| Field | Rule |
+| ----- | ---- |
+| `customer_crm.*` | A string (a whole number is read as its digits) or `null`, at most as long as its column: `first_name`, `last_name`, `city`, `region` 100; `phone` 50; `postal_code` 20; `country` 2 (a two-letter code, e.g. `US`); the rest 255. `email` must be an email address |
+| `items.N.external_product_id`, `items.N.sku` | One is required: the product is found, or created, by it. A string (or whole number) of at most 191 characters; a `sku` with no `external_product_id` becomes the key `sku:<sku>`, so it has at most 187 |
+| `items.N.name` | A string of at most 255 characters |
+| `items.N.quantity` | A number from 0.001 to 999999999.999 (default 1) |
+| `items.N.unit_price` | A number from -999999999.99999 to 999999999.99999 |
+| `items.N.amount` | A number from -99999999999.99999 to 99999999999.99999; default `unit_price × quantity`, which must fit too |
+| `items.N.price` | The product's list price: a number from 0 to 999999999.99999 |
+
+A number is a JSON number or a string holding one (`"25"`); anything else
+(`"abc"`, `true`) is refused, never stored as 0. The lines of a negative
+payout (an adjustment) are stored negative, amount and quantity, whichever
+sign is sent. `POST /ltv/revenue` reads its `items` and `customer_crm` by the
+same rules.
 
 ## Example
 

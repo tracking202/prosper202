@@ -10,6 +10,8 @@ use Api\V3\Exception\LostIdempotencyRaceException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\LtvBody;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
@@ -211,7 +213,10 @@ class LtvController
      */
     public function recordEngagementEvent(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['event', 'event_name', 'value', 'occurred_at', ...self::IDENTITY_KEYS], 'an engagement event');
+        PayloadKeys::refuseUnknown($payload, ['event', 'event_name', 'value', 'occurred_at', ...self::IDENTITY_KEYS], 'an engagement event');
+        PayloadKeys::refuse(
+            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+        );
         $eventName = trim((string) ($payload['event'] ?? $payload['event_name'] ?? ''));
         if ($eventName === '') {
             throw new ValidationException('event is required', ['event' => 'The event name to record']);
@@ -375,7 +380,15 @@ class LtvController
 
     public function upsertCustomer(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['customer_id', 'customer_ref', 'customer_ref_type', ...self::CUSTOMER_RECORD_KEYS], 'a customer');
+        PayloadKeys::refuseUnknown($payload, ['customer_id', 'customer_ref', 'customer_ref_type', ...self::CUSTOMER_RECORD_KEYS], 'a customer');
+        // The repository casts customer_id: "12abc" named customer 12.
+        QueryInt::param($payload, 'customer_id', 0, 1, PHP_INT_MAX, 'an LTV customer id (see `p202 ltv customers`)');
+        // The record's CRM fields are read as customer_crm's are (a country
+        // of "United States" was a 500 in strict mode, "Un" without it), and
+        // each alias as POST /ltv/customers/{id}/aliases reads one: a
+        // misspelled `tpye` made the alias a custom one.
+        PayloadKeys::refuse(LtvBody::crm($payload)
+            + PayloadKeys::listErrors($payload, 'aliases', LtvBody::ALIAS_KEYS, 'an alias', LtvBody::alias(...)));
         $customerId = $this->wrap(fn (): int => $this->crm->upsert($this->userId, $payload));
         $this->enqueueEvent('customer.updated', ['customer_id' => $customerId]);
 
@@ -388,9 +401,11 @@ class LtvController
         // removed here and customer_id overwritten, so a PATCH naming another
         // customer answered 200 having changed this one.
         $byPath = 'the path names the customer: send its record fields only (another reference is added with POST /ltv/customers/{id}/aliases)';
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::CUSTOMER_RECORD_KEYS, 'a customer update', [
+        PayloadKeys::refuseUnknown($payload, self::CUSTOMER_RECORD_KEYS, 'a customer update', [
             'customer_id' => $byPath, 'customer_ref' => $byPath, 'customer_ref_type' => $byPath,
         ]);
+        PayloadKeys::refuse(LtvBody::crm($payload)
+            + PayloadKeys::listErrors($payload, 'aliases', LtvBody::ALIAS_KEYS, 'an alias', LtvBody::alias(...)));
         $this->requireCustomer($customerId);
         $payload['customer_id'] = $customerId;
         unset($payload['customer_ref'], $payload['customer_ref_type']);
@@ -431,12 +446,12 @@ class LtvController
 
     public function addAlias(int $customerId, array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['value', 'type'], 'a customer alias');
+        PayloadKeys::refuseUnknown($payload, LtvBody::ALIAS_KEYS, 'a customer alias');
+        // The body is one alias, read as each of a customer's `aliases` is:
+        // a value of {"a": 1} was stored as the alias "Array".
+        PayloadKeys::refuse(LtvBody::alias($payload));
         $this->requireCustomer($customerId);
-        $value = trim((string) ($payload['value'] ?? ''));
-        if ($value === '') {
-            throw new ValidationException('value is required', ['value' => 'The external identifier to map']);
-        }
+        $value = trim((string) $payload['value']);
 
         $owner = $this->wrap(fn (): int => $this->conn->transaction(
             fn (): int => $this->customers->addAlias(
@@ -468,10 +483,16 @@ class LtvController
      */
     public function recordRevenue(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+        PayloadKeys::refuseUnknown($payload, [
             'event_type', 'amount', 'currency', 'occurred_at', 'items', 'idempotency_key', 'external_ref', 'transaction_id',
             ...self::IDENTITY_KEYS,
         ], 'a revenue event');
+        // The line items and customer_crm, as strictly as the body: `qty`
+        // stored one unit, and a price of "abc" stored 0 (CLAUDE.md #4).
+        PayloadKeys::refuse(
+            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+        );
 
         return $this->wrap(function () use ($payload): array {
             $eventType = strtolower(trim((string) ($payload['event_type'] ?? 'purchase')));
@@ -505,9 +526,6 @@ class LtvController
             $now = time();
             $occurredAt = QueryInt::param($payload, 'occurred_at', $now, 0, 4294967295, 'a unix time; leave it out for now');
             $items = $payload['items'] ?? [];
-            if (!is_array($items)) {
-                throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
-            }
 
             $idempotencyKey = isset($payload['idempotency_key']) && trim((string) $payload['idempotency_key']) !== ''
                 ? trim((string) $payload['idempotency_key'])
@@ -603,10 +621,16 @@ class LtvController
     public function upsertSubscription(array $payload): array
     {
         // MysqlSubscriptionRepository::upsert() reads these, and the customer keys.
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+        PayloadKeys::refuseUnknown($payload, [
             'external_sub_id', 'amount', 'currency', 'plan_name', 'billing_interval', 'billing_interval_count', 'status',
             'grace_days', 'started_at', 'current_period_start', 'current_period_end', ...self::IDENTITY_KEYS,
         ], 'a subscription');
+        // The repository casts customer_id ("12abc" named customer 12) and
+        // took a customer_crm that was not an object as none.
+        QueryInt::param($payload, 'customer_id', 0, 1, PHP_INT_MAX, 'an LTV customer id (see `p202 ltv customers`)');
+        PayloadKeys::refuse(
+            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+        );
         $result = $this->wrap(fn (): array => $this->subscriptions->upsert($this->userId, $payload));
         $this->enqueueEvent('subscription.changed', [
             'subscription_id' => $result['subscriptionId'],
@@ -660,7 +684,10 @@ class LtvController
     public function upsertProduct(array $payload): array
     {
         // MysqlCustomerRepository::upsertProduct() reads these.
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['external_product_id', 'sku', 'name', 'price'], 'a product');
+        PayloadKeys::refuseUnknown($payload, LtvBody::PRODUCT_KEYS, 'a product');
+        // Read as a line item's product is: the repository cast the price, so
+        // "abc" set it to 0, and cut a name or sku longer than its column.
+        PayloadKeys::refuse(LtvBody::product($payload));
 
         return $this->wrap(function () use ($payload): array {
             $currency = $this->customers->accountCurrency($this->userId);
@@ -834,7 +861,14 @@ class LtvController
     public function createField(array $payload): array
     {
         // MysqlCustomerFieldRepository::create() reads these.
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['field_key', 'label', 'field_type', 'options', 'is_required', 'sort_order'], 'a custom field');
+        PayloadKeys::refuseUnknown($payload, ['field_key', 'label', 'field_type', 'options', 'is_required', 'sort_order'], 'a custom field');
+        // Options are a select field's choices. The repository dropped them
+        // from any other field without a word; PATCH refuses them there.
+        $type = $payload['field_type'] ?? 'text';
+        $select = is_string($type) && strtolower(trim($type)) === 'select';
+        $notSelect = 'apply only to a select field (field_type: select); this one is '
+            . (is_string($type) ? $type : 'not a type');
+        PayloadKeys::refuse(self::optionErrors($payload) + (isset($payload['options']) && !$select ? ['options' => $notSelect] : []));
         $fieldId = $this->wrap(fn (): int => $this->fields->create($this->userId, $payload));
 
         return ['data' => ['field_id' => $fieldId]];
@@ -845,9 +879,10 @@ class LtvController
         // MysqlCustomerFieldRepository::update() writes these; a field's key
         // and type are fixed once it holds values.
         $fixed = 'is fixed once the field is created (accepted: label, options, is_required, sort_order)';
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['label', 'options', 'is_required', 'sort_order'], 'a custom field update', [
+        PayloadKeys::refuseUnknown($payload, ['label', 'options', 'is_required', 'sort_order'], 'a custom field update', [
             'field_key' => $fixed, 'field_type' => $fixed,
         ]);
+        PayloadKeys::refuse(self::optionErrors($payload));
         $this->wrap(function () use ($fieldId, $payload): void {
             try {
                 $this->fields->update($this->userId, $fieldId, $payload);
@@ -857,6 +892,26 @@ class LtvController
         });
 
         return $this->fieldsList();
+    }
+
+    /**
+     * A select field's options: a list of choices, each a string (or a
+     * whole number, read as its digits) that is not blank. The repository
+     * cast each with strval(), so {"gold": "Gold", "silver": ["Silver"]}
+     * was stored as the choices "Gold" and "Array".
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, string>
+     */
+    private static function optionErrors(array $payload): array
+    {
+        return PayloadKeys::valueListErrors(
+            $payload,
+            'options',
+            'choices, e.g. ["free", "pro"]',
+            static fn (mixed $option): ?string => (is_string($option) || is_int($option))
+                && trim((string) $option) !== '' ? null : 'must be a choice: a string that is not blank'
+        );
     }
 
     public function deleteField(int $fieldId): void
@@ -879,12 +934,23 @@ class LtvController
 
     public function createWebhook(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['url', 'webhook_url', 'events'], 'a webhook');
+        PayloadKeys::refuseUnknown($payload, ['url', 'webhook_url', 'events'], 'a webhook');
+        // A list of event names. Anything else was read as no list, which
+        // subscribes to every event: `"events": "revenue.recorded"` made a
+        // hook for all five. Which names exist is the repository's to say
+        // (it checks their form, and stays open to names a later version
+        // sends).
+        PayloadKeys::refuse(PayloadKeys::valueListErrors(
+            $payload,
+            'events',
+            'event names, e.g. ["revenue.recorded"] (omit it, or send [], for every event)',
+            static fn (mixed $event): ?string => is_string($event) ? null : 'must be an event name (a string)'
+        ));
         $url = trim((string) ($payload['url'] ?? $payload['webhook_url'] ?? ''));
         if ($url === '') {
             throw new ValidationException('url is required', ['url' => 'The https endpoint to deliver events to']);
         }
-        $events = isset($payload['events']) && is_array($payload['events']) ? $payload['events'] : [];
+        $events = $payload['events'] ?? [];
 
         $result = $this->wrap(fn (): array => $this->webhooks->create($this->userId, $url, $events));
 
@@ -1118,9 +1184,17 @@ class LtvController
 
     public function createIntegration(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['provider', 'name', 'config'], 'an integration');
-        if (isset($payload['config']) && !is_array($payload['config'])) {
-            throw new ValidationException('config must be an object', ['config' => 'Must be an object']);
+        PayloadKeys::refuseUnknown($payload, ['provider', 'name', 'config'], 'an integration');
+        // config is free-form by design: the provider's own settings, stored
+        // as sent and read by nothing here, so no key in it is refused. It is
+        // an object, as documented: a list was stored as one.
+        if (
+            isset($payload['config'])
+            && (!is_array($payload['config']) || ($payload['config'] !== [] && array_is_list($payload['config'])))
+        ) {
+            throw new ValidationException('config must be an object', [
+                'config' => 'must be a JSON object of the provider\'s settings (any keys)',
+            ]);
         }
 
         return $this->wrap(function () use ($payload): array {
@@ -1567,7 +1641,10 @@ class LtvController
             );
         }
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
-        $crm = isset($payload['customer_crm']) && is_array($payload['customer_crm']) ? $payload['customer_crm'] : [];
+        // An object of CRM fields: every caller refused anything else
+        // (PayloadKeys::objectErrors()) before it got here. It was read as
+        // none when it was not an array, so a string answered 201.
+        $crm = $payload['customer_crm'] ?? [];
 
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($this->userId, $refType, $ref, $crm, null, $now);
 

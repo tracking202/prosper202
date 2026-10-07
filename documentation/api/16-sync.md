@@ -73,7 +73,6 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
     "api_key": "target_api_key_here"
   },
   "entity": "campaigns",
-  "collision_mode": "warn",
   "prune": false,
   "max_attempts": 3
 }
@@ -83,12 +82,27 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
 | ----- | ---- | -------- | ----------- |
 | `source.url` | string | Yes | Source instance base URL |
 | `source.api_key` | string | Yes | Source instance API key |
+| `source.name` | string | No | What the job and its audit record call the source (default: its URL) |
 | `target.url` | string | Yes | Target instance base URL |
 | `target.api_key` | string | Yes | Target instance API key |
+| `target.name` | string | No | What the job and its audit record call the target (default: its URL) |
 | `entity` | string | Yes | Entity to sync. One of: `aff-networks`, `ppc-networks`, `ppc-accounts`, `campaigns`, `landing-pages`, `text-ads`, `rotators`, `trackers`, or `all` |
-| `collision_mode` | string | No | `warn` or `manual`. Only evaluated by `POST /sync/plan` (the plan preview); queued jobs created via `POST /sync/jobs` do not currently enforce it. |
 | `prune` | boolean | No | Delete target entities not present in source |
+| `prune_allowlist` | array | No | With `prune`, prune only these entities: a list of the entity names above |
+| `prune_denylist` | array | No | With `prune`, never prune these entities: a list of the entity names above |
 | `max_attempts` | integer | No | Retry limit for failed items |
+
+`collision_mode` (`warn` or `manual`) is read by `POST /sync/plan` only; a
+job body carrying it is a `422`, as is any key the table does not list.
+
+`source` and `target` (or their other names `from` and `to`; send one name
+for each side) are objects of `url`, `api_key` and `name`, each a string: any
+other key is a `422` naming it (`source.nmae`), as it is on `POST /sync/plan`
+and in the `source[...]`/`target[...]` query of `GET /sync/status` and
+`/sync/history`. `prune_allowlist` and `prune_denylist` are lists of entity
+names: a string instead of a list, or a name that is not an entity
+(`prune_denylist.0`), is a `422`. Both used to be read as an empty list,
+so `"prune_denylist": "campaigns"` protected no campaign from the prune.
 
 ## Job Statuses
 

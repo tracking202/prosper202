@@ -535,7 +535,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($ledgerEvent['inserted']) {
                 $this->customers->applyEventToRollups($userId, $customerId, $eventType, $payout, $convTime, $convTime);
                 $items = $data['items'] ?? [];
-                if (is_array($items) && $items !== []) {
+                if (!is_array($items)) {
+                    // Skipped, the sale was recorded without its items.
+                    throw new RuntimeException('items must be a list of line items');
+                }
+                if ($items !== []) {
                     $this->customers->insertLineItems($userId, $ledgerEvent['eventId'], $items, $currency, $convTime, $payout);
                 }
             }
@@ -641,7 +645,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $ref = isset($data['customer_ref']) ? trim((string) $data['customer_ref']) : '';
         $refType = isset($data['customer_ref_type']) ? (string) $data['customer_ref_type'] : null;
-        $crm = isset($data['customer_crm']) && is_array($data['customer_crm']) ? $data['customer_crm'] : [];
+        $crm = $data['customer_crm'] ?? [];
+        if (!is_array($crm)) {
+            // Read as none, the conversion was recorded and the CRM dropped.
+            throw new RuntimeException('customer_crm must be an object of CRM fields');
+        }
 
         return $this->customers->resolveForConversion(
             $userId,

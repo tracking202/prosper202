@@ -308,6 +308,13 @@ final class MysqlCustomerFieldRepository
      */
     private function coerce(string $fieldType, string $fieldKey, mixed $optionsJson, mixed $value): array
     {
+        // custom_fields is keyed by the account's own field keys, so its
+        // keys are checked against the definitions (applyCustomFields());
+        // each value is one value. An object or a list was cast to the
+        // text "Array", which a text field stored (CLAUDE.md #4).
+        if (!is_scalar($value)) {
+            throw new RuntimeException("Field {$fieldKey} expects one value, not an object or a list");
+        }
         switch ($fieldType) {
             case 'number':
                 if (!is_numeric($value)) {

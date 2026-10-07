@@ -75,6 +75,157 @@ final class PayloadKeys
     }
 
     /**
+     * The object a body field holds, read as refuseUnknown() reads the body
+     * itself: each key not in $accepted is a field error named with the
+     * field in front of it (`customer_crm.frist_name`). A nested object was
+     * read by hand, for the keys the handler knew, and the rest dropped:
+     * `{"customer_crm": {"frist_name": "Ann"}}` answered 201 with no first
+     * name stored (CLAUDE.md #4).
+     *
+     * Absent or null is nothing to check: whether the field is required is
+     * the handler's to say. Anything but an object is refused naming the
+     * field. JSON's `{}` and `[]` decode alike, so an empty list reads as an
+     * empty object; a list with entries is not one. $values checks the
+     * values of the keys it is given, answering errors keyed by the object's
+     * own key ('' for the object as a whole); they are reported with the
+     * same prefix, beside the unknown keys, so one 422 names everything.
+     *
+     * @param array<array-key, mixed> $payload
+     * @param list<string> $accepted
+     * @param (callable(array<array-key, mixed>): array<string, string>)|null $values
+     * @return array<string, string>
+     */
+    public static function objectErrors(
+        array $payload,
+        string $field,
+        array $accepted,
+        string $what,
+        ?callable $values = null
+    ): array {
+        $value = $payload[$field] ?? null;
+        if ($value === null) {
+            return [];
+        }
+        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+            return [$field => 'must be an object (' . $what . ': ' . implode(', ', $accepted) . ')'];
+        }
+
+        return self::entryErrors($value, $field, $accepted, $what, $values);
+    }
+
+    /**
+     * The objects of a list a body field holds, each read as objectErrors()
+     * reads one, named by position: `items.0.unit_pirce` (the form a rule's
+     * criteria and redirects are named in). Absent or null is nothing to
+     * check; anything but a list is refused naming the field, and an entry
+     * that is not an object naming the entry (`items.1`).
+     *
+     * @param array<array-key, mixed> $payload
+     * @param list<string> $accepted
+     * @param (callable(array<array-key, mixed>): array<string, string>)|null $values
+     * @return array<string, string>
+     */
+    public static function listErrors(
+        array $payload,
+        string $field,
+        array $accepted,
+        string $what,
+        ?callable $values = null
+    ): array {
+        $list = $payload[$field] ?? null;
+        if ($list === null) {
+            return [];
+        }
+        if (!is_array($list) || !array_is_list($list)) {
+            return [$field => 'must be a list of objects (' . $what . ': ' . implode(', ', $accepted) . ')'];
+        }
+        $errors = [];
+        foreach ($list as $i => $entry) {
+            if (!is_array($entry) || ($entry !== [] && array_is_list($entry))) {
+                $errors["$field.$i"] = 'must be an object (' . $what . ': ' . implode(', ', $accepted) . ')';
+                continue;
+            }
+            $errors += self::entryErrors($entry, "$field.$i", $accepted, $what, $values);
+        }
+
+        return $errors;
+    }
+
+    /**
+     * The values of a list a body field holds when its entries are not
+     * objects (a field's select options, a webhook's event names): a list,
+     * each entry checked by $value, which answers why it is refused or null.
+     * Absent or null is nothing to check; anything but a list is refused
+     * naming the field, an entry naming its position (`events.1`). There
+     * are no keys to refuse, so this is the value half of listErrors().
+     *
+     * @param array<array-key, mixed> $payload
+     * @param callable(mixed): ?string $value
+     * @return array<string, string>
+     */
+    public static function valueListErrors(array $payload, string $field, string $what, callable $value): array
+    {
+        $list = $payload[$field] ?? null;
+        if ($list === null) {
+            return [];
+        }
+        if (!is_array($list) || !array_is_list($list)) {
+            return [$field => 'must be a list of ' . $what];
+        }
+        $errors = [];
+        foreach ($list as $i => $entry) {
+            $why = $value($entry);
+            if ($why !== null) {
+                $errors["$field.$i"] = $why;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Refuse a body whose nested fields were refused (objectErrors(),
+     * listErrors(), valueListErrors(), and the value checks beside them):
+     * one 422 naming every field.
+     *
+     * @param array<string, string> $errors
+     * @throws ValidationException
+     */
+    public static function refuse(array $errors): void
+    {
+        if ($errors !== []) {
+            ksort($errors, SORT_NATURAL);
+            throw new ValidationException('Invalid ' . implode(', ', array_keys($errors)), $errors);
+        }
+    }
+
+    /**
+     * @param array<array-key, mixed> $entry
+     * @param list<string> $accepted
+     * @param (callable(array<array-key, mixed>): array<string, string>)|null $values
+     * @return array<string, string>
+     */
+    private static function entryErrors(
+        array $entry,
+        string $at,
+        array $accepted,
+        string $what,
+        ?callable $values
+    ): array {
+        $errors = [];
+        foreach (self::unknown($entry, $accepted, $what) as $key => $message) {
+            $errors["$at.$key"] = $message;
+        }
+        if ($values !== null) {
+            foreach ($values(array_intersect_key($entry, array_flip($accepted))) as $key => $message) {
+                $errors[$key === '' ? $at : "$at.$key"] = $message;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
      * The read-only keys of $payload that do not hold the record's value.
      * On a create ($current null) there is no record, so each is refused:
      * the server assigns it.

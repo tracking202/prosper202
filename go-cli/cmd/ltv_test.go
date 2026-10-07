@@ -746,8 +746,8 @@ func TestLtvFieldsWebhooksIntegrations(t *testing.T) {
 	if req.Method != "POST" || req.Path != "/ltv/webhooks" {
 		t.Fatalf("request = %s %s", req.Method, req.Path)
 	}
-	// Always an array: the server reads anything else as "no events" and
-	// subscribes the hook to every one.
+	// Always an array: the server refuses anything else (and servers before
+	// that subscribed the hook to every event).
 	assertJSON(t, req.Body, `{"url":"https://hooks.example.com/p202","events":["revenue.recorded","subscription.changed"]}`)
 	if !strings.Contains(stdout, "s3cr3t") || !strings.Contains(stderr, "store the secret now") {
 		t.Errorf("the secret must be printed and called out once: stdout %q stderr %q", stdout, stderr)
