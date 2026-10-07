@@ -79,40 +79,71 @@ final class ServerStateStoreDefaultDirTest extends TestCase
     }
 
     /**
-     * A rename that fails for a real reason (here the destination exists as
-     * a file, so it can never be a state directory) must keep using the
-     * legacy path, so in-flight staged changes and sync jobs stay reachable.
+     * The pre-1.9.75 shared directory in the temp dir is never taken as this
+     * instance's own.
+     *
+     * A new instance with no directory of its own renamed it into place, on
+     * the theory that what sat there was its own pre-upgrade state. Nothing
+     * says whose it is: every install on the host wrote it before the
+     * scoping (and one still on an older version still does), and in a
+     * temp dir anyone can create it. What it holds decides things: an
+     * Idempotency-Key recorded there replays another install's response to
+     * this one's user 1 and executes nothing; a staged change recorded there
+     * is listed for this install's users to apply, against this install's
+     * database. Measured: both, in a brand-new instance on another database.
+     * The directory is left where it is, untouched, and the log names it and
+     * says how an operator who knows it is theirs carries it over.
+     *
+     * Run in a child PHP with its own TMPDIR (sys_get_temp_dir() is fixed
+     * for a process): planting the legacy directory in this host's real temp
+     * dir would hand it to any instance resolving its directory meanwhile.
      */
-    public function testAGenuinelyFailedAdoptionKeepsUsingTheLegacyDir(): void
+    public function testTheSharedLegacyDirectoryIsNeverAdopted(): void
     {
-        $legacy = sys_get_temp_dir() . '/p202-api-v3-state';
-        if (is_dir($legacy) || is_file($legacy)) {
-            $this->markTestSkipped('a real legacy state dir is present on this host; not touching it');
-        }
-        $GLOBALS['dbname'] = 'p202_state_adopt_' . bin2hex(random_bytes(4));
-        $GLOBALS['dbhost'] = 'adopt.host';
-        $scoped = $legacy . '-' . substr(sha1($GLOBALS['dbhost'] . '|' . $GLOBALS['dbname']), 0, 12);
+        $tmp = $this->childTempDir();
+        $code = <<<'PHP'
+            use Api\V3\Support\ServerStateStore;
+            $legacy = sys_get_temp_dir() . '/p202-api-v3-state';
+            // What another install (or anyone who can write the temp dir) left there.
+            $other = new ServerStateStore($legacy);
+            $scope = ServerStateStore::idempotencyScopeForUser(1);
+            $other->putIdempotent($scope, 'k-1', ['data' => ['id' => 999]], 'fp');
+            $other->stageWriteChange(1, ['change_id' => 'chg-1', 'method' => 'DELETE', 'path' => '/campaigns/1',
+                'status' => 'staged', 'created_at_epoch' => time()]);
+            $GLOBALS['dbhost'] = 'db.example:3306';
+            $GLOBALS['dbname'] = 'brand_new';
+            $fresh = new ServerStateStore();
+            $again = new ServerStateStore();
+            echo json_encode([
+                'fresh' => $fresh->baseDir(),
+                'again' => $again->baseDir(),
+                'replay' => $fresh->lookupIdempotent($scope, 'k-1', 'fp')['state'],
+                'staged' => array_column($fresh->listStagedChangesForUser(1), 'change_id'),
+                'legacy_still_holds' => $other->lookupIdempotent($scope, 'k-1', 'fp')['state'],
+            ]);
+            PHP;
+        $seen = $this->runChild($code, $tmp);
 
-        mkdir($legacy, 0700, true);
-        $this->createdDirs[] = $legacy;
-        file_put_contents($scoped, 'not a directory');
-
-        try {
-            $store = new ServerStateStore();
-            $this->assertSame($legacy, $store->baseDir());
-        } finally {
-            @unlink($scoped);
-        }
+        self::assertSame('miss', $seen['replay'], 'another install\'s idempotency record replays nothing here');
+        self::assertSame([], $seen['staged'], 'and its staged change is not listed here to apply');
+        $scoped = $tmp . '/p202-api-v3-state-' . substr(sha1('db.example:3306|brand_new'), 0, 12);
+        self::assertSame($scoped, $seen['fresh'], 'the instance uses its own directory');
+        self::assertSame($scoped, $seen['again'], 'every time');
+        self::assertSame('replay', $seen['legacy_still_holds'], 'and the legacy directory is left as it was');
+        $log = (string) @file_get_contents($tmp . '/php.log');
+        self::assertStringContainsString($tmp . '/p202-api-v3-state is not adopted', $log, 'the log names it');
+        self::assertSame(1, substr_count($log, 'is not adopted'), 'once a process, not once a request');
     }
 
     /**
      * A process with no database identity (a test run, a script that loads
      * the configuration inside a function) wrote the legacy directory — the
-     * one a new instance with no directory of its own adopts. So the next
-     * instance installed on the host took that process's state as its own:
-     * measured, its users were replayed the identity-less process's
+     * one a new instance with no directory of its own used to adopt. So the
+     * next instance installed on the host took that process's state as its
+     * own: measured, its users were replayed the identity-less process's
      * idempotent create and listed its staged DELETE to apply. The fallback
-     * has its own directory now, and a new instance finds nothing there.
+     * has its own directory now, and a new instance finds nothing there
+     * (nor adopts the legacy directory: the test above).
      *
      * Run in a child PHP with its own TMPDIR: sys_get_temp_dir() is fixed
      * for a process, and this host's real temp dir may hold a legacy
@@ -120,11 +151,8 @@ final class ServerStateStoreDefaultDirTest extends TestCase
      */
     public function testAProcessWithNoIdentityDoesNotWriteWhatTheNextNewInstanceAdopts(): void
     {
-        $tmp = sys_get_temp_dir() . '/p202-state-tmpdir-' . bin2hex(random_bytes(4));
-        mkdir($tmp, 0700, true);
-        $this->createdDirs[] = $tmp;
-        $autoload = dirname(__DIR__, 3) . '/vendor/autoload.php';
-        $code = 'require ' . var_export($autoload, true) . ';' . <<<'PHP'
+        $tmp = $this->childTempDir();
+        $code = <<<'PHP'
             use Api\V3\Support\ServerStateStore;
             $scope = ServerStateStore::idempotencyScopeForUser(1);
             $unscoped = new ServerStateStore();
@@ -141,17 +169,7 @@ final class ServerStateStoreDefaultDirTest extends TestCase
                 'staged' => array_column($fresh->listStagedChangesForUser(1), 'change_id'),
             ]);
             PHP;
-        $env = getenv();
-        unset($env['P202_SERVER_STATE_DIR']);
-        $env['TMPDIR'] = $tmp;
-        $command = [PHP_BINARY, '-d', 'error_log=' . $tmp . '/php.log', '-r', $code];
-        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
-        self::assertIsResource($process);
-        $out = (string) stream_get_contents($pipes[1]);
-        $err = (string) stream_get_contents($pipes[2]);
-        proc_close($process);
-        $seen = json_decode($out, true);
-        self::assertIsArray($seen, "the child answered: $out $err");
+        $seen = $this->runChild($code, $tmp);
 
         self::assertSame('miss', $seen['replay'], 'the new instance replays nothing it did not record');
         self::assertSame([], $seen['staged'], 'and lists no staged change it was not given');
@@ -169,5 +187,41 @@ final class ServerStateStoreDefaultDirTest extends TestCase
 
         $store = new ServerStateStore();
         $this->assertSame($dir, $store->baseDir());
+    }
+
+    /** A temp dir of its own for a child PHP, removed in tearDown. */
+    private function childTempDir(): string
+    {
+        $tmp = sys_get_temp_dir() . '/p202-state-tmpdir-' . bin2hex(random_bytes(4));
+        mkdir($tmp, 0700, true);
+        $this->createdDirs[] = $tmp;
+
+        return $tmp;
+    }
+
+    /**
+     * Run $code in a child PHP whose temp dir is $tmp, with no
+     * P202_SERVER_STATE_DIR and its error log in $tmp/php.log; the JSON it
+     * prints, decoded.
+     *
+     * @return array<string, mixed>
+     */
+    private function runChild(string $code, string $tmp): array
+    {
+        $autoload = dirname(__DIR__, 3) . '/vendor/autoload.php';
+        $env = getenv();
+        unset($env['P202_SERVER_STATE_DIR']);
+        $env['TMPDIR'] = $tmp;
+        $command = [PHP_BINARY, '-d', 'error_log=' . $tmp . '/php.log', '-r',
+            'require ' . var_export($autoload, true) . ';' . $code];
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
+        self::assertIsResource($process);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        proc_close($process);
+        $seen = json_decode($out, true);
+        self::assertIsArray($seen, "the child answered: $out $err");
+
+        return $seen;
     }
 }
