@@ -520,16 +520,16 @@ class AUTH
         ]);
     }
 
+    /**
+     * The remember_me cookie's Domain: the one rule every cookie with a
+     * Domain follows (CookieDomain — the request host without its port, none
+     * for an IP literal, localhost or anything that is not a host name). The
+     * copy that lived here stripped a port with /:\d+$/, so `[::1]:8080`
+     * became the Domain `[::1]`.
+     */
     public static function cookie_domain(): string
     {
-        $host = $_SERVER['HTTP_HOST'] ?? '';
-        // Strip port number if present (e.g. "example.com:8080" → "example.com")
-        $domain = strtolower((string) preg_replace('/:\d+$/', '', (string) $host));
-        // Don't set a cookie domain for localhost or IP addresses — browsers reject it
-        if ($domain === 'localhost' || filter_var($domain, FILTER_VALIDATE_IP)) {
-            return '';
-        }
-        return $domain;
+        return \Prosper202\Http\CookieDomain::fromServer($_SERVER);
     }
 
     public static function delete_old_auth_hash()

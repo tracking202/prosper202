@@ -678,17 +678,17 @@ function setClickIdCookie($click_id, $campaign_id = 0)
         $expire = time() + (60 *  60 * 24 * 30);
         $expire_header = 60 *  60 * 24 * 30;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie()/readCookie() must access these cookies
 
         //legacy cookies
 
-        setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
-        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
+        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
 
         // The install-token proof (InstallTokenGrant): set only by the
         // request that allocated the click, so a later lp.php can sign the
@@ -705,8 +705,8 @@ function setClickIdCookie($click_id, $campaign_id = 0)
             if (is_string($installKey) && strlen($installKey) === 32) {
                 $proof = \Api\V3\Apps\Android\InstallToken::forClick((int) $click_id, $installKey);
                 $proofCookie = \Api\V3\Apps\Android\InstallTokenGrant::PROOF_COOKIE;
-                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
-                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
             }
         }
     }
@@ -719,15 +719,15 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
         $expire = time() + (60 *  60 * 24 * 30);
         $expire_header = 60 *  60 * 24 * 30;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = TRUE;
 
 
         //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2434,14 +2434,14 @@ function setPCIdCookie($click_id_public)
         $expire = 0;
         $expire_header = 0;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie() sets this cookie in record_adv.php
 
         //legacy cookies
-        setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2452,14 +2452,14 @@ function setOutboundCookie($outbound_site_url)
         $expire = 0;
         $expire_header = 0;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie() sets this cookie in record_simple.php
 
         //legacy cookies
-        setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
