@@ -167,11 +167,6 @@ function grab_timeframe($unused = null): array
     return $time;
 }
 
-function getLastDayOfMonth($month, $year)
-{
-    return (int)date("d", mktime(0, 0, 0, (int)$month + 1, 0, (int)$year));
-}
-
 function getTrackingDomain(): string
 {
     // Keep in sync with the connect2.php variant of this function: SERVER_NAME

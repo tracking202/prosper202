@@ -6,6 +6,7 @@ namespace Tests\Analyze;
 
 use PHPUnit\Framework\TestCase;
 use Tracking202\Analyze\MobileAppsReportController;
+use Tracking202\Report\ReportWindow;
 
 /**
  * What Analyze › Mobile Apps derives from a query string before it asks the
@@ -248,10 +249,10 @@ final class MobileAppsReportTest extends TestCase
     }
 
     /**
-     * Presets grab_timeframe() has no counterpart for, so there is nothing to
-     * compare them against. Last 90 Days is this report's own: a conversion
-     * window runs to 35 days and postbacks trickle in behind it, which is a
-     * question the click reports are never asked.
+     * Presets the click calendar has no counterpart for, so there is nothing
+     * to compare them against. Last 90 Days is this report's own: a
+     * conversion window runs to 35 days and postbacks trickle in behind it,
+     * which is a question the click reports are never asked.
      *
      * testTheOnlyPresetsExemptFromTheCalendarAreOnesItDoesNotHave keeps this
      * honest — an entry added here to silence a real divergence fails there.
@@ -280,75 +281,57 @@ final class MobileAppsReportTest extends TestCase
     }
 
     /**
-     * grab_timeframe() answers an unknown preset with *today* rather than
-     * failing, so an exemption is indistinguishable from a preset it simply
-     * disagrees about — which makes the exemption list a place a real
-     * divergence could be parked. Each entry has to earn its place by
-     * actually being unknown over there.
+     * The click calendar is ReportWindow: grab_timeframe(), which every
+     * click report reads its window from, resolves each named range with
+     * it. It refuses a name it does not offer, so each exemption has to earn
+     * its place by being refused there.
      */
     public function testTheOnlyPresetsExemptFromTheCalendarAreOnesItDoesNotHave(): void
     {
-        require_once dirname(__DIR__, 2) . '/202-config/functions-timeframe.php';
-        $previous = date_default_timezone_get();
-        date_default_timezone_set('UTC');
-        try {
-            foreach (self::PRESETS_THE_CLICK_CALENDAR_LACKS as $range) {
-                self::assertArrayHasKey(
-                    $range,
-                    MobileAppsReportController::RANGES,
-                    "'$range' is exempted from a comparison for a preset this report does not offer"
-                );
-                do {
-                    $day = gmdate('Y-m-d');
-                    $window = grab_timeframe($range);
-                    $today = grab_timeframe('today');
-                } while ($day !== gmdate('Y-m-d'));
-                self::assertSame(
-                    [$today['from'], $today['to']],
-                    [$window['from'], $window['to']],
-                    "grab_timeframe() knows '$range' after all, so it must be compared rather than exempted"
-                );
+        foreach (self::PRESETS_THE_CLICK_CALENDAR_LACKS as $range) {
+            self::assertArrayHasKey(
+                $range,
+                MobileAppsReportController::RANGES,
+                "'$range' is exempted from a comparison for a preset this report does not offer"
+            );
+            try {
+                ReportWindow::preset($range, 'UTC', self::NOW);
+                self::fail("the click calendar knows '$range' after all, so it must be compared rather than exempted");
+            } catch (\InvalidArgumentException) {
+                // Not one of the calendar's.
             }
-        } finally {
-            date_default_timezone_set($previous);
         }
     }
 
     /**
+     * Executed against the click calendar, not reasoned about from the
+     * labels. They were named identically and resolved differently — 'Last 7
+     * Days' was 7 days here and 8 on every click report — so one label meant
+     * two windows and a reconciliation looked like missing postbacks. Both
+     * are UTC here, which is the one difference the page states outright.
+     *
+     * Compared up to the instant: what either window can hold is what has
+     * arrived by then. This Month runs to the last day of the month here and
+     * to the end of today on the calendar, which hold the same postbacks and
+     * clicks. These cases used to compare with a second grab_timeframe() in
+     * 202-config/functions-timeframe.php that no page loaded — its This
+     * Month ran to the month's end — and the comment on this report's
+     * This Month still says the calendar's does.
+     *
      * @dataProvider calendarPresets
      */
     public function testEachPresetIsTheSameWindowTheClickCalendarMeans(string $range): void
     {
-        // Executed against the other implementation, not reasoned about from
-        // the labels. They were named identically and resolved differently —
-        // 'Last 7 Days' was 7 days here and 8 on every click report, and
-        // 'This Month' stopped at today instead of the end of the month — so
-        // one label meant two windows and a reconciliation looked like
-        // missing postbacks. Both are UTC here, which is the one difference
-        // the page states outright.
-        require_once dirname(__DIR__, 2) . '/202-config/functions-timeframe.php';
-        $previous = date_default_timezone_get();
-        date_default_timezone_set('UTC');
-        try {
-            // One clock for both. grab_timeframe() reads the real one and
-            // takes no argument, so this case is the one that cannot use the
-            // fixed instant the rest of the file does; the day is re-read
-            // afterwards so a run that straddles midnight retries rather than
-            // reporting a difference that is only the calendar turning over.
-            do {
-                $day = gmdate('Y-m-d');
-                $now = time();
-                $calendar = grab_timeframe($range);
-                $mine = MobileAppsReportController::resolveWindow($range, '', '', $now);
-            } while ($day !== gmdate('Y-m-d'));
-        } finally {
-            date_default_timezone_set($previous);
+        // The awkward instant, and one in the middle of a month.
+        foreach ([self::NOW, self::NOW + 16 * self::DAY + 15 * 3600] as $now) {
+            $held = static fn (array $w): string => gmdate('Y-m-d H:i:s', (int) $w['from'])
+                . ' .. ' . gmdate('Y-m-d H:i:s', min((int) $w['to'], $now));
+            self::assertSame(
+                $held(ReportWindow::preset($range, 'UTC', $now)),
+                $held(MobileAppsReportController::resolveWindow($range, '', '', $now)),
+                "the click calendar and this report must mean the same thing by '$range' at " . gmdate('Y-m-d H:i', $now)
+            );
         }
-        self::assertSame(
-            gmdate('Y-m-d H:i:s', $calendar['from']) . ' .. ' . gmdate('Y-m-d H:i:s', $calendar['to']),
-            gmdate('Y-m-d H:i:s', $mine['from']) . ' .. ' . gmdate('Y-m-d H:i:s', $mine['to']),
-            "the click calendar and this report must mean the same thing by '$range'"
-        );
     }
 
     public function testNoTwoPresetsResolveToTheSameWindow(): void
