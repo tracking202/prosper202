@@ -63,6 +63,11 @@ if (!$tracker_row) {
 	die();
 }
 
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this landing page's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
+
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ?? '0'));
 $user_sql = "SELECT 		user_timezone,
@@ -438,9 +443,8 @@ $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
 // p202lpid the landing page's script sends, a signed customer id — linked
 // after the click is stored; nothing when consent is withheld or the
 // campaign's identity capture is off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
 	// Minted only when the landing page is on the tracker's own site; a
 	// cross-site script request links by the page's p202lpid instead.
@@ -499,12 +503,14 @@ header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 (function () {
 
-var subid =<?php echo json_encode((string) $click_id); ?>;
-createCookie('tracking202subid',subid,0);
-
-var outbound = <?php echo json_encode((string) $outbound_site_url); ?>;
-createCookie('tracking202outbound',outbound,0);
-
-<?php echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id); ?>
+<?php
+// The click cookies on the landing page's own site: none for a visitor the
+// privacy setting holds back (p202ClickCookieJs()).
+echo p202ClickCookieJs([
+    'tracking202subid' => (string) $click_id,
+    'tracking202outbound' => (string) $outbound_site_url,
+]);
+echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id, trackingEnabled());
+?>
 
 }());

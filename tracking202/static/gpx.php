@@ -37,7 +37,10 @@ if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
 } else { // nothing named a click: fall back to this address's last click
             // The visitor's last click by the address the click path stored
-            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
+            // first account's clicks, stored under its setting, which is the
+            // install's (p202ApplyOwnerPrivacy()).
+            p202ApplyOwnerPrivacy($mysql['user_id']);
             $daysago = time() - 2592000; // 30 days ago
             $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
                 new \Prosper202\Database\Connection($db),
@@ -130,6 +133,9 @@ if (is_numeric($mysql['click_id'])) {
 		// Atomic + idempotent: locks the click, dedupes on transaction id, and
 		// applies the click update and conversion_logs insert in one transaction.
 		$conversionResult = ['conv_id' => 0, 'duplicate' => false];
+        // The conversion keeps the address under the setting of the click's
+        // account (p202ApplyOwnerPrivacy()).
+        p202ApplyOwnerPrivacy($cpa_row['user_id'] ?? null);
 		try {
 		$conversionResult = p202RecordConversion(
 			$db,

@@ -294,9 +294,18 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
      * or anything fails — the beacon response must never break.
      *
      * @param array<string,mixed> $get The beacon's $_GET (carries c1-c4/cust).
+     * @param bool $cookiesAllowed false for a visitor the privacy setting
+     *        holds back (trackingEnabled()): the engagement is still stamped,
+     *        and no token is minted, since no cookie may carry it. It was
+     *        minted and set under every setting.
      */
-    function p202MintPersonalizationCookieJs(mysqli $db, int $userId, array $get, int $clickId): string
-    {
+    function p202MintPersonalizationCookieJs(
+        mysqli $db,
+        int $userId,
+        array $get,
+        int $clickId,
+        bool $cookiesAllowed = true
+    ): string {
         try {
             $conn = new \Prosper202\Database\Connection($db);
             $repo = new \Prosper202\Ltv\MysqlPersonalizationRepository($conn);
@@ -326,7 +335,9 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
 
             // An empty allowlist only turns PERSONALIZATION off — the ABM
             // stamping above must still run, so this gate sits between them.
-            if ($repo->allowedFields($userId) === []) {
+            // So does privacy: a visitor held back gets no cookie to carry a
+            // token in.
+            if (!$cookiesAllowed || $repo->allowedFields($userId) === []) {
                 return '';
             }
 

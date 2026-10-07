@@ -41,6 +41,9 @@ else if ($db) { //if not find the list clicks id of the ip within a 30 day range
     // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
     // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
+    // The lookup is among the first account's clicks, stored under its
+    // setting, which is the install's (p202ApplyOwnerPrivacy()).
+    p202ApplyOwnerPrivacy($mysql['user_id']);
     $daysago = time() - 86400; // 24 hours
     // The visitor's last click by the address the click path stored
     // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
@@ -381,6 +384,10 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $mysql['landing_page_id'] = $db->real_escape_string((string)$info_row['landing_page_id']);
 $mysql['user_id'] = $db->real_escape_string((string)$info_row['user_id']);
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($info_row['user_id'] ?? null);
 
 // set timezone correctly
 $user_sql = "SELECT user_timezone FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";

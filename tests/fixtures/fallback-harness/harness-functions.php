@@ -65,6 +65,12 @@ function p202NoStore(): void
 {
 }
 
+// dl.php and off.php put the link owner's privacy setting in force before
+// they store an address or set a cookie; nothing here does either.
+function p202ApplyOwnerPrivacy($ownerId): void
+{
+}
+
 // The address off.php looks a cookie-less visitor's last click up by. Empty:
 // LastClickFromAddress then answers "no click" without a query, which is what
 // this harness's reads answer anyway (its mysqli never connects).

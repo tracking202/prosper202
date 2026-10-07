@@ -251,6 +251,11 @@ if (!$tracker_row) {
 	);
 }
 
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this tracker's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
+
 // The URL a MySQL outage redirects to (read above): kept equal to the
 // campaign's current URL, not the one it had at its first click.
 if ($memcacheWorking) {
@@ -529,9 +534,8 @@ if ($cloaking_on === true) {
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
 // A tracker with no campaign has NULL there, which leaves capture on (the
 // column's default); anything but '1' or '0' reads as off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(
 		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
 	)

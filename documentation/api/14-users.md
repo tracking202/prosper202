@@ -114,7 +114,12 @@ Which visitors are held back: no tracking cookies, and their address stored
 masked — an IPv4 address keeps its /24 (`203.0.113.0`), an IPv6 one its /48.
 That covers every row that keeps a visitor's address: the click, the
 conversion's `ip`, the app intakes' `remote_ip` (Android installs and Apple
-postbacks), and the error log the click path writes.
+postbacks), and the error log the click path writes. And every cookie the
+tracking links set: the click cookies on the tracker's site, the ones the
+landing-page script sets on your page (`tracking202subid`,
+`tracking202outbound`, `tracking202pci` and the personalization token), and
+the `p202vid` visitor cookie, which a visitor held back is neither given nor
+read for (see [Visitor identity](../features/visitor-identity.md)).
 
 - `disabled`: nobody.
 - `all`: every visitor.
@@ -129,11 +134,14 @@ postbacks), and the error log the click path writes.
   have laws of the same shape, and masking more costs a report precision,
   never a visitor privacy.
 
-Which setting applies: tracking links read the first account's setting (the
-install's, user 1). The app intakes apply the stricter of the install's and
-the setting of the account that owns the app — an unregistered app's postback
-answers to the install's alone — and a value they cannot read counts as
-`all`.
+Which setting applies: the stricter of the install's (the first account's,
+user 1) and the setting of the account the visitor's click belongs to — the
+account that owns the tracker, landing page, campaign or click the request
+names, and for the app intakes the account that owns the app (an
+unregistered app's postback answers to the install's alone). A value that
+cannot be read counts as `all`. Tracking links read the install's alone
+before this release, so an account's own setting held back nobody unless the
+install's did too.
 
 What the mask changes downstream. The duplicate-click filter remembers
 addresses for a day, and under privacy it can only remember the masked one,

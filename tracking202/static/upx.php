@@ -30,7 +30,10 @@ if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
 } else { // nothing named a click: fall back to this address's last click
             // The visitor's last click by the address the click path stored
-            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
+            // first account's clicks, stored under its setting, which is the
+            // install's (p202ApplyOwnerPrivacy()).
+            p202ApplyOwnerPrivacy($mysql['user_id']);
             $daysago = time() - 2592000; // 30 days ago
             $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
                 new \Prosper202\Database\Connection($db),
@@ -102,6 +105,10 @@ $cvar_sql_row = $cvar_sql_result ? $cvar_sql_result->fetch_assoc() : null;
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the conversion stores the address.
+p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string) ($cvar_sql_row['c2'] ?? ''));
