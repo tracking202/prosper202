@@ -358,7 +358,10 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertSame(2, $preview['data']['would_record']);
         $this->assertSame(3, $preview['data']['skipped']);
         $this->assertSame([['click_id' => $one, 'total' => '3.75000']], $preview['data']['totals'], 'a subid on several lines earns their sum, at the ledger\'s five decimals');
-        $this->assertSame(['header', 'would_record', 'would_record', 'skipped', 'skipped', 'skipped'], array_column($preview['data']['lines'], 'status'));
+        // The lines not recorded are listed, as the page lists them; the
+        // recorded ones are counted and summed per click.
+        $this->assertSame([1, 4, 5, 6], array_column($preview['data']['lines'], 'line'));
+        $this->assertSame(['header', 'skipped', 'skipped', 'skipped'], array_column($preview['data']['lines'], 'status'));
         $this->assertNull($preview['data']['batch_id']);
         $this->assertSame(0, (int) $this->click($one)['click_lead'], 'a dry run writes nothing');
 

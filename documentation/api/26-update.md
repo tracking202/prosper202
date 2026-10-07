@@ -212,8 +212,6 @@ curl -X POST "$P202/api/v3/conversions/uploads" -H "Authorization: Bearer $KEY" 
     "totals": [{"click_id": 940001, "total": "3.75000"}],
     "lines": [
       {"line": 1, "subid": "Sub ID", "amount": "Commission", "status": "header", "reason": "read as the header row (not a subid)"},
-      {"line": 2, "subid": "940001", "amount": "1.50000", "status": "recorded", "reason": ""},
-      {"line": 3, "subid": "940001", "amount": "2.25000", "status": "recorded", "reason": ""},
       {"line": 4, "subid": "940002", "amount": "abc", "status": "skipped", "reason": "the commission is not a number"}
     ]
   }
@@ -226,9 +224,11 @@ curl -X POST "$P202/api/v3/conversions/uploads" -H "Authorization: Bearer $KEY" 
 | `file_name` | string | The name the batch is listed under (default `api-upload.csv`) |
 | `subid_column`, `amount_column` | integer or string | The column by 0-based index, or by header (case ignored). Either may be left out when the header names it plainly — subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission: `commission`, `payout`, `revenue`, `amount`, `earning`, `sale`, `income` — and `columns.guessed` says which were |
 
-Every line is reported: `recorded` (`would_record` in a dry run), `skipped`
-with the reason (not a subid, the commission is not a number, no click with
-this subid in your account), or `header` (line 1 when its subid cell is not a
+Every line is accounted for, as the page accounts for it: `recorded`
+(`would_record` in a dry run) counts the recorded lines and `totals` sums them
+per click, and `lines` lists each line that was not recorded — `skipped` with
+the reason (not a subid, the commission is not a number, no click with this
+subid in your account), or `header` (line 1 when its subid cell is not a
 click id). Amounts may carry `$`, thousands separators and spaces. A header
 name that matches no column or more than one, an index past the header, and
 the same column for both are `422`s that list the header's columns.

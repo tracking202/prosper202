@@ -360,7 +360,7 @@ final class UpdateController
                     'skipped' => $preview['skipped'],
                     'columns' => $columns,
                     'totals' => self::totals($preview['totals']),
-                    'lines' => $preview['lines'],
+                    'lines' => self::unrecorded($preview['lines']),
                 ]];
             }
 
@@ -387,8 +387,25 @@ final class UpdateController
             'skipped' => $import['skipped'],
             'columns' => $columns,
             'totals' => self::totals($import['totals']),
-            'lines' => $import['lines'],
+            'lines' => self::unrecorded($import['lines']),
         ]];
+    }
+
+    /**
+     * The lines of a report that were not recorded — the header, and each
+     * skipped line with its reason — as the page lists them. A recorded line
+     * is in `recorded` and in its click's sum in `totals`; listing every one
+     * as well made a 440,000-line report answer about 48 MB.
+     *
+     * @param list<array<string, mixed>> $lines
+     * @return list<array<string, mixed>>
+     */
+    private static function unrecorded(array $lines): array
+    {
+        return array_values(array_filter(
+            $lines,
+            static fn (array $line): bool => $line['status'] !== RevenueUploadImporter::RECORDED && $line['status'] !== RevenueUploadImporter::WOULD_RECORD
+        ));
     }
 
     // ─── Reading the request ────────────────────────────────────────────

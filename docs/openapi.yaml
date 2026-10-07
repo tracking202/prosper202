@@ -1514,8 +1514,10 @@ paths:
         `commission`, `payout`, `revenue`, `amount`, `earning`, `sale`,
         `income`), and `columns.guessed` says which were. The first line is
         read as the header when its subid cell is not a click id. Every line
-        is reported: `recorded` (`would_record`), `skipped` with the reason,
-        or `header`.
+        is accounted for, as the page accounts for it: `recorded`
+        (`would_record`) counts the recorded lines and `totals` sums them per
+        click, and `lines` lists each line that was not recorded — `skipped`
+        with the reason, or the `header`.
 
         Needs `access_to_update_section` and `conversions:write`. The body
         may be up to 8 MB (every other route takes 1 MB). Not stageable.
@@ -9613,13 +9615,14 @@ components:
                   total: {type: string, example: "3.75000"}
             lines:
               type: array
+              description: The lines not recorded (skipped, or the header); the recorded ones are in the counts and `totals`.
               items:
                 type: object
                 properties:
                   line: {type: integer, description: "The CSV record's number, the header being 1."}
                   subid: {type: string}
                   amount: {type: string}
-                  status: {type: string, enum: [recorded, would_record, skipped, header]}
+                  status: {type: string, enum: [skipped, header]}
                   reason: {type: string, description: "Why a line was skipped (or read as the header)."}
 
     ConversionCreate:
