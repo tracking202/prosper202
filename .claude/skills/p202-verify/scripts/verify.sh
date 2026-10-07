@@ -288,6 +288,13 @@ run_syntax() {
 # classes come from vendor, so nothing in an unchanged file can have been
 # broken by the change; the same text in a changed or new file is the
 # change's to answer for.
+#
+# PHPStan also prints each of those errors a second time, as a top-level
+# "Error message "…" cannot be ignored, use excludePaths instead." (the
+# config's ignore entries name them, and class.notFound cannot be ignored).
+# Counted as findings, those echoes put "5 other" on every partial-vendor run,
+# which teaches the reader to skip the number. An echo is environmental when
+# the error it quotes was; an echo of anything else is still a finding.
 phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, newline separated; prints "ENV OTHER"
     CHANGED="$2" php -r '
         $j = json_decode(stream_get_contents(STDIN), true);
@@ -298,16 +305,29 @@ phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, new
             }
             return false;
         };
-        $env = 0; $other = 0;
+        $env = 0; $other = 0; $envMessages = [];
         foreach (($j["files"] ?? []) as $path => $f) {
-            foreach (($f["messages"] ?? []) as $m) {
+            $messages = $f["messages"] ?? [];
+            $symfonyParentMissing = false;
+            foreach ($messages as $m) {
                 $isEnv = !$isChanged((string) $path)
                     && preg_match("#(^|/)cli/#", (string) $path)
                     && preg_match("/unknown class Symfony\\\\|Symfony\\\\[A-Za-z\\\\]+ not found/", (string) ($m["message"] ?? ""));
+                if ($isEnv) { $env++; $envMessages[] = (string) $m["message"]; $symfonyParentMissing = true; }
+            }
+            foreach ($messages as $m) {
+                if (in_array((string) ($m["message"] ?? ""), $envMessages, true)) { continue; }
+                // #[\Override] on a method of a class whose Symfony parent never
+                // arrived overrides nothing PHPStan can see: the same missing
+                // class, in the same unchanged file.
+                $isEnv = $symfonyParentMissing && ($m["identifier"] ?? "") === "method.override";
                 if ($isEnv) { $env++; } else { $other++; }
             }
         }
-        $other += count($j["errors"] ?? []);
+        foreach (($j["errors"] ?? []) as $e) {
+            $echo = preg_match("/^Error message \"(.*)\" cannot be ignored, use excludePaths instead\\.$/s", (string) $e, $q) === 1;
+            if ($echo && in_array($q[1], $envMessages, true)) { $env++; } else { $other++; }
+        }
         echo $env, " ", $other;
     ' <<< "$1" 2>/dev/null || echo "? ?"
 }
@@ -339,7 +359,7 @@ run_phpstan() {
         split=$(phpstan_partial_vendor_split "$json" "$(changed_php_files)")
         env=${split%% *}; other=${split##* }
         if [ "$env" != "?" ] && [ "$other" -eq 0 ] && [ "$env" -gt 0 ]; then
-            COULD_NOT_RUN_REASON="$env class.notFound errors, all Symfony classes under cli/ that this partial vendor never delivered, and no other findings; see references/sandbox-recovery.md"
+            COULD_NOT_RUN_REASON="$env errors, all Symfony classes under cli/ that this partial vendor never delivered (and PHPStan's notices that it cannot ignore them), and no other findings; see references/sandbox-recovery.md"
             return $TIER_COULD_NOT_RUN
         fi
         if [ "$env" != "?" ] && [ "$env" -gt 0 ]; then
