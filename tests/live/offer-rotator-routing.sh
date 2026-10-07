@@ -173,5 +173,59 @@ for _ in 1 2; do offrtr "$OTHER" default; done
 eq "$(where default)" "$U/default" "a click no rule matched still goes to the default's landing page"
 eq "$(recorded default)" "0/0" "and records no redirect"
 
+# lpclick UA XFF — a landing-page click; prints "click-id public-id".
+lpclick() {
+    local body
+    body=$(curl -sS -A "$1" -H "X-Forwarded-For: $2" "$BASE/tracking202/static/record_adv.php?lpip=$LPIP&t202kw=or-pass")
+    printf '%s %s\n' "$(printf '%s' "$body" | grep -oE 'var subid =[^;]*' | grep -oE '[0-9]+' | head -1)" \
+      "$(printf '%s' "$body" | grep -oE 'var pci = [^;]*' | grep -oE '[0-9]+' | head -1)"
+}
+
+say "off.php takes the click the request names, not the address's last one"
+# Two clicks from one address; the visitor leaves with the first one's public
+# id and no subid cookie (a visitor the privacy setting holds back has none).
+# The address guess replaced the named click with the address's last one.
+read -r A_ID A_PCI < <(lpclick "$OTHER" 203.0.113.91)
+read -r B_ID _ < <(lpclick "$OTHER" 203.0.113.91)
+[ -n "$A_PCI" ] && [ -n "$B_ID" ] || { echo "the landing page recorded no clicks" >&2; exit 2; }
+ACIP=$(Q "SELECT aff_campaign_id_public FROM 202_aff_campaigns WHERE aff_campaign_id=$CA")
+curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.91" "$BASE/tracking202/redirect/off.php?acip=$ACIP&pci=$A_PCI"
+eq "$(Q "SELECT CONCAT(click_out, '/', (SELECT click_out FROM 202_clicks_record WHERE click_id=$B_ID)) FROM 202_clicks_record WHERE click_id=$A_ID")" "1/0" \
+  "the named click goes out, and the address's last click does not"
+
+say "another account's offer or rotator does not take a click"
+# The offer (acip) or the rotator (rpi) and the click (pci, or the subid
+# cookie) are named separately; each script then moves the click into that
+# campaign or rotator. Another account's must not: a click id is a
+# sequential number and a public id is one between two random digits.
+OTHER_ACCOUNT=$(Q "SELECT user_id FROM 202_users WHERE user_id <> 1 AND user_deleted = 0 ORDER BY user_id LIMIT 1")
+if [ -z "$OTHER_ACCOUNT" ]; then
+    must "$(api POST /users "{\"user_name\":\"or$(date +%s)\",\"user_email\":\"or$(date +%s)@example.com\",\"user_pass\":\"or-pass-$(date +%s)\"}")" "a second account"
+    OTHER_ACCOUNT=$(field "d['data']['user_id']")
+fi
+FOREIGN_ACIP=$((970000000 + RANDOM))
+Q "INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5, aff_campaign_payout, aff_campaign_cloaking, aff_campaign_time, aff_campaign_rotate, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals) SELECT $FOREIGN_ACIP, $OTHER_ACCOUNT, aff_network_id, '$TAG foreign', '$U/foreign', '', '', '', '', 99, 0, aff_campaign_time, 0, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id=$CA"
+FOREIGN_CA=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$FOREIGN_ACIP")
+FOREIGN_RPI=$((970000000 + RANDOM))
+Q "INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer) VALUES ($FOREIGN_RPI, $OTHER_ACCOUNT, '$TAG foreign', '$U/foreign-rotator', $FOREIGN_CA, NULL, NULL)"
+FOREIGN_RT=$(Q "SELECT id FROM 202_rotators WHERE public_id=$FOREIGN_RPI")
+[ -n "$FOREIGN_CA" ] && [ -n "$FOREIGN_RT" ] || { echo "the other account's campaign and rotator were not stored" >&2; exit 2; }
+read -r C_ID C_PCI < <(lpclick "$OTHER" 203.0.113.92)
+# An advanced landing page's click has no campaign until an offer is chosen.
+C_BEFORE=$(Q "SELECT CONCAT(aff_campaign_id, '/', click_payout) FROM 202_clicks WHERE click_id=$C_ID")
+location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" \
+  "$BASE/tracking202/redirect/off.php?acip=$FOREIGN_ACIP&pci=$C_PCI")
+eq "${location:-none}" "none" "off.php sends no one to another account's offer with this click"
+location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" \
+  -b "tracking202subid=$C_ID" "$BASE/tracking202/redirect/offrtr.php?rpi=$FOREIGN_RPI")
+eq "${location:-none}" "none" "offrtr.php sends no one through another account's rotator with this click"
+eq "$(Q "SELECT CONCAT(c.aff_campaign_id, '/', c.click_payout, ' ', c.rotator_id, '/', (SELECT COUNT(*) FROM 202_clicks_rotator WHERE click_id=$C_ID)) FROM 202_clicks c WHERE c.click_id=$C_ID")" "$C_BEFORE 0/0" \
+  "and the click keeps its campaign and payout, with no rotator"
+# The same click through this account's own offer still goes out (the
+# refusal above is about the account, not the click).
+curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" "$BASE/tracking202/redirect/off.php?acip=$ACIP&pci=$C_PCI"
+eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$C_ID")" "1" "its own account's offer takes it"
+Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

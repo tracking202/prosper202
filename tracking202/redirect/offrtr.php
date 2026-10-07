@@ -32,6 +32,7 @@ $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
 $rotator_sql = "SELECT
 					   rt.id,
+					   rt.user_id,
 					   rt.default_url,
 					   rt.default_campaign,
 					   rt.default_lp,
@@ -55,6 +56,17 @@ $rotator_sql = "SELECT
 				WHERE   rt.public_id='".$mysql['rpi']."'"; 
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
+
+// The click the cookie names must be one of the rotator's account's. The
+// cookie is the visitor's to set and a click id is a sequential number, and
+// everything below writes to that click (its rotator, its rule, its
+// campaign and payout): any click on the install was moved into any
+// account's rotator (CLAUDE.md #27). Another account's click, or none, is
+// refused as an unknown rotator is.
+$offrtrClickOwner = p202ClickOwner((int) $cookieClickId);
+if ($offrtrClickOwner === null || $offrtrClickOwner['user_id'] !== (int) ($rotator_row['user_id'] ?? 0)) {
+	die();
+}
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 $rule_sql = "SELECT ru.id as rule_id

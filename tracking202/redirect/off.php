@@ -16,7 +16,7 @@ $acip = $_GET['acip'] ?? '';
 require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 $pci = '';
 if (isset($_GET['pci']))
-    $pci = $_GET['pci'];
+    $pci = is_string($_GET['pci']) ? $_GET['pci'] : '';
 elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null)
     $pci = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci');
 
@@ -37,7 +37,13 @@ if(getCookie202('tracking202subid') !== null) { //if there's a cookie use it
     $click_id = getCookie202('tracking202subid');
 }
 
-else if ($db) { //if not find the list clicks id of the ip within a 30 day range
+// Nothing named the click: the visitor's last click by address. Only then —
+// a click the request names (?pci=, or the pci cookie) is the one below
+// resolves; this guess replaced it whenever the subid cookie was missing,
+// which is every visitor the privacy setting holds back (no cookies), and
+// their stored address is masked, so the guess was another visitor's click
+// in the same /24, or none.
+else if ($db && $pci === '') {
     // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
     // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
@@ -248,7 +254,15 @@ $info_sql = "
 	WHERE
 		2ac.aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
 		AND 2cr.click_id_public='" . $mysql['click_id_public'] . "'
+		AND 2ac.user_id = 2c.user_id
 ";
+// The offer and the click are named separately (an advanced landing page
+// lets the visitor choose among the account's offers, so the campaign may
+// differ from the click's), and the click is then moved into the offer's
+// campaign at its payout. Nothing tied the two to one account: any
+// account's acip moved any click, whose public id is its id between two
+// random digits, into that account's campaign (CLAUDE.md #27). Another
+// account's campaign now names no row, the unknown-pair path below.
 
 $info_row = memcache_mysql_fetch_assoc($db, $info_sql);
 

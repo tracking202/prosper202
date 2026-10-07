@@ -946,6 +946,16 @@ the second row is, and whether anything the answer decides — a name, a
 payout, a setting, which rows a bulk write touches — would differ if it were
 someone else's.
 
+The tracking path has a fourth shape the floor does not model: a request
+that names two records *independently* — an offer and a click (`off.php`'s
+`acip` and `pci`), a rotator and a click (`offrtr.php`'s `rpi` and the
+subid cookie) — and then writes one into the other. Neither row is the
+driving row of the other; each was looked up by its own public id, so no
+join exists to tie. Measured: any account's `acip` or `rpi` moved any
+click, named by a sequential id or a public id two random digits wide,
+into that account's campaign at its payout, or its rotator. When a script
+takes two ids from one request, compare their owners before the write.
+
 Tying a join is not the end of the change: the joined row is now NULL where
 it used to be another account's, and every consumer of the joined columns
 has to be read for what NULL does there. Measured in the legacy pages'

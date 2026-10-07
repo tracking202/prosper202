@@ -281,7 +281,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'tracking202/redirect/off.php' => [
             'no user_id tie | 202_clicks | fc.click_id = `2cr`.click_id' => self::SAME_CLICK,
-            'no user_id tie | 202_clicks | `2c`.click_id = `2cr`.click_id' => self::SAME_CLICK,
             'no user_id tie | 202_clicks_spy | `2c`.click_id = `2cs`.click_id' => self::SAME_CLICK,
         ],
         'tracking202/redirect/offrtr.php' => [
