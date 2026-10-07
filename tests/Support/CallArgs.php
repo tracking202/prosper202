@@ -24,7 +24,7 @@ final class CallArgs
      * backslash ignored).
      *
      * @param list<string> $names
-     * @return list<array{line: int, name: string, operator: string, args: list<list<mixed>>}>
+     * @return list<array{line: int, name: string, operator: string, receiver: string, args: list<list<mixed>>}>
      */
     public static function calls(string $source, array $names): array
     {
@@ -53,6 +53,9 @@ final class CallArgs
                 'line' => $t[2],
                 'name' => strtolower(ltrim($t[1], '\\')),
                 'operator' => $operator,
+                // For `Class::name(`, the class as written (a variable or
+                // expression receiver is not read).
+                'receiver' => $operator === '::' && is_array($tokens[$i - 2] ?? null) ? $tokens[$i - 2][1] : '',
                 'args' => self::split(array_slice($tokens, $i + 2, $close - $i - 2)),
             ];
         }

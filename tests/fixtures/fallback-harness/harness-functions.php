@@ -64,3 +64,11 @@ function setPrePopVars($vars, $url, $encode)
 function p202NoStore(): void
 {
 }
+
+// The address off.php looks a cookie-less visitor's last click up by. Empty:
+// LastClickFromAddress then answers "no click" without a query, which is what
+// this harness's reads answer anyway (its mysqli never connects).
+function p202StoredVisitorIp(): string
+{
+    return '';
+}

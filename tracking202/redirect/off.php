@@ -39,24 +39,15 @@ else if ($db) { //if not find the list clicks id of the ip within a 30 day range
     // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
     // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
-    $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
     $daysago = time() - 86400; // 24 hours
-    $click_sql1 = "	SELECT 	202_clicks.click_id,ppc_account_id,click_id_public 
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id)
-                    LEFT JOIN	202_clicks_record USING (click_id)
-					WHERE 	202_ips.ip_address='".$mysql['ip_address']."'
-					AND		202_clicks.user_id='".$mysql['user_id']."'
-					AND		202_clicks.click_time >= '".$daysago."'
-					ORDER BY 	202_clicks.click_id DESC
-					LIMIT 		1";
-
-    $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-    // No matching click within the window yields zero rows; guard so a null row
-    // doesn't trigger array-offset-on-null warnings/empty values downstream.
-    $click_row1 = ($click_result1 instanceof mysqli_result) ? $click_result1->fetch_assoc() : null;
-    $click_row1 = $click_row1 ?: [];
+    // The visitor's last click by the address the click path stored
+    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+        new \Prosper202\Database\Connection($db),
+        p202StoredVisitorIp(),
+        (int) $mysql['user_id'],
+        $daysago
+    ) ?? [];
     $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
     $click_id = $mysql['click_id'];
     $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));

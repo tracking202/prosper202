@@ -584,18 +584,15 @@ $mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 
 if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
-	$click_sql1 = "	SELECT 	202_clicks.click_id,keyword,keyword_id
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					LEFT JOIN 	202_keywords USING (keyword_id) 
-					WHERE 	202_ips.ip_address='".$ip_address."'
-					AND		202_clicks.user_id='".$user_id."'  
-					AND		202_clicks.click_time >= '30'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1 ? $click_result1->fetch_assoc() : null;
+	// The visitor's last click by the address the click path stored
+	// (p202StoredVisitorIp). The window is unchanged: click_time >= 30, i.e.
+	// any time, as the query has always read it.
+	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+		new \Prosper202\Database\Connection($db),
+		p202StoredVisitorIp(),
+		(int) $user_id,
+		30
+	);
 
 	if ($click_row1 && !empty($click_row1['click_id'])) {
 		// Set the bare $click_id too, not just the escaped copy: it is read at
