@@ -22,7 +22,9 @@ if(isset($vars[1])){
 $_GET['pci']=$vars[1];
 $expire = time() + 2592000;
 @setcookie('tracking202subid',$vars[0], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
-@setcookie('tracking202subid_a_' . $vars[2],$vars[0], ['expires' => $expire, 'path' => '', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
+// Path '/', like every click cookie: an empty path defaults to this
+// script's directory, and the pixels under /tracking202/static/ never saw it.
+@setcookie('tracking202subid_a_' . $vars[2],$vars[0], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 @setcookie('tracking202pci',$vars[1], ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 }
 $redirect_site_url='';
