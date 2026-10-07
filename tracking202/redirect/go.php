@@ -14,9 +14,11 @@ use Tracking202\Redirect\RedirectHelper;
 require_once __DIR__ . '/../Redirect/RedirectHelper.php';
 // CookieDomain, and RequestHost, which it reads the Host header through, for
 // the same reason: the cookies below are set before any bootstrap loads the
-// autoloader (GoPhpBeforeBootstrapTest runs this script without one).
+// autoloader (GoPhpBeforeBootstrapTest runs this script without one); and
+// ClickCookie, which reads the outbound cookie below.
 require_once __DIR__ . '/../../202-config/Http/RequestHost.php';
 require_once __DIR__ . '/../../202-config/Http/CookieDomain.php';
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 
 $vars = explode(' ', base64_decode((string) RedirectHelper::getStringParam('202v')));
 
@@ -34,8 +36,8 @@ $redirect_site_url='';
 
 // Simple LP redirect
 if (isset($_GET['lpip']) && is_numeric($_GET['lpip'])) {
-    if (isset($_COOKIE['tracking202outbound'])) {
-        $tracking202outbound = $_COOKIE['tracking202outbound'];
+    if (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound') !== null) {
+        $tracking202outbound = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound');
     } else {
         require_once substr(__DIR__, 0, -21) . '/tracking202/redirect/lp.php';
     }

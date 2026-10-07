@@ -303,9 +303,8 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
 
             // The beacon request hits the tracking domain, so the request
             // cookies are the tracker's own: the prior click's subid.
-            $cookieClickId = isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])
-                ? (int) $_COOKIE['tracking202subid']
-                : 0;
+            $cookieSubid = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
+            $cookieClickId = is_numeric($cookieSubid) ? (int) $cookieSubid : 0;
 
             // Engagement (ABM): whenever the visitor resolves to a known
             // customer — through any explicit signal — stamp this pageview's
@@ -620,9 +619,10 @@ if (!function_exists('p202ClickIdFromRequest')) {
             ['sid', $get['sid'] ?? null],
         ];
         if ($campaignId > 0) {
-            $places[] = ['tracking202subid_a_' . $campaignId, $cookies['tracking202subid_a_' . $campaignId] ?? null];
+            $campaignCookie = 'tracking202subid_a_' . $campaignId;
+            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie)];
         }
-        $places[] = ['tracking202subid', $cookies['tracking202subid'] ?? null];
+        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid')];
 
         foreach ($places as [$name, $value]) {
             if ($value === null || $value === '') {

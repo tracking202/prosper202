@@ -72,3 +72,9 @@ function p202StoredVisitorIp(): string
 {
     return '';
 }
+
+// connect2.php's click-cookie reader, as it is: the cookie or its -legacy twin.
+function getCookie202($cookieName)
+{
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
+}

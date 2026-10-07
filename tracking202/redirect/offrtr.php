@@ -8,8 +8,11 @@ ob_start();
 
 $urlvarslist = $_GET;
 $rpi = $_GET['rpi'];
+// The click cookie, or its -legacy twin (ClickCookie; the autoloader is not loaded yet).
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
+$cookieClickId = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
 
-if(!isset($_COOKIE['tracking202subid']) || !is_numeric($_COOKIE['tracking202subid']) || !isset($rpi) || !is_numeric($rpi)) { 
+if($cookieClickId === null || !is_numeric($cookieClickId) || !isset($rpi) || !is_numeric($rpi)) { 
     die();
 } 
 
@@ -24,7 +27,7 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
+$mysql['click_id'] = $db->real_escape_string((string) $cookieClickId);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
 $rotator_sql = "SELECT

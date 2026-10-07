@@ -12,11 +12,13 @@ $acip = $_GET['acip'] ?? '';
 
 
 // Creat blank #pci and save it with either a pci from the get var or the cookie
+// (or its -legacy twin: ClickCookie, loaded by hand, as the autoloader is not yet).
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 $pci = '';
 if (isset($_GET['pci']))
     $pci = $_GET['pci'];
-elseif (isset($_COOKIE['tracking202pci']))
-    $pci = $_COOKIE['tracking202pci'];
+elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null)
+    $pci = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci');
 
 if (! is_numeric($acip))
     die();
@@ -31,8 +33,8 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
-    $click_id = $_COOKIE['tracking202subid'];
+if(getCookie202('tracking202subid') !== null) { //if there's a cookie use it
+    $click_id = getCookie202('tracking202subid');
 }
 
 else if ($db) { //if not find the list clicks id of the ip within a 30 day range

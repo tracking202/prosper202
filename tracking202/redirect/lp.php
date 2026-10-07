@@ -163,7 +163,7 @@ $mysql['text_ad_id'] = $db->real_escape_string((string) $tracker_row['text_ad_id
 
 //now gather variables for the clicks record db
 //click_id is needed to build click_id_public below, so resolve it first
-$click_id = $_COOKIE['tracking202subid_a_'.$tracker_row['aff_campaign_id']] ?? '';
+$click_id = getCookie202('tracking202subid_a_'.$tracker_row['aff_campaign_id']) ?? '';
 //lets determine if cloaking is on
 $cloaking_on = false;
 if (($tracker_row['click_cloaking'] == 1) or //if tracker has overrided cloaking on

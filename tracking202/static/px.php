@@ -30,7 +30,7 @@ $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']
 // the IP fallback below is for a browser with no cookie, and behind a NAT it
 // would otherwise credit whichever of the owner's clicks last came from that
 // address to a request whose own identity was garbage.
-$cookie = isset($_COOKIE['tracking202subid']) ? (string) $_COOKIE['tracking202subid'] : '';
+$cookie = (string) (getCookie202('tracking202subid') ?? '');
 $click_id = 0;
 if ($cookie !== '') {
 	$click_id = p202ParseClickId($cookie) ?? 0;

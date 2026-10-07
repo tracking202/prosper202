@@ -3991,18 +3991,8 @@ function getUrlVars202(): array
     return $urlvarslist;
 }
 
+/** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */
 function getCookie202($cookieName)
 {
-    $cookieValue = null;
-    $legacyCookie = $cookieName . '-legacy';
-    // check new format
-    if (isset($_COOKIE[$cookieName])) {
-        $cookieValue = $_COOKIE[$cookieName];
-    } // if not found check legacy
-    else {
-        if (isset($_COOKIE[$legacyCookie])) {
-            $cookieValue = $_COOKIE[$legacyCookie];
-        }
-    }
-    return $cookieValue;
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
 }
