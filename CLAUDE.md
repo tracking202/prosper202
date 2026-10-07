@@ -1050,6 +1050,11 @@ where a check quietly fails to check what it appears to.
   (`goenv=$(go env GOENV); gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); rc=1; if tmp=$(mktemp -d); then if HOME="$tmp" GOENV="$goenv" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; then rc=0; else rc=$?; fi; rm -rf "$tmp"; fi; [ "$rc" -eq 0 ]`) before pushing anything that touches
   a command which builds a client. Flag validation belongs *before* the
   client is built anyway.
+  A reused scratch database is the same trap: `ClickFiltersIntegrationTest`
+  read the device types `ReportDepthIntegrationTest` had seeded an hour
+  earlier, passed here, and failed at setUp on CI's fresh one — the schema
+  installer creates that table empty. Run a new scratch-DB integration test
+  alone against a database created for the run before pushing it.
 
 </verify_assumptions>
 
