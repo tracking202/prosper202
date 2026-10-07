@@ -33,7 +33,7 @@ final class RolePermissionTest extends TestCase
     private const ROLE_MIDDLEWARE = '/requirePermission|requireAdmin|\$setupSection|\$setupRemove|\$updateSection|\$settingsPage|\$integrationsPage/';
 
     /** A handler whose first statement asks for one. */
-    private const ROLE_FIRST_STATEMENT = '/^\$(manage|view|setup)\(\);|^\$auth->require(Permission|Admin|MayManageUser|MayChangeRoles|MayDeleteUser|SelfOrMayManageUser|SelfOrAdmin)\(/';
+    private const ROLE_FIRST_STATEMENT = '/^\$(manage|view|setup)\(\);|^\$auth->require(Permission|Admin|MayManageUser|MayChangeRoles|MayDeleteUser|SelfOrMayManageUser|SelfOrAdmin|PersonalSettingsOf)\(/';
 
     /** Routes that pass their answer through $campaignFigures, and the key list they mask. */
     private const MASKED = [
