@@ -20,6 +20,9 @@ declare(strict_types=1);
 [$script, $file, $shape] = $argv + [null, null, 'db'];
 
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
+// record_mysql_error() logs the visitor's address through VisitorIp, which
+// the pages reach through connect.php's autoloader; this runner has none.
+require_once __DIR__ . '/../../../202-config/Http/VisitorIp.php';
 
 /** The source of `function record_mysql_error(...) { ... }` in $path. */
 function lift_record_mysql_error(string $path): string
