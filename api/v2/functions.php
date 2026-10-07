@@ -1,5 +1,21 @@
 <?php
 declare(strict_types=1);
+
+if (!function_exists('legacy_api_ratio')) {
+	/**
+	 * $a / $b times $scale, rounded; 0 when $b is zero or not a number. The
+	 * reports divided with @round($a / $b): since PHP 8 a zero divisor throws
+	 * DivisionByZeroError, which @ does not silence, so a row with no clicks
+	 * or no cost answered 500.
+	 */
+	function legacy_api_ratio(mixed $a, mixed $b, int $precision = 0, int|float $scale = 1): float
+	{
+		$num = is_numeric($a) ? (float) $a : 0.0;
+		$den = is_numeric($b) ? (float) $b : 0.0;
+
+		return $den == 0.0 ? 0.0 : round($num / $den * $scale, $precision);
+	}
+}
 function getAuth($db, $variables): mixed {
 	$mysql['api_key'] = $db->real_escape_string((string) ($variables['apikey'] ?? ''));
 	// Join 202_users so a soft-deleted user's key stops authenticating, exactly
@@ -196,15 +212,18 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	$total_net = 0.0;
 	$total_roi = 0.0;
 
-	$mysql['user_id'] = $db->real_escape_string($user);
-	$select_id = $db->real_escape_string($id);
-	$mysql['date_from'] = $db->real_escape_string($date_from);
-	$mysql['date_to'] = $db->real_escape_string($date_to);
-	$mysql['aff_campaign_id'] = $db->real_escape_string($cid);
-	$mysql['c1'] = $db->real_escape_string($c1);
-	$mysql['c2'] = $db->real_escape_string($c2);
-	$mysql['c3'] = $db->real_escape_string($c3);
-	$mysql['c4'] = $db->real_escape_string($c4);
+	// The timestamps are ints from mktime(), and cid and c1-c4 are null when
+	// not asked for: under strict types real_escape_string() threw on each,
+	// and every report request answered 500.
+	$mysql['user_id'] = (int) $user;
+	$select_id = $db->real_escape_string((string) $id);
+	$mysql['date_from'] = (int) $date_from;
+	$mysql['date_to'] = (int) $date_to;
+	$mysql['aff_campaign_id'] = $db->real_escape_string(is_scalar($cid) ? (string) $cid : '');
+	$mysql['c1'] = $db->real_escape_string(is_scalar($c1) ? (string) $c1 : '');
+	$mysql['c2'] = $db->real_escape_string(is_scalar($c2) ? (string) $c2 : '');
+	$mysql['c3'] = $db->real_escape_string(is_scalar($c3) ? (string) $c3 : '');
+	$mysql['c4'] = $db->real_escape_string(is_scalar($c4) ? (string) $c4 : '');
 
 	$report_sql = "SELECT *
 				FROM   	202_clicks AS 2c
@@ -341,9 +360,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//ctr rate
 					$ctr_ratio = 0;
-					$ctr_ratio = @round($click_throughs/$clicks*100,2);
+					$ctr_ratio = legacy_api_ratio($click_throughs, $clicks, 2, 100);
 
-					$total_ctr_ratio = @round($total_click_throughs/$total_clicks*100,2);
+					$total_ctr_ratio = legacy_api_ratio($total_click_throughs, $total_clicks, 2, 100);
 
 				//avg cpc and cost
 					$avg_cpc = 0;
@@ -353,7 +372,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$cost = $clicks * $avg_cpc;
 
 					$total_cost += $cost;
-					$total_avg_cpc = @round($total_cost/$total_clicks, 5);
+					$total_avg_cpc = legacy_api_ratio($total_cost, $total_clicks, 5);
 
 				//leads
 					$leads = 0;
@@ -363,9 +382,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//signup ratio
 					$su_ratio = 0;
-					$su_ratio = @round($leads/$clicks*100,2);
+					$su_ratio = legacy_api_ratio($leads, $clicks, 2, 100);
 
-					$total_su_ratio = @round($total_leads/$total_clicks*100,2);
+					$total_su_ratio = legacy_api_ratio($total_leads, $total_clicks, 2, 100);
 
 				//current payout
 					$payout = 0;
@@ -379,9 +398,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$total_income += $income;
 				//grab the EPC
 					$epc = 0;
-					$epc = @round($income/$clicks,2);
+					$epc = legacy_api_ratio($income, $clicks, 2);
 
-					$total_epc = $total_clicks > 0 ? round($total_income/$total_clicks,2) : 0;
+					$total_epc = legacy_api_ratio($total_income, $total_clicks, 2);
 
 				//net income
 					$net = 0;
@@ -391,9 +410,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//roi
 					$roi = 0;
-					$roi = @round($net/$cost*100);
+					$roi = legacy_api_ratio($net, $cost, 0, 100);
 
-					$total_roi = @round($total_net/$total_cost);
+					$total_roi = legacy_api_ratio($total_net, $total_cost, 0, 100); // a percentage, as each row's is (it was the bare ratio, so -50% read "-1%")
 
 			if ($name == "keyword") {
 				if(!$report_row['keyword']) $report_row[$name] = "[no keyword]";

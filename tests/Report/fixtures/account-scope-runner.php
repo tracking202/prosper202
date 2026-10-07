@@ -137,21 +137,12 @@ try {
     } elseif (preg_match('/^api-(v1|v2):(text_ads|landing_pages|get_data_for_wp)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
         // them. v1 and v2 declare the same functions: one version per
-        // process. The reports cannot run as the files stand: the endpoint
-        // hands its window to date() and real_escape_string() alike, which
-        // strict types make a TypeError whichever type it is (since
-        // f78e8c0, on every report request). So the file is loaded without
-        // its declare(strict_types=1) -- every other byte as written -- and
-        // the reports run the SQL they would run once that is repaired.
-        $source = file_get_contents($root . '/api/' . $m[1] . '/functions.php');
-        $loose = preg_replace('/declare\(strict_types=1\);/', '', (string) $source, 1, $declares);
-        if ($declares !== 1) {
-            throw new RuntimeException('the legacy API file no longer declares strict types: load it as it is');
-        }
-        $copy = tempnam(sys_get_temp_dir(), 'p202-legacy-api-');
-        file_put_contents($copy, $loose);
-        require $copy;
-        unlink($copy);
+        // process. Loaded as they ship, strict types and all: this runner
+        // used to strip the declare, because every report request was a
+        // TypeError under it (real_escape_string() handed the window's
+        // timestamps and the unasked cid/c1-c4), and so it could not see
+        // that the endpoint answered 500.
+        require $root . '/api/' . $m[1] . '/functions.php';
         $result = match ($m[2]) {
             'text_ads' => reportQuery($db, 'text_ads', 'text_ad_id', 'text_ad_name', (string) $userId, $from, $to),
             'landing_pages' => reportQuery($db, 'landing_pages', 'landing_page_id', 'landing_page', (string) $userId, $from, $to),
