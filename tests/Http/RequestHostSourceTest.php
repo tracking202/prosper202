@@ -41,6 +41,11 @@ final class RequestHostSourceTest extends TestCase
     private const ALLOWED = [
         '202-config/Http/RequestHost.php' => [1, 'the reader of the Host header'],
         '202-config/Click/TrackingBaseUrl.php' => [2, 'the server-name fallback when the Host header is not a host'],
+        '202-config/DataEngine/SelfCall.php' => [
+            2,
+            'the name of the listener the cron\'s rebuild calls back, pinned to the listener\'s own address'
+            . ' (CURLOPT_RESOLVE), so a name the request claimed never takes the call off this machine',
+        ],
         '202-config/connect.php' => [3, "maps nginx's catch-all server name `_` to the request's host"],
         '202-config/connect2.php' => [
             6,

@@ -39,12 +39,13 @@ try {
                 return;
             }
 
-            // The server calls itself, so the address is this install's
-            // stored one (or the server's own name), never the Host header
-            // of whatever request reached the cron: getTrackingDomain()
-            // answers that for URLs handed back to the requester, and here it
-            // would have the server fetch a host the caller chose.
-            $base = p202TrackingBaseUrl();
+            // The server calls itself: on the stored domain when there is
+            // one, else on the listener that served this request, pinned to
+            // its address so the call never leaves this machine whatever
+            // name the request claimed (SelfCall says why).
+            $storedDomain = p202StoredTrackingDomain();
+            $base = \Prosper202\DataEngine\SelfCall::base($storedDomain, $_SERVER, dirname(__DIR__));
+            $selfCallOptions = \Prosper202\DataEngine\SelfCall::curlOptions($storedDomain, $_SERVER);
             $urls = [];
             for ($i = $mysql['click_time_from']; $i < $mysql['click_time_to']; $i += 3599) {
                 $nextval = $i + 3599;
@@ -68,7 +69,7 @@ try {
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_MAXREDIRS => 5
-            ];
+            ] + $selfCallOptions;
             $options = ($custom_options) ? ($std_options + $custom_options) : $std_options;
 
             // start the first batch of requests
