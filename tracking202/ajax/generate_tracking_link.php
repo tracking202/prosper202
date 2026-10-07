@@ -159,7 +159,11 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$_POST['tracker_id']);
-		$get_tracker_sql = "SELECT 
+		// The tracker's names, for the Slack notices below: each only when
+		// it is the tracker's own account's (CLAUDE.md #27). A tracker saved
+		// before 229df10 can name another account's campaign, source or
+		// redirector; that name is not this account's to announce.
+		$get_tracker_sql = "SELECT
 							tracker_id, 
 							tracker_id_public,
 							202_trackers.aff_campaign_id,
@@ -178,13 +182,13 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 							click_cpa,
 							name 
 							FROM 202_trackers
-							LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-							LEFT JOIN 202_aff_networks USING (aff_network_id)
-							LEFT JOIN 202_text_ads USING (text_ad_id)
-							LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-							LEFT JOIN 202_ppc_networks USING (ppc_network_id)
-							LEFT JOIN 202_landing_pages ON (202_trackers.landing_page_id = 202_landing_pages.landing_page_id) 
-							LEFT JOIN 202_rotators ON (202_trackers.rotator_id = 202_rotators.id)
+							LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id)
+							LEFT JOIN 202_aff_networks USING (aff_network_id, user_id)
+							LEFT JOIN 202_text_ads USING (text_ad_id, user_id)
+							LEFT JOIN 202_ppc_accounts USING (ppc_account_id, user_id)
+							LEFT JOIN 202_ppc_networks USING (ppc_network_id, user_id)
+							LEFT JOIN 202_landing_pages ON (202_trackers.landing_page_id = 202_landing_pages.landing_page_id AND 202_landing_pages.user_id = 202_trackers.user_id) 
+							LEFT JOIN 202_rotators ON (202_trackers.rotator_id = 202_rotators.id AND 202_rotators.user_id = 202_trackers.user_id)
 							WHERE 202_trackers.tracker_id_public = '".$mysql['tracker_id_public']."' AND 202_trackers.user_id = '".$mysql['user_id']."'";
 		
 		$get_tracker_result = $db->query($get_tracker_sql);
@@ -368,7 +372,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 				if ($_POST['aff_campaign_id'] != $get_tracker_row['aff_campaign_id']) {
 					
 					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
-					$sql = "SELECT aff_network_name, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN 202_aff_networks USING (aff_network_id) WHERE aff_campaign_id = '".$mysql['aff_campaign_id']."'";
+					$sql = "SELECT aff_network_name, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN 202_aff_networks USING (aff_network_id, user_id) WHERE aff_campaign_id = '".$mysql['aff_campaign_id']."' AND user_id = '".$mysql['user_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
@@ -393,7 +397,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 				if (($get_tracker_row['landing_page_id']) && $_POST['landing_page_id'] != $get_tracker_row['landing_page_id']) {
 					
 					$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
-					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."'";
+					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."' AND user_id = '".$mysql['user_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
@@ -405,7 +409,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 				if (!empty($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
-					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
+					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."' AND user_id = '".$mysql['user_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
@@ -416,7 +420,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 				if (!empty($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
-					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."'";
+					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."' AND user_id = '".$mysql['user_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 
@@ -454,7 +458,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 			if ($_POST['ppc_account_id'] != $get_tracker_row['ppc_account_id']) {
 				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);
-				$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."'";
+				$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id, user_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."' AND user_id = '".$mysql['user_id']."'";
 				$result = $db->query($sql);
 				$row = $result->fetch_assoc();
 
@@ -482,7 +486,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 			if ($_POST['tracker_type'] == '2') {
 				if ($_POST['tracker_rotator'] != $get_tracker_row['rotator_id']) {
 					$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
-					$sql = "SELECT name FROM 202_rotators WHERE id = '".$mysql['rotator_id']."'";
+					$sql = "SELECT name FROM 202_rotators WHERE id = '".$mysql['rotator_id']."' AND user_id = '".$mysql['user_id']."'";
 					$result = $db->query($sql);
 					$row = $result->fetch_assoc();
 

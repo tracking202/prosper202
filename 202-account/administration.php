@@ -148,6 +148,9 @@ if (isset($_POST['database_management'])) {
 		$fieldErrors['database_management'] = 'Pick the date: click data from before it is deleted.';
 	} else {
 		$click_timestamp = strtotime($eraseDate->format('Y-m-d') . ' 00:00:00 ' . date('T'));
+		// Every account's clicks, on purpose: this is the install's data
+		// retention, set by a role with access_to_settings, and the cron
+		// deletes below the marker in every account (ClickRetention).
 		$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . (int) $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
 
 		$clickid_result = _mysqli_query($clickid_sql);

@@ -146,6 +146,8 @@ function RunDailyCronjob()
 
             /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
             //this function runs everyday at midnight to clear out the temp clicks_memory table
+            //Every account's rows, on purpose: the install's own housekeeping,
+            //by age alone, and nothing is read on any account's behalf.
             $from = $now - 86400;
 
             //this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.

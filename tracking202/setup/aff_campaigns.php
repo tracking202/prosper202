@@ -174,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 	if ($editing == true) {
 		$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$aff_campaign_sql = "SELECT * FROM 202_aff_campaigns AS 2cp LEFT JOIN 202_aff_networks AS 2an USING (aff_network_id) WHERE 2cp.user_id='" . $mysql['user_id'] . "' AND 2cp.aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
+		$aff_campaign_sql = "SELECT * FROM 202_aff_campaigns AS 2cp LEFT JOIN 202_aff_networks AS 2an USING (aff_network_id, user_id) WHERE 2cp.user_id='" . $mysql['user_id'] . "' AND 2cp.aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 		if ($aff_campaign_result->num_rows == 0) {
 			$error['wrong_user'] = ($error['wrong_user'] ?? '') . '<div class="error">You are not authorized to modify another users campaign</div>';
@@ -427,7 +427,10 @@ $token = (string) ($_SESSION['token'] ?? '');
 $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 
 // The categories, with their network integration when they have one.
-$categoryRows = p202_setup_rows($db, "SELECT af.aff_network_id, af.aff_network_name, af.dni_network_id, dni.favicon, dni.processed FROM 202_aff_networks AS af LEFT JOIN 202_dni_networks AS dni ON (af.dni_network_id = dni.id) WHERE af.user_id='" . $uid . "' AND af.aff_network_deleted='0' ORDER BY af.aff_network_name ASC");
+// A category's network integration is read only when it is this account's
+// own (CLAUDE.md #27): one naming another account's reads as none, so its
+// offers are neither searched nor shown as loading.
+$categoryRows = p202_setup_rows($db, "SELECT af.aff_network_id, af.aff_network_name, dni.id AS dni_network_id, dni.favicon, dni.processed FROM 202_aff_networks AS af LEFT JOIN 202_dni_networks AS dni ON (af.dni_network_id = dni.id AND dni.user_id = af.user_id) WHERE af.user_id='" . $uid . "' AND af.aff_network_deleted='0' ORDER BY af.aff_network_name ASC");
 $campaignsByCategory = [];
 foreach (p202_setup_rows($db, "SELECT aff_campaign_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_payout, aff_campaign_rotate FROM `202_aff_campaigns` WHERE `user_id`='" . $uid . "' AND `aff_campaign_deleted`='0' ORDER BY `aff_campaign_name` ASC") as $campaign) {
 	$campaignsByCategory[(int) $campaign['aff_network_id']][] = $campaign;

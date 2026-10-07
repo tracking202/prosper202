@@ -171,7 +171,7 @@ function p202_update_traffic_lists(mysqli $db, int $userId): array
     }
     $accounts = [];
     foreach (p202_setup_rows($db, "SELECT pa.ppc_account_id, pa.ppc_account_name, pn.ppc_network_id, pn.ppc_network_name
-        FROM 202_ppc_accounts AS pa INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pa.ppc_network_id)
+        FROM 202_ppc_accounts AS pa INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pa.ppc_network_id AND pn.user_id = pa.user_id)
         WHERE pa.user_id = '" . $userId . "' AND pa.ppc_account_deleted = 0 AND pn.ppc_network_deleted = 0
         ORDER BY pn.ppc_network_name ASC, pa.ppc_account_name ASC") as $row) {
         $group = 'n' . $row['ppc_network_id'];

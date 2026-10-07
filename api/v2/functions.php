@@ -153,6 +153,27 @@ function runReports($db, $vars, $user, $timezone): array {
 	
 }
 
+/**
+ * The table a report groups by, joined as `2l` on the click's id for it.
+ * Each is written out: the name used to be built from the report type
+ * (`202_{$type}`), so no reader could tell which tables a report reads. A
+ * text ad is an account's own record, joined only within the click's account
+ * (CLAUDE.md #27): a click naming another account's ad reads as naming none,
+ * and is counted in the "[no text ad]" row.
+ */
+function reportDimensionJoin(string $type): string
+{
+	return match ($type) {
+		'keywords' => " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.keyword_id = 2ca.keyword_id)",
+		'text_ads' => " LEFT OUTER JOIN 202_text_ads AS 2l ON (2l.text_ad_id = 2ca.text_ad_id AND 2l.user_id = 2c.user_id)",
+		'ips' => " LEFT OUTER JOIN 202_ips AS 2l ON (2l.ip_id = 2ca.ip_id)",
+		'locations_country' => " LEFT OUTER JOIN 202_locations_country AS 2l ON (2l.country_id = 2ca.country_id)",
+		'locations_city' => " LEFT OUTER JOIN 202_locations_city AS 2l ON (2l.city_id = 2ca.city_id)",
+		'locations_isp' => " LEFT OUTER JOIN 202_locations_isp AS 2l ON (2l.isp_id = 2ca.isp_id)",
+		default => throw new InvalidArgumentException("reportQuery(): no report type '$type'"),
+	};
+}
+
 function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null): array {
 
 	$date = [
@@ -198,10 +219,10 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				//If landing pages report type
 				} elseif($type == "landing_pages") {
 					$report_sql .= " LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2c.click_id)
-									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id)";
+									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id AND 2lp.user_id = 2c.user_id)";
 				} else {
 					//If any other report type
-				   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+					$report_sql .= reportDimensionJoin($type);
 				}
 
 				//If any of C1-C4 variables are set
@@ -254,8 +275,11 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					   		LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2c.click_id)
 							LEFT OUTER JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
 							LEFT OUTER JOIN 202_site_domains AS 2l ON (2l.site_domain_id = 2su.site_domain_id)";
-					   } else {
-					   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+					   } elseif($type != "landing_pages") {
+					   		// This appended the join to $report_sql, which had
+					   		// already run, so outside the referers report the
+					   		// figures below never had a `2l` to read.
+					   		$click_sql .= reportDimensionJoin($type);
 					   }
 
 					   //If any of C1-C4 variables are set
@@ -291,6 +315,11 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					   } elseif($type == "landing_pages") {
 					   		$click_sql .= "AND 2c.".$select_id."='".$report_row[$select_id]."'
 					   				  GROUP BY 2c.".$select_id;
+					   } elseif($type == "text_ads" && $report_row[$select_id] === null) {
+					   		// The "[no text ad]" row: no ad, or one that is not this
+					   		// account's (the join reads it as none) -- every click
+					   		// the report grouped there, not only those with id 0.
+					   		$click_sql .= "AND 2l.text_ad_id IS NULL";
 					   } else {
 					   		$click_sql .= "AND 2ca.".$select_id."='".$report_row[$select_id]."'";
 					   }		

@@ -795,6 +795,20 @@ the second row is, and whether anything the answer decides — a name, a
 payout, a setting, which rows a bulk write touches — would differ if it were
 someone else's.
 
+Tying a join is not the end of the change: the joined row is now NULL where
+it used to be another account's, and every consumer of the joined columns
+has to be read for what NULL does there. Measured in the legacy pages'
+round: Group Overview grouped a redirector by the click's own id but keyed
+its tree by the joined row's, so the foreign group and the none group both
+arrived with an empty id and one replaced the other — the redirector level
+showed 1 of 4 clicks (it already did for a redirector removed since); the
+legacy API counted its "[no text ad]" row by `text_ad_id = 0`, so a click on
+a foreign ad, grouped there, was counted nowhere; and Get Links, finding no
+landing page for a link that names one, fell through to building a direct
+link the link was never made as. Group by the expression you select, count
+a none row by the same NULL the join produced, and give a row whose record
+is not the account's no action rather than a different one.
+
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
 strings — right at the edge, and every PHP suite stayed green. It broke four

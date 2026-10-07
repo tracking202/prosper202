@@ -37,6 +37,9 @@ try {
 				curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
 				$response = curl_exec($curl);
 			} else if ($_GET['processed'] == 'true') {
+				// The hosted service's callback names the network by its id
+				// and key, the pair it was sent above: it marks that network
+				// of whichever account registered it, by design.
 				$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE networkId = '" . $mysql['networkId'] . "' AND apiKey = '" . $row['apiKey'] . "'";
 				$results = $db->query($sql);
 			}
