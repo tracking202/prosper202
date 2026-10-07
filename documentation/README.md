@@ -44,6 +44,7 @@
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)
+- [LTV: customers, revenue, subscriptions, products, custom fields, companies, webhooks](api/20-ltv.md)
 - [App measurement: registry and Apple postbacks (SKAdNetwork, AdAttributionKit)](api/19-app-measurement.md)
 - [App SDK wire contract](api/21-app-sdk-contract.md)
 - [Goals: definitions, versions, campaign payouts, evaluation](api/22-goals.md)

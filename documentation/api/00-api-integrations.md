@@ -464,6 +464,7 @@ way, remove the directory (or point `P202_SERVER_STATE_DIR` somewhere new).
 | Reports | Summary, breakdown, timeseries, daypart, weekpart | [Reports](11-reports.md) |
 | Rotators | CRUD + nested rules, criteria, redirects | [Rotators](12-rotators.md) |
 | Attribution | Models, snapshots, exports | [Attribution](13-attribution.md) |
+| LTV | Customers, revenue, subscriptions, products, custom fields, companies, webhooks; LTV reads (summary, cohorts, MRR, predict, ABM) | [LTV](20-ltv.md) |
 | Apps | The app registry (iOS and Android), Apple SKAdNetwork and AdAttributionKit postbacks, SKAN encodings, report | [App measurement](19-app-measurement.md) |
 | Forecast Events | CRUD + bulk-upsert | [Forecast Events](18-forecast-events.md) |
 | Users | CRUD + roles, API keys, preferences | [Users](14-users.md) |
