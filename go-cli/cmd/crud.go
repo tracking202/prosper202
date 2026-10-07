@@ -508,14 +508,30 @@ func crudUpdateExample(entity crudEntity) string {
 // requireCRUDFields refuses a create missing a field the controller
 // requires, before any request: the server would answer 422 for it anyway,
 // after a round trip, and the hint here can say where the value comes from.
+// Every missing flag is named at once, so a caller fixes them in one retry
+// rather than one per run.
 func requireCRUDFields(entity crudEntity, body map[string]string) error {
+	var missing, sources []string
 	for _, f := range entity.Fields {
 		if f.Required && body[f.Name] == "" {
-			return validationError("required flag --%s is missing", f.Name).
-				WithHint("`p202 %s create --help` lists every flag; the required ones say so.", entity.Name)
+			missing = append(missing, "--"+f.Name)
+			if src, ok := idSources[f.Name]; ok {
+				sources = append(sources, "--"+f.Name+" takes an id from `"+src+"`")
+			}
 		}
 	}
-	return nil
+	if len(missing) == 0 {
+		return nil
+	}
+	msg := "required flag " + missing[0] + " is missing"
+	if len(missing) > 1 {
+		msg = "required flags " + strings.Join(missing, ", ") + " are missing"
+	}
+	hint := fmt.Sprintf("`p202 %s create --help` shows an example with every required flag.", entity.Name)
+	if len(sources) > 0 {
+		hint = strings.Join(sources, "; ") + ". " + hint
+	}
+	return validationError("%s", msg).WithHint("%s", hint)
 }
 
 func getLongHelp(entity crudEntity) string {

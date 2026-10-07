@@ -2168,7 +2168,7 @@ func TestLandingPageCreateRequiresAffCampaignID(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
 
-	_, _, err := executeCommand("landing-page", "create", "--landing_page_url=https://lp.example.com")
+	_, _, err := executeCommand("landing-page", "create", "--landing_page_url=https://lp.example.com", "--landing_page_nickname=lp")
 	if err == nil {
 		t.Fatal("expected required flag error")
 	}

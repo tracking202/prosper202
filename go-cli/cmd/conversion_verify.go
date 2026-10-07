@@ -26,7 +26,7 @@ func trackingBaseURL() (string, error) {
 		return "", err
 	}
 	if prof.URL == "" {
-		return "", validationError("no URL configured. Run: p202 config set-url <url>")
+		return "", fmt.Errorf("%w. Run: p202 config set-url <url>", config.ErrNoURL)
 	}
 	return strings.TrimRight(prof.URL, "/"), nil
 }

@@ -256,7 +256,7 @@ func NewURLOnly() (*Client, error) {
 		return nil, err
 	}
 	if profile.URL == "" {
-		return nil, fmt.Errorf("no URL configured. Run: p202 config set-url <url>")
+		return nil, fmt.Errorf("%w. Run: p202 config set-url <url>", config.ErrNoURL)
 	}
 	return newClient(profile.URL, profile.APIKey), nil // API key may be empty for URL-only endpoints.
 }

@@ -393,7 +393,7 @@ Human mode:
 
 ```text
 Error [auth]: fetching historical data: API error (401): invalid api key
-Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+Hint: Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.
 ```
 
 With `--json` or `--ndjson`, and whenever JSON was chosen automatically
@@ -401,7 +401,7 @@ for an AI agent (see Output Modes), the same failure is a single JSON
 envelope, so an agent reads structured fields instead of parsing prose:
 
 ```json
-{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
 ```
 
 | Field | Always | Meaning |
@@ -424,6 +424,14 @@ with no configuration needed) as `--<flag> must be one of: <values>; got
 `allowed_values`. Tests walk the command tree to keep every such flag this
 way and to refuse help text that trails off (`etc.`, `...`) instead of
 listing values.
+
+Two failures come before any request and say what to run instead of
+pointing at `--help`: a CLI with no server configured (exit 1; the hint
+names `p202 config set-url`, `p202 config set-key` and `p202 config test`,
+or `set-key` alone when the URL is set), and a create missing required
+flags, which names every missing flag in one message and, for an id flag,
+the list command its value comes from (that `--aff_network_id` takes an
+id from `p202 aff-network list`, for example).
 
 An unknown command or flag exits 1 with a hint naming `<command> --help` and
 `p202 search <what you want to do>`. A mistyped subcommand under a group

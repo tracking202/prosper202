@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"p202/internal/api"
+	configpkg "p202/internal/config"
 )
 
 // Exit codes for automation compatibility.
@@ -196,6 +197,14 @@ func hintFor(err error) string {
 	}
 	if hint := unknownInputHint(err); hint != "" {
 		return hint
+	}
+	// An unconfigured CLI fails before any flag matters, so pointing at the
+	// command's --help sends an agent the wrong way: name the setup.
+	if errors.Is(err, configpkg.ErrNoURL) {
+		return "Point the CLI at your install: `p202 config set-url https://tracker.example.com`, then `p202 config set-key <key>` with a REST API key (made on the UI's Personal Settings page). `p202 config test` checks both."
+	}
+	if errors.Is(err, configpkg.ErrNoAPIKey) {
+		return "Set a REST API key: `p202 config set-key <key>` (made on the UI's Personal Settings page; omit <key> to be prompted without echo). `p202 config test` checks it."
 	}
 	if activeCommandPath != "" && exitCodeForError(err) == ExitValidation && api.ErrorCategory(err) != "auth" {
 		return fmt.Sprintf("Run `%s --help` for the flags this command accepts.", strings.TrimSpace(activeCommandPath))
