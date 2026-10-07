@@ -429,7 +429,11 @@ try {
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
-            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
+            // The external id is the caller's own string, so it arrives
+            // percent-encoded when it has a character a path escapes (a
+            // space, '/', '?'): decode it, or such a subscription could
+            // never be found here.
+            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));

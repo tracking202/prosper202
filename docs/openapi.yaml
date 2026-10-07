@@ -7136,7 +7136,9 @@ paths:
         required: true
         schema:
           type: string
-        description: The provider's subscription id
+        description: The provider's subscription id, percent-encoded as one path segment (`plan/7 annual` is
+          `plan%2F7%20annual`); the server decodes it. Apache refuses an encoded `/` unless `AllowEncodedSlashes`
+          is on.
       requestBody:
         required: true
         content:

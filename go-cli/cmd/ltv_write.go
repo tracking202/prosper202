@@ -1046,9 +1046,6 @@ var ltvSubscriptionUpsertCmd = &cobra.Command{
 			return ltvNotFound(err, ltvCustomerListHint)
 		}
 		render(data)
-		if id := strings.TrimSpace(subID); url.PathEscape(id) != id {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Note: %q has characters a URL path escapes, and the server matches the id in POST /ltv/subscriptions/{id}/events as sent, so `p202 ltv subscription event` cannot reach this subscription; renewals and cancellations for it can only arrive by upserting it again.\n", id)
-		}
 		return nil
 	}),
 }
@@ -1070,12 +1067,6 @@ var ltvSubscriptionEventCmd = &cobra.Command{
 		if ref == "" {
 			return validationError("the external subscription id is empty").
 				WithHint("`p202 ltv subscriptions` lists them (external_sub_id).")
-		}
-		// The server matches the path segment as sent, without decoding it,
-		// so an id that needs escaping can never be found through it.
-		if url.PathEscape(ref) != ref {
-			return validationError("external subscription id %q has characters that must be escaped in a URL path (such as / ? # %% or a space); the server matches the id in the path as sent and cannot find it", ref).
-				WithHint("Use ids made of letters, digits and - _ . ~ : @ for subscriptions you send events for.")
 		}
 		eventType := enumValue(cmd, "type")
 		if eventType == "" {
@@ -1127,7 +1118,8 @@ var ltvSubscriptionEventCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		data, err := c.Post("ltv/subscriptions/"+ref+"/events", body)
+		// Escaped as one path segment; the server decodes it.
+		data, err := c.Post("ltv/subscriptions/"+url.PathEscape(ref)+"/events", body)
 		if err != nil {
 			return ltvNotFound(err, "`p202 ltv subscriptions` lists the subscriptions (external_sub_id); `p202 ltv subscription upsert` creates one.")
 		}

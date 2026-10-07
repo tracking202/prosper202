@@ -23,10 +23,11 @@ import (
 // ltvRequest is one request a command under test sent, body kept raw so a
 // test can compare it byte for byte after normalizing.
 type ltvRequest struct {
-	Method   string
-	Path     string
-	RawQuery string
-	Body     string
+	Method      string
+	Path        string
+	EscapedPath string // as sent, before the server's decoding
+	RawQuery    string
+	Body        string
 }
 
 type ltvServer struct {
@@ -43,7 +44,7 @@ func newLtvServer(t *testing.T, respond func(r ltvRequest) (int, string)) *ltvSe
 	s := &ltvServer{}
 	s.Server = httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
-		req := ltvRequest{Method: r.Method, Path: strings.TrimPrefix(r.URL.Path, "/api/v3"), RawQuery: r.URL.RawQuery, Body: string(data)}
+		req := ltvRequest{Method: r.Method, Path: strings.TrimPrefix(r.URL.Path, "/api/v3"), EscapedPath: strings.TrimPrefix(r.URL.EscapedPath(), "/api/v3"), RawQuery: r.URL.RawQuery, Body: string(data)}
 		s.mu.Lock()
 		s.reqs = append(s.reqs, req)
 		s.mu.Unlock()
@@ -689,7 +690,6 @@ func TestLtvEngagementEventSubscriptionProductAndNextOffer(t *testing.T) {
 		{"subscription", "event", "sub_123"},
 		{"subscription", "event", "sub_123", "--type", "cancel", "--amount", "5"},
 		{"subscription", "event", "sub_123", "--type", "refund", "--period-end", "1769904000"},
-		{"subscription", "event", "sub 123", "--type", "cancel"},
 		{"subscription", "event", "sub_123", "--type", "renewal", "--idempotency-key", "sub:1"},
 		{"product", "upsert", "--name", "Pro"},
 		{"product", "upsert", "--sku", "A", "--price", "free"},
@@ -951,17 +951,13 @@ func TestLtvRefusedFieldFilterNamesTheFieldsCommand(t *testing.T) {
 	}
 }
 
-// A subscription whose id needs URL escaping can be stored but never sent
-// an event (the server matches the path segment as sent): the upsert says so.
-func TestLtvSubscriptionUpsertWarnsWhenEventsCannotReachIt(t *testing.T) {
+// An id with a character a path escapes used to draw a warning on upsert
+// that no event could reach it; events now can, so the upsert says nothing.
+func TestLtvSubscriptionUpsertOfAnEscapedIDDoesNotWarn(t *testing.T) {
 	newLtvServer(t, func(ltvRequest) (int, string) { return 201, `{"data":{"subscriptionId":2,"customerId":4}}` })
 	_, stderr, err := executeCommand("ltv", "subscription", "upsert", "--external-sub-id", "sub 9", "--customer-id", "4", "--amount", "5")
-	if err != nil || !strings.Contains(stderr, "cannot reach this subscription") {
-		t.Errorf("err %v, stderr %q", err, stderr)
-	}
-	_, stderr, err = executeCommand("ltv", "subscription", "upsert", "--external-sub-id", "sub_9", "--customer-id", "4", "--amount", "5")
 	if err != nil || strings.Contains(stderr, "cannot reach") {
-		t.Errorf("a plain id warned: err %v, stderr %q", err, stderr)
+		t.Errorf("err %v, stderr %q", err, stderr)
 	}
 }
 
@@ -984,5 +980,23 @@ func TestLtvApiErrorsKeepTheirCategoryAndNameTheListCommand(t *testing.T) {
 	_, _, err = executeCommand("ltv", "fields", "delete", "3", "--force")
 	if err == nil || exitCodeForError(err) != ExitAuth {
 		t.Errorf("401: %v, exit %d", err, exitCodeForError(err))
+	}
+}
+
+// A subscription id is the caller's own string. One with a character a path
+// escapes was refused before any request ("the server matches the id as
+// sent"), and an upsert of one warned that no event could ever reach it; the
+// server now decodes the segment, so the CLI escapes it as one segment.
+func TestLtvSubscriptionEventEscapesTheIDAsOneSegment(t *testing.T) {
+	srv := newLtvServer(t, func(ltvRequest) (int, string) { return 200, `{"data":{"changed":true}}` })
+	if _, _, err := executeCommand("ltv", "subscription", "event", "plan/7 annual?#1", "--type", "cancel"); err != nil {
+		t.Fatalf("subscription event: %v", err)
+	}
+	req := srv.only(t)
+	if req.EscapedPath != "/ltv/subscriptions/plan%2F7%20annual%3F%231/events" {
+		t.Fatalf("sent %s, want the id escaped as one path segment", req.EscapedPath)
+	}
+	if req.RawQuery != "" {
+		t.Errorf("part of the id leaked into the query: %q", req.RawQuery)
 	}
 }
