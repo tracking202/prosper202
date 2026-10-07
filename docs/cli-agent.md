@@ -588,9 +588,9 @@ p202 <resource> delete  --ids N1,N2,... [--force] [--dry-run] [--json]
 | `--text_ad_id` | optional | string |
 | `--landing_page_id` | optional | string |
 | `--rotator_id` | optional | string |
-| `--click_cpc` | optional | string |
-| `--click_cpa` | optional | string |
-| `--click_cloaking` | optional | 0/1 |
+| `--click_cpc` | optional | number, 0-99.99999; on update, clears click_cpa (tracker becomes CPC) |
+| `--click_cpa` | optional | number, 0-99.99999; on update, clears click_cpc (tracker becomes CPA); never with `--click_cpc` |
+| `--click_cloaking` | optional | -1 (campaign's setting, default) / 0 off / 1 on |
 
 Tracker utility commands:
 

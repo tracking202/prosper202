@@ -482,9 +482,9 @@ returns one per campaign without a request per campaign.
 | `--text_ad_id` | No | Text ad ID |
 | `--landing_page_id` | No | Landing page ID |
 | `--rotator_id` | No | Rotator ID |
-| `--click_cpc` | No | Cost per click |
-| `--click_cpa` | No | Cost per action |
-| `--click_cloaking` | No | Enable cloaking (0/1) |
+| `--click_cpc` | No | Cost per click (0 to 99.99999). On `update`, switches a CPA tracker to CPC |
+| `--click_cpa` | No | Cost per action (0 to 99.99999). On `update`, switches a CPC tracker to CPA. Not with `--click_cpc` |
+| `--click_cloaking` | No | `-1` the campaign's setting (the default), `0` off, `1` on |
 
 Tracker utility subcommands:
 

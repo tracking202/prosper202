@@ -25,9 +25,64 @@ class TrackersController extends Controller
             'rotator_id'        => ['type' => 'i', 'default' => 0],
             'click_cpc'         => ['type' => 'd'],
             'click_cpa'         => ['type' => 'd'],
-            'click_cloaking'    => ['type' => 'i', 'default' => 0],
+            // -1 is Get Links' default: the campaign decides. 0 turned
+            // cloaking off for every API-made link, whatever the campaign said.
+            'click_cloaking'    => ['type' => 'i', 'default' => -1, 'allowed' => [-1, 0, 1]],
             'tracker_id_public' => ['type' => 'i'],
         ];
+    }
+
+    /** decimal(7,5): the largest cost the columns hold. */
+    private const MAX_COST = 99.99999;
+
+    /**
+     * Checked on the request as sent, before the base class casts it: '0.5'
+     * cast to an integer is a valid cloaking value, and a cost the columns
+     * cannot hold is a strict-mode error rather than a 422.
+     */
+    #[\Override]
+    protected function validatePayload(array $payload, bool $requireRequired = false): array
+    {
+        $errors = [];
+        $cloaking = $payload['click_cloaking'] ?? null;
+        if ($cloaking !== null && !((is_int($cloaking) || is_string($cloaking)) && in_array((string) $cloaking, ['-1', '0', '1'], true))) {
+            $errors['click_cloaking'] = "Must be -1 (the campaign's setting), 0 (off for this link) or 1 (on for this link)";
+        }
+        foreach (['click_cpc', 'click_cpa'] as $cost) {
+            $value = $payload[$cost] ?? null;
+            if ($value !== null && (!is_numeric($value) || (float) $value < 0 || (float) $value > self::MAX_COST)) {
+                $errors[$cost] = 'Must be a cost from 0 to ' . self::MAX_COST;
+            }
+        }
+        // dl.php charges a tracker with any click_cpa per action; one with
+        // both would be charged per click and per action. Get Links writes
+        // one and leaves the other NULL.
+        if (($payload['click_cpc'] ?? null) !== null && ($payload['click_cpa'] ?? null) !== null) {
+            $errors['click_cpa'] = 'A tracker costs per click (click_cpc) or per action (click_cpa), not both: send one';
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Validation failed', $errors);
+        }
+
+        return parent::validatePayload($payload, $requireRequired);
+    }
+
+    /**
+     * Setting one cost switches the tracker to it, as Get Links' cost type
+     * does: the other column is cleared, or a CPC tracker given a CPA would
+     * be charged both ways.
+     */
+    #[\Override]
+    protected function beforeUpdate(int|string $id, array $payload): array
+    {
+        if (array_key_exists('click_cpa', $payload)) {
+            return ['click_cpc' => ['type' => 'd', 'value' => null]];
+        }
+        if (array_key_exists('click_cpc', $payload)) {
+            return ['click_cpa' => ['type' => 'd', 'value' => null]];
+        }
+
+        return [];
     }
 
     #[\Override]

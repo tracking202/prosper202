@@ -23,10 +23,23 @@ Manage tracking links that tie campaigns, landing pages, PPC accounts, and rotat
 | `text_ad_id` | integer | No | Associated text ad |
 | `landing_page_id` | integer | No | Landing page to send traffic to |
 | `rotator_id` | integer | No | Rotator for split testing |
-| `click_cpc` | decimal | No | Cost per click |
-| `click_cpa` | decimal | No | Cost per action |
-| `click_cloaking` | integer | No | Cloaking enabled (0/1) |
+| `click_cpc` | decimal | No | Cost per click, 0 to 99.99999 |
+| `click_cpa` | decimal | No | Cost per action, 0 to 99.99999 |
+| `click_cloaking` | integer | No | `-1` the campaign's setting (default), `0` off for this link, `1` on for this link |
 | `tracker_id_public` | integer | No | Public ID (auto-generated if omitted) |
+
+A tracker costs per click or per action, as the cost type on Get Links
+chooses: the redirects charge any tracker with a `click_cpa` per action, so
+one holding both would be charged twice. Send one of `click_cpc` and
+`click_cpa`; both in one request is a `422`. On an update, setting one
+switches the tracker to it and clears the other:
+
+```bash
+# A CPC tracker becomes CPA: click_cpc is cleared
+curl -X PUT https://your-domain.com/api/v3/trackers/42 \
+  -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" \
+  -d '{"click_cpa": 3.00}'
+```
 
 ## Get Tracking URL
 

@@ -8743,6 +8743,8 @@ components:
           type: number
         click_cloaking:
           type: integer
+          enum: [-1, 0, 1]
+          description: -1 the campaign's setting, 0 off for this link, 1 on for this link.
         tracker_id_public:
           type: integer
           readOnly: true
@@ -8770,10 +8772,19 @@ components:
           type: integer
         click_cpc:
           type: number
+          minimum: 0
+          maximum: 99.99999
+          description: Cost per click. Send click_cpc or click_cpa, not both.
         click_cpa:
           type: number
+          minimum: 0
+          maximum: 99.99999
+          description: Cost per action; the redirects charge any tracker with a click_cpa per action.
         click_cloaking:
           type: integer
+          enum: [-1, 0, 1]
+          default: -1
+          description: -1 the campaign's setting, 0 off for this link, 1 on for this link.
 
     TrackerUpdate:
       type: object
@@ -8790,10 +8801,18 @@ components:
           type: integer
         click_cpc:
           type: number
+          minimum: 0
+          maximum: 99.99999
+          description: Cost per click. Setting it clears click_cpa (the tracker becomes CPC); send click_cpc or click_cpa, not both.
         click_cpa:
           type: number
+          minimum: 0
+          maximum: 99.99999
+          description: Cost per action. Setting it clears click_cpc (the tracker becomes CPA).
         click_cloaking:
           type: integer
+          enum: [-1, 0, 1]
+          description: -1 the campaign's setting, 0 off for this link, 1 on for this link.
 
     TrackerResponse:
       type: object
