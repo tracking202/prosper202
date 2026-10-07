@@ -133,70 +133,24 @@ function grab_timeframe($unused = null): array
         'to' => time(),
     ];
 
-    if (($pref_time == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'yesterday') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-    }
-
-    if ($pref_time == 'last7') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 7), (int)date('d', time() - 86400 * 7), (int)date('Y', time() - 86400 * 7));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last14') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 14), (int)date('d', time() - 86400 * 14), (int)date('Y', time() - 86400 * 14));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last30') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 30), (int)date('d', time() - 86400 * 30), (int)date('Y', time() - 86400 * 30));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'thismonth') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastmonth') {
-        // Anchor to the last day of the previous month (first of this month minus one day)
-        // so the range is correct regardless of month length or today's date.
-        $last_month_day = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time())) - 86400;
-        $time['from'] = mktime(0, 0, 0, (int)date('m', $last_month_day), 1, (int)date('Y', $last_month_day));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', $last_month_day), (int)date('d', $last_month_day), (int)date('Y', $last_month_day));
-    }
-
-    if ($pref_time == 'thisyear') {
-        $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastyear') {
-        $last_year = (int)date('Y', time()) - 1;
-        $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
-        $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
-    }
-
-    if ($pref_time == 'alltime') {
-
-        // for the time from, do something special select the exact date this user was registered and use that :)
-        if (isset($_SESSION['user_id'])) {
+    // A named window, in the account's zone (AUTH::set_timezone() above
+    // reads it from the account), with calendar days rather than 86400-second
+    // strides: ReportWindow says what each one is and what this got wrong.
+    if (in_array($pref_time, \Tracking202\Report\ReportWindow::PRESETS, true)) {
+        $registeredAt = null;
+        if ($pref_time === 'alltime' && isset($_SESSION['user_id'])) {
             $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
             $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
             $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
             $user2_row = $user2_result->fetch_assoc();
-            if ($user2_row !== null) {
-                $time['from'] = $user2_row['user_time_register'];
+            if ($user2_row !== null && is_numeric($user2_row['user_time_register'] ?? null)) {
+                $registeredAt = (int) $user2_row['user_time_register'];
             }
         }
-
-        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+        $time = \Tracking202\Report\ReportWindow::preset($pref_time, date_default_timezone_get(), time(), $registeredAt);
+    } elseif (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '') {
+        // A custom window: today until the stored bounds are read below.
+        $time = \Tracking202\Report\ReportWindow::preset('today', date_default_timezone_get(), time());
     }
 
     if ($pref_time == '') {
@@ -527,13 +481,16 @@ function query(
 
         $mysql['from'] = $db->real_escape_string((string)$time['from']);
         $mysql['to'] = $db->real_escape_string((string)$time['to']);
+        // Both bounds are inclusive, as every report and GET /clicks read a
+        // window: a day ends at 23:59:59 and the next begins at 00:00:00, so
+        // `>` and `<` dropped the clicks of those two seconds from the list.
         if ($mysql['from'] != '') {
-            $click_sql .= " AND click_time > " . $mysql['from'] . " ";
-            $count_where .= " AND click_time > " . $mysql['from'] . " ";
+            $click_sql .= " AND click_time >= " . $mysql['from'] . " ";
+            $count_where .= " AND click_time >= " . $mysql['from'] . " ";
         }
         if ($mysql['to'] != '') {
-            $click_sql .= " AND click_time < " . $mysql['to'] . " ";
-            $count_where .= " AND click_time < " . $mysql['to'] . " ";
+            $click_sql .= " AND click_time <= " . $mysql['to'] . " ";
+            $count_where .= " AND click_time <= " . $mysql['to'] . " ";
         }
     }
 

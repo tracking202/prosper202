@@ -1,0 +1,128 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Auth;
+
+use AUTH;
+use PHPUnit\Framework\TestCase;
+use Prosper202\Database\SchemaInstaller;
+
+/**
+ * AUTH::set_timezone() sets the request's zone from the signed-in user's
+ * account, not from the copy the session took at sign-in, so the report
+ * pages count "today" from the zone GET /reports/* counts it from
+ * (api/v3 AccountTimezone) after the account's zone has changed elsewhere.
+ *
+ * @group integration
+ */
+final class SetTimezoneReadsTheAccountIntegrationTest extends TestCase
+{
+    private const FIRST_USER = 5741;
+
+    private static ?\mysqli $db = null;
+
+    /** @var array<string, mixed> */
+    private array $session = [];
+
+    public static function setUpBeforeClass(): void
+    {
+        $host = getenv('P202_TEST_DB_HOST');
+        if ($host === false || $host === '') {
+            return;
+        }
+        if (!function_exists('_mysqli_query')) {
+            eval('function _mysqli_query($dbOrSql, $sql = null) { return $sql === null ? null : $dbOrSql->query($sql); }');
+        }
+        mysqli_report(MYSQLI_REPORT_STRICT);
+        try {
+            $db = @mysqli_connect(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+                (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+            );
+        } catch (\Throwable) {
+            return;
+        }
+        if (!$db) {
+            return;
+        }
+        $db->query("SET SESSION sql_mode=''");
+        (new SchemaInstaller($db))->install();
+        require_once __DIR__ . '/../../202-config/functions-auth.php';
+        if (!class_exists('DB', false)) {
+            eval('class DB { public static $conn; public static function getInstance() { return new self(); }'
+                . ' public function getConnection() { return self::$conn; } }');
+        }
+        self::$db = $db;
+        self::cleanUp();
+        foreach (['Asia/Tokyo', '', 'Not/AZone'] as $n => $zone) {
+            $id = self::FIRST_USER + $n;
+            $db->query("INSERT INTO 202_users SET user_id = $id, user_name = 'tz$id', user_email = 'tz$id@example.com',"
+                . " user_dash_email = '', user_pass = 'x', user_timezone = '" . $db->real_escape_string($zone) . "',"
+                . " user_time_register = 0, install_hash = '', user_hash = ''");
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$db !== null) {
+            self::cleanUp();
+            self::$db->close();
+        }
+        self::$db = null;
+    }
+
+    private static function cleanUp(): void
+    {
+        self::$db->query('DELETE FROM 202_users WHERE user_id BETWEEN ' . self::FIRST_USER . ' AND ' . (self::FIRST_USER + 9));
+    }
+
+    protected function setUp(): void
+    {
+        if (self::$db === null) {
+            self::markTestSkipped('No test database configured (P202_TEST_DB_HOST).');
+        }
+        \DB::$conn = self::$db;
+        $this->session = $_SESSION ?? [];
+        date_default_timezone_set('UTC');
+    }
+
+    protected function tearDown(): void
+    {
+        $_SESSION = $this->session;
+        date_default_timezone_set('UTC');
+    }
+
+    /** @return iterable<string, array{int, string}> */
+    public static function accounts(): iterable
+    {
+        yield "the account's zone, changed since sign-in" => [self::FIRST_USER, 'Asia/Tokyo'];
+        yield 'no zone stored: UTC, as the API reads it' => [self::FIRST_USER + 1, 'UTC'];
+        yield 'a zone PHP does not know: UTC, as the API reads it' => [self::FIRST_USER + 2, 'UTC'];
+        yield 'no account row: the zone the session has' => [self::FIRST_USER + 9, 'America/New_York'];
+    }
+
+    /** @dataProvider accounts */
+    public function testTheRequestZoneIsTheAccounts(int $userId, string $expected): void
+    {
+        $_SESSION['user_id'] = $userId;
+        $_SESSION['user_timezone'] = 'America/New_York'; // what sign-in stored
+
+        AUTH::set_timezone($_SESSION['user_timezone']);
+
+        self::assertSame($expected, date_default_timezone_get());
+        self::assertSame($expected, $_SESSION['user_timezone'], 'the session copy every other reader uses agrees');
+    }
+
+    public function testWithoutASignedInUserTheArgumentStands(): void
+    {
+        unset($_SESSION['user_id'], $_SESSION['user_timezone']);
+
+        AUTH::set_timezone('Europe/Paris');
+
+        self::assertSame('Europe/Paris', date_default_timezone_get());
+    }
+}
