@@ -8791,7 +8791,15 @@ paths:
       tags:
       - Sync
       summary: Get a sync job
-      description: Admin only, with the `sync:read` scope.
+      description: >-
+        Admin only, with the `sync:read` scope. `error` names the record a
+        run without skip_errors stopped at and why (a remote refusal by the
+        status and message the other instance answered). A write the target
+        refused with 409 is a conflict: it is listed under each entity's
+        `conflicts` (entity, key, operation, target_id, reason, `written:
+        false`) and counted in `conflicted`, and a job it stops fails at once
+        with the record in `conflict` - it is never retried by itself, since
+        a retry would force the source over the change the 409 protected.
       operationId: syncGetJob
       parameters:
       - name: id

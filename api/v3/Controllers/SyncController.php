@@ -6,6 +6,8 @@ namespace Api\V3\Controllers;
 
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
+use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
@@ -373,6 +375,7 @@ class SyncController
                 $summary = $this->summarizeJobResults($results);
                 $job['results'] = $results;
                 $job['error'] = null;
+                $job['conflict'] = null;
                 $job['next_run_at'] = null;
                 // Re-read the persisted flag: a cancel may have landed while
                 // execute() was running and our in-memory copy is stale.
@@ -413,13 +416,21 @@ class SyncController
             $job = $this->store->getJob($jobId) ?? $job;
             $attempts = (int)($job['attempts'] ?? 1);
             $maxAttempts = max(1, (int)($job['max_attempts'] ?? 3));
-            $job['error'] = $e->getMessage();
+            // Named, not "Internal server error": a remote refusal's own
+            // getMessage() is that sentence (RemoteApiException).
+            $job['error'] = $e instanceof RemoteApiException ? $e->describe() : $e->getMessage();
             $job['results'] = null;
+            // A write the target refused with a 409 is not retried by the
+            // job: the retry re-reads the target and force-writes over the
+            // change the 409 protected (CLAUDE.md #13). The record is named
+            // so the caller can look before re-running.
+            $conflict = $e instanceof SyncRecordException ? $e->conflict : null;
+            $job['conflict'] = $conflict;
 
             if ((bool)($job['cancel_requested'] ?? false)) {
                 $job['status'] = 'cancelled';
                 $this->store->incrementMetric('jobs_cancelled', 1);
-            } elseif ($attempts < $maxAttempts) {
+            } elseif ($conflict === null && $attempts < $maxAttempts) {
                 $job['status'] = 'queued';
                 $backoff = min(900, 15 * (2 ** max(0, $attempts - 1)));
                 $job['next_run_at'] = time() + $backoff;
@@ -432,7 +443,12 @@ class SyncController
             }
 
             $this->store->saveJob($job);
-            $this->store->appendJobEvent($jobId, 'error', 'Job execution error', ['error' => $e->getMessage()]);
+            $this->store->appendJobEvent(
+                $jobId,
+                'error',
+                'Job execution error',
+                ['error' => $job['error']] + ($conflict !== null ? ['conflict' => $conflict] : [])
+            );
         } finally {
             $releaseLock();
         }
@@ -559,6 +575,7 @@ class SyncController
             'skipped' => 0,
             'failed' => 0,
             'pruned' => 0,
+            'conflicted' => 0,
         ];
 
         foreach ($perEntity as $entityResult) {
@@ -569,6 +586,7 @@ class SyncController
             $summary['skipped'] += (int)($entityResult['skipped'] ?? 0);
             $summary['failed'] += (int)($entityResult['failed'] ?? 0);
             $summary['pruned'] += (int)($entityResult['pruned'] ?? 0);
+            $summary['conflicted'] += (int)($entityResult['conflicted'] ?? 0);
         }
 
         return $summary;

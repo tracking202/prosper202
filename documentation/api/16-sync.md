@@ -101,6 +101,30 @@ curl -X POST https://your-domain.com/api/v3/sync/jobs \
 | `cancelled` | Job was cancelled |
 | `partial` | Some items succeeded, some failed |
 
+### Failures and conflicts
+
+Each entity's results count `synced`, `skipped`, `failed`, `pruned`,
+`created`, `updated` and `conflicted`, and `errors` names each failed record
+and why: `campaigns[Offer A]: update: 409 from PUT campaigns/20: Version
+mismatch`. A refusal from the other instance is reported with the status and
+message it answered; it used to read `Internal server error` whatever it was.
+
+A **conflict** is a write the target refused with `409`: a `force_update`
+whose target record changed after the sync read it (the `If-Match` the sync
+sends is stale), or a create or delete the target's own state refused. It is
+listed in `conflicts` with the entity, the record's key, the operation, the
+target id, the target's reason and `"written": false` — the target refused
+it, so nothing was written. A conflict is **never retried by itself**: a
+retry would re-read the target and force the source over the change the 409
+protected. Re-run the sync when you have looked (`POST /sync/plan` shows the
+difference).
+
+With `skip_errors` a failed record is counted and the run goes on (`partial`
+when anything else was synced). Without it the run stops at the first one:
+the job's `error` names the record, and an outage (a `5xx`, a network
+failure) is retried up to `max_attempts` with backoff, while a conflict
+fails the job at once, with the record in the job's `conflict`.
+
 ## Example: Sync Campaigns Between Instances
 
 ```bash
