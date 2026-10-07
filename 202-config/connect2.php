@@ -2739,6 +2739,21 @@ function get_absolute_url(): string
 }
 
 /**
+ * A path on this install for a URL in the requester's own response (a form
+ * action, a redirect to the 404 page): the install's directory under the
+ * document root (TrackingBaseUrl::installPath()), then $relative. The
+ * cloaked redirects' forms posted to a root-absolute
+ * '/tracking202/redirect/cl2.php', which on an install in a subdirectory is
+ * a 404 (measured: served from /agent-…/, off.php's form named
+ * /tracking202/redirect/cl2.php). ClickPathUrlsTest refuses a root-absolute
+ * path of this install in the click endpoints.
+ */
+function p202InstallPath(string $relative): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::installPath($_SERVER, ROOT_PATH) . ltrim($relative, '/');
+}
+
+/**
  * True when the current request is a SPECULATIVE fetch — a browser prefetch /
  * prerender, a link-preview scanner, or a HEAD probe — rather than a real human
  * navigation. The click-recording redirect endpoints (dl/lp/rtr/off/…) must not

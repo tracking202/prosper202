@@ -177,7 +177,7 @@ if ($pci == '') {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>
@@ -437,7 +437,7 @@ if ($cloaking_on == true) {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>

@@ -7,7 +7,7 @@ require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
 $url = RedirectHelper::getStringParam('q');
 if ($url === null) {
-    RedirectHelper::redirect('/202-404.php');
+    RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
 
 $referrer = RedirectHelper::getStringParam('r') ?? '';
