@@ -17,12 +17,13 @@ use Api\V3\Support\RequestFlag;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Database\Connection;
-use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
 use Prosper202\Ltv\MysqlCustomerCrmRepository;
 use Prosper202\Ltv\MysqlCustomerFieldRepository;
 use Prosper202\Ltv\CompanyConflictException;
+use Prosper202\Ltv\LtvConflictException;
+use Prosper202\Ltv\LtvInputException;
 use Prosper202\Ltv\MysqlCustomerRepository;
 use Prosper202\Ltv\MysqlIntegrationRepository;
 use Prosper202\Ltv\RecordNotFoundException;
@@ -30,6 +31,7 @@ use Prosper202\Ltv\MysqlLtvRepository;
 use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\SubscriptionNotFoundException;
+use Prosper202\Validation\OutboundUrlException;
 
 /**
  * /ltv endpoints: realized + predictive LTV reads, customer CRM management,
@@ -217,6 +219,7 @@ class LtvController
         PayloadKeys::refuseUnknown($payload, ['event', 'event_name', 'value', 'occurred_at', ...self::IDENTITY_KEYS], 'an engagement event');
         PayloadKeys::refuse(
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + LtvBody::identity($payload)
         );
         $eventName = trim((string) ($payload['event'] ?? $payload['event_name'] ?? ''));
         if ($eventName === '') {
@@ -389,6 +392,7 @@ class LtvController
         // each alias as POST /ltv/customers/{id}/aliases reads one: a
         // misspelled `tpye` made the alias a custom one.
         PayloadKeys::refuse(LtvBody::crm($payload)
+            + LtvBody::identity($payload)
             + PayloadKeys::listErrors($payload, 'aliases', LtvBody::ALIAS_KEYS, 'an alias', LtvBody::alias(...)));
         $customerId = $this->wrap(fn (): int => $this->crm->upsert($this->userId, $payload));
         $this->enqueueEvent('customer.updated', ['customer_id' => $customerId]);
@@ -493,6 +497,7 @@ class LtvController
         PayloadKeys::refuse(
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
             + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+            + LtvBody::identity($payload)
         );
 
         return $this->wrap(function () use ($payload): array {
@@ -633,6 +638,7 @@ class LtvController
         PayloadKeys::refuse(
             LtvBody::subscription($payload)
             + PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + LtvBody::identity($payload)
         );
         $result = $this->wrap(fn (): array => $this->subscriptions->upsert($this->userId, $payload));
         $this->enqueueEvent('subscription.changed', [
@@ -661,18 +667,12 @@ class LtvController
         // renewal 2026 seconds into 1970, and an amount of "abc" renewed for 0.
         PayloadKeys::refuse(LtvBody::subscriptionEvent($payload));
 
-        try {
-            $result = $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload);
-        } catch (SubscriptionNotFoundException $e) {
-            throw new NotFoundException($e->getMessage());
-        } catch (QueryException | \mysqli_sql_exception $e) {
-            // Database-layer failure → 500, not a 422 (see wrap()).
-            throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
-        } catch (\Throwable $e) {
-            throw new DatabaseException('Subscription event failed: ' . $e->getMessage(), $e);
-        }
+        // wrap()'s mapping: a refusal names its field, a missing
+        // subscription is a 404, anything else the server's failure. This
+        // caught every RuntimeException as a 422 with no field.
+        $result = $this->wrap(
+            fn (): array => $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload)
+        );
 
         // Idempotent replays (duplicate renewal/refund keys, repeat cancels)
         // change nothing — notifying downstream would duplicate side effects.
@@ -995,7 +995,17 @@ class LtvController
         }
         $events = $payload['events'] ?? [];
 
-        $result = $this->wrap(fn (): array => $this->webhooks->create($this->userId, $url, $events));
+        $result = $this->wrap(function () use ($url, $events, $payload): array {
+            try {
+                return $this->webhooks->create($this->userId, $url, $events);
+            } catch (OutboundUrlException $e) {
+                // The URL guard's refusal is the caller's to fix, named by
+                // the field it was sent in; wrap() takes an exception it does
+                // not know for the server's.
+                $field = array_key_exists('url', $payload) ? 'url' : 'webhook_url';
+                throw new ValidationException($e->getMessage(), [$field => $e->getMessage()]);
+            }
+        });
 
         // The secret is returned exactly once, at creation.
         return ['data' => ['webhook_id' => $result['webhookId'], 'secret' => $result['secret']]];
@@ -1128,7 +1138,9 @@ class LtvController
     {
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['name', 'domain'], 'a company update');
         if (!array_key_exists('name', $payload) && !array_key_exists('domain', $payload)) {
-            throw new ValidationException('Nothing to update — supply name and/or domain', []);
+            throw new ValidationException('Nothing to update — supply name and/or domain', [
+                'name' => 'Send name, domain or both',
+            ]);
         }
 
         $companies = new MysqlCompanyRepository($this->conn);
@@ -1538,7 +1550,16 @@ class LtvController
         }
 
         $filters = [];
-        foreach ($this->customFieldFilterParams($params) as $key => $value) {
+        $cfParams = $this->customFieldFilterParams($params);
+        if (count($cfParams) > LtvQuery::MAX_CUSTOM_FIELD_FILTERS) {
+            $extra = array_slice(array_keys($cfParams), LtvQuery::MAX_CUSTOM_FIELD_FILTERS);
+            $most = LtvQuery::MAX_CUSTOM_FIELD_FILTERS;
+            throw new ValidationException(
+                'At most ' . $most . ' custom-field filters are supported per query',
+                array_fill_keys($extra, 'One filter too many: at most ' . $most . ' cf.* filters per query')
+            );
+        }
+        foreach ($cfParams as $key => $value) {
             $parts = explode('.', $key);
             $fieldKey = $parts[1] ?? '';
             $bound = $parts[2] ?? '';
@@ -1572,11 +1593,10 @@ class LtvController
             ];
         }
 
-        try {
-            return new LtvQuery($this->userId, $timeFrom, $timeTo, $filters);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
-        }
+        // Every filter above was built here from a checked parameter, so
+        // what LtvQuery refuses is this code's mistake, not the caller's: it
+        // is not a 422 with no field to fix, it is a 500 (wrap()).
+        return new LtvQuery($this->userId, $timeFrom, $timeTo, $filters);
     }
 
     /**
@@ -1720,8 +1740,18 @@ class LtvController
     }
 
     /**
-     * Run a repository call, translating RuntimeExceptions (validation-shaped
-     * messages from the Ltv repos) to 422s and everything else to 500s.
+     * Run a repository call, translating what it throws into the API's
+     * answers: a refusal of what was sent (LtvInputException) is a 422
+     * naming its field, a missing record a 404, a write a concurrent one got
+     * to first a 409, and everything else the server's failure, a 500.
+     *
+     * Every RuntimeException used to be a 422 carrying only its message --
+     * "amount must not be negative for purchase events", an unknown custom
+     * field, a reused idempotency key -- so an agent had a sentence and no
+     * field to fix, and a repository's own failure ("did not yield a
+     * customer_id", an identity-graph error) read as the caller's mistake.
+     * A refusal now says which field (LtvFieldErrorsTest holds every 422
+     * this controller answers to one).
      *
      * @template T
      * @param callable(): T $fn
@@ -1733,17 +1763,19 @@ class LtvController
             return $fn();
         } catch (ValidationException | NotFoundException | ConflictException | DatabaseException $e) {
             throw $e;
-        } catch (QueryException | \mysqli_sql_exception $e) {
-            // A database-LAYER failure (missing table on a code-before-migration
-            // deploy, a failed statement) is a 500, NOT a client-correctable
-            // 422 — under MYSQLI_REPORT_STRICT a failed query surfaces as
-            // Connection's QueryException (a RuntimeException subclass), so it
-            // must be caught before the validation branch or raw MySQL detail
-            // would leak to the client with a 422.
-            throw new DatabaseException('LTV operation failed: ' . $e->getMessage(), $e);
-        } catch (\RuntimeException $e) {
-            throw new ValidationException($e->getMessage());
+        } catch (LtvInputException $e) {
+            throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
+        } catch (RecordNotFoundException | SubscriptionNotFoundException $e) {
+            throw new NotFoundException($e->getMessage(), $e);
+        } catch (LtvConflictException | CompanyConflictException $e) {
+            throw new ConflictException($e->getMessage(), [], $e);
         } catch (\Throwable $e) {
+            // A database-LAYER failure (missing table on a code-before-migration
+            // deploy, a failed statement) and anything else a repository
+            // throws that is not a refusal: a 500, NOT a client-correctable
+            // 422 — under MYSQLI_REPORT_STRICT a failed query surfaces as
+            // Connection's QueryException (a RuntimeException subclass), and
+            // raw MySQL detail must not reach the client.
             throw new DatabaseException('LTV operation failed: ' . $e->getMessage(), $e);
         }
     }

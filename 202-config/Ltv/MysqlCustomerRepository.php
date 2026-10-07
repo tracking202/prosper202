@@ -110,16 +110,16 @@ final class MysqlCustomerRepository
     ): int {
         $aliasValue = trim($aliasValue);
         if ($aliasValue === '') {
-            throw new RuntimeException('Customer reference must not be empty');
+            throw new LtvInputException('customer_ref', 'Customer reference must not be empty');
         }
         if (strlen($aliasValue) > 255) {
-            throw new RuntimeException('Customer reference exceeds 255 characters');
+            throw new LtvInputException('customer_ref', 'Customer reference exceeds 255 characters');
         }
         // Every resolution path funnels through here, so the allowlist is
         // enforced once for all of them: a type stored as 'Merchant_ID' would
         // never match conversion/personalization lookups again.
-        $aliasType = $this->normalizeAliasType($aliasType);
-        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
+        $aliasType = $this->normalizeAliasType($aliasType, 'customer_ref_type');
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, 'customer_ref');
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $existing = $this->aliasCustomerId($userId, $aliasType, $aliasHash);
@@ -172,10 +172,10 @@ final class MysqlCustomerRepository
     {
         $aliasValue = trim($aliasValue);
         if ($aliasValue === '') {
-            throw new RuntimeException('Alias value must not be empty');
+            throw new LtvInputException('value', 'Alias value must not be empty');
         }
-        $aliasType = $this->normalizeAliasType($aliasType);
-        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue);
+        $aliasType = $this->normalizeAliasType($aliasType, 'type');
+        $aliasValue = self::canonicalizeAliasValue($aliasType, $aliasValue, 'value');
         $aliasHash = hash('sha256', $aliasValue, true);
 
         $stmt = $this->conn->prepareWrite(
@@ -259,9 +259,12 @@ final class MysqlCustomerRepository
     public static function assertAmountSignMatchesType(string $eventType, float $amount): void
     {
         if ($amount < 0 && in_array($eventType, ['purchase', 'renewal', 'one_time'], true)) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                'amount',
                 'amount must not be negative for ' . $eventType
-                . ' events; use refund, chargeback or adjustment for negative money'
+                    . ' events; use refund, chargeback or adjustment for negative money',
+                'Must not be negative for ' . $eventType . ': send money back as event_type refund or chargeback'
+                    . ' (with a positive amount), or a correction as adjustment'
             );
         }
     }
@@ -417,7 +420,7 @@ final class MysqlCustomerRepository
         $externalId = trim((string) ($product['external_product_id'] ?? ''));
         $sku = trim((string) ($product['sku'] ?? ''));
         if ($externalId === '' && $sku === '') {
-            throw new RuntimeException('Product requires an external_product_id or sku');
+            throw new LtvInputException('external_product_id', 'Product requires an external_product_id or sku');
         }
         if ($externalId === '') {
             $externalId = 'sku:' . $sku;
@@ -470,11 +473,14 @@ final class MysqlCustomerRepository
     {
         foreach ($items as $index => $item) {
             if (!is_array($item)) {
-                throw new RuntimeException("Line item #{$index} is not an object");
+                throw new LtvInputException("items.{$index}", "Line item #{$index} is not an object");
             }
             $quantity = isset($item['quantity']) ? (float) $item['quantity'] : 1.0;
             if ($quantity <= 0) {
-                throw new RuntimeException("Line item #{$index} has a non-positive quantity");
+                throw new LtvInputException(
+                    "items.{$index}.quantity",
+                    "Line item #{$index} has a non-positive quantity"
+                );
             }
             $unitPrice = isset($item['unit_price']) && $item['unit_price'] !== null ? (float) $item['unit_price'] : null;
             $amount = isset($item['amount']) && $item['amount'] !== null
@@ -485,7 +491,12 @@ final class MysqlCustomerRepository
                 $quantity = -$quantity;
             }
 
-            $productId = $this->upsertProduct($userId, $item, $currency, $now);
+            try {
+                $productId = $this->upsertProduct($userId, $item, $currency, $now);
+            } catch (LtvInputException $e) {
+                // The product's field, at the line item's place in the body.
+                throw new LtvInputException("items.{$index}." . $e->field, "Line item #{$index}: " . $e->getMessage());
+            }
             $sku = trim((string) ($item['sku'] ?? ''));
             $name = trim((string) ($item['name'] ?? ''));
 
@@ -724,8 +735,11 @@ final class MysqlCustomerRepository
     {
         foreach (self::RESERVED_IDEMPOTENCY_PREFIXES as $prefix) {
             if (str_starts_with($key, $prefix)) {
-                throw new RuntimeException(
-                    'idempotency_key prefix "' . $prefix . '" is reserved for internal events; choose a different key'
+                throw new LtvInputException(
+                    'idempotency_key',
+                    'idempotency_key prefix "' . $prefix . '" is reserved for internal events; choose a different key',
+                    'Must not start with "' . $prefix . '" (reserved for the events this install records itself);'
+                        . ' use your own id for the event, e.g. an order or charge id'
                 );
             }
         }
@@ -740,14 +754,17 @@ final class MysqlCustomerRepository
      * (esp_id/merchant_id/subid/custom) pass through untouched. Malformed
      * digests are rejected explicitly rather than stored as an unmatched
      * identity.
+     *
+     * @param string $field the body field that holds the value, which a refusal names
      */
-    public static function canonicalizeAliasValue(string $type, string $value): string
+    public static function canonicalizeAliasValue(string $type, string $value, string $field = 'value'): string
     {
         if ($type === 'email_md5' || $type === 'email_sha256') {
             $value = strtolower($value);
             $length = $type === 'email_md5' ? 32 : 64;
             if (preg_match('/^[0-9a-f]{' . $length . '}$/', $value) !== 1) {
-                throw new RuntimeException(
+                throw new LtvInputException(
+                    $field,
                     $type . ' alias value must be a ' . $length . '-character hex digest'
                 );
             }
@@ -756,15 +773,17 @@ final class MysqlCustomerRepository
         return $value;
     }
 
-    private function normalizeAliasType(?string $type): string
+    /** @param string $field the body field that holds the type, which a refusal names */
+    private function normalizeAliasType(?string $type, string $field): string
     {
         $type = strtolower(trim((string) $type));
         if ($type === '') {
             return 'custom';
         }
         if (!in_array($type, self::ALIAS_TYPES, true)) {
-            throw new RuntimeException(
-                'Unknown customer_ref_type "' . $type . '"; expected one of: ' . implode(', ', self::ALIAS_TYPES)
+            throw new LtvInputException(
+                $field,
+                'Unknown ' . $field . ' "' . $type . '"; expected one of: ' . implode(', ', self::ALIAS_TYPES)
             );
         }
 

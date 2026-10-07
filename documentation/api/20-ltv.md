@@ -38,6 +38,15 @@ fields, companies), or sends it on (webhooks).
   writes nothing.
 - **Money is the account's currency.** A `currency` other than the
   account's is a `422`; multi-currency is not supported.
+- **Every `422` names its field.** `field_errors` holds the body or query
+  field to fix, by its place in the body (`amount`, `items.0.quantity`,
+  `custom_fields.tier`, `aliases.1.value`, `source_customer_id`). Refusals
+  the repositories made used to come back with the message alone ("amount
+  must not be negative for purchase events", an unknown custom field, a
+  reserved `idempotency_key`). A refusal by the state of a record rather
+  than by a field (a company with customers attached, a merge another
+  request got to first) is a `409`, and a failure of the server a `500`,
+  never a `422`.
 
 ## Naming the customer
 
@@ -268,5 +277,10 @@ own settings, a JSON object stored as sent (a list is a `422`).
 | `422` `events.0` on a webhook | An event this install never sends | One of the five names, or `*` |
 | `422` `is_required` | A flag that is not one | `true` or `false` |
 | `422` `staged` | An LTV write sent with `?staged=1` | Send it without |
+| `422` `amount`: "Must not be negative for purchase" | A negative `purchase` or `one_time` | Send it as `refund`/`chargeback` (positive amount) or `adjustment` |
+| `422` `custom_fields.<key>` | A custom field with no definition, a value of the wrong type, or a required one left out | `p202 ltv fields list`; define it first with `POST /ltv/fields` |
+| `422` `customer_ref` / `customer_ref_type` | Not a string, a malformed email digest, or a type off the list | Your id as a string; a type from the list |
+| `422` `source_customer_id` / `source_company_id` | Merging a record into itself, or a source the account does not have | Pick the other record (`p202 ltv customers`, `p202 ltv companies`) |
+| `422` `idempotency_key` | A reserved prefix (`void:`, `sub:`, …) | Your own id for the event |
 | `404` | A customer, subscription, product, field, webhook or company of another account, or none | List them first (`p202 ltv customers`, `subscriptions`, `products`, …) |
-| `409` | A product an order line item names; a company name or domain in use | Leave the product; merge the companies, or pick another name |
+| `409` | A product an order line item names; a company name or domain in use; a company with customers attached (it was a `422`); a merge another request changed first | Leave the product; merge the companies, or pick another name; retry the merge |

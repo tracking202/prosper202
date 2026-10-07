@@ -66,7 +66,7 @@ final class MysqlCompanyRepository
 
         if ($domain === '' || strlen($domain) > 191
             || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/', $domain) !== 1) {
-            throw new RuntimeException('domain must be a bare hostname like example.com');
+            throw new LtvInputException('domain', 'domain must be a bare hostname like example.com');
         }
 
         return $domain;
@@ -92,7 +92,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('company', 'Company name must not be empty');
         }
         $now = $now ?? time();
 
@@ -124,7 +124,7 @@ final class MysqlCompanyRepository
     {
         $name = self::canonicalName($name);
         if ($name === '') {
-            throw new RuntimeException('Company name must not be empty');
+            throw new LtvInputException('name', 'Company name must not be empty');
         }
         // Friendly fast-path message with the existing id; the unique key
         // below still catches the race this check cannot.
@@ -384,10 +384,14 @@ final class MysqlCompanyRepository
     public function update(int $userId, int $companyId, array $changes): void
     {
         if (!array_key_exists('name', $changes) && !array_key_exists('domain', $changes)) {
-            throw new RuntimeException('Nothing to update — supply name and/or domain');
+            throw new LtvInputException(
+                'name',
+                'Nothing to update — supply name and/or domain',
+                'Send name, domain or both'
+            );
         }
         if ($this->get($userId, $companyId) === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
         $newName = null;
@@ -395,7 +399,7 @@ final class MysqlCompanyRepository
         if (array_key_exists('name', $changes)) {
             $newName = self::canonicalName((string) $changes['name']);
             if ($newName === '') {
-                throw new RuntimeException('Company name must not be empty');
+                throw new LtvInputException('name', 'Company name must not be empty');
             }
             $normalized = self::normalizeName($newName);
             $dupStmt = $this->conn->prepareWrite(
@@ -496,12 +500,19 @@ final class MysqlCompanyRepository
     public function merge(int $userId, int $sourceCompanyId, int $targetCompanyId): void
     {
         if ($sourceCompanyId === $targetCompanyId) {
-            throw new RuntimeException('Cannot merge a company into itself');
+            throw new LtvInputException('source_company_id', 'Cannot merge a company into itself');
         }
         $source = $this->get($userId, $sourceCompanyId);
         $target = $this->get($userId, $targetCompanyId);
-        if ($source === null || $target === null) {
-            throw new RuntimeException('Both companies must exist and belong to this account');
+        if ($target === null) {
+            throw new RecordNotFoundException('Company not found');
+        }
+        if ($source === null) {
+            throw new LtvInputException(
+                'source_company_id',
+                'source_company_id ' . $sourceCompanyId . ' not found for this account',
+                'No such company in this account (see `p202 ltv companies`)'
+            );
         }
 
         $now = time();
@@ -523,7 +534,7 @@ final class MysqlCompanyRepository
                 $locked[(int) $row['company_id']] = $row;
             }
             if (!isset($locked[$sourceCompanyId], $locked[$targetCompanyId])) {
-                throw new RuntimeException('Company was merged or deleted concurrently; retry the merge');
+                throw new LtvConflictException('Company was merged or deleted concurrently; retry the merge');
             }
             $targetName = (string) $locked[$targetCompanyId]['name'];
 
@@ -573,12 +584,14 @@ final class MysqlCompanyRepository
         $this->conn->transaction(function () use ($userId, $companyId): void {
         $company = $this->lockCompanyRow($userId, $companyId);
         if ($company === null) {
-            throw new RuntimeException('Company not found');
+            throw new RecordNotFoundException('Company not found');
         }
 
+        // Refused by what the company holds, not by anything sent: a 409,
+        // as a product a line item names is.
         $refusal = $this->deleteRefusal($userId, $companyId, (string) $company['name']);
         if ($refusal !== null) {
-            throw new RuntimeException($refusal);
+            throw new LtvConflictException($refusal);
         }
 
         $stmt = $this->conn->prepareWrite(

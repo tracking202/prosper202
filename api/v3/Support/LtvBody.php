@@ -191,6 +191,35 @@ final class LtvBody
     }
 
     /**
+     * The keys that name a write's customer by your own id, as the
+     * repositories read them: customer_ref a string (or a whole number, read
+     * as its digits) no longer than an alias holds, and customer_ref_type
+     * one of MysqlCustomerRepository::ALIAS_TYPES. customer_id is the
+     * handlers' to read (QueryInt). Absent or null is none.
+     *
+     * The repositories cast both: a customer_ref of {"a": 1} was the text
+     * "Array", and POST /ltv/revenue recorded the money on a new customer of
+     * that name and answered 201 (CLAUDE.md #4).
+     *
+     * @param array<array-key, mixed> $payload
+     * @return array<string, string>
+     */
+    public static function identity(array $payload): array
+    {
+        $errors = [];
+        self::text($payload, 'customer_ref', 255, $errors, ': your id for the customer');
+        if (array_key_exists('customer_ref_type', $payload) && $payload['customer_ref_type'] !== null) {
+            $type = $payload['customer_ref_type'];
+            $sent = is_string($type) ? strtolower(trim($type)) : null;
+            if ($sent === null || ($sent !== '' && !in_array($sent, MysqlCustomerRepository::ALIAS_TYPES, true))) {
+                $errors['customer_ref_type'] = 'must be one of: ' . implode(', ', MysqlCustomerRepository::ALIAS_TYPES);
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
      * An alias: a value (the identifier, required) and a type, one of
      * MysqlCustomerRepository::ALIAS_TYPES (custom when left out); an email
      * digest must be one.

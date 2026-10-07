@@ -7307,6 +7307,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Another request merged or removed one of the two first; nothing was merged. Send the merge again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /ltv/customers/{id}/aliases:
     post:
@@ -7858,9 +7864,10 @@ paths:
       - LTV
       summary: Delete a company
       description: Needs the `ltv:write` scope. LTV writes do not honor `Idempotency-Key` (`POST /ltv/revenue` takes
-        an `idempotency_key` field instead). Refused with `422` while customers are attached (merge the company
-        instead) or customers wait for the entity-linking sweep. `dry_run=1` returns the company and, in `refused`,
-        the reason the delete would be turned down (`null` when it would go ahead).
+        an `idempotency_key` field instead). Refused with `409` while customers are attached (merge the company
+        instead) or customers wait for the entity-linking sweep (it was a `422`).
+        `dry_run=1` returns the company and, in `refused`, the reason the delete would be turned down (`null`
+        when it would go ahead).
       operationId: ltvDeleteCompany
       parameters:
       - $ref: '#/components/parameters/dryRun'
@@ -7873,6 +7880,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Customers are attached to the company (or wait for the linking sweep); nothing was deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /ltv/companies/{id}/merge:
     post:
@@ -7917,6 +7930,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Another request merged or removed one of the two first; nothing was merged. Send the merge again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /ltv/subscriptions:
     get:

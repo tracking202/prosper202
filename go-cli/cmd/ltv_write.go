@@ -818,7 +818,10 @@ var ltvCompanyDeleteCmd = &cobra.Command{
 			idsHintText: "Comma-separate company ids, e.g. --ids 3,4 (" + ltvCompanyListHint + ")",
 			explain: func(err error) error {
 				var apiErr *api.APIError
-				if errors.As(err, &apiErr) && apiErr.Status == 422 && strings.Contains(apiErr.Message, "attached customer") {
+				// 409 now (a refusal by what the company holds, not by a
+				// field sent); servers before answered 422.
+				if errors.As(err, &apiErr) && (apiErr.Status == 409 || apiErr.Status == 422) &&
+					strings.Contains(apiErr.Message, "attached customer") {
 					return withHint(err, "Move its customers with `p202 ltv company merge <target-company-id> --from <this id>`, which also deletes it.")
 				}
 				return ltvNotFound(err, ltvCompanyListHint)

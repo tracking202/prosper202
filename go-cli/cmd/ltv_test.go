@@ -509,12 +509,16 @@ func TestLtvCompanyWrites(t *testing.T) {
 		t.Errorf("a duplicate company should point at update/merge: %v / %q", err, hintFor(err))
 	}
 
-	newLtvServer(t, func(ltvRequest) (int, string) {
-		return 422, `{"message":"Company still has 2 attached customer(s); merge it into another company instead"}`
-	})
-	_, _, err = executeCommand("ltv", "company", "delete", "3", "--force")
-	if err == nil || !strings.Contains(hintFor(err), "p202 ltv company merge") {
-		t.Errorf("a company with customers should point at merge: %v / %q", err, hintFor(err))
+	// The server answers the refusal 409 (a company's state, no field to
+	// fix); servers before answered 422. Both point at merge.
+	for _, status := range []int{409, 422} {
+		newLtvServer(t, func(ltvRequest) (int, string) {
+			return status, `{"message":"Company still has 2 attached customer(s); merge it into another company instead"}`
+		})
+		_, _, err = executeCommand("ltv", "company", "delete", "3", "--force")
+		if err == nil || !strings.Contains(hintFor(err), "p202 ltv company merge") {
+			t.Errorf("%d: a company with customers should point at merge: %v / %q", status, err, hintFor(err))
+		}
 	}
 
 	for _, args := range [][]string{

@@ -53,24 +53,35 @@ final class MysqlSubscriptionRepository
     {
         $externalSubId = trim((string) ($payload['external_sub_id'] ?? ''));
         if ($externalSubId === '') {
-            throw new RuntimeException('external_sub_id is required');
+            throw new LtvInputException(
+                'external_sub_id',
+                'external_sub_id is required',
+                'Required: the billing system\'s id for the subscription'
+            );
         }
 
         $interval = strtolower(trim((string) ($payload['billing_interval'] ?? 'month')));
         if (!in_array($interval, self::INTERVALS, true)) {
-            throw new RuntimeException('billing_interval must be one of: ' . implode(', ', self::INTERVALS));
+            throw new LtvInputException(
+                'billing_interval',
+                'billing_interval must be one of: ' . implode(', ', self::INTERVALS)
+            );
         }
         $intervalCount = max(1, (int) ($payload['billing_interval_count'] ?? 1));
         $amount = (float) ($payload['amount'] ?? 0);
         if ($amount < 0) {
-            throw new RuntimeException('amount must not be negative');
+            throw new LtvInputException('amount', 'amount must not be negative');
         }
 
         $currency = $this->validateCurrency($userId, $payload['currency'] ?? null);
 
         $status = strtolower(trim((string) ($payload['status'] ?? 'active')));
         if (!in_array($status, self::STATUSES, true)) {
-            throw new RuntimeException('invalid subscription status: ' . $status);
+            throw new LtvInputException(
+                'status',
+                'invalid subscription status: ' . $status,
+                'Must be one of: ' . implode(', ', self::STATUSES)
+            );
         }
 
         $now = time();
@@ -78,9 +89,10 @@ final class MysqlSubscriptionRepository
         $periodStart = (int) ($payload['current_period_start'] ?? $startedAt);
         $periodEnd = (int) ($payload['current_period_end'] ?? self::advancePeriod($periodStart, $interval, $intervalCount));
         if ($periodEnd <= $periodStart) {
-            throw new RuntimeException('current_period_end must be after current_period_start');
+            throw new LtvInputException('current_period_end', 'current_period_end must be after current_period_start');
         }
-        self::assertStorableTime($periodEnd, isset($payload['current_period_end']) ? 'current_period_end' : 'billing_interval_count');
+        $periodField = isset($payload['current_period_end']) ? 'current_period_end' : 'billing_interval_count';
+        self::assertStorableTime($periodEnd, $periodField, $periodField);
         $graceDays = max(0, (int) ($payload['grace_days'] ?? 3));
         $planName = trim((string) ($payload['plan_name'] ?? ''));
 
@@ -219,7 +231,7 @@ final class MysqlSubscriptionRepository
     public function recordEvent(int $userId, string $externalSubId, string $eventType, array $payload): array
     {
         if (!in_array($eventType, ['renewal', 'cancel', 'refund'], true)) {
-            throw new RuntimeException('event type must be renewal, cancel or refund');
+            throw new LtvInputException('event_type', 'event type must be renewal, cancel or refund');
         }
 
         $now = time();
@@ -261,7 +273,10 @@ final class MysqlSubscriptionRepository
                 $isRefund = $eventType === 'refund';
                 $amount = isset($payload['amount']) ? (float) $payload['amount'] : (float) $sub['amount'];
                 if ($amount < 0) {
-                    throw new RuntimeException('amount must not be negative; refunds are negated automatically');
+                    throw new LtvInputException(
+                        'amount',
+                        'amount must not be negative; refunds are negated automatically'
+                    );
                 }
                 $ledgerAmount = $isRefund ? -$amount : $amount;
 
@@ -341,6 +356,7 @@ final class MysqlSubscriptionRepository
                             );
                         self::assertStorableTime(
                             $newPeriodEnd,
+                            'current_period_end',
                             isset($payload['current_period_end']) ? 'current_period_end' : 'the subscription\'s billing_interval_count, or send current_period_end'
                         );
                         $mrr = self::normalizeMrr(
@@ -406,12 +422,13 @@ final class MysqlSubscriptionRepository
      * yearly intervals, and the write then failed in strict mode ("Out of
      * range value", a 500); the message names what to change.
      */
-    private static function assertStorableTime(int $periodEnd, string $field): void
+    private static function assertStorableTime(int $periodEnd, string $field, string $lower): void
     {
         if ($periodEnd > 4294967295) {
-            throw new RuntimeException(
+            throw new LtvInputException(
+                $field,
                 'the period would end after 2106-02-07 06:28:15 UTC (unix time 4294967295), the latest the subscription can store: '
-                . 'lower ' . $field
+                    . 'lower ' . $lower
             );
         }
     }
@@ -449,20 +466,28 @@ final class MysqlSubscriptionRepository
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
             if (!$this->customers->customerBelongsToUser($explicitId, $userId)) {
-                throw new RuntimeException('customer_id ' . $explicitId . ' not found for this account');
+                throw new LtvInputException(
+                    'customer_id',
+                    'customer_id ' . $explicitId . ' not found for this account',
+                    'No such customer in this account (see `p202 ltv customers`)'
+                );
             }
             return $this->customers->followMergePointer($explicitId);
         }
 
         $ref = trim((string) ($payload['customer_ref'] ?? ''));
         if ($ref === '') {
-            throw new RuntimeException('A customer is required: pass customer_id or customer_ref');
+            throw new LtvInputException(
+                'customer_ref',
+                'A customer is required: pass customer_id or customer_ref',
+                'Identify the customer: your id for them (customer_ref), or customer_id'
+            );
         }
         $refType = isset($payload['customer_ref_type']) ? (string) $payload['customer_ref_type'] : 'custom';
         $crm = $payload['customer_crm'] ?? [];
         if (!is_array($crm)) {
             // Read as none, it answered 201 with the customer created bare.
-            throw new RuntimeException('customer_crm must be an object of CRM fields');
+            throw new LtvInputException('customer_crm', 'customer_crm must be an object of CRM fields');
         }
 
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now);
@@ -482,7 +507,7 @@ final class MysqlSubscriptionRepository
     public function listForUser(int $userId, ?string $status = null, int $limit = 50, int $offset = 0): array
     {
         if ($status !== null && $status !== '' && !in_array($status, self::STATUSES, true)) {
-            throw new RuntimeException('status must be one of: ' . implode(', ', self::STATUSES));
+            throw new LtvInputException('status', 'status must be one of: ' . implode(', ', self::STATUSES));
         }
         $statusWhere = ($status !== null && $status !== '') ? ' AND s.status = ?' : '';
 
@@ -527,8 +552,11 @@ final class MysqlSubscriptionRepository
         }
         $currency = strtoupper(trim((string) $requested));
         if ($currency !== $accountCurrency) {
-            throw new RuntimeException(
-                "currency {$currency} does not match the account currency {$accountCurrency}; multi-currency is not supported"
+            throw new LtvInputException(
+                'currency',
+                "currency {$currency} does not match the account currency {$accountCurrency};"
+                    . ' multi-currency is not supported',
+                'Must be the account currency, ' . $accountCurrency . ' (or leave it out)'
             );
         }
 

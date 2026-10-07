@@ -334,6 +334,10 @@ class ConversionsController
             throw new ValidationException($e->getMessage(), ['transaction_id' => $e->getMessage()]);
         } catch (\Prosper202\Conversion\LtvDataWithoutCustomer $e) {
             throw new ValidationException($e->getMessage(), $e->fieldErrors());
+        } catch (\Prosper202\Ltv\LtvInputException $e) {
+            // The LTV repositories' refusals name their field (an unknown
+            // customer_ref_type, a line item's quantity), as on /ltv/*.
+            throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
         } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
             // A real database failure is a 500 even though QueryException
             // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed
