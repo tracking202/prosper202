@@ -225,7 +225,7 @@ final class SetupEndpointsInstanceTest extends TestCase
         [$status, $conversions] = self::call(self::$key, 'GET', '/clicks/' . $click . '/conversions');
         $this->assertSame(200, $status, json_encode($conversions));
         $this->assertCount(1, $conversions['data']);
-        $this->assertSame('4.25000', $conversions['data'][0]['amount']);
+        $this->assertSame(4.25, $conversions['data'][0]['amount'], 'an amount is a number');
         $this->assertSame('postback', $conversions['data'][0]['source']);
 
         [$status] = self::call(self::$key, 'DELETE', '/ppc-accounts/' . self::$ids['account'] . '/pixels/' . $pixel['data']['pixel_id']);

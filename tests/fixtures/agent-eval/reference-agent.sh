@@ -165,11 +165,12 @@ case "$ask" in
         # per model — the click report cannot tell models apart. Find the
         # two models in real list output, read the report under each, and
         # name the campaign (of the two the ask names) holding the credit.
+        # Clicks with no campaign come back as a row named null.
         first=$(p202 attribution model list --type first_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
         last=$(p202 attribution model list --type last_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
         top() {
             p202 attribution breakdown --group-by campaign --model "$1" --json |
-                jq -r '[.data[] | select(.name | startswith("EVAL MTA")) | select((.attributed_conversions | tonumber) > 0)] | max_by(.attributed_conversions | tonumber) | .name // "no campaign"'
+                jq -r '[.data[] | select((.name // "") | startswith("EVAL MTA")) | select((.attributed_conversions | tonumber) > 0)] | max_by(.attributed_conversions | tonumber) | .name // "no campaign"'
         }
         printf 'Per `p202 attribution breakdown --group-by campaign`, first touch: %s (model %s); last touch: %s (model %s). The same conversions, credited to the click that opened the journey under one model and to the one that closed it under the other.\n' \
             "$(top "$first")" "$first" "$(top "$last")" "$last"
@@ -396,6 +397,20 @@ case "$ask" in
             --aff-campaign-payout=2.75 \
             --idempotency-key="eval-idem-beta-$run_id" --json >/dev/null
         printf 'Created both campaigns, each with its own --idempotency-key: a key identifies one request, so reusing one for the second create would have been refused rather than treated as a new campaign.\n'
+        ;;
+    *"/tmp/p202-eval-import.csv"*)
+        # A network export that overlaps an earlier import: the dry run reads
+        # each click's conversions and marks what is already on file, and the
+        # write sends only the rest. The counts come from the import's answer.
+        file=/tmp/p202-eval-import.csv
+        p202 conversion import "$file" --dry-run --check-clicks --json >/dev/null
+        out=$(p202 conversion import "$file" --force --json)
+        printf 'Imported %s: %s row(s) new and recorded, %s already recorded and skipped, %s failed.\n' \
+            "$file" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.created')" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.duplicate')" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.failed')"
+        printf '%s' "$out" | jq -r '.data[] | "- row \(.row) (\(.transaction_id // "no transaction id"), \(.payout // "default payout")): \(.status)\(if .reason then ": \(.reason)" else "" end)"'
         ;;
     *"EVAL-LTV-ORD-"*)
         # Revenue from another system goes on the customer's ledger, keyed by

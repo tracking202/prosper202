@@ -665,6 +665,10 @@ func extractIntField(obj map[string]interface{}, keys ...string) (int, bool) {
 			return v, true
 		case int64:
 			return int(v), true
+		case json.Number: // decoded with UseNumber
+			if parsed, err := strconv.Atoi(v.String()); err == nil {
+				return parsed, true
+			}
 		case string:
 			if parsed, err := strconv.Atoi(v); err == nil {
 				return parsed, true

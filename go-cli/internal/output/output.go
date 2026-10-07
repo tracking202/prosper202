@@ -388,8 +388,12 @@ func trimLongDecimal(s string) string {
 		return s
 	}
 	out := strconv.FormatFloat(f, 'f', 4, 64)
-	out = strings.TrimRight(out, "0")
-	return strings.TrimRight(out, ".")
+	out = strings.TrimRight(strings.TrimRight(out, "0"), ".")
+	if f != 0 && (out == "0" || out == "-0") {
+		// Smaller than four decimals show: the value itself, not a zero.
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return out
 }
 
 // terminalCell makes a value safe to print into a human terminal. Report and
@@ -679,6 +683,13 @@ func formatScalar(v interface{}, exact bool) string {
 		}
 		if exact {
 			return strconv.FormatFloat(val, 'f', -1, 64)
+		}
+		// Cents as cents; a finer value keeps up to four decimals, as a long
+		// decimal string does (trimLongDecimal). The API sends money as numbers,
+		// and a $0.00125 or $0.015 CPC rounded to two decimals read as 0.00 or
+		// 0.01: a cost the table said was nothing, or a third less.
+		if s := strconv.FormatFloat(val, 'f', -1, 64); strings.IndexByte(s, '.') < len(s)-3 {
+			return trimLongDecimal(s)
 		}
 		return fmt.Sprintf("%.2f", val)
 	case bool:

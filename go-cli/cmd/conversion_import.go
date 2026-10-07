@@ -636,11 +636,11 @@ func planConversionImport(t *importTable, cols importColumns, layout string, loc
 // clickLedgerAnswer is the part of GET /clicks/{id}/conversions the import reads.
 type clickLedgerAnswer struct {
 	Data []struct {
-		ConvID         int64   `json:"conv_id"`
-		Amount         string  `json:"amount"`
-		Deleted        bool    `json:"deleted"`
-		TransactionID  *string `json:"transaction_id"`
-		ReversesConvID *int64  `json:"reverses_conv_id"`
+		ConvID         int64       `json:"conv_id"`
+		Amount         json.Number `json:"amount"` // a number; older servers sent a numeric string, which json.Number also reads
+		Deleted        bool        `json:"deleted"`
+		TransactionID  *string     `json:"transaction_id"`
+		ReversesConvID *int64      `json:"reverses_conv_id"`
 	} `json:"data"`
 	Click struct {
 		Lead bool `json:"lead"`
@@ -736,7 +736,7 @@ func resolveImportRow(r *conversionImportRow, ans clickLedgerAnswer) {
 		if conv.TransactionID == nil || *conv.TransactionID != r.TransactionID {
 			continue
 		}
-		negative := conv.ReversesConvID != nil || strings.HasPrefix(strings.TrimSpace(conv.Amount), "-")
+		negative := conv.ReversesConvID != nil || strings.HasPrefix(conv.Amount.String(), "-")
 		if reversal != negative {
 			continue
 		}
@@ -816,7 +816,11 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 			Duplicate bool                   `json:"duplicate"` // absent before servers flagged duplicates
 		}
 		convID := 0
-		ok := json.Unmarshal(data, &resp) == nil
+		// UseNumber: click_payout is a JSON number, and a float64 prints a
+		// $1,000,000 payout as 1e+06, which no amount parser reads.
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		ok := dec.Decode(&resp) == nil
 		if ok {
 			convID, ok = extractIntField(resp.Data, "conv_id")
 		}

@@ -57,6 +57,33 @@
         "p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL IDEM ALPHA\" or .aff_campaign_name==\"EVAL IDEM BETA\") | .aff_campaign_id' | xargs -r -I{} p202 campaign delete {} --force"
       ],
       "notes": "A key identifies one operation. Reusing it for a different body is a 422, so an agent that mints one key per turn rather than one per create gets stuck on the second one — the error names the remedy (send a new key), and the agent has to follow it."
+    },
+    {
+      "id": "idem-003-a-conversions-file-imported-again-records-only-what-is-new",
+      "priority": "critical",
+      "state": "a fresh click on EVAL Campaign B carrying sale EVAL-IMP-A ($7.25) and its reversal, both recorded by an earlier `p202 conversion import`; /tmp/p202-eval-import.csv holds those two rows plus a new sale EVAL-IMP-B ($3.10) on the same click",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && pub=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id_public') && url=$(p202 config show --json | jq -r '.url') && before=$(p202 click list --aff_campaign_id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url/tracking202/redirect/dl.php?t202id=$pub\" && after=$(p202 click list --aff_campaign_id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && test \"$after\" != \"$before\" && printf 'subid,payout,transaction_id\\n%s,7.25,EVAL-IMP-A\\n%s,-7.25,EVAL-IMP-A\\n' \"$after\" \"$after\" > /tmp/p202-eval-import-earlier.csv && p202 conversion import /tmp/p202-eval-import-earlier.csv --force --json >/dev/null && printf 'subid,payout,transaction_id\\n%s,7.25,EVAL-IMP-A\\n%s,-7.25,EVAL-IMP-A\\n%s,3.10,EVAL-IMP-B\\n' \"$after\" \"$after\" \"$after\" > /tmp/p202-eval-import.csv"
+      ],
+      "ask": "Our network sent its conversions export again as /tmp/p202-eval-import.csv (subid, payout, transaction id). Part of it was imported last week. Import it so every sale and reversal is recorded exactly once, and tell me what was new.",
+      "expected": {
+        "runs_one_of": [
+          "conversion import"
+        ],
+        "checks": [
+          {
+            "run": "id=$(sed -n 2p /tmp/p202-eval-import.csv | cut -d, -f1); p202 click conversions \"$id\" --json | jq '[.data[] | select(.deleted | not) | [.transaction_id, (.amount | tonumber)]] | sort == [[\"EVAL-IMP-A\", -7.25], [\"EVAL-IMP-A\", 7.25], [\"EVAL-IMP-B\", 3.1]]'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent imported the file with `p202 conversion import`, the click ends with sale EVAL-IMP-A, its reversal and sale EVAL-IMP-B once each, and the reply says the two earlier rows were already recorded and one sale was added, from the command's own answer. FAIL if any row was recorded twice, if the agent recorded the rows one at a time some other way without checking the click's conversions, or if it reports counts it did not read."
+      },
+      "cleanup": [
+        "id=$(sed -n 2p /tmp/p202-eval-import.csv | cut -d, -f1); [ -n \"$id\" ] && printf '%s\\n' \"$id\" | p202 conversion delete-subids - --force --json >/dev/null; rm -f /tmp/p202-eval-import.csv /tmp/p202-eval-import-earlier.csv"
+      ],
+      "notes": "`p202 conversion import` (no page; POST /conversions per row, after reading each click's GET /clicks/{id}/conversions). A write run always reads the click's conversions first, and that read is what recognises the sale and the reversal already on file, so this case fails when the CLI cannot read the ledger: the importer once decoded `amount` as a string, and when the API began answering it as a number every row on a converted click failed, which only a run against a real server could show. The check compares amounts with tonumber, so it holds for a server that sends them either way."
     }
   ]
 }

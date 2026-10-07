@@ -132,7 +132,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
     {
         $a1 = $this->clicks('camp_a1', 3);
         $a2 = $this->clicks('camp_a2', 2);
-        $before = array_map(fn (int $id): string => $this->click($id)['click_cpc'], $a2);
+        $before = array_map(fn (int $id): float|int => $this->click($id)['click_cpc'], $a2);
 
         $selection = $this->today() + ['cpc' => '0.33333', 'aff_campaign_id' => self::$ids['camp_a1']];
         [$status, $preview] = $this->post('/clicks/cpc?dry_run=1', $selection);
@@ -143,7 +143,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertSame('0.33333', $preview['data']['cpc']);
         $this->assertSame(self::$run . ' camp_a1', $preview['data']['filters']['aff_campaign_id']['name']);
         foreach ($a1 as $id) {
-            $this->assertNotSame('0.33333', $this->click($id)['click_cpc'], 'a dry run writes nothing');
+            $this->assertNotSame(0.33333, $this->click($id)['click_cpc'], 'a dry run writes nothing');
         }
 
         [$status, $applied] = $this->post('/clicks/cpc', $selection + [
@@ -153,7 +153,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertFalse($applied['data']['dry_run']);
         $this->assertSame($preview['data']['matching'], $applied['data']['matching']);
         foreach ($this->campaignClicks('camp_a1') as $id) {
-            $this->assertSame('0.33333', $this->click($id)['click_cpc'], "click $id of the campaign costs the new CPC");
+            $this->assertSame(0.33333, $this->click($id)['click_cpc'], "click $id of the campaign costs the new CPC");
         }
         foreach ($a2 as $i => $id) {
             $this->assertSame($before[$i], $this->click($id)['click_cpc'], "click $id of the other campaign is untouched");
@@ -173,7 +173,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $matching = $preview['data']['matching'];
         $through = $preview['data']['through_click_id'];
         $this->assertGreaterThanOrEqual(2, $matching);
-        $costs = fn (): array => array_map(fn (int $id): string => $this->click($id)['click_cpc'], $this->campaignClicks('camp_a2'));
+        $costs = fn (): array => array_map(fn (int $id): float|int => $this->click($id)['click_cpc'], $this->campaignClicks('camp_a2'));
         $before = $costs();
 
         // A count that no longer matches, as a click edited into or out of
@@ -191,8 +191,8 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertGreaterThan($through, $late);
         [$status, $applied] = $this->post('/clicks/cpc', $selection + ['expect_clicks' => $matching, 'through_click_id' => $through]);
         $this->assertSame(200, $status, json_encode($applied));
-        $this->assertSame('0.77000', $this->click($through)['click_cpc']);
-        $this->assertNotSame('0.77000', $this->click($late)['click_cpc'], 'the click recorded after the check keeps its cost');
+        $this->assertSame(0.77, $this->click($through)['click_cpc']);
+        $this->assertNotSame(0.77, $this->click($late)['click_cpc'], 'the click recorded after the check keeps its cost');
 
         // Without what it confirms, a write is refused by name.
         [$status, $bare] = $this->post('/clicks/cpc', $selection);
@@ -205,7 +205,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
     {
         $day = $this->today();
         $cases = [
-            'a misspelled filter' => [$day + ['cpc' => '0.1', 'aff_campaing_id' => 3], 'aff_campaing_id', 'not accepted'],
+            'a misspelled filter' => [$day + ['cpc' => '0.1', 'aff_campaing_id' => 3], 'aff_campaing_id', 'is not a field of a CPC update'],
             'dry_run in the body' => [$day + ['cpc' => '0.1', 'dry_run' => true], 'dry_run', 'query string'],
             'another account\'s campaign' => [$day + ['cpc' => '0.1', 'aff_campaign_id' => 999999999], 'aff_campaign_id', 'is not one of this account\'s'],
             'a fractional id' => [$day + ['cpc' => '0.1', 'aff_campaign_id' => 1.5], 'aff_campaign_id', 'GET /campaigns'],
@@ -387,7 +387,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
             [['csv' => "subid,payout\n1,2\n", 'subid_column' => 'Click'], 'subid_column', 'no header is named "Click"'],
             [['csv' => "subid,payout\n1,2\n", 'amount_column' => 9], 'amount_column', 'index 9 is not a column'],
             [['csv' => "subid,payout\n1,2\n", 'subid_column' => 0, 'amount_column' => 0], 'amount_column', 'is the subid column too'],
-            [['csv' => "subid,payout\n1,2\n", 'columns' => [0, 1]], 'columns', 'not accepted'],
+            [['csv' => "subid,payout\n1,2\n", 'columns' => [0, 1]], 'columns', 'is not a field of a revenue upload'],
         ];
         foreach ($refusals as [$body, $field, $sentence]) {
             [$status, $answer] = $this->post('/conversions/uploads?dry_run=1', $body);

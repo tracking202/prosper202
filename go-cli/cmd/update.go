@@ -119,14 +119,14 @@ var cpcFilterFlags = []struct{ flag, what, list string }{
 // missing is a malformed answer, never 0.
 type cpcAnswer struct {
 	Data struct {
-		DryRun         bool   `json:"dry_run"`
-		Matching       *int64 `json:"matching"`
-		ThroughClickID *int64 `json:"through_click_id"`
-		Updated        *int64 `json:"updated"`
-		CPC            string `json:"cpc"`
-		From           string `json:"from"`
-		To             string `json:"to"`
-		Timezone       string `json:"timezone"`
+		DryRun         bool        `json:"dry_run"`
+		Matching       *int64      `json:"matching"`
+		ThroughClickID *int64      `json:"through_click_id"`
+		Updated        *int64      `json:"updated"`
+		CPC            json.Number `json:"cpc"` // "0.15000" as stored; json.Number reads a number too
+		From           string      `json:"from"`
+		To             string      `json:"to"`
+		Timezone       string      `json:"timezone"`
 		Filters        map[string]struct {
 			ID    json.Number `json:"id"`
 			Name  string      `json:"name"`
@@ -232,7 +232,7 @@ func renderCPC(data []byte, a cpcAnswer) error {
 		"dry_run":          a.Data.DryRun,
 		"matching":         *a.Data.Matching,
 		"through_click_id": *a.Data.ThroughClickID,
-		"cpc":              a.Data.CPC,
+		"cpc":              a.Data.CPC.String(),
 		"from":             a.Data.From,
 		"to":               a.Data.To,
 		"timezone":         a.Data.Timezone,
@@ -928,7 +928,7 @@ type uploadAnswer struct {
 		} `json:"columns"`
 		Totals []struct {
 			ClickID json.Number `json:"click_id"`
-			Total   string      `json:"total"`
+			Total   json.Number `json:"total"`
 		} `json:"totals"`
 		Lines []map[string]interface{} `json:"lines"`
 	} `json:"data"`
@@ -947,7 +947,7 @@ func (a uploadAnswer) columns() string {
 func (a uploadAnswer) total() string {
 	sum := new(big.Rat)
 	for _, t := range a.Data.Totals {
-		if r, ok := new(big.Rat).SetString(t.Total); ok {
+		if r, ok := new(big.Rat).SetString(t.Total.String()); ok {
 			sum.Add(sum, r)
 		}
 	}

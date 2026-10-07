@@ -362,6 +362,15 @@ func TestFormatValue(t *testing.T) {
 			input: float64(1000000),
 			want:  "1000000",
 		},
+		// Money the API sends as numbers: cents stay cents, a finer amount keeps up
+		// to four decimals as a long decimal string does, and none reads as zero.
+		{name: "float64 cents", input: float64(12.5), want: "12.50"},
+		{name: "float64 sub-cent CPC", input: float64(0.00125), want: "0.0013"},
+		{name: "float64 half-cent CPC", input: float64(0.015), want: "0.015"},
+		{name: "float64 computed metric", input: float64(0.288613861), want: "0.2886"},
+		{name: "float64 smallest stored amount", input: float64(0.00001), want: "0.00001"},
+		{name: "float64 negative sub-cent", input: float64(-0.00001), want: "-0.00001"},
+		{name: "float64 large amount", input: float64(1234567.89), want: "1234567.89"},
 		{
 			name:  "bool true",
 			input: true,
@@ -603,6 +612,7 @@ func TestTrimLongDecimal(t *testing.T) {
 		"2.20":          "2.20",  // <=4 decimals untouched
 		"90008":         "90008", // integer untouched
 		"Bing - Search": "Bing - Search",
+		"0.00001":       "0.00001", // smaller than four decimals show: not "0"
 	}
 	for in, want := range cases {
 		if got := trimLongDecimal(in); got != want {

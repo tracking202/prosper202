@@ -782,6 +782,36 @@ the second row is, and whether anything the answer decides — a name, a
 payout, a setting, which rows a bulk write touches — would differ if it were
 someone else's.
 
+### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
+17305ee made the API answer money as numbers rather than mysqli's decimal
+strings — right at the edge, and every PHP suite stayed green. It broke four
+readers no PHP suite runs: `p202 conversion import` decoded the click ledger's
+`amount` into a Go `string`, so every row on a click that already had a
+conversion failed with "cannot unmarshal number"; the CLI's tables rounded
+the new floats to two decimals, so a $0.00125 CPC that used to show `0.0013`
+showed `0.00`; an eval case and two instance suites compared `'0.15000'`. The
+import's own tests passed throughout, because their fake server still sent
+strings — #9, with the fake frozen at the old contract. And one of the
+instance assertions had turned vacuous rather than red:
+`assertNotSame('0.33333', $click['click_cpc'])` ("a dry run writes nothing")
+passes for every float, so it would have stayed green with the write made.
+A type change makes negative assertions against the old type pass forever;
+that is the silent direction.
+
+What found them was running the eval suite and the `@group instance` suites
+against an instance built from the branch — which only the Agent Evals
+workflow does, and only on a pull request or master, so a branch without a
+PR never runs them. Before pushing a change to what an answer *is* (a type,
+a null, a field's presence), stand up an instance and run both; then sweep
+the readers by the field name: Go structs and their test fakes, the
+reference agent and eval checks, the instance suites, `tests/live/`, and the
+display layer, where a type decides how a value renders.
+`TestStructsDecodeAPIMoneyAsJSONNumber` (go-cli/cmd) is the floor for the
+Go half: a struct field under a money name must be `json.Number`, which
+reads a number and an older server's numeric string alike. It does not see
+a non-money field, a reader that decodes into a map (those take either type
+but format differently), or any reader outside go-cli.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

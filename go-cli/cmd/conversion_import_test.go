@@ -34,6 +34,7 @@ type convImportFake struct {
 	ledgerHidden  map[int64]bool  // GET shows no conversions for the click
 	getStatus     map[int64]int   // GET answers this status
 	noLedgerRoute bool            // GET /clicks/{id}/conversions is not a route (older server)
+	stringAmounts bool            // amounts are numeric strings, as servers before 1.9.76's numbers sent them
 	// unflagged answers a duplicate as though it were new, and a repeat of a deleted
 	// conversion with the 500 that hid it (servers before the duplicate flag).
 	unflagged bool
@@ -66,6 +67,15 @@ func newConvImportFake(clicks ...int64) *convImportFake {
 		f.clicks[c] = &fakeImportClick{}
 	}
 	return f
+}
+
+// money is an amount as the server sends it: a JSON number (ConversionsController::present(),
+// ClicksController::conversions()), or with stringAmounts the numeric string older servers sent.
+func (f *convImportFake) money(amount string) interface{} {
+	if _, err := strconv.ParseFloat(amount, 64); err != nil || f.stringAmounts {
+		return amount
+	}
+	return json.Number(amount)
 }
 
 func (f *convImportFake) conversions() int {
@@ -113,7 +123,7 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 					if amount == "" {
 						amount = "5.00000"
 					}
-					row := map[string]interface{}{"conv_id": cv.id, "click_id": id, "amount": amount, "deleted": cv.deleted, "transaction_id": nil, "reverses_conv_id": nil}
+					row := map[string]interface{}{"conv_id": cv.id, "click_id": id, "amount": f.money(amount), "deleted": cv.deleted, "transaction_id": nil, "reverses_conv_id": nil}
 					if cv.txid != "" {
 						row["transaction_id"] = cv.txid
 					}
@@ -171,7 +181,7 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				payout = p
 			}
 			answer := func(id int64, duplicate bool) {
-				resp := map[string]interface{}{"data": map[string]interface{}{"conv_id": id, "click_id": click, "click_payout": payout, "transaction_id": txid, "source": "api"}}
+				resp := map[string]interface{}{"data": map[string]interface{}{"conv_id": id, "click_id": click, "click_payout": f.money(payout), "transaction_id": txid, "source": "api"}}
 				if duplicate && !f.unflagged {
 					resp["duplicate"] = true
 				}
@@ -799,6 +809,47 @@ func TestConversionImportSendsSalesBeforeTheirReversals(t *testing.T) {
 		if r.Status != importDuplicate {
 			t.Errorf("re-run row %+v, want duplicate", r)
 		}
+	}
+}
+
+// Servers before amounts were numbers sent them as numeric strings; the ledger read takes
+// both, so a re-run against one still finds the negative row it would otherwise send again.
+func TestConversionImportReadsAnOlderServersStringAmounts(t *testing.T) {
+	f := newConvImportFake(100, 200)
+	f.stringAmounts = true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n100,-10,T1\n200,-4,T2\n")
+	if _, _, err := executeCommand("conversion", "import", file, "--force", "--json"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	posts := len(f.posts)
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if len(f.posts) != posts {
+		t.Errorf("the re-run sent %d request(s)", len(f.posts)-posts)
+	}
+	for _, r := range decodeImport(t, stdout).Data {
+		if r.Status != importDuplicate {
+			t.Errorf("re-run row %+v, want duplicate", r)
+		}
+	}
+}
+
+// The server's click_payout is a JSON number; read as a float64 a $1,000,000 payout prints as
+// 1e+06, which the amount parser refuses, and the row lost its recorded_payout.
+func TestConversionImportReportsALargePayoutAsRecorded(t *testing.T) {
+	f := newConvImportFake(100, 200)
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout\n100,1000000\n200,0.00001\n")
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rows := importByRow(decodeImport(t, stdout))
+	if rows[2].RecordedPayout != "1000000.00" || rows[3].RecordedPayout != "0.00001" {
+		t.Errorf("recorded_payout = %q and %q, want 1000000.00 and 0.00001", rows[2].RecordedPayout, rows[3].RecordedPayout)
 	}
 }
 
