@@ -150,7 +150,7 @@ final class SkanEncodingVersionsIntegrationTest extends TestCase
         $id = (int) $made['data']['encoding_id'];
 
         $read = $encodings->get($id)['data'];
-        self::assertSame('7.50000', $read['revenue_override']);
+        self::assertSame(7.5, $read['revenue_override'], 'a decimal field is served as a number');
         $meaning = static fn (array $e): array => array_intersect_key($e, array_flip(
             ['encoding_id', 'registration_id', 'fine_value', 'coarse_value', 'goal_id', 'revenue_override', 'user_id']
         ));

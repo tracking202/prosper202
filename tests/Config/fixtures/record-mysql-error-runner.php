@@ -20,9 +20,10 @@ declare(strict_types=1);
 [$script, $file, $shape] = $argv + [null, null, 'db'];
 
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
-// record_mysql_error() logs the visitor's address through VisitorIp, which
-// the pages reach through connect.php's autoloader; this runner has none.
-require_once __DIR__ . '/../../../202-config/Http/VisitorIp.php';
+// The classes the bodies reach through connect.php's autoloader (VisitorIp,
+// StoredVisitorIp, TrackingBaseUrl and what it reads): the project's own
+// autoloader, rather than a list of files that goes stale with each one.
+require_once __DIR__ . '/../../../vendor/autoload.php';
 
 /** The source of `function record_mysql_error(...) { ... }` in $path. */
 function lift_record_mysql_error(string $path): string
@@ -96,6 +97,12 @@ function _mysqli_query($dbOrSql, $sql = null)
 }
 function template_bottom(): void
 {
+}
+// connect2.php's own, which the click path's body logs the address through:
+// the address as stored, unmasked here (no privacy setting in this process).
+function p202StoredVisitorIp(): string
+{
+    return \Prosper202\Http\StoredVisitorIp::fromServer($_SERVER, false);
 }
 
 $_SERVER += [
