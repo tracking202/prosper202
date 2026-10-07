@@ -150,6 +150,12 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 		}
 	}
 
+	// The redirector and the names of its default campaign and landing page,
+	// for the Slack notices: a default that is not this account's own is
+	// named as none (CLAUDE.md #27). The landing page's deleted test is part
+	// of its join: in the WHERE it dropped the redirector itself whenever its
+	// default was not a live landing page, and every notice below went out
+	// with no redirector name, or not at all.
 	$rotator_sql = "SELECT 
 					2ro.name,
 					2ro.default_campaign,
@@ -159,9 +165,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					2ac.aff_campaign_name,
 					2lp.landing_page_nickname
 					FROM 202_rotators AS 2ro 
-					LEFT JOIN 202_aff_campaigns AS 2ac ON (2ro.default_campaign = 2ac.aff_campaign_id)
-					LEFT JOIN 202_landing_pages AS 2lp ON (2ro.default_lp = 2lp.landing_page_id)
-					WHERE 2ro.id = '".$rotator_id."' AND 2ro.user_id = '".$mysql['user_id']."' AND 2lp.landing_page_deleted='0'";
+					LEFT JOIN 202_aff_campaigns AS 2ac ON (2ro.default_campaign = 2ac.aff_campaign_id AND 2ac.user_id = 2ro.user_id)
+					LEFT JOIN 202_landing_pages AS 2lp ON (2ro.default_lp = 2lp.landing_page_id AND 2lp.user_id = 2ro.user_id AND 2lp.landing_page_deleted='0')
+					WHERE 2ro.id = '".$rotator_id."' AND 2ro.user_id = '".$mysql['user_id']."'";
 	$rotator_result = $db->query($rotator_sql);
 	$rotator_row = $rotator_result->fetch_assoc();
 	$rotator_name = $rotator_row['name'] ?? '';
@@ -205,7 +211,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 			
 			if ($canSlack) {
 				$default_campaign_id = $db->real_escape_string($defaults);
-				$default_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$default_campaign_id."'";
+				$default_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$default_campaign_id."' AND user_id = '".$mysql['user_id']."'";
 				$default_campaign_result = $db->query($default_campaign_sql);
 				$default_campaign_row = $default_campaign_result->fetch_assoc();
 
@@ -244,7 +250,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 
 			if ($canSlack) {
 				$default_lp_id = $db->real_escape_string($defaults);
-				$default_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$default_lp_id."' AND landing_page_deleted='0'";
+				$default_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$default_lp_id."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 				$default_lp_result = $db->query($default_lp_sql);
 				$default_lp_row = $default_lp_result->fetch_assoc();
 
@@ -395,7 +401,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$redirect_value = $db->real_escape_string($redirect['value']);
 					switch ($redirect['type']) {
 						case 'campaign':
-						$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."'";
+						$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."' AND user_id = '".$mysql['user_id']."'";
 						$redirect_type_result = $db->query($redirect_type_sql);
 						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
 						$redirect_campaign_name = $redirect_type_row['aff_campaign_name'] ?? 'Unknown Campaign';
@@ -409,7 +415,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							break;
 
 						case 'lp':
-						$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
+						$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 						$redirect_type_result = $db->query($redirect_type_sql);
 						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
 						$redirect_lp_name = $redirect_type_row['landing_page_nickname'] ?? 'Unknown Landing Page';
@@ -479,7 +485,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							break;
 
 						case 'lp':
-						    $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
+						    $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 						    $redirect_type_result = $db->query($redirect_type_sql);
 						    $redirect_type_row = $redirect_type_result->fetch_assoc();
 						    $redirect_name = "Landing page: ".$redirect_type_row['landing_page_nickname'];

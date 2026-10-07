@@ -109,7 +109,6 @@ final class AccountScopedJoinTest extends TestCase
     // Why a site is in KNOWN_UNSCOPED (it can show or use another
     // account's record, and is left to the change that owns the file).
 
-    private const SETUP_PAGE = 'legacy Setup or Get Links page: names another account\'s record when a Setup record names one';
     private const TRACKING_PATH = 'tracking path (a redirect or static endpoint resolving public ids from the URL): follows a tracker\'s, landing page\'s or rotator rule\'s stored id to another account\'s record; reported, not changed here';
     private const LEGACY_API = 'legacy API v1/v2 report: names another account\'s landing page or campaign when a click names one';
     private const CRON = 'daily-email cron (the cron work owns it): names another account\'s campaign when a click names one';
@@ -306,10 +305,6 @@ final class AccountScopedJoinTest extends TestCase
      * @var array<string, array<string, string>>
      */
     private const KNOWN_UNSCOPED = [
-        '202-account/index.php' => [
-            'no user_id tie | 202_ppc_networks | a.ppc_network_id = n.ppc_network_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_aff_networks | c.aff_network_id = n.aff_network_id' => self::SETUP_PAGE,
-        ],
         '202-config/Tracker/MysqlTrackerRepository.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
             'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
@@ -335,25 +330,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_landing_pages | `2lp`.landing_page_id = `2c`.landing_page_id' => self::LEGACY_API,
             'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca`' => self::LEGACY_API,
             'table built at runtime | 202_…$type | LEFT OUTER JOIN 202_ {$type} AS `2l` ON ( `2l`.{$select_id} = `2ca` #2' => self::LEGACY_API,
-        ],
-        'tracking202/ajax/generate_tracking_link.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_trackers LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_aff_networks USING ( aff_network_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_aff_networks | ) LEFT JOIN 202_aff_networks USING ( aff_network_id ) LEFT JOIN 202_text_ads USING ( text_ad_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_text_ads | ) LEFT JOIN 202_text_ads USING ( text_ad_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN 202_ppc_networks USING ( ppc_network_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_ppc_networks | ) LEFT JOIN 202_ppc_networks USING ( ppc_network_id ) LEFT JOIN 202_landing_pages ON ( 202_trackers' => self::SETUP_PAGE,
-            'no user_id tie | 202_landing_pages | 202_trackers.landing_page_id = 202_landing_pages.landing_page_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_rotators | 202_trackers.rotator_id = 202_rotators.id' => self::SETUP_PAGE,
-            'USING without user_id | 202_aff_networks | 202_aff_campaigns LEFT JOIN 202_aff_networks USING ( aff_network_id ) WHERE aff_campaign_id = \'{0}\'' => self::SETUP_PAGE,
-            'USING without user_id | 202_ppc_networks | 202_ppc_accounts LEFT JOIN 202_ppc_networks USING ( ppc_network_id ) WHERE ppc_account_id = \'{0}\'' => self::SETUP_PAGE,
-        ],
-        'tracking202/ajax/get_landing_code.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_landing_pages LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_aff_networks USING ( aff_network_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_aff_networks | ) LEFT JOIN 202_aff_networks USING ( aff_network_id ) WHERE landing_page_id = \'{0}\' AND 202_landing_pages' => self::SETUP_PAGE,
-        ],
-        'tracking202/ajax/rotator.php' => [
-            'no user_id tie | 202_aff_campaigns | `2ro`.default_campaign = `2ac`.aff_campaign_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_landing_pages | `2ro`.default_lp = `2lp`.landing_page_id' => self::SETUP_PAGE,
         ],
         'tracking202/redirect/cl.php' => [
             'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,
@@ -381,31 +357,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_landing_pages | lp.landing_page_id = rt.default_lp' => self::TRACKING_PATH,
             'no user_id tie | 202_aff_campaigns | ca.aff_campaign_id = rur.redirect_campaign' => self::TRACKING_PATH,
             'no user_id tie | 202_landing_pages | lp.landing_page_id = rur.redirect_lp' => self::TRACKING_PATH,
-        ],
-        'tracking202/setup/_includes/landing_code_page.php' => [
-            'no user_id tie | 202_aff_campaigns | ac.aff_campaign_id = lp.aff_campaign_id' => self::SETUP_PAGE,
-        ],
-        'tracking202/setup/aff_campaigns.php' => [
-            'USING without user_id | 202_aff_networks | `2cp` LEFT JOIN 202_aff_networks AS `2an` USING ( aff_network_id ) WHERE `2cp`.user_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_dni_networks | af.dni_network_id = dni.id' => self::SETUP_PAGE,
-        ],
-        'tracking202/setup/get_trackers.php' => [
-            'no user_id tie | 202_landing_pages | `2tr`.landing_page_id = `2lp`.landing_page_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_aff_campaigns | `2tr`.aff_campaign_id = `2ac`.aff_campaign_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_ppc_accounts | `2tr`.ppc_account_id = `2pa`.ppc_account_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_aff_campaigns | ac.aff_campaign_id = lp.aff_campaign_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_landing_pages | tr.landing_page_id = lp.landing_page_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_aff_campaigns | tr.aff_campaign_id = ac.aff_campaign_id' => self::SETUP_PAGE,
-            'no user_id tie | 202_rotators | tr.rotator_id = ro.id' => self::SETUP_PAGE,
-            'no user_id tie | 202_ppc_accounts | tr.ppc_account_id = ppc.ppc_account_id' => self::SETUP_PAGE,
-        ],
-        'tracking202/setup/landing_pages.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_landing_pages LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) WHERE 202_landing_pages.user_id = \'{0}\'' => self::SETUP_PAGE,
-        ],
-        'tracking202/setup/text_ads.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_text_ads LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_landing_pages USING ( landing_page_id' => self::SETUP_PAGE,
-            'USING without user_id | 202_landing_pages | ) LEFT JOIN 202_landing_pages USING ( landing_page_id ) WHERE 202_text_ads.user_id = \'{0}\'' => self::SETUP_PAGE,
         ],
         'tracking202/static/get_custom_vars.php' => [
             'USING without user_id | 202_ppc_accounts | 202_trackers LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
@@ -436,9 +387,6 @@ final class AccountScopedJoinTest extends TestCase
         'tracking202/static/upx.php' => [
             'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::TRACKING_PATH,
             'condition built at runtime | 202_trackers | ( `2cpa`.`tracker_id_public` = `2trc`.`tracker_id_public` ) {$site_urls}' => self::TRACKING_PATH,
-        ],
-        'tracking202/update/_includes/update_ui.php' => [
-            'no user_id tie | 202_ppc_networks | pn.ppc_network_id = pa.ppc_network_id' => self::SETUP_PAGE,
         ],
     ];
 

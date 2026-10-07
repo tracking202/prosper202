@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							202_text_ads.text_ad_display_url AS text_ad_display_url,
 							202_aff_campaigns.aff_campaign_name AS text_add_aff_campaign_name,
 							202_landing_pages.landing_page_nickname AS text_add_landing_page_nickname  
-							FROM 202_text_ads LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) LEFT JOIN 202_landing_pages USING (landing_page_id) WHERE 202_text_ads.user_id='".$mysql['user_id']."' AND text_ad_id='".$mysql['text_ad_id']."'";
+							FROM 202_text_ads LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id) LEFT JOIN 202_landing_pages USING (landing_page_id, user_id) WHERE 202_text_ads.user_id='".$mysql['user_id']."' AND text_ad_id='".$mysql['text_ad_id']."'";
 		$text_ad_result = $db->query($ad_varation_sql) or record_mysql_error($ad_varation_sql);
 		if ($text_ad_result->num_rows == 0 ) {
 			$error['wrong_user'] = ($error['wrong_user'] ?? '') . '<div class="error">You are not authorized to modify another users campaign</div>';    
@@ -274,13 +274,15 @@ if (!empty($_GET['edit_text_ad_id'])) {
 }
 
 if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campaign_id'])) {
-    //now grab the affiliate network id, per that aff campaign id
-    $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."'";
+    //now grab the affiliate network id, per that aff campaign id: each only
+    //when it is this account's (CLAUDE.md #27). The campaign id can be one a
+    //text ad saved before 229df10 names, of another account.
+    $aff_campaign_sql = "SELECT * FROM `202_aff_campaigns` WHERE `aff_campaign_id`='".$mysql['aff_campaign_id']."' AND `user_id`='".$mysql['user_id']."'";
     $aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
     $aff_campaign_row = $aff_campaign_result->fetch_assoc();
 
     $mysql['aff_network_id'] = $db->real_escape_string((string) ($aff_campaign_row['aff_network_id'] ?? ''));
-    $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `aff_network_id`='".$mysql['aff_network_id']."'";
+    $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `aff_network_id`='".$mysql['aff_network_id']."' AND `user_id`='".$mysql['user_id']."'";
     $aff_network_result = $db->query($aff_network_sql) or record_mysql_error($aff_network_sql);
     $aff_network_row = $aff_network_result->fetch_assoc();
 

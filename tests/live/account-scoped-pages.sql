@@ -45,6 +45,9 @@ REPLACE INTO 202_landing_pages SET landing_page_id = 7003, landing_page_id_publi
   landing_page_nickname = 'A Stray Page', landing_page_url = 'https://a.example/stray-page', landing_page_time = @t;
 REPLACE INTO 202_text_ads SET text_ad_id = 7003, user_id = 1, aff_campaign_id = 7002, landing_page_id = 7002, text_ad_name = 'A Stray Ad',
   text_ad_headline = 'A stray headline', text_ad_description = 'A stray description', text_ad_display_url = 'a.example', text_ad_time = @t;
+-- An edit (generate_tracking_link.php) replaces a link with a new row under
+-- the same public id: start from the seeded two only.
+DELETE FROM 202_trackers WHERE user_id = 1 AND tracker_id_public IN (970039, 970049);
 REPLACE INTO 202_trackers SET tracker_id = 7003, user_id = 1, tracker_id_public = 970039, aff_campaign_id = 7002, text_ad_id = 7002,
   ppc_account_id = 7002, landing_page_id = 7002, rotator_id = 0, click_cpc = 0.1, click_cloaking = 0, tracker_time = @t;
 REPLACE INTO 202_trackers SET tracker_id = 7004, user_id = 1, tracker_id_public = 970049, aff_campaign_id = 7001, text_ad_id = 0,

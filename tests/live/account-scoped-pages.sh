@@ -95,16 +95,19 @@ check() {
         ok "$label names nothing of account B"
     fi
 }
+fname() { printf '%s/%s.html' "$OUT" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' _)"; }
 get() { # LABEL PATH [MUST]
     [ -n "$ONLY" ] && [[ "$1" != *$ONLY* ]] && return
-    local f="$OUT/$(echo "$1" | tr -c 'A-Za-z0-9' _).html"
+    local f
+    f=$(fname "$1")
     local code
     code=$(curl -sS -b "$JAR" -c "$JAR" "$BASE/$2" -o "$f" -w '%{http_code}')
     check "$1" "$f" "$code" "${3:-}"
 }
 post() { # LABEL PATH DATA [MUST]
     [ -n "$ONLY" ] && [[ "$1" != *$ONLY* ]] && return
-    local f="$OUT/$(echo "$1" | tr -c 'A-Za-z0-9' _).html"
+    local f
+    f=$(fname "$1")
     local code
     code=$(curl -sS -b "$JAR" -c "$JAR" -H 'X-Requested-With: XMLHttpRequest' --data "$3" "$BASE/$2" -o "$f" -w '%{http_code}')
     check "$1" "$f" "$code" "${4:-}"
@@ -132,6 +135,65 @@ get "Analyze: landing pages download" "tracking202/analyze/landing_pages_downloa
 get "Analyze: variables download" "tracking202/analyze/variables_download.php"
 get "Visitors page (filter menus)" "tracking202/visitors/" "A Account"
 get "Group Overview page (filter menus)" "tracking202/overview/group-overview.php" "A Account"
+
+say "Setup and Get Links (A's links, category, account and pages name B's records)"
+get "Get Links: the links list" "tracking202/setup/get_trackers.php" "970039"
+if [ -z "$ONLY" ] || [[ "Get Links" == *$ONLY* ]]; then
+    if grep -qE 't202id=9700[34]9' "$(fname 'Get Links: the links list')"; then
+        bad "Get Links offers a link to copy for a link on B's landing page or redirector"
+    else
+        ok "Get Links offers no link for a link on B's landing page or redirector"
+    fi
+fi
+get "Get Links: editing a link on B's records" "tracking202/setup/get_trackers.php?edit_tracker_id=970039" 'name="tracker_id" value="970039"'
+get "Campaigns" "tracking202/setup/aff_campaigns.php" "A Category"
+if [ -z "$ONLY" ] || [[ "Campaigns" == *$ONLY* ]]; then
+    if grep -q 'data-dni-id="7002"' "$(fname Campaigns)"; then
+        bad "Campaigns offers a search of B's network integration (data-dni-id 7002)"
+        LEAKED+=("Campaigns (network integration)")
+    else
+        ok "Campaigns offers no search of B's network integration"
+    fi
+fi
+get "Update CPC" "tracking202/update/cpc.php" "A Account"
+get "Landing Pages: editing A's page under B's campaign" "tracking202/setup/landing_pages.php?edit_landing_page_id=7003" "A Stray Page"
+get "Text Ads: editing A's ad on B's campaign and page" "tracking202/setup/text_ads.php?edit_text_ad_id=7003" "A Stray Ad"
+get "Get Simple LP Code" "tracking202/setup/get_simple_landing_code.php" "A Page"
+get "Home (Get Started)" "202-account/"
+
+# The endpoints whose foreign names went only into Slack notices: the
+# webhook is pointed at a capture endpoint the operator serves on the
+# instance (P202_SLACK_CAPTURE_URL, appending each POST body to
+# P202_SLACK_CAPTURE_FILE), and the notices each request sent are read.
+if [ -n "${P202_SLACK_CAPTURE_URL:-}" ] && [ -n "${P202_SLACK_CAPTURE_FILE:-}" ]; then
+    say "Slack notices (captured at $P202_SLACK_CAPTURE_URL)"
+    Q "UPDATE 202_users_pref SET user_slack_incoming_webhook = '$P202_SLACK_CAPTURE_URL' WHERE user_id = 1"
+    TOKEN=$(grep -oE 'token: "[0-9a-f]+"' "$OUT/home.html" | head -1 | grep -oE '[0-9a-f]{20,}')
+    notices() { # LABEL PATH DATA — the notices one request sent, checked for B's names
+        [ -n "$ONLY" ] && [[ "$1" != *$ONLY* ]] && return
+        : > "$P202_SLACK_CAPTURE_FILE"
+        local f code
+        f=$(fname "$1")
+        code=$(curl -sS -b "$JAR" -c "$JAR" -H 'X-Requested-With: XMLHttpRequest' --data "$3&token=$TOKEN" "$BASE/$2" -o "$f" -w '%{http_code}')
+        # The notices are form-encoded JSON: decoded, they read as sent.
+        php -r 'echo urldecode((string) file_get_contents($argv[1]));' "$P202_SLACK_CAPTURE_FILE" > "$f.slack"
+        echo "    sent $(grep -c . "$f.slack") notice(s):"
+        grep -oE '"text":"[^"]*"' "$f.slack" | sed 's/^/      /' | cut -c1-200
+        check "$1" "$f.slack" "$code"
+    }
+    # Editing the link on B's records, to A's own campaign, account and
+    # landing page: the notices name what the link named before.
+    notices "Slack: editing a link on B's records" "tracking202/ajax/generate_tracking_link.php" \
+        "edit_tracker=1&tracker_id=970039&tracker_type=0&method_of_promotion=landingpage&aff_network_id=7001&aff_campaign_id=7001&landing_page_id=7001&text_ad_id=7001&ppc_network_id=7001&ppc_account_id=7001&click_cloaking=1&cost_type=cpc&cpc_dollars=0&cpc_cents=10"
+    notices "Slack: code for A's page under B's campaign" "tracking202/ajax/get_landing_code.php" \
+        "aff_network_id=7001&aff_campaign_id=7001&method_of_promotion=landingpage&landing_page_id=7003"
+    Q "UPDATE 202_rotators SET default_campaign = NULL, default_lp = 7002 WHERE id = 7003"
+    notices "Slack: saving A's redirector whose default is B's page" "tracking202/ajax/rotator.php" \
+        "post_rules=true&rotator_id=7003&default_type=url&defaults=https%3A%2F%2Fa.example%2Fdefault&data%5B0%5D%5Brule_id%5D=7003&data%5B0%5D%5Brule_name%5D=A+Rule&data%5B0%5D%5Bstatus%5D=active&data%5B0%5D%5Bsplit%5D=false&data%5B0%5D%5Bcriteria%5D%5B0%5D%5Bcriteria_id%5D=none&data%5B0%5D%5Bcriteria%5D%5B0%5D%5Btype%5D=country&data%5B0%5D%5Bcriteria%5D%5B0%5D%5Bstatement%5D=is&data%5B0%5D%5Bcriteria%5D%5B0%5D%5Bvalue%5D=US&data%5B0%5D%5Bredirects%5D%5B0%5D%5Bid%5D=7003&data%5B0%5D%5Bredirects%5D%5B0%5D%5Btype%5D=campaign&data%5B0%5D%5Bredirects%5D%5B0%5D%5Bvalue%5D=7001&data%5B0%5D%5Bredirects%5D%5B0%5D%5Bweight%5D=100"
+    Q "UPDATE 202_users_pref SET user_slack_incoming_webhook = '' WHERE user_id = 1"
+else
+    say "Slack notices: not checked (set P202_SLACK_CAPTURE_URL and P202_SLACK_CAPTURE_FILE)"
+fi
 
 say "summary"
 echo "  $PASS passed, $FAIL failed"
