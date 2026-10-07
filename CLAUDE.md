@@ -960,6 +960,19 @@ offset in force at its own instant (`LocalTime::secondsSql()` /
 it cannot see PHP that does the same with one offset, which is this entry's
 job.
 
+The zone itself was read two ways. The pages took only a name PHP lists;
+the API took anything `new DateTimeZone()` accepts, so a stored `+05:30` was
+UTC on every report page and a fixed +05:30 in GET /reports/* and the LTV
+cohorts (measured live: `"timezone":"+05:30"`) -- the offset this entry
+forbids, let in by a parser. `AccountZone::normalize()` is the one rule now
+(a listed name, spelled as listed; anything else is UTC), AUTH asks it, and
+`SetTimezoneReadsTheAccountIntegrationTest` holds the pages and the API to
+one answer per stored value. A reader that parses the column itself is not
+seen: `dl.php` hands a row's zone straight to `date_default_timezone_set()`
+and the data engine the session's copy. When one stored value is parsed in
+more than one place, the parsers are one function, or they disagree on the
+inputs nobody tried.
+
 ### 30. A transform applied where a value is stored moves every comparison with it
 Privacy mode stores a click's address masked (/24, /48). The click filter's
 "don't count my own clicks" check compared the click's stored address row

@@ -421,9 +421,14 @@ class AUTH
      * zone's today until the user signed in again, while GET /reports/*
      * (api/v3 AccountTimezone) used the new one. The account's row is read
      * once a request and the session's copy refreshed with it; a zone that
-     * is empty or that PHP does not know is UTC, as the API reads it. A read
+     * is empty or that is not a zone is UTC, as the API reads it. A read
      * that fails throws (accountTimezone()): kept, the session's zone was a
      * guess every report page counted its days in with nothing to say so.
+     *
+     * Whatever is set is held to the one rule (Prosper202\Report\AccountZone):
+     * the redirects and pixels pass the zone of a row they read, and an
+     * offset such as +05:30 there was refused by date_default_timezone_set()
+     * with a notice, leaving the server's own zone in force.
      */
     public static function set_timezone($user_timezone)
     {
@@ -437,7 +442,8 @@ class AUTH
             }
         }
 
-        date_default_timezone_set($user_timezone);
+        $zone = \Prosper202\Report\AccountZone::normalize(is_string($user_timezone) ? $user_timezone : null);
+        date_default_timezone_set($zone);
     }
 
     /**
@@ -483,10 +489,10 @@ class AUTH
         if ($row === null) {
             return null;
         }
-        $zone = trim((string) ($row['user_timezone'] ?? ''));
-        if ($zone === '' || !in_array($zone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
-            $zone = 'UTC';
-        }
+        // The one rule, the API's too: a zone PHP lists, by that exact name;
+        // an offset or anything else is UTC.
+        $stored = $row['user_timezone'] ?? null;
+        $zone = \Prosper202\Report\AccountZone::normalize(is_string($stored) ? $stored : null);
 
         return self::$accountTimezones[$userId] = $zone;
     }
