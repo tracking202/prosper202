@@ -21,7 +21,7 @@ Manage pay-per-click ad networks (Google Ads, Bing Ads, Facebook, etc.).
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `ppc_network_name` | string | Yes | Network name (max 255) |
+| `ppc_network_name` | string | Yes | Network name (max 50) |
 
 A traffic source's custom variables are the extra `parameter=placeholder`
 pairs its tracking links carry; they are edited under

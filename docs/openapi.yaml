@@ -9951,7 +9951,16 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     ValidationError:
-      description: Validation failed
+      description: |
+        Validation failed; nothing was written. `field_errors` names each
+        field. Every key of a body is written or refused, never ignored: a key
+        that is not a field of the endpoint (the message lists the accepted
+        ones), a read-only field (an id, a public id, `user_id`) other than
+        the record's own value on an update and any on a create, a `null` for
+        a field that cannot hold NULL, a whole number that is not one (`"1.5"`,
+        `"1e3"`, 20 digits) or is outside the column's range, a non-finite or
+        out-of-range decimal, and a string longer than its column are each a
+        422. A `null` clears a field that can hold NULL.
       content:
         application/json:
           schema:
@@ -10249,7 +10258,7 @@ components:
           readOnly: true
         aff_campaign_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         aff_campaign_url:
           type: string
           maxLength: 2048
@@ -10269,7 +10278,7 @@ components:
           type: number
         aff_campaign_currency:
           type: string
-          maxLength: 5
+          maxLength: 3
         aff_campaign_foreign_payout:
           type: number
         aff_network_id:
@@ -10350,7 +10359,7 @@ components:
       properties:
         aff_campaign_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         aff_campaign_url:
           type: string
           maxLength: 2048
@@ -10370,7 +10379,7 @@ components:
           type: number
         aff_campaign_currency:
           type: string
-          maxLength: 5
+          maxLength: 3
         aff_campaign_foreign_payout:
           type: number
         aff_network_id:
@@ -10409,7 +10418,7 @@ components:
       properties:
         aff_campaign_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         aff_campaign_url:
           type: string
           maxLength: 2048
@@ -10429,7 +10438,7 @@ components:
           type: number
         aff_campaign_currency:
           type: string
-          maxLength: 5
+          maxLength: 3
         aff_campaign_foreign_payout:
           type: number
         aff_network_id:
@@ -10489,7 +10498,7 @@ components:
           readOnly: true
         aff_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         dni_network_id:
           type: integer
         aff_network_deleted:
@@ -10505,7 +10514,7 @@ components:
       properties:
         aff_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         dni_network_id:
           type: integer
 
@@ -10514,7 +10523,7 @@ components:
       properties:
         aff_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         dni_network_id:
           type: integer
 
@@ -10544,7 +10553,7 @@ components:
           readOnly: true
         ppc_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         ppc_network_deleted:
           type: integer
           readOnly: true
@@ -10558,14 +10567,14 @@ components:
       properties:
         ppc_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
 
     PpcNetworkUpdate:
       type: object
       properties:
         ppc_network_name:
           type: string
-          maxLength: 255
+          maxLength: 50
 
     PpcNetworkResponse:
       type: object
@@ -10593,7 +10602,7 @@ components:
           readOnly: true
         ppc_account_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         ppc_network_id:
           type: integer
         ppc_account_default:
@@ -10611,7 +10620,7 @@ components:
       properties:
         ppc_account_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         ppc_network_id:
           type: integer
         ppc_account_default:
@@ -10622,7 +10631,7 @@ components:
       properties:
         ppc_account_name:
           type: string
-          maxLength: 255
+          maxLength: 50
         ppc_network_id:
           type: integer
         ppc_account_default:
@@ -10769,7 +10778,7 @@ components:
           readOnly: true
         landing_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -10777,7 +10786,7 @@ components:
           maxLength: 255
         leave_behind_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         landing_page_type:
           type: integer
         landing_page_id_public:
@@ -10800,7 +10809,7 @@ components:
       properties:
         landing_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -10808,7 +10817,7 @@ components:
           maxLength: 255
         leave_behind_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         landing_page_type:
           type: integer
 
@@ -10817,7 +10826,7 @@ components:
       properties:
         landing_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         aff_campaign_id:
           type: integer
         landing_page_nickname:
@@ -10825,7 +10834,7 @@ components:
           maxLength: 255
         leave_behind_page_url:
           type: string
-          maxLength: 2048
+          maxLength: 255
         landing_page_type:
           type: integer
 

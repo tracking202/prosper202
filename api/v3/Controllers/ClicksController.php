@@ -165,7 +165,7 @@ class ClicksController
         $stmt = $this->prepare($countSql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Count query failed');
-        $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+        $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
         $sql = 'SELECT ' . self::DETAIL_COLUMNS . '
@@ -182,7 +182,7 @@ class ClicksController
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -231,7 +231,7 @@ class ClicksController
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'ii', $id, $this->userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {

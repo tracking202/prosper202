@@ -157,6 +157,19 @@ type Hinted interface {
 // nothing useful to add. It augments — never replaces — the error message.
 // An explicit hint attached to the error wins; otherwise the HTTP status or
 // request failure kind selects a generic one.
+// fieldErrorsSay reports whether any of the error's field messages contains
+// one of the phrases.
+func fieldErrorsSay(apiErr *APIError, phrases ...string) bool {
+	for _, msg := range apiErr.FieldErrors {
+		for _, phrase := range phrases {
+			if strings.Contains(msg, phrase) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func HintFor(err error) string {
 	if err == nil {
 		return ""
@@ -200,10 +213,23 @@ func HintFor(err error) string {
 			return "The write may or may not have landed. Run the matching `... list` to check, then stage it again if it did not; this change id can no longer be applied or discarded."
 		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "chg_"):
 			return "Only a staged change can be applied or discarded. Run `p202 change show <change_id>` for its current status."
+		// An If-Match header, or a body carrying the version/etag of an
+		// older read, names a version the record no longer has: it changed
+		// since it was read, so a whole-record write would undo that.
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "Version mismatch"):
+			return "The record changed since it was read. Read it again (`... get <id>`) and make the change on that, or send only the fields to change, without version or etag."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
 		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
 			return "This endpoint cannot be staged; drop --staged to run the command directly (capabilities lists features.staged_writes)."
+		// The server refuses a field it does not write, and a read-only one
+		// (an id, a public id, version) that differs from the record's,
+		// rather than dropping it: nothing was written.
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "is not a field of", "is set by the server", "is read-only"):
+			return "Nothing was written. Remove the field(s) named above: the message lists the fields this endpoint accepts, " +
+				"and a read-only one may only be sent with the value the record already has (for `p202 import`, remove them " +
+				"from the file's records). If a p202 command sent them by itself, the CLI and the server differ in version: " +
+				"compare `p202 --version` with `p202 system version`."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
 		case apiErr.Status == 400 || apiErr.Status == 422:

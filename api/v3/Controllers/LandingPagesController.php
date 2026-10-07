@@ -15,11 +15,11 @@ class LandingPagesController extends Controller
     protected function fields(): array
     {
         return [
-            'landing_page_url'      => ['type' => 's', 'required' => true, 'max_length' => 2048],
-            'aff_campaign_id'       => ['type' => 'i', 'required' => true],
+            'landing_page_url'      => ['type' => 's', 'required' => true, 'max_length' => 255],
+            'aff_campaign_id'       => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
             'landing_page_nickname' => ['type' => 's', 'required' => true, 'max_length' => 50],
-            'leave_behind_page_url' => ['type' => 's', 'max_length' => 2048],
-            'landing_page_type'     => ['type' => 'i', 'default' => 0],
+            'leave_behind_page_url' => ['type' => 's', 'nullable' => true, 'max_length' => 255],
+            'landing_page_type'     => ['type' => 'i', 'default' => 0, 'range' => self::TINYINT],
             // The id the landing-page code and the go/lp redirects carry
             // (lpip=…). Set by afterCreate(); before it was, a landing page
             // made through the API had none, and no code could track it.
@@ -57,7 +57,9 @@ class LandingPagesController extends Controller
 
     /**
      * Landing pages this API created before afterCreate() set a public id
-     * have none, so no landing-page code can carry them. The API is where
+     * have none (NULL; 0 is none as well — no rand-id-rand is 0, and every
+     * page holding it would answer lpip=0), so no landing-page code can carry
+     * them. The API is where
      * such a page's id is read, so it gives this account's id-less pages one
      * there, the setup page's way (rand-id-rand, a leading digit that fits
      * INT UNSIGNED), before answering: one indexed UPDATE, a no-op once
@@ -73,7 +75,7 @@ class LandingPagesController extends Controller
              SET landing_page_id_public = CAST(CONCAT(
                  FLOOR(1 + RAND() * IF(landing_page_id >= 10000000, 4, 9)), landing_page_id, FLOOR(1 + RAND() * 9)
              ) AS UNSIGNED)
-             WHERE user_id = ? AND landing_page_id_public IS NULL'
+             WHERE user_id = ? AND (landing_page_id_public IS NULL OR landing_page_id_public = 0)'
         );
         $this->bind($stmt, 'i', $this->userId);
         $this->execute($stmt, 'Landing page public id repair failed');

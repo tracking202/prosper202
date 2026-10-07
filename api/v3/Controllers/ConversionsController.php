@@ -213,6 +213,13 @@ class ConversionsController
 
     public function create(array $payload): array
     {
+        // Every key below is read; anything else was dropped with a 201 — a
+        // misspelled `transaction_id` recorded the sale without the id that
+        // dedupes its retries (CLAUDE.md #4).
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+            'click_id', 'transaction_id', 'conv_time', 'payout', 'status', 'reversal_id',
+            'customer_id', 'customer_ref', 'customer_ref_type', 'customer_crm', 'items',
+        ], 'a conversion');
         $clickId = (int)($payload['click_id'] ?? 0);
         if ($clickId <= 0) {
             throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);

@@ -519,6 +519,35 @@ func TestHintFor(t *testing.T) {
 	}
 }
 
+// A field the server does not write, or a read-only one that differs, is
+// refused by name (Controller::validatePayload, PayloadKeys): the hint says
+// nothing was written and how to drop it, rather than "fix the field".
+func TestHintForAFieldTheServerRefuses(t *testing.T) {
+	for _, msg := range []string{
+		"is not a field of campaigns (accepted: aff_campaign_name)",
+		"is set by the server: omit it when creating",
+		"is read-only: send it only with the value the record holds (as GET returns it), or omit it",
+	} {
+		h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"x": msg}})
+		if !strings.Contains(h, "Nothing was written") || !strings.Contains(h, "p202 system version") {
+			t.Errorf("field error %q: hint = %q", msg, h)
+		}
+	}
+	if h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"x": "must be a whole number"}}); h != "Fix the field(s) listed above and retry." {
+		t.Errorf("an ordinary field error kept its own hint, got %q", h)
+	}
+}
+
+// A body (or If-Match) read from an older version of the record is a 409
+// that says so; the generic 409 hint ("a matching record already exists,
+// update it") is wrong advice for it.
+func TestHintForAStaleVersion(t *testing.T) {
+	h := HintFor(&APIError{Status: 409, Message: "Version mismatch"})
+	if !strings.Contains(h, "changed since it was read") {
+		t.Errorf("hint = %q", h)
+	}
+}
+
 // The public app routes are selected by the app's token; the account's API
 // key must not travel with it (it is a credential those routes never read).
 func TestAppTokenRequestsCarryNoAPIKey(t *testing.T) {

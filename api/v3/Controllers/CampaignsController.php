@@ -15,18 +15,18 @@ class CampaignsController extends Controller
     protected function fields(): array
     {
         return [
-            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 255],
+            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 50],
             'aff_campaign_url'             => ['type' => 's', 'required' => true, 'max_length' => 2048],
-            'aff_campaign_url_2'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_3'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_4'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_5'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_payout'          => ['type' => 'd', 'required' => true],
+            'aff_campaign_url_2'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_3'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_4'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_5'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_payout'          => ['type' => 'd', 'required' => true, 'range' => [-999999.99, 999999.99]],
             'aff_campaign_currency'        => ['type' => 's', 'max_length' => 3],
-            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0],
-            'aff_network_id'               => ['type' => 'i', 'required' => true],
-            'aff_campaign_cloaking'        => ['type' => 'i'],
-            'aff_campaign_rotate'          => ['type' => 'i'],
+            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0, 'range' => [-999999.99, 999999.99]],
+            'aff_network_id'               => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
+            'aff_campaign_cloaking'        => ['type' => 'i', 'range' => self::TINYINT],
+            'aff_campaign_rotate'          => ['type' => 'i', 'range' => self::TINYINT],
             // How a click's conversions roll up into its value: the latest
             // one's payout (replace) or their sum (accumulate).
             'payout_mode'                  => ['type' => 's', 'allowed' => ['replace', 'accumulate']],
@@ -49,6 +49,12 @@ class CampaignsController extends Controller
             // set by afterCreate() the way the setup page sets it.
             'aff_campaign_id_public'       => ['type' => 'i', 'readonly' => true],
         ];
+    }
+
+    #[\Override]
+    protected function handledKeys(): array
+    {
+        return ['app_registration_id', 'attribution_model_id'];
     }
 
     /**
@@ -83,7 +89,11 @@ class CampaignsController extends Controller
     {
         $this->pendingLinks = $this->linksIn($payload);
         try {
-            return parent::create($payload);
+            // The links are read here and written through beforeCreate();
+            // the base sees only the fields it writes, so it refuses any other
+            // key (a read-only one included) rather than this controller
+            // having to.
+            return parent::create(array_diff_key($payload, $this->pendingLinks));
         } finally {
             $this->pendingLinks = [];
         }
@@ -114,6 +124,56 @@ class CampaignsController extends Controller
     }
 
     #[\Override]
+    public function list(array $params): array
+    {
+        $this->repairMissingPublicIds();
+        return parent::list($params);
+    }
+
+    #[\Override]
+    public function get(int|string $id): array
+    {
+        $this->repairMissingPublicIds();
+        return parent::get($id);
+    }
+
+    /**
+     * A campaign with no public id cannot be tracked: go.php and the
+     * advanced landing-page code carry acip=<public id>, and the offer
+     * redirects resolve the campaign by it. The setup page gives a new
+     * campaign one with an UPDATE after its INSERT (aff_campaigns.php), so a
+     * campaign whose UPDATE failed, or one from before the column was
+     * filled, has none — NULL, or 0, which is no id either: 0 is not a
+     * rand-id-rand, and every campaign holding it would answer acip=0.
+     *
+     * The landing-page code endpoint gave such a campaign one when it named
+     * it (SetupCodeController), and the API's own reads did not, so the
+     * campaign the API listed had no id to put in a link. Like
+     * LandingPagesController::repairMissingPublicIds(), every read here gives
+     * this account's id-less campaigns the setup page's form first (a random
+     * digit, the row id, a random digit — unique by construction — with a
+     * leading digit that keeps it inside INT UNSIGNED): one indexed UPDATE, a
+     * no-op once every campaign has one. A campaign that has an id is never
+     * touched.
+     *
+     * Public for the landing-page code (SetupCodeController), which writes
+     * the campaign's public id into every outbound link it builds.
+     */
+    public function repairMissingPublicIds(): void
+    {
+        $stmt = $this->prepare(
+            'UPDATE 202_aff_campaigns
+             SET aff_campaign_id_public = CAST(CONCAT(
+                 FLOOR(1 + RAND() * IF(aff_campaign_id >= 10000000, 4, 9)), aff_campaign_id, FLOOR(1 + RAND() * 9)
+             ) AS UNSIGNED)
+             WHERE user_id = ? AND (aff_campaign_id_public IS NULL OR aff_campaign_id_public = 0)'
+        );
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Campaign public id repair failed');
+        $stmt->close();
+    }
+
+    #[\Override]
     public function update(int|string $id, array $payload): array
     {
         $links = $this->linksIn($payload);
@@ -133,6 +193,10 @@ class CampaignsController extends Controller
             $this->pendingLinks = $links;
             try {
                 return parent::update($id, $payload);
+            } catch (\Api\V3\Exception\NothingToUpdateException) {
+                // The rest of the body is read-only values the campaign
+                // already holds (a GET body sent back with a new link), which
+                // the base checked: the links are the whole write.
             } finally {
                 $this->pendingLinks = [];
             }

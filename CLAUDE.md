@@ -17,6 +17,10 @@ whatever the statement guarded, in silence), and Go's `json.Marshal` assigned
 to `_` (renders nothing, exits 0). When a false return is
 *indistinguishable from a legitimate empty answer*, the failure is silent by
 construction — that is the tell, not the function name.
+`UncheckedGetResultTest` now holds every `get_result()`/`store_result()` in
+the tree to "tested for false in the next statement, and refused"
+(`StatementHelpers::resultOf()` in api/v3); legacy pages that predate it are
+listed and must only shrink.
 
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
@@ -42,6 +46,25 @@ name is the whole heuristic: a value copied into another variable, put
 through `trim()` first, or read outside `api/` (a repository handed the
 payload) is not seen — and a flag is not a value, so `(bool)` and
 `filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so.
+
+The quietest form is a handler that reads the keys it knows and never looks
+at the rest. The CRUD base `continue`d past any key that was not a writable
+field and past any `null`, and cast whatever `is_numeric()` let through, so a
+typo'd field, a field the resource does not write, a `null` meant to clear
+one, `"1.5"` for an id and a 60-character name for a VARCHAR(50) all
+answered 200 with less (or something else) stored, or a strict-mode 500 —
+and a dozen hand-written handlers
+did the same with their own bodies. Every handler now hands its body to
+`PayloadKeys::refuseUnknown()` before anything reads it, or to the base's
+`validatePayload()`; `PayloadHandlersRefuseUnknownKeysTest` holds every
+handler that takes `$payload` to that, and `ControllerFieldsMatchSchemaTest`
+holds each field's `nullable`, `range` and `max_length` to its column. A key
+a handler consumes itself (a campaign's links, an app's `store_link`) is
+removed before the rest reaches the base, or the base refuses it. Read-only
+keys are the one exception that is not "refuse": a body read with GET must go
+back whole, so they are accepted with the record's own value and refused with
+any other — and every client that builds a body from *another* record
+(`p202 import`, `sync`, `SyncEngine`) has to leave them out.
 
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.

@@ -64,11 +64,11 @@ class AppSkanEncodingsController extends Controller
     protected function fields(): array
     {
         return [
-            'registration_id'  => ['type' => 'i', 'default' => 0],
-            'fine_value'       => ['type' => 'i'],
-            'coarse_value'     => ['type' => 's', 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
-            'goal_id'          => ['type' => 'i', 'required' => true],
-            'revenue_override' => ['type' => 'd'],
+            'registration_id'  => ['type' => 'i', 'default' => 0, 'range' => self::INT_UNSIGNED],
+            'fine_value'       => ['type' => 'i', 'nullable' => true, 'range' => self::TINYINT_UNSIGNED],
+            'coarse_value'     => ['type' => 's', 'nullable' => true, 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
+            'goal_id'          => ['type' => 'i', 'required' => true, 'range' => self::INT_UNSIGNED],
+            'revenue_override' => ['type' => 'd', 'nullable' => true, 'range' => [-999999.99999, 999999.99999]],
             // Since when the current meaning applies; set on every write,
             // never by the caller (assertRawBody() refuses it).
             'effective_at'     => ['type' => 'i', 'readonly' => true],

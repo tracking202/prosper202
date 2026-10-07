@@ -26,13 +26,13 @@ class RotatorsController
         $stmt = $this->prepare('SELECT COUNT(*) as total FROM 202_rotators WHERE user_id = ?');
         $this->bind($stmt, 'i', $this->userId);
         $this->execute($stmt, 'Count query failed');
-        $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+        $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
         $stmt->close();
 
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?');
         $this->bind($stmt, 'iii', $this->userId, $limit, $offset);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -47,7 +47,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id, public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer FROM 202_rotators WHERE id = ? AND user_id = ? LIMIT 1');
         $this->bind($stmt, 'ii', $id, $this->userId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -60,7 +60,7 @@ class RotatorsController
         $this->execute($stmt, 'Query failed');
         $rules = [];
         $ruleIds = [];
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Query failed');
         while ($r = $result->fetch_assoc()) {
             $r['criteria'] = [];
             $r['redirects'] = [];
@@ -76,7 +76,7 @@ class RotatorsController
             $cStmt = $this->prepare("SELECT id, rotator_id, rule_id, type, statement, value FROM 202_rotator_rules_criteria WHERE rule_id IN ($placeholders)");
             $this->bind($cStmt, $types, ...$ruleIds);
             $this->execute($cStmt, 'Query failed');
-            $cr = $cStmt->get_result();
+            $cr = $this->resultOf($cStmt, 'Query failed');
             while ($c = $cr->fetch_assoc()) {
                 $rules[$c['rule_id']]['criteria'][] = $c;
             }
@@ -85,7 +85,7 @@ class RotatorsController
             $rStmt = $this->prepare("SELECT id, rule_id, redirect_url, redirect_campaign, redirect_lp, auto_monetizer, weight, name FROM 202_rotator_rules_redirects WHERE rule_id IN ($placeholders)");
             $this->bind($rStmt, $types, ...$ruleIds);
             $this->execute($rStmt, 'Query failed');
-            $rr = $rStmt->get_result();
+            $rr = $this->resultOf($rStmt, 'Query failed');
             while ($rd = $rr->fetch_assoc()) {
                 $rules[$rd['rule_id']]['redirects'][] = $rd;
             }
@@ -106,7 +106,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id FROM 202_rotators WHERE public_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $candidate);
         $this->execute($stmt, 'Public id lookup failed');
-        $taken = $stmt->get_result()->fetch_assoc();
+        $taken = $this->resultOf($stmt, 'Public id lookup failed')->fetch_assoc();
         $stmt->close();
 
         return $taken === null || $taken === false;
@@ -124,8 +124,40 @@ class RotatorsController
         throw new DatabaseException('Unable to allocate a unique rotator public id');
     }
 
+    /**
+     * The keys a rotator is written with. public_id is honoured on create
+     * when free (see create()), and fixed after.
+     */
+    private const ROTATOR_FIELDS = ['name', 'default_url', 'default_campaign', 'default_lp'];
+
+    /**
+     * What GET answers that no write here sets: rules are written through
+     * /rotators/{id}/rules, the auto-monetizer by the Setup page. Accepted
+     * on an update only with the values the rotator holds, so a GET body can
+     * be sent back; refused on a create.
+     */
+    private const READ_ONLY = ['id', 'user_id', 'auto_monetizer', 'rules'];
+
+    /** A rule's keys, on create and update alike. */
+    private const RULE_FIELDS = ['rule_name', 'splittest', 'status', 'criteria', 'redirects'];
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed>|null $current the rotator an update changes
+     * @param list<string> $readOnly
+     */
+    private static function refuseChangedReadOnly(array $payload, ?array $current, array $readOnly): void
+    {
+        $errors = \Api\V3\Support\PayloadKeys::changedReadOnly($payload, $readOnly, $current);
+        if ($errors !== []) {
+            throw new ValidationException('Read-only field', $errors);
+        }
+    }
+
     public function create(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
+        self::refuseChangedReadOnly($payload, null, self::READ_ONLY);
         $name = self::ruleOrRotatorName($payload, 'name', true);
         $default = $this->destination($payload, self::DEFAULT_KEYS, false);
         // public_id is the handle offrtr.php/rtr.php resolve for ANY visitor with
@@ -168,7 +200,10 @@ class RotatorsController
 
     public function update(int $id, array $payload): array
     {
-        $this->get($id);
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
+        // public_id is what the redirects resolve: it was ignored here, so a
+        // caller who sent a new one believed the links had moved.
+        self::refuseChangedReadOnly($payload, (array) $this->get($id)['data'], [...self::READ_ONLY, 'public_id']);
 
         $sets = [];
         $binds = [];
@@ -493,6 +528,7 @@ class RotatorsController
 
     public function createRule(int $rotatorId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
         $this->get($rotatorId);
 
         $ruleName = self::ruleOrRotatorName($payload, 'rule_name', true);
@@ -521,14 +557,8 @@ class RotatorsController
 
     public function updateRule(int $rotatorId, int $ruleId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::RULE_FIELDS, 'a redirector rule');
         $this->get($rotatorId);
-
-        $allowed = ['rule_name' => true, 'splittest' => true, 'status' => true, 'criteria' => true, 'redirects' => true];
-        foreach (array_keys($payload) as $field) {
-            if (!isset($allowed[$field])) {
-                throw new ValidationException('Unsupported field in rule update payload', [$field => 'Unsupported field']);
-            }
-        }
 
         // get() above proved the rotator is the caller's; the rule must be its.
         $stmt = $this->prepare('SELECT 1 FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
@@ -658,7 +688,7 @@ class RotatorsController
         $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
         $this->bind($stmt, 'ii', $ruleId, $rotatorId);
         $this->execute($stmt, 'Rule lookup failed');
-        $rule = $stmt->get_result()->fetch_assoc();
+        $rule = $this->resultOf($stmt, 'Rule lookup failed')->fetch_assoc();
         $stmt->close();
         if (!$rule) {
             throw new NotFoundException('Rule not found for rotator');

@@ -247,13 +247,13 @@ final class SetupCodeController
         if ($campaign === null) {
             throw new ValidationException('Invalid offers', ["offers[$position]" => "Offer $position: that campaign is not yours, or it was removed."]);
         }
-        if ($campaign['aff_campaign_id_public'] === null) {
-            // A campaign the API created before it assigned public ids has
-            // none, and acip= carries it: give it one, the way a landing
-            // page read through the API gets its own.
-            $this->repairCampaignPublicId($campaignId);
+        if (in_array($campaign['aff_campaign_id_public'], [null, 0], true)) {
+            // A campaign with no public id (NULL, or 0) cannot be carried by
+            // acip=: give it one, the repair every API read of campaigns
+            // runs (CampaignsController::repairMissingPublicIds()).
+            (new CampaignsController($this->db, $this->userId))->repairMissingPublicIds();
             $campaign = $this->liveCampaign($campaignId);
-            if ($campaign === null || $campaign['aff_campaign_id_public'] === null) {
+            if ($campaign === null || in_array($campaign['aff_campaign_id_public'], [null, 0], true)) {
                 throw new DatabaseException("Campaign $campaignId has no public id");
             }
         }
@@ -269,26 +269,6 @@ final class SetupCodeController
             'outbound_link' => LandingPageCode::campaignOutboundLink($base, $publicId),
             'outbound_php' => LandingPageCode::campaignOutboundPhp($base, $publicId, $name, $landingPageUrl, $now),
         ];
-    }
-
-    /**
-     * The setup page's public id (a random digit, the row id, a random
-     * digit; unique by construction), for a campaign that has none — the
-     * statement LandingPagesController::repairMissingPublicIds() runs for
-     * landing pages. A row that has one is never touched.
-     */
-    private function repairCampaignPublicId(int $campaignId): void
-    {
-        $stmt = $this->prepare(
-            'UPDATE 202_aff_campaigns
-             SET aff_campaign_id_public = CAST(CONCAT(
-                 FLOOR(1 + RAND() * IF(aff_campaign_id >= 10000000, 4, 9)), aff_campaign_id, FLOOR(1 + RAND() * 9)
-             ) AS UNSIGNED)
-             WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_id_public IS NULL'
-        );
-        $this->bind($stmt, 'ii', $campaignId, $this->userId);
-        $this->execute($stmt, 'Campaign public id repair failed');
-        $stmt->close();
     }
 
     /** @return array<string, mixed> */
@@ -328,7 +308,7 @@ final class SetupCodeController
         if ($page === null) {
             throw new NotFoundException("Landing page $id not found");
         }
-        if ($page['landing_page_id_public'] === null) {
+        if (in_array($page['landing_page_id_public'], [null, 0], true)) {
             // repairMissingPublicIds() ran first, so this is not a page it
             // missed: a snippet with an empty lpip= tracks nothing.
             throw new DatabaseException("Landing page $id has no public id");

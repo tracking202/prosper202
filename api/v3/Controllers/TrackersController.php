@@ -21,17 +21,17 @@ class TrackersController extends Controller
     protected function fields(): array
     {
         return [
-            'aff_campaign_id'   => ['type' => 'i', 'required' => true],
-            'ppc_account_id'    => ['type' => 'i', 'default' => 0],
-            'text_ad_id'        => ['type' => 'i', 'default' => 0],
-            'landing_page_id'   => ['type' => 'i', 'default' => 0],
-            'rotator_id'        => ['type' => 'i', 'default' => 0],
-            'click_cpc'         => ['type' => 'd'],
-            'click_cpa'         => ['type' => 'd'],
+            'aff_campaign_id'   => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
+            'ppc_account_id'    => ['type' => 'i', 'default' => 0, 'range' => self::MEDIUMINT_UNSIGNED],
+            'text_ad_id'        => ['type' => 'i', 'default' => 0, 'range' => self::MEDIUMINT_UNSIGNED],
+            'landing_page_id'   => ['type' => 'i', 'default' => 0, 'range' => self::MEDIUMINT_UNSIGNED],
+            'rotator_id'        => ['type' => 'i', 'default' => 0, 'range' => self::INT_UNSIGNED],
+            'click_cpc'         => ['type' => 'd', 'nullable' => true, 'range' => [-99.99999, 99.99999]],
+            'click_cpa'         => ['type' => 'd', 'nullable' => true, 'range' => [-99.99999, 99.99999]],
             // -1 is Get Links' default: the campaign decides. 0 turned
             // cloaking off for every API-made link, whatever the campaign said.
-            'click_cloaking'    => ['type' => 'i', 'default' => -1, 'allowed' => [-1, 0, 1]],
-            'tracker_id_public' => ['type' => 'i'],
+            'click_cloaking'    => ['type' => 'i', 'default' => -1, 'allowed' => [-1, 0, 1], 'range' => self::TINYINT],
+            'tracker_id_public' => ['type' => 'i', 'range' => self::BIGINT_UNSIGNED],
         ];
     }
 
@@ -44,7 +44,7 @@ class TrackersController extends Controller
      * cannot hold is a strict-mode error rather than a 422.
      */
     #[\Override]
-    protected function validatePayload(array $payload, bool $requireRequired = false): array
+    protected function validatePayload(array $payload, bool $requireRequired = false, ?array $current = null): array
     {
         $errors = [];
         $cloaking = $payload['click_cloaking'] ?? null;
@@ -67,13 +67,15 @@ class TrackersController extends Controller
             throw new ValidationException('Validation failed', $errors);
         }
 
-        return parent::validatePayload($payload, $requireRequired);
+        return parent::validatePayload($payload, $requireRequired, $current);
     }
 
     /**
      * Setting one cost switches the tracker to it, as Get Links' cost type
      * does: the other column is cleared, or a CPC tracker given a CPA would
-     * be charged both ways.
+     * be charged both ways. Only a value switches: a null clears that one
+     * cost (a GET body sent back carries the unused cost as null, and must
+     * not clear the one in use).
      */
     #[\Override]
     protected function beforeUpdate(int|string $id, array $payload): array
@@ -81,10 +83,10 @@ class TrackersController extends Controller
         if (array_key_exists('tracker_id_public', $payload)) {
             $this->assertPublicIdFree((int) $payload['tracker_id_public'], (int) $id);
         }
-        if (array_key_exists('click_cpa', $payload)) {
+        if (($payload['click_cpa'] ?? null) !== null) {
             return ['click_cpc' => ['type' => 'd', 'value' => null]];
         }
-        if (array_key_exists('click_cpc', $payload)) {
+        if (($payload['click_cpc'] ?? null) !== null) {
             return ['click_cpa' => ['type' => 'd', 'value' => null]];
         }
 

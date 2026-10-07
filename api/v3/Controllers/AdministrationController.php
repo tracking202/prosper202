@@ -8,6 +8,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
 
@@ -258,7 +259,7 @@ final class AdministrationController
      */
     public function setRetention(array $payload): array
     {
-        self::onlyKeys($payload, ['auto_delete_days']);
+        PayloadKeys::refuseUnknown($payload, ['auto_delete_days'], 'the retention setting', self::QUERY_NOT_BODY);
         if (!array_key_exists('auto_delete_days', $payload)) {
             throw new ValidationException('auto_delete_days is required', [
                 'auto_delete_days' => 'is required: a whole number of days from 0 (keep every click) to ' . self::MAX_AUTO_DELETE_DAYS,
@@ -308,7 +309,7 @@ final class AdministrationController
      */
     public function scheduleDeletion(array $payload, bool $dryRun): array
     {
-        self::onlyKeys($payload, ['before', 'through_click_id']);
+        PayloadKeys::refuseUnknown($payload, ['before', 'through_click_id'], 'a scheduled deletion', self::QUERY_NOT_BODY);
         $timezone = $this->accountZone();
         $before = self::day($payload, $timezone);
 
@@ -553,7 +554,7 @@ final class AdministrationController
      */
     public function setIspLookup(array $payload): array
     {
-        self::onlyKeys($payload, ['enabled']);
+        PayloadKeys::refuseUnknown($payload, ['enabled'], 'the ISP lookup setting', self::QUERY_NOT_BODY);
         if (!array_key_exists('enabled', $payload) || !is_bool($payload['enabled'])) {
             throw new ValidationException('enabled is required', ['enabled' => 'must be true (look up ISPs) or false']);
         }
@@ -684,25 +685,10 @@ final class AdministrationController
         return $this->conn->fetchAll($stmt);
     }
 
-    /**
-     * @param array<string, mixed> $payload
-     * @param list<string> $allowed
-     */
-    private static function onlyKeys(array $payload, array $allowed): void
-    {
-        $errors = [];
-        foreach (array_keys($payload) as $key) {
-            $key = (string) $key;
-            if (!in_array($key, $allowed, true)) {
-                $errors[$key] = $key === 'dry_run'
-                    ? 'goes in the query string, not the body: …?dry_run=1 previews; without it the request writes'
-                    : 'is not accepted here (accepted: ' . implode(', ', $allowed) . ')';
-            }
-        }
-        if ($errors !== []) {
-            throw new ValidationException('Unknown field', $errors);
-        }
-    }
+    /** A body key that belongs in the query string, said so when it is refused. */
+    private const QUERY_NOT_BODY = [
+        'dry_run' => 'goes in the query string, not the body: …?dry_run=1 previews; without it the request writes',
+    ];
 
     /**
      * A database failure is a 500, never an answer: an unread setting must

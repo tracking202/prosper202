@@ -132,6 +132,54 @@ final class PublicIdsAndListFiltersIntegrationTest extends TestCase
         self::$db->query("DELETE FROM 202_landing_pages WHERE landing_page_id = $other");
     }
 
+    /**
+     * A campaign with no public id (NULL, or 0, which is none: no
+     * rand-id-rand is 0) cannot be carried by acip=. The landing-page code
+     * endpoint gave one to a campaign it named; the API's own reads of
+     * campaigns did not, so a campaign listed through the API had no id to
+     * build a link with. Every read of campaigns now repairs the account's,
+     * as reads of landing pages do theirs.
+     */
+    public function testAnIdlessCampaignIsGivenOneWhenTheApiReadsIt(): void
+    {
+        $insert = function (int $user, string $name, string $publicId): int {
+            self::assertTrue(self::$db->query('INSERT INTO 202_aff_campaigns SET user_id = ' . $user . ", aff_network_id = {$this->network},"
+                . " aff_campaign_name = '$name', aff_campaign_url = 'https://o.example', aff_campaign_payout = 1, aff_campaign_foreign_payout = 0,"
+                . " aff_campaign_time = 0, aff_campaign_id_public = $publicId"), (string) self::$db->error);
+
+            return (int) self::$db->insert_id;
+        };
+        $null = $insert(self::USER, 'legacy-null', 'NULL');
+        $zero = $insert(self::USER, 'legacy-zero', '0');
+        $other = $insert(5102, 'other-account', 'NULL');
+
+        $campaigns = new CampaignsController(self::$db, self::USER);
+        $rows = array_column($campaigns->list([])['data'], null, 'aff_campaign_id');
+        self::assertRandIdRand($null, $rows[$null]['aff_campaign_id_public']);
+        self::assertRandIdRand($zero, $rows[$zero]['aff_campaign_id_public']);
+        self::assertNull(self::$db->query("SELECT aff_campaign_id_public FROM 202_aff_campaigns WHERE aff_campaign_id = $other")->fetch_row()[0], 'another account\'s campaign is not this account\'s to repair');
+
+        // A read of one campaign repairs it as well, and never replaces an id.
+        self::$db->query("UPDATE 202_aff_campaigns SET aff_campaign_id_public = NULL WHERE aff_campaign_id = $null");
+        $given = $campaigns->get($null)['data']['aff_campaign_id_public'];
+        self::assertRandIdRand($null, $given);
+        self::assertSame($given, $campaigns->get($null)['data']['aff_campaign_id_public'], 'an id, once given, is never replaced');
+        self::assertSame($rows[$zero]['aff_campaign_id_public'], $campaigns->get($zero)['data']['aff_campaign_id_public']);
+        $stored = self::$db->query("SELECT aff_campaign_id_public FROM 202_aff_campaigns WHERE aff_campaign_id = $null")->fetch_row()[0];
+        self::assertSame((string) $given, (string) $stored, 'what the API answers is what go.php will resolve');
+        self::$db->query("DELETE FROM 202_aff_campaigns WHERE aff_campaign_id = $other");
+    }
+
+    public function testALandingPageWhosePublicIdIsZeroIsGivenOne(): void
+    {
+        $campaign = $this->campaign();
+        self::$db->query('INSERT INTO 202_landing_pages SET user_id = ' . self::USER . ", aff_campaign_id = $campaign, landing_page_nickname = 'zero',"
+            . " landing_page_url = 'https://zero.example', landing_page_type = 0, landing_page_time = 0, landing_page_id_public = 0");
+        $id = (int) self::$db->insert_id;
+
+        self::assertRandIdRand($id, (new LandingPagesController(self::$db, self::USER))->get($id)['data']['landing_page_id_public']);
+    }
+
     /** @return iterable<string, array{0: array<string, mixed>, 1: string}> */
     public static function refusedFilters(): iterable
     {

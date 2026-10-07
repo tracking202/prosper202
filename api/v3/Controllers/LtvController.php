@@ -180,11 +180,27 @@ class LtvController
     }
 
     /**
+     * The keys that name the customer a write belongs to
+     * (resolveCustomerFromPayload(), MysqlSubscriptionRepository::resolveCustomer()).
+     */
+    private const IDENTITY_KEYS = ['customer_id', 'customer_ref', 'customer_ref_type', 'customer_crm'];
+
+    /**
+     * A customer record's own fields (MysqlCustomerCrmRepository::upsert():
+     * its CRM columns, email, aliases and custom fields).
+     */
+    private const CUSTOMER_RECORD_KEYS = [
+        'first_name', 'last_name', 'phone', 'company', 'address_line1', 'address_line2', 'city', 'region',
+        'postal_code', 'country', 'email', 'aliases', 'custom_fields',
+    ];
+
+    /**
      * Manually instrument an ABM engagement event from a server-side
      * integration ("demo_requested", "pricing_viewed", ...).
      */
     public function recordEngagementEvent(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['event', 'event_name', 'value', 'occurred_at', ...self::IDENTITY_KEYS], 'an engagement event');
         $eventName = trim((string) ($payload['event'] ?? $payload['event_name'] ?? ''));
         if ($eventName === '') {
             throw new ValidationException('event is required', ['event' => 'The event name to record']);
@@ -247,6 +263,7 @@ class LtvController
      */
     public function recordNextOfferImpression(int $customerId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['campaign_id'], 'a next-offer impression');
         $this->requireCustomer($customerId);
 
         return $this->wrap(function () use ($customerId, $payload): array {
@@ -347,6 +364,7 @@ class LtvController
 
     public function upsertCustomer(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['customer_id', 'customer_ref', 'customer_ref_type', ...self::CUSTOMER_RECORD_KEYS], 'a customer');
         $customerId = $this->wrap(fn (): int => $this->crm->upsert($this->userId, $payload));
         $this->enqueueEvent('customer.updated', ['customer_id' => $customerId]);
 
@@ -355,6 +373,13 @@ class LtvController
 
     public function patchCustomer(int $customerId, array $payload): array
     {
+        // The path names the customer. customer_ref and its type were
+        // removed here and customer_id overwritten, so a PATCH naming another
+        // customer answered 200 having changed this one.
+        $byPath = 'the path names the customer: send its record fields only (another reference is added with POST /ltv/customers/{id}/aliases)';
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::CUSTOMER_RECORD_KEYS, 'a customer update', [
+            'customer_id' => $byPath, 'customer_ref' => $byPath, 'customer_ref_type' => $byPath,
+        ]);
         $this->requireCustomer($customerId);
         $payload['customer_id'] = $customerId;
         unset($payload['customer_ref'], $payload['customer_ref_type']);
@@ -367,6 +392,7 @@ class LtvController
 
     public function mergeCustomer(int $targetId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source_customer_id'], 'a customer merge');
         $sourceId = (int) ($payload['source_customer_id'] ?? 0);
         if ($sourceId <= 0) {
             throw new ValidationException(
@@ -394,6 +420,7 @@ class LtvController
 
     public function addAlias(int $customerId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['value', 'type'], 'a customer alias');
         $this->requireCustomer($customerId);
         $value = trim((string) ($payload['value'] ?? ''));
         if ($value === '') {
@@ -430,6 +457,11 @@ class LtvController
      */
     public function recordRevenue(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+            'event_type', 'amount', 'currency', 'occurred_at', 'items', 'idempotency_key', 'external_ref', 'transaction_id',
+            ...self::IDENTITY_KEYS,
+        ], 'a revenue event');
+
         return $this->wrap(function () use ($payload): array {
             $eventType = strtolower(trim((string) ($payload['event_type'] ?? 'purchase')));
             if (!in_array($eventType, ['purchase', 'one_time', 'refund', 'chargeback', 'adjustment'], true)) {
@@ -559,6 +591,11 @@ class LtvController
 
     public function upsertSubscription(array $payload): array
     {
+        // MysqlSubscriptionRepository::upsert() reads these, and the customer keys.
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+            'external_sub_id', 'amount', 'currency', 'plan_name', 'billing_interval', 'billing_interval_count', 'status',
+            'grace_days', 'started_at', 'current_period_start', 'current_period_end', ...self::IDENTITY_KEYS,
+        ], 'a subscription');
         $result = $this->wrap(fn (): array => $this->subscriptions->upsert($this->userId, $payload));
         $this->enqueueEvent('subscription.changed', [
             'subscription_id' => $result['subscriptionId'],
@@ -571,6 +608,10 @@ class LtvController
 
     public function subscriptionEvent(string $externalSubId, array $payload): array
     {
+        // MysqlSubscriptionRepository::recordEvent() reads these.
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [
+            'event_type', 'amount', 'currency', 'current_period_end', 'idempotency_key', 'occurred_at', 'transaction_id',
+        ], 'a subscription event');
         $eventType = strtolower(trim((string) ($payload['event_type'] ?? '')));
         if (!in_array($eventType, ['renewal', 'cancel', 'refund'], true)) {
             throw new ValidationException(
@@ -607,6 +648,9 @@ class LtvController
 
     public function upsertProduct(array $payload): array
     {
+        // MysqlCustomerRepository::upsertProduct() reads these.
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['external_product_id', 'sku', 'name', 'price'], 'a product');
+
         return $this->wrap(function () use ($payload): array {
             $currency = $this->customers->accountCurrency($this->userId);
             $productId = $this->conn->transaction(
@@ -637,13 +681,10 @@ class LtvController
      */
     public function updateProduct(int $productId, array $payload): array
     {
-        $allowed = ['name', 'sku', 'price'];
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['name', 'sku', 'price'], 'a product update', [
+            'external_product_id' => 'is the product\'s key and does not change (accepted: name, sku, price)',
+        ]);
         $errors = [];
-        foreach (array_keys($payload) as $key) {
-            if (!in_array((string) $key, $allowed, true)) {
-                $errors[(string) $key] = 'is not accepted here (accepted: name, sku, price; external_product_id is the key and does not change)';
-            }
-        }
         if ($payload === []) {
             throw new ValidationException('No fields to update', ['name' => 'send name, sku or price']);
         }
@@ -781,6 +822,8 @@ class LtvController
 
     public function createField(array $payload): array
     {
+        // MysqlCustomerFieldRepository::create() reads these.
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['field_key', 'label', 'field_type', 'options', 'is_required', 'sort_order'], 'a custom field');
         $fieldId = $this->wrap(fn (): int => $this->fields->create($this->userId, $payload));
 
         return ['data' => ['field_id' => $fieldId]];
@@ -788,6 +831,12 @@ class LtvController
 
     public function updateField(int $fieldId, array $payload): array
     {
+        // MysqlCustomerFieldRepository::update() writes these; a field's key
+        // and type are fixed once it holds values.
+        $fixed = 'is fixed once the field is created (accepted: label, options, is_required, sort_order)';
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['label', 'options', 'is_required', 'sort_order'], 'a custom field update', [
+            'field_key' => $fixed, 'field_type' => $fixed,
+        ]);
         $this->wrap(function () use ($fieldId, $payload): void {
             try {
                 $this->fields->update($this->userId, $fieldId, $payload);
@@ -819,6 +868,7 @@ class LtvController
 
     public function createWebhook(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['url', 'webhook_url', 'events'], 'a webhook');
         $url = trim((string) ($payload['url'] ?? $payload['webhook_url'] ?? ''));
         if ($url === '') {
             throw new ValidationException('url is required', ['url' => 'The https endpoint to deliver events to']);
@@ -930,6 +980,7 @@ class LtvController
 
     public function createCompany(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['name', 'domain'], 'a company');
         $name = trim((string) ($payload['name'] ?? ''));
         if ($name === '') {
             throw new ValidationException('name is required', ['name' => 'Required']);
@@ -955,6 +1006,7 @@ class LtvController
 
     public function patchCompany(int $companyId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['name', 'domain'], 'a company update');
         if (!array_key_exists('name', $payload) && !array_key_exists('domain', $payload)) {
             throw new ValidationException('Nothing to update — supply name and/or domain', []);
         }
@@ -989,6 +1041,7 @@ class LtvController
 
     public function mergeCompany(int $companyId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['source_company_id'], 'a company merge');
         $sourceId = (int) ($payload['source_company_id'] ?? 0);
         if ($sourceId <= 0) {
             throw new ValidationException('source_company_id is required', ['source_company_id' => 'Required']);
@@ -1056,6 +1109,7 @@ class LtvController
 
     public function createIntegration(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['provider', 'name', 'config'], 'an integration');
         if (isset($payload['config']) && !is_array($payload['config'])) {
             throw new ValidationException('config must be an object', ['config' => 'Must be an object']);
         }

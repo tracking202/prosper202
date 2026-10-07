@@ -124,13 +124,12 @@ final class AppIntegrityController
     /** @param array<string, mixed> $payload */
     public function setCredential(int $registrationId, array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['credential'], 'an integrity credential (send only "credential")');
         $this->androidRegistration($registrationId);
-        $unknown = array_diff(array_map('strval', array_keys($payload)), ['credential']);
-        if ($unknown !== [] || !array_key_exists('credential', $payload)) {
-            throw new ValidationException('Send the service account as {"credential": <key file JSON>}', array_fill_keys(
-                $unknown !== [] ? array_values($unknown) : ['credential'],
-                $unknown !== [] ? 'is not a field here (send only "credential")' : 'is required: the service-account key file\'s JSON object'
-            ));
+        if (!array_key_exists('credential', $payload)) {
+            throw new ValidationException('Send the service account as {"credential": <key file JSON>}', [
+                'credential' => 'is required: the service-account key file\'s JSON object',
+            ]);
         }
         $credential = ServiceAccountCredential::fromKeyFile($payload['credential']);
         // Written under the registration's row lock, which a registration

@@ -8,7 +8,9 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
 
@@ -115,16 +117,107 @@ abstract class Controller
     // ─── Input Validation ────────────────────────────────────────────
 
     /**
-     * Validate and coerce payload values against field definitions.
-     *
-     * @return array  Cleaned payload with only known, writable fields.
-     * @throws ValidationException
+     * Column ranges for fields()' 'range' (the integer types the schema
+     * uses). A BIGINT UNSIGNED holds more than a PHP int, and mysqli binds
+     * 'i' as a signed 64-bit integer, so its top is PHP_INT_MAX here.
+     * ControllerFieldsMatchSchemaTest holds every declared range, nullable
+     * flag and max_length to the installed schema.
      */
-    protected function validatePayload(array $payload, bool $requireRequired = false): array
+    protected const TINYINT = [-128, 127];
+    protected const TINYINT_UNSIGNED = [0, 255];
+    protected const SMALLINT_UNSIGNED = [0, 65535];
+    protected const MEDIUMINT = [-8388608, 8388607];
+    protected const MEDIUMINT_UNSIGNED = [0, 16777215];
+    protected const INT = [-2147483648, 2147483647];
+    protected const INT_UNSIGNED = [0, 4294967295];
+    protected const BIGINT_UNSIGNED = [0, PHP_INT_MAX];
+
+    /**
+     * What the field-error messages call this resource ("campaigns").
+     */
+    protected function resourceLabel(): string
+    {
+        return $this->changeEntityName() ?? $this->tableName();
+    }
+
+    /**
+     * Keys this controller's create()/update() read themselves and remove
+     * before the body reaches the base (a campaign's links, an app's
+     * store_link). The base never sees them; they are listed so that a
+     * refused key's message names them among what is accepted.
+     *
+     * @return list<string>
+     */
+    protected function handledKeys(): array
+    {
+        return [];
+    }
+
+    /**
+     * The keys a GET of this resource answers that no write sets: the
+     * primary key, the owner, the fields() marked readonly, and the version
+     * metadata withVersionMetadata() adds.
+     *
+     * @return list<string>
+     */
+    protected function readOnlyKeys(): array
+    {
+        $keys = [$this->primaryKey()];
+        if ($this->userIdColumn() !== null) {
+            $keys[] = $this->userIdColumn();
+        }
+        foreach ($this->resolveFields() as $col => $def) {
+            if ($def['readonly'] ?? false) {
+                $keys[] = $col;
+            }
+        }
+        $keys[] = 'version';
+        $keys[] = 'etag';
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * Validate a request body against fields() and return the values to
+     * write, each as its column's type.
+     *
+     * Nothing is passed over in silence (CLAUDE.md #4). This used to skip any
+     * key it did not write and any null, and to cast whatever is_numeric()
+     * let through, so a typo'd field, a field the controller does not write
+     * and an attempt to clear a field all answered success having done less
+     * than asked, and "1.5", "1e3" or a 20-digit string were stored as 1,
+     * 1000 and PHP_INT_MAX. Now each of these is a 422 naming the field:
+     *
+     *  - a key that is not a field: refused, with the writable fields listed;
+     *  - a read-only key (readOnlyKeys()): accepted only on an update, and
+     *    only with the value the record holds ($current), so a body read with
+     *    GET can be sent back; `version`/`etag` that differ are the 409 an
+     *    If-Match would give, since the body was read from an older record;
+     *  - null: written as NULL where the field is 'nullable' (the column can
+     *    hold it: a clear), refused otherwise;
+     *  - 'i': a JSON integer, an integral JSON number, or a string of digits
+     *    with an optional sign, within the field's 'range';
+     *  - 'd': a finite number (a JSON number or a numeric string) within the
+     *    field's 'range';
+     *  - 's': a string, or a JSON integer as its digits; never a bool, a
+     *    fraction, a list or an object.
+     *
+     * @param array<array-key, mixed> $payload the request body as decoded
+     * @param array<string, mixed>|null $current the record an update changes
+     *     (as get() answers it); null for a create
+     * @return array<string, mixed> the writable fields the body sets
+     * @throws ValidationException
+     * @throws ConflictException when the body's version is not the record's
+     */
+    protected function validatePayload(array $payload, bool $requireRequired = false, ?array $current = null): array
     {
         $fields = $this->resolveFields();
         $errors = [];
         $clean = [];
+
+        if ($current !== null) {
+            $this->assertBodyVersionCurrent($payload, $current);
+        }
 
         if ($requireRequired) {
             foreach ($fields as $col => $def) {
@@ -134,35 +227,64 @@ abstract class Controller
             }
         }
 
+        $readOnly = $this->readOnlyKeys();
+        $writable = array_values(array_diff(array_keys($fields), $readOnly));
+        $errors += PayloadKeys::changedReadOnly($payload, $readOnly, $current);
+        $errors += PayloadKeys::unknown(
+            array_diff_key($payload, array_flip($readOnly)),
+            $writable,
+            $this->resourceLabel(),
+            [],
+            $this->handledKeys()
+        );
+
         foreach ($payload as $col => $value) {
+            $col = (string) $col;
             $def = $fields[$col] ?? null;
-            if ($def === null || ($def['readonly'] ?? false)) {
-                continue;
+            if ($def === null || in_array($col, $readOnly, true)) {
+                continue; // refused above, or a read-only value that matches
             }
 
             if ($value === null) {
+                if ($def['nullable'] ?? false) {
+                    $clean[$col] = null;
+                } else {
+                    $errors[$col] = "Field '$col' cannot be null: send a value, or omit it to "
+                        . ($current === null ? 'take its default' : 'leave it as it is');
+                }
                 continue;
             }
 
             switch ($def['type']) {
                 case 'i':
-                    if (!is_numeric($value)) {
-                        $errors[$col] = "Field '$col' must be an integer";
+                    $int = self::wholeNumber($value);
+                    if ($int === null) {
+                        $errors[$col] = "Field '$col' must be a whole number";
+                    } elseif (isset($def['range']) && ($int < $def['range'][0] || $int > $def['range'][1])) {
+                        $errors[$col] = "Field '$col' must be a whole number from {$def['range'][0]} to {$def['range'][1]}";
                     } else {
-                        $clean[$col] = (int)$value;
+                        $clean[$col] = $int;
                     }
                     break;
                 case 'd':
-                    if (!is_numeric($value)) {
-                        $errors[$col] = "Field '$col' must be a number";
+                    $number = is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)) ? (float) $value : null;
+                    if ($number === null || !is_finite($number)) {
+                        $errors[$col] = "Field '$col' must be a finite number";
+                    } elseif (isset($def['range']) && ($number < $def['range'][0] || $number > $def['range'][1])) {
+                        $errors[$col] = "Field '$col' must be a number from {$def['range'][0]} to {$def['range'][1]}";
                     } else {
-                        $clean[$col] = (float)$value;
+                        $clean[$col] = $number;
                     }
                     break;
                 case 's':
-                    $clean[$col] = (string)$value;
+                    if (!is_string($value) && !is_int($value)) {
+                        $errors[$col] = "Field '$col' must be a string";
+                        break;
+                    }
+                    $clean[$col] = (string) $value;
                     if (isset($def['max_length']) && mb_strlen($clean[$col]) > $def['max_length']) {
                         $errors[$col] = "Field '$col' exceeds max length of {$def['max_length']}";
+                        unset($clean[$col]);
                     }
                     break;
                 default:
@@ -183,6 +305,66 @@ abstract class Controller
         }
 
         return $clean;
+    }
+
+    /**
+     * A whole number as the value states it, or null: a PHP int; a float
+     * that is integral and inside PHP's int range (JSON `5.0`, `1e2`); a
+     * string of digits with an optional sign that fits a PHP int. "1.5",
+     * "1e3", " 7", true and a 20-digit string are none of these.
+     */
+    private static function wholeNumber(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_float($value)) {
+            // 2^63 itself is not an int; every float below it in magnitude
+            // that is integral converts exactly.
+            if (!is_finite($value) || floor($value) !== $value || $value >= 9.2233720368547758E18 || $value < -9.2233720368547758E18) {
+                return null;
+            }
+
+            return (int) $value;
+        }
+        if (!is_string($value) || preg_match('/^([+-]?)0*([0-9]+)$/D', $value, $m) !== 1) {
+            return null;
+        }
+        $limit = $m[1] === '-' ? '9223372036854775808' : '9223372036854775807';
+        if (strlen($m[2]) > strlen($limit) || (strlen($m[2]) === strlen($limit) && strcmp($m[2], $limit) > 0)) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
+    /**
+     * A body's `version` (or `etag`) says which record it was read from. A
+     * body read from an older one is the conflict an If-Match header would
+     * report: written back whole, it would undo the change made since.
+     *
+     * @param array<array-key, mixed> $payload
+     * @param array<string, mixed> $current
+     * @throws ConflictException
+     */
+    private function assertBodyVersionCurrent(array $payload, array $current): void
+    {
+        $currentVersion = $this->computeVersionHash($current);
+        foreach (['version' => $currentVersion, 'etag' => '"' . $currentVersion . '"'] as $key => $expected) {
+            if (!array_key_exists($key, $payload) || $payload[$key] === $expected) {
+                continue;
+            }
+            $this->stateStore()->incrementMetric('conflicts', 1);
+            throw new ConflictException(
+                'Version mismatch',
+                [
+                    'expected_version' => is_scalar($payload[$key]) ? trim((string) $payload[$key], '" ') : null,
+                    'current_version' => $currentVersion,
+                    'diff_hint' => "The body's $key is from an older read of this record. Re-fetch it (GET) and "
+                        . "send your changes on that, or omit $key and send only the fields to change.",
+                ]
+            );
+        }
     }
 
     // ─── Linked Records ──────────────────────────────────────────────
@@ -494,7 +676,7 @@ abstract class Controller
             $stmt = $this->prepare($countSql);
             $this->bind($stmt, $types, ...$binds);
             $this->execute($stmt, 'Count query failed');
-            $total = (int)$stmt->get_result()->fetch_assoc()['total'];
+            $total = (int)$this->resultOf($stmt, 'Count query failed')->fetch_assoc()['total'];
             $stmt->close();
         } else {
             $result = $this->db->query($countSql);
@@ -513,7 +695,7 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
 
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -562,7 +744,10 @@ abstract class Controller
         $stmt = $this->prepare($sql);
         $this->bind($stmt, $types, ...$binds);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        // A failed get_result() is a database error, not "no such record":
+        // read as one, an update or a delete would answer 404 for a row that
+        // exists, and bulk-upsert would create a second copy of it.
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -668,7 +853,7 @@ abstract class Controller
         $current = $this->get($id);
         $currentData = (array)$current['data'];
         $this->assertIfMatchSatisfied($currentData);
-        $clean = $this->validatePayload($payload);
+        $clean = $this->validatePayload($payload, current: $currentData);
         $this->assertLinksOwned($clean, $currentData);
         $extras = $this->beforeUpdate($id, $clean);
 
@@ -691,7 +876,7 @@ abstract class Controller
         // Reject before merging extras: a payload with no writable fields must
         // fail validation rather than silently bump hook columns like updated_at.
         if (empty($sets)) {
-            throw new ValidationException('No valid fields to update');
+            throw new NothingToUpdateException('No valid fields to update');
         }
 
         foreach ($extras as $col => $info) {
@@ -835,6 +1020,12 @@ abstract class Controller
             throw new ValidationException('Idempotency-Key header is required', ['idempotency_key' => 'Missing Idempotency-Key header']);
         }
 
+        // The body is a list of rows, or {"rows": [...]}: an object with any
+        // other key is not a bulk body (a typo'd `rows` used to be read as a
+        // batch of one row per key).
+        if (!array_is_list($payload)) {
+            PayloadKeys::refuseUnknown($payload, ['rows'], 'a bulk-upsert body ({"rows": [...]}, or the list of rows itself)');
+        }
         $rows = $payload['rows'] ?? $payload;
         if (!is_array($rows)) {
             throw new ValidationException('rows must be an array', ['rows' => 'Expected array']);
@@ -885,8 +1076,22 @@ abstract class Controller
 
                     try {
                         $primaryKey = $this->primaryKey();
-                        $id = $row[$primaryKey] ?? $row['id'] ?? null;
-                        if ($id !== null && $id !== '') {
+                        $named = static fn (string $key): bool => isset($row[$key]) && $row[$key] !== '';
+                        if ($named($primaryKey) && $named('id') && !PayloadKeys::same($row[$primaryKey], $row['id'])) {
+                            $summary['error']++;
+                            $results[] = ['index' => $index, 'status' => 'error', 'message' => "$primaryKey and id name different records: send one"];
+                            continue;
+                        }
+                        $id = $named($primaryKey) ? $row[$primaryKey] : ($named('id') ? $row['id'] : null);
+                        // `id` is this endpoint's lookup key, not a field of
+                        // the record: it is read here and goes no further. An
+                        // empty primary key is "no id", as it always was.
+                        $fields = $row;
+                        unset($fields['id']);
+                        if (!$named($primaryKey)) {
+                            unset($fields[$primaryKey]);
+                        }
+                        if ($id !== null) {
                             // Strictly validate the ID instead of passing it through
                             // as a string: binding "12abc" as 's' against an integer
                             // PK would let MySQL coerce it to 12 and silently
@@ -902,24 +1107,42 @@ abstract class Controller
                                 $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Invalid primary key value'];
                                 continue;
                             }
+                            if ($named($primaryKey)) {
+                                // The key as it was read (" 12 " is row 12),
+                                // so update() compares the record's own id.
+                                $fields[$primaryKey] = $id;
+                            }
+                            $exists = true;
                             try {
                                 $this->get($id);
-                                $clean = $this->validatePayload($row);
-                                if ($clean === []) {
+                            } catch (NotFoundException) {
+                                $exists = false;
+                            }
+                            if ($exists) {
+                                // The row goes through update() whole, so a
+                                // field it does not write is refused here as
+                                // on a PUT; a row with nothing to change (only
+                                // its id, or read-only values the record
+                                // holds) is skipped.
+                                try {
+                                    $updated = $this->update($id, $fields);
+                                } catch (NothingToUpdateException) {
                                     $summary['skipped']++;
                                     $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'No mutable fields provided'];
                                     continue;
                                 }
-                                $updated = $this->update($id, $row);
                                 $summary['updated']++;
                                 $results[] = ['index' => $index, 'status' => 'updated', 'data' => $updated['data']];
                                 continue;
-                            } catch (NotFoundException) {
-                                // Fall through to create when provided ID does not exist.
                             }
+                            // An id that names none of this account's records
+                            // is the lookup key of a create, not a field of it:
+                            // the row is created with an id of its own, which
+                            // the result carries.
+                            unset($fields[$primaryKey]);
                         }
 
-                        $created = $this->create($row);
+                        $created = $this->create($fields);
                         $summary['created']++;
                         $results[] = ['index' => $index, 'status' => 'created', 'data' => $created['data']];
                     } catch (\Throwable $e) {
@@ -1047,25 +1270,20 @@ abstract class Controller
         return null;
     }
 
+    /**
+     * Whether this resource's table has $column. A probe that fails does not
+     * know, and says so by throwing: answered "no column", a list's
+     * updated_since/deleted_since filter was dropped and every row answered
+     * as though filtered (CLAUDE.md #11: a predicate must not answer when it
+     * does not know).
+     */
     protected function hasColumn(string $column): bool
     {
         $sql = sprintf('SHOW COLUMNS FROM %s LIKE ?', $this->tableName());
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return false;
-        }
+        $stmt = $this->prepare($sql);
         $this->bind($stmt, 's', $column);
-        // @phpstan-ignore-next-line mysqli_stmt::execute checked here; graceful fallback (returns false) on schema probe, must not throw via Connection::execute
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return false;
-        }
-        $row = $result->fetch_assoc();
+        $this->execute($stmt, 'Column probe failed');
+        $row = $this->resultOf($stmt, 'Column probe failed')->fetch_assoc();
         $stmt->close();
         return (bool)$row;
     }

@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use Api\V3\Controller;
 use Api\V3\Exception\ConflictException;
+use Api\V3\Exception\NothingToUpdateException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\RequestContext;
@@ -52,6 +53,9 @@ class StubController extends Controller
             'amount'      => ['type' => 'd'],
             'priority'    => ['type' => 'i'],
             'status'      => ['type' => 's', 'allowed' => ['open', 'closed']],
+            'note'        => ['type' => 's', 'nullable' => true, 'max_length' => 20],
+            'rank'        => ['type' => 'i', 'range' => [0, 255]],
+            'ratio'       => ['type' => 'd', 'range' => [-99.99, 99.99]],
             'created_at'  => ['type' => 's', 'readonly' => true],
         ];
     }
@@ -76,9 +80,9 @@ class StubController extends Controller
         $this->beforeDeleteCalled = true;
     }
 
-    public function testValidatePayload(array $payload, bool $requireRequired = false): array
+    public function testValidatePayload(array $payload, bool $requireRequired = false, ?array $current = null): array
     {
-        return $this->validatePayload($payload, $requireRequired);
+        return $this->validatePayload($payload, $requireRequired, $current);
     }
 
     public function testTransaction(callable $fn): mixed
@@ -419,15 +423,71 @@ final class ControllerTest extends TestCase
 
     // ─── update() ───────────────────────────────────────────────────
 
-    public function testUpdateIgnoresReadonlyFields(): void
+    public function testUpdateAcceptsReadonlyFieldsHoldingTheRecordsValues(): void
     {
+        // A GET body sent back whole: the id, the owner, a read-only field
+        // and the version are the record's own, so they change nothing and
+        // are accepted alongside the change.
+        $row = ['item_id' => 1, 'name' => 'Updated', 'created_at' => '2025-01-01', 'user_id' => 1];
+        $db = $this->createMysqliMock(['SELECT' => $row]);
+        $ctrl = new StubController($db, 1);
+        $read = $ctrl->get(1)['data'];
+        $this->assertArrayHasKey('version', $read);
+
+        $result = $ctrl->update(1, ['name' => 'Updated'] + $read);
+        $this->assertArrayHasKey('data', $result);
+        $this->assertTrue($ctrl->beforeUpdateCalled);
+    }
+
+    public function testUpdateRefusesAReadonlyFieldWithAnotherValue(): void
+    {
+        // The old behaviour dropped it and answered 200: the caller believed
+        // created_at had changed.
         $db = $this->createMysqliMock([
             'SELECT' => ['item_id' => 1, 'name' => 'Updated', 'created_at' => '2025-01-01', 'user_id' => 1],
         ]);
         $ctrl = new StubController($db, 1);
 
-        $result = $ctrl->update(1, ['name' => 'Updated', 'created_at' => '2099-01-01']);
-        $this->assertArrayHasKey('data', $result);
+        foreach ([['created_at' => '2099-01-01'], ['item_id' => 2], ['user_id' => 7]] as $changed) {
+            try {
+                $ctrl->update(1, ['name' => 'Updated'] + $changed);
+                $this->fail('expected ' . key($changed) . ' with another value to be refused');
+            } catch (ValidationException $e) {
+                $this->assertSame([key($changed)], array_keys($e->getFieldErrors()));
+                $this->assertStringContainsString('read-only', $e->getFieldErrors()[key($changed)]);
+            }
+        }
+        $this->assertFalse($ctrl->beforeUpdateCalled, 'a refused update reaches no write');
+    }
+
+    public function testUpdateWithABodyReadFromAnOlderVersionIsAConflict(): void
+    {
+        $db = $this->createMysqliMock([
+            'SELECT' => ['item_id' => 1, 'name' => 'Now', 'user_id' => 1],
+        ]);
+        $ctrl = new StubController($db, 1);
+
+        foreach (['version' => 'stale0', 'etag' => '"stale0"'] as $key => $stale) {
+            try {
+                $ctrl->update(1, ['name' => 'Mine', $key => $stale]);
+                $this->fail("expected a stale $key to be a conflict");
+            } catch (ConflictException $e) {
+                $this->assertSame('Version mismatch', $e->getMessage());
+                $this->assertSame('stale0', $e->getDetails()['expected_version']);
+            }
+        }
+        $this->assertFalse($ctrl->beforeUpdateCalled);
+    }
+
+    public function testUpdateOfOnlyUnchangedReadonlyFieldsHasNothingToUpdate(): void
+    {
+        $db = $this->createMysqliMock([
+            'SELECT' => ['item_id' => 1, 'name' => 'Existing', 'user_id' => 1],
+        ]);
+        $ctrl = new StubController($db, 1);
+
+        $this->expectException(NothingToUpdateException::class);
+        $ctrl->update(1, ['item_id' => 1, 'user_id' => 1]);
     }
 
     public function testUpdateThrowsNotFoundExceptionForMissingId(): void
@@ -541,20 +601,159 @@ final class ControllerTest extends TestCase
         $this->assertSame(str_repeat('x', 500), $clean['description']);
     }
 
-    public function testValidatePayloadStripsReadonlyFields(): void
+    public function testValidatePayloadRefusesReadonlyFieldsOnCreate(): void
     {
+        // There is no record yet, so no value of a read-only field can be
+        // "the one it holds": the server assigns each.
         [$ctrl] = $this->createControllerWithDb();
-        $clean = $ctrl->testValidatePayload(['name' => 'Test', 'created_at' => '2025-01-01']);
-        $this->assertArrayHasKey('name', $clean);
-        $this->assertArrayNotHasKey('created_at', $clean);
+        try {
+            $ctrl->testValidatePayload(['name' => 'Test', 'created_at' => '2025-01-01', 'item_id' => 9, 'user_id' => 1, 'version' => 'v', 'etag' => '"v"'], true);
+            $this->fail('expected read-only fields on a create to be refused');
+        } catch (ValidationException $e) {
+            $errors = $e->getFieldErrors();
+            ksort($errors);
+            $this->assertSame(['created_at', 'etag', 'item_id', 'user_id', 'version'], array_keys($errors));
+            $this->assertStringContainsString('set by the server', $errors['item_id']);
+        }
     }
 
-    public function testValidatePayloadStripsUnknownFields(): void
+    public function testValidatePayloadRefusesUnknownFieldsByName(): void
+    {
+        // They used to be dropped with a 200: a typo saved nothing and said
+        // nothing.
+        [$ctrl] = $this->createControllerWithDb();
+        try {
+            $ctrl->testValidatePayload(['name' => 'Test', 'nmae' => 'typo', 'nonexistent' => 'value']);
+            $this->fail('expected unknown fields to be refused');
+        } catch (ValidationException $e) {
+            $errors = $e->getFieldErrors();
+            $this->assertSame(['nmae', 'nonexistent'], array_keys($errors));
+            $this->assertStringContainsString('is not a field of test_items', $errors['nmae']);
+            $this->assertStringContainsString('name, description, amount, priority, status, note, rank, ratio', $errors['nmae'], 'the writable fields are listed');
+            $this->assertStringNotContainsString('created_at', $errors['nmae'], 'a read-only field is not offered as writable');
+        }
+    }
+
+    public function testValidatePayloadNullClearsANullableFieldAndIsRefusedOtherwise(): void
     {
         [$ctrl] = $this->createControllerWithDb();
-        $clean = $ctrl->testValidatePayload(['name' => 'Test', 'nonexistent' => 'value']);
-        $this->assertArrayHasKey('name', $clean);
-        $this->assertArrayNotHasKey('nonexistent', $clean);
+        $clean = $ctrl->testValidatePayload(['note' => null]);
+        $this->assertArrayHasKey('note', $clean, 'a null for a nullable field is a write of NULL, not a skip');
+        $this->assertNull($clean['note']);
+
+        foreach (['description', 'priority', 'amount', 'status', 'name'] as $field) {
+            try {
+                $ctrl->testValidatePayload([$field => null]);
+                $this->fail("expected null for $field to be refused");
+            } catch (ValidationException $e) {
+                $this->assertSame([$field], array_keys($e->getFieldErrors()));
+                $this->assertStringContainsString('cannot be null', $e->getFieldErrors()[$field]);
+            }
+        }
+    }
+
+    /** @return iterable<string, array{mixed, int}> */
+    public static function wholeNumbers(): iterable
+    {
+        yield 'JSON integer' => [7, 7];
+        yield 'digits' => ['42', 42];
+        yield 'signed digits' => ['-3', -3];
+        yield 'plus sign' => ['+5', 5];
+        yield 'leading zeros' => ['007', 7];
+        yield 'integral JSON number' => [5.0, 5];
+        yield 'integral exponent JSON number' => [1e2, 100];
+        yield 'largest int' => ['9223372036854775807', PHP_INT_MAX];
+        yield 'smallest int' => ['-9223372036854775808', PHP_INT_MIN];
+    }
+
+    /** @dataProvider wholeNumbers */
+    public function testValidatePayloadAcceptsAWholeNumberAsItsValue(mixed $sent, int $stored): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->assertSame($stored, $ctrl->testValidatePayload(['priority' => $sent])['priority']);
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function notWholeNumbers(): iterable
+    {
+        // Each of these used to be cast to some other integer and stored.
+        yield 'fraction string' => ['1.5'];
+        yield 'fraction' => [1.5];
+        yield 'exponent string' => ['1e3'];
+        yield 'past PHP_INT_MAX' => ['99999999999999999999'];
+        yield 'below PHP_INT_MIN' => ['-9223372036854775809'];
+        yield 'float past the int range' => [1e19];
+        yield 'leading space' => [' 7'];
+        yield 'trailing space' => ['7 '];
+        yield 'hex' => ['0x1A'];
+        yield 'empty' => [''];
+        yield 'bool' => [true];
+        yield 'list' => [[1]];
+        yield 'two signs' => ['--1'];
+    }
+
+    /** @dataProvider notWholeNumbers */
+    public function testValidatePayloadRefusesWhatIsNotAWholeNumber(mixed $sent): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        try {
+            $ctrl->testValidatePayload(['priority' => $sent]);
+            $this->fail('expected ' . var_export($sent, true) . ' to be refused');
+        } catch (ValidationException $e) {
+            $this->assertSame(['priority' => "Field 'priority' must be a whole number"], $e->getFieldErrors());
+        }
+    }
+
+    public function testValidatePayloadHoldsAWholeNumberToItsColumnsRange(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->assertSame(255, $ctrl->testValidatePayload(['rank' => '255'])['rank']);
+        $this->assertSame(0, $ctrl->testValidatePayload(['rank' => 0])['rank']);
+        foreach (['256', -1, 1000.0] as $sent) {
+            try {
+                $ctrl->testValidatePayload(['rank' => $sent]);
+                $this->fail('expected ' . var_export($sent, true) . ' to be out of range');
+            } catch (ValidationException $e) {
+                $this->assertSame(['rank' => "Field 'rank' must be a whole number from 0 to 255"], $e->getFieldErrors());
+            }
+        }
+    }
+
+    public function testValidatePayloadRefusesANumberThatIsNotFiniteOrOutOfRange(): void
+    {
+        [$ctrl] = $this->createControllerWithDb();
+        $this->assertSame(1000.0, $ctrl->testValidatePayload(['amount' => '1e3'])['amount'], 'an exponent is a decimal\'s own notation');
+        $this->assertSame(-99.99, $ctrl->testValidatePayload(['ratio' => '-99.99'])['ratio']);
+        foreach (['amount' => '1e400', 'ratio' => '100'] as $field => $sent) {
+            try {
+                $ctrl->testValidatePayload([$field => $sent]);
+                $this->fail("expected $field = $sent to be refused");
+            } catch (ValidationException $e) {
+                $this->assertSame([$field], array_keys($e->getFieldErrors()));
+            }
+        }
+        foreach ([true, [1], 'abc'] as $sent) {
+            try {
+                $ctrl->testValidatePayload(['amount' => $sent]);
+                $this->fail('expected ' . var_export($sent, true) . ' to be refused');
+            } catch (ValidationException $e) {
+                $this->assertSame(['amount' => "Field 'amount' must be a finite number"], $e->getFieldErrors());
+            }
+        }
+    }
+
+    public function testValidatePayloadRefusesAStringFieldGivenABoolAFractionOrAList(): void
+    {
+        // (string) true is "1" and (string) [] is "Array": each was stored.
+        [$ctrl] = $this->createControllerWithDb();
+        foreach ([true, false, 1.5, ['a'], ['k' => 'v']] as $sent) {
+            try {
+                $ctrl->testValidatePayload(['description' => $sent]);
+                $this->fail('expected ' . var_export($sent, true) . ' to be refused');
+            } catch (ValidationException $e) {
+                $this->assertSame(['description' => "Field 'description' must be a string"], $e->getFieldErrors());
+            }
+        }
     }
 
     public function testValidatePayloadRequiredFieldsWhenFlagTrue(): void

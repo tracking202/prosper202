@@ -117,6 +117,61 @@ so a record whose campaign was removed since can still be saved. In
 `bulk-upsert`, a refused row is an `error` row carrying the same `field_errors`;
 the other rows are written.
 
+### Request Bodies
+
+Every key of a request body is either written, or refused by name — never
+ignored. The API used to skip a key it did not write and a `null`, and to cast
+any number it was given, so a misspelled field, a field the endpoint does not
+write, or a `null` meant to clear something answered `200`/`201` having done
+less than asked. Each of these is now a `422` whose `field_errors` names the
+field, and nothing is written:
+
+- **A key that is not a field** of the resource: `"is not a field of campaigns
+  (accepted: aff_campaign_name, …)"` — the message lists what the endpoint
+  takes. Every endpoint that takes a body does this, not
+  only the CRUD resources.
+- **A read-only field** (the record's id, `user_id`, a public id such as
+  `aff_campaign_id_public` or `landing_page_id_public`, a registration's
+  `app_token`, …): accepted on an update only with the value the record
+  already holds, so a body read with `GET` can be sent back whole; any other
+  value is refused (`"is read-only: …"`), and on a create every read-only
+  field is (`"is set by the server: omit it when creating"`).
+- **`version` / `etag`** in a body say which read of the record it came from.
+  On an update they must be the record's current ones; a body read before
+  another write is a `409` `Version mismatch`, as an `If-Match` header with
+  that etag would be — written back whole, it would undo the other write.
+  Re-read the record, or send only the fields to change.
+- **`null`** clears a field whose column can hold NULL (a campaign's
+  `aff_campaign_url_2`…`_5`, a tracker's `click_cpc`/`click_cpa`, a
+  forecast event's `end_date`, `tags`, `notes`, …) and is refused for one that
+  cannot (`"cannot be null: send a value, or omit it …"`). Leaving a key out
+  leaves the field as it is.
+- **Whole numbers** (`integer` fields) are a JSON integer, an integral JSON
+  number (`5.0`), or a string of digits with an optional sign (`"42"`,
+  `"-3"`), within the column's range (an id column holds 0–16777215).
+  `"1.5"`, `"1e3"`, `" 7"`, `true` and a 20-digit string are refused; they
+  were stored as 1, 1000, 7, 1 and 9223372036854775807.
+- **Decimals** are a finite JSON number or numeric string within the column's
+  range (`aff_campaign_payout` holds up to 999999.99); `"1e400"` is refused.
+- **Strings** are a JSON string (a JSON integer is taken as its digits) no
+  longer than the field's limit, which is the column's own (names of
+  categories, traffic sources and their accounts and campaigns hold 50
+  characters; landing-page URLs 255). A bool, a fraction, a list or an
+  object is refused.
+
+`bulk-upsert` holds each row to the same rules: a row naming an existing
+record is an update, one that changes nothing (only its id, or read-only
+values the record holds) is `skipped`, and a refused row is an `error` row
+with `field_errors`. `id` there is the endpoint's own lookup key (an alias for
+the resource's primary key) and is not written; an id that names no record of
+yours is the lookup key of a create, and the row is created with an id of its
+own. The body is a list of rows or `{"rows": [...]}`; any other key is
+refused.
+
+`p202 import`, `p202 sync` and the server-side sync jobs leave out the fields
+a write must not carry (ids, owner, public ids, `version`/`etag`, a
+redirector's rules) when they build a body from another record.
+
 ## Common Headers
 
 | Header | Direction | Description |
@@ -337,7 +392,7 @@ Empty response body.
 | 204 | No Content (DELETE) |
 | 400 | Bad Request |
 | 401 | Unauthorized (missing or invalid API key) |
-| 409 | Conflict (version/etag mismatch on update) |
+| 409 | Conflict (version/etag mismatch on update: an `If-Match` header, or a body's `version`/`etag`) |
 | 422 | Unprocessable Entity (validation errors) |
 | 429 | Too Many Requests (rate limit exceeded) |
 | 503 | Service Unavailable |

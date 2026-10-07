@@ -45,6 +45,22 @@ trait StatementHelpers
     }
 
     /**
+     * The executed statement's result set. get_result() answers false when it
+     * fails, and false read as a result is "no rows": a record reported not
+     * found, a list reported empty, a count of 0, for what was a database
+     * error (CLAUDE.md #1). This throws instead, and closes the statement.
+     */
+    protected function resultOf(\mysqli_stmt $stmt, string $message): \mysqli_result
+    {
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException($message);
+        }
+        return $result;
+    }
+
+    /**
      * Run $fn inside a transaction: checked begin, checked commit, rollback on
      * any throwable. This is the only transaction primitive in api/v3 -- the
      * controllers hand their multi-statement bodies to it as closures rather

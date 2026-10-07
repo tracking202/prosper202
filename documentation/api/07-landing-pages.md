@@ -17,18 +17,18 @@ Manage landing pages used between the traffic source and the destination.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `landing_page_url` | string | Yes | Landing page URL (max 2048) |
+| `landing_page_url` | string | Yes | Landing page URL (max 255) |
 | `aff_campaign_id` | integer | Yes | Campaign this page belongs to |
 | `landing_page_nickname` | string | Yes | Friendly name (max 50) |
-| `leave_behind_page_url` | string | No | Leave-behind URL (max 2048) |
+| `leave_behind_page_url` | string | No | Leave-behind URL (max 255; `null` clears it) |
 | `landing_page_type` | integer | No | Page type identifier (default 0) |
 
 Auto-generated on create: `landing_page_time` (unix timestamp) and
 `landing_page_id_public`, the id the landing-page code and the `go.php`/`lp.php`
 redirects carry (`lpip=`): a random digit, the page id, a random digit, as the
 setup page makes it. Landing pages created through this API before it set one
-had none, so no code could track them; reading them through the API gives each
-one its id.
+had none (`NULL`; `0` is none as well), so no code could track them; reading
+them through the API gives each one its id.
 
 `landing_page_type` is 0 for a simple page (one campaign) and 1 for an
 advanced one (several offers); `GET /landing-pages/{id}/code` makes the code
