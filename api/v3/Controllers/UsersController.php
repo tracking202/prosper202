@@ -908,9 +908,8 @@ class UsersController
      *   nothing, so writing it changed nothing.
      *
      * Not repeated: account.php also writes several of these to memcache
-     * keys under the user id. The only one any request reads back is
-     * user_pref_privacy_, and connect2.php reads it under the tracker id,
-     * so those keys are never what a redirect sees.
+     * keys under the user id, which no request reads back (connect2.php
+     * reads the privacy setting from its row, which this writes).
      *
      * @param (callable(string, string, string): mixed)|null $rate
      *   (account currency, campaign currency, payout) => the exchange

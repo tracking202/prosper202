@@ -131,25 +131,6 @@ if (!isset($db)) {
     }
 }
 
-//determine privacy mode
-if ($memcacheWorking) {
-    // Try to determine tracker/user ID from various possible sources
-    $tid = '';
-    if (isset($_GET['t202id'])) {
-        $tid = $_GET['t202id'];
-    } elseif (isset($_GET['pci'])) {
-        $tid = $_GET['pci'];
-    } elseif (isset($_GET['lpip'])) {
-        $tid = $_GET['lpip'];
-    } elseif (isset($_SESSION['user_id'])) {
-        $tid = $_SESSION['user_id'];
-    } else {
-        // Default to user 1 if no ID is found
-        $tid = '1';
-    }
-    $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
-}
-
 //set sql mode - only if db connection is available
 if ($db) {
     // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
@@ -167,6 +148,21 @@ if ($db) {
 }
 
 
+// The privacy mode: the install's setting, user 1's row, read through
+// memcache_mysql_fetch_assoc(), which caches it for three minutes when
+// memcache works. Every account has a setting of its own on Personal
+// settings, and this does not read it: the click's account is known only
+// after this runs, in each endpoint. The app intakes, which know theirs,
+// apply the stricter of the two (PrivacySetting).
+//
+// With memcache working this used to read account.php's per-account key,
+// user_pref_privacy_<id>, under the request's t202id, pci or lpip instead —
+// ids account.php never writes a key under. The miss came back false, false
+// counted as set, and the database was never asked: every visitor of a
+// tracking link was tracked in full, cookies and unmasked address, whatever
+// the owner had chosen (executed against the old block with a Memcached
+// stand-in; PrivacyBootstrapTest). A pixel's request, which fell back to
+// user 1's key, read a value the API's preference update never refreshes.
 if (!isset($_SESSION['privacy'])) {
 
     $user_sql = "	SELECT 	user_pref_privacy
@@ -175,7 +171,12 @@ if (!isset($_SESSION['privacy'])) {
 
     $privacy = memcache_mysql_fetch_assoc($user_sql);
     if (isset($privacy['user_pref_privacy'])) {
-        $_SESSION['privacy'] = $privacy['user_pref_privacy'];
+        // A stored value that is not a setting holds back rather than
+        // tracking in full (CLAUDE.md #11), as the app intakes read it
+        // (PrivacySetting).
+        $_SESSION['privacy'] = in_array($privacy['user_pref_privacy'], \Prosper202\Http\PrivacySetting::SETTINGS, true)
+            ? $privacy['user_pref_privacy']
+            : 'all';
     } else {
         $_SESSION['privacy'] = 'disabled'; //default to disabled
     }

@@ -353,7 +353,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						setCache(md5('user_referer_' . $tid . systemHash()), $mysql['user_referer'], 0);
 						setCache(md5('cloak_referer_' . $tid . systemHash()), $mysql['cloak_referer'], 0);
 						setCache(md5('user_pref_dynamic_bid_' . $tid . systemHash()), $mysql['user_pref_dynamic_bid'], 0);
-						setCache(md5('user_pref_privacy_' . $tid . systemHash()), $mysql['user_pref_privacy'], 0);
+						// Not the privacy setting: connect2.php reads it from its row.
 					}
 
 					$emailUpdated = ($originalUserEmail !== $submittedEmail);
