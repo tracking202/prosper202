@@ -180,6 +180,19 @@ Two amplifiers, both of which turned this from a blip into a breach:
   its failure mode. The size of a change bounds how long the review takes, not
   whether it gets one.
 
+An absent value is the same trap when nothing ever sets it. Whose clicks a
+report page reads hangs on `$_SESSION['publisher']`, which no code writes, so
+"absent" is every session there is. The engine, Analyze and the Overview read
+absence as "this account's"; the Visitors list, Spy and the click breakdown
+read it as "may see everything" (`!empty(...)`, written to silence a notice
+on what had been `!$_SESSION['publisher']`), and every signed-in user was
+shown every account's visitors and any account's conversions by id — and the
+Overview chart had no account condition at all. Measured live, then fixed:
+the rule is `DataScope::userId()`, and `PublisherSessionReadsTest` lists
+every other read of the key with what it decides. When a flag's *absence*
+is the common case, find every reader and check they agree on what absence
+means; a notice-silencing rewrite preserves whichever meaning was there.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw

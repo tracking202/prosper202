@@ -32,9 +32,10 @@ if (preg_match('/^[1-9][0-9]{0,18}$/D', $raw) !== 1) {
 }
 $clickId = (int) $raw;
 
-// The same owner rule as the click history the row came from: a publisher
-// sees their own clicks, every other session sees every account's.
-$owner = !empty($_SESSION['publisher']) ? (int) $_SESSION['user_own_id'] : null;
+// The same owner rule as the click history the row came from (DataScope):
+// the signed-in account's own clicks. This read the absent publisher key as
+// "every account's", so any signed-in user could open any account's click.
+$owner = \Prosper202\DataEngine\DataScope::userId();
 
 try {
 	$breakdown = (new \Prosper202\Conversion\Ledger\ClickBreakdown(new \Prosper202\Database\Connection($db)))->forClick($clickId, $owner);

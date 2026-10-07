@@ -72,13 +72,11 @@ class DataEngine
             $this->mysql['user_id'] = self::$db->real_escape_string((string) ($_SESSION['user_own_id'] ?? ''));
         }
 
-        if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) {
-            // User is able to see all campaigns.
-            $this->mysql['user_id_query'] = " WHERE 2st.user_id != '0' ";
-        } else {
-            // User can only see their own campaigns.
-            $this->mysql['user_id_query'] = " WHERE 2st.user_id ='" . ($_SESSION['user_own_id'] ?? '') . "' ";
-        }
+        // Whose clicks: the rule every report page reads (DataScope).
+        $dataUserId = \Prosper202\DataEngine\DataScope::userId();
+        $this->mysql['user_id_query'] = $dataUserId === null
+            ? " WHERE 2st.user_id != '0' "
+            : " WHERE 2st.user_id ='" . $dataUserId . "' ";
 
         // Make MySQL use the timezone chosen by the user.
         $timezone = new DateTimeZone(date_default_timezone_get());

@@ -7,6 +7,14 @@ namespace Tests\Report;
 use PHPUnit\Framework\TestCase;
 
 /**
+ * The report pages read the signed-in account's clicks and no one else's.
+ *
+ * The Visitors list and Spy (query() in functions-tracking202.php) read an
+ * absent $_SESSION['publisher'] as "may see every campaign" — the opposite of
+ * every other page (DataScope) — so every account's visitors were listed to
+ * every signed-in user; measured live, another account's click appeared in
+ * both.
+ *
  * The Overview chart (DataEngine::getChart(), for account_overview.php and
  * charts.php) counts the signed-in account's clicks and no one else's.
  *
@@ -23,7 +31,7 @@ use PHPUnit\Framework\TestCase;
  *
  * @group integration
  */
-final class ChartAccountScopeIntegrationTest extends TestCase
+final class ReportAccountScopeIntegrationTest extends TestCase
 {
     use ScratchReportDatabase;
 
@@ -108,10 +116,19 @@ final class ChartAccountScopeIntegrationTest extends TestCase
     /** The chart's one series, as the runner printed it. @return array<string, mixed> */
     private static function chart(string $campaign): array
     {
+        $result = self::read('engine-chart', $campaign);
+        self::assertCount(1, $result['series'] ?? [], json_encode($result));
+
+        return $result['series'][0];
+    }
+
+    /** What a reader returned, as the runner printed it. @return array<string, mixed> */
+    private static function read(string $reader, string $campaign = '0'): array
+    {
         self::requireScratch();
         $env = ['P202_TEST_REPORT_USER' => (string) self::USER, 'P202_TEST_CHART_CAMPAIGN' => $campaign] + getenv();
         $proc = proc_open(
-            [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/report-read-failure-runner.php', 'engine-chart', 'none'],
+            [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/report-read-failure-runner.php', $reader, 'none'],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,
@@ -126,9 +143,13 @@ final class ChartAccountScopeIntegrationTest extends TestCase
         self::assertStringStartsWith('RETURNED ', $out, $out . $err);
         $result = json_decode(substr(trim($out), 9), true);
         self::assertIsArray($result, $out);
-        self::assertCount(1, $result['series'] ?? [], $out);
 
-        return $result['series'][0];
+        return $result;
+    }
+
+    public function testTheVisitorsListIsTheAccountsClicksOnly(): void
+    {
+        self::assertSame(1, self::read('visitors')['rows'], 'the Visitors list counted another account\'s click');
     }
 
     public function testAllCampaignsIsTheAccountsClicksOnly(): void

@@ -343,15 +343,14 @@ function query(
         }
     }
 
-    $count_where = ''; //initialize count_where variable
-    $isPublisher = !empty($_SESSION['publisher']);
-    if (!$isPublisher) { //user is able to see all campaigns
-        $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where = " WHERE $db_table.user_id!='0' ";
-    } else {
-        $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
-    }
+    // Whose clicks: the rule every report page reads (DataScope). This read
+    // the absent publisher key as "may see every campaign", so the Visitors
+    // list and Spy showed every account's clicks to every signed-in user.
+    $dataUserId = \Prosper202\DataEngine\DataScope::userId();
+    $count_where = $dataUserId === null
+        ? " WHERE $db_table.user_id!='0' "
+        : " WHERE $db_table.user_id='" . $dataUserId . "' ";
+    $click_sql = $command . $count_where;
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
         $click_sql .= " AND      2c.click_id='" . $mysql['user_landing_subid'] . "'";

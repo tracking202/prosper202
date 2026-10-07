@@ -31,8 +31,8 @@ final class ClickBreakdown
 
     /**
      * @param int|null $ownerUserId the account the click must belong to; null
-     *        for a session that may see every account's clicks (the report
-     *        pages' non-publisher sessions)
+     *        for a session that may see every account's clicks
+     *        (Prosper202\DataEngine\DataScope::userId())
      * @return array{click: array<string, mixed>, rows: list<array<string, mixed>>}|null
      *         null when there is no such click for that owner
      */

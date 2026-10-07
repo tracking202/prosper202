@@ -558,11 +558,9 @@ class ReportSummaryForm extends ReportBasicForm
 		$database = DB::getInstance();
 		$db = $database->getConnection();
 
-		if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) { //user is able to see all camapigns
-			$user_id_query = " != '0' ";
-		} else {
-			$user_id_query = " = '" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-		}
+		// Whose clicks: the rule every report page reads (DataScope).
+		$dataUserId = \Prosper202\DataEngine\DataScope::userId();
+		$user_id_query = $dataUserId === null ? " != '0' " : " = '" . $dataUserId . "' ";
 
 		$info_sql = '';
 		//select regular setup

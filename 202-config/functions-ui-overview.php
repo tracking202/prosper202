@@ -357,10 +357,7 @@ const P202_OVERVIEW_SEEN_LIMIT = 300;
  */
 function p202_overview_data_user_id(): ?int
 {
-    if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) {
-        return null;
-    }
-    return (int) ($_SESSION['user_own_id'] ?? 0);
+    return \Prosper202\DataEngine\DataScope::userId();
 }
 
 /**
