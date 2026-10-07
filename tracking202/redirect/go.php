@@ -12,8 +12,10 @@ use Tracking202\Redirect\RedirectHelper;
 // __DIR__ . '/RedirectHelper.php' would resolve to the lowercase directory and
 // fatal with "Failed opening required" everywhere except case-insensitive macOS.
 require_once __DIR__ . '/../Redirect/RedirectHelper.php';
-// CookieDomain, for the same reason: the cookies below are set before any
-// bootstrap loads the autoloader.
+// CookieDomain, and RequestHost, which it reads the Host header through, for
+// the same reason: the cookies below are set before any bootstrap loads the
+// autoloader (GoPhpBeforeBootstrapTest runs this script without one).
+require_once __DIR__ . '/../../202-config/Http/RequestHost.php';
 require_once __DIR__ . '/../../202-config/Http/CookieDomain.php';
 
 $vars = explode(' ', base64_decode((string) RedirectHelper::getStringParam('202v')));
