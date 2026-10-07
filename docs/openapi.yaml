@@ -7968,9 +7968,13 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+              - external_sub_id
+              - amount
               properties:
                 external_sub_id:
                   type: string
+                  maxLength: 191
                 customer_id:
                   type: integer
                 customer_ref:
@@ -7980,24 +7984,43 @@ paths:
                   description: What customer_ref is (email, external id, …)
                 plan_name:
                   type: string
+                  maxLength: 255
                 status:
                   type: string
                 amount:
                   type: number
+                  minimum: 0
+                  maximum: 999999999.99999
+                  description: What one billing period charges (0 for a free plan). Required: the upsert replaces the
+                    subscription, and without an amount it stored 0 and took the MRR with it. A JSON number or a
+                    string holding one.
                 currency:
                   type: string
                 billing_interval:
                   type: string
                 billing_interval_count:
                   type: integer
+                  minimum: 1
+                  maximum: 4294967295
+                  description: Intervals per billing period (3 with `month` for a quarter). The period one interval
+                    makes must end by 2106-02-07 (unix time 4294967295), or the upsert is a 422 naming this field.
                 started_at:
                   type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: A unix time in seconds; "2026-10-07" or "12abc" is a 422 (it was cast to 2026 and 12).
                 current_period_start:
                   type: integer
+                  minimum: 0
+                  maximum: 4294967295
                 current_period_end:
                   type: integer
+                  minimum: 0
+                  maximum: 4294967295
                 grace_days:
                   type: integer
+                  minimum: 0
+                  maximum: 4294967295
                 customer_crm:
                   $ref: '#/components/schemas/LtvCustomerCrm'
               additionalProperties: false
@@ -8049,13 +8072,32 @@ paths:
                   - refund
                 amount:
                   type: number
+                  minimum: 0
+                  maximum: 99999999999.99999
+                  description: Left out, the subscription's own amount. Sent as 0 or more; a refund is stored negated.
+                currency:
+                  type: string
+                  description: Must be the account currency; left out, it is.
                 occurred_at:
                   type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: A unix time in seconds; left out, now. "2026-10-07" is a 422 (it was cast to 2026).
+                current_period_end:
+                  type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: A renewal's new paid-through time; left out, one billing period past the later of the
+                    old period end and occurred_at.
                 idempotency_key:
                   type: string
+                transaction_id:
+                  type: string
+                  maxLength: 255
+                  description: The billing system's charge id; without an idempotency_key it makes a retry a replay.
               required:
               - event_type
-              additionalProperties: true
+              additionalProperties: false
       responses:
         '200':
           description: What changed; an idempotent replay changes nothing and queues no webhook

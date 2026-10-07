@@ -56,8 +56,11 @@ use PHPStan\Rules\RuleErrorBuilder;
  *  - an operand of &&, ||, and, or, xor;
  *  - a loose comparison with true, false, 0, '0' or '' (`== false`).
  *
- * Not reported: an explicit (bool) cast or boolval(), which is how a flag
- * says it is a flag ('0' is false there, and meant to be). Not seen: a value
+ * Not reported here: an explicit (bool) cast, boolval() or filter_var() with
+ * FILTER_VALIDATE_BOOL. They are not truthiness tests, but they are not how a
+ * flag is read either — (bool) 'false' is true — and
+ * ForbidBoolCastOfRequestParamRule reports them; a flag is read with
+ * Api\V3\Support\RequestFlag::param(). Not seen: a value
  * copied into another variable first, or passed through a function (trim(),
  * a cast other than (bool)) before the test, or held in an array with
  * another name — the name is the whole heuristic, and the entry in CLAUDE.md
@@ -91,7 +94,7 @@ final class ForbidFalsyRequestParamTestRule implements Rule
                 'Request parameter %s is tested with %s, which reads "0" as absent '
                 . '(empty("0") is true). Test presence with isset()/array_key_exists() and compare with '
                 . "'' explicitly, then read the value or refuse it naming the parameter; "
-                . 'a flag is (bool) or filter_var(FILTER_VALIDATE_BOOL). (CLAUDE.md #4)',
+                . 'a flag is read with Api\V3\Support\RequestFlag::param(). (CLAUDE.md #4)',
                 $name,
                 $how
             ))

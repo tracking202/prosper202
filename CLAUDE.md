@@ -44,8 +44,23 @@ the parameter. `ForbidFalsyRequestParamTestRule` reports a truthiness test
 element of `$params`, `$payload` or a request superglobal in `api/`. The
 name is the whole heuristic: a value copied into another variable, put
 through `trim()` first, or read outside `api/` (a repository handed the
-payload) is not seen — and a flag is not a value, so `(bool)` and
-`filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so.
+payload) is not seen.
+
+That sentence used to end "a flag is not a value, so `(bool)` and
+`filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so", and the advice
+was the bug. `(bool) "false"` is true, as is every
+non-empty string, so a sync job sent `"force_update": "false"` overwrote the
+target's differing records and `"skip_errors": "false"` carried on past the
+errors it was meant to stop at; `!empty($payload['is_required'])` in the
+field repository made `"false"` a required field. Saying "this is a flag"
+does not read one. `Api\V3\Support\RequestFlag::param()` takes true/false,
+1/0 and their strings and refuses the rest naming the field;
+`ForbidBoolCastOfRequestParamRule` reports `(bool)`, `boolval()` and a
+`filter_var(…, FILTER_VALIDATE_BOOL)` without `FILTER_NULL_ON_FAILURE` (which
+reads `"abc"` as false) of an element of `$params`, `$queryParams`, `$payload`
+or a request superglobal in `api/`. Outside `api/` the rule cannot see, so
+the field repository now takes `is_required` as a `bool` and throws on
+anything else, rather than reading it a second way.
 
 The quietest form is a handler that reads the keys it knows and never looks
 at the rest. The CRUD base `continue`d past any key that was not a writable

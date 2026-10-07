@@ -27,6 +27,13 @@ use Prosper202\Ltv\MysqlCustomerRepository;
  * word. The repository keeps its own floor (a product needs a key, a
  * quantity is positive), for the static pixel endpoints that write line
  * items without this check.
+ *
+ * The top-level values of a subscription, a subscription event and a custom
+ * field definition are read here too (subscription(), subscriptionEvent(),
+ * field()): MysqlSubscriptionRepository and MysqlCustomerFieldRepository
+ * cast them, so `started_at: "2026-10-07"` started the subscription 2026
+ * seconds into 1970, `amount: "abc"` stored a free plan, and
+ * `is_required: "false"` made the field required.
  */
 final class LtvBody
 {
@@ -69,6 +76,32 @@ final class LtvBody
 
     /** varchar(191): 202_products.external_product_id and sku. */
     private const PRODUCT_KEY_MAX = 191;
+
+    /** 202_subscriptions.amount, decimal(14,5): what one billing period charges, 0 or more. */
+    private const SUBSCRIPTION_AMOUNT = [0.0, 999999999.99999, '0 to 999999999.99999'];
+
+    /**
+     * A renewal's or refund's amount: 202_revenue_events.amount,
+     * decimal(16,5), sent as 0 or more (a refund is stored negated).
+     */
+    private const EVENT_AMOUNT = [0.0, 99999999999.99999, '0 to 99999999999.99999'];
+
+    /** The int(10) unsigned columns' range. */
+    private const UINT_MAX = 4294967295;
+
+    /**
+     * The whole numbers of a subscription, its events and a field definition,
+     * [min, max, what the message says it is]: int(10) unsigned columns.
+     */
+    private const WHOLE = [
+        'billing_interval_count' => [1, self::UINT_MAX, 'billing intervals per period, e.g. 3 with billing_interval month for a quarter'],
+        'grace_days' => [0, self::UINT_MAX, 'days past the period end before the subscription is past due'],
+        'started_at' => [0, self::UINT_MAX, 'a unix time in seconds'],
+        'current_period_start' => [0, self::UINT_MAX, 'a unix time in seconds'],
+        'current_period_end' => [0, self::UINT_MAX, 'a unix time in seconds'],
+        'occurred_at' => [0, self::UINT_MAX, 'a unix time in seconds; leave it out for now'],
+        'sort_order' => [0, self::UINT_MAX, 'where the field is listed, lowest first'],
+    ];
 
     private function __construct()
     {
@@ -192,6 +225,83 @@ final class LtvBody
     }
 
     /**
+     * A subscription's own values, as MysqlSubscriptionRepository::upsert()
+     * reads them (the customer's identity is checked beside it). The amount
+     * is required: the upsert replaces the row, and without one it stored 0
+     * and took the subscription's MRR with it.
+     *
+     * @param array<array-key, mixed> $sub
+     * @return array<string, string>
+     */
+    public static function subscription(array $sub): array
+    {
+        $errors = [];
+        self::text($sub, 'external_sub_id', 191, $errors);
+        self::text($sub, 'plan_name', 255, $errors);
+        foreach (['status', 'billing_interval', 'currency'] as $key) {
+            self::text($sub, $key, PHP_INT_MAX, $errors);
+        }
+        if (!array_key_exists('amount', $sub) || $sub['amount'] === null) {
+            $errors['amount'] = 'is required: what one billing period charges, ' . self::SUBSCRIPTION_AMOUNT[2]
+                . ' (0 for a free plan)';
+        } else {
+            self::number($sub, 'amount', $errors, self::SUBSCRIPTION_AMOUNT);
+        }
+        foreach (['billing_interval_count', 'grace_days', 'started_at', 'current_period_start', 'current_period_end'] as $key) {
+            self::whole($sub, $key, $errors);
+        }
+
+        return $errors;
+    }
+
+    /**
+     * A subscription event's values, as MysqlSubscriptionRepository::
+     * recordEvent() reads them: an amount (left out, the subscription's own),
+     * when it happened, a renewal's new period end, and the keys that make a
+     * retry a replay. transaction_id is stored in the ledger's varchar(255).
+     *
+     * @param array<array-key, mixed> $event
+     * @return array<string, string>
+     */
+    public static function subscriptionEvent(array $event): array
+    {
+        $errors = [];
+        self::number($event, 'amount', $errors, self::EVENT_AMOUNT);
+        self::whole($event, 'occurred_at', $errors);
+        self::whole($event, 'current_period_end', $errors);
+        self::text($event, 'transaction_id', 255, $errors);
+        self::text($event, 'idempotency_key', PHP_INT_MAX, $errors);
+        self::text($event, 'currency', PHP_INT_MAX, $errors);
+
+        return $errors;
+    }
+
+    /**
+     * A custom field definition's values, as MysqlCustomerFieldRepository::
+     * create() and update() read them (a select field's options are checked
+     * beside it): the key and type as text (the repository says which are
+     * allowed), a label that fits varchar(255), is_required a flag
+     * (RequestFlag) and sort_order a whole number.
+     *
+     * @param array<array-key, mixed> $field
+     * @return array<string, string>
+     */
+    public static function field(array $field): array
+    {
+        $errors = [];
+        self::text($field, 'field_key', PHP_INT_MAX, $errors);
+        self::text($field, 'field_type', PHP_INT_MAX, $errors);
+        self::text($field, 'label', 255, $errors);
+        if (array_key_exists('is_required', $field) && $field['is_required'] !== null && $field['is_required'] !== ''
+            && RequestFlag::read($field['is_required']) === null) {
+            $errors['is_required'] = RequestFlag::ACCEPTED;
+        }
+        self::whole($field, 'sort_order', $errors);
+
+        return $errors;
+    }
+
+    /**
      * $key as trimmed text, '' when absent, null or blank; a value that is
      * not a string or a whole number, or is longer than $max characters, is
      * an error (and reads as '').
@@ -230,10 +340,11 @@ final class LtvBody
      *
      * @param array<array-key, mixed> $object
      * @param array<string, string> $errors
+     * @param array{float, float, string}|null $range [min, max, as the message names it]; RANGES[$key] when null
      */
-    private static function number(array $object, string $key, array &$errors): ?float
+    private static function number(array $object, string $key, array &$errors, ?array $range = null): ?float
     {
-        [$min, $max, $range] = self::RANGES[$key];
+        [$min, $max, $range] = $range ?? self::RANGES[$key];
         if (!array_key_exists($key, $object) || $object[$key] === null) {
             return null;
         }
@@ -247,5 +358,30 @@ final class LtvBody
         }
 
         return $number;
+    }
+
+    /**
+     * $key as a whole number in its range (WHOLE): a JSON integer or a string
+     * of digits, as QueryInt reads one. Absent or null is null; anything else
+     * (a fraction, "12abc", a date, '') is an error (and null).
+     *
+     * @param array<array-key, mixed> $object
+     * @param array<string, string> $errors
+     */
+    private static function whole(array $object, string $key, array &$errors): ?int
+    {
+        [$min, $max, $what] = self::WHOLE[$key];
+        if (!array_key_exists($key, $object) || $object[$key] === null) {
+            return null;
+        }
+        $value = $object[$key];
+        $text = is_int($value) ? (string) $value : (is_string($value) ? $value : '');
+        if (preg_match('/^[0-9]{1,18}$/D', $text) !== 1 || (int) $text < $min || (int) $text > $max) {
+            $errors[$key] = "A whole number, $min to $max: $what";
+
+            return null;
+        }
+
+        return (int) $text;
     }
 }

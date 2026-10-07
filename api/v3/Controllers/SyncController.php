@@ -13,6 +13,7 @@ use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\SyncEngine;
 use Api\V3\Support\QueryInt;
+use Api\V3\Support\RequestFlag;
 
 class SyncController
 {
@@ -43,8 +44,8 @@ class SyncController
         }
 
         $options = [
-            'prune_preview' => (bool)($payload['prune_preview'] ?? false),
-            'prune' => (bool)($payload['prune'] ?? false),
+            'prune_preview' => RequestFlag::param($payload, 'prune_preview', false),
+            'prune' => RequestFlag::param($payload, 'prune', false),
             'fail_on_collision' => $collisionMode === 'manual',
             'collision_mode' => $collisionMode,
         ];
@@ -515,12 +516,15 @@ class SyncController
         );
 
         return [
-            'dry_run' => (bool)($payload['dry_run'] ?? false),
-            'skip_errors' => (bool)($payload['skip_errors'] ?? false),
-            'force_update' => (bool)($payload['force_update'] ?? false),
-            'incremental' => (bool)($payload['incremental'] ?? false),
-            'prune' => (bool)($payload['prune'] ?? false),
-            'prune_preview' => (bool)($payload['prune_preview'] ?? false),
+            // Flags, read strictly: (bool) made every non-empty string true,
+            // so "force_update": "false" overwrote the target's differing
+            // records (RequestFlag).
+            'dry_run' => RequestFlag::param($payload, 'dry_run', false),
+            'skip_errors' => RequestFlag::param($payload, 'skip_errors', false),
+            'force_update' => RequestFlag::param($payload, 'force_update', false),
+            'incremental' => RequestFlag::param($payload, 'incremental', false),
+            'prune' => RequestFlag::param($payload, 'prune', false),
+            'prune_preview' => RequestFlag::param($payload, 'prune_preview', false),
             'confirmation_token' => (string)($payload['confirmation_token'] ?? ''),
             'prune_allowlist' => $payload['prune_allowlist'] ?? [],
             'prune_denylist' => $payload['prune_denylist'] ?? [],

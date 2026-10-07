@@ -13,6 +13,7 @@ use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\LtvBody;
 use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\QueryInt;
+use Api\V3\Support\RequestFlag;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Prosper202\Database\Connection;
@@ -626,10 +627,12 @@ class LtvController
             'grace_days', 'started_at', 'current_period_start', 'current_period_end', ...self::IDENTITY_KEYS,
         ], 'a subscription');
         // The repository casts customer_id ("12abc" named customer 12) and
-        // took a customer_crm that was not an object as none.
+        // took a customer_crm that was not an object as none; it casts the
+        // amount, the times and the counts too (LtvBody::subscription()).
         QueryInt::param($payload, 'customer_id', 0, 1, PHP_INT_MAX, 'an LTV customer id (see `p202 ltv customers`)');
         PayloadKeys::refuse(
-            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            LtvBody::subscription($payload)
+            + PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
         );
         $result = $this->wrap(fn (): array => $this->subscriptions->upsert($this->userId, $payload));
         $this->enqueueEvent('subscription.changed', [
@@ -654,6 +657,9 @@ class LtvController
                 ['event_type' => 'Invalid value']
             );
         }
+        // The repository casts these: occurred_at "2026-10-07" dated the
+        // renewal 2026 seconds into 1970, and an amount of "abc" renewed for 0.
+        PayloadKeys::refuse(LtvBody::subscriptionEvent($payload));
 
         try {
             $result = $this->subscriptions->recordEvent($this->userId, $externalSubId, $eventType, $payload);
@@ -868,7 +874,12 @@ class LtvController
         $select = is_string($type) && strtolower(trim($type)) === 'select';
         $notSelect = 'apply only to a select field (field_type: select); this one is '
             . (is_string($type) ? $type : 'not a type');
-        PayloadKeys::refuse(self::optionErrors($payload) + (isset($payload['options']) && !$select ? ['options' => $notSelect] : []));
+        PayloadKeys::refuse(
+            LtvBody::field($payload)
+            + self::optionErrors($payload)
+            + (isset($payload['options']) && !$select ? ['options' => $notSelect] : [])
+        );
+        $payload = self::fieldValues($payload);
         $fieldId = $this->wrap(fn (): int => $this->fields->create($this->userId, $payload));
 
         return ['data' => ['field_id' => $fieldId]];
@@ -882,7 +893,8 @@ class LtvController
         PayloadKeys::refuseUnknown($payload, ['label', 'options', 'is_required', 'sort_order'], 'a custom field update', [
             'field_key' => $fixed, 'field_type' => $fixed,
         ]);
-        PayloadKeys::refuse(self::optionErrors($payload));
+        PayloadKeys::refuse(LtvBody::field($payload) + self::optionErrors($payload));
+        $payload = self::fieldValues($payload);
         $this->wrap(function () use ($fieldId, $payload): void {
             try {
                 $this->fields->update($this->userId, $fieldId, $payload);
@@ -892,6 +904,32 @@ class LtvController
         });
 
         return $this->fieldsList();
+    }
+
+    /**
+     * A field definition's body as the repository reads it, once LtvBody::
+     * field() has passed it: is_required as the flag it was read as (the
+     * repository took any non-empty value, "false" included, as required),
+     * and a label or is_required that is null or '', or a sort_order that is
+     * null, left out rather than written as an empty label, false or 0
+     * (field() refuses a sort_order of ''). A PATCH of nothing but those is
+     * then the 422 that names what it takes.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private static function fieldValues(array $payload): array
+    {
+        foreach (['label' => [null, ''], 'is_required' => [null, ''], 'sort_order' => [null]] as $key => $none) {
+            if (array_key_exists($key, $payload) && in_array($payload[$key], $none, true)) {
+                unset($payload[$key]);
+            }
+        }
+        if (array_key_exists('is_required', $payload)) {
+            $payload['is_required'] = RequestFlag::read($payload['is_required']);
+        }
+
+        return $payload;
     }
 
     /**

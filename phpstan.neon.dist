@@ -79,6 +79,9 @@ rules:
     # …and a query parameter cast to a number: (int) 'abc' is 0, and a clamp
     # made limit=abc one row and limit=1000 500 that read as all of them.
     - Prosper202\PHPStan\Rules\ForbidNumericCastOfRequestParamRule
+    # …and a request value cast to a flag: (bool) 'false' is true, so a sync
+    # job sent force_update "false" overwrote the target's differing records.
+    - Prosper202\PHPStan\Rules\ForbidBoolCastOfRequestParamRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
     - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
     # CLAUDE.md #7 — bind_param type string mismatches.

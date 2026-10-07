@@ -80,6 +80,7 @@ final class MysqlSubscriptionRepository
         if ($periodEnd <= $periodStart) {
             throw new RuntimeException('current_period_end must be after current_period_start');
         }
+        self::assertStorableTime($periodEnd, isset($payload['current_period_end']) ? 'current_period_end' : 'billing_interval_count');
         $graceDays = max(0, (int) ($payload['grace_days'] ?? 3));
         $planName = trim((string) ($payload['plan_name'] ?? ''));
 
@@ -338,6 +339,10 @@ final class MysqlSubscriptionRepository
                                 (string) $sub['billing_interval'],
                                 (int) $sub['billing_interval_count']
                             );
+                        self::assertStorableTime(
+                            $newPeriodEnd,
+                            isset($payload['current_period_end']) ? 'current_period_end' : 'the subscription\'s billing_interval_count, or send current_period_end'
+                        );
                         $mrr = self::normalizeMrr(
                             (float) $sub['amount'],
                             (string) $sub['billing_interval'],
@@ -393,6 +398,22 @@ final class MysqlSubscriptionRepository
         };
 
         return $advanced !== false ? $advanced : $from + $count * 2630016; // ~1 month fallback
+    }
+
+    /**
+     * A period end the int(10) unsigned columns can hold. One interval
+     * advanced from a start in 2025 passes 4294967295 (2106-02-07) at 81
+     * yearly intervals, and the write then failed in strict mode ("Out of
+     * range value", a 500); the message names what to change.
+     */
+    private static function assertStorableTime(int $periodEnd, string $field): void
+    {
+        if ($periodEnd > 4294967295) {
+            throw new RuntimeException(
+                'the period would end after 2106-02-07 06:28:15 UTC (unix time 4294967295), the latest the subscription can store: '
+                . 'lower ' . $field
+            );
+        }
     }
 
     /**

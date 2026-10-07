@@ -47,6 +47,20 @@ final class StrictIntegerBodyFieldsTest extends TestCase
         yield 'company merge source_company_id' => ['mergeCompany', 'source_company_id', [], ['0']];
         yield 'rotator public_id' => ['rotator', 'public_id', ['name' => 'R'], ['0', '2147483648']];
         yield 'sync worker limit' => ['worker', 'limit', [], ['0', '101']];
+
+        // MysqlSubscriptionRepository and MysqlCustomerFieldRepository cast
+        // these: started_at "2026-10-07" began the subscription in 1970.
+        $sub = ['external_sub_id' => 's1', 'amount' => 9, 'customer_ref' => 'c1'];
+        $uintPast = '4294967296';
+        yield 'subscription billing_interval_count' => ['subscription', 'billing_interval_count', $sub, ['0', $uintPast]];
+        yield 'subscription grace_days' => ['subscription', 'grace_days', $sub, [$uintPast]];
+        yield 'subscription started_at' => ['subscription', 'started_at', $sub, [$uintPast]];
+        yield 'subscription current_period_start' => ['subscription', 'current_period_start', $sub, [$uintPast]];
+        yield 'subscription current_period_end' => ['subscription', 'current_period_end', $sub, [$uintPast]];
+        yield 'subscription event occurred_at' => ['subscriptionEvent', 'occurred_at', ['event_type' => 'renewal'], [$uintPast]];
+        yield 'subscription event current_period_end' => ['subscriptionEvent', 'current_period_end', ['event_type' => 'renewal'], [$uintPast]];
+        yield 'field sort_order' => ['field', 'sort_order', ['field_key' => 'tier'], [$uintPast]];
+        yield 'field update sort_order' => ['fieldUpdate', 'sort_order', [], [$uintPast]];
     }
 
     /**
@@ -89,6 +103,10 @@ final class StrictIntegerBodyFieldsTest extends TestCase
             'mergeCustomer' => (new LtvController($conn, 7))->mergeCustomer(3, $payload),
             'mergeCompany' => (new LtvController($conn, 7))->mergeCompany(3, $payload),
             'rotator' => (new RotatorsController($conn, 7))->create($payload),
+            'subscription' => (new LtvController($conn, 7))->upsertSubscription($payload),
+            'subscriptionEvent' => (new LtvController($conn, 7))->subscriptionEvent('s1', $payload),
+            'field' => (new LtvController($conn, 7))->createField($payload),
+            'fieldUpdate' => (new LtvController($conn, 7))->updateField(3, $payload),
             'worker' => $this->sync($conn)->runWorker($payload),
         };
     }

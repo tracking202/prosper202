@@ -130,13 +130,31 @@ final class MysqlCustomerFieldRepository
             $label,
             $type,
             $options,
-            !empty($payload['is_required']) ? 1 : 0,
+            self::requiredFlag($payload) ? 1 : 0,
             max(0, (int) ($payload['sort_order'] ?? 0)),
             $now,
             $now,
         ]);
 
         return $this->conn->executeInsert($stmt);
+    }
+
+    /**
+     * is_required as the flag the API read it as (LtvController hands over a
+     * bool). !empty() took any non-empty value as true, so "false" made the
+     * field required; a value that is not a bool is refused here rather than
+     * guessed at.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private static function requiredFlag(array $payload): bool
+    {
+        $flag = $payload['is_required'] ?? false;
+        if (!is_bool($flag)) {
+            throw new RuntimeException('is_required must be true or false');
+        }
+
+        return $flag;
     }
 
     /**
@@ -179,7 +197,7 @@ final class MysqlCustomerFieldRepository
         if (array_key_exists('is_required', $payload)) {
             $sets[] = 'is_required = ?';
             $types .= 'i';
-            $binds[] = !empty($payload['is_required']) ? 1 : 0;
+            $binds[] = self::requiredFlag($payload) ? 1 : 0;
         }
         if (array_key_exists('sort_order', $payload)) {
             $sets[] = 'sort_order = ?';
