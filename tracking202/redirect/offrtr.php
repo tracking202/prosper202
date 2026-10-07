@@ -59,7 +59,9 @@ $rule_sql = "SELECT ru.id as rule_id
 			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
 $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
 
-$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
+// The visitor's address by the rule every click endpoint uses (VisitorIp),
+// so the rotator routes on the address dl.php and the pages recorded.
+$ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);

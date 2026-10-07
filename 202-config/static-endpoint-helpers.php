@@ -599,26 +599,18 @@ if (!function_exists('p202ClientIp')) {
      * and with IPv6 hops it runs well past the 45 characters
      * 202_conversion_logs.ip holds. Passed through as it was, the INSERT
      * failed under strict sql_mode and rolled the conversion back — a 500
-     * from pb.php on every retry, silence from px.php. The leftmost hop is
-     * the client the first proxy saw; it is taken only when it parses as an
-     * address, otherwise REMOTE_ADDR is, otherwise nothing. The header is
-     * attacker-supplied, so the value is for display only and never a
-     * security decision (CLAUDE.md error pattern #16).
+     * from pb.php on every retry, silence from px.php. VisitorIp takes the
+     * leftmost hop only when it parses as an address, otherwise REMOTE_ADDR,
+     * otherwise nothing — the same address the click path records, so a
+     * conversion row and its click agree. The header is attacker-supplied,
+     * so the value is for display only and never a security decision
+     * (CLAUDE.md error pattern #16).
      *
      * @param array<string,mixed> $server $_SERVER, or a stand-in in tests.
      */
     function p202ClientIp(array $server): string
     {
-        $forwarded = (string) ($server['HTTP_X_FORWARDED_FOR'] ?? '');
-        $first = trim(explode(',', $forwarded, 2)[0]);
-        if ($first !== '' && filter_var($first, FILTER_VALIDATE_IP) !== false) {
-            return $first;
-        }
-        $remote = trim((string) ($server['REMOTE_ADDR'] ?? ''));
-        if ($remote !== '' && filter_var($remote, FILTER_VALIDATE_IP) !== false) {
-            return $remote;
-        }
-        return '';
+        return \Prosper202\Http\VisitorIp::fromServer($server);
     }
 }
 

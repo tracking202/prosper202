@@ -209,25 +209,6 @@ foreach ($navigation as $key => $row) {
     }
 }
 
-//get the real ip
-$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
-    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
-    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
-    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
-    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
-    // REMOTE_ADDR does not exist under CLI (cron workers)
-    default => $_SERVER['REMOTE_ADDR'] ?? '',
-};
-
-
-$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
-$_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-
-// Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
-$temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
-
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
 } else {
@@ -299,8 +280,10 @@ require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
-// Now that functions.php is included, we can use ipAddress()
-$ip_address = ipAddress($temp_ip_address);
+// The visitor's address (VisitorIp: the one reader of the forwarding
+// headers), once the autoloader and functions.php's ipAddress() are loaded.
+// Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
+$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 

@@ -37,6 +37,6 @@ $impression_result = $db->query($sql);
 $ipx_id = $impression_result ? $db->insert_id : 0;
 
 if ($ipx_id > 0) {
-	setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
+	setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 }
 echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");

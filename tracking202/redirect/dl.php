@@ -464,7 +464,7 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1;
 
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 $ip_id = $locationRepo->findOrCreateIp($ip);
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
