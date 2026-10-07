@@ -400,9 +400,13 @@ AUTH::set_timezone($user_row['user_timezone']);
 
 $now = time();
 
-$today_day = date('j', time());
-$today_month = date('n', time());
-$today_year = date('Y', time());
+// Integers: this file is strict_types, and date() returns strings, which
+// mktime() refused with a TypeError — every advanced landing page's campaign
+// link (go.php?acip=, off.php?acip=) answered 500. dl.php and
+// record_simple.php cast theirs; StrictTypesMktimeArgumentsTest holds all three.
+$today_day = (int) date('j', time());
+$today_month = (int) date('n', time());
+$today_year = (int) date('Y', time());
 
 // the click_time is recorded in the middle of the day
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
