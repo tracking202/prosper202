@@ -376,6 +376,18 @@ on takes the stored domain or the server's own name
 (`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
 `getTrackingDomain()` caller with why its URL goes back to the requester.
 
+A path in a directory anyone can write is a claim of the same kind: the
+name says whose it is, and anyone could have made it. The API state store's
+default directory is a hash of the database host and name in the system temp
+dir, and it was used whoever made it — another local user who made it first
+decided what the install read (measured: a planted `Idempotency-Key` record
+replayed its response, a planted staged DELETE was listed to apply). What is
+proved is the directory's owner and mode, read with `lstat()` so a symbolic
+link is not followed into someone else's choice; `ServerStateStore` now uses
+the directory only when this process's user owns it alone.
+`TempDirPathsTest` lists every path the served tree builds in the temp dir
+with what makes it safe there.
+
 ### 17. A key derived from an identity must be injective
 When a value exists to tell two things apart, every transform between the
 thing and the comparison has to preserve the distinction. Two instances
