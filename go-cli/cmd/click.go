@@ -6,6 +6,7 @@ import (
 	"p202/internal/api"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +19,30 @@ var clickCmd = &cobra.Command{
 var clickListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tracked clicks with optional filters by campaign, time range, or bot status",
+	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
+		"traffic source, keyword, IP, location, device, referrer and landing URLs.\n\n" +
+		"--follow is the Spy page: it prints the newest --limit clicks (default 10), then\n" +
+		"each new click as it arrives, polling every --interval, until interrupted or\n" +
+		"--stop-after elapses. Under --json or --ndjson it writes one JSON object per\n" +
+		"click per line.\n\n" +
+		"  p202 click list --aff_campaign_id 12 --time_from 2026-10-01 --all --csv\n" +
+		"  p202 click list --follow --ndjson --stop-after 10m",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		follow, _ := cmd.Flags().GetBool("follow")
+		if follow {
+			for _, f := range []string{"all", "offset", "page", "time_from", "time_to"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s does not apply to --follow, which shows the newest clicks and then each new one", f).
+						WithHint("Drop --%s, or drop --follow to list a fixed range.", f)
+				}
+			}
+		} else {
+			for _, f := range []string{"interval", "stop-after"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s only applies with --follow", f)
+				}
+			}
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -31,6 +55,9 @@ var clickListCmd = &cobra.Command{
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
 			}
+		}
+		if follow {
+			return followClicks(cmd, c, params)
 		}
 		allRows, _ := cmd.Flags().GetBool("all")
 		if allRows {
@@ -230,6 +257,9 @@ func init() {
 	enumFlag(clickListCmd, "click_lead", newEnum(binaryValues))
 	clickListCmd.Flags().String("click_bot", "", "Filter: 0=human, 1=bot")
 	enumFlag(clickListCmd, "click_bot", newEnum(binaryValues))
+	clickListCmd.Flags().Bool("follow", false, "Keep printing new clicks as they arrive (the Spy page)")
+	clickListCmd.Flags().Duration("interval", 5*time.Second, "With --follow: how often to poll (at least 1s)")
+	clickListCmd.Flags().Duration("stop-after", 0, "With --follow: stop after this long, e.g. 10m (0 follows until interrupted)")
 
 	clickCmd.AddCommand(clickListCmd, clickGetCmd, clickConversionsCmd)
 	rootCmd.AddCommand(clickCmd)

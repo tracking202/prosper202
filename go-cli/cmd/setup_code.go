@@ -57,8 +57,17 @@ func setupRequestError(c *api.Client, err error, page string) error {
 			return withHint(err, "%s", hint)
 		}
 	}
-	if apiErr.Status == 403 && strings.Contains(apiErr.Message, "access_to_setup_section") {
-		return withHint(err, "The key's user needs a role with access_to_setup_section (Super user, Admin or Campaign manager), as the Setup pages do: `p202 user role list` shows the roles, `p202 user role assign <user_id> <role_id>` grants one.")
+	if apiErr.Status == 403 {
+		// The roles the installer seeds with each permission the Setup
+		// routes ask for (DataSeeder::seedRolePermissions).
+		for _, p := range []struct{ permission, roles string }{
+			{"'remove_traffic_source'", "remove_traffic_source (Super user or Admin), as Setup > Traffic Sources does for its variables dialog"},
+			{"'access_to_setup_section'", "access_to_setup_section (Super user, Admin or Campaign manager), as the Setup pages do"},
+		} {
+			if strings.Contains(apiErr.Message, p.permission) {
+				return withHint(err, "The key's user needs a role with %s: `p202 user role list` shows the roles, `p202 user role assign <user_id> <role_id>` grants one.", p.roles)
+			}
+		}
 	}
 	if apiErr.Status == 422 {
 		for field := range apiErr.FieldErrors {

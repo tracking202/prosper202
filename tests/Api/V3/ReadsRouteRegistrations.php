@@ -7,27 +7,30 @@ namespace Tests\Api\V3;
 use Api\V3\Router;
 
 /**
- * api/v3/index.php's route registrations, read from its tokens: every call
- * on `$router`, `$previewRouter` and `$stageableRouter` (and on a group's
- * `$r`), with the prefixes and middleware of the groups that enclose it,
- * loaded into a real Router in source order so the route that answers a
- * path is the one a test checks (first match wins: an earlier route on the
- * same path would shadow it). What the scan cannot read — a registration
- * whose path is not a string literal, other than the CRUD loop's
- * "/$resource" — is refused by line rather than skipped (CLAUDE.md #20).
+ * Reads every route registration in api/v3/index.php from its tokens, with
+ * the prefixes and middleware of the groups that enclose it, and loads them
+ * into a real Router in source order -- so a test can match a path there and
+ * check the registration that answers it (first match wins: an earlier route
+ * on the same path would shadow it), rather than one a text search found
+ * somewhere. What the scan cannot read -- a registration whose path is not a
+ * string literal, other than the CRUD loop's "/$resource" -- is refused by
+ * line rather than skipped (CLAUDE.md #20).
  *
- * Shared by the section permission tests (UpdateRoutesPermissionTest,
- * SetupRoutesPermissionTest); used from a TestCase, whose assertions it
- * calls.
+ * Shared by UpdateRoutesPermissionTest and AdministrationRoutesPermissionTest,
+ * whose route-permission claims both rest on it.
  */
-trait RouteRegistrationScan
+trait ReadsRouteRegistrations
 {
-    private const ROUTE_METHODS = ['get', 'post', 'put', 'patch', 'delete'];
-
     /** @var list<array{0: int, 1: string, 2: int}> */
     private array $t = [];
 
-    private static function source(): string
+    /** @return list<string> the router methods a registration is made with */
+    private static function routeMethods(): array
+    {
+        return ['get', 'post', 'put', 'patch', 'delete'];
+    }
+
+    private static function indexSource(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/index.php');
     }
@@ -56,7 +59,7 @@ trait RouteRegistrationScan
                 array_pop($stack);
             }
             if ($this->t[$i][0] !== T_VARIABLE || ($this->t[$i + 1][1] ?? '') !== '->'
-                || !in_array(strtolower($this->t[$i + 2][1] ?? ''), ['group', ...self::ROUTE_METHODS], true)
+                || !in_array(strtolower($this->t[$i + 2][1] ?? ''), ['group', ...self::routeMethods()], true)
                 || ($this->t[$i + 3][1] ?? '') !== '(') {
                 continue;
             }
@@ -136,7 +139,7 @@ trait RouteRegistrationScan
     private function router(array $registrations, string $name): Router
     {
         $resources = [];
-        if (preg_match('/\$crudMap = \[(.*?)\];/s', self::source(), $map) === 1 && preg_match_all("/'([a-z\-]+)'\s*=>/", $map[1], $keys) > 0) {
+        if (preg_match('/\$crudMap = \[(.*?)\];/s', self::indexSource(), $map) === 1 && preg_match_all("/'([a-z\-]+)'\s*=>/", $map[1], $keys) > 0) {
             $resources = $keys[1];
         }
         self::assertContains('campaigns', $resources, 'the CRUD resources were read');

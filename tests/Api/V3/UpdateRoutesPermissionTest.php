@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Api\V3;
 
-use Api\V3\Router;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -21,7 +20,8 @@ use PHPUnit\Framework\TestCase;
  * one the scan found somewhere (first match wins: an earlier route on the
  * same path would shadow it). What the scan cannot read — a registration
  * whose path is not a string literal, other than the CRUD loop's "/$resource"
- * — is refused by line rather than skipped (CLAUDE.md #20).
+ * — is refused by line rather than skipped (CLAUDE.md #20). The scan
+ * is ReadsRouteRegistrations', shared with AdministrationRoutesPermissionTest.
  *
  * The behaviour — a role without the permission answered 403 on the write and
  * on its dry run, and a role with access_to_update_section but not
@@ -39,7 +39,12 @@ final class UpdateRoutesPermissionTest extends TestCase
         '/conversions/uploads' => ['uploadRevenue', []],
     ];
 
-    use RouteRegistrationScan;
+    use ReadsRouteRegistrations;
+
+    private static function source(): string
+    {
+        return (string) file_get_contents(dirname(__DIR__, 3) . '/api/v3/index.php');
+    }
 
     public function testEveryUpdateRouteAnswersBehindTheUpdateSectionPermission(): void
     {

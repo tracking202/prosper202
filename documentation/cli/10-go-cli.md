@@ -73,6 +73,9 @@ hidden flags are left out. `p202 --help` points at both commands.
 
 ## Commands
 
+For the command that does what a given page of the web UI does, and what
+still needs the browser, see [UI parity](12-ui-parity.md).
+
 | Command | Description |
 | ------- | ----------- |
 | `p202 search <words...>` | Find the command for a task (offline; see [Finding a Command](#finding-a-command)) |
@@ -92,7 +95,7 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 landing-page code <id>` | The page's tracking code, as Setup > Get LP Code hands it out: the loader script and the ways out to the offer; an advanced page's offers with `--offer campaign:<id>`/`--offer rotator:<id>`, in order. See [Setup code and traffic-source settings](#setup-code-and-traffic-source-settings) |
 | `p202 ppc-network variable list\|create\|update\|delete` | A traffic source's custom variables, the `parameter=placeholder` pairs its tracking links carry (Setup > Traffic Sources) |
 | `p202 ppc-account pixel list\|create\|update\|delete` | The pixels a traffic source account fires on a conversion, with a Postback's correction URL (Setup > Traffic Sources) |
-| `p202 click list` | List clicks |
+| `p202 click list` | List clicks; `--follow` streams new ones as they arrive (the Spy page) |
 | `p202 click conversions <id>` | Explain a click's value: every conversion on it, whether it counts and why not, what produced it (goal and version, upload, reversal, API key), ending with the click's value; `--json` is `GET /clicks/{id}/conversions` unchanged |
 | `p202 click update-cpc` | Set what past clicks cost (the UI's Update CPC): `--from`/`--to` days in the account's time zone, `--cpc`, optional id filters and `--method-of-promotion`; counts first, asks, then writes only the clicks it counted. See [Update CPC, subids and revenue reports](#update-cpc-subids-and-revenue-reports) |
 | `p202 conversion mark-subids <file\|->` | Mark clicks converted from a subid list, one per line (the UI's Update Subids); once per click, safe to repeat |
@@ -126,7 +129,8 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 ltv customer upsert` | Customer records: `upsert` (`--customer-ref` creates or finds, `--customer-id` updates), `update <id>`, `merge <target> --from <source>` (asks; `--force`), `erase <id>` (GDPR erasure: personal data, aliases and field values go, revenue stays; `--dry-run` lists both, asks otherwise), `alias add <id> --type --value`, `alias remove <id> <alias-id>`. Record flags `--first-name … --country`, `--field key=value`, `--alias type=value`; a flag given `""` clears that field, one not given is left alone |
 | `p202 ltv company create` | Company (ABM account) writes: `create --name [--domain]` (409 names the one that exists), `update <id> [--name] [--domain ""]`, `merge <target> --from <source>`, `delete <id>` (refused while customers are attached; `--dry-run` says why under `refused`) |
 | `p202 ltv revenue record` | Ingest from other systems: `revenue record` (`--amount`, `--event-type purchase\|one_time\|refund\|chargeback\|adjustment`, `--item`/`--items-file`, `--idempotency-key`), `engagement-event record --event` (ABM events, not `p202 event send`), `subscription upsert --external-sub-id --amount` and `subscription event <external-sub-id> --type renewal\|cancel\|refund`, `product upsert`, `next-offer impression <customer-id> [--campaign-id]`. Each names its customer with `--customer-id` or `--customer-ref` |
-| `p202 ltv fields list` | Account settings: `fields list\|create\|update\|delete` (custom fields: `--key`, `--type`, `--option` for select), `webhooks list\|create\|delete` (`--url https://…`, `--events` from the known list or `*`; the secret is printed once), `integrations list\|create\|delete` (`--provider`, `--config '{…}'` or `--config-file`). Every LTV write refuses `--staged` (the server stages none); every delete takes `--dry-run`, `--force` and `--ids` |
+| `p202 ltv fields list` | Account settings: `fields list\|create\|update\|delete` (custom fields: `--key`, `--type`, `--option` for select), `webhooks list\|create\|deliveries\|delete` (`--url https://…`, `--events` from the known list or `*`; the secret is printed once; `deliveries <id> [--status] [--limit]` is the delivery log with each attempt count and last response or error, never the secret), `integrations list\|create\|delete` (`--provider`, `--config '{…}'` or `--config-file`). Every LTV write refuses `--staged` (the server stages none); every delete takes `--dry-run`, `--force` and `--ids` |
+| `p202 ltv product update` | Catalog products by id: `update <id> [--name] [--sku ""] [--price ""]` (only the fields given; `""` clears sku and price; the name cannot be blank) and `delete <id>` (refused, exit 1, while order line items name the product; `--dry-run` says so as `refused`) |
 | `p202 forecast` | Forecast future metrics from historical data |
 | `p202 dashboard` | Overview of clicks, conversions, revenue, cost, profit, ROI |
 | `p202 analytics` | Grouped performance analytics shorthand |
@@ -134,6 +138,8 @@ hidden flags are left out. `p202 --help` points at both commands.
 | `p202 change list` | Review staged writes awaiting approval |
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check, plus a TLS certificate check of an https base URL made first, on its own connection (verified handshake, no HTTP request). Adds `tls_status` (`ok`, `expiring` within `--cert-warn-days` (default 21), `expired`, `hostname_mismatch`, `unknown_authority`, `invalid`, `unreachable`; `not_used` for http), `tls_not_after`, `tls_days_left`, `tls_issuer` and `tls_detail`. Exits 5 with the health object on stdout when `tls_status` is not `ok`/`not_used`; an expired certificate is reported as expired with a `certbot renew` hint, not as the network error the API call then hits |
+| `p202 system info` | Account › Settings for this install: code and database versions (`database_upgrade_needed`), PHP and MySQL versions, memcache, PHP limits, clicks recorded, database size, cron last ran, DataEngine progress. `system login-log [--limit 1-500]` lists sign-in attempts (user name, time, IP, passed). `system integrations` prints the ClickBank/JVZoo/Zaxaa/Slack/PayKickstart notification URLs and whether each secret is stored. `system metrics` prints sync counters, the job queue and alerts. Admin and a role with `access_to_settings` (`access_to_api_integrations` for integrations); a non-admin key exits 2 with a hint naming the role |
+| `p202 system retention show` | Click-data retention, install-wide: `show`, `set --days 0-36500` (asks when it keeps less than now; `--force`), `delete-before --date YYYY-MM-DD` (schedules the cron job to delete every click before the day; irreversible, so it always previews per-table counts and asks; `--dry-run` stops at the preview; the write carries the previewed click id and a 409 means run it again). `system isp-lookup show\|enable\|disable` is MaxMind ISP lookup (enable is refused while the ISP database is missing). None can be staged |
 | `p202 system cron` | Whether cron is ticking: per `cronjob_type` its row count and last run with age, and the last execution from `202_cronjob_logs` with its age. `hour` is labelled hourly and `secon` every minute; `hourl`, the `hourly` that development builds between 1.9.55 and 1.9.76 wrote, truncated by the `char(5)` column, is labelled so, with a note when it piles up. Exits 5 with the summary on stdout when the last execution is older than 5 minutes (`stale`) or missing (`never_ran`). `--raw` prints every row as the server returns it (under `--json`, added to the summary as `jobs`/`recent_logs`) |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
@@ -379,7 +385,9 @@ The UI's **Setup** section's code and per-source settings, over the
 tracker or a conversion-tracking setup without the web UI. Each needs a role
 with `access_to_setup_section`, as the Setup pages do (a role without it is
 exit 2 with a hint naming `p202 user role assign`), and only reaches the
-account's own records.
+account's own records. `p202 ppc-network variable` needs
+`remove_traffic_source` as well (Super user or Admin): the Traffic Sources
+page shows its variables dialog only to a role with it.
 
 ```bash
 # The landing page's code: loader, then the way out to the offer.
@@ -452,7 +460,7 @@ Human mode:
 
 ```text
 Error [auth]: fetching historical data: API error (401): invalid api key
-Hint: Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.
+Hint: Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.
 ```
 
 With `--json` or `--ndjson`, and whenever JSON was chosen automatically
@@ -460,7 +468,7 @@ for an AI agent (see Output Modes), the same failure is a single JSON
 envelope, so an agent reads structured fields instead of parsing prose:
 
 ```json
-{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config get`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
+{"error":{"category":"auth","message":"fetching historical data: API error (401): invalid api key","hint":"Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong.","exit_code":2,"command":"p202 forecast","http_status":401}}
 ```
 
 | Field | Always | Meaning |
@@ -484,6 +492,14 @@ with no configuration needed) as `--<flag> must be one of: <values>; got
 way and to refuse help text that trails off (`etc.`, `...`) instead of
 listing values.
 
+Two failures come before any request and say what to run instead of
+pointing at `--help`: a CLI with no server configured (exit 1; the hint
+names `p202 config set-url`, `p202 config set-key` and `p202 config test`,
+or `set-key` alone when the URL is set), and a create missing required
+flags, which names every missing flag in one message and, for an id flag,
+the list command its value comes from (that `--aff_network_id` takes an
+id from `p202 aff-network list`, for example).
+
 An unknown command or flag exits 1 with a hint naming `<command> --help` and
 `p202 search <what you want to do>`. A mistyped subcommand under a group
 (`p202 campaign lsit`) is refused the same way, with Cobra's suggestion (`did
@@ -494,7 +510,9 @@ order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
 scope, minting a key with `--scope`, and when it names a role permission
 such as `access_to_update_section` or `access_to_setup_section`, granting a
-role with `p202 user role assign`; 404 use `list` for ids; 429 back off;
+role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
+the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
+`list` for ids; 429 back off;
 5xx retry then `p202 system health`; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.

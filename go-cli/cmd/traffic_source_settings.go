@@ -30,7 +30,8 @@ func newPpcNetworkVariableCmd() *cobra.Command {
 			"source's accounts. A variable whose parameter is a built-in token (c1-c4, utm_*,\n" +
 			"t202kw, t202ref, t202b) sets that token's default instead.\n\n" +
 			"Setup > Traffic Sources > variables edits the same list. Needs a role with\n" +
-			"access_to_setup_section and a key with ppc-networks scope.",
+			"remove_traffic_source and access_to_setup_section (Super user or Admin; the\n" +
+			"page shows the variables dialog only to them) and a key with ppc-networks scope.",
 	}
 
 	list := &cobra.Command{

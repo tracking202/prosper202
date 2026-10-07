@@ -494,7 +494,9 @@ accounts; a parameter that is a built-in token (c1-c4, utm_*, t202kw, t202ref,
 t202b) sets that token's default instead. Every field is required and not
 blank; spaces, `&`, `#`, `?`, an `=` in the parameter, and the parameter
 `t202id` are refused (they would break every link). A removed variable is
-retired: clicks already recorded keep its values.
+retired: clicks already recorded keep its values. Needs a role with
+`remove_traffic_source` and `access_to_setup_section` (Super user or Admin):
+the page shows its variables dialog only to such a role.
 
 ### PPC account (`p202 ppc-account`)
 
@@ -612,6 +614,8 @@ p202 click list
 p202 click list --limit 100 --time_from 1700000000 --time_to 1700100000
 p202 click list --aff_campaign_id 5 --click_lead 1
 p202 click list --all
+p202 click list --follow                         # the Spy page: newest 10, then each new click
+p202 click list --follow --ndjson --stop-after 10m
 ```
 
 | Flag                | Default | Description                          |
@@ -627,6 +631,16 @@ p202 click list --all
 | `--click_lead`      |         | 0 = clicks only, 1 = conversions only |
 | `--click_bot`       |         | 0 = human, 1 = bot                   |
 | `--all`             | false   | Fetch all rows across pages          |
+| `--follow`          |         | Print the newest `--limit` clicks (default 10), then each new click as it arrives |
+| `--interval`        | 5s      | With `--follow`: how often to poll (at least 1s) |
+| `--stop-after`      | 0       | With `--follow`: stop after this long (`0` follows until interrupted) |
+
+`--follow` is the Spy page. It prints each click once, in time order: JSON
+output (`--json`, `--ndjson`, or chosen for an agent) is one object per line.
+Each poll re-reads the 15 seconds behind the newest click it has seen, so a
+click whose row is written a moment after a later click's still appears. A
+failed poll ends it with that error's exit code (2–4); `--all`, `--offset`,
+`--page`, `--time_from`, `--time_to` and `--csv` are refused with it.
 
 ### Get a click
 
@@ -1308,6 +1322,15 @@ p202 ltv product upsert --sku PRO-1 --name "Pro plan" --price 49
 p202 ltv next-offer impression 42 --campaign-id 7
 ```
 
+Catalog products by id (`p202 ltv products` lists the ids):
+
+```bash
+p202 ltv product update 12 --name "Pro plan (annual)" --price 490
+p202 ltv product update 12 --sku ""          # clear the sku ("" clears --price too)
+p202 ltv product delete 12 --dry-run          # `refused` says why while order line items name it
+p202 ltv product delete 12 --force
+```
+
 Settings:
 
 ```bash
@@ -1315,6 +1338,7 @@ p202 ltv fields create --key plan --type select --option free --option pro
 p202 ltv fields update 3 --label "Plan tier" --required
 p202 ltv fields delete 3 --dry-run                     # and how many customers' values go with it
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed
+p202 ltv webhooks deliveries 4 --status failed   # status, attempts, next retry, last response or error
 p202 ltv webhooks delete 4 --force
 p202 ltv integrations create --provider klaviyo --config '{"list_id":"XyZ"}'
 p202 ltv integrations delete 2 --force
@@ -1425,6 +1449,10 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 `export` supports: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
 
 `import` currently supports one entity at a time and strips immutable fields before create requests.
+It sends linked ids (`aff_network_id`, `aff_campaign_id`, …) as they are in the file, and the server
+takes only ids of the importing account's own live records, so a file exported from another
+account or server is refused row by row with the field named. To copy between servers use
+`p202 sync`, which maps each linked id to the target's.
 
 ## Multi-server workflows
 
@@ -1501,12 +1529,57 @@ p202 system cron --raw   # Every 202_cronjobs row, as the server returns them
 p202 system errors       # Recent system errors
 p202 system errors --limit 5
 p202 system dataengine   # Data engine job status
+p202 system metrics      # Sync counters, job queue and active alerts
 ```
 
 | Command              | Auth required |
 |----------------------|---------------|
 | `p202 system health` | No            |
+| `p202 system info`, `login-log`, `retention …`, `isp-lookup …` | Admin, and a role with `access_to_settings` |
+| `p202 system integrations` | Admin, and a role with `access_to_api_integrations` |
 | All others           | Admin         |
+
+### Account › Settings
+
+What the Administration page shows and changes for this install. A key whose
+user is not an Admin or the Super user is refused with `Admin access
+required.` (exit 2; the hint names the role and `p202 whoami`); an Admin whose
+role lacks the page's permission is refused naming it.
+
+```bash
+p202 system info                    # versions (and database_upgrade_needed), PHP limits, memcache,
+                                    # clicks recorded, database size, cron last ran, DataEngine
+p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, passed/failed (default 50)
+p202 system integrations --wide     # the INS/IPN/ZPN/webhook URLs to paste into ClickBank, JVZoo,
+                                    # Zaxaa, Slack, PayKickstart; secret_stored, never the secret
+
+p202 system retention show          # auto_delete_days, and any scheduled one-off deletion
+p202 system retention set --days 180          # asks when it keeps less than now; --force skips
+p202 system retention delete-before --date 2026-01-01 --dry-run   # what would go, per table
+p202 system retention delete-before --date 2026-01-01             # previews, then asks
+
+p202 system isp-lookup show         # on/off, and whether the MaxMind ISP database is in place
+p202 system isp-lookup enable       # refused while GeoIP2-ISP.mmdb / GeoIPISP.dat is missing
+p202 system isp-lookup disable
+```
+
+Retention applies to every account's clicks on the install (the cron job
+reads it from user 1's preferences). `delete-before` deletes nothing itself:
+it schedules the cron job to delete, in batches, every click below the
+newest click at or before midnight that begins `--date` (the account's time
+zone), from the ten click tables; setup data is kept, and it cannot be
+undone. It always previews first (counts per table) and asks before
+scheduling; `--force` skips the question, never the preview, and the write
+carries the click id the preview named, so it never schedules more than was
+shown. None of these writes can be staged: `--staged` is refused before any
+request. AutoCron and "update available" are not here: the page reaches a
+remote Prosper202 service for both.
+
+Known issue: the cron job's automatic deletion (`AutoOptimizeDatabase()` in
+`202-cronjobs/index.php`) currently deletes no clicks — it deletes the rows
+below `MIN(click_id)` of the old clicks — so `retention set` stores the
+setting as the page does without anything being deleted. `delete-before`
+works.
 
 For an https base URL, `system health` checks the host's TLS certificate before it calls the API:
 a verified handshake on its own connection, with no HTTP request. It adds `tls_status`,

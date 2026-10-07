@@ -78,13 +78,23 @@ class CapabilitiesController
                     // stageable.
                     'update_section' => true,
                     // The UI's Setup section's code and per-source settings
-                    // as REST, behind its role permission
-                    // (access_to_setup_section): GET /landing-pages/{id}/code
+                    // as REST, behind its role permissions
+                    // (access_to_setup_section; for the variables,
+                    // remove_traffic_source too): GET /landing-pages/{id}/code
                     // (Get LP Code), GET /conversions/postback-code
                     // (Postback / Pixel), and a traffic source's custom
                     // variables and an account's pixels under
                     // /ppc-networks/{id}/variables and /ppc-accounts/{id}/pixels.
                     'setup_section' => true,
+                    // Account › Settings and the API integrations page's
+                    // URLs for this install, behind Admin and the pages'
+                    // permissions (access_to_settings,
+                    // access_to_api_integrations): GET /system/info,
+                    // /system/login-log, /system/retention (+ PUT, and
+                    // POST /system/retention/delete-before with ?dry_run=1),
+                    // /system/isp-lookup (+ PUT), /system/integrations.
+                    // Not stageable.
+                    'administration' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the

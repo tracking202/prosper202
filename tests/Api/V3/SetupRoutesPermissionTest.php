@@ -10,9 +10,12 @@ use PHPUnit\Framework\TestCase;
  * The Setup routes ask for what the Setup pages ask for (CLAUDE.md #5):
  * access_to_setup_section, which every page under tracking202/setup/ checks
  * before anything else, on every route — the landing-page code, the
- * postback code, and a traffic source's variables and an account's pixels.
+ * postback code, and a traffic source's variables and an account's pixels —
+ * and, on the variables routes, remove_traffic_source first: Setup › Traffic
+ * Sources renders the variables dialog (and the variables it edits) only for
+ * a role that has it.
  *
- * Read from api/v3/index.php's tokens through RouteRegistrationScan: each
+ * Read from api/v3/index.php's tokens through ReadsRouteRegistrations: each
  * path is matched in a real Router loaded in source order, so the route
  * that answers is the one checked. That matters twice here: GET
  * /conversions/postback-code must be answered by the Setup route and not by
@@ -30,7 +33,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class SetupRoutesPermissionTest extends TestCase
 {
-    use RouteRegistrationScan;
+    use ReadsRouteRegistrations;
 
     private const CODE = 'SetupCodeController';
     private const VARS = 'PpcNetworkVariablesController';
@@ -52,12 +55,19 @@ final class SetupRoutesPermissionTest extends TestCase
         ['DELETE', '/ppc-accounts/5/pixels/6', self::PIXELS, 'delete'],
     ];
 
-    /** The variable each controller is held in, in the Setup group. */
+    /** The variable each controller is held in, in its Setup group. */
     private const CLASS_VARIABLES = [self::CODE => '$code', self::VARS => '$vars', self::PIXELS => '$pixels'];
+
+    /** The middleware each controller's routes run, in order. */
+    private const MIDDLEWARE = [
+        self::CODE => ['$setupSection'],
+        self::VARS => ["\$setupRemove['ppc-networks']", '$setupSection'],
+        self::PIXELS => ['$setupSection'],
+    ];
 
     public function testEverySetupRouteAnswersBehindTheSetupSectionPermission(): void
     {
-        $registrations = $this->registrations(self::source());
+        $registrations = $this->registrations(self::indexSource());
         $main = $this->router($registrations, '$router');
         self::assertGreaterThan(150, count(array_filter($registrations, static fn (array $r): bool => $r['router'] === '$router')), 'the scan reads the main router');
 
@@ -65,7 +75,7 @@ final class SetupRoutesPermissionTest extends TestCase
             $match = $main->match($method, $path);
             self::assertNotNull($match, "$method $path is served");
             $route = $registrations[($match['handler'])()];
-            self::assertSame(['$setupSection'], $route['middleware'], "$method $path (line {$route['line']}) runs the access_to_setup_section middleware, and only it");
+            self::assertSame(self::MIDDLEWARE[$controller], $route['middleware'], "$method $path (line {$route['line']}) runs the Setup page's permission middleware, and only it");
             $variable = self::CLASS_VARIABLES[$controller];
             self::assertStringContainsString($variable . '=\Api\V3\Controllers\\' . $controller . '::class;', $route['group'], "$method $path (line {$route['line']}): $variable is $controller");
             self::assertMatchesRegularExpression(
@@ -82,7 +92,7 @@ final class SetupRoutesPermissionTest extends TestCase
 
     public function testThePostbackCodeIsNotAnsweredByTheConversionsCrud(): void
     {
-        $registrations = $this->registrations(self::source());
+        $registrations = $this->registrations(self::indexSource());
         $main = $this->router($registrations, '$router');
         $route = $registrations[($main->match('GET', '/conversions/postback-code')['handler'])()];
         self::assertStringContainsString('postbackCode', $route['handler'], 'GET /conversions/postback-code reaches the postback code');
@@ -90,9 +100,9 @@ final class SetupRoutesPermissionTest extends TestCase
         self::assertStringContainsString('->get(', $byId['handler'], 'GET /conversions/{id} still answers a conversion id');
     }
 
-    public function testTheMiddlewareAsksForAccessToSetupSection(): void
+    public function testTheMiddlewareAsksForThePagesPermissions(): void
     {
-        $src = self::source();
+        $src = self::indexSource();
         self::assertSame(1, preg_match_all('/\$setupSection\s*=/', $src), '$setupSection is assigned once');
         self::assertMatchesRegularExpression(
             '/\$setupSection = static function \(\) use \(\$auth, \$db\): void \{\s*'
@@ -100,11 +110,17 @@ final class SetupRoutesPermissionTest extends TestCase
             $src,
             '$setupSection asks for access_to_setup_section and does nothing else'
         );
+        self::assertSame(1, preg_match_all('/\$setupRemove\s*=/', $src), '$setupRemove is assigned once');
+        self::assertMatchesRegularExpression(
+            "/'ppc-networks'\\s*=> static function \\(\\) use \\(\\\$auth, \\\$db\\): void \\{ \\\$auth->requirePermission\\(\\\$db, 'remove_traffic_source'\\); \\},/",
+            $src,
+            "\$setupRemove['ppc-networks'] asks for remove_traffic_source and does nothing else"
+        );
     }
 
     public function testTheControllersAreReachedThroughTheseRoutesOnly(): void
     {
-        $registrations = $this->registrations(self::source());
+        $registrations = $this->registrations(self::indexSource());
         $listed = [];
         foreach (self::ROUTES as [$method, $path]) {
             $listed[] = $method . ' ' . preg_replace('#/\d+#', '/{}', $path);
@@ -132,7 +148,7 @@ final class SetupRoutesPermissionTest extends TestCase
 
     public function testTheDeletesHavePreviewsAndTheWritesAreStageable(): void
     {
-        $registrations = $this->registrations(self::source());
+        $registrations = $this->registrations(self::indexSource());
         $preview = $this->router($registrations, '$previewRouter');
         $stageable = $this->router($registrations, '$stageableRouter');
         foreach ([['/ppc-networks/5/variables/6', self::VARS], ['/ppc-accounts/5/pixels/6', self::PIXELS]] as [$path, $controller]) {

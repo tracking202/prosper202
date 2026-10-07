@@ -264,6 +264,38 @@ final class MysqlWebhookRepository
         return $this->conn->fetchAll($stmt);
     }
 
+    /** The states a delivery is in (the column's enum). */
+    public const DELIVERY_STATUSES = ['pending', 'delivered', 'failed'];
+
+    /**
+     * The delivery log the API serves: recentDeliveries()'s columns plus
+     * the last attempt's response body or error ("curl: …", "blocked: …",
+     * stored truncated to 1,000 bytes), optionally one status only, newest
+     * first. Never the payload, never the endpoint's secret.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function deliveries(int $userId, int $webhookId, int $limit, ?string $status = null): array
+    {
+        if ($status !== null && !in_array($status, self::DELIVERY_STATUSES, true)) {
+            throw new RuntimeException('Delivery status must be one of: ' . implode(', ', self::DELIVERY_STATUSES));
+        }
+        $sql = 'SELECT delivery_id, event_name, status, attempts, last_status_code, last_response_body,
+                       next_attempt_at, created_at, updated_at
+                FROM 202_ltv_webhook_deliveries
+                WHERE webhook_id = ? AND user_id = ?' . ($status !== null ? ' AND status = ?' : '') . '
+                ORDER BY delivery_id DESC
+                LIMIT ?';
+        $stmt = $this->conn->prepareRead($sql);
+        if ($status !== null) {
+            $this->conn->bind($stmt, 'iisi', [$webhookId, $userId, $status, max(1, $limit)]);
+        } else {
+            $this->conn->bind($stmt, 'iii', [$webhookId, $userId, max(1, $limit)]);
+        }
+
+        return $this->conn->fetchAll($stmt);
+    }
+
     /**
      * Dispatch-side: atomically claim ONE due delivery before posting it.
      * The single-row conditional UPDATE (bump next_attempt_at past now) is

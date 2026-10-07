@@ -21,7 +21,10 @@ Every route asks for what the Setup pages ask for: the role permission
 `access_to_setup_section` (Super user, Admin and Campaign manager have it; a
 Campaign optimizer or viewer is answered `403` naming it), plus the path's
 scope (`landing-pages:read`, `conversions:read`, `ppc-networks:read|write`,
-`ppc-accounts:read|write`). Records are the caller's own: another account's
+`ppc-accounts:read|write`). The variables routes ask for
+`remove_traffic_source` as well, and first: Setup › Traffic Sources shows its
+variables dialog, and the variables it edits, only to a role with it (Super
+user and Admin; a Campaign manager is answered `403` naming it). Records are the caller's own: another account's
 landing page, campaign, redirector, traffic source or account is a `404` (or,
 inside `offers` or `campaign_id`, a `422` naming it). The capabilities report
 `features.setup_section`.

@@ -97,7 +97,7 @@ final class SetupEndpointsInstanceTest extends TestCase
                 throw new \RuntimeException("POST /trackers (advanced page) answered $status: " . json_encode($body));
             }
 
-            foreach ([5 => 'viewer', 3 => 'manager'] as $role => $name) {
+            foreach ([5 => 'viewer', 3 => 'manager', 2 => 'admin'] as $role => $name) {
                 [$status, $body] = self::call(self::$key, 'POST', '/users', [
                     'user_name' => "$run$name", 'user_email' => "$run$name@example.com", 'user_pass' => 'pass-' . $run . '-1',
                 ]);
@@ -264,25 +264,38 @@ final class SetupEndpointsInstanceTest extends TestCase
     {
         $source = self::$ids['source'];
         $account = self::$ids['account'];
-        $routes = [
-            ['GET', '/landing-pages/' . self::$ids['simple'] . '/code', null],
-            ['GET', '/conversions/postback-code', null],
+        // The variables dialog opens only for remove_traffic_source as well
+        // (ppc_accounts.php), and a refusal names the narrower permission.
+        $variables = [
             ['GET', "/ppc-networks/$source/variables", null],
             ['POST', "/ppc-networks/$source/variables", ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']],
             ['PUT', "/ppc-networks/$source/variables/1", ['name' => 'x']],
             ['DELETE', "/ppc-networks/$source/variables/1?dry_run=1", null],
             ['DELETE', "/ppc-networks/$source/variables/1", null],
+            ['POST', "/ppc-networks/$source/variables?staged=1", ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']],
+        ];
+        $section = [
+            ['GET', '/landing-pages/' . self::$ids['simple'] . '/code', null],
+            ['GET', '/conversions/postback-code', null],
             ['GET', "/ppc-accounts/$account/pixels", null],
             ['POST', "/ppc-accounts/$account/pixels", ['pixel_type_id' => 1, 'pixel_code' => 'https://x.example/']],
             ['PUT', "/ppc-accounts/$account/pixels/1", ['pixel_code' => 'https://x.example/']],
             ['DELETE', "/ppc-accounts/$account/pixels/1?dry_run=1", null],
             ['DELETE', "/ppc-accounts/$account/pixels/1", null],
-            ['POST', "/ppc-networks/$source/variables?staged=1", ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']],
+            ['POST', "/ppc-accounts/$account/pixels?staged=1", ['pixel_type_id' => 1, 'pixel_code' => 'https://x.example/']],
         ];
-        foreach ($routes as [$method, $path, $body]) {
-            [$status, $answer] = self::call(self::$roleKeys['viewer'], $method, $path, $body);
-            $this->assertSame(403, $status, "Campaign viewer: $method $path " . json_encode($answer));
-            $this->assertStringContainsString("'access_to_setup_section' permission", (string) ($answer['message'] ?? ''), "$method $path");
+        $refusals = [];
+        foreach ($variables as $route) {
+            $refusals[] = ['viewer', 'remove_traffic_source', $route];
+            $refusals[] = ['manager', 'remove_traffic_source', $route];
+        }
+        foreach ($section as $route) {
+            $refusals[] = ['viewer', 'access_to_setup_section', $route];
+        }
+        foreach ($refusals as [$role, $permission, [$method, $path, $body]]) {
+            [$status, $answer] = self::call(self::$roleKeys[$role], $method, $path, $body);
+            $this->assertSame(403, $status, "$role: $method $path " . json_encode($answer));
+            $this->assertStringContainsString("'$permission' permission", (string) ($answer['message'] ?? ''), "$role: $method $path");
         }
 
         // A Campaign manager has the Setup section, for its own account.
@@ -291,10 +304,14 @@ final class SetupEndpointsInstanceTest extends TestCase
         [$status, $answer] = self::call(self::$roleKeys['manager'], 'GET', '/landing-pages/' . self::$ids['simple'] . '/code');
         $this->assertSame(404, $status, 'another account\'s landing page: ' . json_encode($answer));
         $this->assertSame('Landing page ' . self::$ids['simple'] . ' not found', $answer['message']);
-        [$status, $answer] = self::call(self::$roleKeys['manager'], 'POST', "/ppc-networks/$source/variables", ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']);
+        [$status, $answer] = self::call(self::$roleKeys['manager'], 'GET', "/ppc-accounts/$account/pixels");
+        $this->assertSame(404, $status, json_encode($answer));
+        $this->assertSame("Traffic source account $account not found", $answer['message']);
+        // An Admin has both, for its own account.
+        [$status, $answer] = self::call(self::$roleKeys['admin'], 'POST', "/ppc-networks/$source/variables", ['name' => 'x', 'parameter' => 'x', 'placeholder' => 'x']);
         $this->assertSame(404, $status, json_encode($answer));
         $this->assertSame("Traffic source $source not found", $answer['message']);
-        [$status, $answer] = self::call(self::$roleKeys['manager'], 'GET', "/ppc-accounts/$account/pixels");
+        [$status, $answer] = self::call(self::$roleKeys['admin'], 'GET', "/ppc-networks/$source/variables");
         $this->assertSame(404, $status, json_encode($answer));
     }
 

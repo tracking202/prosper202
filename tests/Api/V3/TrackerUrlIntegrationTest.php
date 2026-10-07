@@ -82,7 +82,7 @@ final class TrackerUrlIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         foreach ([self::USER, self::OTHER] as $u) {
-            foreach (['202_trackers', '202_ppc_accounts', '202_ppc_networks', '202_landing_pages'] as $table) {
+            foreach (['202_trackers', '202_ppc_accounts', '202_ppc_networks', '202_landing_pages', '202_aff_campaigns'] as $table) {
                 self::$db->query("DELETE FROM $table WHERE user_id = $u");
             }
         }
@@ -108,7 +108,11 @@ final class TrackerUrlIntegrationTest extends TestCase
         ] as [$network, $name, $parameter, $placeholder, $deleted]) {
             self::$db->query("INSERT INTO 202_ppc_network_variables SET ppc_network_id = $network, name = '$name', parameter = '$parameter', placeholder = '$placeholder', deleted = $deleted");
         }
+        self::assertTrue(self::$db->query('INSERT INTO 202_aff_campaigns SET user_id = ' . self::USER . ", aff_network_id = 0, aff_campaign_name = 'links', aff_campaign_url = 'https://o.example', aff_campaign_payout = 1, aff_campaign_foreign_payout = 0, aff_campaign_time = 0"), (string) self::$db->error);
+        $this->campaign = (int) self::$db->insert_id;
     }
+
+    private int $campaign = 0;
 
     private static function setDomain(string $domain): void
     {
@@ -121,8 +125,21 @@ final class TrackerUrlIntegrationTest extends TestCase
     private function tracker(int $ppcAccountId, int $landingPageId = 0): int
     {
         return (int) (new TrackersController(self::$db, self::USER))->create([
-            'aff_campaign_id' => 1, 'ppc_account_id' => $ppcAccountId, 'landing_page_id' => $landingPageId,
+            'aff_campaign_id' => $this->campaign, 'ppc_account_id' => $ppcAccountId, 'landing_page_id' => $landingPageId,
         ])['data']['tracker_id'];
+    }
+
+    /**
+     * A tracker that already links to another account's record: the API
+     * refuses to write that link now, but rows written before it did are
+     * still read, and must lend nothing of the other account's.
+     */
+    private function legacyTracker(string $column, int $theirs): int
+    {
+        $id = $this->tracker(0);
+        self::assertTrue(self::$db->query("UPDATE 202_trackers SET $column = $theirs WHERE tracker_id = $id"), (string) self::$db->error);
+
+        return $id;
     }
 
     /** @param array<string, mixed> $params */
@@ -147,7 +164,7 @@ final class TrackerUrlIntegrationTest extends TestCase
 
     public function testAnotherAccountsTrafficSourceLendsNoVariables(): void
     {
-        $data = $this->url($this->tracker(9202));
+        $data = $this->url($this->legacyTracker('ppc_account_id', 9202));
         self::assertStringEndsWith('&t202kw=', $data['direct_url']);
         self::assertStringNotContainsString('theirs', $data['direct_url']);
     }
@@ -163,7 +180,7 @@ final class TrackerUrlIntegrationTest extends TestCase
     {
         self::$db->query("INSERT INTO 202_landing_pages SET user_id = " . self::OTHER . ", aff_campaign_id = 1, landing_page_nickname = 'x',"
             . " landing_page_url = 'https://theirs.example/lp', landing_page_type = 0, landing_page_time = 0");
-        $data = $this->url($this->tracker(0, (int) self::$db->insert_id));
+        $data = $this->url($this->legacyTracker('landing_page_id', (int) self::$db->insert_id));
         self::assertStringStartsWith('https://track.example.com/tracking202/redirect/dl.php?', $data['direct_url']);
     }
 

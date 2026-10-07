@@ -60,6 +60,7 @@ final class TrackerWriteRulesIntegrationTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         self::$db?->query('DELETE FROM 202_trackers WHERE user_id = ' . self::USER);
+        self::$db?->query('DELETE FROM 202_aff_campaigns WHERE user_id = ' . self::USER);
         self::$db?->close();
         self::$db = null;
     }
@@ -70,7 +71,13 @@ final class TrackerWriteRulesIntegrationTest extends TestCase
             self::markTestSkipped('No test database configured (P202_TEST_DB_HOST).');
         }
         self::$db->query('DELETE FROM 202_trackers WHERE user_id = ' . self::USER);
+        self::$db->query('DELETE FROM 202_aff_campaigns WHERE user_id = ' . self::USER);
+        // A tracker links only to the caller's own campaign.
+        self::assertTrue(self::$db->query('INSERT INTO 202_aff_campaigns SET user_id = ' . self::USER . ", aff_network_id = 0, aff_campaign_name = 'rules', aff_campaign_url = 'https://o.example', aff_campaign_payout = 1, aff_campaign_foreign_payout = 0, aff_campaign_time = 0"), (string) self::$db->error);
+        $this->campaign = (int) self::$db->insert_id;
     }
+
+    private int $campaign = 0;
 
     private function trackers(): TrackersController
     {
@@ -87,7 +94,7 @@ final class TrackerWriteRulesIntegrationTest extends TestCase
 
     public function testCloakingIsLeftToTheCampaignUnlessAsked(): void
     {
-        $id = (int) $this->trackers()->create(['aff_campaign_id' => 1])['data']['tracker_id'];
+        $id = (int) $this->trackers()->create(['aff_campaign_id' => $this->campaign])['data']['tracker_id'];
         self::assertSame('-1', $this->stored($id)[2], "the campaign's setting, as Get Links defaults it");
         $this->trackers()->update($id, ['click_cloaking' => '0']);
         self::assertSame('0', $this->stored($id)[2]);
@@ -95,7 +102,7 @@ final class TrackerWriteRulesIntegrationTest extends TestCase
 
     public function testSettingOneCostSwitchesTheTrackerToIt(): void
     {
-        $id = (int) $this->trackers()->create(['aff_campaign_id' => 1, 'click_cpc' => '0.25'])['data']['tracker_id'];
+        $id = (int) $this->trackers()->create(['aff_campaign_id' => $this->campaign, 'click_cpc' => '0.25'])['data']['tracker_id'];
         self::assertSame(['0.25000', null], array_slice($this->stored($id), 0, 2));
 
         $this->trackers()->update($id, ['click_cpa' => '3']);
@@ -126,9 +133,9 @@ final class TrackerWriteRulesIntegrationTest extends TestCase
         foreach (['create', 'update'] as $write) {
             try {
                 if ($write === 'create') {
-                    $this->trackers()->create(['aff_campaign_id' => 1] + $payload);
+                    $this->trackers()->create(['aff_campaign_id' => $this->campaign] + $payload);
                 } else {
-                    $id = (int) $this->trackers()->create(['aff_campaign_id' => 1])['data']['tracker_id'];
+                    $id = (int) $this->trackers()->create(['aff_campaign_id' => $this->campaign])['data']['tracker_id'];
                     $this->trackers()->update($id, $payload);
                 }
                 self::fail("$write accepted " . json_encode($payload));

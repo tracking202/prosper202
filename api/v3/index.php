@@ -281,15 +281,45 @@ try {
         $router = new Router();
 
 
+        // The Setup pages' role permissions (CLAUDE.md #5): every Setup page
+        // asks for access_to_setup_section, and each removal for its own
+        // remove_* permission as well (delete_tracker.php, aff_campaigns.php,
+        // …); a delete asks for both, the remove_* first so a refusal names
+        // the narrower one. The API asked for neither, so a key of a Campaign
+        // viewer — a role that "changes nothing" — could create and delete
+        // campaigns, while the
+        // Update and attribution routes already held to their pages' rules.
+        // Group middleware runs from the main match, so a dry-run preview and
+        // a staged write are refused exactly as the write is (and a staged
+        // change is applied with the applier's permissions). Forecast events
+        // have no Setup page and stay ungated.
+        $setupSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_setup_section');
+        };
+        // Each with its permission as a literal, so PreviewAuthParityTest
+        // can read what a delete (and so its preview) asks for.
+        $setupRemove = [
+            'campaigns'     => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign'); },
+            'aff-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_campaign_category'); },
+            'ppc-networks'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source'); },
+            'ppc-accounts'  => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_traffic_source_account'); },
+            'trackers'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_tracker'); },
+            'landing-pages' => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_landing_page'); },
+            'text-ads'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_text_ad'); },
+        ];
         foreach ($crudMap as $resource => $class) {
-            $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $queryParams, $payload) {
+            $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
                 $r->get('',       fn() => $crud($class)->list($queryParams));
-                $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
+            });
+            $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $payload) {
+                $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
                 $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
+            }, isset($setupRemove[$resource]) ? [$setupSection] : []);
+            $router->group("/$resource", function (Router $r) use ($class, $crud) {
                 $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
-            });
+            }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
 
         // Tracker sub-resource
@@ -297,47 +327,49 @@ try {
             return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams);
         });
 
-        // ── Setup (the UI's Setup section, tracking202/setup/) ───────────
+        // ── Setup: its code, a traffic source's variables, an account's pixels
         // Get LP Code, Postback / Pixel, and Traffic Sources' custom
         // variables and account pixels: what those pages hand out and edit,
         // built by the classes the pages build theirs with
         // (Prosper202\Setup\LandingPageCode, PostbackCode) and held to the
-        // pages' rules. Gated by the Setup pages' role permission,
-        // access_to_setup_section, on every route (one permission check per
-        // operation on every surface, CLAUDE.md #5), plus the path's scope
-        // area. Registered before the /conversions routes, whose
-        // GET /conversions/{id} would otherwise answer
-        // GET /conversions/postback-code. SetupRoutesPermissionTest holds
-        // all of this.
-        $setupSection = static function () use ($auth, $db): void {
-            $auth->requirePermission($db, 'access_to_setup_section');
+        // pages' rules. Every route asks for access_to_setup_section
+        // ($setupSection, above), reads included: these pages are the only
+        // place the code, the variables and the pixels are shown. The
+        // variables dialog opens only for a role with remove_traffic_source
+        // as well (ppc_accounts.php renders its button, and the variables it
+        // edits, inside that check), so the variables routes ask for both,
+        // the narrower first, as the deletes above do. Registered before the
+        // /conversions routes, whose GET /conversions/{id} would otherwise
+        // answer GET /conversions/postback-code. SetupRoutesPermissionTest
+        // holds all of this.
+        //
+        // A path id is digits the int cast leaves unchanged: (int) '1e3' is
+        // 1000, and '12abc' would act on 12.
+        $setupId = static function (array $ctx, string $key = 'id'): int {
+            $n = \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
+            if ($n === 0) {
+                throw new \Api\V3\Exception\NotFoundException('Not found: ' . json_encode((string) $ctx[$key]) . ' is not an id');
+            }
+            return $n;
         };
-        $router->group('', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        $router->group('', function (Router $r) use ($crud, $queryParams, $setupId) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
-            $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
-            $pixels = \Api\V3\Controllers\PpcAccountPixelsController::class;
-            // A path id is digits the int cast leaves unchanged: (int) '1e3'
-            // is 1000, and '12abc' would act on 12.
-            $id = static function (array $ctx, string $key = 'id'): int {
-                $n = \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
-                if ($n === 0) {
-                    throw new \Api\V3\Exception\NotFoundException('Not found: ' . json_encode((string) $ctx[$key]) . ' is not an id');
-                }
-                return $n;
-            };
-
-            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode($id($ctx), $queryParams));
+            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode($setupId($ctx), $queryParams));
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
-
-            $r->get('/ppc-networks/{id}/variables', fn($ctx) => $crud($vars)->list($id($ctx)));
-            $r->post('/ppc-networks/{id}/variables', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . $id($ctx) . '/variables', $payload, fn() => $crud($vars)->create($id($ctx), $payload)));
-            $r->put('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => $crud($vars)->update($id($ctx), $id($ctx, 'variableId'), $payload));
-            $r->delete('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete($id($ctx), $id($ctx, 'variableId'))));
-
-            $r->get('/ppc-accounts/{id}/pixels', fn($ctx) => $crud($pixels)->list($id($ctx)));
-            $r->post('/ppc-accounts/{id}/pixels', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . $id($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create($id($ctx), $payload)));
-            $r->put('/ppc-accounts/{id}/pixels/{pixelId}', fn($ctx) => $crud($pixels)->update($id($ctx), $id($ctx, 'pixelId'), $payload));
-            $r->delete('/ppc-accounts/{id}/pixels/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete($id($ctx), $id($ctx, 'pixelId'))));
+        }, [$setupSection]);
+        $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+            $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
+            $r->get('', fn($ctx) => $crud($vars)->list($setupId($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . $setupId($ctx) . '/variables', $payload, fn() => $crud($vars)->create($setupId($ctx), $payload)));
+            $r->put('/{variableId}', fn($ctx) => $crud($vars)->update($setupId($ctx), $setupId($ctx, 'variableId'), $payload));
+            $r->delete('/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'variableId'))));
+        }, [$setupRemove['ppc-networks'], $setupSection]);
+        $router->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+            $pixels = \Api\V3\Controllers\PpcAccountPixelsController::class;
+            $r->get('', fn($ctx) => $crud($pixels)->list($setupId($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . $setupId($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create($setupId($ctx), $payload)));
+            $r->put('/{pixelId}', fn($ctx) => $crud($pixels)->update($setupId($ctx), $setupId($ctx, 'pixelId'), $payload));
+            $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'pixelId'))));
         }, [$setupSection]);
 
         // ── Clicks (read-only) ───────────────────────────────────────────
@@ -418,6 +450,7 @@ try {
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
+            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries((int)$ctx['id'], $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
         }, [
             static function () use ($auth): void {
@@ -442,8 +475,14 @@ try {
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
-            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent((string)$ctx['ref'], $payload));
+            // The external id is the caller's own string, so it arrives
+            // percent-encoded when it has a character a path escapes (a
+            // space, '/', '?'): decode it, or such a subscription could
+            // never be found here.
+            $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct((int)$ctx['id'], $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct((int)$ctx['id'])));
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
             $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));
             $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField((int)$ctx['id'])));
@@ -536,20 +575,25 @@ try {
         ]);
 
         // ── Rotators ─────────────────────────────────────────────────────
-        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
-            $cls = \Api\V3\Controllers\RotatorsController::class;
-            $r->get('',        fn() => $crud($cls)->list($queryParams));
-            $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($cls)->create($payload)));
-            $r->put('/{id}',   fn($ctx) => $crud($cls)->update((int)$ctx['id'], $payload));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
-
-            // Sub-resource: rules
-            $r->get('/{id}/rules',             fn($ctx) => $crud($cls)->listRules((int)$ctx['id']));
-            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($cls)->createRule((int)$ctx['id'], $payload)));
-            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($cls)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
-            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+        // Setup > Redirectors' permissions, as for the CRUD resources above.
+        $rotators = \Api\V3\Controllers\RotatorsController::class;
+        $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
+            $r->get('',                        fn() => $crud($rotators)->list($queryParams));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get((int)$ctx['id']));
+            $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules((int)$ctx['id']));
         });
+        $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
+            $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
+            $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update((int)$ctx['id'], $payload));
+            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($rotators)->createRule((int)$ctx['id'], $payload)));
+            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
+        }, [$setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}', fn($ctx) => tap($crud($rotators), fn($c) => $c->delete((int)$ctx['id'])));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator'); }, $setupSection]);
+        $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
+            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator_rule'); }, $setupSection]);
 
         // ── Multi-touch attribution ──────────────────────────────────────
         // Gated by the same role permissions as the session pages (plan
@@ -878,6 +922,34 @@ try {
             $r->get('/metrics',    fn() => $make()->metrics());
         }, [$auth->requireAdmin(...)]);
 
+        // ── Administration (202-account/administration.php, api-integrations.php) ──
+        // What Account › Settings shows and changes for this install, and the
+        // URLs Account › API integrations hands out. Admin, as the rest of
+        // /system, and the pages' own permission on top (CLAUDE.md #5):
+        // access_to_settings for Settings, access_to_api_integrations for the
+        // integrations. Not stageable; the one-off deletion previews with
+        // `?dry_run=1` through the same handler, so it is gated identically.
+        // AdministrationRoutesPermissionTest holds all of this.
+        $settingsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_settings');
+        };
+        $integrationsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_api_integrations');
+        };
+        $router->group('/system', function (Router $r) use ($crud, $payload, $queryParams) {
+            $cls = \Api\V3\Controllers\AdministrationController::class;
+            $r->get('/info',                     fn() => $crud($cls)->info(isset($GLOBALS['mchost']) && is_string($GLOBALS['mchost']) ? $GLOBALS['mchost'] : null));
+            $r->get('/login-log',                fn() => $crud($cls)->loginLog($queryParams));
+            $r->get('/retention',                fn() => $crud($cls)->retention());
+            $r->put('/retention',                fn() => $crud($cls)->setRetention($payload));
+            $r->post('/retention/delete-before', fn() => $crud($cls)->scheduleDeletion($payload, writeDryRunRequested($queryParams)));
+            $r->get('/isp-lookup',               fn() => $crud($cls)->ispLookup());
+            $r->put('/isp-lookup',               fn() => $crud($cls)->setIspLookup($payload));
+        }, [$auth->requireAdmin(...), $settingsPage]);
+        $router->group('/system', function (Router $r) use ($crud) {
+            $r->get('/integrations', fn() => $crud(\Api\V3\Controllers\AdministrationController::class)->integrations());
+        }, [$auth->requireAdmin(...), $integrationsPage]);
+
         // ── API root ─────────────────────────────────────────────────────
         $router->get('/', fn() => [
             'api' => 'Prosper202 API v3',
@@ -897,14 +969,14 @@ try {
                 'conversions'   => '/conversions',
                 'update'        => '/clicks/cpc, /conversions/{subids|subids/delete|subids/reset|uploads}',
                 'reports'       => '/reports/{summary|breakdown|timeseries|daypart|weekpart}',
-                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}',
+                'ltv'           => '/ltv/{summary|customers|companies|breakdown|mrr|predict|products|fields|revenue|subscriptions|webhooks|integrations}[/{id}][/deliveries]',
                 'rotators'      => '/rotators',
                 'attribution'   => '/attribution/{models|reports/breakdown|reports/journeys|conversions/{id}/journey|queue|exports}',
                 'apps'          => '/apps/{id|skan-encodings|postbacks|report|notifications|verify|schema|installs}[/installs|/install-token|/store-link|/integrity|/integrity-credential]',
                 'goals'         => '/goals/{id|validate|evaluate}',
                 'events'        => '/events',
                 'users'         => '/users',
-                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics}',
+                'system'        => '/system/{health|version|db-stats|cron|errors|dataengine|metrics|info|login-log|retention|retention/delete-before|isp-lookup|integrations}',
                 'sync'          => '/sync/{plan|jobs|status|history|re-sync}',
                 'changes'       => '/changes/{entity}',
                 'audit'         => '/audit/sync-jobs',
@@ -929,9 +1001,11 @@ try {
         $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
         $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
-        // The Setup deletes ask for access_to_setup_section in their group
-        // middleware, which runs from the main match before this router is
-        // consulted; their handlers check nothing more.
+        // The Setup variables and pixels deletes ask for their groups'
+        // permissions (remove_traffic_source and access_to_setup_section;
+        // access_to_setup_section) in middleware, which runs from the main
+        // match before this router is consulted; their handlers check
+        // nothing more.
         $previewRouter->delete('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworkVariablesController::class)->deletePreview(
             \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
             \Api\V3\Controllers\GoalsController::pathId($ctx['variableId'])
@@ -972,6 +1046,7 @@ try {
             $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview((int)$ctx['id'], (int)$ctx['aliasId']));
             $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview((int)$ctx['id']));
             $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview((int)$ctx['id']));
+            $r->delete('/products/{id}',                    fn($ctx) => $crud($cls)->deleteProductPreview((int)$ctx['id']));
             $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview((int)$ctx['id']));
             $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview((int)$ctx['id']));
         });
@@ -1021,8 +1096,8 @@ try {
     });
     // A traffic source's variables and an account's pixels are Setup records
     // like the CRUD entities they hang off: stageable, and applied through
-    // the real route, whose access_to_setup_section middleware runs against
-    // the applier.
+    // the real route, whose permission middleware (access_to_setup_section,
+    // and remove_traffic_source for the variables) runs against the applier.
     $stageableRouter->group('/ppc-networks/{id}/variables', function (Router $r) use ($stageable) {
         $r->post('', $stageable);
         $r->put('/{variableId}', $stageable);

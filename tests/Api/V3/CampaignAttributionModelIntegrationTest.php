@@ -72,8 +72,12 @@ final class CampaignAttributionModelIntegrationTest extends TestCase
         foreach ([self::USER, self::OTHER] as $u) {
             self::$db->query("DELETE FROM 202_aff_campaigns WHERE user_id = $u");
             self::$db->query("DELETE FROM 202_attribution_models WHERE user_id = $u");
+            self::$db->query("DELETE FROM 202_aff_networks WHERE user_id = $u");
         }
     }
+
+    /** The category the campaigns go in: one of the caller's own. */
+    private int $network = 0;
 
     protected function setUp(): void
     {
@@ -81,6 +85,8 @@ final class CampaignAttributionModelIntegrationTest extends TestCase
             self::markTestSkipped('No test database configured (P202_TEST_DB_HOST).');
         }
         self::cleanUp();
+        self::assertTrue(self::$db->query('INSERT INTO 202_aff_networks SET user_id = ' . self::USER . ", aff_network_name = 'models', aff_network_time = 0"), (string) self::$db->error);
+        $this->network = (int) self::$db->insert_id;
     }
 
     private static function model(int $user, string $slug): int
@@ -107,7 +113,7 @@ final class CampaignAttributionModelIntegrationTest extends TestCase
     private function create(array $extra = []): int
     {
         return (int) $this->campaigns()->create([
-            'aff_campaign_name' => 'm', 'aff_campaign_url' => 'https://o.example', 'aff_campaign_payout' => 1, 'aff_network_id' => 1,
+            'aff_campaign_name' => 'm', 'aff_campaign_url' => 'https://o.example', 'aff_campaign_payout' => 1, 'aff_network_id' => $this->network,
         ] + $extra)['data']['aff_campaign_id'];
     }
 

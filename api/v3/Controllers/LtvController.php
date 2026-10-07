@@ -610,6 +610,166 @@ class LtvController
         });
     }
 
+    /** The product's catalog columns, as GET /ltv/products lists them. */
+    private const PRODUCT_COLUMNS = 'product_id, external_product_id, sku, name, price, currency, created_at, updated_at';
+
+    /** decimal(14,5): the largest price 202_products.price holds. */
+    private const PRODUCT_PRICE_MAX = 999999999.99999;
+
+    /**
+     * Edit a catalog product's name, sku or list price (the LTV Products
+     * tab's Save, tracking202/ajax/ltv_products.php). Only the fields sent
+     * change. Its rules: a name is required and is not blank; sku and price
+     * may be cleared (null or ""); a price is a number of 0 or more. Past
+     * order line items keep the name they were sold under.
+     *
+     * Where the page truncates a long name or sku without a word, this
+     * refuses it (CLAUDE.md #4), and every value is read before any cast.
+     *
+     * @param array<string, mixed> $payload {name?, sku?, price?}
+     */
+    public function updateProduct(int $productId, array $payload): array
+    {
+        $allowed = ['name', 'sku', 'price'];
+        $errors = [];
+        foreach (array_keys($payload) as $key) {
+            if (!in_array((string) $key, $allowed, true)) {
+                $errors[(string) $key] = 'is not accepted here (accepted: name, sku, price; external_product_id is the key and does not change)';
+            }
+        }
+        if ($payload === []) {
+            throw new ValidationException('No fields to update', ['name' => 'send name, sku or price']);
+        }
+        $set = [];
+        if (array_key_exists('name', $payload)) {
+            $name = is_string($payload['name']) ? trim($payload['name']) : null;
+            if ($name === null || $name === '') {
+                $errors['name'] = 'must be a product name that is not blank';
+            } elseif (mb_strlen($name) > 255) {
+                $errors['name'] = 'must be at most 255 characters (got ' . mb_strlen($name) . ')';
+            } else {
+                $set['name'] = ['s', $name];
+            }
+        }
+        if (array_key_exists('sku', $payload)) {
+            $sku = $payload['sku'];
+            if ($sku !== null && !is_string($sku)) {
+                $errors['sku'] = 'must be a string, or null (or "") to clear it';
+            } else {
+                $sku = $sku === null ? '' : trim($sku);
+                if (mb_strlen($sku) > 191) {
+                    $errors['sku'] = 'must be at most 191 characters (got ' . mb_strlen($sku) . ')';
+                } else {
+                    $set['sku'] = ['s', $sku === '' ? null : $sku];
+                }
+            }
+        }
+        if (array_key_exists('price', $payload)) {
+            $price = $payload['price'];
+            if (is_string($price)) {
+                $price = trim($price);
+            }
+            if ($price === null || $price === '') {
+                $set['price'] = ['d', null];
+            } elseif ((is_int($price) || is_float($price) || (is_string($price) && is_numeric($price)))
+                && is_finite((float) $price) && (float) $price >= 0 && (float) $price <= self::PRODUCT_PRICE_MAX) {
+                $set['price'] = ['d', (float) $price];
+            } else {
+                $errors['price'] = 'must be a number from 0 to ' . self::PRODUCT_PRICE_MAX . ', or null (or "") to clear it';
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid product update', $errors);
+        }
+
+        return $this->wrap(function () use ($productId, $set): array {
+            $columns = [];
+            $types = '';
+            $values = [];
+            foreach ($set as $column => [$type, $value]) {
+                $columns[] = $column . ' = ?';
+                $types .= $type;
+                $values[] = $value;
+            }
+            $stmt = $this->conn->prepareWrite(
+                'UPDATE 202_products SET ' . implode(', ', $columns) . ', updated_at = ? WHERE product_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, $types . 'iii', [...$values, time(), $productId, $this->userId]);
+            $this->conn->executeUpdate($stmt);
+
+            // Zero affected rows can mean "unchanged", so the row is read
+            // back either way: absent is the 404.
+            $product = $this->findProduct($productId);
+            if ($product === null) {
+                throw new NotFoundException('Product not found');
+            }
+
+            return ['data' => $product];
+        });
+    }
+
+    /**
+     * Delete a catalog product, which the page allows only while no order
+     * line item names it. The check and the delete are one statement, so a
+     * line item recorded in between keeps the product.
+     */
+    public function deleteProduct(int $productId): void
+    {
+        $this->wrap(function () use ($productId): void {
+            $stmt = $this->conn->prepareWrite(
+                'DELETE p FROM 202_products p
+                 WHERE p.product_id = ? AND p.user_id = ?
+                   AND NOT EXISTS (SELECT 1 FROM 202_revenue_line_items li WHERE li.product_id = p.product_id AND li.user_id = p.user_id)'
+            );
+            $this->conn->bind($stmt, 'ii', [$productId, $this->userId]);
+            if ($this->conn->executeUpdate($stmt) > 0) {
+                return;
+            }
+            if ($this->findProduct($productId) === null) {
+                throw new NotFoundException('Product not found');
+            }
+            // Present and not deleted: a line item names it (or named it
+            // until a moment ago, when the count below finds none).
+            $count = $this->productLineItems($productId);
+            throw new ConflictException(
+                $count > 0
+                    ? self::productRefusal($count)
+                    : 'The product was not deleted because an order line item named it; nothing names it now, so try again.',
+                ['line_items' => $count]
+            );
+        });
+    }
+
+    /** @return array<string, mixed>|null */
+    private function findProduct(int $productId): ?array
+    {
+        $stmt = $this->conn->prepareRead('SELECT ' . self::PRODUCT_COLUMNS . ' FROM 202_products WHERE product_id = ? AND user_id = ? LIMIT 1');
+        $this->conn->bind($stmt, 'ii', [$productId, $this->userId]);
+
+        return $this->conn->fetchOne($stmt);
+    }
+
+    private function productLineItems(int $productId): int
+    {
+        $stmt = $this->conn->prepareRead('SELECT COUNT(*) AS c FROM 202_revenue_line_items WHERE product_id = ? AND user_id = ?');
+        $this->conn->bind($stmt, 'ii', [$productId, $this->userId]);
+
+        return (int) ($this->conn->fetchOne($stmt)['c'] ?? 0);
+    }
+
+    /** The page's refusal while line items name the product; null when it may go. */
+    private function productDeleteRefusal(int $productId): ?string
+    {
+        $count = $this->productLineItems($productId);
+
+        return $count > 0 ? self::productRefusal($count) : null;
+    }
+
+    private static function productRefusal(int $lineItems): string
+    {
+        return 'This product appears on ' . $lineItems . ' order line item(s) and cannot be deleted.';
+    }
+
     // ── Custom field definitions ─────────────────────────────────────
 
     public function createField(array $payload): array
@@ -662,6 +822,76 @@ class LtvController
 
         // The secret is returned exactly once, at creation.
         return ['data' => ['webhook_id' => $result['webhookId'], 'secret' => $result['secret']]];
+    }
+
+    /**
+     * One endpoint's delivery log, newest first (the LTV Settings tab's
+     * Log, which shows the last 25): each event's status, attempts, next
+     * retry, last HTTP status and the last attempt's response or error.
+     * Never the endpoint's secret, and not the payload.
+     *
+     * @param array<string, mixed> $params limit (1-100, default 25), status (pending, delivered, failed)
+     */
+    public function webhookDeliveries(int $webhookId, array $params): array
+    {
+        $errors = [];
+        foreach (array_keys($params) as $key) {
+            if (!in_array((string) $key, ['limit', 'status'], true)) {
+                $errors[(string) $key] = 'is not accepted here (accepted: limit, status)';
+            }
+        }
+        $limit = 25;
+        if (array_key_exists('limit', $params)) {
+            $raw = $params['limit'];
+            if (!is_string($raw) || preg_match('/^[1-9][0-9]{0,2}$/D', $raw) !== 1 || (int) $raw > 100) {
+                $errors['limit'] = 'must be a whole number from 1 to 100';
+            } else {
+                $limit = (int) $raw;
+            }
+        }
+        $status = null;
+        if (array_key_exists('status', $params)) {
+            if (!is_string($params['status']) || !in_array($params['status'], MysqlWebhookRepository::DELIVERY_STATUSES, true)) {
+                $errors['status'] = 'must be one of: ' . implode(', ', MysqlWebhookRepository::DELIVERY_STATUSES);
+            } else {
+                $status = $params['status'];
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid parameter', $errors);
+        }
+
+        return $this->wrap(function () use ($webhookId, $limit, $status): array {
+            // An unknown id is a 404, not an empty log: the two must not read
+            // the same (CLAUDE.md #1).
+            $webhook = $this->webhooks->get($this->userId, $webhookId);
+            if ($webhook === null) {
+                throw new NotFoundException('Webhook not found');
+            }
+            $rows = array_map(static fn (array $row): array => [
+                'delivery_id' => (int) $row['delivery_id'],
+                'event_name' => (string) $row['event_name'],
+                'status' => (string) $row['status'],
+                'attempts' => (int) $row['attempts'],
+                'next_attempt_at' => (string) $row['status'] === 'pending' ? (int) $row['next_attempt_at'] : null,
+                'last_status_code' => $row['last_status_code'] === null ? null : (int) $row['last_status_code'],
+                'last_response_body' => $row['last_response_body'] === null ? null : (string) $row['last_response_body'],
+                'created_at' => (int) $row['created_at'],
+                'updated_at' => (int) $row['updated_at'],
+            ], $this->webhooks->deliveries($this->userId, $webhookId, $limit, $status));
+
+            return [
+                'data' => $rows,
+                'meta' => [
+                    'webhook_id' => $webhookId,
+                    'webhook_url' => (string) $webhook['webhook_url'],
+                    'webhook_status' => (string) $webhook['status'],
+                    'limit' => $limit,
+                    'status' => $status,
+                    'max_attempts' => MysqlWebhookRepository::MAX_ATTEMPTS,
+                ],
+            ];
+        });
     }
 
     public function deleteWebhook(int $webhookId): void
@@ -999,6 +1229,32 @@ class LtvController
                         'by_status' => (object) $byStatus,
                     ],
                 ],
+            ]];
+        });
+    }
+
+    /**
+     * Preview of deleteProduct(), including the refusal the delete would
+     * answer while order line items name the product (refused: the delete's
+     * own message; null when it would go ahead). Nothing cascades: line
+     * items keep their own snapshot of the product.
+     */
+    public function deleteProductPreview(int $productId): array
+    {
+        return $this->wrap(function () use ($productId): array {
+            $product = $this->findProduct($productId);
+            if ($product === null) {
+                throw new NotFoundException('Product not found');
+            }
+
+            return ['data' => [
+                'dry_run' => true,
+                'action' => 'delete',
+                'resource' => 'ltv-products',
+                'mode' => 'hard',
+                'record' => $product,
+                'refused' => $this->productDeleteRefusal($productId),
+                'cascade' => [],
             ]];
         });
     }

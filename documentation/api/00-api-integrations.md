@@ -59,6 +59,46 @@ on `202_api_keys` (fresh installs have it; the 1.9.75 upgrade backfills it —
 `features.api_key_scopes` in [capabilities](17-capabilities.md) reports
 whether scoped keys can be minted).
 
+### Role Permissions
+
+A key acts as its user, and the user's **role** limits it as the web pages
+limit that user — a scope can narrow a key further, never past its role:
+
+| Routes | The role needs | As the page that does it |
+| ------ | -------------- | ------------------------ |
+| `POST`/`PUT` on `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules), and their `bulk-upsert` | `access_to_setup_section` | every Setup page |
+| `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
+| The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
+| The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
+| A traffic source's custom variables, reads included: `/ppc-networks/{id}/variables` | `remove_traffic_source` and `access_to_setup_section` | Traffic Sources' variables dialog, shown only to a role with both |
+| Attribution reports and models | `view_attribution_reports`, `manage_attribution_models` | Attribution |
+
+The check runs before the handler, so a `?dry_run=1` preview and a
+`?staged=1` proposal are refused exactly as the write is, and a staged change
+is applied with the applier's permissions. Reads are not gated by role,
+except the Setup code, pixels and variables above, which only the Setup pages
+show. A refusal is `403` naming the permission: `This account's role does not
+have the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user
+role`).
+Forecast events have no Setup page and are not gated.
+
+### Linked Records
+
+A Setup record links only to the caller's own live records, as the Setup pages
+require. `aff_network_id` on a campaign, `ppc_network_id` on a traffic source
+account, `aff_campaign_id` on a landing page, `aff_campaign_id` and
+`landing_page_id` on a text ad, and every id on a tracker (`aff_campaign_id`,
+`ppc_account_id`, `landing_page_id`, `text_ad_id`, `rotator_id`) must name a
+record of the key's user that has not been removed; otherwise the write is a
+`422` whose `field_errors` names the field (`category 12 is not one of yours,
+or it was removed (GET /aff-networks lists them)`). `0` means "none" for a link
+the record may go without (a tracker's landing page, a text ad's campaign) and
+is refused for one it requires (a campaign's category, a tracker's campaign).
+An update that re-sends the value a record already holds is not checked again,
+so a record whose campaign was removed since can still be saved. In
+`bulk-upsert`, a refused row is an `error` row carrying the same `field_errors`;
+the other rows are written.
+
 ## Common Headers
 
 | Header | Direction | Description |
