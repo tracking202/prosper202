@@ -77,7 +77,7 @@ final class MobileAppsReportTest extends TestCase
             'last14'    => ['last14', 'last14 2026-02-15 00:00:00 .. 2026-03-01 23:59:59'],
             'last30'    => ['last30', 'last30 2026-01-30 00:00:00 .. 2026-03-01 23:59:59'],
             'last90'    => ['last90', 'last90 2025-12-01 00:00:00 .. 2026-03-01 23:59:59'],
-            'thismonth' => ['thismonth', 'thismonth 2026-03-01 00:00:00 .. 2026-03-31 23:59:59'],
+            'thismonth' => ['thismonth', 'thismonth 2026-03-01 00:00:00 .. 2026-03-01 23:59:59'], // the 1st through today, as the click calendar's
             'lastmonth' => ['lastmonth', 'lastmonth 2026-02-01 00:00:00 .. 2026-02-28 23:59:59'],
         ];
     }
@@ -310,13 +310,12 @@ final class MobileAppsReportTest extends TestCase
      * two windows and a reconciliation looked like missing postbacks. Both
      * are UTC here, which is the one difference the page states outright.
      *
-     * Compared up to the instant: what either window can hold is what has
-     * arrived by then. This Month runs to the last day of the month here and
-     * to the end of today on the calendar, which hold the same postbacks and
-     * clicks. These cases used to compare with a second grab_timeframe() in
-     * 202-config/functions-timeframe.php that no page loaded — its This
-     * Month ran to the month's end — and the comment on this report's
-     * This Month still says the calendar's does.
+     * Compared to the second, ends included. This compared only up to the
+     * instant, because This Month ran to the last day of the month here and
+     * to the end of today on the calendar; the date inputs then showed a
+     * window ending weeks ahead under a comment saying the calendar's did
+     * too (a second grab_timeframe(), in a file no page loaded, had). This
+     * Month is the calendar's window now.
      *
      * @dataProvider calendarPresets
      */
@@ -325,7 +324,7 @@ final class MobileAppsReportTest extends TestCase
         // The awkward instant, and one in the middle of a month.
         foreach ([self::NOW, self::NOW + 16 * self::DAY + 15 * 3600] as $now) {
             $held = static fn (array $w): string => gmdate('Y-m-d H:i:s', (int) $w['from'])
-                . ' .. ' . gmdate('Y-m-d H:i:s', min((int) $w['to'], $now));
+                . ' .. ' . gmdate('Y-m-d H:i:s', (int) $w['to']);
             self::assertSame(
                 $held(ReportWindow::preset($range, 'UTC', $now)),
                 $held(MobileAppsReportController::resolveWindow($range, '', '', $now)),
@@ -343,10 +342,14 @@ final class MobileAppsReportTest extends TestCase
         // default arm is gone — such a name now raises UnhandledMatchError on
         // the first page load — and this is the assertion that would have
         // caught the old behaviour: two labels, one window.
+        //
+        // In the middle of a month: on the 1st, This Month IS today, on the
+        // click calendar and here alike.
+        $now = self::NOW + 16 * self::DAY + 15 * 3600;
         $seen = [];
         self::assertNotSame([], MobileAppsReportController::RANGES, 'there are presets to check');
         foreach (array_keys(MobileAppsReportController::RANGES) as $range) {
-            $window = MobileAppsReportController::resolveWindow($range, '', '', self::NOW);
+            $window = MobileAppsReportController::resolveWindow($range, '', '', $now);
             $key = $window['from'] . '..' . $window['to'];
             // The message is built from $seen only when there IS a clash;
             // PHPUnit evaluates it either way, and reading a key that is

@@ -156,7 +156,11 @@ and Postbacks sent tabs are offered once the account has an Android app.
 
 The range picker offers the same preset windows as the click reports (Today,
 Yesterday, Last 7/14/30/90 Days, This Month, Last Month) plus Custom Date,
-which is what makes the two date fields live. **The dates on this page are
+which is what makes the two date fields live. Each preset is counted as the
+click reports count it (in UTC here, as below): Last 7 Days is today and the
+seven days before it, and This Month runs from the 1st to the end of today
+(it used to run to the last day of the month here). Last 90 Days is counted
+the same way. **The dates on this page are
 UTC**, unlike the click reports, which use your account timezone: postbacks
 are grouped into whole UTC days by the report itself, so a window anchored to
 a local midnight would split its first and last day across groups the report
