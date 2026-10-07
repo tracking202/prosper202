@@ -57,7 +57,7 @@ final class RequestHostSourceTest extends TestCase
             "compared with the license service's click-server id, which is the Host header as sent",
         ],
         '202-config/functions-auth.php' => [2, 'the list of request fields a security log records'],
-        '202-config/Slack.class.php' => [1, "the Slack message's sender name"],
+        '202-config/Slack.class.php' => [4, "the Slack message's sender name (senderName() and payload()'s check for one)"],
         '202-lost-pass.php' => [
             1,
             'NOT a self-URL: the reset link goes to the account\'s email, someone other than the requester, so its host'
