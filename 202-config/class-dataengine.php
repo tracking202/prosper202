@@ -594,10 +594,19 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
         // Joined tables (202_variable_sets2, 202_custom_variables,
         // 202_ppc_network_variables, 202_ppc_networks) have no income/cost/clicks,
         // so the 2st. prefix in GROUPED_SELECT is unambiguous.
+        //
+        // One group per variable, not per variable name: a click records
+        // each of its traffic source's variables (202_variable_sets2, one row
+        // per variable), so a variable removed in Setup and added again
+        // under the same name gave a click two rows in one name's group
+        // (both recorded the value until the recorders read live variables
+        // only), and the report counted that click twice. A removed
+        // variable's values are still its clicks', so it stays, named as
+        // removed.
         $click_sql = " SELECT
             2st.user_id,
     ppc_network_name,
-    name as variable_name,
+    IF(202_ppc_network_variables.deleted = 0, name, CONCAT(name, ' (removed)')) as variable_name,
     variable as variable_value," . MetricsSql::GROUPED_SELECT . ",
     2st.ppc_network_id,
     2st.variable_set_id,
@@ -617,8 +626,8 @@ FROM
         $click_sql .= $filters['join'] . $this->mysql['user_id_query'] . "
         AND 2st.variable_set_id != 0
         AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter'] . "
-group by ppc_network_id , name , variable
-ORDER BY ppc_network_id , name , variable";
+group by 2st.ppc_network_id, 202_custom_variables.ppc_variable_id, variable
+ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variable";
 
         $click_result = $this->reportQuery($click_sql);
         while ($click_row = $click_result->fetch_assoc()) {

@@ -89,7 +89,7 @@ if (!empty($_GET['t202id'])) {
 							2cv.parameters
 					FROM    202_trackers AS 2tr
 					LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
-					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 					WHERE   2tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
 

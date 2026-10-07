@@ -503,6 +503,23 @@ eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "3" "three trackers stored"
 get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
 KID=$(Q "SELECT tracker_id FROM 202_trackers WHERE rotator_id=$ROT")
 has "$P" "data-tracker-id=\"$KID\"" "the list shows the redirector tracker"
+
+say "trackers: the list's links carry the traffic source's live variables only"
+# Removing a variable in the variables dialog marks it deleted; the list read
+# every variable the source ever had, so the removed one stayed on its links.
+KWVAR=$(Q "SELECT ppc_variable_id FROM 202_ppc_network_variables WHERE ppc_network_id=$SRC AND parameter='kw' AND deleted=0")
+ajax "$AJAX/custom_variables.php" "$OUT/v-two.txt" --data-urlencode "token=$T" --data-urlencode "post_vars=1" --data-urlencode "ppc_network_id=$SRC" \
+  --data-urlencode "vars[0][id]=$KWVAR" --data-urlencode "vars[0][name]=Keyword" --data-urlencode "vars[0][parameter]=kw" --data-urlencode "vars[0][placeholder]={keyword}" \
+  --data-urlencode "vars[1][id]=false" --data-urlencode "vars[1][name]=Gone" --data-urlencode "vars[1][parameter]=gonevar" --data-urlencode "vars[1][placeholder]={gone}"
+has "$OUT/v-two.txt" "DONE" "a second variable is saved"
+get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
+has "$P" "kw={keyword}&amp;gonevar={gone}" "the direct link carries both, in the order they were added"
+ajax "$AJAX/custom_variables.php" "$OUT/v-one.txt" --data-urlencode "token=$T" --data-urlencode "post_vars=1" --data-urlencode "ppc_network_id=$SRC" \
+  --data-urlencode "vars[0][id]=$KWVAR" --data-urlencode "vars[0][name]=Keyword" --data-urlencode "vars[0][parameter]=kw" --data-urlencode "vars[0][placeholder]={keyword}"
+eq "$(Q "SELECT deleted FROM 202_ppc_network_variables WHERE ppc_network_id=$SRC AND parameter='gonevar'")" "1" "saving the dialog without it removes it"
+get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
+has "$P" "kw={keyword}" "the list's link still carries the live variable"
+hasnt "$P" "gonevar=" "and no longer the removed one"
 ajax "$AJAX/delete_tracker.php" "$OUT/k-del-csrf.txt" --data-urlencode "tracker_id=$KID"
 eq "$LAST_CODE" "403" "deleting a tracker without the token is answered 403"
 eq "$(Q "SELECT COUNT(*) FROM 202_trackers WHERE tracker_id=$KID")" "1" "and deletes nothing"
