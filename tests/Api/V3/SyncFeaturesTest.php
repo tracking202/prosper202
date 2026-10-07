@@ -424,6 +424,11 @@ final class SyncFeaturesTest extends TestCase
         $first = $engine->buildPlan($source, $target, 'campaigns');
         $second = $engine->buildPlan($source, $target, 'campaigns');
 
+        // The plan is the same; when it was generated is not, and two builds
+        // that straddle a second differ there (this failed on that boundary).
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT/', (string) ($first['generated_at'] ?? ''));
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT/', (string) ($second['generated_at'] ?? ''));
+        unset($first['generated_at'], $second['generated_at']);
         $this->assertSame(
             json_encode($first, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             json_encode($second, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
