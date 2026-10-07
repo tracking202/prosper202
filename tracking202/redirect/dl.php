@@ -484,7 +484,7 @@ if ($clickIsBot) {
 } else {
 	// Initialize click_id as 0 for the filter (will be updated after insert)
 	$click_id_temp = 0;
-	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $ip_address, $user_id);
+	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $user_id);
 	$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 

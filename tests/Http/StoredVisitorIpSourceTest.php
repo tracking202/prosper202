@@ -26,6 +26,14 @@ use Tests\Support\SourceScan;
  * there writes its own by-address lookup in SQL: the five that did matched
  * REMOTE_ADDR — a proxy's address, under which no click is stored — and never
  * an IPv6 click.
+ *
+ * The other direction too: the click filter compares the address a click
+ * ARRIVED from with the operator's sign-in address, which is stored as it
+ * arrived; comparing the stored, masked one, it matched nobody under privacy
+ * and the owner's own clicks were counted. FILTER::startFilter() reads the
+ * arrived address itself now, and every call passes the four arguments it
+ * takes — a call still handing it an address, the old fifth argument, would
+ * shift the user id into the address's place.
  */
 final class StoredVisitorIpSourceTest extends TestCase
 {
@@ -64,6 +72,24 @@ final class StoredVisitorIpSourceTest extends TestCase
         self::assertSame([], $problems, "A visitor address is stored or looked up without the privacy mask:\n  "
             . implode("\n  ", $problems)
             . "\nPass p202StoredVisitorIp(): the VisitorIp address, masked when trackingEnabled() is false.");
+    }
+
+    public function testTheClickFilterIsCalledWithTheArgumentsItTakes(): void
+    {
+        $calls = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            foreach (CallArgs::calls($source, ['startFilter']) as $call) {
+                $calls[] = [$path, $call['line'], count($call['args'])];
+            }
+        }
+
+        // dl.php, rtr.php and the two landing-page recorders.
+        self::assertGreaterThanOrEqual(4, count($calls), 'the scan finds the click filter\'s callers');
+        foreach ($calls as [$path, $line, $count]) {
+            self::assertSame(4, $count, "$path:$line calls FILTER::startFilter() with $count arguments. It takes"
+                . ' ($db, $click_id, $ip_id, $user_id) and reads the address the click arrived from itself; an'
+                . ' address handed in would land where the user id goes.');
+        }
     }
 
     public function testNoClickPathFileLooksAClickUpByAddressInItsOwnSql(): void

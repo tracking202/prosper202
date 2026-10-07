@@ -290,19 +290,32 @@ function delay_sql($db, $delayed_sql): void
 class FILTER
 {
 
-    public static function startFilter($db, $click_id, $ip_id, $ip_address, $user_id)
+    /**
+     * Whether to record this click as filtered (1) or not (0).
+     *
+     * The sign-in and netrange checks compare the address the click arrived
+     * from (VisitorIp), read here rather than handed in: a caller that
+     * passed the address the click path stores — masked under privacy —
+     * would match no sign-in and no netrange. Every caller passed one
+     * argument more before; StoredVisitorIpSourceTest holds them to four.
+     *
+     * @param int|string $ip_id the click's stored address row (masked under
+     *        privacy): what the duplicate check keeps, the only one it may
+     */
+    public static function startFilter($db, $click_id, $ip_id, $user_id)
     {
+        $arrived = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
         // we only do the other checks, if the first ones have failed.
         // we will return the variable filter, if the $filter returns TRUE, when the click is inserted and recorded we will insert the new click already inserted,
         // what was lagign this query is before it would insert a click, then scan it and then update the click, the updating later on was lagging, now we will just insert and it will not stop the clicks from being redirected becuase of a slow update.
 
         // check the user
-        $filter = FILTER::checkUserIP($db, $click_id, $ip_id, $user_id);
+        $filter = FILTER::checkUserIP($db, $arrived);
         if ($filter == false) {
 
             // check the netrange
-            $filter = FILTER::checkNetrange($click_id, $ip_address);
+            $filter = FILTER::checkNetrange($click_id, $arrived);
             if ($filter == false) {
 
                 $filter = FILTER::checkLastIps($db, $user_id, $ip_id);
@@ -316,24 +329,22 @@ class FILTER
         }
     }
 
-    public static function checkUserIP($db, $click_id, $ip_id, $user_id)
+    /**
+     * Whether a user last signed in from the address this click arrived from
+     * (SignedInFromAddress): the owner's own clicks are filtered.
+     *
+     * It compares the address as it arrived, not the click's stored ip_id.
+     * The sign-in address is stored unmasked under every privacy setting, the
+     * click's masked under privacy, so the ip_id comparison this replaced
+     * never matched there and the owner's clicks were counted.
+     *
+     * @param string|object $arrived VisitorIp's address (or ipAddress()'s object of it)
+     */
+    public static function checkUserIP($db, $arrived)
     {
-        // $user_id no longer needed
+        $address = is_object($arrived) ? (string) ($arrived->address ?? '') : (string) $arrived;
 
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-
-        $count_sql = "SELECT    user_id
-					  FROM      202_users 
-					  WHERE     user_last_login_ip_id='" . $mysql['ip_id'] . "'";
-        $count_result = _mysqli_query($db, $count_sql); // ($count_sql);
-
-        // if the click_id's ip address, is the same ip adddress of the click_id's owner's last logged in ip, filter this. 
-        if ($count_result->num_rows > 0) {
-
-            return true;
-        }
-        return false;
+        return \Prosper202\Click\SignedInFromAddress::any(new \Prosper202\Database\Connection($db), $address);
     }
 
     public static function checkNetrange($click_id, $ip)
@@ -406,6 +417,16 @@ class FILTER
     }
 
     // this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
+    //
+    // It keys on the click's stored ip_id, both when it looks and when it
+    // records (202_last_ips keeps it for a day), so under privacy both sides
+    // are the masked address and every visitor in one /24 (/48) is one
+    // visitor: the second of two neighbours within the day is filtered.
+    // Measured live. That is the price of the setting rather than a mismatch
+    // — this check needs a memory of earlier visitors, and the masked address
+    // is the only one privacy lets it keep. Unlike checkUserIP, whose other
+    // side is an operator's unmasked record, there is nothing unmasked here
+    // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
 
