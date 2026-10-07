@@ -14,7 +14,8 @@ declare(strict_types=1);
  * that returns false. The lock goes with the process.
  *
  * argv: <reader> <table to lock, or "none">
- * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_REPORT_USER
+ * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_REPORT_USER, and
+ *       P202_TEST_CHART_CAMPAIGN (the chart line's campaign; 0, all, by default)
  * Prints "RETURNED <json>" when the reader returns and "THREW <class>:
  * <message>" when it throws; the error page is whatever record_mysql_error()
  * printed before it died.
@@ -73,7 +74,8 @@ if ($current !== $dbName) {
 
 $_SESSION['user_id'] = $userId;
 $_SESSION['user_own_id'] = $userId;
-$_SESSION['publisher'] = false;
+// No 'publisher' key: nothing in the app sets one, so a signed-in account
+// reads its own rows. (Set to false, the engine read every account's.)
 $_SESSION['user_timezone'] = 'UTC';
 $_POST = [];
 
@@ -111,7 +113,7 @@ try {
         'engine-chart' => (new DataEngine())->getChart(
             $now - 86400,
             $now + 86400,
-            [['campaign_id' => '0', 'value_type' => 'clicks']],
+            [['campaign_id' => (string) (getenv('P202_TEST_CHART_CAMPAIGN') ?: '0'), 'value_type' => 'clicks']],
             'days',
             'M d',
             [new DateTime('@' . $now)]

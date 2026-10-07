@@ -332,7 +332,6 @@ final class AccountScopedJoinTest extends TestCase
             'condition built at runtime | 202_ppc_networks | ( 202_ppc_accounts.ppc_network_id = 202_ppc_networks.ppc_network_id ) {$this->mysql[\'user_id_query\']} AND `2st`.{{$select_by_id}} IN ( {implode(",", $ids)} )' => self::LEGACY_REPORT,
             'condition built at runtime | 202_ppc_networks | ( 202_ppc_networks.ppc_network_id = `2st`.ppc_network_id ) {$filters[\'join\']} {$this->mysql[\'user_id_query\']} AND `2st`.variable_set_id != 0 AND click_time >= {$clickFrom} AND click_time <= {$clickTo…' => self::LEGACY_REPORT,
             'condition built at runtime | 202_ppc_networks | ( 202_ppc_networks.ppc_network_id = `2st`.ppc_network_id ) {$filters[\'join\']} {$this->mysql[\'user_id_query\']} AND `2st`.variable_set_id != 0 AND click_time >= {$clickFrom} AND click_time <= {$clickTo… #2' => self::LEGACY_REPORT,
-            'USING without user_id | 202_aff_campaigns | LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id )' => self::LEGACY_REPORT,
         ],
         '202-config/connect2.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,

@@ -1008,20 +1008,25 @@ ORDER BY ppc_network_id , name , variable";
                 $rangeFormat .= ", aff_campaign_name";
             }
 
-            $sqlObj = "SELECT" . $sqlSelectObj . $rangeFormat . " FROM 202_dataengine ";
+            $sqlObj = "SELECT" . $sqlSelectObj . $rangeFormat . " FROM 202_dataengine AS 2st ";
 
             if ($campaign != '0') {
-                $sqlObj .= "LEFT JOIN 202_aff_campaigns USING (aff_campaign_id) ";
+                $sqlObj .= "LEFT JOIN 202_aff_campaigns AS 2ac ON 2ac.aff_campaign_id = 2st.aff_campaign_id AND 2ac.user_id = 2st.user_id ";
             }
 
+            // The account's clicks, as every other reader here scopes them
+            // (user_id_query): the chart had no account condition at all, so
+            // "Clicks (all)" summed every account's clicks in the window, and
+            // a campaign line drew whichever account owned that id.
             // click_time is an integer timestamp and aff_campaign_id an int id;
             // cast both so neither can break out of the clause regardless of
             // how the caller sourced them (from/to come from the request,
             // campaign from the stored chart config).
-            $sqlObj .= "WHERE click_time >= '" . (int) $from . "' AND click_time <= '" . (int) $to . "' ";
+            $sqlObj .= $this->mysql['user_id_query']
+                . "AND 2st.click_time >= '" . (int) $from . "' AND 2st.click_time <= '" . (int) $to . "' ";
 
             if ($campaign != '0') {
-                $sqlObj .= "AND aff_campaign_id = '" . (int) $campaign . "' ";
+                $sqlObj .= "AND 2st.aff_campaign_id = '" . (int) $campaign . "' ";
             }
             $sqlObj .= $click_filtered . " ";
             $sqlObj .= "GROUP BY " . $rangeGroupby . ";";
