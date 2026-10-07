@@ -35,13 +35,23 @@ info:
 
     ## Role Permissions
     A key also acts within its user's role, as the web pages limit that
-    user. Creating or changing a Setup entity (campaigns, aff-networks,
-    ppc-networks, ppc-accounts, trackers, landing-pages, text-ads, rotators
-    and their rules, and each `bulk-upsert`) needs `access_to_setup_section`;
-    deleting one needs that and the entity's own `remove_*` permission
-    (`remove_campaign`, `remove_tracker`, `remove_rotator_rule`, …). The
-    check runs before the handler, so `?dry_run=1` and `?staged=1` are
-    refused as the write is. Denials are `403` naming the permission.
+    user. Reading, creating or changing a Setup entity (campaigns,
+    aff-networks, ppc-networks, ppc-accounts, trackers and their links,
+    landing-pages, text-ads, rotators and their rules, Mobile Apps, and each
+    `bulk-upsert`) needs `access_to_setup_section`; deleting one needs that
+    and the entity's own `remove_*` permission (`remove_campaign`,
+    `remove_tracker`, `remove_rotator_rule`, …). Recording a conversion needs
+    `access_to_update_section`, removing one `delete_individual_subids` as
+    well; the Account › Settings reads under `/system` need Admin and
+    `access_to_settings`. The check runs before the handler, so `?dry_run=1`
+    and `?staged=1` are refused as the write is. Denials are `403` naming the
+    permission.
+
+    The reports, clicks and conversions are open to every role, but a role
+    without `access_to_campaign_data` reads them as the pages show them: the
+    absolute clicks, click-throughs, leads, income, cost and net (and a
+    click's or conversion's cost and payout) are `null`, ratios are kept,
+    and the answer carries `"masked": true`.
 
     ## Linked Records
     A Setup record links only to the caller's own live records, as the Setup

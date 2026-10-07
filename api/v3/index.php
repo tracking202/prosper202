@@ -307,11 +307,16 @@ try {
             'landing-pages' => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_landing_page'); },
             'text-ads'      => static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_text_ad'); },
         ];
+        // Reads too: the Setup pages are the only place these records are
+        // shown, and every one of them asks for access_to_setup_section first
+        // (SetupController). The reports name a campaign or a source to any
+        // role; the record itself -- its URL, payout, cost -- only Setup does.
+        // A Campaign viewer's key listed every campaign the page hid from it.
         foreach ($crudMap as $resource => $class) {
             $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
                 $r->get('',       fn() => $crud($class)->list($queryParams));
                 $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
-            });
+            }, isset($setupRemove[$resource]) ? [$setupSection] : []);
             $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $payload) {
                 $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
@@ -322,10 +327,10 @@ try {
             }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
 
-        // Tracker sub-resource
-        $router->get('/trackers/{id}/url', function ($ctx) use ($crud, $queryParams) {
-            return $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams);
-        });
+        // Tracker sub-resource: Setup › Get Links' link.
+        $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
+            $r->get('/{id}/url', fn($ctx) => $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams));
+        }, [$setupSection]);
 
         // ── Setup: its code, a traffic source's variables, an account's pixels
         // Get LP Code, Postback / Pixel, and Traffic Sources' custom
@@ -372,25 +377,55 @@ try {
             $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'pixelId'))));
         }, [$setupSection]);
 
+        // ── Campaign figures ─────────────────────────────────────────────
+        // A role without access_to_campaign_data reads the reports, the clicks
+        // and the conversions with the absolute clicks, leads and money null
+        // and `masked: true` (CampaignFigures), as every report page prints
+        // them as '?' (CampaignDataMask); ratios stay. RolePermissionTest
+        // holds which routes pass through this.
+        $campaignFigures = static function (mixed $response, array $keys) use ($auth, $db): mixed {
+            if (!is_array($response) || $auth->hasPermission($db, 'access_to_campaign_data')) {
+                return $response;
+            }
+            return \Api\V3\Support\CampaignFigures::mask($response, $keys);
+        };
+        $recordMoney = \Api\V3\Support\CampaignFigures::RECORD;
+        $reportFigures = \Api\V3\Support\CampaignFigures::REPORT;
+
         // ── Clicks (read-only) ───────────────────────────────────────────
-        $router->get('/clicks', fn() => $crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams));
-        $router->get('/clicks/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']));
+        $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
+        $router->get('/clicks/{id}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']), $recordMoney));
         // A click's conversions, each with whether it counts toward the
         // click's value. It is the clicks area by path and shows conversion
         // rows, so a key needs read scope on both.
-        $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth) {
+        $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth, $campaignFigures, $recordMoney) {
             $auth->requireScope('conversions:read');
-            return $crud(\Api\V3\Controllers\ClicksController::class)->conversions((int)$ctx['id']);
+            return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions((int)$ctx['id']), $recordMoney);
         });
 
         // ── Conversions ──────────────────────────────────────────────────
-        $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        // Reading is the click's conversions panel's (no permission; money
+        // masked). Recording one is what Update › Subids does, and removing
+        // one what Update › Delete Subids does, so they ask what those pages
+        // ask ($updateSection, below; delete_individual_subids first for a
+        // removal). They asked for nothing: any role's key recorded and
+        // deleted conversions.
+        $updateSection = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_update_section');
+        };
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
-            $r->get('',        fn() => $crud($cls)->list($queryParams));
-            $r->get('/{id}',   fn($ctx) => $crud($cls)->get((int)$ctx['id']));
-            $r->post('',       fn() => ['_status' => 201] + $idempotent('conversions', $payload, fn() => $crud($cls)->create($payload)));
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
+            $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get((int)$ctx['id']), $recordMoney));
         });
+        $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $payload) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->post('',       fn() => ['_status' => 201] + $idempotent('conversions', $payload, fn() => $crud($cls)->create($payload)));
+        }, [$updateSection]);
+        $router->group('/conversions', function (Router $r) use ($crud) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
+        }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'delete_individual_subids'); }, $updateSection]);
 
         // ── Update (the UI's Update section, tracking202/update/) ────────
         // Update CPC, Update Subids, Delete Subids, Reset Campaign Subids and
@@ -403,10 +438,8 @@ try {
         // handler, after the same checks, and writes nothing. None is
         // stageable: a report travels in the body (up to 8 MB), and a CPC
         // write confirms a count taken moments before.
-        // UpdateRoutesPermissionTest holds all of this.
-        $updateSection = static function () use ($auth, $db): void {
-            $auth->requirePermission($db, 'access_to_update_section');
-        };
+        // UpdateRoutesPermissionTest holds all of this. ($updateSection is
+        // defined above, with the conversions it also gates.)
         $router->group('/clicks', function (Router $r) use ($crud, $payload, $queryParams) {
             $r->post('/cpc', fn() => $crud(\Api\V3\Controllers\UpdateController::class)->cpc($payload, writeDryRunRequested($queryParams)));
         }, [$updateSection]);
@@ -422,14 +455,16 @@ try {
         }, [$updateSection]);
 
         // ── Reports ──────────────────────────────────────────────────────
-        $router->group('/reports', function (Router $r) use ($crud, $queryParams) {
+        // Overview and Analyze ask for no permission; a role without
+        // access_to_campaign_data gets them masked ($campaignFigures).
+        $router->group('/reports', function (Router $r) use ($crud, $queryParams, $campaignFigures, $reportFigures) {
             $cls = \Api\V3\Controllers\ReportsController::class;
-            $r->get('/summary',    fn() => $crud($cls)->summary($queryParams));
-            $r->get('/breakdown',  fn() => $crud($cls)->breakdown($queryParams));
-            $r->get('/timeseries', fn() => $crud($cls)->timeseries($queryParams));
-            $r->get('/daypart',    fn() => $crud($cls)->daypart($queryParams));
-            $r->get('/weekpart',   fn() => $crud($cls)->weekpart($queryParams));
-            $r->get('/groups',     fn() => $crud($cls)->groups($queryParams));
+            $r->get('/summary',    fn() => $campaignFigures($crud($cls)->summary($queryParams), $reportFigures));
+            $r->get('/breakdown',  fn() => $campaignFigures($crud($cls)->breakdown($queryParams), $reportFigures));
+            $r->get('/timeseries', fn() => $campaignFigures($crud($cls)->timeseries($queryParams), $reportFigures));
+            $r->get('/daypart',    fn() => $campaignFigures($crud($cls)->daypart($queryParams), $reportFigures));
+            $r->get('/weekpart',   fn() => $campaignFigures($crud($cls)->weekpart($queryParams), $reportFigures));
+            $r->get('/groups',     fn() => $campaignFigures($crud($cls)->groups($queryParams), $reportFigures));
         });
 
         // ── LTV: reads (ltv:read) ───────────────────────────────────────
@@ -582,7 +617,7 @@ try {
             $r->get('',                        fn() => $crud($rotators)->list($queryParams));
             $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get((int)$ctx['id']));
             $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules((int)$ctx['id']));
-        });
+        }, [$setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
             $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
             $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update((int)$ctx['id'], $payload));
@@ -599,10 +634,11 @@ try {
         // Overview's Rotator Breakdown shows it (ReportsController::
         // rotatorStats). The path is the rotators area; the figures are
         // report data, so a key needs read scope on both, as
-        // /clicks/{id}/conversions needs it on clicks and conversions.
-        $router->get('/rotators/{id}/stats', function ($ctx) use ($crud, $auth, $queryParams) {
+        // /clicks/{id}/conversions needs it on clicks and conversions. A report
+        // asks for no role permission, and is masked as the others are.
+        $router->get('/rotators/{id}/stats', function ($ctx) use ($crud, $auth, $queryParams, $campaignFigures, $reportFigures) {
             $auth->requireScope('reports:read');
-            return $crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats((int)$ctx['id'], $queryParams);
+            return $campaignFigures($crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats((int)$ctx['id'], $queryParams), $reportFigures);
         });
 
         // ── Multi-touch attribution ──────────────────────────────────────
@@ -691,9 +727,21 @@ try {
             $view = static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'view_attribution_reports');
             };
+            // What Setup › Mobile Apps shows: its base class asks for
+            // access_to_setup_section before anything ("Reading the list
+            // needs Setup"), and these reads asked for nothing.
+            $setup = static function () use ($auth, $db): void {
+                $auth->requirePermission($db, 'access_to_setup_section');
+            };
 
-            $r->get('/skan-encodings',         fn() => $crud($encodings)->list($queryParams));
-            $r->get('/skan-encodings/{id}',    fn($ctx) => $crud($encodings)->get((int)$ctx['id']));
+            $r->get('/skan-encodings',         function () use ($setup, $crud, $encodings, $queryParams) {
+                $setup();
+                return $crud($encodings)->list($queryParams);
+            });
+            $r->get('/skan-encodings/{id}',    function ($ctx) use ($setup, $crud, $encodings) {
+                $setup();
+                return $crud($encodings)->get((int)$ctx['id']);
+            });
             $r->post('/skan-encodings',        function () use ($manage, $crud, $encodings, $idempotent, $payload) {
                 $manage();
                 return ['_status' => 201] + $idempotent('apps/skan-encodings', $payload, fn() => $crud($encodings)->create($payload));
@@ -755,14 +803,20 @@ try {
             // The link builder's read: the store link a campaign should send
             // its clicks to, and whether campaign_id already does (a read;
             // applying it is PUT /campaigns/{id}).
-            $r->get('/{id}/store-link', fn($ctx) => $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink((int)$ctx['id'], $queryParams));
+            $r->get('/{id}/store-link', function ($ctx) use ($setup, $crud, $queryParams) {
+                $setup();
+                return $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink((int)$ctx['id'], $queryParams);
+            });
 
             // Play Integrity (plan §5.6, §5.11): the status read, and the
             // service-account credential — set/rotate and clear. Neither
             // write is stageable: its body is a private key, which a staged
             // change would store and show to reviewers.
             $integrity = \Api\V3\Controllers\AppIntegrityController::class;
-            $r->get('/{id}/integrity',               fn($ctx) => $crud($integrity)->status((int)$ctx['id']));
+            $r->get('/{id}/integrity',               function ($ctx) use ($setup, $crud, $integrity) {
+                $setup();
+                return $crud($integrity)->status((int)$ctx['id']);
+            });
             $r->put('/{id}/integrity-credential',    function ($ctx) use ($manage, $crud, $integrity, $payload) {
                 $manage();
                 return $crud($integrity)->setCredential((int)$ctx['id'], $payload);
@@ -772,7 +826,10 @@ try {
                 return $crud($integrity)->clearCredential((int)$ctx['id']);
             });
 
-            $r->get('',            fn() => $crud($apps)->list($queryParams));
+            $r->get('',            function () use ($setup, $crud, $apps, $queryParams) {
+                $setup();
+                return $crud($apps)->list($queryParams);
+            });
             // Deliberately NOT wrapped in $idempotent, for the same reason
             // API-key creation is not: the response carries the app token,
             // which must not persist in the server-state store as a
@@ -782,7 +839,10 @@ try {
                 $manage();
                 return ['_status' => 201] + $crud($apps)->create($payload);
             });
-            $r->get('/{id}',       fn($ctx) => $crud($apps)->get((int)$ctx['id']));
+            $r->get('/{id}',       function ($ctx) use ($setup, $crud, $apps) {
+                $setup();
+                return $crud($apps)->get((int)$ctx['id']);
+            });
             $r->put('/{id}',       function ($ctx) use ($manage, $crud, $apps, $payload) {
                 $manage();
                 return $crud($apps)->update((int)$ctx['id'], $payload);
@@ -921,6 +981,13 @@ try {
         });
 
         // ── System (admin only; /health is handled above without auth) ─────
+        // Account › Settings shows these (versions, cron, the data engine,
+        // database size, errors): Admin, and the page's own permission,
+        // access_to_settings, as the routes below ask for it. These asked for
+        // Admin alone, so a custom Admin-like role without Settings read them.
+        $settingsPage = static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_settings');
+        };
         $router->group('/system', function (Router $r) use ($db, $queryParams) {
             $make = fn() => new \Api\V3\Controllers\SystemController($db);
 
@@ -930,7 +997,7 @@ try {
             $r->get('/errors',     fn() => $make()->errors($queryParams));
             $r->get('/dataengine', fn() => $make()->dataengineStatus());
             $r->get('/metrics',    fn() => $make()->metrics());
-        }, [$auth->requireAdmin(...)]);
+        }, [$auth->requireAdmin(...), $settingsPage]);
 
         // ── Administration (202-account/administration.php, api-integrations.php) ──
         // What Account › Settings shows and changes for this install, and the
@@ -939,10 +1006,8 @@ try {
         // access_to_settings for Settings, access_to_api_integrations for the
         // integrations. Not stageable; the one-off deletion previews with
         // `?dry_run=1` through the same handler, so it is gated identically.
-        // AdministrationRoutesPermissionTest holds all of this.
-        $settingsPage = static function () use ($auth, $db): void {
-            $auth->requirePermission($db, 'access_to_settings');
-        };
+        // AdministrationRoutesPermissionTest holds all of this. ($settingsPage
+        // is defined above, with the older /system routes it also gates.)
         $integrationsPage = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_api_integrations');
         };

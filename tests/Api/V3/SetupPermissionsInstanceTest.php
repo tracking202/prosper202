@@ -8,11 +8,17 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The Setup routes ask for what the Setup pages ask for (CLAUDE.md #5):
- * access_to_setup_section to create or change anything, and each removal's
- * own remove_* permission to delete it. Before, any key could write: a
- * Campaign viewer's — a role that "changes nothing" — created and deleted
- * campaigns. A dry-run preview and a staged write are refused as the write
- * is, because the permission runs as the route's group middleware.
+ * access_to_setup_section to read, create or change anything, and each
+ * removal's own remove_* permission to delete it. Before, any key could
+ * write: a Campaign viewer's — a role that "changes nothing" — created and
+ * deleted campaigns, and read every campaign's URL and payout, which its
+ * pages never show it. A dry-run preview and a staged write are refused as
+ * the write is, because the permission runs as the route's group middleware.
+ *
+ * The reports, clicks and conversions are open to every role, as the pages
+ * are, with the figures a role without access_to_campaign_data may not see
+ * null and `masked: true` (the pages print '?'); and recording or removing a
+ * conversion asks for the Update pages' permissions.
  *
  * Runs over HTTP against a live instance: P202_BASE with the Super user's
  * REST key in P202_API_KEY. It creates a Campaign viewer (role 5) and a
@@ -169,12 +175,14 @@ final class SetupPermissionsInstanceTest extends TestCase
         $this->assertStringContainsString("'$permission' permission", (string) ($response['message'] ?? ''), "$who: $method $path refused for the wrong reason");
     }
 
-    public function testAViewerReadsButChangesNothing(): void
+    public function testAViewerNeitherReadsNorChangesSetup(): void
     {
         foreach (self::resources() as $resource => [$create, $remove]) {
             $id = self::$fixture[$resource];
-            [$status] = self::call(self::$users['viewer']['key'], 'GET', "/$resource");
-            $this->assertSame(200, $status, "viewer: GET /$resource reads");
+            $this->assertRefused('viewer', 'GET', "/$resource", null, 'access_to_setup_section');
+            $this->assertRefused('viewer', 'GET', "/$resource/$id", null, 'access_to_setup_section');
+            [$status] = self::call(self::$users['manager']['key'], 'GET', "/$resource");
+            $this->assertSame(200, $status, "manager: GET /$resource reads");
             $this->assertRefused('viewer', 'POST', "/$resource", $create, 'access_to_setup_section');
             $this->assertRefused('viewer', 'POST', "/$resource?staged=1", $create, 'access_to_setup_section');
             $this->assertRefused('viewer', 'PUT', "/$resource/$id", $resource === 'rotators' ? ['name' => 'renamed'] : array_slice($create, 0, 1, true), 'access_to_setup_section');
@@ -185,6 +193,9 @@ final class SetupPermissionsInstanceTest extends TestCase
             }
         }
         $rotator = self::$fixture['rotators'];
+        $this->assertRefused('viewer', 'GET', "/rotators/$rotator/rules", null, 'access_to_setup_section');
+        $this->assertRefused('viewer', 'GET', '/trackers/' . self::$fixture['trackers'] . '/url', null, 'access_to_setup_section');
+        $this->assertRefused('viewer', 'GET', '/apps', null, 'access_to_setup_section');
         $this->assertRefused('viewer', 'POST', "/rotators/$rotator/rules", ['rule_name' => 'x'], 'access_to_setup_section');
         $this->assertRefused('viewer', 'DELETE', "/rotators/$rotator/rules/" . self::$ruleId, null, 'remove_rotator_rule');
         foreach (self::$fixture as $resource => $id) {
@@ -205,5 +216,53 @@ final class SetupPermissionsInstanceTest extends TestCase
             $this->assertSame(200, $status, "the refused delete left the $resource in place");
         }
         $this->assertRefused('manager', 'DELETE', '/rotators/' . self::$fixture['rotators'] . '/rules/' . self::$ruleId, null, 'remove_rotator_rule');
+    }
+
+    /**
+     * The viewer (role 5: no access_to_campaign_data) reads every report with
+     * the absolute figures null and `masked: true`, ratios kept; the manager
+     * (role 3, which has it) reads them in full.
+     */
+    public function testReportsAreMaskedForARoleWithoutCampaignData(): void
+    {
+        // Rotator stats are masked the same way (RolePermissionTest); no
+        // seeded role both owns a rotator and lacks access_to_campaign_data,
+        // and a key reads only its own account's rotators.
+        $paths = ['/reports/summary', '/reports/breakdown', '/reports/timeseries', '/reports/daypart',
+            '/reports/weekpart', '/reports/groups?by=campaign', '/clicks', '/conversions'];
+        foreach ($paths as $path) {
+            [$status, $body] = self::call(self::$users['viewer']['key'], 'GET', $path);
+            $this->assertSame(200, $status, "viewer: GET $path is a page every role opens: " . json_encode($body));
+            $this->assertTrue($body['masked'] ?? false, "viewer: GET $path says it is masked");
+            [$status, $body] = self::call(self::$users['manager']['key'], 'GET', $path);
+            $this->assertSame(200, $status, "manager: GET $path");
+            $this->assertArrayNotHasKey('masked', $body, "manager: GET $path is not masked");
+        }
+        [, $summary] = self::call(self::$users['viewer']['key'], 'GET', '/reports/summary');
+        foreach (['total_clicks', 'total_click_throughs', 'total_leads', 'total_income', 'total_cost', 'total_net'] as $hidden) {
+            $this->assertArrayHasKey($hidden, $summary['data']);
+            $this->assertNull($summary['data'][$hidden], "viewer: $hidden is hidden");
+        }
+        foreach (['epc', 'avg_cpc', 'conv_rate', 'roi', 'cpa'] as $ratio) {
+            $this->assertIsNumeric($summary['data'][$ratio], "viewer: $ratio stays, as on the pages");
+        }
+        [, $summary] = self::call(self::$users['manager']['key'], 'GET', '/reports/summary');
+        $this->assertIsInt($summary['data']['total_clicks'], 'manager: a count');
+    }
+
+    /**
+     * Recording a conversion is Update › Subids' (access_to_update_section);
+     * removing one is Update › Delete Subids' (delete_individual_subids as
+     * well). The viewer has neither; the manager has the first only.
+     */
+    public function testConversionWritesAskForTheUpdatePagesPermissions(): void
+    {
+        $this->assertRefused('viewer', 'POST', '/conversions', ['click_id' => 1, 'payout' => 1], 'access_to_update_section');
+        $this->assertRefused('viewer', 'POST', '/conversions?staged=1', ['click_id' => 1, 'payout' => 1], 'access_to_update_section');
+        $this->assertRefused('viewer', 'DELETE', '/conversions/1', null, 'delete_individual_subids');
+        $this->assertRefused('manager', 'DELETE', '/conversions/1', null, 'delete_individual_subids');
+        $this->assertRefused('manager', 'DELETE', '/conversions/1?dry_run=1', null, 'delete_individual_subids');
+        [$status, $body] = self::call(self::$users['manager']['key'], 'POST', '/conversions', ['click_id' => 999999999, 'payout' => 1]);
+        $this->assertNotSame(403, $status, 'manager: recording a conversion passes the role check: ' . json_encode($body));
     }
 }

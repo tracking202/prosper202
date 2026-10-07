@@ -35,6 +35,9 @@ var campaignOptimizeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := refuseMaskedFigures(sumRaw, "p202 campaign optimize"); err != nil {
+			return err
+		}
 		var sum struct {
 			Data map[string]interface{} `json:"data"`
 		}

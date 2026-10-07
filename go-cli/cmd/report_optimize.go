@@ -72,6 +72,10 @@ func fetchBreakdownRows(c *api.Client, params map[string]string) ([]map[string]i
 	if err != nil {
 		return nil, err
 	}
+	// Every caller ranks or sums these rows.
+	if err := refuseMaskedFigures(data, "This command"); err != nil {
+		return nil, err
+	}
 	var resp struct {
 		Data []map[string]interface{} `json:"data"`
 	}

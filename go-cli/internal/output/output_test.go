@@ -676,3 +676,47 @@ func TestQuietIdSkipsANullForeignKeyRatherThanDroppingTheRow(t *testing.T) {
 		}
 	}
 }
+
+// A masked answer (a role without access_to_campaign_data) says so in every
+// view: the table and CSV with a note on stderr (their cells are blank), each
+// NDJSON line with "masked": true, JSON as the server sent it, and stderr
+// left to errors in the machine views.
+func TestAMaskedAnswerSaysSoInEveryView(t *testing.T) {
+	masked := []byte(`{"data":[{"name":"A","total_clicks":null,"epc":2.5}],"masked":true}`)
+	plain := []byte(`{"data":[{"name":"A","total_clicks":4,"epc":2.5}]}`)
+
+	for _, view := range []struct {
+		name string
+		opts Opts
+		note bool
+	}{
+		{"table", Opts{}, true},
+		{"csv", Opts{CSV: true}, true},
+		{"json", Opts{JSON: true}, false},
+		{"ndjson", Opts{NDJSON: true}, false},
+	} {
+		var stdout string
+		stderr := captureStderr(t, func() {
+			stdout = captureStdout(t, func() { RenderWith(masked, view.opts) })
+		})
+		if got := strings.Contains(stderr, MaskedNote); got != view.note {
+			t.Errorf("%s: note on stderr = %v, want %v (stderr %q)", view.name, got, view.note, stderr)
+		}
+		if !view.note && stderr != "" {
+			t.Errorf("%s: stderr is for errors, got %q", view.name, stderr)
+		}
+		if view.name == "ndjson" && !strings.Contains(stdout, `"masked":true`) {
+			t.Errorf("ndjson: each line carries the flag, got %q", stdout)
+		}
+		if view.name == "json" && !strings.Contains(stdout, `"masked": true`) {
+			t.Errorf("json: the flag is in the answer, got %q", stdout)
+		}
+
+		stderr = captureStderr(t, func() {
+			_ = captureStdout(t, func() { RenderWith(plain, view.opts) })
+		})
+		if stderr != "" {
+			t.Errorf("%s: an unmasked answer printed %q", view.name, stderr)
+		}
+	}
+}

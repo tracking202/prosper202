@@ -12,7 +12,9 @@ how to do on a page, and to see what still needs the browser.
 | — | Not applicable: the page shows content or talks to a hosted Prosper202 service, not this install |
 
 Permissions follow the pages: a key acts as its user, and a route asks for
-the role permission its page asks for (see
+the role permission its page asks for, and a report shows a role what its
+page shows it: without `access_to_campaign_data`, clicks, leads and money
+are hidden (`null`, `"masked": true`) as the pages print `?` (see
 [Role Permissions](../api/00-api-integrations.md#role-permissions)). A Setup
 record links only to the caller's own records
 ([Linked Records](../api/00-api-integrations.md#linked-records)).

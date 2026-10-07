@@ -66,21 +66,39 @@ limit that user — a scope can narrow a key further, never past its role:
 
 | Routes | The role needs | As the page that does it |
 | ------ | -------------- | ------------------------ |
-| `POST`/`PUT` on `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules), and their `bulk-upsert` | `access_to_setup_section` | every Setup page |
+| `/campaigns`, `/aff-networks`, `/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`, `/text-ads`, `/rotators` (and rotator rules): reads, `POST`/`PUT` and `bulk-upsert`; `GET /trackers/{id}/url`; the Mobile Apps reads (`GET /apps`, `/apps/{id}`, `/apps/skan-encodings…`, `/apps/{id}/store-link`, `/apps/{id}/integrity`) | `access_to_setup_section` | every Setup page (they are the only place these records are shown) |
 | `DELETE` of each of those | its own `remove_*` — `remove_campaign`, `remove_campaign_category`, `remove_traffic_source`, `remove_traffic_source_account`, `remove_tracker`, `remove_landing_page`, `remove_text_ad`, `remove_rotator`, `remove_rotator_rule` — and `access_to_setup_section` | the Setup pages' remove buttons, `delete_tracker.php` |
-| The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
+| The Update routes (`/clicks/cpc`, `/conversions/subids…`, `/conversions/uploads`), and recording one conversion (`POST /conversions`) | `access_to_update_section`; deleting subids also `delete_individual_subids` | the Update section ([Update](26-update.md)) |
+| Removing one conversion (`DELETE /conversions/{id}`) | `delete_individual_subids` and `access_to_update_section` | Update › Delete Subids |
+| `/system/version`, `/db-stats`, `/cron`, `/errors`, `/dataengine`, `/metrics`, and the rest of Account › Settings (`/system/info`, `/login-log`, `/retention`, `/isp-lookup`) | Admin, and `access_to_settings` | Account › Settings |
 | The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
 | A traffic source's custom variables, reads included: `/ppc-networks/{id}/variables` | `remove_traffic_source` and `access_to_setup_section` | Traffic Sources' variables dialog, shown only to a role with both |
 | Attribution reports and models | `view_attribution_reports`, `manage_attribution_models` | Attribution |
 
 The check runs before the handler, so a `?dry_run=1` preview and a
 `?staged=1` proposal are refused exactly as the write is, and a staged change
-is applied with the applier's permissions. Reads are not gated by role,
-except the Setup code, pixels and variables above, which only the Setup pages
-show. A refusal is `403` naming the permission: `This account's role does not
-have the 'remove_campaign' permission.` (`p202` adds a hint naming `p202 user
-role`).
-Forecast events have no Setup page and are not gated.
+is applied with the applier's permissions. A refusal is `403` naming the
+permission: `This account's role does not have the 'remove_campaign'
+permission.` (`p202` adds a hint naming `p202 user role`). Forecast events,
+goals and LTV have no page that asks for a permission and are not gated by
+role (keys still need their scopes).
+
+**Campaign figures.** The reports (`/reports/…`, `/rotators/{id}/stats`), the
+clicks (`/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions`) and the
+conversions (`GET /conversions…`) are open to every role, as Overview,
+Analyze and Visitors are, but a role without `access_to_campaign_data` (the
+seeded Campaign viewer and Publisher roles) reads them as those pages show
+them: the absolute clicks, click-throughs, leads, income, cost and net — and
+a click's or conversion's cost and payout — are `null`, the ratios (EPC, CPC,
+conversion rate, ROI, CPA) are kept, and the answer carries `"masked": true`.
+The pages print `?`; a number field holds `null` instead, so a client reads
+"hidden" rather than a figure. `p202` notes it under a table and marks each
+`--ndjson` line.
+
+Until this, reads asked for no role: a Campaign viewer's key listed every
+campaign with its URL and payout, read every report's money, and recorded and
+deleted conversions. `RolePermissionTest` now requires every route to ask for
+a permission, mask, or be listed with the reason it needs neither.
 
 ### Linked Records
 

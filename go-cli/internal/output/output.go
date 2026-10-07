@@ -81,6 +81,7 @@ func RenderWith(data []byte, opts Opts) {
 	}
 	if opts.CSV {
 		renderCSVData(data, opts)
+		noteMasked(data)
 		return
 	}
 
@@ -90,6 +91,7 @@ func RenderWith(data []byte, opts Opts) {
 		fmt.Println()
 		return
 	}
+	defer noteMasked(data)
 
 	switch v := parsed.(type) {
 	case []interface{}:
@@ -107,6 +109,22 @@ func RenderWith(data []byte, opts Opts) {
 		}
 	default:
 		fmt.Println(string(data))
+	}
+}
+
+// MaskedNote is what a human view prints, on stderr, under an answer the
+// server masked: a role without access_to_campaign_data reads reports,
+// clicks and conversions with the absolute clicks, leads and money null
+// (`"masked": true`), which a table shows as blank cells. JSON and NDJSON
+// carry the flag themselves and keep stderr for errors.
+const MaskedNote = "Note: this account's role does not have the access_to_campaign_data permission, so clicks, leads and money are hidden (blank); the ratios are shown."
+
+func noteMasked(data []byte) {
+	var top struct {
+		Masked bool `json:"masked"`
+	}
+	if json.Unmarshal(data, &top) == nil && top.Masked {
+		fmt.Fprintln(os.Stderr, MaskedNote)
 	}
 }
 
@@ -158,7 +176,16 @@ func renderQuiet(data []byte) {
 
 // renderNDJSON prints one compact JSON object per row.
 func renderNDJSON(data []byte) {
+	// A masked answer's flag sits beside its rows; each line carries it, so
+	// a reader of one line knows its blanks are hidden, not zero.
+	var top struct {
+		Masked bool `json:"masked"`
+	}
+	masked := json.Unmarshal(data, &top) == nil && top.Masked
 	for _, obj := range rowsOf(data) {
+		if masked {
+			obj["masked"] = true
+		}
 		if b, err := json.Marshal(obj); err == nil {
 			fmt.Println(string(b))
 		}

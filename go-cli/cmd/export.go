@@ -117,6 +117,13 @@ func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]str
 		if err != nil {
 			return nil, err
 		}
+		// The report rows paged here are summed or compared by every caller
+		// (list --stats, analytics --split-at); hidden figures are not zeros.
+		if strings.HasPrefix(endpoint, "reports/") {
+			if err := refuseMaskedFigures(data, "This command"); err != nil {
+				return nil, err
+			}
+		}
 		rows, err := parseDataArray(data)
 		if err != nil {
 			return nil, err

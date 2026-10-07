@@ -160,6 +160,17 @@ Deleted campaign 42.
 
 Void operations print a plain-text success message to stdout. There is no JSON body -- the API returns 204 No Content.
 
+### Hidden figures (`"masked": true`)
+
+A key whose user's role lacks `access_to_campaign_data` (the Campaign viewer
+and Publisher roles) reads reports, clicks and conversions as its pages show
+them: the absolute clicks, click-throughs, leads, income, cost and net, and a
+click's or conversion's cost and payout, are `null`, the ratios are kept, and
+the answer has `"masked": true` (each `--ndjson` line carries it). A `null`
+there means hidden, not zero: do not sum it or report it as 0. Setup records
+(`campaign list` and the like) are refused outright for a role without
+`access_to_setup_section`, with a 403 that names the permission.
+
 ### Error
 
 On failure nothing is written to stdout. With `--json` or `--ndjson`, and whenever JSON was chosen automatically for an agent, stderr carries exactly one JSON envelope:

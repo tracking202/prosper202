@@ -106,6 +106,7 @@ var reportGroupsCmd = &cobra.Command{
 		var resp struct {
 			Data   []map[string]interface{} `json:"data"`
 			Totals map[string]interface{}   `json:"totals"`
+			Masked bool                     `json:"masked"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
 			return fmt.Errorf("parsing the group report: %w", err)
@@ -118,7 +119,11 @@ var reportGroupsCmd = &cobra.Command{
 			}
 			rows = append(rows, total)
 		}
-		encoded, err := json.Marshal(map[string]interface{}{"data": rows})
+		flat := map[string]interface{}{"data": rows}
+		if resp.Masked {
+			flat["masked"] = true
+		}
+		encoded, err := json.Marshal(flat)
 		if err != nil {
 			return fmt.Errorf("encoding %d groups: %w", len(rows), err)
 		}

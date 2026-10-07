@@ -240,6 +240,9 @@ func runForecast(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("fetching historical data: %w", err)
 	}
+	if err := refuseMaskedFigures(data, "p202 forecast"); err != nil {
+		return err
+	}
 	// A cut series is missing its most recent buckets, the ones a forecast
 	// anchors on (--history alltime or thisyear by day can pass the cap).
 	if w := timeseriesTruncationWarning(data, interval); w != "" {
