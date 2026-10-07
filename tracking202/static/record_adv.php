@@ -434,8 +434,6 @@ setPCIdCookie($mysql['click_id_public']);
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
 
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_adv');
-
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 

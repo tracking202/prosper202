@@ -484,8 +484,6 @@ setOutboundCookie($outbound_site_url);
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
 
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_simple');
-
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 

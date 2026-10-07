@@ -679,5 +679,3 @@ if ($mysql['click_cpa'] != NULL) {
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
-
-p202LinkImpressionToClick($db, $mysql['click_id'], null, 'dl.php');

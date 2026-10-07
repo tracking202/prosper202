@@ -16,8 +16,9 @@ use Tests\Support\SourceScan;
  * the port on a non-default one, and a Domain with a port never matches: the
  * browser dropped tracking202subid and every cookie beside it, so lp.php
  * never set click_out and no pixel found its click by cookie on an install
- * served from :8080 or :8443. go.php and ipx.php used SERVER_NAME, which is
- * the server's configured name rather than the host the browser asked for.
+ * served from :8080 or :8443. go.php and ipx.php (whose cookie is gone with
+ * its impression write) used SERVER_NAME, which is the server's configured
+ * name rather than the host the browser asked for.
  * Each was its own derivation; this test makes a new one name its line.
  *
  * What it reads, by token: every call to setcookie() and setrawcookie() —
@@ -90,13 +91,13 @@ final class CookieDomainSourceTest extends TestCase
     public function testTheScanReadsTheTreesCookieDomains(): void
     {
         // Without this a scan that read nothing would pass the test above:
-        // connect2.php's twelve click cookies, go.php's three, ipx.php's one,
-        // and remember_me's three.
+        // connect2.php's twelve click cookies, go.php's three and
+        // remember_me's three.
         $read = 0;
         foreach (SourceScan::phpFiles() as $path => $source) {
             $read += self::scan($source, self::ALLOWED_IN_FILE[$path] ?? [])['domains'];
         }
-        self::assertGreaterThanOrEqual(19, $read);
+        self::assertGreaterThanOrEqual(18, $read);
     }
 
     /**
@@ -119,10 +120,9 @@ final class CookieDomainSourceTest extends TestCase
             }
         }
 
-        // connect2.php's twelve, go.php's three, ipx.php's one, remember_me's
-        // three and the visitor cookie: without a floor a scan that read
-        // nothing would pass.
-        self::assertGreaterThanOrEqual(20, $read);
+        // connect2.php's twelve, go.php's three, remember_me's three and the
+        // visitor cookie: without a floor a scan that read nothing would pass.
+        self::assertGreaterThanOrEqual(19, $read);
         self::assertSame([], $problems, "A cookie is not set for the whole site:\n  " . implode("\n  ", $problems)
             . "\nPass 'path' => '/': the readers (lp.php, the pixels, the API) live in other directories.");
     }
