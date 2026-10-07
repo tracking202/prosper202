@@ -6,14 +6,15 @@ namespace Tests\DataEngine;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\DataEngine\SortOrder;
+use Prosper202\Report\LocalTime;
 
 final class SortOrderTest extends TestCase
 {
     public function testUnknownKeyFallsBackToLeadsDesc(): void
     {
-        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause(''));
-        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('nonsense'));
-        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('clicks; DROP TABLE 202_clicks'));
+        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('', 'UTC'));
+        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('nonsense', 'UTC'));
+        self::assertSame(' ORDER BY leads DESC', SortOrder::orderByClause('clicks; DROP TABLE 202_clicks', 'UTC'));
     }
 
     public function testEveryClauseKeepsItsLeadingSpace(): void
@@ -21,31 +22,35 @@ final class SortOrderTest extends TestCase
         // Report SQL concatenates the clause directly after
         // "group by <column>", so the leading space is load-bearing.
         self::assertStringStartsWith(' ', SortOrder::DEFAULT_ORDER);
-        self::assertStringStartsWith(' ', SortOrder::orderByClause('sort_breakdown_clicks asc'));
-        self::assertStringStartsWith(' ', SortOrder::orderByClause('breakdown desc'));
+        self::assertStringStartsWith(' ', SortOrder::orderByClause('sort_breakdown_clicks asc', 'UTC'));
+        self::assertStringStartsWith(' ', SortOrder::orderByClause('breakdown desc', 'UTC'));
     }
 
+    /**
+     * A group's own first click, not whichever row's click_time MySQL kept
+     * for an ungrouped column (which the query's grouping made arbitrary).
+     */
     public function testTimeOrderingMapsDirectly(): void
     {
-        self::assertSame(' ORDER BY click_time DESC', SortOrder::orderByClause('sort_breakdown_time_order desc'));
-        self::assertSame(' ORDER BY click_time ASC', SortOrder::orderByClause('sort_breakdown_time_order asc'));
+        self::assertSame(' ORDER BY MIN(click_time) DESC', SortOrder::orderByClause('sort_breakdown_time_order desc', 'UTC'));
+        self::assertSame(' ORDER BY MIN(click_time) ASC', SortOrder::orderByClause('sort_breakdown_time_order asc', 'UTC'));
     }
 
     public function testMetricOrderingMatchesItsKey(): void
     {
         // The legacy map inverted these (asc sorted DESC) to match a toggle
         // contract of a UI that no longer exists; keys now mean what they say.
-        self::assertSame(' ORDER BY `clicks` ASC', SortOrder::orderByClause('sort_breakdown_clicks asc'));
-        self::assertSame(' ORDER BY `clicks` DESC', SortOrder::orderByClause('sort_breakdown_clicks desc'));
-        self::assertSame(' ORDER BY `net` ASC', SortOrder::orderByClause('sort_breakdown_net asc'));
-        self::assertSame(' ORDER BY `roi` DESC', SortOrder::orderByClause('sort_breakdown_roi desc'));
+        self::assertSame(' ORDER BY `clicks` ASC', SortOrder::orderByClause('sort_breakdown_clicks asc', 'UTC'));
+        self::assertSame(' ORDER BY `clicks` DESC', SortOrder::orderByClause('sort_breakdown_clicks desc', 'UTC'));
+        self::assertSame(' ORDER BY `net` ASC', SortOrder::orderByClause('sort_breakdown_net asc', 'UTC'));
+        self::assertSame(' ORDER BY `roi` DESC', SortOrder::orderByClause('sort_breakdown_roi desc', 'UTC'));
     }
 
     public function testSuRatioSortsByItsRealAlias(): void
     {
         // The legacy map produced ORDER BY `su`, a column no report query
         // defines; the metric's alias is su_ratio.
-        self::assertSame(' ORDER BY `su_ratio` DESC', SortOrder::orderByClause('sort_breakdown_su_ratio desc'));
+        self::assertSame(' ORDER BY `su_ratio` DESC', SortOrder::orderByClause('sort_breakdown_su_ratio desc', 'UTC'));
     }
 
     public function testCanonicalKeyOnlyReflectsWhitelistedKeys(): void
@@ -56,12 +61,21 @@ final class SortOrderTest extends TestCase
         self::assertSame('', SortOrder::canonicalKey('sort_breakdown_income DESC'), 'Case must match exactly');
     }
 
+    /**
+     * The hour of the day on the account's clock (LocalTime), not
+     * FROM_UNIXTIME() in whatever zone the connection is in.
+     */
     public function testHourBreakdownOrdering(): void
     {
         self::assertSame(
-            ' ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) ASC',
-            SortOrder::orderByClause('breakdown asc')
+            ' ORDER BY HOUR(' . LocalTime::datetimeSql('click_time', 'Asia/Kolkata') . ') ASC',
+            SortOrder::orderByClause('breakdown asc', 'Asia/Kolkata')
         );
+        self::assertSame(
+            ' ORDER BY HOUR(' . LocalTime::datetimeSql('click_time', 'America/New_York') . ') DESC',
+            SortOrder::orderByClause('breakdown desc', 'America/New_York')
+        );
+        self::assertStringNotContainsString('FROM_UNIXTIME', SortOrder::orderByClause('breakdown asc', 'UTC'));
     }
 
     public function testEveryMappedClauseIsAWhitelistedOrderBy(): void
@@ -75,7 +89,7 @@ final class SortOrderTest extends TestCase
 
         foreach ($keys as $key) {
             foreach (['asc', 'desc'] as $direction) {
-                $clause = SortOrder::orderByClause($key . ' ' . $direction);
+                $clause = SortOrder::orderByClause($key . ' ' . $direction, 'UTC');
                 self::assertSame(
                     ' ORDER BY `' . str_replace(['sort_breakdown_', 'click_throughs'], ['', 'click_out'], $key) . '` ' . strtoupper($direction),
                     $clause,

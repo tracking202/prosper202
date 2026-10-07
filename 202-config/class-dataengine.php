@@ -11,6 +11,7 @@ use Prosper202\DataEngine\MetricsSql;
 use Prosper202\DataEngine\ReportTotals;
 use Prosper202\DataEngine\SortOrder;
 use Prosper202\DataEngine\UserPrefFilters;
+use Prosper202\Report\LocalTime;
 
 ini_set('memory_limit', '-1');
 if (!isset($_SESSION['user_timezone']) || empty($_SESSION['user_timezone'])) {
@@ -45,19 +46,23 @@ class DataEngine
         return self::$db !== null;
     }
 
-    private function getDbConnection(): ?mysqli
+    /**
+     * click_time as the wall clock of the account's zone, in SQL (LocalTime):
+     * the zone the page put in force with AUTH::set_timezone(), which is the
+     * zone grab_timeframe() computed the window in, so a report's hours,
+     * weekdays and days are the ones its window is made of.
+     *
+     * The engine used to SET the connection's time_zone to that zone's
+     * offset *today*, rounded to whole hours, and group by FROM_UNIXTIME():
+     * India's +05:30 was +06:00 all year, every click on the far side of a
+     * daylight-saving change from today was an hour out, and the setting
+     * stayed on the connection for the rest of the request (the cron's
+     * attribution exports ran in it). Nothing here touches the connection's
+     * zone now.
+     */
+    private static function localClickTime(): string
     {
-        if ($this->isDatabaseConnected()) {
-            return self::$db;
-        }
-
-        // Fallback to the legacy global database connection.
-        global $db;
-        if ($db instanceof mysqli) {
-            return $db;
-        }
-
-        return null;
+        return LocalTime::datetimeSql('click_time', date_default_timezone_get());
     }
 
     public function __construct()
@@ -78,13 +83,8 @@ class DataEngine
             ? " WHERE 2st.user_id != '0' "
             : " WHERE 2st.user_id ='" . $dataUserId . "' ";
 
-        // Make MySQL use the timezone chosen by the user.
-        $timezone = new DateTimeZone(date_default_timezone_get());
-        $offsetHours = round($timezone->getOffset(new DateTime()) / 3600);
-        if ($offsetHours >= 0) {
-            $offsetHours = '+' . $offsetHours;
-        }
-        $this->getDbConnection()?->query("SET time_zone = '" . $offsetHours . ":00'");
+        // The account's clock is localClickTime(), in each query; the
+        // connection's zone is not the engine's to set.
     }
 
     public function setDownload(): void
@@ -505,18 +505,22 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
     {
         new UserPrefs();
 
-        [$groupby, $dateFormat] = match (UserPrefs::getPref('user_pref_breakdown')) {
-            'hour' => [" HOUR(FROM_UNIXTIME(click_time)) ", "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d, %Y at %l%p')"],
-            'month' => [" MONTH(FROM_UNIXTIME(click_time)) ", "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %Y')"],
-            'year' => [" YEAR(FROM_UNIXTIME(click_time)) ", "DATE_FORMAT(FROM_UNIXTIME(click_time),'%Y')"],
-            default => [" DAY(FROM_UNIXTIME(click_time)) ", "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d, %Y')"],
+        // Each label names one calendar hour, day, month or year of the
+        // account's clock, so the rows are grouped by the label. They were
+        // grouped by HOUR(), DAY() or MONTH() of the time alone: 7 September
+        // and 7 October were one row, and so was every day's 3 pm.
+        $label = match (UserPrefs::getPref('user_pref_breakdown')) {
+            'hour' => '%b %d, %Y at %l%p',
+            'month' => '%b %Y',
+            'year' => '%Y',
+            default => '%b %d, %Y',
         };
 
         $filters = $this->getFilters();
-        $sql = "SELECT " . $dateFormat . " as click_time_from_disp," . MetricsSql::GROUPED_SELECT
+        $sql = "SELECT DATE_FORMAT(" . self::localClickTime() . ", '" . $label . "') as click_time_from_disp," . MetricsSql::GROUPED_SELECT
             . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
             . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
-            . " group by" . $groupby . $this->sortOrder('sort_breakdown_time_order asc');
+            . " group by click_time_from_disp" . $this->sortOrder('sort_breakdown_time_order asc');
 
         return $this->collectRows($sql, $cpv);
     }
@@ -524,11 +528,14 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
     public function doHourlyReport($clickFrom, $clickTo, $cpv)
     {
         $filters = $this->getFilters();
-        $sql = "SELECT  DATE_FORMAT(FROM_UNIXTIME(click_time),'%l %p')  as click_time_from_disp, DATE_FORMAT(FROM_UNIXTIME(click_time),'%p') as ampm,"
+        // The account's hour of the day. The labels are read from one row of
+        // the hour, so the clock is worked out once a row, for the group.
+        $local = self::localClickTime();
+        $sql = "SELECT HOUR(" . $local . ") as hour_of_day, DATE_FORMAT(" . $local . ",'%l %p') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%p') as ampm,"
             . MetricsSql::GROUPED_SELECT
             . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
             . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
-            . " group by HOUR(FROM_UNIXTIME(click_time)) " . $this->sortOrder('breakdown asc');
+            . " group by hour_of_day " . $this->sortOrder('breakdown asc');
 
         return $this->collectRows($sql, $cpv);
     }
@@ -536,7 +543,9 @@ AND 2c.click_time <= " . $clickTo . $click_filtered . "
     public function doWeeklyReport($clickFrom, $clickTo, $cpv)
     {
         $filters = $this->getFilters();
-        $sql = "SELECT DATE_FORMAT(FROM_UNIXTIME(click_time),'%a') as click_time_from_disp, DATE_FORMAT(FROM_UNIXTIME(click_time),'%w') as click_time_from_sort,"
+        // The account's weekday, grouped by its name.
+        $local = self::localClickTime();
+        $sql = "SELECT DATE_FORMAT(" . $local . ",'%a') as click_time_from_disp, DATE_FORMAT(" . $local . ",'%w') as click_time_from_sort,"
             . MetricsSql::GROUPED_SELECT
             . " FROM 202_dataengine as 2st " . $filters['join'] . $this->mysql['user_id_query']
             . " AND click_time >= " . $clickFrom . " AND click_time <= " . $clickTo . $filters['filter']
@@ -676,7 +685,7 @@ ORDER BY ppc_network_id , name , variable";
             $sortKey = (string) ($_POST['order'] ?? '');
         }
 
-        return SortOrder::orderByClause($sortKey);
+        return SortOrder::orderByClause($sortKey, date_default_timezone_get());
     }
 
     /**
@@ -995,12 +1004,10 @@ ORDER BY ppc_network_id , name , variable";
             }
             $sqlSelectObj = implode(',', $selectParts);
 
-            if ($time_range == 'hours') {
-                $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y %l:00%p')";
-            } else {
-                $rangeGroupby = "DATE_FORMAT(FROM_UNIXTIME(click_time),'%b %d %Y')";
-            }
-            $rangeFormat = ", " . $rangeGroupby . " AS date_range";
+            // The account's hours or days, named as the series below name
+            // returnRanges()' points, which step through the same zone.
+            $rangeLabel = $time_range == 'hours' ? '%b %d %Y %l:00%p' : '%b %d %Y';
+            $rangeFormat = ", DATE_FORMAT(" . self::localClickTime() . ", '" . $rangeLabel . "') AS date_range";
 
             if ($campaign != '0') {
                 $rangeFormat .= ", aff_campaign_name";
@@ -1027,7 +1034,7 @@ ORDER BY ppc_network_id , name , variable";
                 $sqlObj .= "AND 2st.aff_campaign_id = '" . (int) $campaign . "' ";
             }
             $sqlObj .= $click_filtered . " ";
-            $sqlObj .= "GROUP BY " . $rangeGroupby . ";";
+            $sqlObj .= "GROUP BY date_range;";
 
             // No recognized metrics selected: skip the query and let every
             // series fall through to its zero-filled default.

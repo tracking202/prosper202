@@ -125,6 +125,14 @@ credited range is the conversions' `conv_time`; the cost range is the clicks'
 `click_time`. `totals.attributed_revenue` is the counted value of the
 conversions in range, the same under every model.
 
+Under `group_by=day` a row's `key` (and `name`) is a date, `YYYY-MM-DD`, in
+the account's time zone, which `meta.timezone` names (the user's
+`user_timezone`, UTC when unset): a conversion at 03:30 UTC on 8 March is on
+7 March for an account in New York, and one at 18:45 UTC on 1 October is on
+2 October for an account in India. An export grouped by day uses the same
+zone. (The days used to be the database connection's, which was the
+server's zone for the API and UTC for an export.)
+
 With `cohort=click` the credited range is the `click_time` of the click each
 credit lands on, and an assist is an assisting touch made in the range, for a
 conversion at any time. A row is then what its own clicks in the range earned

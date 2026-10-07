@@ -235,27 +235,24 @@ class CapabilitiesController
         return (string)($row['version'] ?? 'unknown');
     }
 
+    /**
+     * `named-timezone`: every report reads hours, days, weeks and months in
+     * the account's own named zone (user_timezone), daylight saving and
+     * half-hour offsets included, on every server. The reports, the report
+     * pages and the attribution day buckets convert with
+     * Prosper202\Report\LocalTime, from PHP's zone database, so nothing
+     * depends on MySQL's time-zone tables or the connection's zone any more.
+     *
+     * This used to probe CONVERT_TZ() to a named zone and answer
+     * `fallback-only` when MySQL had no zone tables — true of the reports
+     * then (they fell back to UTC hours), and a falsehood once they stopped
+     * asking MySQL: a server without zone tables (Debian's MariaDB among
+     * them) told an agent its reports could not read a named zone while
+     * they did. The answer is a fact about this code, so it is not probed.
+     */
     private function timezoneSupport(): string
     {
-        $stmt = $this->db->prepare("SELECT CONVERT_TZ('2000-01-01 00:00:00', '+00:00', 'UTC') AS tz");
-        if (!$stmt) {
-            return 'unknown';
-        }
-
-        // @phpstan-ignore-next-line capability probe; execute is return-checked with graceful 'unknown' fallback, no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        return ($row['tz'] ?? null) === null ? 'fallback-only' : 'named-timezone';
+        return 'named-timezone';
     }
 
     private function maxBulkRows(): int

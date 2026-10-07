@@ -24,6 +24,9 @@ final class LocalTimeIntegrationTest extends TestCase
     private const array ZONES = [
         'UTC', 'America/New_York', 'Europe/London', 'Asia/Kolkata', 'Asia/Kathmandu',
         'America/St_Johns', 'Australia/Lord_Howe', 'Pacific/Chatham', 'Pacific/Apia',
+        // Zones PHP keeps no history for: an abbreviation (what the report
+        // engine puts in force when the session names no zone) and offsets.
+        'GMT', 'EST', '+05:30', '-03:00',
     ];
 
     private static ?\mysqli $db = null;
@@ -83,7 +86,7 @@ final class LocalTimeIntegrationTest extends TestCase
             foreach (self::ZONES as $zone) {
                 $moments = self::moments($zone, $now);
                 self::assertTrue(self::$db->query('DROP TEMPORARY TABLE IF EXISTS lt_moments'));
-                self::assertTrue(self::$db->query('CREATE TEMPORARY TABLE lt_moments (t BIGINT NOT NULL)'), self::$db->error);
+                self::assertTrue(self::$db->query('CREATE TEMPORARY TABLE lt_moments (t INT UNSIGNED NOT NULL)'), self::$db->error);
                 self::assertTrue(self::$db->query('INSERT INTO lt_moments (t) VALUES (' . implode('), (', $moments) . ')'), self::$db->error);
 
                 $local = LocalTime::datetimeSql('m.t', $zone, $now);
@@ -107,11 +110,45 @@ final class LocalTimeIntegrationTest extends TestCase
         self::$db->query("SET time_zone = 'SYSTEM'");
     }
 
+    /**
+     * An hour number read as its first second (`r.bucket * 3600`, the
+     * attribution rollup's buckets) agrees with PHP at every hour on each
+     * side of every offset change.
+     */
+    public function testAnHourNumberTimesItsLengthIsTheHoursFirstSecond(): void
+    {
+        $now = 1_791_331_200;
+        self::assertTrue(self::$db->query("SET time_zone = '-09:30'"), self::$db->error);
+        foreach (self::ZONES as $zone) {
+            $hours = [0, intdiv($now, 3600)];
+            foreach (LocalTime::offsets($zone, $now) as [$from]) {
+                array_push($hours, intdiv($from, 3600) - 1, intdiv($from, 3600), intdiv($from, 3600) + 1);
+            }
+            $hours = array_values(array_unique(array_filter($hours, static fn (int $h): bool => $h >= 0)));
+            self::assertTrue(self::$db->query('DROP TEMPORARY TABLE IF EXISTS lt_hours'));
+            self::assertTrue(self::$db->query('CREATE TEMPORARY TABLE lt_hours (h INT UNSIGNED NOT NULL)'), self::$db->error);
+            self::assertTrue(self::$db->query('INSERT INTO lt_hours (h) VALUES (' . implode('), (', $hours) . ')'), self::$db->error);
+            $local = LocalTime::datetimeSql('m.h * 3600', $zone, $now);
+            $result = self::$db->query("SELECT m.h, DATE_FORMAT($local, '%Y-%m-%d %H:%i:%s') AS wall FROM lt_hours m");
+            self::assertNotFalse($result, self::$db->error);
+            $tz = new \DateTimeZone($zone);
+            foreach ($result->fetch_all(MYSQLI_ASSOC) as $row) {
+                $php = (new \DateTimeImmutable('@' . ((int) $row['h'] * 3600)))->setTimezone($tz);
+                self::assertSame($php->format('Y-m-d H:i:s'), $row['wall'], "$zone, hour {$row['h']}");
+            }
+        }
+        self::$db->query("SET time_zone = 'SYSTEM'");
+    }
+
     public function testAZoneWithoutChangesIsOneOffsetAndAColumnIsAColumn(): void
     {
-        self::assertSame('(de.click_time + 19800)', LocalTime::secondsSql('de.click_time', 'Asia/Kolkata', 1_791_331_200));
-        self::assertSame('(click_time + 0)', LocalTime::secondsSql('click_time', 'UTC', 1_791_331_200));
-        foreach (['de.click_time; DROP TABLE x', 'a.b.c', '1', '', 'de.click_time)'] as $bad) {
+        self::assertSame('(CAST(de.click_time AS SIGNED) + 19800)', LocalTime::secondsSql('de.click_time', 'Asia/Kolkata', 1_791_331_200));
+        self::assertSame('(CAST(click_time AS SIGNED) + 0)', LocalTime::secondsSql('click_time', 'UTC', 1_791_331_200));
+        self::assertSame('(CAST(click_time AS SIGNED) + 0)', LocalTime::secondsSql('click_time', 'GMT', 1_791_331_200));
+        self::assertSame('(CAST(click_time AS SIGNED) + -18000)', LocalTime::secondsSql('click_time', 'EST', 1_791_331_200));
+        self::assertSame('(CAST(r.bucket * 3600 AS SIGNED) + 19800)', LocalTime::secondsSql('r.bucket * 3600', 'Asia/Kolkata', 1_791_331_200));
+        foreach (['de.click_time; DROP TABLE x', 'a.b.c', '1', '', 'de.click_time)', 'r.bucket * x', 'r.bucket * 0',
+            'r.bucket * -1', 'r.bucket*3600', 'r.bucket * 3600 + 1', '3600 * r.bucket', 'r.bucket * 3600 * 2'] as $bad) {
             try {
                 LocalTime::secondsSql($bad, 'UTC');
                 self::fail("$bad was accepted as a column");

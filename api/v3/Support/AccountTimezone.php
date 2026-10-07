@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Prosper202\Report\AccountZone;
 
 /**
  * The account's timezone (202_users.user_timezone), as the report pages use
- * it; UTC when it is unset or not a timezone PHP knows. For a class with
- * StatementHelpers, a $db and a $userId.
+ * it; UTC when it is unset or not a timezone PHP knows (AccountZone, the one
+ * rule). For a class with StatementHelpers, a $db and a $userId.
  */
 trait AccountTimezone
 {
@@ -26,16 +27,6 @@ trait AccountTimezone
         $row = $result->fetch_assoc();
         $stmt->close();
 
-        $timezone = trim((string)($row['user_timezone'] ?? ''));
-        if ($timezone === '') {
-            return 'UTC';
-        }
-
-        try {
-            new \DateTimeZone($timezone);
-            return $timezone;
-        } catch (\Throwable) {
-            return 'UTC';
-        }
+        return AccountZone::normalize(isset($row['user_timezone']) ? (string) $row['user_timezone'] : null);
     }
 }

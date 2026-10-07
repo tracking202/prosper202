@@ -193,6 +193,24 @@ final class SyncFeaturesTest extends TestCase
         $this->assertSame('named-timezone', $result['data']['server']['timezone_support']);
     }
 
+    /**
+     * A server without MySQL's zone tables (CONVERT_TZ() to a named zone is
+     * NULL) still reads every report in the account's named zone, so the
+     * capability says so. It answered `fallback-only` there, which was the
+     * truth only while the reports asked MySQL to convert.
+     */
+    public function testTimezoneSupportDoesNotDependOnTheDatabasesZoneTables(): void
+    {
+        $db = $this->createMysqliMock([
+            'SELECT version FROM 202_version' => ['version' => '1.2.3'],
+            'CONVERT_TZ' => ['tz' => null],
+        ]);
+
+        $result = (new CapabilitiesController($db))->capabilities();
+
+        $this->assertSame('named-timezone', $result['data']['server']['timezone_support']);
+    }
+
     public function testCapabilitiesExposesConfiguredMaxBulkRows(): void
     {
         putenv('P202_MAX_BULK_ROWS=123');

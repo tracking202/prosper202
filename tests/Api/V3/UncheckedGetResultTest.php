@@ -66,8 +66,6 @@ final class UncheckedGetResultTest extends TestCase
      * an unchecked one is reported wherever it is.
      */
     private const GRACEFUL = [
-        'api/v3/Controllers/CapabilitiesController.php::timezoneSupport' =>
-            'A capability probe: a failed read answers "unknown", which /capabilities reports as such, never as "fallback-only".',
         '202-config/functions-auth.php::accountTimezone' =>
             'An unread zone answers null, which set_timezone() reads as "keep the zone the session holds": the page counts days in the zone captured at sign-in, as every page did before it read the account\'s.',
         'api/v3/Controllers/CapabilitiesController.php::loadClickServerKey' =>

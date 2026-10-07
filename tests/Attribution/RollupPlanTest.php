@@ -38,6 +38,42 @@ final class RollupPlanTest extends TestCase
         }
     }
 
+    /**
+     * The hours the day dimension cannot take from the rollup, against the
+     * definition, hour by hour: an hour is on two of the account's dates
+     * when its first and last second fall on different dates, or under
+     * different offsets (a jump in the wall clock). Zones whose midnights
+     * are not on the hour, half-hour DST, changes at 00:01 local
+     * (Moncton until 2006), and zones that are always on the hour.
+     */
+    public function testTheHoursOnTwoDatesAreTheOnesWhoseEndsDisagree(): void
+    {
+        $zones = ['UTC', 'GMT', '+05:30', 'Asia/Kolkata', 'Asia/Kathmandu', 'America/St_Johns', 'America/New_York',
+            'Australia/Lord_Howe', 'Pacific/Chatham', 'America/Moncton', 'Pacific/Kiritimati', 'Europe/London'];
+        $now = 1_791_331_200;
+        $windows = [['2005-01-01', '2006-12-31'], ['2025-01-01', '2026-10-07']];
+        $found = 0;
+        foreach ($zones as $zone) {
+            $tz = new \DateTimeZone($zone);
+            foreach ($windows as [$a, $b]) {
+                $first = intdiv((new \DateTimeImmutable($a . 'T00:00:00Z'))->getTimestamp(), 3600);
+                $last = intdiv((new \DateTimeImmutable($b . 'T23:59:59Z'))->getTimestamp(), 3600);
+                $expected = [];
+                for ($h = $first; $h <= $last; $h++) {
+                    $start = (new \DateTimeImmutable('@' . ($h * 3600)))->setTimezone($tz);
+                    $end = (new \DateTimeImmutable('@' . ($h * 3600 + 3599)))->setTimezone($tz);
+                    if ($start->format('Y-m-d') !== $end->format('Y-m-d') || $start->getOffset() !== $end->getOffset()) {
+                        $expected[] = $h;
+                    }
+                }
+                self::assertSame($expected, AttributionRollup::hoursAcrossLocalDates($zone, $first, $last, $now), "$zone, $a to $b");
+                $found += count($expected);
+            }
+        }
+        self::assertGreaterThan(2000, $found, 'the zones off the hour put hours on two dates every day');
+        self::assertSame([], AttributionRollup::hoursAcrossLocalDates('Asia/Kolkata', 10, 9), 'an empty range has none');
+    }
+
     public function testTheKeyWithoutItsNameJoinKeepsEveryOtherJoin(): void
     {
         [$key, $joins] = AttributionRollup::keySql('device', 'cr.conv_time');

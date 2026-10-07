@@ -131,7 +131,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_clicks | c.click_id = j.click_id' => self::JOURNEY_TOUCH,
             'condition built at runtime | 202_attribution_rollup_state | s.user_id = {$u} AND s.built_through_hour > {(int) $plan[\'maxHour\']} {($effective ? \' AND s.default_model_id = \'.(int) $plan[\'default\'] : \'\')}' => self::ROLLUP_GUARD,
             'condition built at runtime | 202_attribution_rollup_dirty | d.user_id = {$u} AND ( {implode(\' OR \', array_map(static fn (array $r): string => \'(d.hour_from <= \'.(int) $r[1].\' AND d.hour_to >= \'.(int) $r[0].\')\', $plan[\'runs\']))} )' => self::ROLLUP_GUARD,
-            'condition built at runtime | 202_attribution_rollup | r2.user_id = {$u} AND r2.part IN ( {AttributionRollup::PART_CREDITS} , {AttributionRollup::PART_COST} , {AttributionRollup::PART_ASSISTS} ) AND r2.dim = {AttributionRollup::DIMENSION_CODES[\'day\']} AN…' => self::ROLLUP_GUARD,
             'subquery table built at runtime | {$table} | . {{$name}} FROM {{$table}} dn WHERE dn.{{$id}} = g.k {($owned ? \' AND dn.user_id = \'.$userId : \'\')}' => self::RUNTIME_CHECKED,
             'no table after JOIN | ? | no name join' => self::NOT_SQL,
             'no user_id tie | 202_clicks | c.click_id = cr.click_id {$joins} #2' => self::JOURNEY_TOUCH,
@@ -677,7 +676,7 @@ final class AccountScopedJoinTest extends TestCase
             $checked += $this->assertTied($sql, "MysqlReportRepository::dimensionJoin('$dimension')");
         }
         foreach (\Prosper202\Attribution\AttributionReports::dimensions() as $dimension) {
-            [, , $joins] = \Prosper202\Attribution\AttributionReports::dimensionSql($dimension, 'c.click_time');
+            [, , $joins] = \Prosper202\Attribution\AttributionReports::dimensionSql($dimension, 'c.click_time', 'UTC');
             $checked += $this->assertTied("SELECT 1 FROM 202_clicks c $joins WHERE c.user_id = ?", "AttributionReports::dimensionSql('$dimension')");
             $name = \Prosper202\Attribution\AttributionReports::nameSql($dimension, 7);
             $checked += $this->assertTied("SELECT $name FROM (SELECT 1 AS k, 1 AS named) g", "AttributionReports::nameSql('$dimension')");

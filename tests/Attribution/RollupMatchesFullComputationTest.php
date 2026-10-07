@@ -34,9 +34,13 @@ use Tests\Attribution\Support\AttributionDatabase;
  *   account in the same hours, and the newest hours not summed yet. Every
  *   dimension, the effective model, an explicit model and a comparison;
  *   ranges that start and end mid-hour, on hour and UTC-day boundaries,
- *   inside one hour, and past the summed frontier; the day dimension under
- *   time zones on the hour, at +05:30, +05:45, -03:30 and +14:00 (and a
- *   named zone with DST where the server has zone tables).
+ *   inside one hour, and past the summed frontier; the day dimension in the
+ *   account's zone (202_users.user_timezone): UTC, India (+05:30), Nepal
+ *   (+05:45), St John's (−03:30, with DST), Kiritimati (+14:00), New York
+ *   and Lord Howe (a 30-minute DST shift), the sparse tenant's two years
+ *   crossing every one of their changes, and a tenant laid across a New
+ *   York and a Lord Howe change of its own. The connection is left at
+ *   +07:00, a zone no account is in: neither computation may read it.
  *   P202_ROLLUP_DIFF_SCALE multiplies the tenants' sizes.
  * - Changes after the rollup was summed, through the real writers: a
  *   retraction, a replacement, a partial reversal, a revival, a conversion
@@ -77,7 +81,11 @@ final class RollupMatchesFullComputationTest extends TestCase
         '202_landing_pages', '202_tracking_c1', '202_tracking_c2', '202_tracking_c3', '202_tracking_c4',
     ];
 
-    private const TIME_ZONES = ['+00:00', '+05:30', '+05:45', '-03:30', '+14:00'];
+    /** The account zones the day dimension is compared in. */
+    private const TIME_ZONES = [
+        'UTC', 'Asia/Kolkata', 'Asia/Kathmandu', 'America/St_Johns', 'Pacific/Kiritimati',
+        'America/New_York', 'Australia/Lord_Howe',
+    ];
 
     private int $comparisons = 0;
 
@@ -89,12 +97,20 @@ final class RollupMatchesFullComputationTest extends TestCase
                 throw new \RuntimeException('reset failed: ' . $t . ': ' . self::$db->error);
             }
         }
-        self::$db->query("SET time_zone = '+00:00'");
+        // A connection zone no account is in.
+        self::$db->query("SET time_zone = '+07:00'");
     }
 
     protected function tearDown(): void
     {
-        self::$db?->query("SET time_zone = '+00:00'");
+        self::$db?->query("SET time_zone = 'SYSTEM'");
+    }
+
+    /** The account's zone, the one its day dimension is read in. */
+    private static function accountZone(int $userId, string $zone): void
+    {
+        self::fixture("UPDATE 202_users SET user_timezone = '$zone' WHERE user_id = $userId");
+        self::assertSame($zone, self::scalar("SELECT user_timezone FROM 202_users WHERE user_id = $userId"));
     }
 
     /** @return array<string, array{0: int, 1: array<string, int>}> */
@@ -129,19 +145,23 @@ final class RollupMatchesFullComputationTest extends TestCase
             'effective vs first touch' => [null, $t['models']['first']],
         ];
         $served = 0;
+        $servedIn = array_fill_keys(self::TIME_ZONES, 0);
         foreach ($ranges as $label => [$from, $to]) {
             foreach (AttributionReports::dimensions() as $dim) {
                 foreach ($variants as $variant => [$model, $compare]) {
                     $served += $this->assertSameAnswer("$label, $dim, $variant", 1, $model, $compare, $t['models']['default'], $dim, $from, $to);
                 }
             }
-            foreach (self::timeZones() as $tz) {
-                self::$db->query("SET time_zone = '$tz'");
+            foreach (self::TIME_ZONES as $tz) {
+                self::accountZone(1, $tz);
                 foreach ($variants as $variant => [$model, $compare]) {
-                    $served += $this->assertSameAnswer("$label, day in $tz, $variant", 1, $model, $compare, $t['models']['default'], 'day', $from, $to);
+                    $servedIn[$tz] += $this->assertSameAnswer("$label, day in $tz, $variant", 1, $model, $compare, $t['models']['default'], 'day', $from, $to);
                 }
             }
-            self::$db->query("SET time_zone = '+00:00'");
+            self::accountZone(1, 'UTC');
+        }
+        foreach ($servedIn as $tz => $hours) {
+            self::assertGreaterThan(0, $hours, "the rollup served the day dimension's hours in $tz, or its comparison there proves nothing");
         }
         // The other account, in the same hours, reads only its own rows.
         $served += $this->assertSameAnswer('the other account', 2, null, null, $t['models']['other'], 'campaign', $t['first'] - 7200, $t['last'] + 7200);
@@ -176,17 +196,74 @@ final class RollupMatchesFullComputationTest extends TestCase
 
     public function testATimeZoneOffTheHourSplitsOnlyTheHourThatStraddlesMidnight(): void
     {
-        // 2025-01-10 18:00 UTC is 23:30 in +05:30: the hour 18:00–19:00 UTC
-        // is on two local dates, the hours either side on one.
+        // 2025-01-10 18:00 UTC is 23:30 in India: the hour 18:00–19:00 UTC
+        // is on two of the account's dates, the hours either side on one.
         $t = $this->generate(5, ['conversions' => 40, 'span' => 3 * 86400, 'campaigns' => 3], 1_736_400_000);
         $this->buildRollup($t['now']);
-        self::$db->query("SET time_zone = '+05:30'");
         $straddling = intdiv(1_736_532_000, 3600);
-        self::assertSame(0, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) $straddling)));
-        self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) ($straddling + 1))));
-        self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) ($straddling - 1))));
-        self::$db->query("SET time_zone = '+00:00'");
-        self::assertSame(1, (int) self::scalar('SELECT ' . AttributionRollup::hourIsOneLocalDateSql((string) $straddling)));
+        self::assertSame([$straddling], AttributionRollup::hoursAcrossLocalDates('Asia/Kolkata', $straddling - 2, $straddling + 2));
+        self::assertSame([], AttributionRollup::hoursAcrossLocalDates('UTC', $straddling - 2, $straddling + 2));
+
+        // And the plan computes exactly that hour, and serves the rest.
+        self::accountZone(1, 'Asia/Kolkata');
+        $window = [$t['first'] - 7200, $t['last'] + 7200];
+        $reports = new AttributionReports($this->conn, true);
+        $plan = (new \ReflectionMethod(AttributionReports::class, 'rollupPlan'))
+            ->invoke($reports, 1, true, [AttributionRollup::EFFECTIVE], $t['models']['default'], 'day', ...[...$window, 'Asia/Kolkata']);
+        self::assertIsArray($plan);
+        $planned = [];
+        foreach ($plan['runs'] as [$a, $b]) {
+            $planned = array_merge($planned, range($a, $b));
+        }
+        self::assertNotContains($straddling, $planned, 'the hour on two dates is computed exactly');
+        self::assertContains($straddling - 1, $planned);
+        self::assertContains($straddling + 1, $planned);
+        self::assertSame([], array_values(array_intersect(
+            $planned,
+            AttributionRollup::hoursAcrossLocalDates('Asia/Kolkata', $plan['runs'][0][0], $plan['maxHour'])
+        )), 'no planned hour is on two dates');
+        self::assertGreaterThan(0, $this->assertSameAnswer('India', 1, null, $t['models']['first'], $t['models']['default'], 'day', ...$window));
+    }
+
+    /** @return array<string, array{0: string, 1: string}> zone, the UTC instant its offset changes */
+    public static function changesOfOffset(): array
+    {
+        return [
+            // An hour on the hour: no UTC hour is on two dates.
+            'New York springs forward' => ['America/New_York', '2025-03-09T07:00:00Z'],
+            // Half an hour at 02:00 local, 15:30 UTC: the hour 15:00–16:00
+            // UTC has two offsets.
+            'Lord Howe springs forward' => ['Australia/Lord_Howe', '2025-10-04T15:30:00Z'],
+            'New York falls back' => ['America/New_York', '2025-11-02T06:00:00Z'],
+        ];
+    }
+
+    /**
+     * A tenant laid across a change of offset of its own, read with ranges
+     * that start and end on either side of it and inside its hour.
+     *
+     * @dataProvider changesOfOffset
+     */
+    public function testTheDayAcrossAChangeOfOffsetIsTheFullComputations(string $zone, string $utc): void
+    {
+        $change = (new \DateTimeImmutable($utc))->getTimestamp();
+        $offsets = array_column(\Prosper202\Report\LocalTime::offsets($zone, $change + 86400), 0);
+        self::assertContains($change, $offsets, "$zone changes its offset at $utc");
+        $t = $this->generate(41, ['conversions' => 120, 'span' => 4 * 86400, 'campaigns' => 3], $change - 2 * 86400);
+        $this->buildRollup($t['now']);
+        self::accountZone(1, $zone);
+        $served = 0;
+        foreach ([
+            'the four days' => [$t['first'] - 7200, $t['last'] + 7200],
+            'from the day before' => [$change - 86400 - 1800, $change + 86400],
+            'from inside the hour of the change' => [$change - 1200, $change + 2 * 86400 + 17],
+            'ending inside it' => [$change - 3 * 86400, $change + 600],
+        ] as $label => [$from, $to]) {
+            foreach ([[null, null], [$t['models']['first'], null], [$t['models']['linear'], $t['models']['default']]] as [$m, $c]) {
+                $served += $this->assertSameAnswer("$zone, $label", 1, $m, $c, $t['models']['default'], 'day', $from, $to);
+            }
+        }
+        self::assertGreaterThan(0, $served, "$zone: the rollup served hours");
     }
 
     public function testARollupSummedBeforeItKeptTheJourneyPartIsReadInFullUntilSummedAgain(): void
@@ -426,9 +503,9 @@ final class RollupMatchesFullComputationTest extends TestCase
                         $served += $this->assertSameAnswer("$label, $rangeLabel, $dim, $variant", 1, $m, $c, $models['default'], $dim, $from, $to);
                     }
                 }
-                self::$db->query("SET time_zone = '+05:30'");
-                $served += $this->assertSameAnswer("$label, $rangeLabel, day in +05:30", 1, null, $models['first'], $models['default'], 'day', $from, $to);
-                self::$db->query("SET time_zone = '+00:00'");
+                self::accountZone(1, 'Asia/Kolkata');
+                $served += $this->assertSameAnswer("$label, $rangeLabel, day in India", 1, null, $models['first'], $models['default'], 'day', $from, $to);
+                self::accountZone(1, 'UTC');
             }
             $served += $this->assertSameAnswer("$label, the other account", 2, null, null, $models['other'], 'campaign', $ranges['everything'][0], $ranges['everything'][1]);
 
@@ -630,9 +707,9 @@ final class RollupMatchesFullComputationTest extends TestCase
                     $served += $this->assertSameAnswer("$label, $rangeLabel, $dim", 1, $m, $c, $default, $dim, $from, $to);
                 }
             }
-            self::$db->query("SET time_zone = '+05:30'");
-            $served += $this->assertSameAnswer("$label, $rangeLabel, day in +05:30", 1, null, $model, $default, 'day', $from, $to);
-            self::$db->query("SET time_zone = '+00:00'");
+            self::accountZone(1, 'Asia/Kolkata');
+            $served += $this->assertSameAnswer("$label, $rangeLabel, day in India", 1, null, $model, $default, 'day', $from, $to);
+            self::accountZone(1, 'UTC');
         }
         if ($expectServed) {
             self::assertGreaterThan(0, $served, "$label: the rollup served hours");
@@ -682,19 +759,6 @@ final class RollupMatchesFullComputationTest extends TestCase
         $this->comparisons++;
 
         return $reports->lastServedHours();
-    }
-
-    /** @return list<string> */
-    private static function timeZones(): array
-    {
-        $zones = self::TIME_ZONES;
-        // A named zone with daylight saving, where the server has zone tables.
-        if (self::scalar("SELECT CONVERT_TZ('2024-03-10 12:00:00', 'UTC', 'America/New_York')") !== null) {
-            $zones[] = 'America/New_York';
-            $zones[] = 'Australia/Lord_Howe'; // a 30-minute DST shift
-        }
-
-        return $zones;
     }
 
     // --- data ---

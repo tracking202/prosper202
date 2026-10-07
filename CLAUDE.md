@@ -825,6 +825,24 @@ reads a number and an older server's numeric string alike. It does not see
 a non-money field, a reader that decodes into a map (those take either type
 but format differently), or any reader outside go-cli.
 
+### 29. One offset stands in for a zone's history
+The report engine put the account's zone in force with `SET time_zone` to
+its offset *today*, rounded to whole hours, and grouped by
+`FROM_UNIXTIME()`. India's +05:30 ran at +06:00 all year; every click on the
+far side of a daylight-saving change from today was an hour out; MariaDB
+refused the unsigned `'5:00'` east of UTC, so the setting held only to the
+west; and it stayed on the connection for the rest of the request, where
+the cron's attribution export grouped days in it. A zone is a list of
+offsets with the instants they start (`LocalTime::offsets()`); any
+conversion that takes one offset and applies it to a range — a session
+setting, a cached `getOffset(new DateTime())`, a fixed `+ 19800` — is wrong
+for every row outside the moment it was read. Convert each row by the
+offset in force at its own instant (`LocalTime::secondsSql()` /
+`datetimeSql()`), in the account's zone passed in, never the connection's.
+`SessionZoneSqlTest` refuses SQL that sets or reads the connection's zone;
+it cannot see PHP that does the same with one offset, which is this entry's
+job.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

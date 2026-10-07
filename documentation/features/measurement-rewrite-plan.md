@@ -4312,8 +4312,8 @@ reads it. Where it differs from §7.3's sketch, and why:
   high-cardinality dimension: at 1M conversions the keyword breakdown has
   about as many (keyword, hour) rows as credits. Whole UTC days inside a range
   read one row per key per day; the hours at either end read hour rows; the
-  day dimension always reads hours, since it groups them by each hour's local
-  date.
+  day dimension always reads hours, since it groups them by each hour's date
+  in the account's time zone.
 - **Names are not stored.** A campaign renamed after its hour was summed
   would keep its old name. Every name table is joined on its primary key, so
   the group's name is looked up when the report runs, and a key that was
@@ -4322,8 +4322,11 @@ reads it. Where it differs from §7.3's sketch, and why:
 - **Exact, not approximate, at every edge.** A plan splits the range into
   hours the rollup serves and second ranges it does not: the part-hours at
   either end, hours not summed yet, dirty hours, an hour that is not one
-  local date in the session's time zone (at +05:30 the hour that straddles
-  local midnight; a DST change inside an hour), and everything when a
+  date in the account's time zone (at +05:30 the hour that straddles
+  local midnight; a DST change inside an hour — worked out from PHP's zone
+  database, `AttributionRollup::hoursAcrossLocalDates()`, so it depends on
+  the zone alone and the guard need not re-check it; this was the session's
+  zone, read through `FROM_UNIXTIME()`), and everything when a
   changed click is unresolved or the effective rows were summed under other
   overrides or another default. Each part is one statement: the rollup rows
   `UNION ALL` the exact rows of the rest, summed by MySQL — so the decimals
