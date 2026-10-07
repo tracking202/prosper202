@@ -1051,11 +1051,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     private function refreshReportRollup(int $clickId): void
     {
         try {
-            $stmt = $this->conn->prepareWrite(ClickRollupSql::insertSelect(
-                '202_dataengine',
-                '2c.click_id=' . $clickId,
-                updateLandingPageId: true
-            ));
+            $stmt = $this->conn->prepareWrite(
+                ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . $clickId)
+            );
             $this->conn->executeUpdate($stmt);
         } catch (Throwable $e) {
             error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());

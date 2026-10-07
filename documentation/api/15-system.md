@@ -166,12 +166,17 @@ and written there, whoever calls; they apply to every account's clicks.
 `GET /system/retention`
 
 ```json
-{ "data": { "auto_delete_days": 180, "scheduled_deletion": { "through_click_id": 940102, "before": "2025-12-31", "clicks_remaining": 1500 } } }
+{ "data": { "auto_delete_days": 180, "scheduled_deletion": { "before": "2026-01-01", "cutoff_time": 1767225600, "through_click_id": null, "clicks_remaining": 1500 } } }
 ```
 
 `scheduled_deletion` is null when no one-off deletion was scheduled; while one
-is, the cron job deletes every click below `through_click_id`, and
-`clicks_remaining` counts those still there.
+is, the cron job deletes every click all of whose rows were recorded before
+`cutoff_time` (`before` is the day it falls on in your time zone), and
+`clicks_remaining` counts those still there. An install that scheduled one
+with an earlier version shows `through_click_id` instead, with `cutoff_time`
+null: the cron job deletes the clicks below that id, as it was scheduled,
+`before` is the day of the click the id names, and `clicks_remaining` counts
+the clicks below it.
 
 `PUT /system/retention` with `{"auto_delete_days": 180}` sets the automatic
 deletion: a whole number of days from 0 (keep every click) to 36500, as a
@@ -186,7 +191,8 @@ ages out. Click ids are not in time order, so the job selects the old
 clicks themselves rather than an id boundary. (It used to delete the ids
 below the oldest old click — in practice nothing.)
 
-Both deletions (this one and the one-off below) go through
+Both deletions (this one and the one-off below) select the clicks the same
+way, and go through
 `Prosper202\Click\ClickRetention`: a batch of 1,000 clicks is deleted from
 every click table in one transaction, for up to 20 seconds each cron run,
 so a backlog drains over the following runs and no table keeps a row of a
@@ -206,22 +212,34 @@ and agrees with the Overview.
 click data from before". It is irreversible, so it has two steps:
 
 1. **Preview** with `?dry_run=1` and `{"before": "2026-01-01"}`. Nothing is
-   written. The answer names `through_click_id` — the newest click at or
-   before midnight that begins `before`, in the caller's time zone; null when
-   no click is that old — and counts what the cron job would delete below it:
-   `clicks` (`202_clicks`) and `rows` per click table.
-2. **Schedule** with `{"before": "2026-01-01", "through_click_id": 940102}`.
-   It is stored only if the day still names that click; otherwise nothing is
-   written and the answer is a `409` with `details.current_through_click_id`.
-   Without `through_click_id` the write is a `422`.
+   written. The answer names `cutoff_time` — midnight that begins `before`,
+   in the caller's time zone — and counts what the cron job would delete
+   now, by the selection it deletes by: `clicks`, and their rows per click
+   table (`rows`).
+2. **Schedule** with `{"before": "2026-01-01", "cutoff_time": 1767225600}`.
+   It is stored only if the day still begins at that time in the caller's
+   zone (the account's zone can change in between); otherwise nothing is
+   written and the answer is a `409` with `details.current_cutoff_time`.
+   Without `cutoff_time` the write is a `422`. When no click is from before
+   the day, nothing is written (`scheduled: false`).
 
 `before` must be a calendar day written `YYYY-MM-DD`, not after today. A
 time zone the server does not know is a `409`, never read as UTC. The cron
-job deletes every click below `through_click_id`, and then whatever rows the
-other click tables still hold below it, in the batches described above;
-`rows` counts each of those tables. Setup data is kept. The marker stays
-set when the deletion is done (`clicks_remaining` reads 0), and a Slack
-webhook, if set, hears once, from the run that deletes the last of it.
+job deletes every click all of whose rows were recorded before
+`cutoff_time`, by the same rule as the automatic deletion: a click visited
+again on or after the day (a rotator re-click gives it a new row) is kept
+whole. A new schedule replaces the one before it. Setup data is kept. The
+time stays set when the deletion is done (`clicks_remaining` reads 0), and
+a Slack webhook, if set, hears once, from the run that deletes the last of
+it.
+
+This deletion used to store a click id — the newest click at or before
+the day — and delete every click below it. Ids are not in time order, so
+that deleted a click re-clicked after the day and kept the newest click
+from before it. `through_click_id` is no longer part of the request or the
+preview; an id an install scheduled that way is still carried out (it is
+all that was stored, so the day cannot be recovered from it), and
+`GET /system/retention` shows it until a new schedule replaces it.
 
 ### ISP and carrier lookup
 

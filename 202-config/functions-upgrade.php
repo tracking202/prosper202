@@ -4251,7 +4251,11 @@ class UPGRADE
             // outcomes); the Android installs, the notification outbox, and
             // the install-token key with the table that holds it. The DDL is the
             // installer's own definitions, so this block cannot drift from
-            // them.
+            // them. 202_users_pref is reconciled with them for the one column
+            // this release adds to it, user_delete_data_before (the scheduled
+            // click deletion's time, which replaced an id marker: see
+            // Prosper202\Click\ClickRetention); the reconciler adds it where
+            // the installer declares it.
             //
             // Gated on 1.9.75 rather than 1.9.76: a block gated on the code
             // version is unreachable from upgrade.php (upgrade_needed() is
@@ -4261,7 +4265,8 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
                 \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
                 \Prosper202\Database\Tables\GoalTables::getDefinitions(),
-                \Prosper202\Database\Tables\SecretTables::getDefinitions()
+                \Prosper202\Database\Tables\SecretTables::getDefinitions(),
+                [\Prosper202\Database\Tables\UserTables::usersPref()]
             ));
 
             if ($measurement_ok) {

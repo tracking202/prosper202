@@ -3141,7 +3141,7 @@ function getTrackerDetail(&$mysql)
                 LEFT JOIN 202_users USING (user_id)
     			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
@@ -3212,7 +3212,7 @@ function getTrackerDetailPT(&$mysql)
     			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
                 LEFT JOIN 202_landing_pages USING (landing_page_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 

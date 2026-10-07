@@ -209,7 +209,7 @@ final class LegacyReportAccountScopeIntegrationTest extends TestCase
     {
         self::requireScratch();
         foreach ([self::ROLLUP_FOREIGN, self::ROLLUP_OWN] as $click) {
-            self::q(ClickRollupSql::insertSelect('202_dataengine', '2c.click_id = ' . $click, true));
+            self::q(ClickRollupSql::insertSelect('202_dataengine', '2c.click_id = ' . $click));
         }
         $rows = [];
         $result = self::$db->query('SELECT click_id, aff_campaign_id, aff_network_id, ppc_account_id, ppc_network_id, landing_page_id, text_ad_id, clicks'

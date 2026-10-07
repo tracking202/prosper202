@@ -19,6 +19,11 @@ declare(strict_types=1);
  *   api-v1:<report> / api-v2:<report>
  *                   the legacy API's reportQuery() for text_ads or
  *                   landing_pages, and v1's getDataForWP() (get_data_for_wp)
+ *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
+ *                   the 202_dirty_hours rows it left (RollupRefreshIntegrationTest)
+ *   click-upgrade   the cron job's DataEngine::processClickUpgrade(), and
+ *                   whether curl was loaded, which sends it the other way
+ *                   (ClickUpgradeIntegrationTest runs it without)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_REPORT_USER,
  *       P202_TEST_FROM, P202_TEST_TO (the window, unix seconds)
  * Prints "RETURNED <json>", or "THREW <class>: <message>".
@@ -125,6 +130,19 @@ try {
             throw new RuntimeException('visitors: ' . $db->error);
         }
         $result = ['rows' => $query['rows'], 'listed' => array_map('intval', array_column($listed->fetch_all(MYSQLI_ASSOC), 'click_id'))];
+    } elseif ($reader === 'dirty-hours') {
+        (new DataEngine())->processDirtyHours();
+        $left = $db->query('SELECT COUNT(*) FROM 202_dirty_hours WHERE user_id = ' . $userId);
+        if (!$left instanceof mysqli_result) {
+            throw new RuntimeException('dirty hours: ' . $db->error);
+        }
+        $result = ['left' => (int) ($left->fetch_row()[0] ?? -1)];
+    } elseif ($reader === 'click-upgrade') {
+        $curl = function_exists('curl_version');
+        if (!$curl) {
+            (new DataEngine())->processClickUpgrade();
+        }
+        $result = ['curl' => $curl];
     } elseif ($reader === 'lists') {
         $result = [
             'store' => (new \Tracking202\Report\ReportPrefsStore($db))->lists($userId),

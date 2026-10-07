@@ -543,17 +543,14 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 	{
 		// Set default values
 		$set = 'P1D';
-		$add = 'day';
 		
 		switch ($type) {
 			case 'days':
 				$set = 'P1D';
-				$add = 'day';
 				break;
 
 			case 'hours':
 				$set = 'PT1H';
-				$add = 'hour';
 				break;
 		}
 
@@ -568,10 +565,15 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		$fromdate = (clone $fromdate)->setTimezone($zone);
 		$todate = (clone $todate)->setTimezone($zone);
 
+        // The window's last second is its end: a DatePeriod leaves out its
+        // end, so this ends on the window's last day or hour. It ended a
+        // whole day or hour after the window's last second, which put one
+        // more point on the chart than the window has: today drawn as Oct 07
+        // and Oct 08, and by hour a last point at the midnight after it.
 		return new \DatePeriod(
 			$fromdate,
 			new \DateInterval($set),
-			$todate->modify('+1 ' . $add)
+			$todate->modify('+1 second')
 		);
 	}
 

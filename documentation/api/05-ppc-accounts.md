@@ -25,6 +25,13 @@ Manage pay-per-click advertising accounts within PPC networks.
 | `ppc_network_id` | integer | Yes | Parent PPC network ID |
 | `ppc_account_default` | integer | No | Set as default account (0/1) |
 
+Moving an account to another network (a `PUT` with a new `ppc_network_id`)
+moves its past clicks too: the reports file each click under the network its
+account was in when the click was rolled up, so the move queues every click
+the account has for the cron job to roll up again, and the breakdowns by
+traffic source show them under the new network from its next run
+(`GET /system/dataengine` counts what is still queued).
+
 An account's pixels — image, iframe, script, server-to-server postback (with
 an optional correction URL) or raw markup, fired when one of its clicks
 converts — are edited under `/ppc-accounts/{id}/pixels`, held to the account

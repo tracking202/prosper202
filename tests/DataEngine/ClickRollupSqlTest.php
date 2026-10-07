@@ -20,7 +20,7 @@ final class ClickRollupSqlTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123', true);
+        $this->sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123');
     }
 
     public function testInsertSelectJoinsAllRequiredTables(): void
@@ -152,16 +152,40 @@ final class ClickRollupSqlTest extends TestCase
         }
     }
 
-    public function testLandingPageUpdateCanBeExcluded(): void
+    /**
+     * A re-roll converges a row to what a fresh rollup computes: every
+     * column the SELECT derives is refreshed, the key alone excepted. The
+     * list named fourteen columns, so a row kept the traffic source, text ad
+     * and the rest of what its first rollup saw (ClickRollupSql says what
+     * that looked like in the reports).
+     */
+    public function testADuplicateKeyRefreshesEveryColumnButTheKey(): void
     {
-        $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=123', false);
-
-        self::assertStringNotContainsString(
-            'landing_page_id=values(landing_page_id)',
-            $sql,
-            'Batch re-aggregation paths must not refresh landing_page_id'
+        preg_match('/insert into 202_dataengine\(([^)]+)\)/s', $this->sql, $insertMatch);
+        $insertColumns = array_map(
+            static fn(string $column): string => preg_replace('/\s+/', '', $column),
+            explode(',', $insertMatch[1])
         );
-        self::assertStringContainsString('leads=values(leads)', $sql);
+        preg_match('/on duplicate key update\s+(.*)$/s', $this->sql, $updateMatch);
+        $updated = array_map(
+            static fn(string $set): string => preg_replace('/=values\((\w+)\)$/', '', trim($set)),
+            explode(",\n", $updateMatch[1])
+        );
+        foreach (explode(",\n", $updateMatch[1]) as $set) {
+            self::assertMatchesRegularExpression(
+                '/^(\w+)=values\(\1\)$/',
+                trim($set),
+                'each column takes its own new value'
+            );
+        }
+
+        self::assertSame(array_values(array_diff($insertColumns, ['click_id', 'click_time'])), $updated);
+        $copied = ['ppc_network_id', 'text_ad_id', 'landing_page_id', 'keyword_id', 'country_id', 'variable_set_id'];
+        foreach ($copied as $column) {
+            self::assertContains($column, $updated);
+        }
+        self::assertNotContains('click_id', $updated);
+        self::assertNotContains('click_time', $updated);
     }
 
     public function testIncomeCalculationOnlyCountsLeads(): void

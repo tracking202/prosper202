@@ -9,6 +9,7 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Support\PayloadKeys;
+use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
 
@@ -36,7 +37,7 @@ use Prosper202\Database\Connection;
  * and AdministrationRoutesPermissionTest pins it (CLAUDE.md #5).
  *
  * Which preferences row each setting lives on is the reader's, not the
- * page's. The cron job reads automatic deletion and the one-off marker from
+ * page's. The cron job reads automatic deletion and the one-off deletion from
  * user 1's row only (202-cronjobs/index.php, AutoOptimizeDatabase() and
  * ClearOldClicks()), so they are read and written there: a value on any
  * other row is one nothing acts on. ISP lookup is read by the redirects from
@@ -241,7 +242,9 @@ final class AdministrationController
      * Automatic deletion (click data older than auto_delete_days goes, from
      * the first cron run after midnight; 0 keeps it all) and the one-off
      * deletion scheduled through delete-before, if any: the cron job
-     * deletes, in batches, every click whose id is below through_click_id.
+     * deletes, in batches, every click all of whose rows were recorded
+     * before cutoff_time — or, for an id an earlier version scheduled
+     * (cutoff_time null), every click whose id is below through_click_id.
      *
      * @return array{data: array<string, mixed>}
      */
@@ -293,140 +296,125 @@ final class AdministrationController
     /**
      * Schedule the deletion of click data from before a day (the page's
      * Advanced › "Delete click data from before"). The page does not delete:
-     * it stores a click id on user 1's preferences, and the cron job deletes
-     * every row below it from CLICK_DATA_TABLES, a batch of clicks from every
-     * table in one transaction (Prosper202\Click\ClickRetention), for every
-     * account on the install. It cannot be undone.
+     * it stores a time on user 1's preferences, and the cron job deletes
+     * every click all of whose rows were recorded before it, from
+     * CLICK_DATA_TABLES, a batch of clicks from every table in one
+     * transaction (Prosper202\Click\ClickRetention), for every account on the
+     * install. It cannot be undone.
      *
-     * The id is the page's: the newest click recorded at or before midnight
-     * that begins `before`, in the caller's time zone. A dry run answers it
-     * as through_click_id with what lies below it, per table; the write
-     * carries it back and stores it only if it is still the id the day
-     * names, so it never schedules more than was previewed.
+     * The time is midnight that begins `before`, in the caller's time zone.
+     * A dry run answers it as cutoff_time with what the cron job would
+     * delete before it now, counted by the selection the cron job deletes by
+     * (ClickRetention::countOlderThan()): a click re-clicked on or after the
+     * day is not in it, and is not deleted. The write carries cutoff_time
+     * back and stores it only if it is still the time the day names (the
+     * account's zone can change in between), so it never schedules a
+     * different cutoff than was previewed.
      *
-     * @param array<string, mixed> $payload {before: YYYY-MM-DD, through_click_id: the dry run's}
+     * This used to store an id — the newest click recorded at or before the
+     * day — and the cron job deleted the clicks below it, which is not the
+     * same thing: ids are not in time order (ClickRetention says why), so a
+     * click re-clicked after the day went, and the newest click from before
+     * it stayed. An id scheduled that way is still honoured; any schedule
+     * made here replaces it.
+     *
+     * @param array<string, mixed> $payload {before: YYYY-MM-DD, cutoff_time: the dry run's}
      * @return array{data: array<string, mixed>}
      */
     public function scheduleDeletion(array $payload, bool $dryRun): array
     {
-        PayloadKeys::refuseUnknown($payload, ['before', 'through_click_id'], 'a scheduled deletion', self::QUERY_NOT_BODY);
+        PayloadKeys::refuseUnknown($payload, ['before', 'cutoff_time'], 'a scheduled deletion', self::QUERY_NOT_BODY);
         $timezone = $this->accountZone();
         $before = self::day($payload, $timezone);
+        $cutoff = $before->getTimestamp();
 
-        $confirmed = null;
         if (!$dryRun) {
-            if (!array_key_exists('through_click_id', $payload)) {
-                throw new ValidationException('through_click_id is required', [
-                    'through_click_id' => 'is required to schedule the deletion: send the request with ?dry_run=1 first and confirm the through_click_id it answers',
+            if (!array_key_exists('cutoff_time', $payload)) {
+                throw new ValidationException('cutoff_time is required', [
+                    'cutoff_time' => 'is required to schedule the deletion: send the request with ?dry_run=1 first and confirm the cutoff_time it answers',
                 ]);
             }
-            $raw = $payload['through_click_id'];
-            if ($raw !== null && !(is_int($raw) && $raw > 0)) {
-                throw new ValidationException('Invalid through_click_id', [
-                    'through_click_id' => 'must be the through_click_id a dry run answered: a positive whole number, or null when it answered null',
+            $confirmed = $payload['cutoff_time'];
+            if (!is_int($confirmed) || $confirmed < 1) {
+                throw new ValidationException('Invalid cutoff_time', [
+                    'cutoff_time' => 'must be the cutoff_time a dry run answered: a positive whole number',
                 ]);
             }
-            $confirmed = $raw;
+            if ($confirmed !== $cutoff) {
+                throw new ConflictException(
+                    'cutoff_time ' . $confirmed . ' is not the time ' . $before->format('Y-m-d') . ' begins now (' . $cutoff
+                    . ' in ' . $timezone->getName() . '): the account\'s time zone changed after the dry run, or the time is not '
+                    . 'the one the dry run answered. Nothing was scheduled. Run the request again with ?dry_run=1 and confirm '
+                    . 'the cutoff_time it answers.',
+                    ['cutoff_time' => $confirmed, 'current_cutoff_time' => $cutoff]
+                );
+            }
         }
 
-        $cutoff = $before->getTimestamp();
-        $answer = static fn (array $state, ?int $through, array $rows, bool $scheduled) => [
+        $answer = static fn (array $state, array $counts, bool $scheduled) => [
             'dry_run' => $dryRun,
             'scheduled' => $scheduled,
             'before' => $before->format('Y-m-d'),
             'timezone' => $timezone->getName(),
             'cutoff_time' => $cutoff,
-            'through_click_id' => $through,
-            'clicks' => $rows['202_clicks'] ?? 0,
-            'rows' => (object) $rows,
+            'clicks' => $counts['clicks'],
+            'rows' => (object) $counts['rows'],
             'current' => $state['scheduled_deletion'],
         ];
 
         if ($dryRun) {
-            return ['data' => $this->guard(function () use ($cutoff, $answer): array {
-                $state = $this->retentionState($this->ownerPrefs());
-                $through = $this->marker($cutoff);
-                return $answer($state, $through, $through === null ? [] : $this->rowsBelow($through), false);
-            })];
+            return ['data' => $this->guard(fn (): array => $answer(
+                $this->retentionState($this->ownerPrefs()),
+                $this->clickRetention()->countOlderThan($cutoff),
+                false
+            ))];
         }
 
-        return ['data' => $this->guard(function () use ($cutoff, $answer, $confirmed): array {
+        return ['data' => $this->guard(function () use ($cutoff, $answer): array {
             // `current` is what was scheduled before this request, as in
             // the dry run's answer.
             $state = $this->retentionState($this->ownerPrefs());
-            $outcome = $this->conn->transaction(function () use ($cutoff, $confirmed): array {
+            $scheduled = $this->conn->transaction(function () use ($cutoff): bool {
                 // The row the cron reads, locked so two schedules cannot
                 // interleave their check and their write.
-                $stmt = $this->conn->prepareWrite('SELECT user_delete_data_clickid FROM 202_users_pref WHERE user_id = ? LIMIT 1 FOR UPDATE');
+                $stmt = $this->conn->prepareWrite('SELECT user_delete_data_before FROM 202_users_pref WHERE user_id = ? LIMIT 1 FOR UPDATE');
                 $this->conn->bind($stmt, 'i', [self::INSTALL_OWNER]);
                 if ($this->conn->fetchOne($stmt) === null) {
                     throw new DatabaseException('the Super user (user 1) has no 202_users_pref row; the cron job reads its settings there');
                 }
-                $through = $this->marker($cutoff);
-                if ($through !== $confirmed) {
-                    return ['conflict' => $through];
+                // Nothing from before the day: nothing to schedule, as the
+                // page says.
+                if (!$this->clickRetention()->anyOlderThan($cutoff)) {
+                    return false;
                 }
-                if ($through === null) {
-                    return ['through' => null];
-                }
-                $write = $this->conn->prepareWrite('UPDATE 202_users_pref SET user_delete_data_clickid = ? WHERE user_id = ?');
-                $this->conn->bind($write, 'ii', [$through, self::INSTALL_OWNER]);
+                // The time, and no id beside it: an id an earlier version
+                // scheduled is replaced, as a new marker replaced it.
+                $write = $this->conn->prepareWrite('UPDATE 202_users_pref SET user_delete_data_before = ?, user_delete_data_clickid = NULL WHERE user_id = ?');
+                $this->conn->bind($write, 'ii', [$cutoff, self::INSTALL_OWNER]);
                 $this->conn->executeUpdate($write);
-                return ['through' => $through];
+
+                return true;
             });
-            if (array_key_exists('conflict', $outcome)) {
-                $now = $outcome['conflict'];
-                throw new ConflictException(
-                    'through_click_id ' . ($confirmed === null ? 'null' : $confirmed) . ' is not what this day names now ('
-                    . ($now === null ? 'no click' : 'click ' . $now) . '): the clicks before it changed after the dry run, or the id '
-                    . 'is not the one the dry run answered. Nothing was scheduled. Run the request again with ?dry_run=1 and confirm '
-                    . 'the through_click_id it answers.',
-                    ['through_click_id' => $confirmed, 'current_through_click_id' => $now]
-                );
+            if (!$scheduled) {
+                return $answer($state, ['clicks' => 0, 'rows' => array_fill_keys(self::CLICK_DATA_TABLES, 0)], false);
             }
-            $through = $outcome['through'];
-            if ($through === null) {
-                return $answer($state, null, [], false);
-            }
-            // The marker is committed: a failure counting the rows must not
+            // The time is committed: a failure counting the rows must not
             // read as "nothing was scheduled" (CLAUDE.md #13).
             try {
-                $rows = $this->rowsBelow($through);
+                $counts = $this->clickRetention()->countOlderThan($cutoff);
             } catch (\Throwable $e) {
                 throw new WriteCommittedException('the scheduled deletion', $e,
-                    'The deletion was scheduled (through_click_id ' . $through . '), but its rows could not be counted afterwards. '
+                    'The deletion was scheduled (cutoff_time ' . $cutoff . '), but its rows could not be counted afterwards. '
                     . 'GET /system/retention shows what is scheduled; sending the same request again schedules nothing more.');
             }
 
-            return $answer($state, $through, $rows, true);
+            return $answer($state, $counts, true);
         })];
     }
 
-    /**
-     * The newest click at or before the cutoff — the page's query. Null
-     * when there is none (nothing to delete).
-     */
-    private function marker(int $cutoff): ?int
+    private function clickRetention(): ClickRetention
     {
-        $row = $this->one('SELECT click_id FROM 202_clicks WHERE click_time <= ? ORDER BY click_id DESC LIMIT 1', 'i', [$cutoff]);
-
-        return $row === null ? null : (int) $row['click_id'];
-    }
-
-    /**
-     * What the cron job removes below a marker, per table.
-     *
-     * @return array<string, int>
-     */
-    private function rowsBelow(int $through): array
-    {
-        $rows = [];
-        foreach (self::CLICK_DATA_TABLES as $table) {
-            $row = $this->one('SELECT COUNT(*) AS n FROM `' . $table . '` WHERE click_id < ?', 'i', [$through]);
-            $rows[$table] = (int) ($row['n'] ?? 0);
-        }
-
-        return $rows;
+        return new ClickRetention($this->conn);
     }
 
     /**
@@ -435,18 +423,29 @@ final class AdministrationController
      */
     private function retentionState(array $prefs): array
     {
-        $marker = $prefs['user_delete_data_clickid'] ?? null;
+        ['before' => $cutoff, 'marker' => $marker] = ClickRetention::scheduled($prefs);
         $scheduled = null;
-        if ($marker !== null && (int) $marker > 0) {
-            $through = (int) $marker;
-            // p202_admin_erase_date(): the day of the click the marker names
-            // (the newest at or below it, which the deletion keeps).
-            $at = $this->one('SELECT click_time FROM 202_clicks WHERE click_id <= ? ORDER BY click_id DESC LIMIT 1', 'i', [$through]);
-            $remaining = $this->one('SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id < ?', 'i', [$through]);
+        if ($cutoff !== null) {
+            // The day the cutoff falls on in the caller's zone: midnight
+            // that begins it when the caller scheduled it; cutoff_time is
+            // exact either way.
             $scheduled = [
-                'through_click_id' => $through,
+                'before' => (new \DateTimeImmutable('@' . $cutoff))->setTimezone($this->accountZone())->format('Y-m-d'),
+                'cutoff_time' => $cutoff,
+                'through_click_id' => null,
+                'clicks_remaining' => $this->clickRetention()->clicksOlderThan($cutoff),
+            ];
+        } elseif ($marker !== null) {
+            // An id an earlier version scheduled: the day of the click it
+            // names (the newest at or below it, which the deletion keeps),
+            // and the clicks below it.
+            $at = $this->one('SELECT click_time FROM 202_clicks WHERE click_id <= ? ORDER BY click_id DESC LIMIT 1', 'i', [$marker]);
+            $remaining = $this->one('SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id < ?', 'i', [$marker]);
+            $scheduled = [
                 'before' => $at === null ? null : (new \DateTimeImmutable('@' . (int) $at['click_time']))
                     ->setTimezone($this->accountZone())->format('Y-m-d'),
+                'cutoff_time' => null,
+                'through_click_id' => $marker,
                 'clicks_remaining' => (int) ($remaining['n'] ?? 0),
             ];
         }
@@ -461,7 +460,7 @@ final class AdministrationController
     private function ownerPrefs(): array
     {
         $row = $this->one(
-            'SELECT user_auto_database_optimization_days, user_delete_data_clickid FROM 202_users_pref WHERE user_id = ? LIMIT 1',
+            'SELECT user_auto_database_optimization_days, user_delete_data_before, user_delete_data_clickid FROM 202_users_pref WHERE user_id = ? LIMIT 1',
             'i',
             [self::INSTALL_OWNER]
         );

@@ -118,25 +118,35 @@ $pick = static fn (string $key): string => (string) ($row[$key] ?? '');
 $trackers_sql = "SELECT
 	tr.tracker_id, tr.tracker_id_public, tr.tracker_time, tr.rotator_id, tr.landing_page_id AS named_landing_page_id,
 	lp.landing_page_id, lp.landing_page_url, ac.aff_campaign_name, lp.landing_page_nickname, ro.id AS redirector_id, ro.name,
-	pv.parameters, pv.placeholders
+	pn.ppc_network_id
 	FROM 202_trackers AS tr
 	LEFT JOIN 202_landing_pages AS lp ON (tr.landing_page_id = lp.landing_page_id AND lp.user_id = tr.user_id)
 	LEFT JOIN 202_aff_campaigns AS ac ON (tr.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = tr.user_id)
 	LEFT JOIN 202_rotators AS ro ON (tr.rotator_id = ro.id AND ro.user_id = tr.user_id)
 	LEFT JOIN 202_ppc_accounts AS ppc ON (tr.ppc_account_id = ppc.ppc_account_id AND ppc.user_id = tr.user_id)
 	LEFT JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = tr.user_id)
-	LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter) AS parameters, GROUP_CONCAT(placeholder) AS placeholders FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS pv ON (pn.ppc_network_id = pv.ppc_network_id)
 	WHERE tr.user_id ='" . $mysql['user_id'] . "'
 	ORDER BY tr.tracker_id DESC";
 $trackers = p202_setup_rows($db, $trackers_sql);
-$trackerLink = static function (array $tracker) use ($base): array {
+// Each traffic source's variables as a link carries them: the live ones
+// only, in the order they were added, each parameter beside its own
+// placeholder, as the link generator (generate_tracking_link.php), Setup's
+// Traffic Sources and GET /trackers/{id}/url give them. This list read
+// every variable the source ever had, through one GROUP_CONCAT of
+// parameters and another of placeholders, so a variable removed in Setup
+// stayed on every link it showed, and neither list was ordered.
+$linkVariables = [];
+foreach (p202_setup_rows($db, "SELECT pv.ppc_network_id, pv.parameter, pv.placeholder
+	FROM 202_ppc_network_variables AS pv
+	INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pv.ppc_network_id)
+	WHERE pn.user_id = '" . $mysql['user_id'] . "' AND pv.deleted = 0
+	ORDER BY pv.ppc_variable_id ASC") as $variable) {
+	$linkVariables[(int) $variable['ppc_network_id']][] = $variable;
+}
+$trackerLink = static function (array $tracker) use ($base, $linkVariables): array {
 	$vars_query = '';
-	$parameters = explode(',', $tracker['parameters'] ?? '');
-	$placeholders = explode(',', $tracker['placeholders'] ?? '');
-	foreach ($parameters as $key => $value) {
-		if (isset($placeholders[$key])) {
-			$vars_query .= '&' . $value . '=' . $placeholders[$key];
-		}
+	foreach ($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [] as $variable) {
+		$vars_query .= '&' . $variable['parameter'] . '=' . $variable['placeholder'];
 	}
 	// A link whose landing page or redirector is not one of this account's
 	// (another account's, or removed since) has no link to give: the page's

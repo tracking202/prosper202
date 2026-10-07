@@ -176,9 +176,10 @@ class CampaignsController extends Controller
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
+        $before = $this->categoryOf($this->get($id));
         $links = $this->linksIn($payload);
         if ($links === []) {
-            return parent::update($id, $payload);
+            return $this->queueRollupIfMoved($id, $before, parent::update($id, $payload));
         }
         foreach (array_keys($links) as $column) {
             unset($payload[$column]);
@@ -192,7 +193,7 @@ class CampaignsController extends Controller
             // old link for good. A payload the base refuses changes nothing.
             $this->pendingLinks = $links;
             try {
-                return parent::update($id, $payload);
+                return $this->queueRollupIfMoved($id, $before, parent::update($id, $payload));
             } catch (\Api\V3\Exception\NothingToUpdateException) {
                 // The rest of the body is read-only values the campaign
                 // already holds (a GET body sent back with a new link), which
@@ -223,6 +224,37 @@ class CampaignsController extends Controller
         try {
             $updated = $this->get($id);
             $this->recordChange('update', (array)$updated['data']);
+        } catch (\Throwable $e) {
+            throw new \Api\V3\Exception\WriteCommittedException('campaign', $e);
+        }
+
+        return $this->queueRollupIfMoved($id, $before, $updated);
+    }
+
+    /** @param array<string, mixed> $record a get() answer */
+    private function categoryOf(array $record): int
+    {
+        return (int) (((array) $record['data'])['aff_network_id'] ?? 0);
+    }
+
+    /**
+     * A campaign moved to another category queues its clicks' report rows
+     * for the cron job to roll up again: the rows keep the category they
+     * were rolled up under, and the readers filter and group by it
+     * (Prosper202\DataEngine\RollupRefresh). The update has landed, so a
+     * queue that fails is reported as landed (CLAUDE.md #13).
+     *
+     * @param array<string, mixed> $updated
+     * @return array<string, mixed>
+     */
+    private function queueRollupIfMoved(int|string $id, int $before, array $updated): array
+    {
+        if ($this->categoryOf($updated) === $before) {
+            return $updated;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection($this->db);
+            \Prosper202\DataEngine\RollupRefresh::campaign($conn, $this->userId, (int) $id, time());
         } catch (\Throwable $e) {
             throw new \Api\V3\Exception\WriteCommittedException('campaign', $e);
         }

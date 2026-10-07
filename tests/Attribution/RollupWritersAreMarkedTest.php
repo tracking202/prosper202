@@ -94,7 +94,7 @@ final class RollupWritersAreMarkedTest extends TestCase
         'api/v3/Controllers/SystemController.php' => 'counts rows',
         // POST /system/retention/delete-before: names the click tables to count
         // what the cron job's one-off deletion (ClearOldClicks) would remove.
-        'api/v3/Controllers/AdministrationController.php' => 'reads: counts the rows ClickRetention would delete (CLICK_DATA_TABLES) and stores the deletion marker on 202_users_pref; the cron job deletes',
+        'api/v3/Controllers/AdministrationController.php' => 'reads: counts the rows ClickRetention would delete (CLICK_DATA_TABLES) and stores the deletion date on 202_users_pref; the cron job deletes',
         // The subid writes behind the Update pages and the /conversions/subids API.
         '202-config/Update/SubidBatch.php' => 'writes click_filtered, which no sum reads',
         '202-config/Attribution/ConversionBackfill.php' => 'MARK_SQL writes the ledger backfill\'s marker, reading MAX(click_id) of 202_clicks; the conversions it backfills are written by MysqlConversionLedger',

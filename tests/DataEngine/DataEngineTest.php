@@ -34,15 +34,6 @@ final class DataEngineTest extends TestCase
         );
     }
 
-    public function testSlimEngineRefreshesLandingPageOnDuplicate(): void
-    {
-        self::assertStringContainsString(
-            'updateLandingPageId: true',
-            $this->source,
-            'Postbacks must refresh landing_page_id when the click already exists'
-        );
-    }
-
     public function testEmptyClickIdReturnsEarly(): void
     {
         self::assertStringContainsString(
@@ -67,13 +58,63 @@ final class DataEngineTest extends TestCase
         );
     }
 
-    public function testClickIdFromIpLookupIsEscaped(): void
+    /**
+     * A request that names no click re-rolls none, in either engine. Both
+     * took "the visitor's latest click" instead: user 1's newest click from
+     * the address in $ip_address in the last 24 hours, so a cookie-less
+     * lpc.php request re-rolled user 1's click from that address — a lookup
+     * and a rollup for a request that changed no click, reading only user
+     * 1's clicks and the global address rather than the stored one.
+     */
+    public function testNeitherEngineLooksAClickUpByAddress(): void
     {
-        self::assertStringContainsString(
-            'real_escape_string',
-            $this->source,
-            'Click ID resolved from the DB lookup must be escaped before interpolation'
-        );
+        $full = (string) file_get_contents(__DIR__ . '/../../202-config/class-dataengine.php');
+        foreach (['slim' => $this->source, 'full' => $full] as $engine => $source) {
+            $body = self::methodBody($source, 'setDirtyHour');
+            $read = "$engine: the body read is setDirtyHour()'s";
+            self::assertStringContainsString('ClickRollupSql::insertSelect', $body, $read);
+            foreach (['$ip_address', '202_ips', 'user_id'] as $read) {
+                self::assertStringNotContainsString($read, $body, "$engine: setDirtyHour() reads $read");
+            }
+        }
+    }
+
+    /** A function's body, from its opening brace to the brace that closes it, read from tokens. */
+    private static function methodBody(string $source, string $name): string
+    {
+        $tokens = token_get_all($source);
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token) || $token[0] !== T_FUNCTION) {
+                continue;
+            }
+            $j = $i + 1;
+            while (is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) {
+                $j++;
+            }
+            if (!is_array($tokens[$j]) || $tokens[$j][1] !== $name) {
+                continue;
+            }
+            while ($tokens[$j] !== '{') {
+                $j++;
+            }
+            $depth = 0;
+            $body = '';
+            for ($k = $j; $k < count($tokens); $k++) {
+                $text = is_array($tokens[$k]) ? $tokens[$k][1] : $tokens[$k];
+                $opens = is_array($tokens[$k])
+                    && in_array($tokens[$k][0], [T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES], true);
+                if ($text === '{' || $opens) {
+                    $depth++;
+                } elseif ($text === '}') {
+                    $depth--;
+                }
+                $body .= $text;
+                if ($depth === 0) {
+                    return $body;
+                }
+            }
+        }
+        self::fail("no function $name()");
     }
 
     public function testSlimEngineIsGuardedAgainstRedeclaration(): void

@@ -43,6 +43,11 @@ final class FieldErrorPathsAreDottedTest extends TestCase
             'offers[<n>]: an offer by its place in the comma-separated `offers` query value, numbered from 1 as'
             . ' the Setup page numbers them; a query value, not a body list',
         ],
+        '202-config/Report/OverviewChart.php' => [
+            2,
+            'levels[<i>][id], types[<i>][type]: the Overview chart builder\'s own form field names, as'
+            . ' tracking202/ajax/charts.php receives them from the page; a form post, not an API body',
+        ],
         'api/v3/Apps/Android/InstallEventsIntake.php' => [
             1,
             "events[<i>]: the Android SDK's events contract (tests/fixtures/app-sdk-contract/android names"

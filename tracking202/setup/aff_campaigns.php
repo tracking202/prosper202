@@ -234,6 +234,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 		$aff_campaign_result = $db->query($aff_campaign_sql) or record_mysql_error($aff_campaign_sql);
 		$add_success = true;
 
+        // A campaign moved to another category: its clicks' report rows keep
+        // the category they were rolled up under until they are rolled up
+        // again, so they are queued for the cron job (RollupRefresh). The
+        // campaign is saved either way; a queue that fails is logged.
+        $movedCampaignId = (int) $mysql['aff_campaign_id'];
+        if ($editing == true && (int) $aff_campaign_row['aff_network_id'] !== (int) $mysql['aff_network_id']) {
+            try {
+                $rollupConn = new \Prosper202\Database\Connection($db);
+                $owner = (int) $mysql['user_id'];
+                \Prosper202\DataEngine\RollupRefresh::campaign($rollupConn, $owner, $movedCampaignId, time());
+            } catch (\Throwable $e) {
+                error_log('aff_campaigns.php: campaign ' . $movedCampaignId . ' moved category, but its clicks'
+                    . ' were not queued for the report rollup: ' . $e->getMessage());
+            }
+        }
+
 		if ($slack) {
 			if ($editing == true) {
 				if ($aff_campaign_row['aff_campaign_name'] != $_POST['aff_campaign_name']) {

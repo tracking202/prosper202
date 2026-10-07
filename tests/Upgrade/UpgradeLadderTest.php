@@ -154,6 +154,23 @@ final class UpgradeLadderTest extends TestCase
         $this->assertStringContainsString("version='" . self::CURRENT_VERSION . "'", $block);
     }
 
+    /**
+     * The release adds user_delete_data_before to 202_users_pref (the
+     * scheduled click deletion's time; ClickRetention), and the rung brings
+     * an upgraded table to the installer's definition by reconciling it with
+     * the measurement tables. Without the definition in the rung's list an
+     * upgraded install has no column, and the cron job's read of it — and
+     * the Settings page and GET /system/retention with it — fails.
+     * ScheduledDeletionUpgradeIntegrationTest runs that reconcile on a server.
+     */
+    public function testThePriorVersionBlockReconcilesThePreferencesTable(): void
+    {
+        $this->assertStringContainsString(
+            'UserTables::usersPref()',
+            $this->blockGatedOn(self::PRIOR_VERSION)
+        );
+    }
+
     public function testThePriorVersionBlockReconcilesExistingTablesAndDoesNotOnlyCreateThem(): void
     {
         // CREATE TABLE IF NOT EXISTS converges nothing: against a table that

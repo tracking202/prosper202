@@ -298,7 +298,9 @@ final class TimeGroupingIntegrationTest extends TestCase
      * point's value is the group of the same name. The points were UTC days
      * and hours (DateTime('@…') is UTC): India's chart started on the day
      * before its window, and New York's hourly chart started at 5 am, so the
-     * clicks of its first five hours were on no point at all.
+     * clicks of its first five hours were on no point at all. And the last
+     * point is the window's last day or hour: the points ran a day or an
+     * hour past it, so today's chart had two days.
      */
     public function testTheChartsPointsAreTheAccountsDaysAndHours(): void
     {
@@ -308,6 +310,7 @@ final class TimeGroupingIntegrationTest extends TestCase
         $to = (new \DateTimeImmutable('2026-10-08 23:59:59', $tz))->getTimestamp();
         [$categories, $points] = self::chart($from, $to, 'days', 'M d');
         self::assertSame('Oct 05', $categories[0], 'the first point is the first day of the window');
+        self::assertSame(['Oct 05', 'Oct 06', 'Oct 07', 'Oct 08'], $categories, 'and the last its last day');
         self::assertSame(['Oct 06' => '1', 'Oct 07' => '1'], $points);
 
         self::signIn(self::NEW_YORK, 'America/New_York');
@@ -316,6 +319,8 @@ final class TimeGroupingIntegrationTest extends TestCase
         $to = (new \DateTimeImmutable('2026-03-08 23:59:59', $tz))->getTimestamp();
         [$categories, $points] = self::chart($from, $to, 'hours', 'M d h:iA');
         self::assertSame('Mar 07 12:00AM', $categories[0], 'the first point is the first hour of the window');
+        self::assertSame('Mar 08 11:00PM', end($categories), 'and the last point its last hour');
+        self::assertCount(24 + 23, $categories, 'one per hour the clock showed: 8 March 2026 lost 2 am');
         self::assertSame(['Mar 07 01:00AM' => '1', 'Mar 07 11:00PM' => '1', 'Mar 08 03:00AM' => '1'], $points);
     }
 

@@ -112,48 +112,47 @@ LEFT OUTER JOIN 202_clicks_rotator AS 2rc ON (2c.click_id = 2rc.click_id)
 SQL;
 
     /**
-     * Columns refreshed when the click already exists in the rollup table
-     * (e.g. a conversion postback arrives after the click was recorded).
+     * The rollup row's key (202_dataengine's PRIMARY KEY): one row per
+     * 202_clicks row, a rotator re-click being a second row of its click.
      */
-    private const UPDATED_ON_DUPLICATE = [
-        'click_lead',
-        'click_bot',
-        'click_out',
-        'click_filtered',
-        'landing_page_id',
-        'leads',
-        'payout',
-        'income',
-        'cost',
-        'rotator_id',
-        'rule_id',
-        'rule_redirect_id',
-        'aff_campaign_id',
-        'aff_network_id',
-    ];
+    private const KEY = ['click_id', 'click_time'];
 
     /**
      * Build the full INSERT ... SELECT ... ON DUPLICATE KEY UPDATE statement.
      *
+     * A row that is already there takes every column the SELECT derives, so
+     * re-rolling a click converges its row to what a fresh rollup of it
+     * computes, whichever path re-rolls it (the redirects and pixels, a
+     * conversion, the dirty-hours queue, the hourly job). The update list
+     * named fourteen of the forty-two columns, so the rest kept whatever the
+     * row's first rollup saw: a traffic source account moved to another
+     * traffic source left its clicks' ppc_network_id on the old one for good
+     * (measured live: after the move and a re-run of the hour, the API's
+     * breakdown by traffic source put six of seven clicks under the old
+     * source while the Overview, which looks the account's source up,
+     * showed all seven under the new one), and a row rolled up before the
+     * joins were tied to the click's account (CLAUDE.md #27) kept another
+     * account's ppc_network_id and text_ad_id, which the "[No traffic
+     * source]" filter (`ppc_network_id IS NULL`) and the text-ad groups then
+     * told apart from the NULL a fresh rollup writes. landing_page_id was
+     * refreshed on the tracking path only, a difference kept "until verified
+     * safe to unify": it is the 202_clicks row's own column, which nothing
+     * rewrites, so every path refreshes it now.
+     *
+     * A row's dimensions are its click's: a re-click rewrites the click's
+     * one 202_clicks_advance, _tracking, _site and _variable rows, and a
+     * re-roll of the click's earlier row reads them as a fresh rollup of it
+     * always did.
+     *
      * @param string $table       Target table (202_dataengine or 202_dataengine_new).
      * @param string $whereClause SQL condition on the 202_clicks side, already
      *                            escaped by the caller (e.g. "2c.click_id=123").
-     * @param bool   $updateLandingPageId Whether ON DUPLICATE KEY UPDATE also
-     *                            refreshes landing_page_id. The tracking hot
-     *                            path does; the batch re-aggregation paths
-     *                            historically did not, and that difference is
-     *                            preserved until verified safe to unify.
      */
-    public static function insertSelect(string $table, string $whereClause, bool $updateLandingPageId = false): string
+    public static function insertSelect(string $table, string $whereClause): string
     {
-        $updateColumns = self::UPDATED_ON_DUPLICATE;
-        if (!$updateLandingPageId) {
-            $updateColumns = array_values(array_diff($updateColumns, ['landing_page_id']));
-        }
-
         $updates = implode(",\n", array_map(
             static fn(string $column): string => $column . '=values(' . $column . ')',
-            $updateColumns
+            self::refreshedColumns()
         ));
 
         return 'insert into ' . $table . '(' . implode(",\n", array_keys(self::COLUMNS)) . ")\n"
@@ -161,5 +160,15 @@ SQL;
             . self::JOINS . "\n"
             . 'WHERE ' . $whereClause . "\n"
             . "on duplicate key update\n" . $updates;
+    }
+
+    /**
+     * Every column a duplicate key refreshes: all the SELECT derives but the key.
+     *
+     * @return list<string>
+     */
+    public static function refreshedColumns(): array
+    {
+        return array_values(array_diff(array_keys(self::COLUMNS), self::KEY));
     }
 }

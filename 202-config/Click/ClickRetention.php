@@ -16,10 +16,25 @@ use Prosper202\Report\RollupDirty;
  *    "Delete click data older than", PUT /system/retention): every click all
  *    of whose rows are older than midnight that began the day that many days
  *    before today (cutoff());
- *  - **scheduled** (`user_delete_data_clickid`; the page's Advanced ›
+ *  - **scheduled** (`user_delete_data_before`; the page's Advanced ›
  *    "Delete click data from before", POST /system/retention/delete-before):
- *    every click whose id is below the marker — the contract the API's
- *    preview counts by, table by table.
+ *    every click all of whose rows are older than the stored time, midnight
+ *    that began the chosen day in the scheduler's zone — the same rule as the
+ *    automatic deletion, by the same query (expiredClicks()), and the one the
+ *    API's preview counts by (countOlderThan()).
+ *
+ * The scheduled deletion used to store an id instead: MAX(click_id) of the
+ * clicks recorded at or before the day, in `user_delete_data_clickid`, and
+ * delete every click below it. An id range is not a time range (below), so
+ * it deleted a click re-clicked after the day and kept the newest click from
+ * before it (measured live: a deletion "from before Oct 7" deleted a click
+ * whose second row was recorded on Oct 7, and kept one from Oct 4). Nothing
+ * writes the id any more; an install that scheduled one before still has it
+ * honoured as it was promised (deleteBelow()), because the day it was made
+ * from was never stored and cannot be recovered from it. A stored time wins
+ * over an id beside it: every writer of the time clears the id in the same
+ * statement, so the two together are only ever a hand edit, and the time is
+ * the schedule the current page or API made.
  *
  * Both select click ids and hand them to deleteClicks(), which deletes a
  * batch from every table in TABLES in one transaction — so no table keeps a
@@ -28,14 +43,15 @@ use Prosper202\Report\RollupDirty;
  * AttributionRollup rule 2), so the rollup re-sums them from what remains,
  * as 202_dataengine, deleted in the same batch, already reads.
  *
- * Why the automatic deletion selects the expired clicks' ids rather than an
- * id boundary: click_id is not ordered by click_time. A redirect takes
+ * Why a deletion by date selects the expired clicks' ids rather than an id
+ * boundary: click_id is not ordered by click_time. A redirect takes
  * click_time before it allocates the id (dl.php reads time() some two
  * hundred lines earlier, with geo and filter lookups between), so concurrent
  * requests interleave; and a rotator re-click (rtr.php, ?lpr=) gives an
- * existing click another 202_clicks row at the time of the re-click. The job
- * this replaces took MIN(click_id) of the expired clicks and deleted the ids
- * below it — below the oldest expired click, so in practice nothing.
+ * existing click another 202_clicks row at the time of the re-click. The
+ * automatic job this replaced took MIN(click_id) of the expired clicks and
+ * deleted the ids below it — below the oldest expired click, so in practice
+ * nothing (CLAUDE.md #26).
  *
  * A click is expired when every one of its rows is: a click re-clicked
  * inside the window is kept whole, old row included, until its newest row
@@ -103,7 +119,7 @@ final class ClickRetention
         '202_engagement_events' => 'LTV engagement events, kept with the customer',
         '202_personalization_tokens' => 'personalization tokens, purged on their own replay window',
         '202_customers' => 'first_click_id: the customer\'s first click, kept as the customer\'s acquisition record',
-        '202_users_pref' => 'user_delete_data_clickid is the scheduled deletion\'s marker itself',
+        '202_users_pref' => 'user_delete_data_clickid is the scheduled deletion\'s marker (an earlier version\'s form)',
     ];
 
     /** @var callable(): int */
@@ -156,18 +172,42 @@ final class ClickRetention
 
     /**
      * Run the one-off deletion scheduled on user 1's preferences, until
-     * $deadline. None scheduled deletes nothing.
+     * $deadline: by the stored time when there is one, else by an id marker
+     * an earlier version stored. None scheduled deletes nothing.
      *
-     * @return array{marker: int|null, clicks: int, rows: array<string, int>, batches: int, complete: bool}
+     * @return array{before: int|null, marker: int|null, clicks: int, rows: array<string, int>, batches: int,
+     *     complete: bool}
      */
     public function runScheduled(int $deadline): array
     {
-        $marker = self::marker($this->ownerPrefs()['user_delete_data_clickid'] ?? null);
-        if ($marker === null) {
-            return ['marker' => null] + self::emptyReport();
+        ['before' => $before, 'marker' => $marker] = self::scheduled($this->ownerPrefs());
+        if ($before !== null) {
+            return ['before' => $before, 'marker' => null] + $this->deleteOlderThan($before, $deadline);
+        }
+        if ($marker !== null) {
+            return ['before' => null, 'marker' => $marker] + $this->deleteBelow($marker, $deadline);
         }
 
-        return ['marker' => $marker] + $this->deleteBelow($marker, $deadline);
+        return ['before' => null, 'marker' => null] + self::emptyReport();
+    }
+
+    /**
+     * What user 1's preferences schedule: the time (user_delete_data_before)
+     * when one is stored — an id beside it is not read — else the id marker
+     * an earlier version stored (user_delete_data_clickid). Unreadable is an
+     * error, never "none".
+     *
+     * @param array<string, mixed> $prefs a 202_users_pref row
+     * @return array{before: int|null, marker: int|null}
+     */
+    public static function scheduled(array $prefs): array
+    {
+        $before = self::cutoffTime($prefs['user_delete_data_before'] ?? null);
+        if ($before !== null) {
+            return ['before' => $before, 'marker' => null];
+        }
+
+        return ['before' => null, 'marker' => self::marker($prefs['user_delete_data_clickid'] ?? null)];
     }
 
     /**
@@ -179,18 +219,14 @@ final class ClickRetention
     public function deleteOlderThan(int $cutoff, int $deadline): array
     {
         $report = self::emptyReport();
-        // The accounts with a row before the cutoff: a loose scan of
-        // (user_id, click_time), one probe an account.
-        $stmt = $this->conn->prepareWrite('SELECT user_id FROM 202_clicks GROUP BY user_id HAVING MIN(click_time) < ?');
-        $this->conn->bind($stmt, 'i', [$cutoff]);
-        $users = array_map(static fn (array $r): int => (int) $r['user_id'], $this->conn->fetchAll($stmt));
+        $users = $this->accountsOlderThan($cutoff);
 
         while ($users !== []) {
             foreach ($users as $k => $userId) {
                 if (($this->clock)() >= $deadline) {
                     return $report;
                 }
-                $ids = $this->expiredClicks($userId, $cutoff);
+                $ids = $this->expiredClicks($userId, $cutoff, $this->batch);
                 if ($ids === []) {
                     unset($users[$k]);
                     continue;
@@ -204,10 +240,63 @@ final class ClickRetention
     }
 
     /**
+     * What deleteOlderThan($cutoff) would delete now, counted by the same
+     * selection (EXPIRED, account by account): the clicks, and their rows in
+     * each of TABLES. The API's preview of a scheduled deletion. A click
+     * re-clicked at or after the cutoff is in neither, and neither is a row
+     * whose 202_clicks row is already gone — deleteOlderThan() reaches a
+     * click through its 202_clicks rows.
+     *
+     * @return array{clicks: int, rows: array<string, int>}
+     */
+    public function countOlderThan(int $cutoff): array
+    {
+        $counts = ['clicks' => 0, 'rows' => array_fill_keys(self::TABLES, 0)];
+        foreach ($this->accountsOlderThan($cutoff) as $userId) {
+            $counts['clicks'] += $this->countExpired(self::COUNT_EXPIRED, $userId, $cutoff);
+            foreach (self::TABLES as $table) {
+                $counts['rows'][$table] += $this->countExpired(
+                    'SELECT COUNT(*) AS n FROM `' . $table . '` AS x INNER JOIN (SELECT DISTINCT c.click_id '
+                    . self::EXPIRED . ') AS e ON (e.click_id = x.click_id)',
+                    $userId,
+                    $cutoff
+                );
+            }
+        }
+
+        return $counts;
+    }
+
+    /** How many clicks deleteOlderThan($cutoff) would delete now: countOlderThan()'s clicks alone. */
+    public function clicksOlderThan(int $cutoff): int
+    {
+        $clicks = 0;
+        foreach ($this->accountsOlderThan($cutoff) as $userId) {
+            $clicks += $this->countExpired(self::COUNT_EXPIRED, $userId, $cutoff);
+        }
+
+        return $clicks;
+    }
+
+    /** Whether deleteOlderThan($cutoff) would delete any click now. */
+    public function anyOlderThan(int $cutoff): bool
+    {
+        foreach ($this->accountsOlderThan($cutoff) as $userId) {
+            if ($this->expiredClicks($userId, $cutoff, 1) !== []) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Delete every click whose id is below $marker: the clicks first, then
      * whatever the other tables still hold below it (rows whose 202_clicks
-     * row was already gone, which the preview counted too), until nothing
-     * is left or $deadline.
+     * row was already gone, which that version's preview counted too), until
+     * nothing is left or $deadline. Only an id marker an earlier version
+     * scheduled reaches this (runScheduled()); it is not a time range, which
+     * is why nothing schedules one any more.
      *
      * @return array{clicks: int, rows: array<string, int>, batches: int, complete: bool}
      */
@@ -265,33 +354,67 @@ final class ClickRetention
     }
 
     /**
-     * Up to a batch of an account's expired clicks, oldest first: a range
-     * of (user_id, click_time), skipping a click that has a row at or after
-     * the cutoff. The skip is a LEFT JOIN probing the click_id index row by
-     * row: written as NOT EXISTS, MariaDB turned it into IN and
-     * materialized it with a scan of the whole table, every batch.
+     * An account's expired clicks' 202_clicks rows: a range of (user_id,
+     * click_time), skipping a click that has a row at or after the cutoff.
+     * The skip is a LEFT JOIN probing the click_id index row by row: written
+     * as NOT EXISTS, MariaDB turned it into IN and materialized it with a
+     * scan of the whole table, every batch. Binds, in order: the cutoff, the
+     * account, the cutoff. The deletion and its preview both select through
+     * it, so the preview cannot count by another rule.
+     */
+    private const EXPIRED = 'FROM 202_clicks c
+             LEFT JOIN 202_clicks n ON n.click_id = c.click_id AND n.click_time >= ?
+             WHERE c.user_id = ? AND c.click_time < ? AND n.click_id IS NULL';
+
+    /** How many clicks EXPIRED selects. */
+    private const COUNT_EXPIRED = 'SELECT COUNT(DISTINCT c.click_id) AS n ' . self::EXPIRED;
+
+    /**
+     * The accounts with a row before the cutoff: a loose scan of (user_id,
+     * click_time), one probe an account.
      *
      * @return list<int>
      */
-    private function expiredClicks(int $userId, int $cutoff): array
+    private function accountsOlderThan(int $cutoff): array
     {
-        $stmt = $this->conn->prepareWrite(
-            'SELECT c.click_id FROM 202_clicks c
-             LEFT JOIN 202_clicks n ON n.click_id = c.click_id AND n.click_time >= ?
-             WHERE c.user_id = ? AND c.click_time < ? AND n.click_id IS NULL
-             ORDER BY c.click_time
-             LIMIT ?'
-        );
-        $this->conn->bind($stmt, 'iiii', [$cutoff, $userId, $cutoff, $this->batch]);
+        $stmt = $this->conn->prepareWrite('SELECT user_id FROM 202_clicks GROUP BY user_id HAVING MIN(click_time) < ?');
+        $this->conn->bind($stmt, 'i', [$cutoff]);
+
+        return array_map(static fn (array $r): int => (int) $r['user_id'], $this->conn->fetchAll($stmt));
+    }
+
+    /**
+     * Up to $limit of an account's expired clicks, oldest first.
+     *
+     * @return list<int>
+     */
+    private function expiredClicks(int $userId, int $cutoff, int $limit): array
+    {
+        $stmt = $this->conn->prepareWrite('SELECT c.click_id ' . self::EXPIRED . ' ORDER BY c.click_time LIMIT ?');
+        $this->conn->bind($stmt, 'iiii', [$cutoff, $userId, $cutoff, $limit]);
 
         return array_values(array_unique(array_map(static fn (array $r): int => (int) $r['click_id'], $this->conn->fetchAll($stmt))));
+    }
+
+    /** One count over an account's expired clicks; $sql selects `n` and ends in EXPIRED's binds. */
+    private function countExpired(string $sql, int $userId, int $cutoff): int
+    {
+        $stmt = $this->conn->prepareWrite($sql);
+        $this->conn->bind($stmt, 'iii', [$cutoff, $userId, $cutoff]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null || !array_key_exists('n', $row)) {
+            throw new \UnexpectedValueException('a count of the clicks older than ' . $cutoff . ' answered no row');
+        }
+
+        return (int) $row['n'];
     }
 
     /** @return array<string, mixed> user 1's retention settings; [] when it has no preferences row */
     private function ownerPrefs(): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT user_auto_database_optimization_days, user_delete_data_clickid FROM 202_users_pref WHERE user_id = 1 LIMIT 1'
+            'SELECT user_auto_database_optimization_days, user_delete_data_before, user_delete_data_clickid'
+            . ' FROM 202_users_pref WHERE user_id = 1 LIMIT 1'
         );
 
         return $this->conn->fetchOne($stmt) ?? [];
@@ -313,6 +436,25 @@ final class ClickRetention
         }
 
         return (int) $s;
+    }
+
+    /**
+     * The stored time a scheduled deletion runs up to; null when none is
+     * scheduled (NULL, or 0 as the marker reads it). Unreadable is an error,
+     * never "none".
+     */
+    private static function cutoffTime(mixed $raw): ?int
+    {
+        if ($raw === null) {
+            return null;
+        }
+        $s = is_int($raw) ? (string) $raw : (is_string($raw) ? $raw : '');
+        if (preg_match('/^[0-9]{1,10}$/D', $s) !== 1 || (int) $s > 4294967295) {
+            throw new \UnexpectedValueException('user 1\'s user_delete_data_before is ' . var_export($raw, true)
+                . ', not a time; nothing was deleted');
+        }
+
+        return (int) $s === 0 ? null : (int) $s;
     }
 
     /** The stored marker; null when none is scheduled. Unreadable is an error, never "none". */

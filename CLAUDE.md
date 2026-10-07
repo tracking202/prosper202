@@ -846,6 +846,17 @@ already written will not change. An end-to-end request through the real
 reader (here, a click that matches the rule) is what finds it; reading either
 file alone cannot.
 
+The same split hid a whole Overview table. `DataEngine::doSummary()` writes
+`''` for a missing value (0 in an int column, under the app's empty
+`sql_mode`), but every rollup is now `INSERT … SELECT` (`ClickRollupSql`),
+which never reaches it and writes the LEFT JOIN's NULL; the Overview's
+advanced-landing-page tables asked for `aff_campaign_id IS FALSE`, which NULL
+is not, so no advanced landing page click the rollup wrote was ever listed
+there. In SQL the "none" tests that
+miss NULL are `IS FALSE`, `= 0`, `= ''` and `NOT IN (…)`; on a column a
+LEFT JOIN fills, ask for `IS NULL OR = 0`, and seed tests with the NULL the
+writer actually writes — the account-scope test seeded `0` and stayed green.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -861,6 +872,21 @@ hand-kept list of click tables had drifted five tables behind the schema;
 `ClickRetentionCoversEveryClickTableTest` now holds it to the table
 definitions. And a delete is a write the derived sums must hear about —
 `RollupDirty::clicksDeleted()` marks them in the deleting transaction.
+
+The fix moved one of the class's two deletions and left the other: the
+scheduled "delete click data from before <date>" still stored `MAX(click_id)`
+of the clicks at or before the day and deleted the ids below it, in the same
+file, under a docblock that explained why ids are not time. Measured live: a
+deletion "from before Oct 7" deleted a click re-clicked on Oct 7 and kept one
+from Oct 4. It stores the day's time now (`user_delete_data_before`), deletes
+and previews by the automatic deletion's own query, and honours an id an
+install already stored — rows already written will not change (#25). A fix
+to one consumer of a stand-in is a sweep of every consumer of it, starting
+with the ones beside it. The same form computed the day's midnight with
+`strtotime($day . ' ' . date('T'))`, today's abbreviation: "IST" is Israel's
+to PHP, so India and Ireland were cut hours off, and any day across a DST
+change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
+$day, $zone)`.
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
@@ -988,6 +1014,38 @@ case-folded, truncated or canonicalized on its way into storage, find every
 comparison against the stored value and ask which side of the transform the
 other operand is on — and every other writer of the same kind of value, and
 whether it was given the transform at all.
+
+### 31. A copied value is stale from the moment its source changes
+A click's report row (202_dataengine) copies two values from Setup, not from
+the click: its account's traffic source and its campaign's category. The
+rollup's `ON DUPLICATE KEY UPDATE` refreshed fourteen of its forty-two
+columns — `ppc_network_id` and `text_ad_id` not among them — and nothing
+re-rolled a moved account's older clicks, so after an account moved to
+another source the API's breakdown (which groups by the row's copy) put six
+of seven clicks under the old source while the Overview (which looks the
+account's source up) put all seven under the new one; and rows rolled up
+before #27's joins were tied kept another account's source for good. A
+denormalized copy needs both halves: every re-derivation writes every
+column it derives (`ClickRollupSql::refreshedColumns()`, pinned by
+`ClickRollupSqlTest`), and every writer of the source queues the copies
+for re-derivation (`RollupRefresh`, from the Setup pages and the API). When
+adding a column to a derived table, or a writer to a table one is derived
+from, find the other half. Rows already stale in an install heal only when
+they are re-rolled; nothing re-rolls them by itself.
+
+### 32. A shortcut that returns early skips the work the old path did after
+Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
+`DataEngine::doQuery()` returns at once when the query answers `true`. The
+rows were right; but `doSummary()`, the code that return skips, was also
+where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
+so the cron job's rebuild without curl took its first window, never finished
+it, and never took another — and it read `user_id = 1` while the curl path
+read every account. Nothing failed: the reports simply never got the
+rebuilt history. When a change makes a function skip code it used to run —
+an early return, a fast path, a branch on a new result type — list every
+side effect of the skipped code (flags, counters, cache writes, the "done"
+mark) and move each one to where the new path still runs it;
+`ClickUpgradeIntegrationTest` holds this one.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
