@@ -450,6 +450,61 @@ func linkTokenParams(cmd *cobra.Command) (map[string]string, error) {
 	return params, nil
 }
 
+// idSources names the command that lists each kind of id a flag takes, so a
+// flag's help says where its value comes from instead of leaving an agent
+// to guess (and to try a public id from a tracking link).
+var idSources = map[string]string{
+	"aff_campaign_id": "p202 campaign list",
+	"aff_network_id":  "p202 aff-network list",
+	"ppc_network_id":  "p202 ppc-network list",
+	"ppc_account_id":  "p202 ppc-account list",
+	"landing_page_id": "p202 landing-page list",
+	"text_ad_id":      "p202 text-ad list",
+	"rotator_id":      "p202 rotator list",
+}
+
+// withIDSource adds the list command an id comes from to an id flag's help,
+// unless the help already names a command.
+func withIDSource(name, desc string) string {
+	if src, ok := idSources[name]; ok && !strings.Contains(desc, "p202 ") {
+		return desc + " (from `" + src + "`)"
+	}
+	return desc
+}
+
+// crudCreateExample is a create with every required flag, the ids marked
+// with the command that lists them.
+func crudCreateExample(entity crudEntity) string {
+	line := "  p202 " + entity.Name + " create"
+	for _, f := range entity.Fields {
+		if !f.Required {
+			continue
+		}
+		value := "<" + strings.TrimPrefix(strings.TrimPrefix(f.Name, "aff_"), "ppc_") + ">"
+		if src, ok := idSources[f.Name]; ok {
+			value = "<id from " + src + ">"
+		} else if f.Enum != nil {
+			value = f.Enum[0]
+		}
+		line += " --" + strings.ReplaceAll(f.Name, "_", "-") + " " + value
+	}
+	return line + " --json"
+}
+
+// crudUpdateExample changes one field; the others are left as they are.
+func crudUpdateExample(entity crudEntity) string {
+	if len(entity.Fields) == 0 {
+		return ""
+	}
+	f := entity.Fields[0]
+	value := "<new value>"
+	if f.Enum != nil {
+		value = f.Enum[0]
+	}
+	return "  p202 " + entity.Name + " update <id from p202 " + entity.Name + " list> --" + strings.ReplaceAll(f.Name, "_", "-") + " " + value + " --json\n" +
+		"  (only the flags given are sent; the rest of the " + entity.Name + " is unchanged)"
+}
+
 // requireCRUDFields refuses a create missing a field the controller
 // requires, before any request: the server would answer 422 for it anyway,
 // after a round trip, and the hint here can say where the value comes from.
@@ -896,7 +951,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		registerListStatsFlags(listCmd, entity)
 	}
 	for _, p := range entity.ListParams {
-		listCmd.Flags().String(p.Name, "", p.Desc)
+		listCmd.Flags().String(p.Name, "", withIDSource(p.Name, p.Desc))
 		if p.Enum != nil {
 			enumFlag(listCmd, p.Name, newEnum(p.Enum))
 		}
@@ -938,8 +993,9 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 
 	// create
 	createCmd := &cobra.Command{
-		Use:   "create",
-		Short: fmt.Sprintf("Create a new %s", entity.Name),
+		Use:     "create",
+		Short:   fmt.Sprintf("Create a new %s", entity.Name),
+		Example: crudCreateExample(entity),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("create", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -966,7 +1022,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		desc := f.Desc
+		desc := withIDSource(f.Name, f.Desc)
 		if f.Required {
 			desc += " (required)"
 		}
@@ -979,9 +1035,10 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 
 	// update
 	updateCmd := &cobra.Command{
-		Use:   "update <id>",
-		Short: fmt.Sprintf("Update a %s", entity.Name),
-		Args:  cobra.ExactArgs(1),
+		Use:     "update <id>",
+		Short:   fmt.Sprintf("Update a %s", entity.Name),
+		Example: crudUpdateExample(entity),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			done := metrics.Timer("update", entity.Endpoint)
 			defer func() { done(retErr == nil, errString(retErr)) }()
@@ -1014,7 +1071,7 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 		},
 	}
 	for _, f := range entity.Fields {
-		desc := f.Desc
+		desc := withIDSource(f.Name, f.Desc)
 		if f.Clearable {
 			desc += " (\"\" clears it)"
 		}
