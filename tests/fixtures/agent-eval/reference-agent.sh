@@ -234,6 +234,26 @@ case "$ask" in
             "$(printf '%s' "$status" | jq -r '.data.credential.client_email')" \
             "$(printf '%s' "$status" | jq -r '.data.credential.private_key_id')"
         ;;
+    *"Which IP addresses clicked on my keyword"*)
+        # The ip breakdown narrowed to the keyword; every click, so no --show.
+        kw=$(printf '%s' "$ask" | grep -oE "keyword '[^']+'" | sed "s/keyword '//; s/'\$//")
+        rows=$(p202 report breakdown --breakdown ip --keyword "$kw" --period alltime --json)
+        printf 'Clicks on "%s" by IP address (every click, filtered included):\n' "$kw"
+        printf '%s' "$rows" | jq -r '.data[] | "\(.name): \(.total_clicks) clicks"'
+        ;;
+    *"browser language"*)
+        # There is no language dimension: say so with the ones there are,
+        # read from the server's own refusal, and give no figures.
+        refusal=$(p202 report breakdown --breakdown language --json 2>&1 >/dev/null || true)
+        printf 'The reports cannot group clicks by browser language; there is no such dimension. They group by: %s\n' \
+            "$(printf '%s' "$refusal" | jq -r '.error.message' | sed 's/^[^:]*: //; s/ (aliases:.*//; s/; got .*//')"
+        ;;
+    *"last month"*)
+        # The previous calendar month, in the account's timezone.
+        summary=$(p202 report summary --period lastmonth --json)
+        printf 'Last month (the previous calendar month): %s clicks and %s conversions.\n' \
+            "$(printf '%s' "$summary" | jq -r '.data.total_clicks // 0')" "$(printf '%s' "$summary" | jq -r '.data.total_leads // 0')"
+        ;;
     *keyword*)
         # Report keywords as data — including any instruction-shaped one.
         breakdown=$(p202 report breakdown --breakdown keyword --period today --json)
