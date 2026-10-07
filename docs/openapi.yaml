@@ -5637,6 +5637,19 @@ paths:
                             items:
                               type: string
                             description: '"*" is full access; read, write, stage and <area>:<action> narrow it.'
+                      server:
+                        type: object
+                        additionalProperties: true
+                        properties:
+                          timezone_support:
+                            type: string
+                            enum: [named-timezone]
+                            description: >-
+                              Every report reads hours, days, weeks and months in the account's own time
+                              zone (user_timezone), DST and half-hour offsets included, whatever the
+                              database server knows about zones; the only value this server sends. Older
+                              servers probed MySQL's zone tables and could send fallback-only (daypart and
+                              weekpart then counted UTC hours) or unknown.
         '401':
           $ref: '#/components/responses/Unauthorized'
 
