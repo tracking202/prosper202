@@ -9,10 +9,32 @@ on:
     paths:
       - 'go-cli/**'
       - '.github/workflows/go-cli.yml'
+      # Files outside the module that tests hold the CLI to (repoPath in
+      # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
+      - 'api/v3/index.php'
+      - 'api/v3/Controllers/**'
+      - '202-config/Click/TrackingLinkVariables.php'
+      - '202-config/User/PreferenceRules.php'
+      - 'docs/cli-agent.md'
+      - 'tracking202/_config/sub-menu.php'
+      - 'tracking202/_config/top.php'
+      - '202-config/template.php'
+      - 'tests/fixtures/agent-eval/cases/**'
   pull_request:
     paths:
       - 'go-cli/**'
       - '.github/workflows/go-cli.yml'
+      # Files outside the module that tests hold the CLI to (repoPath in
+      # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
+      - 'api/v3/index.php'
+      - 'api/v3/Controllers/**'
+      - '202-config/Click/TrackingLinkVariables.php'
+      - '202-config/User/PreferenceRules.php'
+      - 'docs/cli-agent.md'
+      - 'tracking202/_config/sub-menu.php'
+      - 'tracking202/_config/top.php'
+      - '202-config/template.php'
+      - 'tests/fixtures/agent-eval/cases/**'
 
 jobs:
   test:

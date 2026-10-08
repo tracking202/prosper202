@@ -56,20 +56,29 @@ each marker is in `docs/cli-agent.md`.
 ## Finding a Command
 
 `p202 search <what you want to do>` ranks commands offline by your words, matched
-against each command's name, aliases, description, examples, flags and the values
-its flags accept (plurals fold; synonyms such as referrer/referer, offer/campaign,
-dead/broken, undo/revert and link/url match; "per"/"by" ask for a breakdown). Each
-result says why it matched and, when a flag value matched, gives a command line to
-try; `--json` returns `{query, terms, good_match, note, results[]}`. When nothing
-matches well, `good_match` is false, the note says so, and only the closest three
-are shown.
+against each command's name, aliases, description, examples, flags, the values its
+flags accept, and the tasks it runs: the web UI page that does the same ("Spy",
+"Update CPC", "Analyze › IPs") and the words people use for it ("realtime traffic",
+"live clicks"). Plurals fold (`IPs` = `ip`), split words join (`real time` and
+`real-time` = `realtime`), synonyms such as referrer/referer, offer/campaign,
+dead/broken, undo/revert and link/url match, and "per"/"by" ask for a breakdown. A
+page or phrase counts in full only when the query names all of it. Each result says
+why it matched and, when a flag value or a task matched, gives the command line to
+try (`p202 search spy` offers `p202 click list --follow`); `--json` returns
+`{query, terms, good_match, results[]}`. When nothing matches well, search fails:
+exit 1, nothing on stdout in any mode, and the hint names the closest three
+commands. A UI page with no command (Watch TV202, Hot Deals & Discounts, VIP Perks
+Profile, Help, Home, the 1-click upgrade) fails the same way and says where it is
+done instead.
 
 `p202 commands [command...]` lists the command tree, or one subtree. `--json`
 returns `{schema, cli_version, global_flags, commands[]}`: per command its path,
 use, aliases, short and long description, examples, whether it runs, and its flags
 (name, shorthand, type, default, usage, `required`, and for fixed-set flags
-`allowed_values`, `value_aliases`, `value_list`). Global flags are listed once and
-hidden flags are left out. `p202 --help` points at both commands.
+`allowed_values`, `value_aliases`, `value_list`), and `tasks` (`{run, ui_pages,
+phrases}`: the command line for each web UI page it does). The pages no command does
+are listed once under `not_in_cli` with `instead` and `hint`. Global flags are
+listed once and hidden flags are left out. `p202 --help` points at both commands.
 
 ## Commands
 

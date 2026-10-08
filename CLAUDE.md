@@ -1177,6 +1177,22 @@ leaves you unsure what to do next, the error needs a hint. The user-facing
 contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
 keep it in sync.
 
+A command is found by `p202 search`, which matches words: it finds a command
+only when the asker uses words its text uses. "spy" found nothing (Spy was a
+word in one flag's help), "live clicks" found goal outcomes, and "real-time
+traffic" found `click list` through `--show real` — the filter for human
+clicks — and offered that as the line to run. `searchTasks`
+(`cmd/search_tasks.go`) gives each task its exact command line, the web UI
+pages that do it and the words people use for it; a command that does what a
+page does belongs there. `TestEveryUIMenuLabelHasASearchTask` reads the
+menus and fails on a page with no entry, and
+`TestSearchFindsTheEvalAsksCommand` searches every agent-eval ask for its
+command, with `searchKnownMisses` listing the rest with why — a list that
+only shrinks. Write a phrase from the task, never from an ask: a phrase
+lifted from an ask teaches that one ask and inflates the measure. A search
+with no good match exits 1 with nothing on stdout, so a script cannot run a
+guess.
+
 ## Development environment notes (sandboxed/CI sessions)
 
 Findings from working on this repo in network-restricted agent sandboxes.
@@ -1230,6 +1246,15 @@ Check here before burning time on tooling failures.
   description containing `: ` made the file unparseable for every OpenAPI tool
   with all of them green. Write a description that holds a colon as a `>-`
   block or quote it.
+- **A Go test that reads a file outside `go-cli/` reads it through
+  `repoPath()`** (`go-cli/cmd/repo_paths_test.go`), and the file goes in
+  `.github/workflows/go-cli.yml`'s `paths:`, both lists. The workflow runs
+  only when a listed path changes, so a test reading an unlisted file stays
+  green while the file breaks it — until an unrelated CLI change runs it and
+  fails for a reason that change did not cause. Four test files read the
+  API's controllers, the preference rules, the link tokens and the agent
+  guide that way, unlisted; `TestRepoFilesTriggerTheGoWorkflow` now holds every
+  `repoPath()` to a trigger and refuses a hand-built `"..", ".."` path.
 - **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
   test ./...`); the repo root is not a Go module. The forecast package's
   acceptance suites take ~40s; `-short` skips them.
@@ -1470,6 +1495,19 @@ where a check quietly fails to check what it appears to.
   never happened and the test passed against the code it was supposed to
   fail. Print a marker (`assert old in s`, then re-grep the file) before
   believing the run.
+- **A backup is only a backup where you will read it back.** A plant harness
+  copied each file to a fixed scratch path (`plant/keep`) before planting a
+  defect, and that path
+  already existed as a directory from earlier work: `cp file keep` copied the
+  file *into* it, the restore `cp keep file` failed, and the harness printed
+  "RESTORE FAILED" and went on to the next plant — nine defects stacked in
+  four files, each later backup overwriting the earlier one with an
+  already-planted copy. Nothing was committed, and every plant had to be
+  reversed by hand. Back up to a fresh `mktemp` path, check the copy with
+  `cmp` before planting, and stop the run at the first failed restore. And
+  count a plant as caught only when a named test fails: two "caught" plants
+  were a compile error (an unused variable, a missing import), which proves
+  nothing about the test.
 - **Assert that a probe perturbed the target.** To force a post-commit failure
   I created a directory where a state file goes — in the wrong one of three
   `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request

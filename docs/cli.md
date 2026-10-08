@@ -58,11 +58,14 @@ p202 commands --json               # every command and flag, with allowed values
 ```
 
 `p202 search <words...>` matches your words against every command's name, aliases,
-description, examples, flags and the values its flags accept. Plural forms and common
-synonyms match (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url),
-and "per"/"by" ask for a breakdown. Each result says why it matched and, when a flag
-value matched, prints a command line to try. When nothing matches well it says so and
-shows only the closest three. `--limit N` sets the number of results (default 10).
+description, examples, flags, the values its flags accept, and the tasks it runs: the
+web UI page that does the same ("Spy") and the words people use for it ("realtime
+traffic"). Plural forms, split words (real time, real-time) and common synonyms match
+(referrer/referer, offer/campaign, dead/broken, undo/revert, link/url), and "per"/"by"
+ask for a breakdown. Each result says why it matched and, when a flag value or a task
+matched, prints the command line to try. When nothing matches well it fails (exit 1,
+nothing on stdout) and the hint names the closest three; a UI page with no command
+says where it is done instead. `--limit N` sets the number of results (default 10).
 
 `p202 commands [command...]` lists the tree, or one subtree (`p202 commands report`).
 With `--json` each command carries its flags' name, shorthand, type, default, usage,

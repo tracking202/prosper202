@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -426,7 +425,7 @@ func TestAgentMarkersAreDocumented(t *testing.T) {
 			t.Errorf("p202 --help does not mention %s", name)
 		}
 	}
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "cli-agent.md"))
+	doc, err := os.ReadFile(repoPath("docs", "cli-agent.md"))
 	if err != nil {
 		t.Fatalf("reading docs/cli-agent.md: %v", err)
 	}

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -34,15 +33,14 @@ type controllerField struct {
 // This reads each CRUD entity's controller and holds every flag to a field
 // it writes, and Required to what it requires.
 func TestCRUDFlagsMatchTheirControllers(t *testing.T) {
-	root := filepath.Join("..", "..")
-	classes := crudControllerClasses(t, root)
+	classes := crudControllerClasses(t)
 	for _, entity := range crudEntities {
 		class, ok := classes[entity.Endpoint]
 		if !ok {
 			t.Errorf("%s: endpoint %q is not in api/v3/index.php's $crudMap", entity.Name, entity.Endpoint)
 			continue
 		}
-		fields := controllerFields(t, filepath.Join(root, "api", "v3", "Controllers", class+".php"))
+		fields := controllerFields(t, repoPath("api", "v3", "Controllers", class+".php"))
 		var required []string
 		for name, f := range fields {
 			if f.required {
@@ -83,9 +81,9 @@ func TestCRUDFlagsMatchTheirControllers(t *testing.T) {
 }
 
 // crudControllerClasses reads api/v3/index.php's $crudMap: endpoint → class.
-func crudControllerClasses(t *testing.T, root string) map[string]string {
+func crudControllerClasses(t *testing.T) map[string]string {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join(root, "api", "v3", "index.php"))
+	src, err := os.ReadFile(repoPath("api", "v3", "index.php"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,7 +15,7 @@ import (
 // (Prosper202\Click\TrackingLinkVariables::BUILT_IN), in its order: a token
 // only one side knows is either refused by the server or never offered.
 func TestLinkTokensMatchTheServer(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "202-config", "Click", "TrackingLinkVariables.php"))
+	src, err := os.ReadFile(repoPath("202-config", "Click", "TrackingLinkVariables.php"))
 	if err != nil {
 		t.Fatal(err)
 	}

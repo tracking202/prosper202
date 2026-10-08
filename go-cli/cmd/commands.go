@@ -23,6 +23,9 @@ type commandTree struct {
 	CLIVersion  string        `json:"cli_version,omitempty"`
 	GlobalFlags []flagInfo    `json:"global_flags"`
 	Commands    []commandInfo `json:"commands"`
+	// NotInCLI are the web UI pages (and tasks) no command does, with where
+	// they are done instead; see searchTasks.
+	NotInCLI []taskInfo `json:"not_in_cli,omitempty"`
 }
 
 type commandInfo struct {
@@ -34,6 +37,9 @@ type commandInfo struct {
 	Example  string     `json:"example,omitempty"`
 	Runnable bool       `json:"runnable"`
 	Flags    []flagInfo `json:"flags"`
+	// Tasks are the command lines this command runs for a task, with the
+	// web UI pages that do the same and the words people use for it.
+	Tasks []taskInfo `json:"tasks,omitempty"`
 }
 
 type flagInfo struct {
@@ -73,6 +79,7 @@ func buildCommandTree(root *cobra.Command) commandTree {
 		}
 	}
 	walk(root)
+	tree.NotInCLI = tasksNotInCLI()
 	return tree
 }
 
@@ -90,6 +97,7 @@ func describeCommand(c *cobra.Command) commandInfo {
 		Example:  strings.TrimSpace(c.Example),
 		Runnable: c.Runnable(),
 		Flags:    []flagInfo{},
+		Tasks:    tasksFor(c.CommandPath()),
 	}
 	persistent := c.PersistentFlags()
 	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
@@ -124,6 +132,7 @@ func describeFlag(f *pflag.Flag, persistent bool) flagInfo {
 func (t commandTree) subtree(path string) commandTree {
 	out := t
 	out.Commands = []commandInfo{}
+	out.NotInCLI = nil // pages with no command sit under none
 	for _, c := range t.Commands {
 		if c.Path == path || strings.HasPrefix(c.Path, path+" ") {
 			out.Commands = append(out.Commands, c)
@@ -173,6 +182,9 @@ func writeCommandTree(w io.Writer, tree commandTree) error {
 			if err := writeJSONNoEscape(w, c); err != nil {
 				return err
 			}
+		}
+		if len(tree.NotInCLI) > 0 {
+			return writeJSONNoEscape(w, map[string]interface{}{"not_in_cli": tree.NotInCLI})
 		}
 		return nil
 	case quietOutput:

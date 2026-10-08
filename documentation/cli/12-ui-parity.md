@@ -2,7 +2,11 @@
 
 Every page of the web UI, the REST API route that does the same thing, and
 the `p202` command for it. Use it to find the command for something you know
-how to do on a page, and to see what still needs the browser.
+how to do on a page, and to see what still needs the browser. From the
+command line, `p202 search <page name>` (`p202 search spy`, `p202 search
+update cpc`) gives the same command line, and `p202 commands --json` lists
+each command's pages under `tasks` and the pages no command does under
+`not_in_cli`.
 
 | Mark | Meaning |
 | ---- | ------- |

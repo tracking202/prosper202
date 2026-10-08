@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -22,7 +21,7 @@ func phpStringList(literal string) []string {
 // is what the CLI offers. Read from the PHP so a column or a choice added
 // on one side and not the other fails here, in either direction.
 func TestPrefFlagsMatchThePreferenceRules(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "202-config", "User", "PreferenceRules.php"))
+	src, err := os.ReadFile(repoPath("202-config", "User", "PreferenceRules.php"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +92,7 @@ func TestPrefFlagsMatchThePreferenceRules(t *testing.T) {
 	}
 
 	// The currency list is UsersController's.
-	users, err := os.ReadFile(filepath.Join("..", "..", "api", "v3", "Controllers", "UsersController.php"))
+	users, err := os.ReadFile(repoPath("api", "v3", "Controllers", "UsersController.php"))
 	if err != nil {
 		t.Fatal(err)
 	}

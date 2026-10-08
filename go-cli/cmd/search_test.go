@@ -77,31 +77,55 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	}
 }
 
+// searchFails runs a search that must find no good match: it fails with
+// exit 1 and prints nothing on stdout, in every output mode, so a script
+// that reads the first line or the exit status cannot take a guess for the
+// answer.
+func searchFails(t *testing.T, words ...string) (message, hint string) {
+	t.Helper()
+	for _, mode := range [][]string{nil, {"--json"}, {"--quiet"}} {
+		args := append(append([]string{"search"}, words...), mode...)
+		stdout, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != ExitValidation || stdout != "" {
+			t.Fatalf("%v: want exit 1 with nothing on stdout, got err=%v stdout=%q", args, err, stdout)
+		}
+		message, hint = err.Error(), hintFor(err)
+	}
+	return message, hint
+}
+
 // No report has a currency dimension. Search must say so rather than dress
 // up the nearest text match as the answer. (This case was "referrer" until
 // reports gained a referer dimension; see the test below.)
 func TestSearchDoesNotPretendACurrencyDimensionExists(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	for _, q := range []string{"currency", "breakdown by currency"} {
-		a := searchJSON(t, q)
-		if q == "currency" && (a.GoodMatch || !strings.HasPrefix(a.Note, `No command matches "currency" well`) || len(a.Results) > closestShown) {
-			t.Errorf("%s: good=%v note=%q results=%d", q, a.GoodMatch, a.Note, len(a.Results))
+	message, hint := searchFails(t, "currency")
+	if message != `No command matches "currency" well.` || !strings.Contains(hint, "The closest") || !strings.Contains(hint, "p202 commands") {
+		t.Errorf("currency: %q / %q", message, hint)
+	}
+	if strings.Count(hint, "`p202 ") > closestShown+1 { // the closest, and `p202 commands`
+		t.Errorf("currency: more than %d commands named: %q", closestShown, hint)
+	}
+	// With "breakdown" in the query the breakdown command is a fair answer;
+	// what it must not do is claim the dimension or offer it.
+	stdout, _, err := executeCommand("search", "breakdown", "by", "currency", "--json")
+	if err == nil {
+		var a searchAnswer
+		if jerr := json.Unmarshal([]byte(stdout), &a); jerr != nil {
+			t.Fatalf("breakdown by currency: %v\n%s", jerr, stdout)
 		}
 		for _, r := range a.Results {
 			for _, m := range r.Matched {
 				if strings.Contains(m, "accepts currency") {
-					t.Errorf("%s: %s claims %q", q, r.Command, m)
+					t.Errorf("breakdown by currency: %s claims %q", r.Command, m)
 				}
 			}
 			if strings.Contains(r.Try, "currency") {
-				t.Errorf("%s: %s suggests %q", q, r.Command, r.Try)
+				t.Errorf("breakdown by currency: %s suggests %q", r.Command, r.Try)
 			}
 		}
-	}
-
-	stdout, _, err := executeCommand("search", "currency")
-	if err != nil || !strings.HasPrefix(stdout, `No command matches "currency" well`) {
-		t.Errorf("human form: %v\n%s", err, stdout)
+	} else if exitCodeForError(err) != ExitValidation || stdout != "" {
+		t.Errorf("breakdown by currency: %v, stdout %q", err, stdout)
 	}
 }
 
@@ -123,9 +147,9 @@ func TestSearchFindsTheRefererBreakdown(t *testing.T) {
 
 func TestSearchWithNothingToSearchFor(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	a := searchJSON(t, "xyzzy", "plugh")
-	if a.GoodMatch || len(a.Results) != 0 || !strings.Contains(a.Note, "p202 commands") {
-		t.Errorf("no match: %+v", a)
+	message, hint := searchFails(t, "xyzzy", "plugh")
+	if message != `No command matches "xyzzy plugh".` || !strings.Contains(hint, "p202 commands") || strings.Contains(hint, "closest") {
+		t.Errorf("no match: %q / %q", message, hint)
 	}
 	for _, args := range [][]string{{"search"}, {"search", "the", "by"}} {
 		_, _, err := executeCommand(args...)
