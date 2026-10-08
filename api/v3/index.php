@@ -305,6 +305,19 @@ try {
         $setupSection = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_setup_section');
         };
+        // A write to an app's goal (scope registration) or the account's
+        // (every app's) is Setup › Mobile Apps', whose writes ask for
+        // manage_attribution_models on top of Setup (MobileAppsController::
+        // requireManage()); a campaign's goal is Setup › Campaigns', which
+        // asks for Setup alone. $scope is the goal's, or null when there is
+        // no such goal (the controller then answers 404 or 422); a scope that
+        // is not 'campaign' is held to the stricter rule, so one that reads
+        // as nothing known is never the laxer (CLAUDE.md #11).
+        $appGoalWrite = static function (?string $scope) use ($auth, $db): void {
+            if ($scope !== null && $scope !== 'campaign') {
+                $auth->requirePermission($db, 'manage_attribution_models');
+            }
+        };
         // Each with its permission as a literal, so PreviewAuthParityTest
         // can read what a delete (and so its preview) asks for.
         $setupRemove = [
@@ -861,25 +874,59 @@ try {
         // Definitions and versions, the campaigns that pay for them, their
         // outcomes, and the two computations (validate, evaluate) that write
         // nothing. The literal paths come before /goals/{id}.
-        $router->group('/goals', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
+        //
+        // Goals are Setup's: a campaign's are edited on Setup › Campaigns
+        // (aff_campaigns.php asks for access_to_setup_section before it
+        // includes the goal editor, which saves through GoalsController) and
+        // an app's on Setup › Mobile Apps (its base class asks the same, and
+        // every write manage_attribution_models as well). These routes asked
+        // for nothing: measured live, a Campaign viewer's key created a paid
+        // goal, set its campaign's payout for it to 99.99, ran a
+        // re-evaluation (which re-scores past clicks and announces new
+        // outcomes to the traffic source) and read every payout back. Every
+        // route now asks for access_to_setup_section ($setupSection), reads
+        // and the two computations included; a write to an app's or the
+        // account's goal asks for manage_attribution_models too
+        // ($appGoalWrite, repeated on the DELETE preview); and the money --
+        // a campaign's payout for a goal, a goal's fixed value, an outcome's
+        // value -- is masked for a role without access_to_campaign_data
+        // ($campaignFigures), as the reports mask theirs.
+        $goalFigures = \Api\V3\Support\CampaignFigures::GOAL;
+        $outcomeFigures = \Api\V3\Support\CampaignFigures::GOAL_OUTCOME;
+        $router->group('/goals', function (Router $r) use ($crud, $idempotent, $queryParams, $payload, $campaignFigures, $goalFigures, $outcomeFigures, $appGoalWrite) {
             $cls = \Api\V3\Controllers\GoalsController::class;
 
-            $r->get('',             fn() => $crud($cls)->list($queryParams));
-            $r->post('',              fn() => ['_status' => 201] + $idempotent('goals', $payload, fn() => $crud($cls)->create($payload)));
+            $r->get('',               fn() => $campaignFigures($crud($cls)->list($queryParams), $goalFigures));
+            $r->post('',              function () use ($crud, $cls, $idempotent, $payload, $campaignFigures, $goalFigures, $appGoalWrite) {
+                $appGoalWrite(is_string($payload['scope'] ?? null) ? $payload['scope'] : null);
+                return $campaignFigures(['_status' => 201] + $idempotent('goals', $payload, fn() => $crud($cls)->create($payload)), $goalFigures);
+            });
             $r->post('/validate',     fn() => $crud($cls)->validate($payload));
             $r->post('/evaluate',     fn() => $crud($cls)->evaluate($payload));
-            $r->get('/{id}',          fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
-            $r->put('/{id}',          fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
-            $r->delete('/{id}',       fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
-            $r->get('/{id}/versions', fn($ctx) => $crud($cls)->versions(PathId::of($ctx)));
-            $r->get('/{id}/versions/{version}', fn($ctx) => $crud($cls)->version(PathId::of($ctx), PathId::of($ctx, 'version')));
-            $r->get('/{id}/outcomes', fn($ctx) => $crud($cls)->outcomes(PathId::of($ctx), $queryParams));
-            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->campaigns(PathId::of($ctx)));
-            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $crud($cls)->attachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'), $payload));
+            $r->get('/{id}',          fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $goalFigures));
+            $r->put('/{id}',          function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $goalFigures, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                return $campaignFigures($crud($cls)->update(PathId::of($ctx), $payload), $goalFigures);
+            });
+            $r->delete('/{id}',       function ($ctx) use ($crud, $cls, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                $crud($cls)->delete(PathId::of($ctx));
+                return null; // 204
+            });
+            $r->get('/{id}/versions', fn($ctx) => $campaignFigures($crud($cls)->versions(PathId::of($ctx)), $goalFigures));
+            $r->get('/{id}/versions/{version}', fn($ctx) => $campaignFigures($crud($cls)->version(PathId::of($ctx), PathId::of($ctx, 'version')), $goalFigures));
+            $r->get('/{id}/outcomes', fn($ctx) => $campaignFigures($crud($cls)->outcomes(PathId::of($ctx), $queryParams), $outcomeFigures));
+            $r->get('/{id}/campaigns', fn($ctx) => $campaignFigures($crud($cls)->campaigns(PathId::of($ctx)), $goalFigures));
+            // What a campaign pays for a goal is the campaign's, set on its
+            // Setup page whatever owns the goal: Setup's permission alone.
+            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $campaignFigures($crud($cls)->attachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'), $payload), $goalFigures));
             $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'))));
-            $r->get('/{id}/reevaluation',  fn($ctx) => $crud($cls)->reevaluationPreview(PathId::of($ctx), $queryParams));
-            $r->post('/{id}/reevaluation', fn($ctx) => $crud($cls)->reevaluate(PathId::of($ctx), $payload));
-        });
+            $r->get('/{id}/reevaluation',  fn($ctx) => $campaignFigures($crud($cls)->reevaluationPreview(PathId::of($ctx), $queryParams), $outcomeFigures));
+            $r->post('/{id}/reevaluation', function ($ctx) use ($crud, $cls, $payload, $campaignFigures, $outcomeFigures, $appGoalWrite) {
+                $appGoalWrite($crud($cls)->scopeOf(PathId::of($ctx)));
+                return $campaignFigures($crud($cls)->reevaluate(PathId::of($ctx), $payload), $outcomeFigures);
+            });
+        }, [$setupSection]);
 
         // ── Events (plan §2.2) ──────────────────────────────────────────
         // A web campaign's events, keyed by click_id, evaluated by its
@@ -1111,11 +1158,20 @@ try {
             $auth->requirePermission($db, 'manage_attribution_models');
             return $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview(PathId::of($ctx));
         });
-        $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(PathId::of($ctx)));
-        $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
+        // The goals routes ask for access_to_setup_section in middleware; the
+        // archive of an app's or the account's goal also checks
+        // manage_attribution_models inside its handler, so its preview
+        // repeats that. Both previews show a goal's money, masked as the
+        // goal's own reads are.
+        $previewRouter->delete('/goals/{id}', function ($ctx) use ($crud, $appGoalWrite, $campaignFigures) {
+            $goals = $crud(\Api\V3\Controllers\GoalsController::class);
+            $appGoalWrite($goals->scopeOf(PathId::of($ctx)));
+            return $campaignFigures($goals->deletePreview(PathId::of($ctx)), \Api\V3\Support\CampaignFigures::GOAL);
+        });
+        $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
             PathId::of($ctx),
             PathId::of($ctx, 'campaignId')
-        ));
+        ), \Api\V3\Support\CampaignFigures::GOAL));
         // The LTV deletes make no authorization check inside their handlers:
         // the group's ltv:write middleware, run from the main match before
         // this router is consulted, is their only one.

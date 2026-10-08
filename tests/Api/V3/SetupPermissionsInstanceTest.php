@@ -251,6 +251,53 @@ final class SetupPermissionsInstanceTest extends TestCase
     }
 
     /**
+     * Goals are Setup's: Setup › Campaigns edits a campaign's, Setup › Mobile
+     * Apps an app's. Every goal route asked for nothing, so a Campaign
+     * viewer's key created a paid goal, set its campaign's payout for it,
+     * re-evaluated it and read the payouts back (measured live). The viewer
+     * is refused every one now, the computations included; the manager
+     * (Setup, no manage_attribution_models) keeps a campaign's goals and is
+     * refused the account's, as Mobile Apps refuses its writes.
+     */
+    public function testGoalsAreSetupsAndAnAppsGoalsAskForTheModelsPermission(): void
+    {
+        $campaign = self::$fixture['campaigns'];
+        $manager = self::$users['manager']['key'];
+        $paid = ['scope' => 'campaign', 'scope_id' => $campaign, 'payable' => true, 'payout' => '1.5',
+            'definition' => ['name' => 'perm-goal-' . bin2hex(random_bytes(3)), 'trigger' => ['event' => 'purchase']]];
+        [$status, $body] = self::call($manager, 'POST', '/goals', $paid);
+        $goal = (int) ($body['data']['goal_id'] ?? 0);
+        $this->assertSame(201, $status, 'manager: a campaign goal is Setup › Campaigns\': ' . json_encode($body));
+        $this->assertSame('1.50000', $body['data']['campaigns'][0]['payout'] ?? null, 'manager (access_to_campaign_data): the payout, unmasked');
+        try {
+            foreach ([
+                ['GET', '/goals', null], ['GET', "/goals/$goal", null], ['GET', "/goals/$goal/versions", null],
+                ['GET', "/goals/$goal/versions/1", null], ['GET', "/goals/$goal/outcomes", null], ['GET', "/goals/$goal/campaigns", null],
+                ['GET', "/goals/$goal/reevaluation", null],
+                ['POST', '/goals', $paid], ['POST', '/goals?staged=1', $paid],
+                ['PUT', "/goals/$goal", ['definition' => $paid['definition']]],
+                ['PUT', "/goals/$goal/campaigns/$campaign", ['payout' => '99.99']],
+                ['POST', "/goals/$goal/reevaluation", []],
+                ['DELETE', "/goals/$goal/campaigns/$campaign", null], ['DELETE', "/goals/$goal", null], ['DELETE', "/goals/$goal?dry_run=1", null],
+                ['POST', '/goals/validate', ['definition' => $paid['definition']]],
+                ['POST', '/goals/evaluate', ['goals' => [], 'subject' => [], 'events' => []]],
+            ] as [$method, $path, $body]) {
+                $this->assertRefused('viewer', $method, $path, $body, 'access_to_setup_section');
+            }
+            [, $body] = self::call($manager, 'GET', "/goals/$goal/campaigns");
+            $this->assertSame('1.50000', $body['data'][0]['payout'] ?? null, "the viewer's refused PUT left the payout as it was");
+
+            $account = ['scope' => 'account', 'scope_id' => 0, 'definition' => ['name' => 'perm-app-goal', 'trigger' => ['event' => 'level_up']]];
+            $this->assertRefused('manager', 'POST', '/goals', $account, 'manage_attribution_models');
+            [$status, $body] = self::call($manager, 'POST', "/goals/$goal/reevaluation", []);
+            $this->assertSame(200, $status, "manager: re-evaluating a campaign's goal: " . json_encode($body));
+        } finally {
+            [$status, $body] = self::call($manager, 'DELETE', "/goals/$goal");
+            $this->assertSame(204, $status, 'manager: archiving a campaign goal: ' . json_encode($body));
+        }
+    }
+
+    /**
      * Recording a conversion is Update › Subids' (access_to_update_section);
      * removing one is Update › Delete Subids' (delete_individual_subids as
      * well). The viewer has neither; the manager has the first only.

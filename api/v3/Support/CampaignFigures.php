@@ -30,6 +30,21 @@ final class CampaignFigures
      */
     public const array RECORD = ['click_cpc', 'click_payout', 'amount', 'ledger_value'];
 
+    /**
+     * A goal's money, where a goal's definition is in the answer: what a
+     * campaign pays for it (`payout`) and its fixed value (the definition's
+     * `value.amount`). Not `value`, which a definition's conditions also use
+     * for the value they compare an event property with.
+     */
+    public const array GOAL = ['payout', 'amount'];
+
+    /**
+     * An outcome's money, where no definition is in the answer (a goal's
+     * outcomes, a re-evaluation): what each is worth (`value`) and what it
+     * was or would be recorded at (`payout`, `amount`).
+     */
+    public const array GOAL_OUTCOME = ['value', 'payout', 'amount'];
+
     private function __construct()
     {
     }

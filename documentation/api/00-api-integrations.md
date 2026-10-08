@@ -80,15 +80,16 @@ limit that user — a scope can narrow a key further, never past its role:
 | `/system/version`, `/db-stats`, `/cron`, `/errors`, `/dataengine`, `/metrics`, and the rest of Account › Settings (`/system/info`, `/login-log`, `/retention`, `/isp-lookup`) | Admin, and `access_to_settings` | Account › Settings |
 | The Setup code and an account's pixels, reads included: `GET /landing-pages/{id}/code`, `GET /conversions/postback-code`, `/ppc-accounts/{id}/pixels` | `access_to_setup_section` | Get LP Code, Postback / Pixel, Traffic Sources ([Setup](27-setup.md)) |
 | A traffic source's custom variables, reads included: `/ppc-networks/{id}/variables` | `remove_traffic_source` and `access_to_setup_section` | Traffic Sources' variables dialog, shown only to a role with both |
+| Goals, reads and `/goals/validate` and `/goals/evaluate` included: every `/goals` route | `access_to_setup_section`; a write to an app's or the account's goal (create, edit, archive, re-evaluate) also `manage_attribution_models` | Setup › Campaigns (a campaign's goals) and Setup › Mobile Apps (an app's) ([Goals](22-goals.md)) |
 | Attribution reports and models | `view_attribution_reports`, `manage_attribution_models` | Attribution |
 
 The check runs before the handler, so a `?dry_run=1` preview and a
 `?staged=1` proposal are refused exactly as the write is, and a staged change
 is applied with the applier's permissions. A refusal is `403` naming the
 permission: `This account's role does not have the 'remove_campaign'
-permission.` (`p202` adds a hint naming `p202 user role`). Forecast events,
-goals and LTV have no page that asks for a permission and are not gated by
-role (keys still need their scopes).
+permission.` (`p202` adds a hint naming `p202 user role`). Forecast events
+and LTV have no page that asks for a permission and are not gated by role
+(keys still need their scopes).
 
 **Campaign figures.** The reports (`/reports/…`, `/rotators/{id}/stats`), the
 clicks (`/clicks`, `/clicks/{id}`, `/clicks/{id}/conversions`) and the
@@ -100,7 +101,9 @@ a click's or conversion's cost and payout — are `null`, the ratios (EPC, CPC,
 conversion rate, ROI, CPA) are kept, and the answer carries `"masked": true`.
 The pages print `?`; a number field holds `null` instead, so a client reads
 "hidden" rather than a figure. `p202` notes it under a table and marks each
-`--ndjson` line.
+`--ndjson` line. The goal routes, which ask for Setup as well, mask their
+money the same way: a campaign's `payout` for a goal, a definition's
+`value.amount`, an outcome's `value`.
 
 Until this, reads asked for no role: a Campaign viewer's key listed every
 campaign with its URL and payout, read every report's money, and recorded and

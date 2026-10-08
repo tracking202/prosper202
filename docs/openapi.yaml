@@ -43,7 +43,10 @@ info:
     `remove_tracker`, `remove_rotator_rule`, …). Recording a conversion needs
     `access_to_update_section`, removing one `delete_individual_subids` as
     well; the Account › Settings reads under `/system` need Admin and
-    `access_to_settings`. The check runs before the handler, so `?dry_run=1`
+    `access_to_settings`. Every `/goals` route needs
+    `access_to_setup_section` (Setup › Campaigns and Setup › Mobile Apps
+    edit goals), and a write to an app's or the account's goal
+    `manage_attribution_models` as well. The check runs before the handler, so `?dry_run=1`
     and `?staged=1` are refused as the write is. Denials are `403` naming the
     permission.
 
@@ -51,7 +54,9 @@ info:
     without `access_to_campaign_data` reads them as the pages show them: the
     absolute clicks, click-throughs, leads, income, cost and net (and a
     click's or conversion's cost and payout) are `null`, ratios are kept,
-    and the answer carries `"masked": true`.
+    and the answer carries `"masked": true`. The goal routes mask a
+    campaign's `payout` for a goal, a definition's `value.amount` and an
+    outcome's `value` the same way.
 
     ## Linked Records
     A Setup record links only to the caller's own live records, as the Setup
@@ -162,7 +167,7 @@ tags:
   - name: Apps
     description: App measurement — the app registry (iOS and Android), Apple's SKAdNetwork and AdAttributionKit postback receivers, SKAN encodings, the report, and the runtime schema
   - name: Goals
-    description: Goals — versioned, data-only definitions of what counts as a conversion, owned by a campaign, an app registration or the account; the campaigns that pay for them; their outcomes; validation, evaluation and re-evaluation
+    description: Goals — versioned, data-only definitions of what counts as a conversion, owned by a campaign, an app registration or the account; the campaigns that pay for them; their outcomes; validation, evaluation and re-evaluation. Role permission `access_to_setup_section` on every route, and `manage_attribution_models` as well to write an app's or the account's goal (Setup › Mobile Apps' rule); money is null with `masked` for a role without `access_to_campaign_data`
   - name: Forecast Events
     description: Calendar events (holidays, promotions) that event-aware forecasting shifts predictions around
   - name: LTV

@@ -95,6 +95,21 @@ final class GoalsController
         return ['data' => $this->present($this->mustFind($id), true)];
     }
 
+    /**
+     * What owns one of this account's goals -- campaign, registration or
+     * account -- or null when the account has no such goal. The route asks
+     * more of a write to an app's goal than to a campaign's (Mobile Apps'
+     * writes need manage_attribution_models), and reads the owner here
+     * before it lets the write through; null is left to the write's own
+     * 404. A failed read throws (guard()), never "no such goal".
+     */
+    public function scopeOf(int $id): ?string
+    {
+        $goal = $this->guard(fn () => $this->goals->find($this->userId, $id));
+
+        return $goal === null ? null : (string) $goal['scope'];
+    }
+
     public function versions(int $id): array
     {
         $this->mustFind($id);
