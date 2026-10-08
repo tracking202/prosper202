@@ -45,6 +45,9 @@ final class PathId
             return (int) $segment;
         }
 
-        throw new NotFoundException('Not found: ' . json_encode($segment, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . ' is not an id');
+        // A request line can carry bytes that are not UTF-8, which json_encode()
+        // refuses with false, and the message would name nothing: substituted.
+        $shown = json_encode($segment, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        throw new NotFoundException('Not found: ' . ($shown === false ? 'the path segment' : $shown) . ' is not an id');
     }
 }

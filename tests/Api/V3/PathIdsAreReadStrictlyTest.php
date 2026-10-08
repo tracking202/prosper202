@@ -159,6 +159,17 @@ PHP;
         }
     }
 
+    /** A request line can carry bytes that are not UTF-8; the 404 still names the segment. */
+    public function testASegmentThatIsNotUtf8IsNamedInTheNotFound(): void
+    {
+        try {
+            PathId::of(['id' => "\xff1"]);
+            self::fail('"\\xff1" was read as an id');
+        } catch (NotFoundException $e) {
+            self::assertSame("Not found: \"\u{FFFD}1\" is not an id", $e->getMessage());
+        }
+    }
+
     public function testAnIdIsReadAsItsNumber(): void
     {
         self::assertSame(1, PathId::of(['id' => '1']));
