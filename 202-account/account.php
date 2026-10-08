@@ -268,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// classic page stored whatever arrived; a value outside the list
 			// is refused by name rather than written.
 			$postedTimezone = (string)($_POST['user_timezone'] ?? '');
-			if (!in_array($postedTimezone, DateTimeZone::listIdentifiers(), true)) {
+			if (!\Prosper202\Report\AccountZone::isZone($postedTimezone)) {
 				$error['user_timezone'] = 'Choose a time zone from the list.';
 			}
 			if (!array_key_exists((string)($_POST['user_daily_email'] ?? ''), $dailyEmailChoices)) {
@@ -798,6 +798,18 @@ $keyScope = static function (mixed $raw): array {
 $currencyValue = (string)($_POST['account_currency'] ?? ($user_row['user_account_currency'] ?? 'USD'));
 $sel = static fn (string $code): string => $currencyValue === $code ? ' selected' : '';
 $currentTimezone = $profileValue('user_timezone', 'user_timezone');
+// The select offers PHP's list, which leaves out the backward-compatible
+// names a renamed zone keeps (Europe/Kiev, Europe/Kyiv since 2022). An
+// account holding one had no option selected, so the browser sent the first
+// in the list and saving Personal settings for any other reason moved the
+// account to Africa/Abidjan. Its own zone is offered first, selected; a
+// stored value that is no zone is UTC on every report, and shows as UTC.
+$timezoneOptions = DateTimeZone::listIdentifiers();
+if (!\Prosper202\Report\AccountZone::isZone($currentTimezone)) {
+	$currentTimezone = 'UTC';
+} elseif (!in_array($currentTimezone, $timezoneOptions, true)) {
+	array_unshift($timezoneOptions, $currentTimezone);
+}
 
 $profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
@@ -864,7 +876,7 @@ echo p202_account_render_flashes($extraFlashes);
 								<label class="form-label" for="user_timezone">Time zone <span class="text-danger">*</span></label>
 								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_timezone'); ?>" name="user_timezone" id="user_timezone">
 									<?php
-									foreach (DateTimeZone::listIdentifiers() as $tz) {
+									foreach ($timezoneOptions as $tz) {
 										$current_tz = new DateTimeZone($tz);
 										$offset = $current_tz->getOffset($dt);
 										$transition = $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());

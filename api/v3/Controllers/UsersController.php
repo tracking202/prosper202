@@ -12,6 +12,7 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
+use Prosper202\Report\AccountZone;
 use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
 use Prosper202\User\PreferenceRules;
@@ -291,9 +292,12 @@ class UsersController
      * - user_email: a valid address of at most 100 characters, no other
      *   account's;
      * - user_fname, user_lname: text of at most 50 characters;
-     * - user_timezone: one of DateTimeZone::listIdentifiers(), as Personal
-     *   settings offers them (any other string was stored, and every report
-     *   then fell back to UTC without a word);
+     * - user_timezone: a zone the reports read as one (AccountZone::isZone():
+     *   PHP's list with its backward-compatible names, as Personal settings
+     *   takes them; any other string was stored, and every report then fell
+     *   back to UTC without a word). A renamed zone an account already holds
+     *   (Europe/Kiev, Europe/Kyiv since 2022) is one, so a GET body sent back
+     *   is not refused for it;
      * - user_active: 0 or 1 ("abc" was bound as an integer, 0, and
      *   deactivated the account).
      *
@@ -346,7 +350,7 @@ class UsersController
         }
         if (array_key_exists('user_timezone', $payload)) {
             $tz = $payload['user_timezone'];
-            if (!is_string($tz) || !in_array($tz, \DateTimeZone::listIdentifiers(), true)) {
+            if (!is_string($tz) || !AccountZone::isZone($tz)) {
                 $errors['user_timezone'] = 'A time zone such as America/New_York (PHP\'s list, as Personal settings offers it)';
             } else {
                 $out['user_timezone'] = ['s', $tz];

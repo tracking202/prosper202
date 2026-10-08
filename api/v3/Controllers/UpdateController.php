@@ -807,7 +807,7 @@ final class UpdateController
         if ($timezone === '') {
             $timezone = 'UTC';
         }
-        if (!in_array($timezone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+        if (!\Prosper202\Report\AccountZone::isZone($timezone)) {
             throw new ConflictException(
                 'The account\'s time zone "' . $timezone . '" is not a zone this server knows, so its days cannot be read. '
                 . 'Set user_timezone to an IANA zone such as America/New_York (PUT /users/' . $this->userId . ').'

@@ -12748,7 +12748,11 @@ components:
             not sent when resetting another user's.
         user_timezone:
           type: string
-          description: A PHP time zone name such as America/New_York; anything else is a 422.
+          description: >-
+            A PHP time zone name such as America/New_York, including the
+            backward-compatible name of a renamed zone (Europe/Kiev) that an
+            account already holds, so a GET body sent back is accepted; anything
+            else is a 422.
         user_active:
           type: integer
           enum: [0, 1]

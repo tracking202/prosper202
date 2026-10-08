@@ -6,6 +6,7 @@ namespace Tests\Report;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Report\AccountZone;
+use Tests\Support\SourceScan;
 
 /**
  * One rule for the account's zone: a name PHP lists, spelled as listed;
@@ -49,10 +50,46 @@ final class AccountZoneTest extends TestCase
 
     public function testEveryNameAWriterAcceptsIsAZone(): void
     {
-        // Personal settings and PUT /users/{id} take listIdentifiers().
+        // Personal settings and the installer offer listIdentifiers().
         foreach (\DateTimeZone::listIdentifiers() as $name) {
             self::assertTrue(AccountZone::isZone($name), $name);
         }
+    }
+
+    /**
+     * Only this class decides what is a zone. PUT /users/{id} and Personal
+     * settings took listIdentifiers() while the reports read it with the
+     * backward-compatible names, so an account holding a renamed zone
+     * (Europe/Kiev) had its own GET body refused and its zone moved by any
+     * save of the page; the other three sites spelled the rule by hand.
+     * listIdentifiers() is left to the pages that list options, and an
+     * option list offers the account's own zone even when it is not on it.
+     */
+    public function testOnlyAccountZoneDecidesWhatIsAZone(): void
+    {
+        $lists = [
+            '202-config/install.php' => 'the installer\'s option list, for an install with no zone yet',
+            '202-account/account.php' => 'Personal settings\' option list, with the account\'s own zone added',
+        ];
+        $found = [];
+        $files = SourceScan::phpFiles();
+        self::assertGreaterThan(500, count($files), 'the scan found the tree');
+        foreach ($files as $file => $code) {
+            if ($file === '202-config/Report/AccountZone.php') {
+                continue;
+            }
+            foreach (token_get_all($code) as $token) {
+                if (is_array($token) && $token[0] === T_STRING && $token[1] === 'listIdentifiers') {
+                    $found[$file] = true;
+                }
+            }
+        }
+        self::assertSame([], array_values(array_diff(array_keys($found), array_keys($lists))), 'Ask Prosper202\\Report\\AccountZone::isZone() whether a name is a zone.');
+        self::assertSame([], array_values(array_diff(array_keys($lists), array_keys($found))), 'These entries match nothing any more; remove them.');
+
+        $page = $files['202-account/account.php'];
+        self::assertStringContainsString('AccountZone::isZone($postedTimezone)', $page, 'Personal settings accepts what the reports read');
+        self::assertMatchesRegularExpression('/array_unshift\(\$timezoneOptions, \$currentTimezone\)/', $page, 'Personal settings offers the account\'s own zone');
     }
 
     /**

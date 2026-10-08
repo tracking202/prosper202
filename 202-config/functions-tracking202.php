@@ -32,7 +32,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     // database that has just failed, and a failed read there throws (a fatal
     // in place of this page, with the error never recorded).
     $sessionZone = is_string($_SESSION['user_timezone'] ?? null) ? $_SESSION['user_timezone'] : '';
-    if (in_array($sessionZone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+    if (\Prosper202\Report\AccountZone::isZone($sessionZone)) {
         date_default_timezone_set($sessionZone);
     }
 
