@@ -76,7 +76,9 @@ var dataImportCmd = &cobra.Command{
 			if err != nil {
 				failed++
 				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
-				if !skipErrors {
+				// --skip-errors goes past a record's own failure, never past
+				// the key's: a 401 or 403 fails every later record the same way.
+				if !skipErrors || api.ErrorCategory(err) == "auth" {
 					// %w: flattened with %s, a 401 exited 1 as a validation
 					// error with the --help hint, and the class hint for a
 					// read-only or unknown field (remove it from the file's
@@ -124,6 +126,13 @@ var dataImportCmd = &cobra.Command{
 			return fmt.Errorf("encoding import summary: %w", err)
 		}
 		render(encoded)
+		// --skip-errors goes on past a failed record; it does not make the
+		// import a success. It exited 0 with every record failed, which a
+		// script reads as everything imported. The summary lists each.
+		if failed > 0 {
+			return partialFailureError("failed to import %d of %d record(s); the summary lists each under errors", failed, len(records)).
+				WithHint("Fix those records and import a file of just them: running the whole file again sends every record already imported a second time.")
+		}
 		return nil
 	},
 }
@@ -175,6 +184,6 @@ func stripImmutableFields(entity string, rec map[string]interface{}) map[string]
 
 func init() {
 	dataImportCmd.Flags().Bool("dry-run", false, "Validate import and count records without creating them")
-	dataImportCmd.Flags().Bool("skip-errors", false, "Continue importing after record-level failures")
+	dataImportCmd.Flags().Bool("skip-errors", false, "Continue importing after record-level failures; exits 5 when any record failed, and a 401 or 403 still stops it")
 	rootCmd.AddCommand(dataImportCmd)
 }

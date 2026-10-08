@@ -1520,7 +1520,10 @@ takes only ids of the importing account's own live records, so a file exported f
 account or server is refused row by row with the field named. To copy between servers use
 `p202 sync`, which maps each linked id to the target's. Without `--skip-errors` the first
 refused record stops the import with that record's number, how many were imported before it,
-and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4).
+and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4). With
+`--skip-errors` the rest are sent, the summary lists each refusal under `errors`, and the command
+exits 5 when any record failed; a 401 or 403 still stops it, since every later record would fail
+the same way.
 
 ## Multi-server workflows
 
@@ -1550,7 +1553,7 @@ p202 re-sync --from prod --to staging --force-update --json
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Compute actions without writes |
-| `--skip-errors` | Continue on record-level errors |
+| `--skip-errors` | Continue on record-level errors; exits 5 when any record failed (a 401 or 403 still stops the sync) |
 | `--force-update` | Update mismatched target records instead of skipping |
 
 Sync state is stored in `~/.p202/sync/<source>-<target>.json`.

@@ -18,7 +18,9 @@ import (
 	"sync"
 	"testing"
 
+	"p202/internal/api"
 	configpkg "p202/internal/config"
+	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 )
 
@@ -1727,9 +1729,11 @@ func TestSyncUnresolvableFK(t *testing.T) {
 		"target": {"url": target.URL, "api_key": "target-key-123456"},
 	})
 
+	// --skip-errors goes on past the record and reports it; the sync is a
+	// partial failure (exit 5), never a success a script reads as complete.
 	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--skip-errors", "--json")
-	if err != nil {
-		t.Fatalf("sync campaigns with --skip-errors should not fail hard: %v", err)
+	if err == nil || exitCodeForError(err) != ExitPartialFailure {
+		t.Fatalf("sync with a skipped record: want a partial failure (exit %d), got %v (exit %d)", ExitPartialFailure, err, exitCodeForError(err))
 	}
 	if capture.PostCalls != 0 {
 		t.Fatalf("expected no posts for unresolvable FK, got %d", capture.PostCalls)
@@ -3567,6 +3571,86 @@ func TestImportKeepsTheRecordsAPIError(t *testing.T) {
 				t.Errorf("%d POSTs, want 2: the import stops at the failed record", posts)
 			}
 		})
+	}
+}
+
+// --skip-errors goes past a record's own failure and says so in the exit
+// code (5, after the summary); it exited 0 with every record failed. A 401
+// is the key's failure, not the record's: it fails every later record the
+// same way, so it stops the import as it does without the flag.
+func TestImportSkipErrorsEndsInAPartialFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    int
+		answer    string
+		exit      int
+		posts     int
+		summary   bool
+		failFirst bool
+	}{
+		{"a 422 on one record", 422, `{"error":true,"message":"Validation failed","status":422,"field_errors":{"aff_campaign_name":"too long"}}`, ExitPartialFailure, 3, true, false},
+		{"a 401", 401, `{"error":true,"message":"Invalid API key","status":401}`, ExitAuth, 2, false, false},
+		{"none", 0, "", 0, 3, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+					posts++
+					if posts == 2 && tc.status != 0 {
+						w.WriteHeader(tc.status)
+						w.Write([]byte(tc.answer))
+						return
+					}
+					w.WriteHeader(201)
+					w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+					return
+				}
+				w.WriteHeader(404)
+				w.Write([]byte(`{"message":"not found"}`))
+			}))
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			inFile := filepath.Join(tmp, "campaigns.json")
+			if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"}]`), 0600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+
+			stdout, _, err := executeCommand("import", "campaigns", inFile, "--skip-errors", "--json")
+			if code := exitCodeForError(err); (err == nil && tc.exit != 0) || (err != nil && code != tc.exit) {
+				t.Fatalf("exit %d (%v), want %d", code, err, tc.exit)
+			}
+			if posts != tc.posts {
+				t.Errorf("%d POSTs, want %d", posts, tc.posts)
+			}
+			if tc.summary != strings.Contains(stdout, `"total": 3`) {
+				t.Errorf("summary on stdout: %v, want %v:\n%s", !tc.summary, tc.summary, stdout)
+			}
+			if tc.exit == ExitPartialFailure && (!strings.Contains(stdout, `"failed": 1`) || !strings.Contains(err.Error(), "failed to import 1 of 3")) {
+				t.Errorf("the summary and the error must count the failed record: %v\n%s", err, stdout)
+			}
+		})
+	}
+}
+
+// sync's --skip-errors goes past a record's own failure, not the key's.
+func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
+	var result syncdata.EntityResult
+	if !handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, true, &result) {
+		t.Error("a record's 422 under --skip-errors should go on")
+	}
+	for _, status := range []int{401, 403} {
+		if handleSyncRecordError("campaigns", "A", &api.APIError{Status: status, Message: "key"}, true, &result) {
+			t.Errorf("a %d under --skip-errors should stop the sync", status)
+		}
+	}
+	if handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, false, &result) {
+		t.Error("without --skip-errors every failure stops the sync")
+	}
+	if result.Failed != 4 || len(result.Errors) != 4 {
+		t.Errorf("every failure is counted and listed: %+v", result)
 	}
 }
 
