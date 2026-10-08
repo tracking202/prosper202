@@ -128,6 +128,11 @@ var reportBreakdownCmd = &cobra.Command{
 	Use:   "breakdown",
 	Short: "Get stats broken down by a dimension (campaign, traffic source, country, landing page, etc.)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// A --having the filter cannot read is refused before any request.
+		having, _ := cmd.Flags().GetString("having")
+		if _, _, _, _, err := havingFilter(having); err != nil {
+			return err
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
@@ -331,7 +336,7 @@ func init() {
 	reportBreakdownCmd.Flags().Float64("min-clicks", 0, "Only rows with at least N clicks")
 	reportBreakdownCmd.Flags().Float64("min-cost", 0, "Only rows with at least $N cost")
 	reportBreakdownCmd.Flags().Bool("zero-leads", false, "Only rows with cost > 0 and zero conversions (pure waste)")
-	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP VALUE (e.g. 'total_leads=0', 'roi<0')")
+	reportBreakdownCmd.Flags().String("having", "", "Post-filter rows: FIELD OP NUMBER, FIELD a metric column or its alias, OP one of >= <= != = > < (e.g. 'total_leads=0', 'roi<0')")
 
 	addReportFilters(reportTimeseriesCmd)
 	reportTimeseriesCmd.Flags().StringP("interval", "i", "", "Interval: hour, day, week, month")

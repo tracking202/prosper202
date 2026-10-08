@@ -1269,3 +1269,39 @@ func TestClassifyPrefersMaxCPCOverPayout(t *testing.T) {
 		t.Errorf("CPC $2.82 is over the $1.71 payout break-even, so it is CUT; got %s", b)
 	}
 }
+
+// A --having the filter cannot read was dropped (every row, exit 0), and one
+// on a field no breakdown row has read that field as 0 ({"data": []}, exit
+// 0). Each is refused, before a client is built: with no configuration here,
+// a refusal that came after the client would be the config error instead.
+func TestBreakdownRefusesAHavingItCannotRead(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for having, want := range map[string]string{
+		"roi<abc":        "is not FIELD OP NUMBER",
+		"total_leads==0": "is not FIELD OP NUMBER",
+		"roi<NaN":        "is not FIELD OP NUMBER",
+		"roi":            "is not FIELD OP NUMBER",
+		"<0":             "is not FIELD OP NUMBER",
+		"rio<0":          `names "rio", which no breakdown row has`,
+		"Revenue>0x":     "is not FIELD OP NUMBER",
+	} {
+		_, _, err := executeCommand("report", "breakdown", "--breakdown", "campaign", "--having", having)
+		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(err.Error(), want) {
+			t.Errorf("--having %q: want a validation error containing %q, got %v (exit %d)", having, want, err, exitCodeForError(err))
+			continue
+		}
+		if !strings.Contains(hintFor(err), "--having 'roi<0'") {
+			t.Errorf("--having %q: the hint shows no filter to write: %q", having, hintFor(err))
+		}
+	}
+	// Control: a filter it can read, in the same empty HOME, reaches the client.
+	if _, _, err := executeCommand("report", "breakdown", "--breakdown", "campaign", "--having", "roi<0"); err == nil || !strings.Contains(err.Error(), "no URL configured") {
+		t.Errorf("--having roi<0 without config: want the config error, got %v", err)
+	}
+	// What it accepts: a field or its alias, any of the operators.
+	for _, having := range []string{"roi<0", "Revenue >= 10", "conversions=0", "total_click_throughs!=3"} {
+		if _, _, _, ok, err := havingFilter(having); err != nil || !ok {
+			t.Errorf("--having %q was refused: %v", having, err)
+		}
+	}
+}

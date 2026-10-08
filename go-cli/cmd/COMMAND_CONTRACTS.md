@@ -21,7 +21,7 @@ This file captures the API paths and payload/query expectations used by upcoming
   - Partial rule update (`rule_name`, `splittest`, `status`, `criteria`, `redirects`)
 - `GET /api/v3/reports/breakdown`
   - Also used by `analytics` shorthand command
-  - `report breakdown --min-clicks/--min-cost/--zero-leads/--having` filter the rows client-side; on a masked answer (`"masked": true`) a filter that reads a masked figure (`CampaignFigures::REPORT`) is refused with exit 2, and a `--having` on a ratio keeps `masked` beside the rows it keeps
+  - `report breakdown --min-clicks/--min-cost/--zero-leads/--having` filter the rows client-side; on a masked answer (`"masked": true`) a filter that reads a masked figure (`CampaignFigures::REPORT`) is refused with exit 2, and a `--having` on a ratio keeps `masked` beside the rows it keeps; a `--having` that is not FIELD OP NUMBER, or names a field no breakdown row has, is refused (exit 1) before any request
 - `GET /api/v3/attribution/models` (`?type=first_touch`), `GET /api/v3/attribution/models/{id}`
   - `attribution model list/get`; `report losers/winners` read them to pick, or check, the first-touch model (`model_type`, `status`)
 - `GET /api/v3/attribution/reports/breakdown`

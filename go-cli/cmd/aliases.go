@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -50,7 +51,10 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 			Cause: err,
 		}
 	}
-	field, op, want, hasHaving := parseHaving(having)
+	field, op, want, hasHaving, err := havingFilter(having)
+	if err != nil {
+		return nil, err
+	}
 
 	// A masked answer's clicks, leads and money are null, and toFloat reads
 	// null as 0: --min-clicks 10 answered {"data": []} and --having
@@ -107,6 +111,28 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("encoding output: %w", err)
 	}
 	return b, nil
+}
+
+// havingFilter reads --having, refusing one it cannot read: a filter that
+// does not parse was dropped (every row answered, exit 0), and one on a field
+// no breakdown row has read that field as 0 ({"data": []}, exit 0) -- each
+// an answer to a question nobody asked (CLAUDE.md #4). The breakdown command
+// asks it before building a client, so a bad filter costs no request.
+func havingFilter(having string) (field, op string, want float64, has bool, err error) {
+	if strings.TrimSpace(having) == "" {
+		return "", "", 0, false, nil
+	}
+	field, op, want, ok := parseHaving(having)
+	if !ok || math.IsNaN(want) || math.IsInf(want, 0) {
+		return "", "", 0, false, validationError("--having %q is not FIELD OP NUMBER", having).
+			WithHint("Write one comparison, e.g. --having 'roi<0' or --having 'total_leads=0'; OP is one of >=, <=, !=, =, >, <.")
+	}
+	if !containsString(metricColumns, field) {
+		return "", "", 0, false, validationError("--having names %q, which no breakdown row has; valid: %s (or clicks, leads, conversions, revenue, income, cost, profit, net)",
+			field, strings.Join(metricColumns, ", ")).
+			WithHint("Use one of the fields above, e.g. --having 'roi<0'.")
+	}
+	return field, op, want, true, nil
 }
 
 func parseHaving(s string) (field, op string, value float64, ok bool) {
