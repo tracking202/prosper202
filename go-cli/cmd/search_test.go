@@ -143,6 +143,13 @@ func TestSearchQuietPrintsOnlyAConfidentAnswer(t *testing.T) {
 	if a.GoodMatch || len(a.Results) == 0 {
 		t.Errorf("weak --json: want candidates and good_match false, got %+v", a)
 	}
+	// An agent gets JSON, not the table's footer: the next step is in it.
+	if !strings.Contains(a.Hint, "p202 commands --brief") {
+		t.Errorf("weak --json: hint %q should point at the catalog", a.Hint)
+	}
+	if a = searchJSON(t, "spy"); !a.GoodMatch || a.Hint != "" {
+		t.Errorf("confident --json: good_match %v, hint %q", a.GoodMatch, a.Hint)
+	}
 }
 
 // Reports break down by referer now (the Analyze › Referers page's dimension),

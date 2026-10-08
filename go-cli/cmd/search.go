@@ -36,6 +36,9 @@ const (
 	defaultSearchLimit = 5
 )
 
+// weakMatchHint is what a search with no confident answer says to do next.
+const weakMatchHint = "None of these? `p202 commands --brief` lists every command with the web UI page it does."
+
 // searchStopwords carry no meaning for finding a command. They are held
 // stemmed (searchStopwordSet), since a query word is stemmed before it is
 // compared: "this" is "thi" by then, and was kept as a search term.
@@ -221,9 +224,13 @@ type searchAnswer struct {
 	// person, it is a typo. Not a verdict: on 40 tasks an agent phrased, it
 	// named a word in 6 the CLI does under another name and in none of the 4
 	// it does not do.
-	UnknownTerms []string       `json:"unknown_terms"`
-	GoodMatch    bool           `json:"good_match"`
-	Results      []searchResult `json:"results"`
+	UnknownTerms []string `json:"unknown_terms"`
+	GoodMatch    bool     `json:"good_match"`
+	// Hint is the next step when the first result is not a confident answer.
+	// A table prints it below the list; an agent gets JSON, so it is here too,
+	// or an agent holding weak candidates is never pointed at the catalog.
+	Hint    string         `json:"hint,omitempty"`
+	Results []searchResult `json:"results"`
 
 	// notInCLI is the UI page (or task) no command does, when the query
 	// names it.
@@ -270,6 +277,9 @@ func runSearch(tree commandTree, words []string, limit int) searchAnswer {
 		}
 	}
 	answer.GoodMatch = len(answer.Results) > 0 && answer.Results[0].Coverage >= confidentCoverage
+	if !answer.GoodMatch {
+		answer.Hint = weakMatchHint
+	}
 	return answer
 }
 
@@ -403,7 +413,7 @@ func writeSearchAnswer(w io.Writer, a searchAnswer) error {
 	}
 	if !a.GoodMatch {
 		fmt.Fprintf(w, "No confident match for %q (the first matches %.0f%% of its words); the closest:\n\n", a.Query, a.Results[0].Coverage*100)
-		defer fmt.Fprintln(w, "\nNone of these? `p202 commands --brief` lists every command with the web UI page it does.")
+		defer fmt.Fprintln(w, "\n"+a.Hint)
 	}
 	for _, r := range a.Results {
 		fmt.Fprintf(w, "%s — %s\n", r.Command, r.Short)

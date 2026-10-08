@@ -75,8 +75,9 @@ dead/broken, undo/revert and link/url match, and "per"/"by" ask for a breakdown.
 page or phrase counts in full only when the query names all of it. Each result says
 why it matched and, when a flag value or a task matched, gives the command line to
 try (`p202 search spy` offers `p202 click list --follow`); `--json` returns
-`{query, terms, unknown_terms, good_match, results[]}`, each result with
-`coverage`, the share of the query's words it matched. An inflected word matches its
+`{query, terms, unknown_terms, good_match, hint, results[]}` (`hint`, naming the
+catalog, only when `good_match` is false), each result with `coverage`, the share of
+the query's words it matched. An inflected word matches its
 base when the commands use the base (`imported` = `import`). There is no typo
 correction: the askers are mostly agents, and on their asks edit-distance matching
 only turned correct words into wrong ones (`came` into `name`, `tmp` into `tcp`). A
