@@ -20,8 +20,8 @@ function getAuth($db, $variables): mixed {
 	$mysql['api_key'] = $db->real_escape_string((string) ($variables['apikey'] ?? ''));
 	// Join 202_users so a soft-deleted user's key stops authenticating, exactly
 	// as api/v3/Auth.php does. Deleting a user must revoke access on EVERY API
-	// version, not just the newest one.
-	$key_sql = "SELECT 	k.*
+	// version, not just the newest one; so must deactivating one (below).
+	$key_sql = "SELECT 	k.*, u.`user_active`
 				FROM   	`202_api_keys` k
 				INNER JOIN `202_users` u ON u.`user_id` = k.`user_id`
 				WHERE  	k.`api_key`='".$mysql['api_key']."' AND u.`user_deleted` = 0";
@@ -29,6 +29,14 @@ function getAuth($db, $variables): mixed {
 	$key_row = $key_result->fetch_assoc();
 
 	if($key_result->num_rows > 0) {
+
+		// A deactivated user's key is refused, as the sign-in refuses them
+		// (`user_active = 1`, functions-auth.php) and api/v3/Auth.php does:
+		// this read user_deleted alone, so a user turned off in Account ›
+		// Users kept reading reports with every key they held.
+		if ((string) ($key_row['user_active'] ?? '') !== '1') {
+			return ['msg' => 'The account this API key belongs to is deactivated', 'error' => true, 'status' => 401];
+		}
 
 		// A v3-scoped key is an attenuated credential. This legacy API
 		// predates scoping and cannot enforce it, so refuse the key

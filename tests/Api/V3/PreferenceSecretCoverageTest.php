@@ -180,7 +180,7 @@ final class PreferenceSecretCoverageTest extends TestCase
             $store = new ServerStateStore($dir);
             $db = $this->createMysqliMock([
                 "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-                '202_api_keys' => ['user_id' => 5, 'scope' => '*'],
+                '202_api_keys' => ['user_id' => 5, 'user_active' => 1, 'scope' => '*'],
                 '202_user_role' => [['role_name' => 'admin']],
             ]);
             $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);

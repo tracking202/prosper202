@@ -57,10 +57,14 @@ final readonly class Auth
 
         // Join 202_users so keys belonging to soft-deleted users stop
         // authenticating — "deleting" a user must actually revoke access.
+        // A deactivated user (Account › Users' Active switch off) is refused
+        // too, as the sign-in and the remember-me cookie refuse them
+        // (functions-auth.php): this read user_deleted alone, so turning a
+        // user off left every key they held working with their role.
         $scopeColumnExists = self::apiKeyScopeColumnExists($db);
         $sql = $scopeColumnExists
-            ? 'SELECT k.user_id, k.scope FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
-            : 'SELECT k.user_id FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
+            ? 'SELECT k.user_id, k.scope, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
+            : 'SELECT k.user_id, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
@@ -80,6 +84,11 @@ final readonly class Auth
 
         if (!$row || !isset($row['user_id'])) {
             throw new AuthException('Invalid API key.', 401);
+        }
+        // Only 1 is active: the column is int(1) NOT NULL DEFAULT 1, and the
+        // sign-in asks for `user_active = 1`, so anything else is refused.
+        if ((string) ($row['user_active'] ?? '') !== '1') {
+            throw new AuthException('The account this API key belongs to is deactivated; an Admin can turn it back on in Account › Users.', 401);
         }
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));

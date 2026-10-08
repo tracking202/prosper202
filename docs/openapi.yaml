@@ -12778,6 +12778,9 @@ components:
         user_active:
           type: integer
           enum: [0, 1]
+          description: >-
+            0 switches the user off: they cannot sign in, and every API key
+            they hold answers 401 (on v1 and v2 too) until it is 1 again.
 
     Role:
       type: object

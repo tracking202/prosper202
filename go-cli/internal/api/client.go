@@ -193,6 +193,11 @@ func HintFor(err error) string {
 			// Auth::requireAdmin(): the key is fine; its user is not an
 			// Admin or the Super user, which the route asks for.
 			return "The key is valid, but its user holds neither the Admin nor the Super user role, which this needs. `p202 whoami` shows the key's user and roles; use an admin's key, or have an admin grant the Admin role: `p202 user role assign <user_id> 2`."
+		case apiErr.Status == 401 && strings.Contains(strings.ToLower(apiErr.Message), "deactivated"):
+			// Auth::fromRequest(): the key is right, but its user is
+			// switched off (not Active in Account › Users); another key
+			// of the same user would be refused the same way.
+			return "The key is valid, but its user is switched off. An admin can switch the user back on: `p202 user update <user_id> --user-active 1`; or use the key of an active user."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:

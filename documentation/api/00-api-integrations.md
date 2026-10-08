@@ -22,6 +22,13 @@ API keys are managed through **My Account > Personal Settings** in the Prosper20
 
 Create a separate API key for each integration so you can revoke access individually.
 
+A key works only while its user does: the keys of a user removed in
+**Account › Users** are `401 Invalid API key.`, and the keys of a user
+switched off there (not Active) are `401` with `The account this API key
+belongs to is deactivated…` until the user is switched on again — on the
+legacy v1 and v2 APIs too, as the sign-in page refuses them. A deactivated
+user's keys used to keep working with the user's role.
+
 ### API Key Scopes
 
 A key may carry a **scope** that attenuates what it can do, independent of

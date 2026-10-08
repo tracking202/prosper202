@@ -514,6 +514,12 @@ func TestHintFor(t *testing.T) {
 	if h := HintFor(&APIError{Status: 200}); h != "" {
 		t.Error("200 should produce no hint")
 	}
+	// A deactivated user's key is the right key: the generic "verify your
+	// key" would send an agent to replace a key that is not the problem.
+	deactivated := HintFor(&APIError{Status: 401, Message: "The account this API key belongs to is deactivated; an Admin can turn it back on in Account › Users."})
+	if !strings.Contains(deactivated, "switched off") || !strings.Contains(deactivated, "`p202 user update <user_id> --user-active 1`") || strings.Contains(deactivated, "set-key") {
+		t.Errorf("a deactivated account's 401 hint = %q", deactivated)
+	}
 	if h := HintFor(nil); h != "" {
 		t.Error("nil should produce no hint")
 	}
