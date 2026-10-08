@@ -3,6 +3,11 @@
 declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
+// Held until the end, so a notice printed before a failure cannot send the
+// headers: under CGI or FPM with output_buffering off, the first output
+// fixes the status at 200 and the catch's 500 is dropped (measured with
+// php-cgi).
+ob_start();
 try {
     require_once __DIR__ . '/../202-config/connect.php';
     require_once __DIR__ . '/../202-config/class-dataengine.php';

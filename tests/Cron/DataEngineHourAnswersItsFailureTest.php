@@ -14,8 +14,9 @@ use PHPUnit\Framework\TestCase;
  * (measured live with the 202_dataengine write refused by a trigger).
  *
  * This holds the one thing the job reads: every exit through the catch sets
- * a 500 before it writes anything. The live measurement is the proof; this
- * is the floor that stops the status line going back out.
+ * a 500 before it writes anything, with the output buffered from the start
+ * so nothing printed earlier has sent the headers. The live measurement is
+ * the proof; this is the floor that stops the status line going back out.
  */
 final class DataEngineHourAnswersItsFailureTest extends TestCase
 {
@@ -26,6 +27,14 @@ final class DataEngineHourAnswersItsFailureTest extends TestCase
             static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
         ));
         $text = static fn ($t): string => is_array($t) ? $t[1] : $t;
+
+        // Output is buffered before anything can print: under CGI or FPM
+        // with output_buffering off, a notice printed first sends the
+        // headers and the 500 set later is dropped.
+        $code = implode('', array_map($text, $tokens));
+        $buffered = strpos($code, 'ob_start();');
+        self::assertNotFalse($buffered, 'dej.php buffers its output');
+        self::assertLessThan(strpos($code, 'try{'), $buffered, 'before the work starts');
 
         $catches = [];
         foreach ($tokens as $i => $t) {
