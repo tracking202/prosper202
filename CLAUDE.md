@@ -196,6 +196,14 @@ session holding an unusable token would be refused on every form until
 sign-out, so `connect.php` seeds a new one whenever the token is not a
 non-empty string (`tests/live/session-token-reseed.sh`).
 
+Turning a user off is the same sweep. The sign-in and the remember-me
+cookie ask for `user_active = 1`; the API key lookups on v1, v2 and v3
+asked only `user_deleted = 0`, so a user switched off in Account › Users
+kept reading and writing with every key they held, under their role.
+`ApiKeyAuthPathScopeTest` now holds every authentication path to refusing a
+deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
+When a state means "this person may not act", list every way a person acts.
+
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
 
@@ -237,6 +245,16 @@ method, path, and body; it always did. The defect was that the real closure
 could not deliver that body. If the thing you wrote is the seam, exercise
 the real path at least once: an integration test, or a live request against
 a running instance.
+
+A fake connection is a mock of the server, and it accepts SQL the server
+refuses. The CRUD lists probed for a time column with `SHOW COLUMNS FROM t
+LIKE ?`, which MariaDB 10.11 will not prepare (measured); the unit fake
+prepared it, so every `updated_since` and `deleted_since` on a list was a
+500 in production while its tests were green, and every server-side
+re-sync after the first failed with it. The table name was interpolated,
+so `StaticSqlSchemaTest` could not see the statement either. SQL that
+reaches a server only through a builder needs one run against a real
+server before it ships (`ListTimeFiltersIntegrationTest`).
 
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
@@ -333,6 +351,15 @@ inherits nothing — so `p202 shell --staged -c 'campaign delete 42 --force'`
 performed the delete. A flag whose whole purpose is to withhold an action must
 be re-checked at every boundary that rebuilds state; grep for the reset and
 the subprocess spawn, not just the flag definition.
+
+And at every route that receives it. `?dry_run=1` was read only for a
+DELETE and by the few writes that preview; on every other POST, PUT or PATCH
+it was ignored and the write ran — `PUT /system/retention?dry_run=1`, the
+spelling the route's own error message recommended, changed the setting. A
+flag that withholds an action is refused where it cannot be honoured, never
+ignored: the dispatcher answers 422 unless the route is on the list of
+writes that preview, and `DryRunRoutesTest` holds that list to the handlers
+that read the flag.
 
 ### 15. A discriminator folded into the storage key can never be checked
 An idempotency key exists to make a retry safe. Every one of the three
