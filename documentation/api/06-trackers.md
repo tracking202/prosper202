@@ -18,7 +18,7 @@ Manage tracking links that tie campaigns, landing pages, PPC accounts, and rotat
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `aff_campaign_id` | integer | Yes | Campaign this tracker is for |
+| `aff_campaign_id` | integer | Yes | Campaign this tracker is for; `0` for a redirector's link (`rotator_id`) or an advanced landing page's, which have none |
 | `ppc_account_id` | integer | No | PPC account for cost tracking |
 | `text_ad_id` | integer | No | Associated text ad |
 | `landing_page_id` | integer | No | Landing page to send traffic to |

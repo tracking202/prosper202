@@ -35,6 +35,21 @@ class LandingPagesController extends Controller
         ];
     }
 
+    /**
+     * An advanced landing page (landing_page_type 1) promotes several offers
+     * and belongs to no campaign: Setup › Landing Pages stores it with
+     * aff_campaign_id 0 and asks for a campaign only for a simple page
+     * (type 0). assertLinksOwned() refused that 0 for every page, so POST
+     * /landing-pages could not make an advanced page at all.
+     */
+    #[\Override]
+    protected function requiredLinkMayBeNone(string $field, array $clean, ?array $current): bool
+    {
+        $type = array_key_exists('landing_page_type', $clean) ? $clean['landing_page_type'] : ($current['landing_page_type'] ?? 0);
+
+        return $field === 'aff_campaign_id' && (int) $type === 1;
+    }
+
     #[\Override]
     protected function afterCreate(int $insertId, array $payload): void
     {

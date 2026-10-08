@@ -121,9 +121,16 @@ record of the key's user that has not been removed; otherwise the write is a
 `422` whose `field_errors` names the field (`category 12 is not one of yours,
 or it was removed (GET /aff-networks lists them)`). `0` means "none" for a link
 the record may go without (a tracker's landing page, a text ad's campaign) and
-is refused for one it requires (a campaign's category, a tracker's campaign).
-An update that re-sends the value a record already holds is not checked again,
-so a record whose campaign was removed since can still be saved. In
+is refused for one it requires (a campaign's category, a tracker's campaign) —
+except where the Setup pages store none: an advanced landing page
+(`landing_page_type: 1`, several offers) has `aff_campaign_id: 0`, and so
+does a tracker that names a redirector (`rotator_id`) or an advanced landing
+page, as Get Links stores them; a simple landing page, a direct link and a
+simple landing page's link need their campaign. An update that re-sends the
+value a record already holds is not checked again, so a record whose campaign
+was removed since can still be saved; one that makes a record need a link it
+holds as `0` (a redirector's tracker given `rotator_id: 0`, an advanced page
+made simple) is a `422` naming it. In
 `bulk-upsert`, a refused row is an `error` row carrying the same `field_errors`;
 the other rows are written.
 

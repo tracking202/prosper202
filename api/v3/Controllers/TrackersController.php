@@ -115,6 +115,47 @@ class TrackersController extends Controller
         ];
     }
 
+    /**
+     * A redirector's link and an advanced landing page's have no campaign:
+     * Get Links (generate_tracking_link.php) asks for one only for a direct
+     * link or a simple landing page (tracker_type 0) and stores 0 for the
+     * other two. assertLinksOwned() refused that 0 for every tracker, so POST
+     * /trackers could make neither. A link counts as a redirector's when it
+     * names a redirector, and as an advanced page's when the landing page it
+     * names is one of this account's live advanced (type 1) pages; anything
+     * else still needs its campaign. The values are the body's, else the
+     * record's.
+     */
+    #[\Override]
+    protected function requiredLinkMayBeNone(string $field, array $clean, ?array $current): bool
+    {
+        if ($field !== 'aff_campaign_id') {
+            return false;
+        }
+        $value = static fn (string $f): int => (int) (array_key_exists($f, $clean) ? $clean[$f] : ($current[$f] ?? 0));
+        if ($value('rotator_id') > 0) {
+            return true;
+        }
+        $landingPageId = $value('landing_page_id');
+
+        return $landingPageId > 0 && $this->isAdvancedLandingPage($landingPageId);
+    }
+
+    /** Whether $landingPageId is a live advanced (type 1) landing page of this account's. A failed read throws. */
+    private function isAdvancedLandingPage(int $landingPageId): bool
+    {
+        $stmt = $this->prepare(
+            'SELECT landing_page_type FROM 202_landing_pages
+             WHERE landing_page_id = ? AND user_id = ? AND COALESCE(landing_page_deleted, 0) = 0 LIMIT 1'
+        );
+        $this->bind($stmt, 'ii', $landingPageId, $this->userId);
+        $this->execute($stmt, 'Landing page lookup failed');
+        $row = $this->resultOf($stmt, 'Landing page lookup failed')->fetch_assoc();
+        $stmt->close();
+
+        return $row !== null && (int) $row['landing_page_type'] === 1;
+    }
+
     private function assertPublicIdFree(int $publicId, ?int $trackerId): void
     {
         if ($publicId <= 0) {

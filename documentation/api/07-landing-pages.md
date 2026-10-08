@@ -18,7 +18,7 @@ Manage landing pages used between the traffic source and the destination.
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `landing_page_url` | string | Yes | Landing page URL (max 255) |
-| `aff_campaign_id` | integer | Yes | Campaign this page belongs to |
+| `aff_campaign_id` | integer | Yes | Campaign this page belongs to; `0` for an advanced page (`landing_page_type: 1`), which has none |
 | `landing_page_nickname` | string | Yes | Friendly name (max 50) |
 | `leave_behind_page_url` | string | No | Leave-behind URL (max 255; `null` clears it) |
 | `landing_page_type` | integer | No | Page type identifier (default 0) |

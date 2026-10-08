@@ -441,7 +441,9 @@ abstract class Controller
      * record already holds is not read either: re-sending what a record has
      * (a full PUT, a sync) must not fail because its campaign was removed
      * since. 0 is "none" for a link the record may go without, and refused
-     * for one it requires.
+     * for one it requires -- unless requiredLinkMayBeNone() says this record
+     * goes without it, as its Setup page stores it (an advanced landing
+     * page's campaign, a redirector's tracker's).
      *
      * @param array<string, mixed>      $clean   validatePayload()'s output
      * @param array<string, mixed>|null $current the row an update changes
@@ -459,7 +461,7 @@ abstract class Controller
             if ($current !== null && array_key_exists($field, $current) && (int)$current[$field] === $id) {
                 continue;
             }
-            if ($id === 0 && !($fields[$field]['required'] ?? false)) {
+            if ($id === 0 && (!($fields[$field]['required'] ?? false) || $this->requiredLinkMayBeNone($field, $clean, $current))) {
                 continue;
             }
             if ($id <= 0) {
@@ -470,9 +472,39 @@ abstract class Controller
                 $errors[$field] = "$what $id is not one of yours, or it was removed ($listedBy lists them)";
             }
         }
+        // An update can take away what let a required link be 0 without
+        // naming the link: a redirector's tracker given rotator_id 0, an
+        // advanced landing page made simple. The record then needs the link
+        // it does not have, as the page that edits it would say. A record
+        // that held 0 where it never could (stored before this was checked)
+        // is not refused for being re-sent as it is.
+        foreach (self::LINKED_RECORDS as $field => [, , , $what, $listedBy]) {
+            if ($current === null || isset($errors[$field]) || !isset($fields[$field]) || !($fields[$field]['required'] ?? false)) {
+                continue;
+            }
+            $id = (int) (array_key_exists($field, $clean) ? $clean[$field] : ($current[$field] ?? 0));
+            if ($id === 0 && $this->requiredLinkMayBeNone($field, [], $current) && !$this->requiredLinkMayBeNone($field, $clean, $current)) {
+                $errors[$field] = "Field '$field' must be the id of a $what of yours ($listedBy lists them): this change makes the record need one";
+            }
+        }
         if ($errors) {
             throw new ValidationException('Validation failed', $errors);
         }
+    }
+
+    /**
+     * Whether a link the record requires may be 0 ("none") for this one, as
+     * the Setup page that writes such a record stores 0 there: a required
+     * link's 0 is refused unless this says otherwise. $clean is the body's
+     * validated fields; $current the row an update changes (null on a
+     * create), for the fields the body does not set.
+     *
+     * @param array<string, mixed>      $clean
+     * @param array<string, mixed>|null $current
+     */
+    protected function requiredLinkMayBeNone(string $field, array $clean, ?array $current): bool
+    {
+        return false;
     }
 
     /**

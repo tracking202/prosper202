@@ -203,6 +203,47 @@ final class OwnedReferencesIntegrationTest extends TestCase
         $this->assertRefused(fn () => (new TrackersController(self::$db, self::USER))->create(['aff_campaign_id' => 0]), 'aff_campaign_id', 'a tracker on no campaign');
     }
 
+    /**
+     * Where a Setup page stores a required link as 0, the API takes 0 too:
+     * an advanced landing page (type 1) has no campaign (landing_pages.php
+     * posts aff_campaign_id 0 for it), and Get Links stores no campaign for
+     * a redirector's link or an advanced landing page's
+     * (generate_tracking_link.php asks for one only for tracker_type 0).
+     * The ownership check refused all three, so the API could make none of
+     * them. A simple page, a direct link and a simple landing page's link
+     * still need their campaign, and an update that turns a record into
+     * one that needs it, leaving it at 0, is refused.
+     */
+    public function testARequiredLinkIsNoneExactlyWhereThePagesStoreNone(): void
+    {
+        $m = $this->ids['mine'];
+        $pages = new LandingPagesController(self::$db, self::USER);
+        $trackers = new TrackersController(self::$db, self::USER);
+
+        $advanced = $pages->create(['landing_page_url' => 'https://adv.example', 'landing_page_nickname' => 'adv', 'landing_page_type' => 1, 'aff_campaign_id' => 0])['data'];
+        self::assertSame([1, 0], [(int) $advanced['landing_page_type'], (int) $advanced['aff_campaign_id']], 'an advanced landing page has no campaign');
+        $this->assertRefused(fn () => $pages->create(['landing_page_url' => 'https://s.example', 'landing_page_nickname' => 's', 'landing_page_type' => 0, 'aff_campaign_id' => 0]), 'aff_campaign_id', 'a simple landing page on no campaign');
+        $this->assertRefused(fn () => $pages->create(['landing_page_url' => 'https://s.example', 'landing_page_nickname' => 's', 'aff_campaign_id' => 0]), 'aff_campaign_id', 'a landing page of the default (simple) type on no campaign');
+
+        $redirector = $trackers->create(['aff_campaign_id' => 0, 'rotator_id' => $m['rotator_id']])['data'];
+        self::assertSame([0, $m['rotator_id']], [(int) $redirector['aff_campaign_id'], (int) $redirector['rotator_id']], "a redirector's link has no campaign");
+        $advancedLink = $trackers->create(['aff_campaign_id' => 0, 'landing_page_id' => (int) $advanced['landing_page_id']])['data'];
+        self::assertSame(0, (int) $advancedLink['aff_campaign_id'], "an advanced landing page's link has no campaign");
+        $this->assertRefused(fn () => $trackers->create(['aff_campaign_id' => 0, 'landing_page_id' => $m['landing_page_id']]), 'aff_campaign_id', "a simple landing page's link on no campaign");
+        $this->assertRefused(fn () => $trackers->create(['aff_campaign_id' => 0, 'landing_page_id' => $this->ids['theirs']['landing_page_id']]), 'aff_campaign_id', "another account's landing page does not excuse the campaign");
+        self::$db->query('UPDATE 202_landing_pages SET landing_page_type = 1 WHERE landing_page_id = ' . (int) $this->ids['removed']['landing_page_id']);
+        $this->assertRefused(fn () => $trackers->create(['aff_campaign_id' => 0, 'landing_page_id' => $this->ids['removed']['landing_page_id']]), 'aff_campaign_id', 'a removed advanced landing page does not excuse the campaign');
+
+        // Re-sent as they are, they save; changed into what needs a campaign, they do not.
+        $pages->update((int) $advanced['landing_page_id'], ['aff_campaign_id' => 0, 'landing_page_type' => 1, 'landing_page_nickname' => 'adv2']);
+        $trackers->update((int) $redirector['tracker_id'], ['aff_campaign_id' => 0, 'rotator_id' => $m['rotator_id']]);
+        $this->assertRefused(fn () => $pages->update((int) $advanced['landing_page_id'], ['landing_page_type' => 0]), 'aff_campaign_id', 'an advanced page made simple with no campaign');
+        $this->assertRefused(fn () => $trackers->update((int) $redirector['tracker_id'], ['rotator_id' => 0]), 'aff_campaign_id', "a redirector's link made a direct link with no campaign");
+        $this->assertRefused(fn () => $trackers->update((int) $redirector['tracker_id'], ['rotator_id' => 0, 'aff_campaign_id' => 0]), 'aff_campaign_id', 'the same, re-sending the 0');
+        self::assertSame($m['rotator_id'], (int) $trackers->get((int) $redirector['tracker_id'])['data']['rotator_id'], 'the refused updates changed nothing');
+        $trackers->update((int) $redirector['tracker_id'], ['rotator_id' => 0, 'aff_campaign_id' => $m['aff_campaign_id']]);
+    }
+
     public function testBulkUpsertRefusesTheRowNotTheBatch(): void
     {
         $m = $this->ids['mine'];

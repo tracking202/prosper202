@@ -65,8 +65,12 @@ info:
     a text ad's `landing_page_id`), and a tracker's `aff_campaign_id`,
     `ppc_account_id`, `landing_page_id`, `text_ad_id` and `rotator_id`.
     Another account's id, or a removed record's, is a `422` naming the field
-    in `field_errors`; `0` is "none" where the link is optional. An update
-    re-sending the value the record already holds is not checked again.
+    in `field_errors`; `0` is "none" where the link is optional, and where
+    the Setup pages store none: an advanced landing page's
+    (`landing_page_type` 1) `aff_campaign_id`, and the `aff_campaign_id` of
+    a tracker that names a redirector or an advanced landing page. An update
+    re-sending the value the record already holds is not checked again; one
+    that makes a record need a link it holds as `0` is a `422`.
 
     ## Idempotent Creates
     Single POST creates across the operator surface (CRUD entities,
