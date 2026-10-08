@@ -30,6 +30,14 @@ error had every report page count "today" in a stale zone with nothing said,
 while the test listed it as graceful. A fallback that reads like an answer is
 the silent case again; it throws now.
 
+A status line is a return value too. `dej.php` rolls up one hour for
+`process_dataengine_job.php`, which marks the hour processed when every call
+answers 200; it caught a failed rollup, printed `Error: …` into the body and
+answered 200, so the hour was marked done with nothing rolled up and never
+tried again. Whoever reads the result reads the status, not the prose: an
+endpoint another process calls answers its failure in the status
+(`DataEngineHourAnswersItsFailureTest`).
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
@@ -142,6 +150,18 @@ webhook event names were checked only for their form so later versions'
 events would need no edit, while `*` already subscribed to those — so
 `revenue.recoded` made a hook that received nothing, answered 201. Ask what
 the permissive check buys that the explicit escape hatch does not.
+
+A form that posts every field rewrites every field, and a select posts its
+first option when none is selected. Personal settings listed
+`DateTimeZone::listIdentifiers()`, which leaves out the backward-compatible
+name a renamed zone keeps (`Europe/Kiev`, `Europe/Kyiv` since 2022): an
+account holding one rendered with nothing selected, and saving the page to
+change an email moved it to `Africa/Abidjan` — measured live — while the
+API refused the same account's GET body back. Every select on a form that
+saves a stored value must offer that value, selected, even when it is not
+among the choices a new value may take; and the writer and the reader of one
+value accept the same set (`AccountZone::isZone()`, held by
+`AccountZoneTest`).
 
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
@@ -906,6 +926,13 @@ miss NULL are `IS FALSE`, `= 0`, `= ''` and `NOT IN (…)`; on a column a
 LEFT JOIN fills, ask for `IS NULL OR = 0`, and seed tests with the NULL the
 writer actually writes — the account-scope test seeded `0` and stayed green.
 
+Written down, it shipped again three times in one feature: the API's
+"No traffic source" filter, the pages' report filter and the summary form
+each asked `ppc_network_id IS NULL` of a rollup whose older rows hold 0.
+They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
+refuses the literal and any file handling the sentinel without it. When a
+rule is a spelling, one function should own the spelling.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1105,6 +1132,16 @@ set under every setting, the install's included: a guard on the setters
 you know about does not reach a cookie another path writes (#5). List
 every place the guarded act happens before trusting the guard.
 
+Making the two sides comparable is not the end of it either. The pixels'
+"this visitor's last click" fallback looked an unmasked address up among
+masked rows, which under privacy never matched; fixed to compare masked
+with masked, it matched the whole /24, and since privacy sets no cookie,
+every pixel there reached it — measured live, a sale from `.40` was credited
+to the click `.30` had made. A fix that makes a dormant comparison match
+again across a many-to-one transform has to decide what several matches
+mean before it ships: `LastClickFromAddress` answers a masked address only
+when one click in the window matches it.
+
 ### 31. A copied value is stale from the moment its source changes
 A click's report row (202_dataengine) copies two values from Setup, not from
 the click: its account's traffic source and its campaign's category. The
@@ -1136,6 +1173,23 @@ an early return, a fast path, a branch on a new result type — list every
 side effect of the skipped code (flags, counters, cache writes, the "done"
 mark) and move each one to where the new path still runs it;
 `ClickUpgradeIntegrationTest` holds this one.
+
+### 33. A tagged version's upgrade step is frozen
+`upgrade_needed()` compares the stored version with the code's, and the
+ladder runs only when they differ. v1.9.76 was tagged at this branch's merge
+base; the branch kept `version.php` at 1.9.76 and put a new column into the
+1.9.75 → 1.9.76 step. An install already on the released 1.9.76 stores
+1.9.76, so nothing differs, the step never runs, and every reader of the
+column fails: measured by installing from the tag and serving the branch —
+`GET /system/retention` answered 500 and `upgrade.php` sent the operator
+to sign in. A schema change after a version is tagged takes a new version
+and a step gated on the tagged one. `UpgradeLadderTest` pins the current and
+prior versions but cannot see tags (CI's clone is shallow), and a session's
+clone often has none either — `git tag` printed nothing here while the
+remote held `v1.9.76` — so before touching the ladder ask the remote
+(`git ls-remote --tags origin 'v*'`); when `version.php`'s version is
+already there, bump it. Prove an upgrade by installing from the latest tag,
+not only from an older one.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -1401,6 +1455,19 @@ Check here before burning time on tooling failures.
   three times in one session, including once with the `[i]nstall` bracket
   trick, because the same command later invoked the script by name. Kill by
   port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
+- **A worktree whose `vendor/` is a symlink to the main checkout tests the
+  main checkout's code.** Composer's generated maps hold paths relative to
+  `vendor/`'s real location, so every `Prosper202\` and `Api\V3\` class
+  resolved to the other tree and a fix in the worktree read as not working.
+  Copy `vendor/` (`cp -a`), do not link it.
+- **This sandbox's PHP reads the system's zone database**
+  (`timezone_version_get()` is `0.system`), and Ubuntu 24.04 ships the
+  backward-compatible names (`US/Eastern`, `Europe/Kiev`) in
+  `tzdata-legacy`, which is not installed: here they are not zones at all,
+  while PHP's own builds list them under `DateTimeZone::ALL_WITH_BC`. Test zone handling with a name this
+  build has in `ALL_WITH_BC` but not in `listIdentifiers()`
+  (`America/Montreal`), and do not conclude from a refusal here what a
+  production build does.
 
 ## Closing the loop on mistakes
 
