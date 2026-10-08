@@ -58,6 +58,7 @@ trait SetupScratchDatabase
         if (self::$db === null) {
             return;
         }
+        self::$db->query('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
         if (self::$savedDomain === null) {
             self::$db->query('DELETE FROM 202_users_pref WHERE user_id = 1');
         } else {
@@ -77,10 +78,19 @@ trait SetupScratchDatabase
         return self::$db;
     }
 
-    private static function setTrackingDomain(string $domain): void
+    /**
+     * The caller's (self::USER's) tracking domain, which the API builds the
+     * caller's links on; user 1's is set to another so a read of the owner's
+     * instead shows.
+     */
+    private static function setTrackingDomain(string $domain, ?int $user = null): void
     {
-        $stmt = self::$db->prepare('INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (1, ?) ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)');
-        $stmt->bind_param('s', $domain);
+        $user ??= self::USER;
+        if ($user !== 1) {
+            self::assertTrue(self::$db->query("INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (1, 'owner.example') ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)"));
+        }
+        $stmt = self::$db->prepare('INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (?, ?) ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)');
+        $stmt->bind_param('is', $user, $domain);
         self::assertTrue($stmt->execute());
         $stmt->close();
     }

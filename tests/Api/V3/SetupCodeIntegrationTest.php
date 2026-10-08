@@ -13,8 +13,8 @@ use Prosper202\Setup\PostbackCode;
 
 /**
  * GET /landing-pages/{id}/code and GET /conversions/postback-code against a
- * real database: the code is LandingPageCode's and PostbackCode's on user
- * 1's tracking domain, for the caller's own live landing pages, campaigns
+ * real database: the code is LandingPageCode's and PostbackCode's on the
+ * caller's tracking domain, for the caller's own live landing pages, campaigns
  * and redirectors only, and every refusal of the pages — no offer chosen,
  * an offer that is not yours or was removed — is made here too, along with
  * what the pages could not be asked (a malformed offer, a value that would
@@ -123,7 +123,7 @@ final class SetupCodeIntegrationTest extends TestCase
 
         $base = '//track.example.com/';
         self::assertSame('simple', $data['landing_page_type']);
-        self::assertSame($base, $data['base_url'], 'user 1\'s domain, scheme-relative as the page writes it');
+        self::assertSame($base, $data['base_url'], 'the caller\'s domain (user 1\'s is owner.example), scheme-relative as the page writes it');
         self::assertSame(LandingPageCode::loader($base, $public), $data['loader']);
         self::assertSame($base . 'tracking202/redirect/go.php?lpip=' . $public, $data['outbound_link']);
         self::assertSame(LandingPageCode::simpleOutboundPhp($base, $public, 'https://lp.example/mine', self::NOW), $data['outbound_php']);

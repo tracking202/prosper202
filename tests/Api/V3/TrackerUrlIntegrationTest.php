@@ -65,6 +65,7 @@ final class TrackerUrlIntegrationTest extends TestCase
     public static function tearDownAfterClass(): void
     {
         if (self::$db !== null) {
+            self::$db->query('DELETE FROM 202_users_pref WHERE user_id = ' . self::USER);
             if (self::$savedDomain === null) {
                 self::$db->query('DELETE FROM 202_users_pref WHERE user_id = 1');
             } else {
@@ -114,9 +115,11 @@ final class TrackerUrlIntegrationTest extends TestCase
 
     private int $campaign = 0;
 
+    /** The caller's tracking domain; user 1's is another, so a read of the owner's shows. */
     private static function setDomain(string $domain): void
     {
-        $stmt = self::$db->prepare('INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (1, ?) ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)');
+        self::assertTrue(self::$db->query("INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (1, 'owner.example') ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)"));
+        $stmt = self::$db->prepare('INSERT INTO 202_users_pref (user_id, user_tracking_domain) VALUES (' . self::USER . ', ?) ON DUPLICATE KEY UPDATE user_tracking_domain = VALUES(user_tracking_domain)');
         $stmt->bind_param('s', $domain);
         self::assertTrue($stmt->execute());
         $stmt->close();
@@ -156,7 +159,12 @@ final class TrackerUrlIntegrationTest extends TestCase
         return (new TrackersController(self::$db, self::USER))->getTrackingUrl($id, $params, $server)['data'];
     }
 
-    public function testTheLinkIsOnUserOnesDomainWithTheSourcesLiveVariables(): void
+    /**
+     * On the caller's own tracking domain, as Get Links builds it for the
+     * signed-in user: the API used user 1's, so an account with a domain of
+     * its own got its links on the owner's host here and on its own there.
+     */
+    public function testTheLinkIsOnTheCallersDomainWithTheSourcesLiveVariables(): void
     {
         $id = $this->tracker(9201);
         $data = $this->url($id);
