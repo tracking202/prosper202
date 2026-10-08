@@ -278,7 +278,7 @@ final class ReportFilter
 
         foreach (self::ID_FILTERS as $param => $column) {
             if ($param === 'ppc_network_id' && self::isNoTrafficSource($params[$param] ?? null)) {
-                $where[] = $col($column) . ' IS NULL';
+                $where[] = \Prosper202\DataEngine\NoTrafficSource::condition($col($column));
                 continue;
             }
             $id = self::id($params, $param);

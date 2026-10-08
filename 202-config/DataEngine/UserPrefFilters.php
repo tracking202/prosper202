@@ -70,7 +70,7 @@ final class UserPrefFilters
         // "No Traffic Source" is stored as 16777215 (the column maximum)
         // because 0 already means "all traffic sources".
         if (($userRow['user_pref_ppc_network_id'] ?? '0') == '16777215') {
-            $filter .= " AND 2st.ppc_network_id IS NULL";
+            $filter .= ' AND ' . NoTrafficSource::condition('2st.ppc_network_id');
         } elseif (!empty($userRow['user_pref_ppc_network_id']) && $userRow['user_pref_ppc_network_id'] != '0') {
             $filter .= " AND 2st.ppc_network_id=" . (int) $userRow['user_pref_ppc_network_id'];
         }

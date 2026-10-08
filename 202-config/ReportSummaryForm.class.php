@@ -1081,7 +1081,7 @@ class ReportSummaryForm extends ReportBasicForm
 				AND 2c.ppc_account_id='" . $mysql['user_pref_ppc_account_id'] . "'
 			";
 		} else if ($user_row['user_pref_ppc_network_id'] == '16777215') {
-			$info_sql .= " AND 2c.ppc_network_id IS NULL ";
+			$info_sql .= ' AND ' . \Prosper202\DataEngine\NoTrafficSource::condition('2c.ppc_network_id') . ' ';
 		} else if ($user_row['user_pref_ppc_network_id'] != '0' && !empty($user_row['user_pref_ppc_network_id'])) {
 			$info_sql .= " AND 2pn.ppc_network_id=" . $user_row['user_pref_ppc_network_id'] . " ";
 			$info_sql .= " AND 2pn.ppc_network_deleted = 0 ";

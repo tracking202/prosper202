@@ -118,7 +118,7 @@ final class UserPrefFiltersTest extends TestCase
     {
         $result = UserPrefFilters::build($this->prefs(['user_pref_ppc_network_id' => '16777215']), 0, false, self::escape(...));
 
-        self::assertSame(' AND 2st.ppc_network_id IS NULL', $result['filter']);
+        self::assertSame(' AND (2st.ppc_network_id IS NULL OR 2st.ppc_network_id = 0)', $result['filter']);
     }
 
     public function testMethodOfPromotionFilters(): void

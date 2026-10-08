@@ -133,7 +133,7 @@ SQL;
      * showed all seven under the new one), and a row rolled up before the
      * joins were tied to the click's account (CLAUDE.md #27) kept another
      * account's ppc_network_id and text_ad_id, which the "[No traffic
-     * source]" filter (`ppc_network_id IS NULL`) and the text-ad groups then
+     * source]" filter (NoTrafficSource) and the text-ad groups then
      * told apart from the NULL a fresh rollup writes. landing_page_id was
      * refreshed on the tracking path only, a difference kept "until verified
      * safe to unify": it is the 202_clicks row's own column, which nothing

@@ -89,7 +89,7 @@ final class ReportFilterTest extends TestCase
     public function testNoTrafficSourceIsTheClicksWithoutOne(): void
     {
         foreach (['none', '16777215', 16777215] as $value) {
-            self::assertSame([['de.ppc_network_id IS NULL'], [], ''], self::applied(['ppc_network_id' => $value]), var_export($value, true));
+            self::assertSame([['(de.ppc_network_id IS NULL OR de.ppc_network_id = 0)'], [], ''], self::applied(['ppc_network_id' => $value]), var_export($value, true));
         }
         self::assertSame([['de.ppc_network_id = ?'], [16777214], 'i'], self::applied(['ppc_network_id' => '16777214']));
         foreach (['None', 'nil', '-1', '16777215 '] as $bad) {

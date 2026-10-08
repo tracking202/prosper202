@@ -77,6 +77,7 @@ final class GroupReportIntegrationTest extends TestCase
         foreach ([self::USER, self::OTHER] as $u) {
             self::$db->query("DELETE FROM 202_dataengine WHERE user_id = $u");
             self::$db->query("DELETE FROM 202_aff_campaigns WHERE user_id = $u");
+            self::$db->query("DELETE FROM 202_ppc_networks WHERE user_id = $u");
         }
         if (self::$keywords !== []) {
             self::$db->query('DELETE FROM 202_keywords WHERE keyword_id IN (' . implode(',', self::$keywords) . ')');
@@ -282,19 +283,26 @@ final class GroupReportIntegrationTest extends TestCase
 
     /**
      * ppc_network_id=none (the pages' 16777215) is the clicks with no
-     * traffic source, which the data engine stores as a NULL network; as an
-     * id it matched no row and the report answered nothing.
+     * traffic source; as an id it matched no row and the report answered
+     * nothing. The rollup stores NULL for them, and rows rolled up before it
+     * (DataEngine::doSummary()) hold the column's 0: both are counted, as the
+     * groups report already puts both in its one "none" group.
      */
     public function testNoTrafficSourceIsTheClicksWithoutOne(): void
     {
-        self::q('UPDATE 202_dataengine SET ppc_network_id = 7 WHERE user_id = ' . self::USER);
+        $source = self::q('INSERT INTO 202_ppc_networks SET user_id = ' . self::USER . ", ppc_network_name = 'gr source', ppc_network_time = 0");
+        self::q("UPDATE 202_dataengine SET ppc_network_id = $source WHERE user_id = " . self::USER);
         self::q('UPDATE 202_dataengine SET ppc_network_id = NULL WHERE user_id = ' . self::USER . ' AND keyword_id = 0');
+        self::q('UPDATE 202_dataengine SET ppc_network_id = 0 WHERE user_id = ' . self::USER . ' AND aff_campaign_id = ' . self::$ids['b']);
         $controller = new ReportsController(self::$db, self::USER);
         foreach (['none', '16777215'] as $value) {
             $summary = $controller->summary(['ppc_network_id' => $value])['data'];
-            self::assertSame([1, 5.0], [$summary['total_clicks'], $summary['total_income']], "ppc_network_id=$value");
+            self::assertSame([2, 5.1], [$summary['total_clicks'], $summary['total_income']], "ppc_network_id=$value");
         }
-        self::assertSame(4, $controller->summary(['ppc_network_id' => '7'])['data']['total_clicks']);
+        self::assertSame(3, $controller->summary(['ppc_network_id' => (string) $source])['data']['total_clicks']);
+
+        $groups = $this->groups(['by' => 'ppc_network'])['data'];
+        self::assertSame([[$source, 3], [null, 2]], array_map(static fn (array $g): array => [$g['id'], $g['total_clicks']], $groups), 'the groups report has one none group, of the clicks the filter reads');
     }
 
     public function testTooManyGroupsIsRefusedNotCut(): void
