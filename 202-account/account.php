@@ -342,7 +342,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
+					// The daily email is the install owner's: daily-email.php
+					// sends user 1's campaigns to user 1's address, and the
+					// hosted service keeps one schedule per install. Another
+					// user's save re-registered it at their own hour and zone.
+					if ((int) $_SESSION['user_id'] === 1) {
+						p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
+					}
 
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {

@@ -240,18 +240,25 @@ function p202StoredTrackingDomain(?int $userId = null): string
 
 /**
  * This install's tracking base, `scheme://host[:port]/<install path>/`:
- * TrackingBaseUrl::build() over the stored tracking domain, the base every
- * API link is built on (a stored scheme kept, the request's otherwise).
+ * TrackingBaseUrl::build() over the install owner's (user 1's) stored
+ * tracking domain (a stored scheme kept, the request's otherwise).
  * callAutoCron(), registerDailyEmail(), getDNIHost() and the account home's
  * deeplink pixel hand it to the hosted service, which calls the install back
- * there. They took the scheme from SERVER_PROTOCOL, which is "HTTP/1.1" or
- * "HTTP/2.0" and never names https, so every install was registered as
- * http://, and a site served only over HTTPS was called back where nothing
- * answers.
+ * there with the install hash. They took the scheme from SERVER_PROTOCOL,
+ * which is "HTTP/1.1" or "HTTP/2.0" and never names https, so every install
+ * was registered as http://, and a site served only over HTTPS was called
+ * back where nothing answers.
+ *
+ * It is the owner's domain, not the signed-in user's: every user sets their
+ * own on Personal settings and every user row carries the install hash, so a
+ * session-dependent read let any user save attacker.example and have the
+ * hosted service call it with the hash that authenticates the cron
+ * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
+ * answered `http://attacker.example/`.
  */
 function p202TrackingBaseUrl(): string
 {
-    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(), $_SERVER, dirname(__DIR__));
+    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
 }
 
 /**
