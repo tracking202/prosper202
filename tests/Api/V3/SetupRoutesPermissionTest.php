@@ -156,7 +156,7 @@ final class SetupRoutesPermissionTest extends TestCase
             self::assertNotNull($match, "DELETE $path has a dry-run preview");
             $route = $registrations[($match['handler'])()];
             self::assertStringContainsString($controller . '::class)->deletePreview(', $route['handler'], "DELETE $path previews through $controller");
-            self::assertStringContainsString('GoalsController::pathId($ctx[', $route['handler'], "DELETE $path's preview reads its ids with pathId");
+            self::assertStringContainsString('PathId::of($ctx', $route['handler'], "DELETE $path's preview reads its ids with PathId::of()");
         }
         foreach (self::ROUTES as [$method, $path]) {
             $staged = $stageable->match($method, $path) !== null;

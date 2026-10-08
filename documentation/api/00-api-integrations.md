@@ -365,6 +365,17 @@ empty is the default. These used to be cast and clamped, so `limit=1000`
 answered 500 rows that read as all of them and `updated_since=yesterday`
 answered every row.
 
+### Ids in the path
+
+An id in a path (`/campaigns/{id}`, `/rotators/{id}/rules/{ruleId}`, …) is
+the digits of a positive whole number, nothing else: `/campaigns/1e3`,
+`/trackers/12x`, `/campaigns/0` and `/campaigns/012` are `404` with `Not
+found: "1e3" is not an id`, the same status as an id no record has. They were
+read as a cast reads them, so `DELETE /campaigns/2e0` deleted campaign 2 and
+`PUT /trackers/12x` changed tracker 12. The ids that are strings — a sync
+job's, a staged change's, an API key, an install's uuid, a subscription's
+external id — are taken as sent.
+
 ### Single Resource
 
 ```json

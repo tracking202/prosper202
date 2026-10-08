@@ -18,6 +18,7 @@ use Api\V3\Router;
 use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\PathId;
 use Api\V3\Support\ServerStateStore;
 
 // ─── Security headers ────────────────────────────────────────────────
@@ -272,6 +273,10 @@ try {
     // one. Nothing is swapped by reference: a handler written as an arrow
     // function captures by value at definition time and would otherwise
     // never see a later swap.
+    //
+    // Every {id} in a path is read with PathId::of($ctx[, 'name']): digits
+    // the int cast leaves unchanged, or a 404. Read as (int) $ctx['id'],
+    // DELETE /campaigns/2e0 deleted campaign 2 (PathIdsAreReadStrictlyTest).
     $buildRouters = function (array $payload, array $queryParams, int $actorUserId)
         use ($db, $auth, $stateStore, $crudMap): array {
         // Controller factories — instantiated lazily by the router handlers.
@@ -319,21 +324,21 @@ try {
         foreach ($crudMap as $resource => $class) {
             $router->group("/$resource", function (Router $r) use ($class, $crud, $queryParams) {
                 $r->get('',       fn() => $crud($class)->list($queryParams));
-                $r->get('/{id}',  fn($ctx) => $crud($class)->get((int)$ctx['id']));
+                $r->get('/{id}',  fn($ctx) => $crud($class)->get(PathId::of($ctx)));
             }, isset($setupRemove[$resource]) ? [$setupSection] : []);
             $router->group("/$resource", function (Router $r) use ($resource, $class, $crud, $idempotent, $payload) {
                 $r->post('/bulk-upsert', fn() => $crud($class)->bulkUpsert($payload));
                 $r->post('',      fn() => ['_status' => 201] + $idempotent($resource, $payload, fn() => $crud($class)->create($payload)));
-                $r->put('/{id}',  fn($ctx) => $crud($class)->update((int)$ctx['id'], $payload));
+                $r->put('/{id}',  fn($ctx) => $crud($class)->update(PathId::of($ctx), $payload));
             }, isset($setupRemove[$resource]) ? [$setupSection] : []);
             $router->group("/$resource", function (Router $r) use ($class, $crud) {
-                $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete((int)$ctx['id'])));
+                $r->delete('/{id}', fn($ctx) => tap($crud($class), fn($c) => $c->delete(PathId::of($ctx))));
             }, isset($setupRemove[$resource]) ? [$setupRemove[$resource], $setupSection] : []);
         }
 
         // Tracker sub-resource: Setup › Get Links' link.
         $router->group('/trackers', function (Router $r) use ($crud, $queryParams) {
-            $r->get('/{id}/url', fn($ctx) => $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl((int)$ctx['id'], $queryParams));
+            $r->get('/{id}/url', fn($ctx) => $crud(\Api\V3\Controllers\TrackersController::class)->getTrackingUrl(PathId::of($ctx), $queryParams));
         }, [$setupSection]);
 
         // ── Setup: its code, a traffic source's variables, an account's pixels
@@ -351,34 +356,24 @@ try {
         // /conversions routes, whose GET /conversions/{id} would otherwise
         // answer GET /conversions/postback-code. SetupRoutesPermissionTest
         // holds all of this.
-        //
-        // A path id is digits the int cast leaves unchanged: (int) '1e3' is
-        // 1000, and '12abc' would act on 12.
-        $setupId = static function (array $ctx, string $key = 'id'): int {
-            $n = \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
-            if ($n === 0) {
-                throw new \Api\V3\Exception\NotFoundException('Not found: ' . json_encode((string) $ctx[$key]) . ' is not an id');
-            }
-            return $n;
-        };
-        $router->group('', function (Router $r) use ($crud, $queryParams, $setupId) {
+        $router->group('', function (Router $r) use ($crud, $queryParams) {
             $code = \Api\V3\Controllers\SetupCodeController::class;
-            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode($setupId($ctx), $queryParams));
+            $r->get('/landing-pages/{id}/code', fn($ctx) => $crud($code)->landingPageCode(PathId::of($ctx), $queryParams));
             $r->get('/conversions/postback-code', fn() => $crud($code)->postbackCode($queryParams));
         }, [$setupSection]);
-        $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+        $router->group('/ppc-networks/{id}/variables', function (Router $r) use ($crud, $idempotent, $payload) {
             $vars = \Api\V3\Controllers\PpcNetworkVariablesController::class;
-            $r->get('', fn($ctx) => $crud($vars)->list($setupId($ctx)));
-            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . $setupId($ctx) . '/variables', $payload, fn() => $crud($vars)->create($setupId($ctx), $payload)));
-            $r->put('/{variableId}', fn($ctx) => $crud($vars)->update($setupId($ctx), $setupId($ctx, 'variableId'), $payload));
-            $r->delete('/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'variableId'))));
+            $r->get('', fn($ctx) => $crud($vars)->list(PathId::of($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-networks/' . PathId::of($ctx) . '/variables', $payload, fn() => $crud($vars)->create(PathId::of($ctx), $payload)));
+            $r->put('/{variableId}', fn($ctx) => $crud($vars)->update(PathId::of($ctx), PathId::of($ctx, 'variableId'), $payload));
+            $r->delete('/{variableId}', fn($ctx) => tap($crud($vars), fn($c) => $c->delete(PathId::of($ctx), PathId::of($ctx, 'variableId'))));
         }, [$setupRemove['ppc-networks'], $setupSection]);
-        $router->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($crud, $idempotent, $payload, $setupId) {
+        $router->group('/ppc-accounts/{id}/pixels', function (Router $r) use ($crud, $idempotent, $payload) {
             $pixels = \Api\V3\Controllers\PpcAccountPixelsController::class;
-            $r->get('', fn($ctx) => $crud($pixels)->list($setupId($ctx)));
-            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . $setupId($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create($setupId($ctx), $payload)));
-            $r->put('/{pixelId}', fn($ctx) => $crud($pixels)->update($setupId($ctx), $setupId($ctx, 'pixelId'), $payload));
-            $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete($setupId($ctx), $setupId($ctx, 'pixelId'))));
+            $r->get('', fn($ctx) => $crud($pixels)->list(PathId::of($ctx)));
+            $r->post('', fn($ctx) => ['_status' => 201] + $idempotent('ppc-accounts/' . PathId::of($ctx) . '/pixels', $payload, fn() => $crud($pixels)->create(PathId::of($ctx), $payload)));
+            $r->put('/{pixelId}', fn($ctx) => $crud($pixels)->update(PathId::of($ctx), PathId::of($ctx, 'pixelId'), $payload));
+            $r->delete('/{pixelId}', fn($ctx) => tap($crud($pixels), fn($c) => $c->delete(PathId::of($ctx), PathId::of($ctx, 'pixelId'))));
         }, [$setupSection]);
 
         // ── Campaign figures ─────────────────────────────────────────────
@@ -398,13 +393,13 @@ try {
 
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
-        $router->get('/clicks/{id}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->get((int)$ctx['id']), $recordMoney));
+        $router->get('/clicks/{id}', fn($ctx) => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->get(PathId::of($ctx)), $recordMoney));
         // A click's conversions, each with whether it counts toward the
         // click's value. It is the clicks area by path and shows conversion
         // rows, so a key needs read scope on both.
         $router->get('/clicks/{id}/conversions', function ($ctx) use ($crud, $auth, $campaignFigures, $recordMoney) {
             $auth->requireScope('conversions:read');
-            return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions((int)$ctx['id']), $recordMoney);
+            return $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->conversions(PathId::of($ctx)), $recordMoney);
         });
 
         // ── Conversions ──────────────────────────────────────────────────
@@ -420,7 +415,7 @@ try {
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
-            $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get((int)$ctx['id']), $recordMoney));
+            $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $recordMoney));
         });
         $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $payload) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
@@ -428,7 +423,7 @@ try {
         }, [$updateSection]);
         $router->group('/conversions', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
-            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->delete('/{id}', fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'delete_individual_subids'); }, $updateSection]);
 
         // ── Update (the UI's Update section, tracking202/update/) ────────
@@ -476,9 +471,9 @@ try {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->get('/summary',        fn() => $crud($cls)->summary($queryParams));
             $r->get('/customers',      fn() => $crud($cls)->customers($queryParams));
-            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail((int)$ctx['id']));
-            $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement((int)$ctx['id'], $queryParams));
-            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer((int)$ctx['id']));
+            $r->get('/customers/{id}', fn($ctx) => $crud($cls)->customerDetail(PathId::of($ctx)));
+            $r->get('/customers/{id}/engagement', fn($ctx) => $crud($cls)->customerEngagement(PathId::of($ctx), $queryParams));
+            $r->get('/customers/{id}/next-offer', fn($ctx) => $crud($cls)->customerNextOffer(PathId::of($ctx)));
             $r->get('/abm',            fn() => $crud($cls)->abm($queryParams));
             $r->get('/abm/company',    fn() => $crud($cls)->abmCompany($queryParams));
             $r->get('/breakdown',      fn() => $crud($cls)->breakdown($queryParams));
@@ -490,7 +485,7 @@ try {
             $r->get('/subscriptions',  fn() => $crud($cls)->listSubscriptions($queryParams));
             $r->get('/fields',         fn() => $crud($cls)->fieldsList());
             $r->get('/webhooks',       fn() => $crud($cls)->listWebhooks());
-            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries((int)$ctx['id'], $queryParams));
+            $r->get('/webhooks/{id}/deliveries', fn($ctx) => $crud($cls)->webhookDeliveries(PathId::of($ctx), $queryParams));
             $r->get('/integrations',   fn() => $crud($cls)->listIntegrations());
         }, [
             static function () use ($auth): void {
@@ -502,16 +497,16 @@ try {
         $router->group('/ltv', function (Router $r) use ($crud, $payload) {
             $cls = \Api\V3\Controllers\LtvController::class;
             $r->post('/customers',                fn() => ['_status' => 201] + $crud($cls)->upsertCustomer($payload));
-            $r->patch('/customers/{id}',          fn($ctx) => $crud($cls)->patchCustomer((int)$ctx['id'], $payload));
-            $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer((int)$ctx['id'], $payload));
-            $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer((int)$ctx['id'])));
-            $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias((int)$ctx['id'], $payload));
-            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression((int)$ctx['id'], $payload));
-            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias((int)$ctx['id'], (int)$ctx['aliasId'])));
+            $r->patch('/customers/{id}',          fn($ctx) => $crud($cls)->patchCustomer(PathId::of($ctx), $payload));
+            $r->post('/customers/{id}/merge',     fn($ctx) => $crud($cls)->mergeCustomer(PathId::of($ctx), $payload));
+            $r->delete('/customers/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomer(PathId::of($ctx))));
+            $r->post('/customers/{id}/aliases',   fn($ctx) => ['_status' => 201] + $crud($cls)->addAlias(PathId::of($ctx), $payload));
+            $r->post('/customers/{id}/next-offer/impression', fn($ctx) => $crud($cls)->recordNextOfferImpression(PathId::of($ctx), $payload));
+            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCustomerAlias(PathId::of($ctx), PathId::of($ctx, 'aliasId'))));
             $r->post('/companies',                fn() => ['_status' => 201] + $crud($cls)->createCompany($payload));
-            $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany((int)$ctx['id'], $payload));
-            $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany((int)$ctx['id'], $payload));
-            $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany((int)$ctx['id'])));
+            $r->patch('/companies/{id}',          fn($ctx) => $crud($cls)->patchCompany(PathId::of($ctx), $payload));
+            $r->post('/companies/{id}/merge',     fn($ctx) => $crud($cls)->mergeCompany(PathId::of($ctx), $payload));
+            $r->delete('/companies/{id}',         fn($ctx) => tap($crud($cls), fn($c) => $c->deleteCompany(PathId::of($ctx))));
             $r->post('/revenue',                  fn() => $crud($cls)->recordRevenue($payload));
             $r->post('/events',                   fn() => $crud($cls)->recordEngagementEvent($payload));
             $r->post('/subscriptions',            fn() => ['_status' => 201] + $crud($cls)->upsertSubscription($payload));
@@ -521,15 +516,15 @@ try {
             // never be found here.
             $r->post('/subscriptions/{ref}/events', fn($ctx) => $crud($cls)->subscriptionEvent(rawurldecode((string)$ctx['ref']), $payload));
             $r->post('/products',                 fn() => ['_status' => 201] + $crud($cls)->upsertProduct($payload));
-            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct((int)$ctx['id'], $payload));
-            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct((int)$ctx['id'])));
+            $r->patch('/products/{id}',           fn($ctx) => $crud($cls)->updateProduct(PathId::of($ctx), $payload));
+            $r->delete('/products/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteProduct(PathId::of($ctx))));
             $r->post('/fields',                   fn() => ['_status' => 201] + $crud($cls)->createField($payload));
-            $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField((int)$ctx['id'], $payload));
-            $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField((int)$ctx['id'])));
+            $r->patch('/fields/{id}',             fn($ctx) => $crud($cls)->updateField(PathId::of($ctx), $payload));
+            $r->delete('/fields/{id}',            fn($ctx) => tap($crud($cls), fn($c) => $c->deleteField(PathId::of($ctx))));
             $r->post('/webhooks',                 fn() => ['_status' => 201] + $crud($cls)->createWebhook($payload));
-            $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook((int)$ctx['id'])));
+            $r->delete('/webhooks/{id}',          fn($ctx) => tap($crud($cls), fn($c) => $c->deleteWebhook(PathId::of($ctx))));
             $r->post('/integrations',             fn() => ['_status' => 201] + $crud($cls)->createIntegration($payload));
-            $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration((int)$ctx['id'])));
+            $r->delete('/integrations/{id}',      fn($ctx) => tap($crud($cls), fn($c) => $c->deleteIntegration(PathId::of($ctx))));
         }, [
             static function () use ($auth): void {
                 $auth->requireScope('ltv:write');
@@ -619,20 +614,20 @@ try {
         $rotators = \Api\V3\Controllers\RotatorsController::class;
         $router->group('/rotators', function (Router $r) use ($crud, $queryParams, $rotators) {
             $r->get('',                        fn() => $crud($rotators)->list($queryParams));
-            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get((int)$ctx['id']));
-            $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules((int)$ctx['id']));
+            $r->get('/{id}',                   fn($ctx) => $crud($rotators)->get(PathId::of($ctx)));
+            $r->get('/{id}/rules',             fn($ctx) => $crud($rotators)->listRules(PathId::of($ctx)));
         }, [$setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $idempotent, $payload, $rotators) {
             $r->post('',                       fn() => ['_status' => 201] + $idempotent('rotators', $payload, fn() => $crud($rotators)->create($payload)));
-            $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update((int)$ctx['id'], $payload));
-            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . (int)$ctx['id'] . '/rules', $payload, fn() => $crud($rotators)->createRule((int)$ctx['id'], $payload)));
-            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule((int)$ctx['id'], (int)$ctx['ruleId'], $payload));
+            $r->put('/{id}',                   fn($ctx) => $crud($rotators)->update(PathId::of($ctx), $payload));
+            $r->post('/{id}/rules',            fn($ctx) => $idempotent('rotators/' . PathId::of($ctx) . '/rules', $payload, fn() => $crud($rotators)->createRule(PathId::of($ctx), $payload)));
+            $r->put('/{id}/rules/{ruleId}',    fn($ctx) => $crud($rotators)->updateRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'), $payload));
         }, [$setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
-            $r->delete('/{id}', fn($ctx) => tap($crud($rotators), fn($c) => $c->delete((int)$ctx['id'])));
+            $r->delete('/{id}', fn($ctx) => tap($crud($rotators), fn($c) => $c->delete(PathId::of($ctx))));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator'); }, $setupSection]);
         $router->group('/rotators', function (Router $r) use ($crud, $rotators) {
-            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule((int)$ctx['id'], (int)$ctx['ruleId'])));
+            $r->delete('/{id}/rules/{ruleId}', fn($ctx) => tap($crud($rotators), fn($c) => $c->deleteRule(PathId::of($ctx), PathId::of($ctx, 'ruleId'))));
         }, [static function () use ($auth, $db): void { $auth->requirePermission($db, 'remove_rotator_rule'); }, $setupSection]);
         // A rotator's report — its totals, each rule and its default — as the
         // Overview's Rotator Breakdown shows it (ReportsController::
@@ -642,7 +637,7 @@ try {
         // asks for no role permission, and is masked as the others are.
         $router->get('/rotators/{id}/stats', function ($ctx) use ($crud, $auth, $queryParams, $campaignFigures, $reportFigures) {
             $auth->requireScope('reports:read');
-            return $campaignFigures($crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats((int)$ctx['id'], $queryParams), $reportFigures);
+            return $campaignFigures($crud(\Api\V3\Controllers\ReportsController::class)->rotatorStats(PathId::of($ctx), $queryParams), $reportFigures);
         });
 
         // ── Multi-touch attribution ──────────────────────────────────────
@@ -657,18 +652,18 @@ try {
                 $auth->requirePermission($db, 'manage_attribution_models');
             };
             $r->get('',        fn() => $crud($cls)->listModels($queryParams));
-            $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel((int)$ctx['id']));
+            $r->get('/{id}',   fn($ctx) => $crud($cls)->getModel(PathId::of($ctx)));
             $r->post('',       function () use ($manage, $crud, $cls, $idempotent, $payload) {
                 $manage();
                 return ['_status' => 201] + $idempotent('attribution/models', $payload, fn() => $crud($cls)->createModel($payload));
             });
             $r->put('/{id}',   function ($ctx) use ($manage, $crud, $cls, $payload) {
                 $manage();
-                return $crud($cls)->updateModel((int)$ctx['id'], $payload);
+                return $crud($cls)->updateModel(PathId::of($ctx), $payload);
             });
             $r->delete('/{id}', function ($ctx) use ($manage, $crud, $cls) {
                 $manage();
-                $crud($cls)->deleteModel((int)$ctx['id']);
+                $crud($cls)->deleteModel(PathId::of($ctx));
                 return null; // 204
             });
         }, [
@@ -680,7 +675,7 @@ try {
             $cls = \Api\V3\Controllers\AttributionController::class;
             $r->get('/reports/breakdown',          fn() => $crud($cls)->breakdown($queryParams));
             $r->get('/reports/journeys',           fn() => $crud($cls)->journeyMetrics($queryParams));
-            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey((int)$ctx['id']));
+            $r->get('/conversions/{id}/journey',   fn($ctx) => $crud($cls)->journey(PathId::of($ctx)));
             $r->get('/queue',                      fn() => $crud($cls)->queue($queryParams));
         }, [
             static function () use ($auth, $db): void {
@@ -695,11 +690,11 @@ try {
         $router->group('/attribution/exports', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
             $cls = \Api\V3\Controllers\AttributionController::class;
             $r->get('',                fn() => $crud($cls)->listExports($queryParams));
-            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport((int)$ctx['id']));
-            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport((int)$ctx['id']));
+            $r->get('/{id}',           fn($ctx) => $crud($cls)->getExport(PathId::of($ctx)));
+            $r->get('/{id}/download',  fn($ctx) => $crud($cls)->downloadExport(PathId::of($ctx)));
             $r->post('',               fn() => ['_status' => 201] + $idempotent('attribution/exports', $payload, fn() => $crud($cls)->createExport($payload)));
-            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport((int)$ctx['id']));
-            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport((int)$ctx['id'])));
+            $r->post('/{id}/retry',    fn($ctx) => $crud($cls)->retryExport(PathId::of($ctx)));
+            $r->delete('/{id}',        fn($ctx) => tap($crud($cls), fn($c) => $c->deleteExport(PathId::of($ctx))));
         }, [
             static function () use ($auth, $db): void {
                 $auth->requirePermission($db, 'view_attribution_reports');
@@ -744,7 +739,7 @@ try {
             });
             $r->get('/skan-encodings/{id}',    function ($ctx) use ($setup, $crud, $encodings) {
                 $setup();
-                return $crud($encodings)->get((int)$ctx['id']);
+                return $crud($encodings)->get(PathId::of($ctx));
             });
             $r->post('/skan-encodings',        function () use ($manage, $crud, $encodings, $idempotent, $payload) {
                 $manage();
@@ -752,11 +747,11 @@ try {
             });
             $r->put('/skan-encodings/{id}',    function ($ctx) use ($manage, $crud, $encodings, $payload) {
                 $manage();
-                return $crud($encodings)->update((int)$ctx['id'], $payload);
+                return $crud($encodings)->update(PathId::of($ctx), $payload);
             });
             $r->delete('/skan-encodings/{id}', function ($ctx) use ($manage, $crud, $encodings) {
                 $manage();
-                $crud($encodings)->delete((int)$ctx['id']);
+                $crud($encodings)->delete(PathId::of($ctx));
                 return null; // 204
             });
 
@@ -766,7 +761,7 @@ try {
             });
             $r->get('/postbacks/{id}', function ($ctx) use ($view, $crud, $postbacks) {
                 $view();
-                return $crud($postbacks)->get((int)$ctx['id']);
+                return $crud($postbacks)->get(PathId::of($ctx));
             });
             // Both platforms: Apple's postbacks and Android's installs
             // (AppReportController picks, and refuses a one-platform
@@ -796,20 +791,20 @@ try {
             $installs = \Api\V3\Controllers\AppInstallsController::class;
             $r->get('/{id}/installs',        function ($ctx) use ($view, $crud, $installs, $queryParams) {
                 $view();
-                return $crud($installs)->list((int)$ctx['id'], $queryParams);
+                return $crud($installs)->list(PathId::of($ctx), $queryParams);
             });
             $r->get('/{id}/installs/{uuid}', function ($ctx) use ($view, $crud, $installs) {
                 $view();
-                return $crud($installs)->get((int)$ctx['id'], (string)$ctx['uuid']);
+                return $crud($installs)->get(PathId::of($ctx), (string)$ctx['uuid']);
             });
-            $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken((int)$ctx['id'], $queryParams));
+            $r->get('/{id}/install-token',   fn($ctx) => $crud($installs)->installToken(PathId::of($ctx), $queryParams));
 
             // The link builder's read: the store link a campaign should send
             // its clicks to, and whether campaign_id already does (a read;
             // applying it is PUT /campaigns/{id}).
             $r->get('/{id}/store-link', function ($ctx) use ($setup, $crud, $queryParams) {
                 $setup();
-                return $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink((int)$ctx['id'], $queryParams);
+                return $crud(\Api\V3\Controllers\AppLinksController::class)->storeLink(PathId::of($ctx), $queryParams);
             });
 
             // Play Integrity (plan §5.6, §5.11): the status read, and the
@@ -819,15 +814,15 @@ try {
             $integrity = \Api\V3\Controllers\AppIntegrityController::class;
             $r->get('/{id}/integrity',               function ($ctx) use ($setup, $crud, $integrity) {
                 $setup();
-                return $crud($integrity)->status((int)$ctx['id']);
+                return $crud($integrity)->status(PathId::of($ctx));
             });
             $r->put('/{id}/integrity-credential',    function ($ctx) use ($manage, $crud, $integrity, $payload) {
                 $manage();
-                return $crud($integrity)->setCredential((int)$ctx['id'], $payload);
+                return $crud($integrity)->setCredential(PathId::of($ctx), $payload);
             });
             $r->delete('/{id}/integrity-credential', function ($ctx) use ($manage, $crud, $integrity) {
                 $manage();
-                return $crud($integrity)->clearCredential((int)$ctx['id']);
+                return $crud($integrity)->clearCredential(PathId::of($ctx));
             });
 
             $r->get('',            function () use ($setup, $crud, $apps, $queryParams) {
@@ -845,20 +840,20 @@ try {
             });
             $r->get('/{id}',       function ($ctx) use ($setup, $crud, $apps) {
                 $setup();
-                return $crud($apps)->get((int)$ctx['id']);
+                return $crud($apps)->get(PathId::of($ctx));
             });
             $r->put('/{id}',       function ($ctx) use ($manage, $crud, $apps, $payload) {
                 $manage();
-                return $crud($apps)->update((int)$ctx['id'], $payload);
+                return $crud($apps)->update(PathId::of($ctx), $payload);
             });
             $r->delete('/{id}',    function ($ctx) use ($manage, $crud, $apps) {
                 $manage();
-                $crud($apps)->delete((int)$ctx['id']);
+                $crud($apps)->delete(PathId::of($ctx));
                 return null; // 204
             });
             $r->post('/{id}/app-token/rotate', function ($ctx) use ($manage, $crud, $apps) {
                 $manage();
-                return $crud($apps)->rotateAppToken((int)$ctx['id']);
+                return $crud($apps)->rotateAppToken(PathId::of($ctx));
             });
         });
 
@@ -868,23 +863,22 @@ try {
         // nothing. The literal paths come before /goals/{id}.
         $router->group('/goals', function (Router $r) use ($crud, $idempotent, $queryParams, $payload) {
             $cls = \Api\V3\Controllers\GoalsController::class;
-            $id = static fn(array $ctx, string $key = 'id'): int => \Api\V3\Controllers\GoalsController::pathId($ctx[$key]);
 
-            $r->get('',               fn() => $crud($cls)->list($queryParams));
+            $r->get('',             fn() => $crud($cls)->list($queryParams));
             $r->post('',              fn() => ['_status' => 201] + $idempotent('goals', $payload, fn() => $crud($cls)->create($payload)));
             $r->post('/validate',     fn() => $crud($cls)->validate($payload));
             $r->post('/evaluate',     fn() => $crud($cls)->evaluate($payload));
-            $r->get('/{id}',          fn($ctx) => $crud($cls)->get($id($ctx)));
-            $r->put('/{id}',          fn($ctx) => $crud($cls)->update($id($ctx), $payload));
-            $r->delete('/{id}',       fn($ctx) => tap($crud($cls), fn($c) => $c->delete($id($ctx))));
-            $r->get('/{id}/versions', fn($ctx) => $crud($cls)->versions($id($ctx)));
-            $r->get('/{id}/versions/{version}', fn($ctx) => $crud($cls)->version($id($ctx), $id($ctx, 'version')));
-            $r->get('/{id}/outcomes', fn($ctx) => $crud($cls)->outcomes($id($ctx), $queryParams));
-            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->campaigns($id($ctx)));
-            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $crud($cls)->attachCampaign($id($ctx), $id($ctx, 'campaignId'), $payload));
-            $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign($id($ctx), $id($ctx, 'campaignId'))));
-            $r->get('/{id}/reevaluation',  fn($ctx) => $crud($cls)->reevaluationPreview($id($ctx), $queryParams));
-            $r->post('/{id}/reevaluation', fn($ctx) => $crud($cls)->reevaluate($id($ctx), $payload));
+            $r->get('/{id}',          fn($ctx) => $crud($cls)->get(PathId::of($ctx)));
+            $r->put('/{id}',          fn($ctx) => $crud($cls)->update(PathId::of($ctx), $payload));
+            $r->delete('/{id}',       fn($ctx) => tap($crud($cls), fn($c) => $c->delete(PathId::of($ctx))));
+            $r->get('/{id}/versions', fn($ctx) => $crud($cls)->versions(PathId::of($ctx)));
+            $r->get('/{id}/versions/{version}', fn($ctx) => $crud($cls)->version(PathId::of($ctx), PathId::of($ctx, 'version')));
+            $r->get('/{id}/outcomes', fn($ctx) => $crud($cls)->outcomes(PathId::of($ctx), $queryParams));
+            $r->get('/{id}/campaigns', fn($ctx) => $crud($cls)->campaigns(PathId::of($ctx)));
+            $r->put('/{id}/campaigns/{campaignId}', fn($ctx) => $crud($cls)->attachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'), $payload));
+            $r->delete('/{id}/campaigns/{campaignId}', fn($ctx) => tap($crud($cls), fn($c) => $c->detachCampaign(PathId::of($ctx), PathId::of($ctx, 'campaignId'))));
+            $r->get('/{id}/reevaluation',  fn($ctx) => $crud($cls)->reevaluationPreview(PathId::of($ctx), $queryParams));
+            $r->post('/{id}/reevaluation', fn($ctx) => $crud($cls)->reevaluate(PathId::of($ctx), $payload));
         });
 
         // ── Events (plan §2.2) ──────────────────────────────────────────
@@ -910,83 +904,83 @@ try {
                 return ['_status' => 201] + $idempotent('users', $payload, fn() => $make()->create($payload));
             });
             $r->get('/{id}', function ($ctx) use ($auth, $make) {
-                $auth->requireSelfOrAdmin((int)$ctx['id']);
-                return $make()->get((int)$ctx['id']);
+                $auth->requireSelfOrAdmin(PathId::of($ctx));
+                return $make()->get(PathId::of($ctx));
             });
             // Writes to another user's account follow user-management.php:
             // requireSelfOrMayManageUser() and its siblings in Auth say how.
             $r->put('/{id}', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
                 // A rename and the active flag are the Users page's, not
                 // Personal settings': they need a user you may manage, even
                 // when that is you. The time zone is Personal settings'.
                 if (array_key_exists('user_name', $payload) || array_key_exists('user_active', $payload)) {
-                    $auth->requireMayManageUser($db, (int)$ctx['id']);
+                    $auth->requireMayManageUser($db, PathId::of($ctx));
                 }
                 if (array_key_exists('user_timezone', $payload)) {
-                    $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
+                    $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
                 }
-                return $make()->update((int)$ctx['id'], $payload, $auth->userId());
+                return $make()->update(PathId::of($ctx), $payload, $auth->userId());
             });
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireMayDeleteUser($db, (int)$ctx['id']);
-                $make()->delete((int)$ctx['id']);
+                $auth->requireMayDeleteUser($db, PathId::of($ctx));
+                $make()->delete(PathId::of($ctx));
                 return null; // 204
             });
 
             // Roles sub-resource
             $r->post('/{id}/roles', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requireMayChangeRoles($db, (int)$ctx['id'], \Api\V3\Controllers\UsersController::roleIdFrom($payload));
-                return $make()->assignRole((int)$ctx['id'], $payload);
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), \Api\V3\Controllers\UsersController::roleIdFrom($payload));
+                return $make()->assignRole(PathId::of($ctx), $payload);
             });
             $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireMayChangeRoles($db, (int)$ctx['id'], null);
-                $make()->removeRole((int)$ctx['id'], (int)$ctx['roleId']);
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                $make()->removeRole(PathId::of($ctx), PathId::of($ctx, 'roleId'));
                 return null;
             });
 
             // API keys (Personal settings: yours with the page's permission,
             // or a user you may manage)
             $r->get('/{id}/api-keys', function ($ctx) use ($auth, $make, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                return $make()->listApiKeys((int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->listApiKeys(PathId::of($ctx));
             });
             $r->post('/{id}/api-keys', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                return ['_status' => 201] + $make()->createApiKey((int)$ctx['id'], $payload, $auth);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return ['_status' => 201] + $make()->createApiKey(PathId::of($ctx), $payload, $auth);
             });
             $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                $make()->deleteApiKey((int)$ctx['id'], $ctx['keyId']);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                $make()->deleteApiKey(PathId::of($ctx), (string)$ctx['keyId']);
                 return null;
             });
 
             // Identity linking key (self-or-admin): what the operator's
             // server signs customer ids with (cust_sig).
             $r->get('/{id}/identity-key', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
                 // A read that hands out a signing secret: whoever holds the
                 // key can link any click to any customer id, which is a write
                 // to the account's identity graph. So a read-only or
                 // propose-only key (a reporting agent's) cannot fetch it.
                 $auth->requireScope('users:write');
-                return $make()->identityKey((int)$ctx['id']);
+                return $make()->identityKey(PathId::of($ctx));
             });
             $r->post('/{id}/identity-key/rotate', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireSelfOrMayManageUser($db, (int)$ctx['id']);
-                return $make()->rotateIdentityKey((int)$ctx['id']);
+                $auth->requireSelfOrMayManageUser($db, PathId::of($ctx));
+                return $make()->rotateIdentityKey(PathId::of($ctx));
             });
 
             // Preferences (Personal settings: yours with the page's
             // permission, or a user you may manage; they hold the account's
             // integration secrets)
             $r->get('/{id}/preferences', function ($ctx) use ($auth, $make, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                return $make()->getPreferences((int)$ctx['id']);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->getPreferences(PathId::of($ctx));
             });
             $r->put('/{id}/preferences', function ($ctx) use ($auth, $make, $payload, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                return $make()->updatePreferences((int)$ctx['id'], $payload);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->updatePreferences(PathId::of($ctx), $payload);
             });
         });
 
@@ -1081,73 +1075,73 @@ try {
         // staged write alike.
         $previewRouter = new Router();
         foreach ($crudMap as $resource => $class) {
-            $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview((int)$ctx['id']));
+            $previewRouter->delete("/$resource/{id}", fn($ctx) => $crud($class)->deletePreview(PathId::of($ctx)));
         }
-        $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview((int)$ctx['id']));
-        $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview((int)$ctx['id']));
-        $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview((int)$ctx['id'], (int)$ctx['ruleId']));
+        $previewRouter->delete('/conversions/{id}', fn($ctx) => $crud(\Api\V3\Controllers\ConversionsController::class)->deletePreview(PathId::of($ctx)));
+        $previewRouter->delete('/rotators/{id}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deletePreview(PathId::of($ctx)));
+        $previewRouter->delete('/rotators/{id}/rules/{ruleId}', fn($ctx) => $crud(\Api\V3\Controllers\RotatorsController::class)->deleteRulePreview(PathId::of($ctx), PathId::of($ctx, 'ruleId')));
         // The Setup variables and pixels deletes ask for their groups'
         // permissions (remove_traffic_source and access_to_setup_section;
         // access_to_setup_section) in middleware, which runs from the main
         // match before this router is consulted; their handlers check
         // nothing more.
         $previewRouter->delete('/ppc-networks/{id}/variables/{variableId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcNetworkVariablesController::class)->deletePreview(
-            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
-            \Api\V3\Controllers\GoalsController::pathId($ctx['variableId'])
+            PathId::of($ctx),
+            PathId::of($ctx, 'variableId')
         ));
         $previewRouter->delete('/ppc-accounts/{id}/pixels/{pixelId}', fn($ctx) => $crud(\Api\V3\Controllers\PpcAccountPixelsController::class)->deletePreview(
-            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
-            \Api\V3\Controllers\GoalsController::pathId($ctx['pixelId'])
+            PathId::of($ctx),
+            PathId::of($ctx, 'pixelId')
         ));
         // The real DELETE checks manage_attribution_models inside its handler
         // (the group middleware only asks for view_attribution_reports), so
         // the preview repeats it, as the users previews repeat requireAdmin.
         $previewRouter->delete('/attribution/models/{id}', function ($ctx) use ($crud, $auth, $db) {
             $auth->requirePermission($db, 'manage_attribution_models');
-            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview((int)$ctx['id']);
+            return $crud(\Api\V3\Controllers\AttributionController::class)->deleteModelPreview(PathId::of($ctx));
         });
-        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview((int)$ctx['id']));
+        $previewRouter->delete('/attribution/exports/{id}', fn($ctx) => $crud(\Api\V3\Controllers\AttributionController::class)->deleteExportPreview(PathId::of($ctx)));
         // The /apps deletes check manage_attribution_models inside their
         // handlers; the previews repeat it.
         $previewRouter->delete('/apps/skan-encodings/{id}', function ($ctx) use ($crud, $auth, $db) {
             $auth->requirePermission($db, 'manage_attribution_models');
-            return $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview((int)$ctx['id']);
+            return $crud(\Api\V3\Controllers\AppSkanEncodingsController::class)->deletePreview(PathId::of($ctx));
         });
         $previewRouter->delete('/apps/{id}', function ($ctx) use ($crud, $auth, $db) {
             $auth->requirePermission($db, 'manage_attribution_models');
-            return $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview((int)$ctx['id']);
+            return $crud(\Api\V3\Controllers\AppRegistrationsController::class)->deletePreview(PathId::of($ctx));
         });
-        $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(\Api\V3\Controllers\GoalsController::pathId($ctx['id'])));
+        $previewRouter->delete('/goals/{id}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->deletePreview(PathId::of($ctx)));
         $previewRouter->delete('/goals/{id}/campaigns/{campaignId}', fn($ctx) => $crud(\Api\V3\Controllers\GoalsController::class)->detachCampaignPreview(
-            \Api\V3\Controllers\GoalsController::pathId($ctx['id']),
-            \Api\V3\Controllers\GoalsController::pathId($ctx['campaignId'])
+            PathId::of($ctx),
+            PathId::of($ctx, 'campaignId')
         ));
         // The LTV deletes make no authorization check inside their handlers:
         // the group's ltv:write middleware, run from the main match before
         // this router is consulted, is their only one.
         $previewRouter->group('/ltv', function (Router $r) use ($crud) {
             $cls = \Api\V3\Controllers\LtvController::class;
-            $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview((int)$ctx['id']));
-            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview((int)$ctx['id'], (int)$ctx['aliasId']));
-            $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview((int)$ctx['id']));
-            $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview((int)$ctx['id']));
-            $r->delete('/products/{id}',                    fn($ctx) => $crud($cls)->deleteProductPreview((int)$ctx['id']));
-            $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview((int)$ctx['id']));
-            $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview((int)$ctx['id']));
+            $r->delete('/customers/{id}',                   fn($ctx) => $crud($cls)->deleteCustomerPreview(PathId::of($ctx)));
+            $r->delete('/customers/{id}/aliases/{aliasId}', fn($ctx) => $crud($cls)->deleteCustomerAliasPreview(PathId::of($ctx), PathId::of($ctx, 'aliasId')));
+            $r->delete('/companies/{id}',                   fn($ctx) => $crud($cls)->deleteCompanyPreview(PathId::of($ctx)));
+            $r->delete('/fields/{id}',                      fn($ctx) => $crud($cls)->deleteFieldPreview(PathId::of($ctx)));
+            $r->delete('/products/{id}',                    fn($ctx) => $crud($cls)->deleteProductPreview(PathId::of($ctx)));
+            $r->delete('/webhooks/{id}',                    fn($ctx) => $crud($cls)->deleteWebhookPreview(PathId::of($ctx)));
+            $r->delete('/integrations/{id}',                fn($ctx) => $crud($cls)->deleteIntegrationPreview(PathId::of($ctx)));
         });
         $previewRouter->group('/users', function (Router $r) use ($db, $auth) {
             $make = fn() => new \Api\V3\Controllers\UsersController($db);
             $r->delete('/{id}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireMayDeleteUser($db, (int)$ctx['id']);
-                return $make()->deletePreview((int)$ctx['id']);
+                $auth->requireMayDeleteUser($db, PathId::of($ctx));
+                return $make()->deletePreview(PathId::of($ctx));
             });
             $r->delete('/{id}/api-keys/{keyId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requirePersonalSettingsOf($db, (int)$ctx['id']);
-                return $make()->deleteApiKeyPreview((int)$ctx['id'], (string)$ctx['keyId']);
+                $auth->requirePersonalSettingsOf($db, PathId::of($ctx));
+                return $make()->deleteApiKeyPreview(PathId::of($ctx), (string)$ctx['keyId']);
             });
             $r->delete('/{id}/roles/{roleId}', function ($ctx) use ($auth, $make, $db) {
-                $auth->requireMayChangeRoles($db, (int)$ctx['id'], null);
-                return $make()->removeRolePreview((int)$ctx['id'], (int)$ctx['roleId']);
+                $auth->requireMayChangeRoles($db, PathId::of($ctx), null);
+                return $make()->removeRolePreview(PathId::of($ctx), PathId::of($ctx, 'roleId'));
             });
         });
 
