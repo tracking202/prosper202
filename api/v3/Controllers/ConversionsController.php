@@ -15,6 +15,9 @@ use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Api\V3\Support\QueryInt;
+use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Database\Tables\ConversionTables;
 
 class ConversionsController
 {
@@ -218,6 +221,66 @@ class ConversionsController
         return is_int($id) && $id > 0 ? $id : null;
     }
 
+    /**
+     * transaction_id and reversal_id as the ledger keys them: a string, or a
+     * JSON integer read as its digits (the rule LtvBody reads /ltv/revenue's
+     * references by), at most DedupeKey::MAX_TEXT bytes once trimmed, as
+     * the key is built from the trimmed id. Absent or null is none.
+     *
+     * A number past PHP_INT_MAX is decoded as a float, which cannot tell
+     * 12345678901234567891 from 12345678901234567892 (both are
+     * 12345678901234567168), so it is refused, not read: send such an id as
+     * a string. Past 255 bytes, DedupeKey threw from inside the write and the
+     * request answered 500 naming nothing.
+     *
+     * @param array<array-key, mixed> $payload
+     * @return array<string, string>
+     */
+    private static function referenceErrors(array $payload): array
+    {
+        $errors = [];
+        $about = [
+            'transaction_id' => 'the network\'s id for the sale',
+            'reversal_id' => 'the network\'s id for the reversal',
+        ];
+        foreach ($about as $key => $what) {
+            if (!array_key_exists($key, $payload) || $payload[$key] === null) {
+                continue;
+            }
+            $value = $payload[$key];
+            if (!is_string($value) && !is_int($value)) {
+                $errors[$key] = 'must be a string, or a whole number up to ' . PHP_INT_MAX . ': ' . $what
+                    . ' (send a longer number as a string)';
+                continue;
+            }
+            $bytes = strlen(trim((string) $value));
+            if ($bytes > DedupeKey::MAX_TEXT) {
+                $errors[$key] = 'must be at most ' . DedupeKey::MAX_TEXT . ' bytes: ' . $what . ' (got ' . $bytes . ')';
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * The largest amount, in Amount's units, 202_conversion_logs.click_payout
+     * holds, read from the table's definition rather than restated:
+     * decimal(P,S) holds P nines' worth of units of 10^-S, and S has to be
+     * Amount's scale for those to be Amount's units.
+     */
+    private static function payoutColumnMaxUnits(): int
+    {
+        $ddl = ConversionTables::conversionLogs()->createStatement;
+        $found = preg_match('/`click_payout`\s+decimal\((\d+),(\d+)\)/i', $ddl, $m) === 1;
+        if (!$found || (int) $m[2] !== Amount::SCALE || (int) $m[1] > 18) {
+            throw new \LogicException(
+                '202_conversion_logs.click_payout is not a decimal(P,' . Amount::SCALE . ') column'
+            );
+        }
+
+        return (int) str_repeat('9', (int) $m[1]);
+    }
+
     public function create(array $payload): array
     {
         // Every key below is read; anything else was dropped with a 201 — a
@@ -230,10 +293,18 @@ class ConversionsController
         // And the objects inside it, as strictly: the repository read the
         // keys of a line item and of customer_crm it knew and cast them, so
         // `unit_pirce` stored no price, a unit_price of "abc" stored 0 and
-        // `frist_name` no name, each answered 201 (CLAUDE.md #4).
+        // `frist_name` no name, each answered 201 (CLAUDE.md #4). And the
+        // references a sale is keyed and identified by, as /ltv/revenue reads
+        // its own: (string) made the JSON integers 12345678901234567891 and
+        // 12345678901234567892 (floats past PHP_INT_MAX) both
+        // "1.2345678901235E+19", so the second sale was answered duplicate
+        // and dropped, an object "Array" and true "1" (measured); is_scalar()
+        // let a customer_ref through the same way.
         PayloadKeys::refuse(
             PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
             + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+            + LtvBody::identity($payload)
+            + self::referenceErrors($payload)
         );
         // Read strictly: (int) made "12abc" click 12 and "abc" no click, and
         // a conv_time of "2026-10-07" the 2026th second of 1970.
@@ -241,6 +312,7 @@ class ConversionsController
 
         $data = [
             'click_id' => $clickId,
+            // A string or an integer by now (referenceErrors()).
             'transaction_id' => (string)($payload['transaction_id'] ?? ''),
             'conv_time' => QueryInt::param($payload, 'conv_time', time(), 0, 2147483647, 'a unix time; leave it out for now'),
             // Provenance: written through the API, by this key (a digest of
@@ -257,6 +329,21 @@ class ConversionsController
             $payout = $payload['payout'];
             if (!is_int($payout) && !is_float($payout) && !(is_string($payout) && preg_match('/^-?\d+(\.\d+)?$/D', trim($payout)) === 1)) {
                 throw new ValidationException('payout must be a number', ['payout' => 'Must be a decimal number, e.g. 12.50']);
+            }
+            // And one a conversion row can hold, as stored (rounded to five
+            // places): Amount refused 14 digits or more and overflowed on a
+            // JSON integer from 10^14, each a 500 naming nothing, and 1234567
+            // reached the INSERT, a strict-mode 500, or under an empty
+            // sql_mode stored as 999999.99999 and answered 201 (measured).
+            try {
+                $units = Amount::toUnits(is_int($payout) ? (string) $payout : $payout);
+            } catch (\InvalidArgumentException) {
+                $units = null;
+            }
+            $max = self::payoutColumnMaxUnits();
+            if ($units === null || abs($units) > $max) {
+                throw new ValidationException('payout is out of range', ['payout' => 'Must be from -'
+                    . Amount::fromUnits($max) . ' to ' . Amount::fromUnits($max) . ', what one conversion holds']);
             }
             $data['payout'] = is_string($payout) ? trim($payout) : $payout;
         }
@@ -278,8 +365,9 @@ class ConversionsController
         }
 
         // LTV: optional customer identity + product line items, whose shape
-        // was checked above. An unknown customer_ref_type is rejected by the
-        // repository with an explicit error — never silently dropped.
+        // was checked above, with customer_ref and customer_ref_type
+        // (LtvBody::identity()); the repository keeps its own refusal of a
+        // type it does not know — never silently dropped.
         // Given means present and not null. These were !empty(), and
         // empty('0') is true: customer_ref "0" (a real id where a system
         // counts from 0) was dropped and the revenue landed on whatever the

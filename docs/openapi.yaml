@@ -11844,17 +11844,29 @@ components:
           description: Click ID to attribute the conversion to
         payout:
           type: number
+          minimum: -999999.99999
+          maximum: 999999.99999
           description: |
             Payout amount. Must be a number (a string that is not one is a
-            422). When omitted: the click's current value in a `replace`
-            campaign, the campaign payout in an `accumulate` campaign. For a
-            reversal, the amount reversed (default: all of the sale).
+            422) that one conversion holds once rounded to five places
+            (`click_payout` is decimal(11,5)); a larger one is a 422 naming
+            `payout`, never stored cut to the column. When omitted: the
+            click's current value in a `replace` campaign, the campaign payout
+            in an `accumulate` campaign. For a reversal, the amount reversed
+            (default: all of the sale).
         transaction_id:
           type: string
+          maxLength: 255
           description: |
             The network's or merchant's id for this conversion: kept on the
             row for reconciliation, and a repeat on the same click is the
             same conversion. For a reversal, the id of the sale it reverses.
+            A string of at most 255 bytes, or a JSON integer up to
+            9223372036854775807, read as its digits. A longer number, a
+            fraction, a boolean or an object is a 422 naming
+            `transaction_id`: send a longer number as a string, since JSON
+            decoding makes it a floating-point number, which cannot tell
+            12345678901234567891 from 12345678901234567892.
         conv_time:
           type: integer
           description: Conversion timestamp (defaults to current time)
@@ -11864,14 +11876,22 @@ components:
           description: Record a reversal of the conversion named by `transaction_id`.
         reversal_id:
           type: string
-          description: The network's id for the reversal. Without one, a sale can be reversed once.
+          maxLength: 255
+          description: |
+            The network's id for the reversal. Without one, a sale can be
+            reversed once. Read as `transaction_id` is: a string of at most
+            255 bytes or a JSON integer up to 9223372036854775807.
         customer_id:
           type: integer
           minimum: 1
           description: The LTV customer the revenue belongs to; it wins over `customer_ref`.
         customer_ref:
           type: string
-          description: Your id for the customer, resolved to one or created.
+          maxLength: 255
+          description: |
+            Your id for the customer, resolved to one or created. A string,
+            or a JSON integer read as its digits, as POST /ltv/revenue reads
+            it; anything else is a 422 naming `customer_ref`.
         customer_ref_type:
           type: string
           enum: [email_md5, email_sha256, esp_id, merchant_id, subid, custom]

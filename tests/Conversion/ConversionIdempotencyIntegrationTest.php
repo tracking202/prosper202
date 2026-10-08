@@ -254,6 +254,47 @@ final class ConversionIdempotencyIntegrationTest extends TestCase
         self::assertSame('1', (string) $click['click_lead'], 'V3 create must flag the source click');
     }
 
+    /**
+     * Sales whose ids differ past the fifteenth digit are different sales,
+     * and a body the ledger cannot key or hold is refused naming the field.
+     * (string) made the JSON integers 12345678901234567891 and
+     * 12345678901234567892 one id, "1.2345678901235E+19", so the second was
+     * answered duplicate and dropped; an id past 255 bytes was a 500; and
+     * under the empty sql_mode this suite runs with (connect2.php's default)
+     * a payout of 1234567 was stored as 999999.99999 and answered 201.
+     */
+    public function testV3CreateKeysEachSaleExactlyAndRefusesWhatTheLedgerCannotHold(): void
+    {
+        $this->insertClick(1400);
+        $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
+        $create = static fn (string $json): array => $controller->create(json_decode($json, true));
+
+        $first = $create('{"click_id":1400,"transaction_id":"12345678901234567891","payout":5}');
+        $second = $create('{"click_id":1400,"transaction_id":"12345678901234567892","payout":5}');
+        $third = $create('{"click_id":1400,"transaction_id":9223372036854775807,"payout":5}');
+        self::assertArrayNotHasKey('duplicate', $second, 'a different id is a different sale');
+        self::assertSame(
+            ['12345678901234567891', '12345678901234567892', '9223372036854775807'],
+            [$first['data']['transaction_id'], $second['data']['transaction_id'], $third['data']['transaction_id']]
+        );
+        self::assertSame(3, $this->conversionCount(1400));
+
+        $refused = [
+            '{"click_id":1400,"transaction_id":12345678901234567893,"payout":5}' => 'transaction_id',
+            '{"click_id":1400,"transaction_id":"' . str_repeat('x', 256) . '","payout":5}' => 'transaction_id',
+            '{"click_id":1400,"transaction_id":"T-BIG","payout":1234567}' => 'payout',
+        ];
+        foreach ($refused as $json => $field) {
+            try {
+                $create($json);
+                self::fail(substr($json, 0, 80) . ' was recorded');
+            } catch (\Api\V3\Exception\ValidationException $e) {
+                self::assertSame([$field], array_keys($e->getFieldErrors()), substr($json, 0, 80));
+            }
+        }
+        self::assertSame(3, $this->conversionCount(1400), 'nothing was written for a refused body');
+    }
+
     public function testV3ControllerCreateThrowsNotFoundForMissingClick(): void
     {
         $controller = new \Api\V3\Controllers\ConversionsController(self::$db, 1);
