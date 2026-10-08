@@ -19,9 +19,7 @@ import (
 //     its command's. Three things differ from MiniSearch 7.2.0's source: a
 //     field's length is its words, where MiniSearch counts distinct words; a
 //     field's average length is over the documents that have the field (cf's
-//     documents all have its four); and fuzzy matching is only for a word the
-//     index does not know -- a typo, rather than an ordinary word near a
-//     different one.
+//     documents all have its four); and there is no fuzzy matching (below).
 //   - The BM25F ranker is one document per command, its tasks among its
 //     fields; a word's evidence is combined across fields before one
 //     saturation, and each word takes only its best form in each field. Summing
@@ -39,6 +37,28 @@ import (
 // 36 in the top five, 9 of 10 typos), and that gap is the measure of how much
 // tuning to a set teaches about other wording: little. Words are the ceiling;
 // a model reading `p202 commands --brief` chose right first for all 30.
+//
+// A second set was written afterwards by an agent that had not seen the
+// code: 40 tasks, each with the words it would type into search, labelled
+// and hashed before any search ran on them (4 ask for things the CLI does
+// not do). Fused: first for 27 of the 36, in the top five for 34; cf as
+// published 21 and 28, cf with the task table 23 and 30, the hand-weighted
+// scorer 23 and 31. A model given only the catalog: first for 34, and
+// "nothing does this" for 3 of the 4 the CLI cannot do, where search was
+// confident about 2 of them.
+//
+// No fuzzy matching. The askers are mostly agents, and agents spell: fuzzy
+// matching (edit distance a fifth of the word, as cf has it, tried only for
+// a word the index did not know) fired on 20 of the 40 agent-eval asks and 3
+// of the 50 held-out phrasings, and not once on a typo -- it read "came" as
+// "name", "top" as "stop", "tmp" as "tcp", "404" as "405", "clicked" as
+// "clickid", and counted each as a matched word towards good_match. Turned
+// off, no first or top-five answer on those sets changed, nor any answer on
+// 40 tasks an agent phrased afterwards. A word no command knows is said
+// (searchAnswer.UnknownTerms) rather than swapped for a neighbour. What
+// fuzzy matching did that was worth keeping was grammar -- "imported" to
+// import, "charged" to charge -- and lemmaOf does that by rule, only for a
+// word the index does not know, only to a word it does.
 
 type searchFieldID int
 
@@ -75,9 +95,6 @@ const (
 	bm25D         = 0.5
 	synonymWeight = 0.8
 	prefixWeight  = 0.375
-	fuzzyWeight   = 0.45
-	fuzzyRatio    = 0.2
-	maxFuzzy      = 6
 	// groupingWeight is the share of a "breakdown" match a grouping cue
 	// ("per", "by") adds without counting as a query word.
 	groupingWeight = 0.5
@@ -136,7 +153,7 @@ type rankCorpus struct {
 	docs  []rankDoc
 	avg   [numSearchFields]float64
 	vocab map[string]bool
-	words []string // vocab in index order, for prefix and fuzzy expansion
+	words []string // vocab in index order, for prefix expansion
 	// fieldDF counts the documents holding a word in a field (the summed
 	// ranker's idf, as MiniSearch computes it).
 	fieldDF [numSearchFields]map[string]int
@@ -404,15 +421,8 @@ func prefixFormWeight(q, v string) float64 {
 	return prefixWeight * lv / (lv + 0.3*(lv-lq))
 }
 
-// fuzzyDistance is how many edits a query word may be from an indexed one:
-// a fifth of its letters, rounded, at most maxFuzzy.
-func fuzzyDistance(q string) int {
-	return int(math.Min(maxFuzzy, math.Round(float64(runeLen(q))*fuzzyRatio)))
-}
-
-// known reports whether the index has the word, a synonym of it, or a word
-// it begins; fuzzy matching is only for a word that is none of these.
-func (c *rankCorpus) known(q string) bool {
+// has reports whether the index holds the word itself or a synonym of it.
+func (c *rankCorpus) has(q string) bool {
 	if c.vocab[q] {
 		return true
 	}
@@ -420,6 +430,15 @@ func (c *rankCorpus) known(q string) bool {
 		if c.vocab[s] {
 			return true
 		}
+	}
+	return false
+}
+
+// known reports whether the index has the word, a synonym of it, or a word
+// it begins: whether the word can match anything.
+func (c *rankCorpus) known(q string) bool {
+	if c.has(q) {
+		return true
 	}
 	for _, v := range c.words {
 		if v != q && strings.HasPrefix(v, q) {
@@ -476,38 +495,18 @@ func (c *rankCorpus) summedTerm(form string, weight float64, q string, hits map[
 }
 
 // summedSearch is MiniSearch's search over the summed corpus: each query word,
-// its synonyms, the words it begins, and (for an unknown word) the words a
-// fuzzy match reaches, each scored and summed.
-func (c *rankCorpus) summedSearch(terms []string, prefix, fuzzy bool) map[int]*rankHit {
+// its synonyms and the words it begins, each scored and summed.
+func (c *rankCorpus) summedSearch(terms []string, prefix bool) map[int]*rankHit {
 	hits := map[int]*rankHit{}
 	for _, q := range terms {
 		c.summedTerm(q, 1, q, hits)
 		for _, s := range searchSynonyms[q] {
 			c.summedTerm(s, synonymWeight, q, hits)
 		}
-		done := map[string]bool{q: true}
 		if prefix {
 			for _, v := range c.words {
 				if v != q && strings.HasPrefix(v, q) {
-					done[v] = true
 					c.summedTerm(v, prefixFormWeight(q, v), q, hits)
-				}
-			}
-		}
-		known := c.vocab[q] || len(done) > 1
-		for _, s := range searchSynonyms[q] {
-			known = known || c.vocab[s]
-		}
-		if fuzzy && !known {
-			if maxd := fuzzyDistance(q); maxd > 0 {
-				for _, v := range c.words {
-					if done[v] {
-						continue
-					}
-					if dd := editDistance(q, v, maxd); dd > 0 && dd <= maxd {
-						lv := float64(runeLen(v))
-						c.summedTerm(v, fuzzyWeight*lv/(lv+float64(dd)), q, hits)
-					}
 				}
 			}
 		}
@@ -527,20 +526,45 @@ func (c *rankCorpus) forms(q string) map[string]float64 {
 			out[v] = math.Max(out[v], prefixFormWeight(q, v))
 		}
 	}
-	if !c.known(q) {
-		if maxd := fuzzyDistance(q); maxd > 0 {
-			for _, v := range c.words {
-				if _, ok := out[v]; ok {
-					continue
-				}
-				if dd := editDistance(q, v, maxd); dd > 0 && dd <= maxd {
-					lv := float64(runeLen(v))
-					out[v] = fuzzyWeight * lv / (lv + float64(dd))
-				}
-			}
+	return out
+}
+
+// lemmaOf is the word the index knows for an inflected word it does not:
+// "imported" → import, "charged" → charge, "putting" → put, "matche" (the
+// plural fold of "matches") → match. Only a word the index has (itself or as
+// a synonym) is an answer, so a suffix rule never invents a match; "" when
+// none applies. Irregular forms ("came") stay unknown.
+func (c *rankCorpus) lemmaOf(w string) string {
+	var cands []string
+	n := len(w)
+	doubled := func(stem string) bool {
+		k := len(stem)
+		return k >= 2 && stem[k-1] == stem[k-2] && !strings.ContainsRune("aeiouls", rune(stem[k-1]))
+	}
+	switch {
+	case n > 4 && strings.HasSuffix(w, "ied"):
+		cands = append(cands, w[:n-3]+"y")
+	case n > 4 && strings.HasSuffix(w, "ed"):
+		stem := w[:n-2]
+		cands = append(cands, stem, w[:n-1]) // imported → import, charged → charge
+		if doubled(stem) {
+			cands = append(cands, stem[:len(stem)-1]) // stopped → stop
+		}
+	case n > 5 && strings.HasSuffix(w, "ing"):
+		stem := w[:n-3]
+		cands = append(cands, stem, stem+"e") // tracking → track, updating → update
+		if doubled(stem) {
+			cands = append(cands, stem[:len(stem)-1]) // putting → put
+		}
+	case n > 3 && strings.HasSuffix(w, "e"):
+		cands = append(cands, w[:n-1])
+	}
+	for _, cand := range cands {
+		if c.has(cand) {
+			return cand
 		}
 	}
-	return out
+	return ""
 }
 
 // idf is the BM25F ranker's rarity of a word: the documents holding any of
@@ -607,36 +631,6 @@ func (c *rankCorpus) bm25fSearch(terms []string) map[int]*rankHit {
 		}
 	}
 	return hits
-}
-
-// editDistance is Levenshtein's, in runes, giving up past max.
-func editDistance(a, b string, max int) int {
-	ra, rb := []rune(a), []rune(b)
-	if d := len(ra) - len(rb); d > max || -d > max {
-		return max + 1
-	}
-	prev := make([]int, len(rb)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(ra); i++ {
-		cur := make([]int, len(rb)+1)
-		cur[0] = i
-		best := cur[0]
-		for j := 1; j <= len(rb); j++ {
-			cost := 1
-			if ra[i-1] == rb[j-1] {
-				cost = 0
-			}
-			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
-			best = min(best, cur[j])
-		}
-		if best > max {
-			return max + 1
-		}
-		prev = cur
-	}
-	return prev[len(rb)]
 }
 
 // rankedCommand is one ranker's answer for a command (or a page with no
@@ -778,10 +772,10 @@ func termSetOf(terms []string) map[string]bool {
 // rankSummed merges each command's document with its best task document,
 // adds a grouping cue's share, and multiplies by the query words matched.
 func rankSummed(c *rankCorpus, terms []string, grouping bool) []rankedCommand {
-	hits := c.summedSearch(terms, true, true)
+	hits := c.summedSearch(terms, true)
 	var group map[int]*rankHit
 	if grouping {
-		group = c.summedSearch([]string{groupingTerm}, false, false)
+		group = c.summedSearch([]string{groupingTerm}, false)
 	}
 	termSet := termSetOf(terms)
 	type entry struct {

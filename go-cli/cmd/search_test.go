@@ -164,7 +164,7 @@ func TestSearchFindsTheRefererBreakdown(t *testing.T) {
 func TestSearchWithNothingToSearchFor(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	message, hint := searchFails(t, "xyzzy", "plugh")
-	if message != `No command matches "xyzzy plugh".` || !strings.Contains(hint, "p202 commands --brief") {
+	if message != `No command matches "xyzzy plugh": no command mentions xyzzy, plugh.` || !strings.Contains(hint, "p202 commands --brief") {
 		t.Errorf("no match: %q / %q", message, hint)
 	}
 	for _, args := range [][]string{{"search"}, {"search", "the", "by"}} {
@@ -281,5 +281,75 @@ func TestSearchFusionSettlesATieByCoverageThenBM25F(t *testing.T) {
 	}
 	if got := order([]rankedCommand{b, a}, []rankedCommand{a, b}); !reflect.DeepEqual(got, []string{"p202 a", "p202 b"}) {
 		t.Errorf("at equal coverage BM25F's first should win, not the name sorting first: %v", got)
+	}
+}
+
+// Search has no fuzzy matching: the askers are mostly agents, which spell,
+// and on their asks edit distance only ever turned a real word into another
+// one ("came" into name, "tmp" into tcp, "404" into 405) and counted it as
+// matched. A word no command knows is reported instead: the commands lack it
+// or call it something else, or (from a person) it is a typo.
+func TestSearchReportsWordsNoCommandKnowsInsteadOfGuessing(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	a := searchJSON(t, "clicks", "by", "language")
+	if !reflect.DeepEqual(a.UnknownTerms, []string{"language"}) || a.GoodMatch {
+		t.Errorf("clicks by language: unknown %v, good_match %v", a.UnknownTerms, a.GoodMatch)
+	}
+	a = searchJSON(t, "watch", "our", "traffic", "live", "and", "tell", "me", "what", "came", "in")
+	if !containsString(a.UnknownTerms, "came") {
+		t.Errorf("came: unknown %v", a.UnknownTerms)
+	}
+	for _, r := range a.Results {
+		for _, m := range r.Matched {
+			if strings.Contains(m, `(for "came")`) {
+				t.Errorf("%s matched %q for a word no command has", r.Command, m)
+			}
+		}
+	}
+	a = searchJSON(t, "campain", "list")
+	if !containsString(a.UnknownTerms, "campain") {
+		t.Errorf("a typo is reported, not corrected: unknown %v", a.UnknownTerms)
+	}
+	if a = searchJSON(t, "campaign", "list"); len(a.UnknownTerms) != 0 {
+		t.Errorf("every word known: unknown %v", a.UnknownTerms)
+	}
+
+	stdout, _, err := executeCommand("search", "clicks", "by", "language")
+	if err != nil || !strings.HasPrefix(stdout, "No command mentions: language.\n") {
+		t.Errorf("human form: %v\n%s", err, stdout)
+	}
+	message, _ := searchFails(t, "xyzzy", "plugh")
+	if message != `No command matches "xyzzy plugh": no command mentions xyzzy, plugh.` {
+		t.Errorf("nothing known: %q", message)
+	}
+}
+
+// An inflected word the index does not know is read as the word it does:
+// agents write grammatical English ("imported", "charged") where the commands
+// say import and charge. Only a word the index has is an answer, so a rule
+// never invents a match, and an irregular form stays unknown.
+func TestSearchFoldsInflectionsTheIndexKnows(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	c := buildBM25FCorpus(buildCommandTree(rootCmd))
+	for word, want := range map[string]string{
+		"imported": "import", // -ed
+		"charged":  "charge", // -d
+		"updating": "update", // -ing, e restored
+		"stopped":  "stop",   // doubled consonant
+		"copied":   "copy",   // -ied
+		"matche":   "match",  // the plural fold of "matches"
+		"came":     "",       // irregular
+		"xyzzyed":  "",       // no base the index has
+	} {
+		if !c.has(want) && want != "" {
+			t.Fatalf("the index has no %q any more; pick another example", want)
+		}
+		if got := c.lemmaOf(word); got != want {
+			t.Errorf("lemmaOf(%q) = %q, want %q", word, got, want)
+		}
+	}
+	a := searchJSON(t, "imported", "conversions", "import")
+	if !reflect.DeepEqual(a.Terms, []string{"import", "conversion"}) || len(a.UnknownTerms) != 0 {
+		t.Errorf("imported conversions import: terms %v, unknown %v", a.Terms, a.UnknownTerms)
 	}
 }

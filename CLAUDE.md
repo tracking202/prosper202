@@ -1198,7 +1198,15 @@ does, and fails only when nothing matches or when the query names in full a
 page no command does: a refusal is an answer, and "is the server up" reached
 the upgrade entry through a synonym and a prefix and was told the CLI cannot
 do what `system health` does. `--quiet`, which prints a bare path a script
-will run, prints one only for a confident match. The ranking's own
+will run, prints one only for a confident match. There is no fuzzy matching,
+because the askers are agents and agents spell: on the eval asks it fired on
+20 of 40 and never on a typo, turning "came" into name and "tmp" into tcp and
+counting each towards `good_match`. A word no command knows is reported
+(`unknown_terms`) rather than guessed at; it says the commands lack the word,
+which is not the same as lacking the capability (on 40 sealed agent tasks it
+named a word in 6 the CLI does under another name and in none of the 4 it
+cannot do). Inflections fold only
+onto a word the index has (`lemmaOf`). The ranking's own
 measurements, and why a model reading the catalog beats it, are in
 `cmd/search_rank.go`'s header.
 
@@ -1528,7 +1536,12 @@ where a check quietly fails to check what it appears to.
   the sealed one. Write the evaluation set first, record its hash, do not
   read it while tuning, and report the sealed numbers as the result. A set
   that has been opened is a development set from then on: the next
-  measurement needs a new one.
+  measurement needs a new one. The next change was measured on a set an
+  agent wrote, labelled and hashed before any search ran on it, and it
+  refuted a sentence already in the docs: that a word no command knows
+  "usually means the capability does not exist" (it named a word in 6 tasks
+  the CLI does under another name and in none of the 4 it cannot do). Write
+  the claim after the measurement, not before.
 - **Assert that a probe perturbed the target.** To force a post-commit failure
   I created a directory where a state file goes — in the wrong one of three
   `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request

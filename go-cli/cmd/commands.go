@@ -199,7 +199,8 @@ type briefElsewhere struct {
 // the pages no command does. An agent that reads it chooses better than any
 // keyword ranking: on 30 phrasings written before anything was tuned, a
 // model given only this catalog chose the right command first for all 30,
-// where the best keyword search found 16 (search_rank.go). At this CLI's
+// where the best keyword search found 16; on 36 tasks an agent phrased, 34
+// against 27 (search_rank.go). At this CLI's
 // size the catalog costs about 6,000 tokens, where `commands --json` is
 // about 120,000; Cloudflare's cf, at 2,900 commands, cannot hand an agent
 // its catalog, which is why it searches.

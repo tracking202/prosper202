@@ -20,12 +20,14 @@ import (
 
 const (
 	// confidentCoverage is the share of the query's words the first result
-	// must match to be a confident answer. Calibrated on 137 queries (the
+	// must match to be a confident answer. On 137 development queries (the
 	// UI's page names, ways of asking for Spy, the agent-eval asks, phrasings
-	// written before tuning, typos, the queries search_test pins): 97 first
-	// results reached it and 92 of those were right; 24 right answers fell
-	// below it, which is why it is a flag and not a refusal. On 30 phrasings
-	// sealed before tuning it held less well: 19 reached it, 13 right. The
+	// written before tuning, typos, the queries search_test pins) 90 first
+	// results reach it and 84 of those are right; 30 right answers fall below
+	// it, which is why it is a flag and not a refusal. Sets sealed until
+	// measured hold it less well: 13 right of 19 on 30 phrasings, 24 of 30 on
+	// 36 tasks an agent phrased, where 2 of the 4 tasks the CLI cannot do
+	// also reached it. The
 	// score says little: fusion scores by rank, and the median right and
 	// wrong first results score 0.0328 and 0.0325. Requiring the first to
 	// beat the runner-up's coverage kept 35 of the 92: many right answers tie
@@ -211,10 +213,17 @@ type searchResult struct {
 // searchAnswer is what a search prints: candidates, best first, and whether
 // the first is a confident answer.
 type searchAnswer struct {
-	Query     string         `json:"query"`
-	Terms     []string       `json:"terms"`
-	GoodMatch bool           `json:"good_match"`
-	Results   []searchResult `json:"results"`
+	Query string   `json:"query"`
+	Terms []string `json:"terms"`
+	// UnknownTerms are the query's words no command's text has, as written,
+	// as a synonym or as the start of a word: the commands lack the thing or
+	// call it something else ("approve" where they say apply), or, from a
+	// person, it is a typo. Not a verdict: on 40 tasks an agent phrased, it
+	// named a word in 6 the CLI does under another name and in none of the 4
+	// it does not do.
+	UnknownTerms []string       `json:"unknown_terms"`
+	GoodMatch    bool           `json:"good_match"`
+	Results      []searchResult `json:"results"`
 
 	// notInCLI is the UI page (or task) no command does, when the query
 	// names it.
@@ -223,11 +232,13 @@ type searchAnswer struct {
 
 func runSearch(tree commandTree, words []string, limit int) searchAnswer {
 	terms, grouping := parseSearchQuery(words)
-	answer := searchAnswer{Query: strings.Join(words, " "), Terms: terms, Results: []searchResult{}}
+	answer := searchAnswer{Query: strings.Join(words, " "), Terms: terms, UnknownTerms: []string{}, Results: []searchResult{}}
 	if len(terms) == 0 {
 		return answer
 	}
 	summed, bm25f := buildSummedCorpus(tree), buildBM25FCorpus(tree)
+	terms, answer.UnknownTerms = foldTerms(bm25f, terms)
+	answer.Terms = terms
 	fused := fuseRankings(rankSummed(summed, terms, grouping), rankBM25F(bm25f, terms, grouping), terms)
 	docs := map[string]*rankDoc{}
 	for i := range bm25f.docs {
@@ -262,6 +273,29 @@ func runSearch(tree commandTree, words []string, limit int) searchAnswer {
 	return answer
 }
 
+// foldTerms puts an inflected word the index does not know into the form it
+// does ("imported" → import), drops a repeat that makes, and lists the words
+// that still match nothing. Both corpora index the same text, so either one's
+// vocabulary answers.
+func foldTerms(c *rankCorpus, terms []string) (folded, unknown []string) {
+	unknown = []string{}
+	seen := map[string]bool{}
+	for _, t := range terms {
+		if !c.known(t) {
+			if l := c.lemmaOf(t); l != "" {
+				t = l
+			} else {
+				unknown = append(unknown, t)
+			}
+		}
+		if !seen[t] {
+			seen[t] = true
+			folded = append(folded, t)
+		}
+	}
+	return folded, unknown
+}
+
 // namesAGroup reports whether the query names one of d's pages or phrases in
 // full.
 func namesAGroup(d *rankDoc, terms map[string]bool) bool {
@@ -284,6 +318,10 @@ func searchError(a searchAnswer) error {
 			return validationError("No p202 command does what the web UI's %q page does: %s.", t.UIPages[0], t.Instead).WithHint("%s", t.Hint)
 		}
 		return validationError("No p202 command for %q: %s.", a.Query, t.Instead).WithHint("%s", t.Hint)
+	}
+	if len(a.UnknownTerms) > 0 {
+		return validationError("No command matches %q: no command mentions %s.", a.Query, strings.Join(a.UnknownTerms, ", ")).
+			WithHint("Read `p202 commands --brief` (every command on one line, with the web UI page it does) and choose, or describe the task in other words.")
 	}
 	return validationError("No command matches %q.", a.Query).
 		WithHint("Read `p202 commands --brief` (every command on one line, with the web UI page it does) and choose, or describe the task in other words.")
@@ -309,16 +347,20 @@ var searchCmd = &cobra.Command{
 		"\"Update CPC\") and the words people use for it (\"realtime traffic\"). Lists the best\n" +
 		"matches (5 by default), best first, each with why it matched, the share of your\n" +
 		"words it matched (coverage) and a command line to try. Plural forms, common\n" +
-		"synonyms (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url) and\n" +
-		"split words (real time, real-time) match. No server is contacted.\n\n" +
+		"synonyms (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url),\n" +
+		"inflected forms (imported, charged) and split words (real time, real-time) match.\n" +
+		"Misspellings are not corrected: a word no command mentions is listed above the\n" +
+		"results (unknown_terms in JSON); the commands lack it or call it something else.\n" +
+		"No server is contacted.\n\n" +
 		"good_match says whether the first is a confident answer (it matched at least three\n" +
 		"quarters of your words); a table says so above the list when it is not, and\n" +
 		"--quiet prints a command only for a confident answer, so a script never runs a\n" +
 		"guess. It fails (exit 1) only when nothing matches, or when the words name a web UI\n" +
 		"page no command does, and then it says where that is done instead.\n\n" +
-		"Search matches words, not meaning: on 30 phrasings written before it was tuned,\n" +
-		"the first result was right for 16 and the first five held the right command for\n" +
-		"26. An agent choosing a command does better reading `p202 commands --brief`.",
+		"Search matches words, not meaning: on 36 tasks as an agent phrased them, written\n" +
+		"before this version was measured, the first result was right for 27 and the first\n" +
+		"five held the right command for 34. A model reading `p202 commands --brief` chose\n" +
+		"right first for 34: an agent choosing a command does better reading the catalog.",
 	Example: "  p202 search breakdown by browser\n  p202 search realtime traffic\n  p202 search dead links --json\n  p202 search undo url change",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(searchQueryTerms(args)) == 0 {
@@ -355,6 +397,9 @@ func writeSearchAnswer(w io.Writer, a searchAnswer) error {
 			fmt.Fprintln(w, r.Command)
 		}
 		return nil
+	}
+	if len(a.UnknownTerms) > 0 {
+		fmt.Fprintf(w, "No command mentions: %s.\n", strings.Join(a.UnknownTerms, ", "))
 	}
 	if !a.GoodMatch {
 		fmt.Fprintf(w, "No confident match for %q (the first matches %.0f%% of its words); the closest:\n\n", a.Query, a.Results[0].Coverage*100)

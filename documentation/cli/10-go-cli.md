@@ -63,7 +63,7 @@ they are done instead. It is about 6,000 tokens (`commands --json` is about
 `{commands[{command, summary, ui[{page, run}]}], not_in_cli[{page, instead,
 hint}]}` with `--json`. On 30 task phrasings written before search was tuned, a
 model given only this catalog chose the right command first for all 30; search put
-it first for 16.
+it first for 16. On 36 tasks another agent phrased: 34 against 27.
 
 `p202 search <what you want to do>` ranks commands offline by your words, matched
 against each command's name, aliases, description, examples, flags, the values its
@@ -75,9 +75,15 @@ dead/broken, undo/revert and link/url match, and "per"/"by" ask for a breakdown.
 page or phrase counts in full only when the query names all of it. Each result says
 why it matched and, when a flag value or a task matched, gives the command line to
 try (`p202 search spy` offers `p202 click list --follow`); `--json` returns
-`{query, terms, good_match, results[]}`, each result with `coverage`, the share of
-the query's words it matched. A misspelt word matches the word it was meant for
-when no word is spelled that way. Two rankings are fused (reciprocal rank fusion):
+`{query, terms, unknown_terms, good_match, results[]}`, each result with
+`coverage`, the share of the query's words it matched. An inflected word matches its
+base when the commands use the base (`imported` = `import`). There is no typo
+correction: the askers are mostly agents, and on their asks edit-distance matching
+only turned correct words into wrong ones (`came` into `name`, `tmp` into `tcp`). A
+word no command's text has is listed in `unknown_terms` (and above a table as "No
+command mentions"): the commands lack it or call it something else (`approve` where
+they say `apply`), so rephrase or check the catalog before concluding. Two rankings
+are fused (reciprocal rank fusion):
 one scored the way Cloudflare's `cf cli search` scores (MiniSearch's BM25+, each
 field on its own, summed), and one that combines a word's evidence across a
 command's fields before saturating it (BM25F). Search lists candidates, best

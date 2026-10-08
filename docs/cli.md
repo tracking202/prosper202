@@ -67,9 +67,12 @@ a subtree like `p202 commands` does.
 `p202 search <words...>` matches your words against every command's name, aliases,
 description, examples, flags, the values its flags accept, and the tasks it runs: the
 web UI page that does the same ("Spy") and the words people use for it ("realtime
-traffic"). Plural forms, split words (real time, real-time) and common synonyms match
-(referrer/referer, offer/campaign, dead/broken, undo/revert, link/url), and "per"/"by"
-ask for a breakdown. Each result says why it matched and, when a flag value or a task
+traffic"). Plural forms, inflected forms (imported, charged), split words (real time,
+real-time) and common synonyms match (referrer/referer, offer/campaign, dead/broken,
+undo/revert, link/url), and "per"/"by" ask for a breakdown. Misspellings are not
+corrected: a word no command mentions is listed first ("No command mentions:
+language."; `unknown_terms` in JSON) -- the commands lack it or call it something
+else. Each result says why it matched and, when a flag value or a task
 matched, prints the command line to try. It lists candidates, best first (`--limit N`,
 default 5), and says when the first is not a confident match (`good_match: false` in
 JSON: it matched under three quarters of your words); `--quiet` prints a path only for
