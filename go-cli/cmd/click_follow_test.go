@@ -23,6 +23,9 @@ type clickFeed struct {
 	onRequest func(n int, f *clickFeed)
 	queries   []map[string]string
 	failAt    int
+	// masked answers as the API does to a role without
+	// access_to_campaign_data: "masked": true beside the rows.
+	masked bool
 }
 
 func (f *clickFeed) add(id, at int64) {
@@ -77,9 +80,13 @@ func (f *clickFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []map[string]interface{}{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	answer := map[string]interface{}{
 		"data": rows, "pagination": map[string]int{"total": total, "limit": limit, "offset": offset},
-	})
+	}
+	if f.masked {
+		answer["masked"] = true
+	}
+	_ = json.NewEncoder(w).Encode(answer)
 }
 
 func followedIDs(t *testing.T, stdout string) []int64 {
@@ -312,5 +319,40 @@ func TestClickFollowReadsOnceMoreWhenTheTimeRunsOut(t *testing.T) {
 	defer feed.mu.Unlock()
 	if feed.requests != 3 {
 		t.Fatalf("%d requests, want 3: the backlog, its window, and one read at the deadline", feed.requests)
+	}
+}
+
+// --follow rebuilt each batch as {"data": [...]} and dropped the server's
+// masked flag, as --all did: a hidden click cost read as none. Every line,
+// from the backlog and from a poll, carries it.
+func TestClickFollowKeepsTheMaskedFlag(t *testing.T) {
+	lowerFollowLimits(t, 500)
+	feed := &clickFeed{masked: true}
+	for id := int64(1); id <= 2; id++ {
+		feed.add(id, 3000+id)
+	}
+	feed.onRequest = func(n int, f *clickFeed) {
+		if n == 3 { // after the backlog and its window
+			f.add(3, 3003)
+		}
+	}
+	srv := httptest.NewServer(feed)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("click", "list", "--follow", "--ndjson", "--interval", "1h", "--stop-after", "100ms")
+	if err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("printed %q, want the backlog's two clicks and the polled one", stdout)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, `"masked":true`) {
+			t.Errorf("a --follow line lost masked:true: %s", line)
+		}
 	}
 }

@@ -96,11 +96,44 @@ func fetchAllRowsWithParams(c *api.Client, endpoint string, baseParams map[strin
 
 // fetchAllRowsPaged is fetchAllRowsWithParams with the page size to request.
 func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]string, pageSize int) ([]map[string]interface{}, error) {
+	rows, _, err := fetchAllPages(c, endpoint, baseParams, pageSize)
+	return rows, err
+}
+
+// fetchAllRowsMasked is fetchAllRowsWithParams that also says whether the
+// server masked the rows (`"masked": true`: a click's or conversion's money
+// hidden from a role without access_to_campaign_data). A caller that rebuilds
+// the answer from the rows carries the flag (listEnvelope), or --ndjson rows
+// and the table's note lose it and the nulls read as zeros.
+func fetchAllRowsMasked(c *api.Client, endpoint string, baseParams map[string]string) ([]map[string]interface{}, bool, error) {
+	return fetchAllPages(c, endpoint, baseParams, 100)
+}
+
+// listEnvelope is a list's answer rebuilt from every page: the rows, a
+// pagination that says they are all of them, and the masked flag.
+func listEnvelope(rows []map[string]interface{}, masked bool) map[string]interface{} {
+	env := map[string]interface{}{
+		"data": rows,
+		"pagination": map[string]interface{}{
+			"total":  len(rows),
+			"limit":  len(rows),
+			"offset": 0,
+		},
+	}
+	if masked {
+		env["masked"] = true
+	}
+	return env
+}
+
+// fetchAllPages reads every page of endpoint, and whether any was masked.
+func fetchAllPages(c *api.Client, endpoint string, baseParams map[string]string, pageSize int) ([]map[string]interface{}, bool, error) {
 	const maxPages = 10000
 
 	offset := 0
 	all := make([]map[string]interface{}, 0)
 	seenKeys := map[string]struct{}{}
+	masked := false
 
 	for page := 0; page < maxPages; page++ {
 		params := map[string]string{
@@ -115,18 +148,21 @@ func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]str
 		}
 		data, err := c.Get(endpoint, params)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		// The report rows paged here are summed or compared by every caller
 		// (list --stats, analytics --split-at); hidden figures are not zeros.
 		if strings.HasPrefix(endpoint, "reports/") {
 			if err := refuseMaskedFigures(data, "This command"); err != nil {
-				return nil, err
+				return nil, false, err
 			}
+		}
+		if maskedFigures(data) {
+			masked = true
 		}
 		rows, err := parseDataArray(data)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(rows) == 0 {
 			break
@@ -150,7 +186,7 @@ func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]str
 			step = pg.limit
 		}
 		if step <= 0 {
-			return nil, withHint(fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset), "The server returned an unusable page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+			return nil, false, withHint(fmt.Errorf("pagination stalled for %s: invalid page size at offset %d", endpoint, offset), "The server returned an unusable page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		if pg.hasTotal && len(all) >= pg.total {
@@ -162,7 +198,7 @@ func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]str
 		}
 
 		if added == 0 {
-			return nil, withHint(fmt.Errorf("pagination stalled for %s: page at offset %d contained no new rows", endpoint, offset), "The server keeps returning the same page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+			return nil, false, withHint(fmt.Errorf("pagination stalled for %s: page at offset %d contained no new rows", endpoint, offset), "The server keeps returning the same page; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		reportedOffset := offset
@@ -171,14 +207,14 @@ func fetchAllRowsPaged(c *api.Client, endpoint string, baseParams map[string]str
 		}
 		nextOffset := reportedOffset + step
 		if nextOffset <= offset {
-			return nil, withHint(fmt.Errorf("pagination stalled for %s: next offset %d did not advance from %d", endpoint, nextOffset, offset), "The server's pagination cursor did not advance; retry, and if it persists check the API version with `p202 system version` and the server logs.")
+			return nil, false, withHint(fmt.Errorf("pagination stalled for %s: next offset %d did not advance from %d", endpoint, nextOffset, offset), "The server's pagination cursor did not advance; retry, and if it persists check the API version with `p202 system version` and the server logs.")
 		}
 
 		offset = nextOffset
 		pageSize = step
 	}
 
-	return all, nil
+	return all, masked, nil
 }
 
 type paginationInfo struct {

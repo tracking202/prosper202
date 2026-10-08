@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"p202/internal/output"
 )
 
 // maskedReports answers every report as the server does to a role without
@@ -165,6 +167,46 @@ func TestBreakdownFiltersRefuseAHiddenFigure(t *testing.T) {
 	stdout, _, err = executeCommand("report", "breakdown", "--breakdown", "campaign", "--json")
 	if err != nil || !strings.Contains(stdout, `"masked": true`) || !strings.Contains(stdout, `"total_clicks": null`) {
 		t.Errorf("unfiltered: the answer as sent, got %v %s", err, stdout)
+	}
+}
+
+// --all rebuilt the clicks' and conversions' answer as {data, pagination}
+// and dropped the server's masked flag: --ndjson rows lost "masked":true and
+// the table its note, so a hidden cost read as a missing one. Every page is
+// masked; the rebuilt answer says so, as one page does.
+func TestListAllKeepsTheMaskedFlag(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		row := `{"click_id":7,"click_cpc":null,"click_payout":null}`
+		if strings.HasSuffix(r.URL.Path, "/conversions") {
+			row = `{"conv_id":1,"click_id":7,"amount":null}`
+		}
+		if off := r.URL.Query().Get("offset"); off != "" && off != "0" {
+			_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":1,"limit":100,"offset":` + off + `},"masked":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[` + row + `],"pagination":{"total":1,"limit":100,"offset":0},"masked":true}`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	for _, list := range [][]string{{"click", "list", "--all"}, {"conversion", "list", "--all"}} {
+		stdout, _, err := executeCommand(append(list, "--ndjson")...)
+		if err != nil {
+			t.Fatalf("%v --ndjson: %v", list, err)
+		}
+		if lines := strings.Split(strings.TrimSpace(stdout), "\n"); len(lines) != 1 || !strings.Contains(lines[0], `"masked":true`) {
+			t.Errorf("%v --ndjson: every row carries masked:true, got %q", list, stdout)
+		}
+		stdout, _, err = executeCommand(append(list, "--json")...)
+		if err != nil || !strings.Contains(stdout, `"masked": true`) {
+			t.Errorf("%v --json: the answer keeps masked:true, got %v %s", list, err, stdout)
+		}
+		_, stderr, err := executeCommand(append(list, "--table")...)
+		if err != nil || !strings.Contains(stderr, output.MaskedNote) {
+			t.Errorf("%v --table: the note goes under the table, got %v %q", list, err, stderr)
+		}
 	}
 }
 

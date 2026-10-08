@@ -65,18 +65,12 @@ var clickListCmd = &cobra.Command{
 		}
 		allRows, _ := cmd.Flags().GetBool("all")
 		if allRows {
-			rows, err := fetchAllRowsWithParams(c, "clicks", params)
+			// The server's masked flag goes with the rows it hid money in.
+			rows, masked, err := fetchAllRowsMasked(c, "clicks", params)
 			if err != nil {
 				return err
 			}
-			encoded, err := json.Marshal(map[string]interface{}{
-				"data": rows,
-				"pagination": map[string]interface{}{
-					"total":  len(rows),
-					"limit":  len(rows),
-					"offset": 0,
-				},
-			})
+			encoded, err := json.Marshal(listEnvelope(rows, masked))
 			if err != nil {
 				return fmt.Errorf("encoding %d clicks: %w", len(rows), err)
 			}

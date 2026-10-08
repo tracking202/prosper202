@@ -92,16 +92,18 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 	if err != nil {
 		return err
 	}
+	masked := maskedFigures(data)
 	for _, r := range first {
 		if r.time > newest {
 			newest = r.time
 		}
 	}
 	if newest > 0 {
-		window, err := followWindow(c, params, strconv.FormatInt(newest-int64(clickFollowLookback/time.Second), 10))
+		window, windowMasked, err := followWindow(c, params, strconv.FormatInt(newest-int64(clickFollowLookback/time.Second), 10))
 		if err != nil {
 			return err
 		}
+		masked = masked || windowMasked
 		byID := map[int64]followedClick{}
 		for _, r := range append(first, window...) {
 			byID[r.id] = r
@@ -121,7 +123,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		for _, r := range all[:cut] {
 			seen[r.id] = r.time
 		}
-		if err := emitFollowed(all[cut:], seen); err != nil {
+		if err := emitFollowed(all[cut:], seen, masked); err != nil {
 			return err
 		}
 	}
@@ -131,7 +133,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		if newest > 0 {
 			from = strconv.FormatInt(newest-int64(clickFollowLookback/time.Second), 10)
 		}
-		rows, err := followWindow(c, params, from)
+		rows, masked, err := followWindow(c, params, from)
 		if err != nil {
 			return err
 		}
@@ -144,7 +146,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 				newest = r.time
 			}
 		}
-		if err := emitFollowed(fresh, seen); err != nil {
+		if err := emitFollowed(fresh, seen, masked); err != nil {
 			return err
 		}
 		// Forget what the next window can no longer return.
@@ -184,29 +186,32 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 }
 
 // followWindow reads every click from `from` (unix seconds; "" for no lower
-// bound) through now, across pages. The list is
-// newest first, so a click arriving mid-read pushes rows down a page: a row
-// can be read twice, which the caller's seen-set absorbs, but never skipped.
-func followWindow(c *api.Client, params map[string]string, from string) ([]followedClick, error) {
+// bound) through now, across pages, and whether the server masked them. The
+// list is newest first, so a click arriving mid-read pushes rows down a
+// page: a row can be read twice, which the caller's seen-set absorbs, but
+// never skipped.
+func followWindow(c *api.Client, params map[string]string, from string) ([]followedClick, bool, error) {
 	q := copyParams(params)
 	if from != "" {
 		q["time_from"] = from
 	}
 	q["limit"] = strconv.Itoa(clickFollowPageSize)
 	var all []followedClick
+	masked := false
 	for offset := 0; ; offset += clickFollowPageSize {
 		q["offset"] = strconv.Itoa(offset)
 		data, err := c.Get("clicks", q)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		rows, err := followRows(data)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		masked = masked || maskedFigures(data)
 		all = append(all, rows...)
 		if len(rows) < clickFollowPageSize {
-			return all, nil
+			return all, masked, nil
 		}
 	}
 }
@@ -252,7 +257,9 @@ func intField(v interface{}) (int64, bool) {
 // emitFollowed prints clicks oldest first, as Spy adds them, and records
 // them as seen. JSON is one object per line here (a stream cannot be one
 // JSON document); the table view prints each batch under its own header.
-func emitFollowed(rows []followedClick, seen map[int64]int64) error {
+// A masked answer's flag goes with its rows, as `click list` prints them: each
+// line carries "masked":true, and the table its note.
+func emitFollowed(rows []followedClick, seen map[int64]int64, masked bool) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -268,7 +275,11 @@ func emitFollowed(rows []followedClick, seen map[int64]int64) error {
 	if len(batch) == 0 {
 		return nil
 	}
-	data, err := json.Marshal(map[string]interface{}{"data": batch})
+	envelope := map[string]interface{}{"data": batch}
+	if masked {
+		envelope["masked"] = true
+	}
+	data, err := json.Marshal(envelope)
 	if err != nil {
 		return fmt.Errorf("encoding %d clicks: %w", len(batch), err)
 	}

@@ -181,7 +181,8 @@ A key whose user's role lacks `access_to_campaign_data` (the Campaign viewer
 and Publisher roles) reads reports, clicks and conversions as its pages show
 them: the absolute clicks, click-throughs, leads, income, cost and net, and a
 click's or conversion's cost and payout, are `null`, the ratios are kept, and
-the answer has `"masked": true` (each `--ndjson` line carries it). A `null`
+the answer has `"masked": true` (each `--ndjson` line carries it, from
+`click list --all`/`--follow` and `conversion list --all` too). A `null`
 there means hidden, not zero: do not sum it or report it as 0. The commands
 that compute from those figures refuse a masked answer (exit 2, naming the
 permission), and so do `report breakdown`'s `--min-clicks`, `--min-cost`,
