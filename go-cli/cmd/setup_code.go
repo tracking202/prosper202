@@ -22,10 +22,11 @@ import (
 //	p202 conversion postback-url [--type simple|advanced] [--campaign] [--amount] [--subid] [--scheme]
 //	p202 conversion pixel [--type simple|advanced|universal] [--iframe] [...]
 //
-// Under --json (or --ndjson/--csv/--quiet) each prints the API's answer as
-// sent, so an agent reads every snippet; in a table-mode terminal the
-// snippets are printed as text to copy, each under the sentence the page
-// puts above it.
+// Under --json (or --ndjson/--csv) each prints the API's answer as sent, so
+// an agent reads every snippet; in a table-mode terminal the snippets are
+// printed as text to copy, each under the sentence the page puts above it.
+// Under --quiet postback-url and pixel print their one value, as a terminal
+// does, and landing-page code its id, as every record's --quiet does.
 
 // setupOfferRe is one offer of an advanced landing page, as the API reads it.
 var setupOfferRe = regexp.MustCompile(`^(campaign|rotator):[1-9][0-9]{0,9}$`)
@@ -36,8 +37,11 @@ const setupMaxOffers = 100
 const setupOfferHint = "Give each offer as --offer campaign:<id> (ids from `p202 campaign list`) or --offer rotator:<id> (`p202 rotator list`), in the order they appear on the page."
 
 // setupMachineOutput is whether the answer is printed as the API sent it.
+// --quiet is not: it rendered the answer as ids, and a postback-code answer
+// has none, so `conversion postback-url -q` and `conversion pixel -q` printed
+// nothing and exited 0 where a script wanted the URL or the pixel.
 func setupMachineOutput() bool {
-	return jsonOutput || ndjsonOutput || csvOutput || quietOutput
+	return jsonOutput || ndjsonOutput || csvOutput
 }
 
 // setupRequestError attaches the next step to a failed Setup request: a 404
@@ -159,7 +163,9 @@ func newLandingPageCodeCmd(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return setupRequestError(c, err, "Setup > Get LP Code")
 			}
-			if setupMachineOutput() {
+			// --quiet prints the landing page's id, as every record's does:
+			// the code is several snippets, none of which stands for the rest.
+			if setupMachineOutput() || quietOutput {
 				render(data)
 				return nil
 			}
@@ -352,7 +358,8 @@ var conversionPostbackURLCmd = &cobra.Command{
 		"  --amount  a number or the network's payout macro, e.g. {payout}; empty pays the\n" +
 		"            campaign's payout\n" +
 		"  --campaign <id>  the advanced postback, which also carries cid\n\n" +
-		"Stdout is the URL alone; --json prints every pixel and postback the page shows.\n" +
+		"Stdout is the URL alone, under --quiet too; --json prints every pixel and postback\n" +
+		"the page shows.\n" +
 		"If the network only supports sid, change ?subid= to ?sid=. Needs a role with\n" +
 		"access_to_setup_section.",
 	Example: "  p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'\n" +
@@ -398,7 +405,10 @@ var conversionPixelCmd = &cobra.Command{
 		"  --type universal  the universal smart pixel (upx.php), which also fires your\n" +
 		"                    traffic sources' pixels: a JavaScript tag with a fallback for\n" +
 		"                    browsers without JavaScript, or a plain iframe with --iframe\n\n" +
-		"Stdout is the pixel alone; --json prints every pixel and postback the page shows.\n" +
+		"Stdout is the pixel alone, under --quiet too: the image or iframe tag on one line,\n" +
+		"or the universal JavaScript tag as the page writes it (a <script> block and its\n" +
+		"<noscript> fallback, over several lines); --json prints every pixel and postback\n" +
+		"the page shows.\n" +
 		"Needs a role with access_to_setup_section.",
 	Example: "  p202 conversion pixel\n" +
 		"  p202 conversion pixel --type advanced --campaign 3 --amount 12.50\n" +

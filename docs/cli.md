@@ -904,7 +904,10 @@ What Setup › Postback / Pixel shows, on this install's tracking domain.
 `--subid` is your network's sub id macro and `--amount` a number or its
 payout macro (empty pays the campaign's payout), written in as given;
 `--campaign` fills the advanced pixel's `cid`; `--scheme http|https` overrides
-the protocol. Stdout is the URL or pixel alone, the guidance on stderr.
+the protocol. Stdout is the URL or pixel alone, the guidance on stderr, and
+`-q` prints the same where JSON would otherwise be chosen (for an agent): the
+image or iframe pixel is one line, the universal JavaScript pixel the page's
+several-line `<script>` block. `landing-page code -q` prints the page's id.
 
 ### Update subids and upload revenue reports
 

@@ -259,6 +259,41 @@ func TestPixelPrintsTheChosenForm(t *testing.T) {
 	}
 }
 
+// --quiet rendered the postback-code answer as ids, and it has none: the
+// postback URL and the pixel printed nothing and exited 0, where a script
+// takes stdout as the value. Under --quiet each prints the value a terminal
+// prints; landing-page code, whose code is several snippets, its id.
+func TestSetupCodeQuietPrintsTheOneValue(t *testing.T) {
+	newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
+		if strings.HasSuffix(r.URL.Path, "/landing-pages/12/code") {
+			return 200, simpleCodeAnswer
+		}
+		return 200, postbackAnswer
+	})
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"conversion", "postback-url"}, "https://t.example/tracking202/static/gpb.php?amount={payout}&subid={aff_sub}"},
+		{[]string{"conversion", "postback-url", "--campaign", "3"}, "https://t.example/tracking202/static/gpb.php?amount={payout}&cid=3&subid={aff_sub}"},
+		{[]string{"conversion", "pixel"}, `<img src="https://t.example/tracking202/static/gpx.php?amount={payout}&subid={aff_sub}" />`},
+		{[]string{"conversion", "pixel", "--type", "advanced", "--campaign", "3"}, `<img src="https://t.example/tracking202/static/gpx.php?amount={payout}&cid=3&subid={aff_sub}" />`},
+		{[]string{"conversion", "pixel", "--type", "universal"}, `<script>var vars202={}</script>`},
+		{[]string{"conversion", "pixel", "--type", "universal", "--iframe"}, `<iframe src="https://t.example/tracking202/static/upx.php?amount={payout}&subid={aff_sub}"></iframe>`},
+		{[]string{"landing-page", "code", "12"}, "12"},
+	} {
+		for _, quiet := range []string{"-q", "--quiet"} {
+			stdout, _, err := executeCommand(append(tc.args, quiet)...)
+			if err != nil {
+				t.Fatalf("%v %s: %v", tc.args, quiet, err)
+			}
+			if stdout != tc.want+"\n" {
+				t.Errorf("%v %s: stdout %q, want %q alone", tc.args, quiet, stdout, tc.want)
+			}
+		}
+	}
+}
+
 func TestPostbackChoicesThatCannotApplyAreRefusedBeforeAnyRequest(t *testing.T) {
 	cases := map[string]string{
 		"conversion postback-url --type universal":           "conversion pixel --type universal",

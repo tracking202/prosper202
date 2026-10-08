@@ -452,7 +452,9 @@ p202 ppc-account pixel create 4 --type-id 4 --code 'https://network.example/pb?c
 - **`conversion postback-url`** and **`conversion pixel`** print what Postback
   / Pixel shows on the tracking domain. Stdout is the URL or the pixel alone
   (guidance on stderr), so `URL=$(p202 conversion postback-url --subid ...)`
-  works; `--campaign` chooses the advanced form, and `--type universal` belongs
+  works, and `-q` prints the same where JSON would otherwise be chosen (the
+  universal JavaScript pixel is the page's several-line `<script>` block;
+  `landing-page code -q` prints the page's id); `--campaign` chooses the advanced form, and `--type universal` belongs
   to `pixel`. Values are written in as given; spaces, quotes, `<`, `>`, `\` and
   `&` are refused.
 - **`ppc-network variable`** edits the extra parameters the source's tracking

@@ -490,7 +490,8 @@ p202 landing-page code 12 --json
 p202 landing-page code 14 --offer campaign:3 --offer rotator:2 --json   # an advanced page: offers[] in order
 
 # The postback URL to give the network, and the pixel for the thank-you page (Setup > Postback / Pixel).
-p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}'    # stdout: the URL alone
+p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}' -q # stdout: the URL alone
+p202 conversion pixel -q                                                # stdout: the pixel alone
 p202 conversion pixel --type universal --json                           # every pixel and postback
 
 # What the traffic source's links carry, and what its account fires (Setup > Traffic Sources).
