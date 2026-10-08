@@ -785,7 +785,13 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
-
+					// The job's own outcome is the command's: a failed,
+					// partial or cancelled job exited 0 here, read by a
+					// script as a sync that happened.
+					if status != "succeeded" {
+						return true, partialFailureError("sync job %s ended %s; the job above lists what failed", jobID, status).
+							WithHint("Fix the cause and run the same sync again: records already synced are found on the target by their natural key, not created twice. `p202 sync history` lists past runs.")
+					}
 					return true, nil // server-side sync ran; the caller must not fall back
 				}
 				time.Sleep(250 * time.Millisecond)

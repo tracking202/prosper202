@@ -1711,6 +1711,57 @@ func TestSyncDependencyOrder(t *testing.T) {
 	}
 }
 
+// A server-side sync job that did not succeed is the command's failure: a
+// failed, partial or cancelled job exited 0 with its outcome only in the body.
+func TestSyncServerJobThatDidNotSucceedIsAPartialFailure(t *testing.T) {
+	for _, status := range []string{"succeeded", "partial", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			orchestrator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/versions":
+					_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/capabilities":
+					_, _ = w.Write([]byte(`{"data":{"sync_features":{"async_jobs":true}}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/jobs":
+					_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"queued"}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/worker/run":
+					_, _ = w.Write([]byte(`{"data":{"processed":1}}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/sync/jobs/j1":
+					_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"` + status + `"}}`))
+				default:
+					w.WriteHeader(404)
+					_, _ = w.Write([]byte(`{"message":"not found"}`))
+				}
+			}))
+			defer orchestrator.Close()
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+			}))
+			defer target.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+				"source": {"url": orchestrator.URL, "api_key": "source-key-123456"},
+				"target": {"url": target.URL, "api_key": "target-key-123456"},
+			})
+
+			stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+			if !strings.Contains(stdout, `"status": "`+status+`"`) {
+				t.Errorf("the job is rendered:\n%s", stdout)
+			}
+			if status == "succeeded" {
+				if err != nil {
+					t.Errorf("a job that succeeded: %v", err)
+				}
+				return
+			}
+			if err == nil || exitCodeForError(err) != ExitPartialFailure || !strings.Contains(err.Error(), "ended "+status) {
+				t.Errorf("a %s job: want a partial failure naming it, got %v (exit %d)", status, err, exitCodeForError(err))
+			}
+		})
+	}
+}
+
 func TestSyncUnresolvableFK(t *testing.T) {
 	source := newEntityDataServer(t, map[string][]map[string]interface{}{
 		"campaigns": {
