@@ -146,9 +146,13 @@ var commandsCmd = &cobra.Command{
 	Short: "List every command and flag (with allowed values) in one call; --json for agents",
 	Long: "Dumps the command tree: for each command its path, aliases, description, examples\n" +
 		"and flags (name, shorthand, type, default, usage, allowed values, required). Global\n" +
-		"flags are listed once under global_flags. Name a command to list only its subtree.\n" +
-		"To find a command by what you want to do, use `p202 search <words>`.",
-	Example: "  p202 commands --json\n  p202 commands report\n  p202 commands --quiet",
+		"flags are listed once under global_flags. Name a command to list only its subtree.\n\n" +
+		"--brief is the catalog an agent reads to choose a command: every command on one\n" +
+		"line (its path, summary and the web UI page it does, with that page's command line),\n" +
+		"and the pages no command does; about 6,000 tokens. It prints as text even where an\n" +
+		"agent would get JSON by default; --json gives it as JSON. Then `p202 <command> --help`\n" +
+		"for the flags. To rank commands by your words instead, use `p202 search <words>`.",
+	Example: "  p202 commands --brief\n  p202 commands --json\n  p202 commands report\n  p202 commands --quiet",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if csvOutput {
 			return validationError("p202 commands has no CSV form").WithHint("Use --json (one document), --ndjson (one command per line) or --quiet (paths only).")
@@ -166,8 +170,118 @@ var commandsCmd = &cobra.Command{
 			}
 			tree = tree.subtree(target.CommandPath())
 		}
+		if brief, _ := cmd.Flags().GetBool("brief"); brief && !quietOutput {
+			return writeBriefCatalog(os.Stdout, tree)
+		}
 		return writeCommandTree(os.Stdout, tree)
 	},
+}
+
+// briefCommand is a command as the --brief catalog lists it.
+type briefCommand struct {
+	Command string      `json:"command"`
+	Summary string      `json:"summary"`
+	UI      []briefPage `json:"ui,omitempty"`
+}
+
+type briefPage struct {
+	Page string `json:"page"`
+	Run  string `json:"run,omitempty"` // the page's command line, when it is not the bare command
+}
+
+type briefElsewhere struct {
+	Page    string `json:"page"`
+	Instead string `json:"instead"`
+	Hint    string `json:"hint,omitempty"`
+}
+
+// writeBriefCatalog is --brief: one line per command an agent can run, and
+// the pages no command does. An agent that reads it chooses better than any
+// keyword ranking: on 30 phrasings written before anything was tuned, a
+// model given only this catalog chose the right command first for all 30,
+// where the best keyword search found 16 (search_rank.go). At this CLI's
+// size the catalog costs about 6,000 tokens, where `commands --json` is
+// about 120,000; Cloudflare's cf, at 2,900 commands, cannot hand an agent
+// its catalog, which is why it searches.
+func writeBriefCatalog(w io.Writer, tree commandTree) error {
+	var cmds []briefCommand
+	for _, c := range tree.Commands {
+		if !c.Runnable {
+			continue
+		}
+		b := briefCommand{Command: c.Path, Summary: c.Short}
+		for _, t := range c.Tasks {
+			for _, p := range t.UIPages {
+				page := briefPage{Page: p}
+				if t.Run != c.Path {
+					page.Run = t.Run
+				}
+				b.UI = append(b.UI, page)
+			}
+		}
+		cmds = append(cmds, b)
+	}
+	var elsewhere []briefElsewhere
+	for _, t := range tree.NotInCLI {
+		name := ""
+		if len(t.UIPages) > 0 {
+			name = t.UIPages[0]
+		} else if len(t.Phrases) > 0 {
+			name = t.Phrases[0]
+		}
+		elsewhere = append(elsewhere, briefElsewhere{Page: name, Instead: t.Instead, Hint: t.Hint})
+	}
+	// The catalog is read by a model, so an agent gets the text even where
+	// it would get JSON by default: the same catalog as one-line JSON is a
+	// quarter longer (31,384 bytes against 24,961), the difference all keys
+	// and quotes. --json, --ndjson, P202_OUTPUT or a config default still
+	// give JSON, for a program that parses it.
+	asJSON := (jsonOutput || ndjsonOutput) && !strings.HasPrefix(outputSource, sourceAgent)
+	switch {
+	case asJSON && ndjsonOutput:
+		for _, c := range cmds {
+			if err := writeJSONNoEscape(w, c); err != nil {
+				return err
+			}
+		}
+		for _, e := range elsewhere {
+			if err := writeJSONNoEscape(w, map[string]interface{}{"not_in_cli": e}); err != nil {
+				return err
+			}
+		}
+		return nil
+	case asJSON:
+		if cmds == nil {
+			cmds = []briefCommand{}
+		}
+		if elsewhere == nil {
+			elsewhere = []briefElsewhere{}
+		}
+		return writeJSONNoEscape(w, map[string]interface{}{"commands": cmds, "not_in_cli": elsewhere})
+	}
+	for _, c := range cmds {
+		line := c.Command + " — " + c.Summary
+		if len(c.UI) > 0 {
+			var pages []string
+			for _, p := range c.UI {
+				if p.Run != "" {
+					pages = append(pages, p.Page+" = "+p.Run)
+				} else {
+					pages = append(pages, p.Page)
+				}
+			}
+			line += " [UI: " + strings.Join(pages, "; ") + "]"
+		}
+		fmt.Fprintln(w, line)
+	}
+	for _, e := range elsewhere {
+		line := "(no command) " + e.Page + " — " + e.Instead
+		if e.Hint != "" {
+			line += ". " + e.Hint
+		}
+		fmt.Fprintln(w, line)
+	}
+	return nil
 }
 
 func writeCommandTree(w io.Writer, tree commandTree) error {
@@ -226,17 +340,20 @@ func flagLabel(f flagInfo) string {
 	return label
 }
 
-// writeJSONNoEscape writes v as indented JSON without HTML escaping, so
-// usage text with <placeholders> reads as written.
+// writeJSONNoEscape writes v as JSON without HTML escaping, so usage text
+// with <placeholders> reads as written: indented for --json, on one line for
+// --ndjson and for an agent that gets JSON by default (compactJSON), as every
+// other command prints it.
 func writeJSONNoEscape(w io.Writer, v interface{}) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	if jsonOutput {
+	if jsonOutput && !compactJSON {
 		enc.SetIndent("", "  ")
 	}
 	return enc.Encode(v)
 }
 
 func init() {
+	commandsCmd.Flags().Bool("brief", false, "One line per command (path, summary, the UI page it does): the catalog an agent reads to choose a command")
 	rootCmd.AddCommand(commandsCmd)
 }

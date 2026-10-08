@@ -412,12 +412,15 @@ recover from a failure without a person in the loop. So:
   needed. People at a terminal and existing scripts keep tables; `--table`,
   `P202_OUTPUT` or `p202 config set-default output.format` override it, and
   `p202 config show` says which format is in use and why.
-- **Find a command by describing the task.** `p202 search find dead offer
-  links` ranks commands, flags and flag values by your words, offline; the
-  name of a web UI page (`p202 search spy`) or the words for it (`p202 search
-  realtime traffic`) give the exact command line, and when nothing matches
-  well it fails and names the closest commands; `p202 commands --json` lists
-  every command and flag, with its allowed values, in one call.
+- **Find a command by describing the task.** `p202 commands --brief` lists
+  every command on one line with the web UI page it does, about 6,000 tokens:
+  the catalog an agent reads to choose. `p202 search find dead offer links`
+  ranks commands, flags and flag values by your words, offline; the name of a
+  web UI page (`p202 search spy`) or the words for it (`p202 search realtime
+  traffic`) give the exact command line, and a weak first match is flagged as
+  one (`good_match: false`) rather than passed off as the answer;
+  `p202 commands --json` lists every command and flag, with its allowed
+  values, in one call.
 - **Valid values are always spelled out.** Every flag that takes a fixed set
   lists it in its help, and a wrong value is refused before any request with
   the full list: `--period must be one of: today, yesterday, last7, last14,

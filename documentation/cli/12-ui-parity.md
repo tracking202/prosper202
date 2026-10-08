@@ -3,10 +3,11 @@
 Every page of the web UI, the REST API route that does the same thing, and
 the `p202` command for it. Use it to find the command for something you know
 how to do on a page, and to see what still needs the browser. From the
-command line, `p202 search <page name>` (`p202 search spy`, `p202 search
-update cpc`) gives the same command line, and `p202 commands --json` lists
-each command's pages under `tasks` and the pages no command does under
-`not_in_cli`.
+command line, `p202 commands --brief` lists every command with the pages it
+does and each page's command line, `p202 search <page name>` (`p202 search
+spy`, `p202 search update cpc`) gives the same command line, and `p202
+commands --json` lists each command's pages under `tasks` and the pages no
+command does under `not_in_cli`.
 
 | Mark | Meaning |
 | ---- | ------- |
@@ -105,5 +106,6 @@ What the CLI and API add that the UI has no page for: staged changes
 (`--staged`, `p202 change …`), dry-run previews of every delete and Update
 write, idempotent creates, `p202 sync`/`diff`/`export`/`import` across
 servers, forecasts and forecast events, goals evaluation, the change feed,
-`p202 search` and `p202 commands --json` for discovering commands, and
+`p202 commands --brief`, `p202 search` and `p202 commands --json` for
+discovering commands, and
 `p202 eval` for agent evaluation cases.

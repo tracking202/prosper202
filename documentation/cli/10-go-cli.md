@@ -55,6 +55,16 @@ each marker is in `docs/cli-agent.md`.
 
 ## Finding a Command
 
+`p202 commands --brief` is the catalog to read when choosing a command: every
+command an agent can run on one line (its path, its summary, and the web UI pages
+it does with each page's command line), then the pages no command does and where
+they are done instead. It is about 6,000 tokens (`commands --json` is about
+120,000), prints as text even for an agent that gets JSON by default, and gives
+`{commands[{command, summary, ui[{page, run}]}], not_in_cli[{page, instead,
+hint}]}` with `--json`. On 30 task phrasings written before search was tuned, a
+model given only this catalog chose the right command first for all 30; search put
+it first for 16.
+
 `p202 search <what you want to do>` ranks commands offline by your words, matched
 against each command's name, aliases, description, examples, flags, the values its
 flags accept, and the tasks it runs: the web UI page that does the same ("Spy",
@@ -65,11 +75,19 @@ dead/broken, undo/revert and link/url match, and "per"/"by" ask for a breakdown.
 page or phrase counts in full only when the query names all of it. Each result says
 why it matched and, when a flag value or a task matched, gives the command line to
 try (`p202 search spy` offers `p202 click list --follow`); `--json` returns
-`{query, terms, good_match, results[]}`. When nothing matches well, search fails:
-exit 1, nothing on stdout in any mode, and the hint names the closest three
-commands. A UI page with no command (Watch TV202, Hot Deals & Discounts, VIP Perks
-Profile, Help, Home, the 1-click upgrade) fails the same way and says where it is
-done instead.
+`{query, terms, good_match, results[]}`, each result with `coverage`, the share of
+the query's words it matched. A misspelt word matches the word it was meant for
+when no word is spelled that way. Two rankings are fused (reciprocal rank fusion):
+one scored the way Cloudflare's `cf cli search` scores (MiniSearch's BM25+, each
+field on its own, summed), and one that combines a word's evidence across a
+command's fields before saturating it (BM25F). Search lists candidates, best
+first (`--limit`, default 5); `good_match` is true when the first matched at least
+three quarters of the query's words, and a table says "No confident match" above
+the list when it did not. `--quiet` prints a path only for a confident match and
+otherwise exits 1 with the candidates in its hint. Search fails (exit 1, nothing
+on stdout) only when nothing matches, or when the query names, in full, a UI page
+no command does (Watch TV202, Hot Deals & Discounts, VIP Perks Profile, Help,
+Home, the 1-click upgrade); it then says where that is done instead.
 
 `p202 commands [command...]` lists the command tree, or one subtree. `--json`
 returns `{schema, cli_version, global_flags, commands[]}`: per command its path,
@@ -78,7 +96,7 @@ use, aliases, short and long description, examples, whether it runs, and its fla
 `allowed_values`, `value_aliases`, `value_list`), and `tasks` (`{run, ui_pages,
 phrases}`: the command line for each web UI page it does). The pages no command does
 are listed once under `not_in_cli` with `instead` and `hint`. Global flags are
-listed once and hidden flags are left out. `p202 --help` points at both commands.
+listed once and hidden flags are left out. `p202 --help` points at all three.
 
 ## Commands
 
@@ -88,7 +106,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | Command | Description |
 | ------- | ----------- |
 | `p202 search <words...>` | Find the command for a task (offline; see [Finding a Command](#finding-a-command)) |
-| `p202 commands [command...]` | Every command and flag, with allowed values, in one call (`--json`, `--ndjson`, `--quiet`) |
+| `p202 commands [command...]` | Every command and flag, with allowed values, in one call (`--json`, `--ndjson`, `--quiet`); `--brief` for one line per command, the catalog to choose from |
 | `p202 campaign list` | List campaigns; `--url-contains <text>` returns every campaign with an offer URL (any of the five slots) containing the text; `--with-stats` adds each campaign's `total_clicks`, `total_leads`, `total_income`, `total_cost`, `total_net` for `--period` (default `last30`) or `--days N`, `0` when it had no traffic (needs `reports:read`); `--min-clicks N` keeps campaigns with at least N clicks |
 | `p202 campaign get <id>` | Get a single campaign |
 | `p202 campaign create` | Create a campaign |

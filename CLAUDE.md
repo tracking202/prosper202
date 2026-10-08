@@ -1177,8 +1177,11 @@ leaves you unsure what to do next, the error needs a hint. The user-facing
 contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
 keep it in sync.
 
-A command is found by `p202 search`, which matches words: it finds a command
-only when the asker uses words its text uses. "spy" found nothing (Spy was a
+A command is found by reading `p202 commands --brief` — every command on one
+line with the UI page it does, about 6,000 tokens, held to a budget by
+`TestCommandsBriefIsTheCatalogAnAgentReads` — or by `p202 search`, which
+matches words: it finds a command only when the asker uses words its text
+uses. "spy" found nothing (Spy was a
 word in one flag's help), "live clicks" found goal outcomes, and "real-time
 traffic" found `click list` through `--show real` — the filter for human
 clicks — and offered that as the line to run. `searchTasks`
@@ -1189,9 +1192,15 @@ menus and fails on a page with no entry, and
 `TestSearchFindsTheEvalAsksCommand` searches every agent-eval ask for its
 command, with `searchKnownMisses` listing the rest with why — a list that
 only shrinks. Write a phrase from the task, never from an ask: a phrase
-lifted from an ask teaches that one ask and inflates the measure. A search
-with no good match exits 1 with nothing on stdout, so a script cannot run a
-guess.
+lifted from an ask teaches that one ask and inflates the measure. Search
+hands back candidates with `coverage` and `good_match`, as `cf cli search`
+does, and fails only when nothing matches or when the query names in full a
+page no command does: a refusal is an answer, and "is the server up" reached
+the upgrade entry through a synonym and a prefix and was told the CLI cannot
+do what `system health` does. `--quiet`, which prints a bare path a script
+will run, prints one only for a confident match. The ranking's own
+measurements, and why a model reading the catalog beats it, are in
+`cmd/search_rank.go`'s header.
 
 ## Development environment notes (sandboxed/CI sessions)
 
@@ -1508,6 +1517,18 @@ where a check quietly fails to check what it appears to.
   count a plant as caught only when a named test fails: two "caught" plants
   were a compile error (an unused variable, a missing import), which proves
   nothing about the test.
+- **A heuristic tuned on a set is measured on a set it never saw.** The search
+  ranker was tuned against the UI's page names, the agent-eval asks and a
+  "held-out" set that had been looked at while tuning; it scored 39 of 39,
+  28 of 40 and 14 of 20 first, and a MiniSearch prototype scored 18 of 20 on
+  that held-out set. On 30 phrasings written and hashed before tuning began
+  and opened only at the end, the same ranker put the right command first
+  for 16, the prototype for 10, and the scorer being replaced for 14; its
+  confidence flag was right 92 times in 97 on the tuned sets and 13 in 19 on
+  the sealed one. Write the evaluation set first, record its hash, do not
+  read it while tuning, and report the sealed numbers as the result. A set
+  that has been opened is a development set from then on: the next
+  measurement needs a new one.
 - **Assert that a probe perturbed the target.** To force a post-commit failure
   I created a directory where a state file goes — in the wrong one of three
   `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request

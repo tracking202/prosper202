@@ -52,10 +52,17 @@ p202 report summary --period today
 ## Finding a command
 
 ```bash
+p202 commands --brief             # every command on one line, with the UI page it does
 p202 search breakdown by browser   # rank commands for a task (offline)
 p202 commands                      # the whole command tree, indented
 p202 commands --json               # every command and flag, with allowed values
 ```
+
+`p202 commands --brief` is the catalog to read when choosing a command: each command
+on one line with its summary and the web UI pages it does (with each page's command
+line), then the pages no command does and where they are done instead. It is about
+6,000 tokens, prints as text even for an agent (`--json` gives it as JSON), and takes
+a subtree like `p202 commands` does.
 
 `p202 search <words...>` matches your words against every command's name, aliases,
 description, examples, flags, the values its flags accept, and the tasks it runs: the
@@ -63,14 +70,18 @@ web UI page that does the same ("Spy") and the words people use for it ("realtim
 traffic"). Plural forms, split words (real time, real-time) and common synonyms match
 (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url), and "per"/"by"
 ask for a breakdown. Each result says why it matched and, when a flag value or a task
-matched, prints the command line to try. When nothing matches well it fails (exit 1,
-nothing on stdout) and the hint names the closest three; a UI page with no command
-says where it is done instead. `--limit N` sets the number of results (default 10).
+matched, prints the command line to try. It lists candidates, best first (`--limit N`,
+default 5), and says when the first is not a confident match (`good_match: false` in
+JSON: it matched under three quarters of your words); `--quiet` prints a path only for
+a confident match. It fails (exit 1, nothing on stdout) only when nothing matches, or
+when the words name a UI page no command does, which it answers with where that page's
+work is done instead.
 
 `p202 commands [command...]` lists the tree, or one subtree (`p202 commands report`).
 With `--json` each command carries its flags' name, shorthand, type, default, usage,
 `required`, and for fixed-set flags `allowed_values` and `value_aliases`. Global flags
-appear once. `--ndjson` prints one command per line and `--quiet` prints paths only.
+appear once. `--ndjson` prints one command per line and `--quiet` prints paths only;
+`--brief` is the one-line-per-command catalog above.
 
 Every flag that takes a fixed set of values lists the set in `--help`. A value outside
 the set is refused before any request, with every accepted value in the message.

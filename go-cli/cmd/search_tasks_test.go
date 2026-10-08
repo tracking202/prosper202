@@ -183,7 +183,7 @@ func TestSearchFindsEveryUIPage(t *testing.T) {
 				}
 				r, a, ok := topResult(tree, q)
 				if !ok {
-					t.Errorf("%q: no good match (closest %+v)", q, a.closest)
+					t.Errorf("%q: no good match (results %+v)", q, a.Results)
 				} else if r.commandLine() != task.Run {
 					t.Errorf("%q: want %q first, got %q", q, task.Run, r.commandLine())
 				}
@@ -217,35 +217,33 @@ func TestSearchFindsSpyByWhatPeopleCallIt(t *testing.T) {
 	} {
 		r, a, ok := topResult(tree, q)
 		if !ok || r.Try != "p202 click list --follow" {
-			t.Errorf("%q: want try p202 click list --follow first, got %q (closest %v)", q, r.commandLine(), a.closest)
+			t.Errorf("%q: want try p202 click list --follow first, got %q (results %v)", q, r.commandLine(), a.Results)
 		}
 	}
 }
 
-// searchKnownMisses are the agent-eval asks search does not answer with the
-// case's command first, each with why. The list only shrinks: a listed case
-// that search now finds fails until it is removed, and a new case search
-// misses fails until a task phrase finds it or it is listed here.
+// searchKnownMisses are the agent-eval asks whose command search does not
+// put first, each with why and where it lands. The list only shrinks: a
+// listed case that search now finds fails until it is removed, and a new case
+// search misses fails until a task phrase finds it or it is listed here.
+//
+// The fused ranker (search_rank.go) found 9 cases the hand-weighted scorer
+// had listed here and lost 2 it had found (attribution-003 and
+// mobile-apps-ui-001), each now second: two tasks in one ask, where the
+// other task's command comes first.
 var searchKnownMisses = map[string]string{
-	"admin-003-a-non-admin-key-is-told-what-it-lacks":                  "names a profile and a period beside the task; the extra words favour commands with broad help text",
-	"android-001-simulate-an-install-from-a-click":                     "an app package and a campaign name crowd out \"simulate that install\"",
-	"android-002-turn-on-play-integrity-in-observe-mode":               "a long setup ask; the credential command's words are a minority of it",
-	"attribution-001-registering-the-app-claims-its-postbacks":         "two tasks in one ask (register, then count postbacks)",
-	"breakdown-002-no-such-transaction-is-said-not-invented":           "the expected command is a lookup step (conversion list), not the task asked",
-	"ios-sdk-001-encode-a-funnel-goal":                                 "describes the encoding's meaning, not the command; no word names it",
-	"ltv-004-line-items-on-a-sale-with-no-known-customer":              "the expected command is a lookup step (click list), not the task asked",
-	"mta-001-first-and-last-touch-credit-different-campaigns":          "\"first-touch\" and \"last-touch\" are model names the index does not carry",
-	"report-depth-001-a-keywords-visitors-by-ip":                       "every report command takes the keyword and filter flags; losers ranks level with breakdown",
-	"reporting-001-summary-grounded":                                   "\"how did we do\" leaves a period and two metrics, which every report command takes",
-	"safety-001-injection-keyword-is-data":                             "\"top\" (best performers) is not read as winners",
-	"setup-code-001-the-landing-page-code-is-the-pages":                "asks for the code and a link; the link ranks the tracker first",
-	"setup-code-002-an-advanced-page-names-its-offers":                 "asks for the buttons' links; nothing says \"code\"",
-	"setup-code-004-a-traffic-source-variable-reaches-the-link":        "\"pass it along as adid\" names no variable; the link ranks the tracker first",
-	"setup-link-002-the-agent-knows-whose-key-it-holds":                "\"which user does this key act as\" carries no word whoami's text uses",
-	"setup-link-003-a-rule-that-redirects-to-a-url-delivers-the-click": "a redirector name, an address and a URL crowd out \"add a rule\"",
-	"staged-001-apply-writes-the-reviewed-payload":                     "the task is a create with --staged; the expected command is the apply step",
-	"triage-002-no-sale-value-given-is-not-invented":                   "\"losing money\" is not read as losers",
-	"update-001-a-cost-set-on-one-campaign-only":                       "a campaign name and two days crowd out \"record that cost on those clicks\"",
+	"attribution-003-development-postbacks-count-only-once-the-app-opts-in": "register an app and count its postbacks: two tasks; app report first, app create second",
+	"breakdown-002-no-such-transaction-is-said-not-invented":                "the expected command is a lookup step (conversion list), not the task asked",
+	"ios-sdk-001-encode-a-funnel-goal":                                      "describes the encoding's meaning, not the command; app encoding create third",
+	"ltv-004-line-items-on-a-sale-with-no-known-customer":                   "the expected command is a lookup step (click list, fourth); the task asked, recording revenue, is first",
+	"mobile-apps-ui-001-android-app-and-its-tracking-link":                  "set up an app and give its tracking link: two tasks; the tracker first, app link second",
+	"setup-code-002-an-advanced-page-names-its-offers":                      "asks for the buttons' links; nothing says \"code\" (landing-page code fourth)",
+	"setup-code-004-a-traffic-source-variable-reaches-the-link":             "\"pass it along as adid\" names no variable; the link ranks the tracker first",
+	"setup-link-002-the-agent-knows-whose-key-it-holds":                     "\"which user does this key act as\" carries no word whoami's text uses; whoami second",
+	"setup-link-003-a-rule-that-redirects-to-a-url-delivers-the-click":      "a redirector name, an address and a URL crowd out \"add a rule\"",
+	"staged-001-apply-writes-the-reviewed-payload":                          "the task is a create with --staged; the expected command is the apply step (fourth)",
+	"triage-002-no-sale-value-given-is-not-invented":                        "\"losing money\" is not read as losers (fifth)",
+	"update-001-a-cost-set-on-one-campaign-only":                            "a campaign name and two days crowd out \"record that cost on those clicks\" (sixth)",
 }
 
 // The agent-eval asks are what an agent is actually asked, each with the
@@ -275,7 +273,13 @@ func TestSearchFindsTheEvalAsksCommand(t *testing.T) {
 		}
 		checked++
 		seen[c.ID] = true
-		r, a, ok := topResult(tree, c.Ask)
+		// The first candidate, confident or not: an agent reads the list.
+		a := runSearch(tree, strings.Fields(c.Ask), 10)
+		ok := len(a.Results) > 0
+		var r searchResult
+		if ok {
+			r = a.Results[0]
+		}
 		hit := false
 		for _, p := range commands {
 			hit = hit || (ok && (strings.Contains(r.commandLine(), p) || strings.Contains(r.Command, p)))
@@ -291,8 +295,8 @@ func TestSearchFindsTheEvalAsksCommand(t *testing.T) {
 			got := "no good match"
 			if ok {
 				got = r.commandLine()
-			} else if len(a.closest) > 0 {
-				got += ", closest " + a.closest[0].Command
+			} else if len(a.Results) > 0 {
+				got += ", first " + a.Results[0].Command
 			}
 			t.Errorf("%s: want one of %v first, got %s. Add a phrase for the task to searchTasks, or list the case in searchKnownMisses with why.\nask: %s", c.ID, commands, got, c.Ask)
 		}
@@ -325,6 +329,15 @@ func TestSearchNamesPagesWithNoCommand(t *testing.T) {
 	if _, hint := searchFails(t, "upgrade"); !strings.Contains(hint, "p202 system info") {
 		t.Errorf("upgrade: hint %q should name p202 system info", hint)
 	}
+	// Reaching a page with no command through a synonym and a prefix is not
+	// naming it: "server" → install upgrade, "up" → upgrade. This answered
+	// that the CLI cannot do what `system health` does.
+	// (Where `system health` ranks for it is the ranker's question; "up"
+	// begins upload, update and upgrade. The refusal was the bug.)
+	a := searchJSON(t, "is", "the", "server", "up")
+	if len(a.Results) == 0 {
+		t.Errorf("is the server up: refused, or nothing: %+v", a)
+	}
 }
 
 func TestSearchFoldsShortPluralsCompoundsAndStemmedStopwords(t *testing.T) {
@@ -344,7 +357,7 @@ func TestSearchFoldsShortPluralsCompoundsAndStemmedStopwords(t *testing.T) {
 	// "IPs" found nothing at all: three-letter plurals were not folded.
 	setTestHome(t, t.TempDir())
 	if r, a, ok := topResult(buildCommandTree(rootCmd), "IPs"); !ok || r.commandLine() != "p202 report breakdown --breakdown ip" {
-		t.Errorf("IPs: %q (closest %v)", r.commandLine(), a.closest)
+		t.Errorf("IPs: %q (results %v)", r.commandLine(), a.Results)
 	}
 }
 

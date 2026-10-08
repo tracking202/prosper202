@@ -31,9 +31,10 @@ var stagedWrites bool
 // last lines tell an agent how to find a command without walking --help.
 const rootLong = "p202 is a command-line tool for managing a Prosper202 tracking instance.\n" +
 	"Designed for both human operators and AI agents.\n\n" +
-	"Finding a command: `p202 search <what you want to do>` ranks commands, flags and\n" +
-	"flag values by your words; `p202 commands --json` lists every command and flag\n" +
-	"(with allowed values) in one call."
+	"Finding a command: `p202 commands --brief` lists every command on one line with\n" +
+	"the web UI page it does (about 6,000 tokens; an agent reads it and chooses).\n" +
+	"`p202 search <what you want to do>` ranks commands, flags and flag values by your\n" +
+	"words; `p202 commands --json` lists every command and flag (with allowed values)."
 
 var rootCmd = &cobra.Command{
 	Use:           "p202",
