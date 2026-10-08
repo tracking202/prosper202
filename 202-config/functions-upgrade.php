@@ -4251,11 +4251,8 @@ class UPGRADE
             // outcomes); the Android installs, the notification outbox, and
             // the install-token key with the table that holds it. The DDL is the
             // installer's own definitions, so this block cannot drift from
-            // them. 202_users_pref is reconciled with them for the one column
-            // this release adds to it, user_delete_data_before (the scheduled
-            // click deletion's time, which replaced an id marker: see
-            // Prosper202\Click\ClickRetention); the reconciler adds it where
-            // the installer declares it.
+            // them. As 1.9.76 shipped it: 202_users_pref's new column is the
+            // next step's.
             //
             // Gated on 1.9.75 rather than 1.9.76: a block gated on the code
             // version is unreachable from upgrade.php (upgrade_needed() is
@@ -4265,8 +4262,7 @@ class UPGRADE
                 \Prosper202\Database\Tables\ConversionTables::getDefinitions(),
                 \Prosper202\Database\Tables\IdentityTables::getDefinitions(),
                 \Prosper202\Database\Tables\GoalTables::getDefinitions(),
-                \Prosper202\Database\Tables\SecretTables::getDefinitions(),
-                [\Prosper202\Database\Tables\UserTables::usersPref()]
+                \Prosper202\Database\Tables\SecretTables::getDefinitions()
             ));
 
             if ($measurement_ok) {
@@ -4283,10 +4279,36 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.76', '>')) {
+        if ($prosper202_version == '1.9.76') {
 
-            $prosper202_version = '1.9.76';
+            // 202_users_pref gains user_delete_data_before, the scheduled
+            // click deletion's time, which replaced an id marker (see
+            // Prosper202\Click\ClickRetention). The column was first put in
+            // the 1.9.75 step, after v1.9.76 had been tagged: an install
+            // already on 1.9.76 never runs that step, so it never got the
+            // column, and the cron job's click deletions, the Settings page's
+            // retention form and GET /system/retention all failed on it. The
+            // reconciler adds it where the installer declares it, and does
+            // nothing where it is already there.
+            //
+            // Gated on 1.9.76 rather than 1.9.77, for the reason above.
+            $prefs_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::usersPref()]);
+
+            if ($prefs_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.77'") !== false) {
+                    $prosper202_version = '1.9.77';
+                } else {
+                    error_log('Prosper202 upgrade: reconciled 202_users_pref but failed to persist version 1.9.77; leaving version at 1.9.76 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: 202_users_pref could not be reconciled; leaving version at 1.9.76 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.77', '>')) {
+
+            $prosper202_version = '1.9.77';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

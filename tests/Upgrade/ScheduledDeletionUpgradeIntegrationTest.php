@@ -10,7 +10,7 @@ use Prosper202\Database\Tables\UserTables;
 /**
  * The scheduled click deletion's time (202_users_pref.user_delete_data_before,
  * see Prosper202\Click\ClickRetention) arrives on an upgraded install where
- * the installer puts it: the 1.9.75 -> 1.9.76 rung reconciles 202_users_pref
+ * the installer puts it: the 1.9.76 -> 1.9.77 rung reconciles 202_users_pref
  * against the installer's definition, and afterwards the table is the fresh
  * install's, column for column and in the same order — the comparison
  * tests/live/upgrade-equals-install.sh makes across the whole ladder. An id
