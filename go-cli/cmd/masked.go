@@ -16,6 +16,14 @@ func maskedFigures(data []byte) bool {
 	return json.Unmarshal(data, &top) == nil && top.Masked
 }
 
+// maskedReportFigures are the report fields a masked answer holds null:
+// the server's CampaignFigures::REPORT (TestMaskedReportFiguresAreTheServers
+// holds the two lists together). The ratios -- epc, avg_cpc, conv_rate, roi,
+// cpa -- are not among them.
+var maskedReportFigures = []string{
+	"total_clicks", "total_click_throughs", "total_leads", "total_income", "total_cost", "total_net",
+}
+
 // errMaskedFigures is the refusal of a command that computes from the
 // figures a masked answer hides. Its nulls are hidden values, not zeros:
 // summing, ranking or forecasting them would print confident wrong numbers,

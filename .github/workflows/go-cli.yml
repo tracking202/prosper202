@@ -13,6 +13,7 @@ on:
       # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
       - 'api/v3/index.php'
       - 'api/v3/Controllers/**'
+      - 'api/v3/Support/CampaignFigures.php'
       - '202-config/Click/TrackingLinkVariables.php'
       - '202-config/User/PreferenceRules.php'
       - 'docs/cli-agent.md'
@@ -28,6 +29,7 @@ on:
       # go-cli/cmd/repo_paths_test.go, which fails when one is not here).
       - 'api/v3/index.php'
       - 'api/v3/Controllers/**'
+      - 'api/v3/Support/CampaignFigures.php'
       - '202-config/Click/TrackingLinkVariables.php'
       - '202-config/User/PreferenceRules.php'
       - 'docs/cli-agent.md'

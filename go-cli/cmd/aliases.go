@@ -52,6 +52,34 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 	}
 	field, op, want, hasHaving := parseHaving(having)
 
+	// A masked answer's clicks, leads and money are null, and toFloat reads
+	// null as 0: --min-clicks 10 answered {"data": []} and --having
+	// total_leads=0 every row, exit 0, as if they had been read. A filter on
+	// a hidden figure is refused as `report losers` refuses one; a filter on
+	// a ratio the role does see still runs.
+	masked := maskedFigures(data)
+	if masked {
+		var hidden []string
+		if minClicks > 0 {
+			hidden = append(hidden, "--min-clicks")
+		}
+		if minCost > 0 {
+			hidden = append(hidden, "--min-cost")
+		}
+		if zeroLeads {
+			hidden = append(hidden, "--zero-leads")
+		}
+		if hasHaving && containsString(maskedReportFigures, field) {
+			hidden = append(hidden, "--having "+strings.TrimSpace(having))
+		}
+		if len(hidden) > 0 {
+			refusal := errMaskedFigures("report breakdown " + strings.Join(hidden, " "))
+			refusal.Hint = "Drop " + strings.Join(hidden, " and ") + " to see every row with the ratios this role does see, " +
+				"or filter on one of those: --having 'roi<0' (epc, avg_cpc, conv_rate, roi, cpa). " + refusal.Hint
+			return nil, refusal
+		}
+	}
+
 	out := make([]map[string]interface{}, 0, len(resp.Data))
 	for _, r := range resp.Data {
 		if minClicks > 0 && toFloat(r["total_clicks"]) < minClicks {
@@ -68,7 +96,13 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 		}
 		out = append(out, r)
 	}
-	b, err := json.Marshal(map[string]interface{}{"data": out})
+	filtered := map[string]interface{}{"data": out}
+	// The rows kept still hold nulls for hidden figures: the flag goes with
+	// them, or --ndjson rows and the table's note lose it.
+	if masked {
+		filtered["masked"] = true
+	}
+	b, err := json.Marshal(filtered)
 	if err != nil {
 		return nil, fmt.Errorf("encoding output: %w", err)
 	}

@@ -182,7 +182,11 @@ and Publisher roles) reads reports, clicks and conversions as its pages show
 them: the absolute clicks, click-throughs, leads, income, cost and net, and a
 click's or conversion's cost and payout, are `null`, the ratios are kept, and
 the answer has `"masked": true` (each `--ndjson` line carries it). A `null`
-there means hidden, not zero: do not sum it or report it as 0. Setup records
+there means hidden, not zero: do not sum it or report it as 0. The commands
+that compute from those figures refuse a masked answer (exit 2, naming the
+permission), and so do `report breakdown`'s `--min-clicks`, `--min-cost`,
+`--zero-leads` and a `--having` on one of those figures; a `--having` on a
+ratio (`'roi<0'`) still filters, and its rows keep `"masked": true`. Setup records
 (`campaign list` and the like) are refused outright for a role without
 `access_to_setup_section`, with a 403 that names the permission.
 
