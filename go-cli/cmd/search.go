@@ -364,9 +364,10 @@ var searchCmd = &cobra.Command{
 		"No server is contacted.\n\n" +
 		"good_match says whether the first is a confident answer (it matched at least three\n" +
 		"quarters of your words); a table says so above the list when it is not, and\n" +
-		"--quiet prints a command only for a confident answer, so a script never runs a\n" +
-		"guess. It fails (exit 1) only when nothing matches, or when the words name a web UI\n" +
-		"page no command does, and then it says where that is done instead.\n\n" +
+		"--quiet prints that first command alone, and only for a confident answer, so a\n" +
+		"script never runs a guess. It fails (exit 1) only when nothing matches, or when\n" +
+		"the words name a web UI page no command does, and then it says where that is\n" +
+		"done instead.\n\n" +
 		"Search matches words, not meaning: on 36 tasks as an agent phrased them, written\n" +
 		"before this version was measured, the first result was right for 27 and the first\n" +
 		"five held the right command for 34. A model reading `p202 commands --brief` chose\n" +
@@ -403,8 +404,12 @@ func writeSearchAnswer(w io.Writer, a searchAnswer) error {
 	case jsonOutput || ndjsonOutput:
 		return writeJSONNoEscape(w, a)
 	case quietOutput:
-		for _, r := range a.Results {
-			fmt.Fprintln(w, r.Command)
+		// good_match vouches for the first result only. --quiet printed
+		// every candidate, so a confident answer came with four guesses
+		// under it, one path a line, as alike as the answer to a script
+		// reading the lines; the rest are what --json and the table list.
+		if len(a.Results) > 0 {
+			fmt.Fprintln(w, a.Results[0].Command)
 		}
 		return nil
 	}

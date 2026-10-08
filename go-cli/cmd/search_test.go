@@ -128,12 +128,18 @@ func TestSearchDoesNotPretendACurrencyDimensionExists(t *testing.T) {
 // answer, as `cf cli search` does: of the 25 benchmark queries the previous
 // scorer refused outright, 20 have the right command in the top five now (5
 // of the 7 among the phrasings sealed before tuning). Only --quiet, which
-// prints command paths alone, withholds a guess.
+// prints a command path alone, withholds a guess -- and good_match vouches
+// for the first result only, so a confident --quiet prints that one path:
+// it printed all five, the four candidates under the answer one per line
+// like it.
 func TestSearchQuietPrintsOnlyAConfidentAnswer(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	stdout, _, err := executeCommand("search", "realtime", "traffic", "--quiet")
-	if err != nil || !strings.HasPrefix(stdout, "p202 click list\n") {
-		t.Errorf("realtime traffic --quiet: %v\n%s", err, stdout)
+	if err != nil || stdout != "p202 click list\n" {
+		t.Errorf("realtime traffic --quiet: want the confident first path alone, got %v %q", err, stdout)
+	}
+	if a := searchJSON(t, "realtime", "traffic"); !a.GoodMatch || len(a.Results) < 2 || a.Results[0].Command != "p202 click list" {
+		t.Errorf("realtime traffic --json: want a confident first result and the candidates under it, got %+v", a)
 	}
 	stdout, _, err = executeCommand("search", "breakdown", "by", "currency", "--quiet")
 	if err == nil || exitCodeForError(err) != ExitValidation || stdout != "" || !strings.Contains(hintFor(err), "The candidates") || !strings.Contains(hintFor(err), "p202 commands --brief") {

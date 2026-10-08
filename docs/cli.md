@@ -75,8 +75,8 @@ language."; `unknown_terms` in JSON) -- the commands lack it or call it somethin
 else. Each result says why it matched and, when a flag value or a task
 matched, prints the command line to try. It lists candidates, best first (`--limit N`,
 default 5), and says when the first is not a confident match (`good_match: false` in
-JSON: it matched under three quarters of your words); `--quiet` prints a path only for
-a confident match. It fails (exit 1, nothing on stdout) only when nothing matches, or
+JSON: it matched under three quarters of your words); `--quiet` prints the first path
+alone, and only for a confident match. It fails (exit 1, nothing on stdout) only when nothing matches, or
 when the words name a UI page no command does, which it answers with where that page's
 work is done instead.
 

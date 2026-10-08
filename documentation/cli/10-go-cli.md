@@ -90,8 +90,8 @@ field on its own, summed), and one that combines a word's evidence across a
 command's fields before saturating it (BM25F). Search lists candidates, best
 first (`--limit`, default 5); `good_match` is true when the first matched at least
 three quarters of the query's words, and a table says "No confident match" above
-the list when it did not. `--quiet` prints a path only for a confident match and
-otherwise exits 1 with the candidates in its hint. Search fails (exit 1, nothing
+the list when it did not. `--quiet` prints the first path alone, and only for a
+confident match; otherwise it exits 1 with the candidates in its hint. Search fails (exit 1, nothing
 on stdout) only when nothing matches, or when the query names, in full, a UI page
 no command does (Watch TV202, Hot Deals & Discounts, VIP Perks Profile, Help,
 Home, the 1-click upgrade); it then says where that is done instead.
