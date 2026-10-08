@@ -643,7 +643,7 @@ p202 click list --follow --ndjson --stop-after 10m
 | `--all`             | false   | Fetch all rows across pages          |
 | `--follow`          |         | Print the newest `--limit` clicks (default 10), then each new click as it arrives |
 | `--interval`        | 5s      | With `--follow`: how often to poll (at least 1s) |
-| `--stop-after`      | 0       | With `--follow`: stop after this long (`0` follows until interrupted) |
+| `--stop-after`      | 0       | With `--follow`: stop after this long (`0` follows until interrupted); the last read is at the deadline, so a click from the final interval is shown |
 
 `--follow` is the Spy page. It prints each click once, in time order: JSON
 output (`--json`, `--ndjson`, or chosen for an agent) is one object per line.

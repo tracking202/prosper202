@@ -278,3 +278,39 @@ func TestClickListSendsTheVisitorsFilters(t *testing.T) {
 		t.Errorf("--show outside its values must be refused before any request: %v", err)
 	}
 }
+
+// --stop-after is the window watched. With an interval longer than the
+// watch no tick ever fires, so a click that arrives after the backlog is
+// printed only by the read the deadline itself makes; before it, a click in
+// the last interval of every bounded watch was dropped.
+func TestClickFollowReadsOnceMoreWhenTheTimeRunsOut(t *testing.T) {
+	lowerFollowLimits(t, 500)
+	feed := &clickFeed{}
+	for id := int64(1); id <= 3; id++ {
+		feed.add(id, 3000+id)
+	}
+	feed.onRequest = func(n int, f *clickFeed) {
+		if n == 3 { // after the backlog and its window
+			f.add(4, 3004)
+		}
+	}
+	srv := httptest.NewServer(feed)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("click", "list", "--follow", "--ndjson", "--interval", "1h", "--stop-after", "100ms")
+	if err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	got := followedIDs(t, stdout)
+	if len(got) != 4 || got[3] != 4 {
+		t.Fatalf("printed %v, want the backlog [1 2 3] and then 4, read when the time ran out", got)
+	}
+	feed.mu.Lock()
+	defer feed.mu.Unlock()
+	if feed.requests != 3 {
+		t.Fatalf("%d requests, want 3: the backlog, its window, and one read at the deadline", feed.requests)
+	}
+}

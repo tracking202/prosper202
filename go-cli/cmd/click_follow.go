@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -125,23 +126,13 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		}
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
+	poll := func() error {
 		from := ""
 		if newest > 0 {
 			from = strconv.FormatInt(newest-int64(clickFollowLookback/time.Second), 10)
 		}
 		rows, err := followWindow(c, params, from)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
 		var fresh []followedClick
@@ -162,6 +153,32 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 			if t < floor {
 				delete(seen, id)
 			}
+		}
+		return nil
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// --stop-after is the window watched, not the last tick before it:
+			// with a 5s interval and --stop-after 10s the second tick and the
+			// deadline land together, and returning here dropped every click
+			// of the last interval (measured: a click 5s into a 10s watch
+			// was never printed). Read once more when the time ran out; an
+			// interrupt stops at once.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return poll()
+			}
+			return nil
+		case <-ticker.C:
+		}
+		if err := poll(); err != nil {
+			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil // interrupted mid-poll
+			}
+			return err
 		}
 	}
 }

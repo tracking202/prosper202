@@ -22,6 +22,15 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # The Spy page (visitors.json): --follow prints the newest clicks, then
+    # each new one, one JSON object per line, until --stop-after ends the
+    # turn. Ids and times only: a keyword is visitor-written text.
+    *"traffic live"*)
+        out=$(p202 click list --follow --stop-after 10s --limit 5 --json)
+        n=$(printf '%s\n' "$out" | grep -c '^{' || true)
+        printf 'I watched with `p202 click list --follow --stop-after 10s` (the Spy page). It printed %s clicks, the five newest first, then any that arrived while it watched:\n' "$n"
+        printf '%s\n' "$out" | jq -r 'select(.click_id != null) | "- click \(.click_id) at \(.click_time | todate)"'
+        ;;
     # LTV webhooks and line items (ltv.json). First: the line-item ask says
     # "keyword" and names an EVAL-LTV-ORD- order, which later branches take.
     *"eval-ltv-revenue"*)
