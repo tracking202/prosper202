@@ -336,7 +336,14 @@ class TrackersController extends Controller
 
     /**
      * The live custom variables of the traffic source this tracker's account
-     * belongs to — this user's account only, as Get Links checks.
+     * belongs to — this user's account, and a source of the same user's, as
+     * Get Links reads them (get_trackers.php joins the source on
+     * `pn.user_id` and takes the variables of the account's own sources).
+     * The source was joined on its id alone, and a variable has no user_id
+     * of its own (it is owned through its source, CLAUDE.md #27), so an
+     * account row naming another account's source -- one written before
+     * links were checked -- put that account's parameters and placeholders
+     * into this account's link (measured live).
      *
      * @return list<array{parameter: string, placeholder: string}>
      */
@@ -345,11 +352,6 @@ class TrackersController extends Controller
         if ($ppcAccountId <= 0) {
             return [];
         }
-        // The variables of the account's traffic source when that source is
-        // the caller's too (CLAUDE.md #27): an account filed under another
-        // account's source (written before 229df10) lent that source's
-        // parameters and placeholders to every link on it, which Get Links,
-        // reading only the account's own sources, left out.
         $stmt = $this->prepare(
             'SELECT v.parameter, v.placeholder
              FROM 202_ppc_network_variables v

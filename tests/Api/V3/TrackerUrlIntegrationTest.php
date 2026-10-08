@@ -184,17 +184,22 @@ final class TrackerUrlIntegrationTest extends TestCase
     }
 
     /**
-     * The account is the caller's, but it is filed under another account's
-     * traffic source (written before 229df10 checked it): that source's
-     * variables are not the caller's to put in a link, as Get Links leaves
-     * them out.
+     * The caller's own account, naming another account's traffic source (a
+     * row written before links were checked): the variables are owned
+     * through the source, so they are read only from a source of the
+     * account's own user, as Get Links reads them. The source was joined on
+     * its id alone, and the other account's parameters and placeholders went
+     * into this account's link (measured live).
      */
-    public function testAnAccountUnderAnotherAccountsSourceLendsNoVariables(): void
+    public function testAnOwnAccountOnAnotherAccountsSourceLendsNoVariables(): void
     {
-        self::assertTrue(self::$db->query('INSERT INTO 202_ppc_accounts SET ppc_account_id = 9203, user_id = ' . self::USER . ", ppc_network_id = 9202, ppc_account_name = 'stray', ppc_account_deleted = 0, ppc_account_time = 0"), (string) self::$db->error);
-        $data = $this->url($this->legacyTracker('ppc_account_id', 9203));
-        self::assertStringEndsWith('&t202kw=', $data['direct_url']);
+        $id = $this->tracker(9201);
+        self::assertStringContainsString('adid={ad_id}', $this->url($id)['direct_url'], 'its own source lends its variables');
+        self::assertTrue(self::$db->query('UPDATE 202_ppc_accounts SET ppc_network_id = 9202 WHERE ppc_account_id = 9201'), (string) self::$db->error);
+        $data = $this->url($id);
         self::assertStringNotContainsString('theirs', $data['direct_url']);
+        self::assertStringNotContainsString('adid', $data['direct_url']);
+        self::assertStringEndsWith('?t202id=' . $data['tracker_id_public'] . '&t202kw=', $data['direct_url']);
     }
 
     public function testAnEmptyDomainUsesThisServer(): void
