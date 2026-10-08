@@ -36,7 +36,7 @@ trait ReadsRouteRegistrations
     }
 
     /**
-     * Every route registration on $router, $previewRouter and $stageableRouter
+     * Every route registration on $router, $previewRouter, $stageableRouter and $writePreviewRouter
      * (and on a group's `$r`), in source order.
      *
      * @return list<array{router: string, method: string, path: string, middleware: list<string>, handler: string, group: string, line: int}>
@@ -64,7 +64,7 @@ trait ReadsRouteRegistrations
                 continue;
             }
             $var = $this->t[$i][1];
-            if (in_array($var, ['$router', '$previewRouter', '$stageableRouter'], true)) {
+            if (in_array($var, ['$router', '$previewRouter', '$stageableRouter', '$writePreviewRouter'], true)) {
                 [$router, $prefix, $middleware, $groupBody] = [$var, '', [], ''];
             } elseif ($var === '$r' && $stack !== []) {
                 [$router, $prefix, $middleware, , $groupBody] = $stack[count($stack) - 1];

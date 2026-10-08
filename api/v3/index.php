@@ -1208,6 +1208,26 @@ try {
     $built = $buildRouters($payload, $queryParams, $userId);
     $router = $built['router'];
     $previewRouter = $built['preview'];
+    // ── Write previews ──────────────────────────────────────────────
+    // `?dry_run=1` on a POST, PUT or PATCH previews only where the route's
+    // own handler implements a preview: it reads writeDryRunRequested() and
+    // writes nothing when asked (the Update routes, the scheduled click
+    // deletion). Every other write refuses the parameter, as a DELETE with
+    // no preview does. It was ignored there, so the write ran: measured
+    // live, PUT /system/retention?dry_run=1 -- the spelling the route's own
+    // 422 for a body dry_run told callers to use -- changed the retention
+    // setting, and POST /aff-networks?dry_run=1 created a category.
+    // DryRunRoutesTest holds this list to the handlers that read the flag.
+    $writePreviewRouter = new Router();
+    $writePreview = static fn() => true;
+    $writePreviewRouter->post('/clicks/cpc', $writePreview);
+    $writePreviewRouter->group('/conversions', function (Router $r) use ($writePreview) {
+        $r->post('/subids', $writePreview);
+        $r->post('/subids/delete', $writePreview);
+        $r->post('/subids/reset', $writePreview);
+        $r->post('/uploads', $writePreview);
+    });
+    $writePreviewRouter->post('/system/retention/delete-before', $writePreview);
     // ── Staged writes ───────────────────────────────────────────────
     // `?staged=1` on an operator-surface write records it as a proposal
     // (server-issued change id) instead of executing it; a person applies
@@ -1337,10 +1357,14 @@ try {
     // requireScope middleware) still run below; this is the floor, not a
     // replacement.
     $stagedWrite = stagedWriteRequested($method, $queryParams);
-    $dryRun = deleteDryRunRequested($method, $queryParams);
+    // Read for every write, not only a DELETE: a POST, PUT or PATCH that
+    // asks for a preview gets one or a 422 (below), never the write.
+    $dryRun = $method === 'DELETE'
+        ? deleteDryRunRequested($method, $queryParams)
+        : in_array($method, ['POST', 'PUT', 'PATCH'], true) && writeDryRunRequested($queryParams);
     if ($stagedWrite && $dryRun) {
         throw new ValidationException('staged and dry_run are mutually exclusive', [
-            'staged' => 'Use dry_run=1 to preview a delete, or staged=1 to record it for approval — not both.',
+            'staged' => 'Use dry_run=1 to preview a write, or staged=1 to record it for approval — not both.',
         ]);
     }
 
@@ -1469,7 +1493,7 @@ try {
         }
 
         // Execute handler (or the dry-run preview for a DELETE that asked for one)
-        if ($dryRun) {
+        if ($dryRun && $method === 'DELETE') {
             $preview = $previewRouter->match('DELETE', $path);
             if ($preview === null) {
                 throw new ValidationException('dry_run is not supported for this endpoint', [
@@ -1477,7 +1501,13 @@ try {
                 ]);
             }
             $response = ($preview['handler'])($preview['pathParams']);
+        } elseif ($dryRun && $writePreviewRouter->match($method, $path) === null) {
+            // A write whose handler has no preview: refused, never run.
+            throw new ValidationException('dry_run is not supported for this endpoint', [
+                'dry_run' => 'This route has no preview; remove dry_run to perform the write.',
+            ]);
         } else {
+            // A previewing write's handler reads dry_run itself.
             $response = ($match['handler'])($match['pathParams']);
         }
     }
@@ -1554,10 +1584,12 @@ function deleteDryRunRequested(string $method, array $queryParams): bool
 }
 
 /**
- * Whether a POST write that has a preview (the Update routes) asked for it
- * with `?dry_run=1`. Read by the handler itself, which previews instead of
- * writing; the strict values are deleteDryRunRequested()'s, so a typo like
- * dry_run=tru is an error and never the write.
+ * Whether a POST, PUT or PATCH asked for a preview with `?dry_run=1`. Read
+ * by the dispatcher for every write, which refuses it where the route has
+ * no preview ($writePreviewRouter), and by a previewing route's handler,
+ * which previews instead of writing; the strict values are
+ * deleteDryRunRequested()'s, so a typo like dry_run=tru is an error and
+ * never the write.
  */
 function writeDryRunRequested(array $queryParams): bool
 {

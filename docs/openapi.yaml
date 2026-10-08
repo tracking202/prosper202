@@ -84,6 +84,9 @@ info:
     Every operator-surface DELETE accepts `dry_run=1` and returns a preview
     (record, soft/hard mode, cascade counts) without deleting. Fail-closed
     on unsupported endpoints. Advertised via `features.delete_dry_run`.
+    A POST, PUT or PATCH takes `dry_run=1` only where the route documents a
+    preview (the Update routes, `POST /system/retention/delete-before`);
+    every other write answers `422` naming `dry_run` and writes nothing.
 
     ## Staged Writes
     `staged=1` on an operator-surface write records it as a proposal with a

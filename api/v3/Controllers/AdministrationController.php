@@ -262,7 +262,7 @@ final class AdministrationController
      */
     public function setRetention(array $payload): array
     {
-        PayloadKeys::refuseUnknown($payload, ['auto_delete_days'], 'the retention setting', self::QUERY_NOT_BODY);
+        PayloadKeys::refuseUnknown($payload, ['auto_delete_days'], 'the retention setting', self::NO_PREVIEW);
         if (!array_key_exists('auto_delete_days', $payload)) {
             throw new ValidationException('auto_delete_days is required', [
                 'auto_delete_days' => 'is required: a whole number of days from 0 (keep every click) to ' . self::MAX_AUTO_DELETE_DAYS,
@@ -553,7 +553,7 @@ final class AdministrationController
      */
     public function setIspLookup(array $payload): array
     {
-        PayloadKeys::refuseUnknown($payload, ['enabled'], 'the ISP lookup setting', self::QUERY_NOT_BODY);
+        PayloadKeys::refuseUnknown($payload, ['enabled'], 'the ISP lookup setting', self::NO_PREVIEW);
         if (!array_key_exists('enabled', $payload) || !is_bool($payload['enabled'])) {
             throw new ValidationException('enabled is required', ['enabled' => 'must be true (look up ISPs) or false']);
         }
@@ -689,6 +689,15 @@ final class AdministrationController
     /** A body key that belongs in the query string, said so when it is refused. */
     private const QUERY_NOT_BODY = [
         'dry_run' => 'goes in the query string, not the body: …?dry_run=1 previews; without it the request writes',
+    ];
+
+    /**
+     * A body dry_run on a setting with no preview. It used to get
+     * QUERY_NOT_BODY's "…?dry_run=1 previews", and the query string's
+     * dry_run was then ignored, so following the advice changed the setting.
+     */
+    private const NO_PREVIEW = [
+        'dry_run' => 'is not taken: this setting has no preview (?dry_run=1 is refused too); send the request without it to change the setting, and GET it to read the current value',
     ];
 
     /**

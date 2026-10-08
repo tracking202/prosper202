@@ -231,6 +231,17 @@ and an unrecognized `dry_run` value (anything other than `1/true/yes` or
 `0/false/no`) is a `422`, never a delete. `features.delete_dry_run` in
 [capabilities](17-capabilities.md) advertises support.
 
+A `POST`, `PUT` or `PATCH` previews with `?dry_run=1` only where the route
+has a preview: the Update routes (`/clicks/cpc`, `/conversions/subids`,
+`…/subids/delete`, `…/subids/reset`, `/conversions/uploads`, see
+[Update](26-update.md)) and `POST /system/retention/delete-before`. Every
+other write refuses it — `422`, `field_errors.dry_run`: `This route has no
+preview; remove dry_run to perform the write.` — and writes nothing, as a
+DELETE without a preview does; `dry_run` with `staged` is a `422` on any
+write. The parameter used to be read on a DELETE alone, so on any other
+write it was ignored and the write ran: `PUT /system/retention?dry_run=1`
+changed the setting it was meant to preview.
+
 ## Staged Writes
 
 The model proposes; a person applies. `?staged=1` on an operator-surface
