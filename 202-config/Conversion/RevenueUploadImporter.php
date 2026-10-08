@@ -318,10 +318,25 @@ final class RevenueUploadImporter
      * A commission cell as a decimal string, or null when it is not one.
      * Currency symbols, thousands separators and surrounding spaces are what
      * network reports put around a number; anything else is not a number.
+     *
+     * A comma is read only as a thousands separator: between groups of three
+     * digits, before any decimal point, the first group not starting with 0
+     * ("1,234.56", "1,000,000"; "0,125" is a decimal comma). Every comma
+     * was deleted wherever it stood, so a report written with a decimal comma
+     * had "12,50" recorded as 1250.00000, "1.234,56" as 1.23456 and "1,23" as
+     * 123.00000, each line marked recorded (measured through POST
+     * /conversions/uploads). A comma anywhere else is not a number, and the
+     * line is skipped with the reason, never guessed at (CLAUDE.md #4).
      */
     public static function parseAmount(string $raw): ?string
     {
-        $clean = str_replace(['$', ',', ' ', "\u{00A0}"], '', trim($raw));
+        $clean = str_replace(['$', ' ', "\u{00A0}"], '', trim($raw));
+        if (str_contains($clean, ',')) {
+            if (preg_match('/^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/D', $clean) !== 1) {
+                return null;
+            }
+            $clean = str_replace(',', '', $clean);
+        }
         if (preg_match('/^-?\d+(\.\d+)?$/D', $clean) !== 1) {
             return null;
         }

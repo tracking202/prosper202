@@ -156,7 +156,25 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'plain' => ['12.5', '12.50000'];
         yield 'dollar sign' => ['$12.50', '12.50000'];
         yield 'thousands separator' => ['$1,234.56', '1234.56000'];
+        yield 'thousands separators, no decimals' => ['1,000,000', '1000000.00000'];
+        yield 'negative with a thousands separator' => ['-1,234.50', '-1234.50000'];
         yield 'spaces' => [' 3 ', '3.00000'];
+        // A comma is a thousands separator only between groups of three
+        // digits. Deleting it wherever it stood read a decimal comma as
+        // a separator: "12,50" was 1250 and "1.234,56" 1.23456.
+        yield 'decimal comma' => ['12,50', null];
+        yield 'decimal comma, one digit' => ['12,5', null];
+        yield 'decimal comma after a thousands point' => ['1.234,56', null];
+        yield 'comma before two digits' => ['1,23', null];
+        yield 'comma before four digits' => ['1,2345', null];
+        yield 'group of four before a comma' => ['1234,567', null];
+        yield 'comma after the decimal point' => ['1.234,567', null];
+        yield 'leading comma' => [',123', null];
+        yield 'trailing comma' => ['123,', null];
+        yield 'two commas together' => ['1,,234', null];
+        // No thousands group starts with 0: "0,125" is a decimal comma.
+        yield 'decimal comma of three digits after 0' => ['0,125', null];
+        yield 'leading zero before a comma' => ['01,234', null];
         yield 'negative (a charge-back line)' => ['-4.00', '-4.00000'];
         yield 'empty' => ['', null];
         yield 'text' => ['pending', null];

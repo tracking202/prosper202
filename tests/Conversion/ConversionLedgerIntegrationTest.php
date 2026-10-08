@@ -367,6 +367,41 @@ final class ConversionLedgerIntegrationTest extends TestCase
     }
 
     /**
+     * A report written with a decimal comma: every comma was deleted, so
+     * "12,50" was recorded as 1250.00000 and "1.234,56" as 1.23456, each
+     * line marked recorded. They are skipped as not numbers and write no
+     * row; a comma between groups of three digits still reads as the
+     * thousands separator it is.
+     */
+    public function testADecimalCommaIsSkippedNotReadAsAThousandsSeparator(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7, '0.00');
+        $this->click(101, 7, '0.00');
+
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+        $h = fopen('php://memory', 'r+');
+        fwrite($h, "subid,amount\n100,\"12,50\"\n100,\"1.234,56\"\n100,\"1,23\"\n101,\"\$1,234.50\"\n");
+        rewind($h);
+        $result = $importer->import(1, 'eu.csv', $h, 0, 1);
+
+        self::assertSame(1, $result['recorded']);
+        self::assertSame(3, $result['skipped']);
+        $skipped = array_filter($result['lines'], static fn ($l) => $l['status'] === 'skipped');
+        $nan = 'the commission is not a number';
+        self::assertSame([2 => $nan, 3 => $nan, 4 => $nan], array_column($skipped, 'reason', 'line'));
+        self::assertSame(
+            [2 => '12,50', 3 => '1.234,56', 4 => '1,23'],
+            array_column($skipped, 'amount', 'line'),
+            'each listed as the cell it was'
+        );
+        self::assertSame(['101' => '1234.50000'], array_map('strval', $result['totals']));
+        self::assertSame([], $this->rows(100), 'no row for a commission that could not be read');
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        self::assertSame('1234.50000', $this->clickState(101)['payout']);
+    }
+
+    /**
      * The legacy endpoints' id-less rule (gpb.php, upx.php, gpx.php and the
      * per-campaign pixel and postback, through p202RecordConversion): a
      * retry cannot be told from a repeat, so the click converts once. In a

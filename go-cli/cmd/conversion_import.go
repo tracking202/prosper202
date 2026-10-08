@@ -376,10 +376,23 @@ func parseImportClickID(subid string) (int64, bool) {
 
 var importAmountPattern = regexp.MustCompile(`^(-)?(\d+)(?:\.(\d+))?$`)
 
+// importThousandsPattern is the only place a comma may stand in a payout: between groups of three
+// digits, before any decimal point, the first group not starting with 0 ("0,125" is a decimal comma).
+var importThousandsPattern = regexp.MustCompile(`^-?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?$`)
+
 // parseImportAmount reads a payout as RevenueUploadImporter::parseAmount and Amount::toUnits do:
 // currency signs, thousands separators and spaces dropped, 5 decimals rounded half away from zero.
+// A comma is read only as a thousands separator ("1,234.56"). Every comma was dropped wherever it
+// stood, so a decimal comma's "12,50" was sent as a payout of 1250.00 and "1.234,56" as 1.23456;
+// any other comma is not a number, and the row is invalid.
 func parseImportAmount(raw string) (units int64, canonical string, ok bool) {
-	clean := strings.NewReplacer("$", "", ",", "", " ", "", "\u00a0", "").Replace(strings.TrimSpace(raw))
+	clean := strings.NewReplacer("$", "", " ", "", "\u00a0", "").Replace(strings.TrimSpace(raw))
+	if strings.Contains(clean, ",") {
+		if !importThousandsPattern.MatchString(clean) {
+			return 0, "", false
+		}
+		clean = strings.ReplaceAll(clean, ",", "")
+	}
 	m := importAmountPattern.FindStringSubmatch(clean)
 	if m == nil {
 		return 0, "", false
@@ -1132,7 +1145,8 @@ func newConversionImportCmd() *cobra.Command {
 			"Columns (auto-detected from the header, case and punctuation ignored; the flags override):\n" +
 			"  subid           required: subid, sub_id, aff_sub, sub1, click_id, clickid, s2 (--subid-column)\n" +
 			"  payout          optional: payout, commission, amount, revenue (--payout-column); $ and\n" +
-			"                  thousands separators are dropped; absent = the campaign's default payout\n" +
+			"                  thousands separators (1,234.50) are dropped, a decimal comma (12,50) is\n" +
+			"                  refused; absent = the campaign's default payout\n" +
 			"  transaction id  optional: transaction_id, order_id, txid (--txid-column)\n" +
 			"  time            optional: date, time, conversion_date, created_at (--time-column); unix\n" +
 			"                  seconds or ms, or 2026-02-03[ 14:05[:00]] in --timezone (default UTC),\n" +

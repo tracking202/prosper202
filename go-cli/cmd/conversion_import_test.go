@@ -392,13 +392,22 @@ func TestConversionImportReadsJSONArrays(t *testing.T) {
 
 func TestConversionImportSniffsSemicolonDelimiter(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	file := writeImportFile(t, "export.csv", "subid;payout\n12345;4,50\n")
+	file := writeImportFile(t, "export.csv", "subid;payout\n12345;4.50\n12346;4,50\n")
 	stdout, _, err := executeCommand("conversion", "import", file, "--dry-run", "--json")
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
-	// A comma is a thousands separator to the server's amount parser, so "4,50" is 450.
-	if r := decodeImport(t, stdout).Data[0]; r.ClickID != 12345 || r.Payout != "450.00" {
+	rows := decodeImport(t, stdout).Data
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r := rows[0]; r.ClickID != 12345 || r.Payout != "4.50" {
+		t.Errorf("row = %+v", r)
+	}
+	// A semicolon file is often a decimal-comma one. This test read "4,50" as 450, as the server's
+	// parser then did; a comma is a thousands separator only between groups of three digits, so
+	// the row is refused rather than sent at a hundred times its payout.
+	if r := rows[1]; r.ClickID != 12346 || r.Status != importInvalid || r.Reason != `payout "4,50" is not a number` {
 		t.Errorf("row = %+v", r)
 	}
 }
@@ -1167,13 +1176,18 @@ func TestParseImportAmountMatchesTheServer(t *testing.T) {
 		"-0.000005":    "-0.00001",
 		"1\u00a0000.1": "1000.10",
 		"007.25":       "7.25",
+		"1,000,000":    "1000000.00",
+		"-1,234.50":    "-1234.50",
 	} {
 		_, got, ok := parseImportAmount(raw)
 		if !ok || got != want {
 			t.Errorf("parseImportAmount(%q) = %q, %v; want %q", raw, got, ok, want)
 		}
 	}
-	for _, raw := range []string{"", "ten", "1e3", "1.", ".5", "--1", "12345678901234", "€5"} {
+	// A comma is a thousands separator only between groups of three digits: a decimal comma was
+	// read as one, so "12,50" was sent as 1250.00 and "1.234,56" as 1.23456.
+	for _, raw := range []string{"", "ten", "1e3", "1.", ".5", "--1", "12345678901234", "€5",
+		"12,50", "12,5", "1.234,56", "1,23", "1,2345", "1234,567", ",123", "123,", "1,,234", "0,125", "01,234"} {
 		if _, got, ok := parseImportAmount(raw); ok {
 			t.Errorf("parseImportAmount(%q) = %q, want refused", raw, got)
 		}

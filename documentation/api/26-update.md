@@ -230,7 +230,10 @@ Every line is accounted for, as the page accounts for it: `recorded`
 per click, and `lines` lists each line that was not recorded — `skipped` with
 the reason (not a subid, the commission is not a number, no click with this
 subid in your account), or `header` (line 1 when its subid cell is not a
-click id). Amounts may carry `$`, thousands separators and spaces. A header
+click id). Amounts may carry `$`, spaces and a comma between groups of three
+digits (`1,234.56`); any other comma is not read as a number, so a report
+written with a decimal comma (`12,50`, `1.234,56`) has those lines skipped
+rather than recorded at a hundred times the amount. A header
 name that matches no column or more than one, an index past the header, and
 the same column for both are `422`s that list the header's columns.
 

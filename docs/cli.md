@@ -807,10 +807,12 @@ How each cell is read:
   subid uploads read it: the click id, digits only, no sign, no leading zero,
   within bigint (`Prosper202\Click\ClickId::parse`). Surrounding spaces are
   trimmed, as the uploads do.
-- **payout**: `$`, thousands separators and spaces are dropped, as the revenue
-  upload does; more than five decimals are rounded the way the ledger stores
-  them. A negative payout needs a transaction id: it reverses the sale with that
-  id, as a postback would.
+- **payout**: `$`, thousands separators (`1,234.50`, a comma between groups of
+  three digits) and spaces are dropped, as the revenue upload does; any other
+  comma is not a number, so a decimal comma (`12,50`, `1.234,56`) makes the row
+  invalid rather than a payout a hundred times too large. More than five
+  decimals are rounded the way the ledger stores them. A negative payout needs
+  a transaction id: it reverses the sale with that id, as a postback would.
 - **transaction id**: up to 255 bytes.
 - **time**: unix seconds (10 digits) or milliseconds (13), `YYYYMMDD`,
   `2026-02-03`, `2026-02-03 14:05[:00]` (with or without `T`), or RFC 3339.
