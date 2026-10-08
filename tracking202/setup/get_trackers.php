@@ -144,10 +144,9 @@ foreach (p202_setup_rows($db, "SELECT pv.ppc_network_id, pv.parameter, pv.placeh
 	$linkVariables[(int) $variable['ppc_network_id']][] = $variable;
 }
 $trackerLink = static function (array $tracker) use ($base, $linkVariables): array {
-	$vars_query = '';
-	foreach ($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [] as $variable) {
-		$vars_query .= '&' . $variable['parameter'] . '=' . $variable['placeholder'];
-	}
+	// The variables as the link generator and GET /trackers/{id}/url write
+	// them: the source's own, then `t202kw=`.
+	$variables = \Prosper202\Click\TrackingLinkVariables::query($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [], []);
 	// A link whose landing page or redirector is not one of this account's
 	// (another account's, or removed since) has no link to give: the page's
 	// URL is not this account's to build on, and a direct link would send
@@ -160,22 +159,19 @@ $trackerLink = static function (array $tracker) use ($base, $linkVariables): arr
 		return ['', 'no redirector', ''];
 	}
 	if ($tracker['landing_page_id']) {
-		$parsed_url = parse_url((string) $tracker['landing_page_url']);
-		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . ($parsed_url['host'] ?? '') . ($parsed_url['path'] ?? '') . '?';
-		if (!empty($parsed_url['query'])) {
-			$destination_url .= $parsed_url['query'] . '&';
-		}
-		$destination_url .= 't202id=' . $tracker['tracker_id_public'];
-		if (!empty($parsed_url['fragment'])) {
-			$destination_url .= '#' . $parsed_url['fragment'];
-		}
-		$destination_url .= 't202kw=';
-		return [(string) $tracker['landing_page_nickname'], 'landing page', $destination_url];
+		// The landing page's own URL, built as GET /trackers/{id}/url builds
+		// it: port kept, the id and variables before any #fragment. This list
+		// wrote `t202kw=` with no `&` straight onto the id (`t202id=12t202kw=`,
+		// an id no tracker has) and after the fragment, dropped the port, and
+		// left out the source's variables. A URL with no host to build on has
+		// no link either.
+		$link = \Api\V3\Controllers\TrackersController::buildLandingPageUrl((string) $tracker['landing_page_url'], (int) $tracker['tracker_id_public'], $variables);
+		return [(string) $tracker['landing_page_nickname'], $link === '' ? 'no landing page URL' : 'landing page', $link];
 	}
 	if ($tracker['rotator_id']) {
-		return [(string) $tracker['name'], 'redirector', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/rtr.php?t202id=' . $tracker['tracker_id_public'] . '&t202kw=' . $vars_query];
+		return [(string) $tracker['name'], 'redirector', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/rtr.php?t202id=' . $tracker['tracker_id_public'] . $variables];
 	}
-	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . '&t202kw=' . $vars_query];
+	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . $variables];
 };
 
 template_top('Get Trackers'); ?>

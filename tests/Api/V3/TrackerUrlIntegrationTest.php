@@ -183,6 +183,20 @@ final class TrackerUrlIntegrationTest extends TestCase
         self::assertStringNotContainsString('theirs', $data['direct_url']);
     }
 
+    /**
+     * The account is the caller's, but it is filed under another account's
+     * traffic source (written before 229df10 checked it): that source's
+     * variables are not the caller's to put in a link, as Get Links leaves
+     * them out.
+     */
+    public function testAnAccountUnderAnotherAccountsSourceLendsNoVariables(): void
+    {
+        self::assertTrue(self::$db->query('INSERT INTO 202_ppc_accounts SET ppc_account_id = 9203, user_id = ' . self::USER . ", ppc_network_id = 9202, ppc_account_name = 'stray', ppc_account_deleted = 0, ppc_account_time = 0"), (string) self::$db->error);
+        $data = $this->url($this->legacyTracker('ppc_account_id', 9203));
+        self::assertStringEndsWith('&t202kw=', $data['direct_url']);
+        self::assertStringNotContainsString('theirs', $data['direct_url']);
+    }
+
     public function testAnEmptyDomainUsesThisServer(): void
     {
         self::setDomain('');

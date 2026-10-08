@@ -244,9 +244,10 @@ class TrackersController extends Controller
      * Append t202id to a landing page URL, preserving any existing query string
      * and fragment. Matches the parse_url handling in generate_tracking_link.php.
      * Returns an empty string when the URL is missing or unparseable, so the
-     * caller can fall back to a redirect-handler URL.
+     * caller can fall back to a redirect-handler URL. Get Links' list of
+     * saved links (get_trackers.php) builds its landing page links here too.
      */
-    private static function buildLandingPageUrl(string $landingPageUrl, int $publicId, string $variables = ''): string
+    public static function buildLandingPageUrl(string $landingPageUrl, int $publicId, string $variables = ''): string
     {
         if (trim($landingPageUrl) === '') {
             return '';
@@ -303,10 +304,16 @@ class TrackersController extends Controller
         if ($ppcAccountId <= 0) {
             return [];
         }
+        // The variables of the account's traffic source when that source is
+        // the caller's too (CLAUDE.md #27): an account filed under another
+        // account's source (written before 229df10) lent that source's
+        // parameters and placeholders to every link on it, which Get Links,
+        // reading only the account's own sources, left out.
         $stmt = $this->prepare(
             'SELECT v.parameter, v.placeholder
              FROM 202_ppc_network_variables v
              INNER JOIN 202_ppc_accounts a ON a.ppc_network_id = v.ppc_network_id
+             INNER JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id
              WHERE a.ppc_account_id = ? AND a.user_id = ? AND v.deleted = 0
              ORDER BY v.ppc_variable_id'
         );

@@ -49,6 +49,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
     private const STRAY = 990073;
     private const LINK_ON_THEIRS = 99007119;
     private const LINK_ON_THEIR_REDIRECTOR = 99007129;
+    private const LINK_ON_MINE = 99007139;
     private const ROLE = 990071;
 
     private static string $sessions = '';
@@ -106,7 +107,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
-        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id = ' . self::OTHER);
+        self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id IN (' . self::OTHER . ', ' . self::USER . ')');
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::ROLE);
         if (self::$addedPermission !== null) {
@@ -165,6 +166,15 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
             'text_ad_id' => $o, 'ppc_account_id' => $o, 'landing_page_id' => $o, 'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t]);
         self::row('202_trackers', ['tracker_id' => $s, 'user_id' => $a, 'tracker_id_public' => self::LINK_ON_THEIR_REDIRECTOR, 'aff_campaign_id' => 0,
             'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0, 'rotator_id' => $o, 'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t]);
+        // And one wholly A's: its landing page has a port, a query and a
+        // fragment, and its source a variable.
+        self::row('202_ppc_networks', ['ppc_network_id' => $a, 'user_id' => $a, 'ppc_network_name' => 'My Source', 'ppc_network_time' => $t]);
+        self::row('202_ppc_accounts', ['ppc_account_id' => $a, 'user_id' => $a, 'ppc_network_id' => $a, 'ppc_account_name' => 'My Account', 'ppc_account_time' => $t]);
+        self::row('202_ppc_network_variables', ['ppc_variable_id' => $a, 'ppc_network_id' => $a, 'name' => 'My Var', 'parameter' => 'myvar', 'placeholder' => '{mine}']);
+        self::row('202_landing_pages', ['landing_page_id' => $a, 'user_id' => $a, 'aff_campaign_id' => 0, 'landing_page_nickname' => 'My Page',
+            'landing_page_url' => 'https://mine.example:8443/lp?x=1#top', 'landing_page_time' => $t]);
+        self::row('202_trackers', ['tracker_id' => $a + 20, 'user_id' => $a, 'tracker_id_public' => self::LINK_ON_MINE, 'aff_campaign_id' => 0,
+            'text_ad_id' => 0, 'ppc_account_id' => $a, 'landing_page_id' => $a, 'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t]);
     }
 
     /**
@@ -222,6 +232,20 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         self::assertStringContainsString('no redirector', $out);
     }
 
+    /**
+     * A landing page link is the one GET /trackers/{id}/url gives: the page's
+     * port kept, the id and the source's variables before its fragment. This
+     * list wrote `t202kw=` with no `&` onto the id, after the fragment, and
+     * dropped the port and the variables.
+     */
+    public function testGetLinksGivesALandingPageLinkAsTheApiBuildsIt(): void
+    {
+        $out = self::page('tracking202/setup/get_trackers.php');
+        $link = 'https://mine.example:8443/lp?x=1&t202id=' . self::LINK_ON_MINE . '&myvar={mine}&t202kw=#top';
+        self::assertSame(\Api\V3\Controllers\TrackersController::buildLandingPageUrl('https://mine.example:8443/lp?x=1#top', self::LINK_ON_MINE, '&myvar={mine}&t202kw='), $link);
+        self::assertStringContainsString('data-p202-copy="' . htmlspecialchars($link, ENT_QUOTES) . '"', $out, 'the link to copy');
+    }
+
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void
     {
         $out = self::page('tracking202/setup/aff_campaigns.php');
@@ -236,7 +260,11 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         $out = self::page('function:p202_update_traffic_lists');
         $lists = json_decode($out, true);
         self::assertIsArray($lists, $out);
-        self::assertSame([], $lists['accounts'], 'an account under another account\'s source is left out, as one under a deleted source is: ' . $out);
+        $accounts = [];
+        foreach ($lists['accounts'] as $source) {
+            array_push($accounts, ...array_keys($source['options'] ?? []));
+        }
+        self::assertSame([self::USER], $accounts, 'an account under another account\'s source is left out, as one under a deleted source is; the account under its own is listed: ' . $out);
         self::assertShowsNothingOfTheOtherAccount($out, 'Update › CPC');
     }
 
