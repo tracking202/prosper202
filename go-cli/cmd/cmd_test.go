@@ -3507,6 +3507,69 @@ func TestImportCampaignsStripsImmutableFields(t *testing.T) {
 	}
 }
 
+// import flattened a record's API error into its message with %s: a 401
+// exited 1 as a validation error with the --help hint, and the server's
+// refusal of a read-only or unknown field lost the hint that says to remove
+// it from the file's records. The error is wrapped, so its category, exit
+// code and class hint survive, with the record named.
+func TestImportKeepsTheRecordsAPIError(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer string
+		status       int
+		exit         int
+		hint         string
+	}{
+		{"401", `{"error":true,"message":"Invalid API key","status":401}`, 401, ExitAuth, "p202 config set-key"},
+		{"422 unknown field", `{"error":true,"message":"Validation failed","status":422,` +
+			`"field_errors":{"aff_campaign_nmae":"aff_campaign_nmae is not a field of campaigns"}}`, 422, ExitValidation, "from the file's records"},
+		{"500", `{"error":true,"message":"boom","status":500}`, 500, ExitServer, "p202 system health"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+					posts++
+					if posts == 1 {
+						w.WriteHeader(201)
+						w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+						return
+					}
+					w.WriteHeader(tc.status)
+					w.Write([]byte(tc.answer))
+					return
+				}
+				w.WriteHeader(404)
+				w.Write([]byte(`{"message":"not found"}`))
+			}))
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			inFile := filepath.Join(tmp, "campaigns.json")
+			if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"}]`), 0600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+
+			stdout, _, err := executeCommand("import", "campaigns", inFile, "--json")
+			if err == nil {
+				t.Fatalf("a failed record must fail the import: %s", stdout)
+			}
+			if code := exitCodeForError(err); code != tc.exit {
+				t.Errorf("exit %d, want %d (%v)", code, tc.exit, err)
+			}
+			if h := hintFor(err); !strings.Contains(h, tc.hint) {
+				t.Errorf("hint %q, want the API error's class hint naming %q", h, tc.hint)
+			}
+			if !strings.Contains(err.Error(), "record 2 of 3 (1 imported and 0 staged before it)") {
+				t.Errorf("the message must name the record and what was sent before it: %v", err)
+			}
+			if posts != 2 {
+				t.Errorf("%d POSTs, want 2: the import stops at the failed record", posts)
+			}
+		})
+	}
+}
+
 func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
 	var createPath, deletePath string
 

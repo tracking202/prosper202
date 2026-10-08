@@ -1518,7 +1518,9 @@ p202 import campaigns /tmp/campaigns.json --skip-errors
 It sends linked ids (`aff_network_id`, `aff_campaign_id`, …) as they are in the file, and the server
 takes only ids of the importing account's own live records, so a file exported from another
 account or server is refused row by row with the field named. To copy between servers use
-`p202 sync`, which maps each linked id to the target's.
+`p202 sync`, which maps each linked id to the target's. Without `--skip-errors` the first
+refused record stops the import with that record's number, how many were imported before it,
+and the API error's category, exit code and hint (a bad key exits 2; a 5xx, 4).
 
 ## Multi-server workflows
 

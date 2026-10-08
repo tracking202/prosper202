@@ -75,10 +75,14 @@ var dataImportCmd = &cobra.Command{
 			created, err := c.Post(endpoint, body)
 			if err != nil {
 				failed++
-				msg := fmt.Sprintf("record %d: %v", i+1, err)
-				errorsOut = append(errorsOut, msg)
+				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
 				if !skipErrors {
-					return fmt.Errorf("import failed (%s)", msg)
+					// %w: flattened with %s, a 401 exited 1 as a validation
+					// error with the --help hint, and the class hint for a
+					// read-only or unknown field (remove it from the file's
+					// records) never reached the user.
+					return fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it): %w",
+						i+1, len(records), imported, staged, err)
 				}
 				continue
 			}
