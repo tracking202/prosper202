@@ -156,6 +156,26 @@ LT=$(grep -oE 'name="token" value="[^"]+"' "$OUT/login.html" | head -1 | sed 's/
 curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" --data-urlencode "token=$LT" \
   --data-urlencode "user_name=$P202_USER" --data-urlencode "user_pass=$P202_PASS" -o /dev/null
 curl -sS -b "$JAR" -c "$JAR" -L "$BASE/202-account/administration.php" -o "$OUT/ad.html"
+
+# A day that is not one, or is after today, is refused and schedules
+# nothing: createFromFormat() rolled 2001-02-31 to March 3 and 2001-13-01 to
+# 2002-01-01, and a day after today deletes every click there is. The page
+# answers 200 with the refusal (a schedule answers 303), and user 1's row is
+# as it was.
+BEFORE_ROW=$(Q "SELECT CONCAT_WS('|', IFNULL(user_delete_data_before, 'NULL'), IFNULL(user_delete_data_clickid, 'NULL')) FROM 202_users_pref WHERE user_id=1")
+# Two days on in UTC is after today in every zone (none is 48 hours ahead).
+TOMORROW=$(date -u -d '+2 days' +%F)
+for bad_day in 2001-02-31 2001-13-01 "$TOMORROW"; do
+  case "$bad_day" in 2001-*) sentence='Pick the date: click data from before it is deleted.' ;; *) sentence='Pick today or an earlier day' ;; esac
+  python3 "$HERE/form-body.py" "$OUT/ad.html" database_management database_management="$bad_day" > "$OUT/bad-form" || bad "the deletion form is on the page"
+  code=$(curl -sS -b "$JAR" -c "$JAR" -o "$OUT/ad-bad.html" -w '%{http_code}' --data-binary @"$OUT/bad-form" \
+    -H 'Content-Type: application/x-www-form-urlencoded' "$BASE/202-account/administration.php")
+  eq "$code" "200" "$bad_day: the page answers in place, not with a redirect"
+  has "$OUT/ad-bad.html" "$sentence" "$bad_day: the refusal is said"
+  eq "$(Q "SELECT CONCAT_WS('|', IFNULL(user_delete_data_before, 'NULL'), IFNULL(user_delete_data_clickid, 'NULL')) FROM 202_users_pref WHERE user_id=1")" \
+    "$BEFORE_ROW" "$bad_day: nothing is scheduled"
+done
+
 if ! python3 "$HERE/form-body.py" "$OUT/ad.html" database_management database_management="$DAY" > "$OUT/form"; then
     bad "the deletion form is on the page"
     exit 1

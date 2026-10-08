@@ -160,10 +160,25 @@ if (isset($_POST['database_management'])) {
     // and Ireland were cut hours off, and a day across a daylight-saving
     // change from today an hour off (CLAUDE.md #29).
     $zone = new DateTimeZone(date_default_timezone_get());
-    $eraseDate = DateTimeImmutable::createFromFormat('!Y-m-d', $postedDate, $zone)
-        ?: DateTimeImmutable::createFromFormat('!d-m-Y', $postedDate, $zone);
+    // A day as written, never rolled over, and not after today, as
+    // POST /system/retention/delete-before reads it: createFromFormat()
+    // read 2026-02-31 as March 3 and 2026-13-01 as 2027-01-01, a day after
+    // every click there is, which deletes all of them in every account. The
+    // input's max stops a browser from picking a later day; this stops a
+    // request that did not come from it.
+    $eraseDate = false;
+    foreach (['Y-m-d', 'd-m-Y'] as $format) {
+        $parsed = DateTimeImmutable::createFromFormat('!' . $format, $postedDate, $zone);
+        if ($parsed !== false && $parsed->format($format) === $postedDate) {
+            $eraseDate = $parsed;
+            break;
+        }
+    }
+    $today = (new DateTimeImmutable('now', $zone))->format('Y-m-d');
     if ($postedDate === '' || $eraseDate === false) {
         $fieldErrors['database_management'] = 'Pick the date: click data from before it is deleted.';
+    } elseif ($eraseDate->format('Y-m-d') > $today) {
+        $fieldErrors['database_management'] = 'Pick today or an earlier day: every click recorded so far is from before a later one.';
     } else {
         $cutoff = $eraseDate->getTimestamp();
         $day = $eraseDate->format('M j, Y');
