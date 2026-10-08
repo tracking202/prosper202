@@ -1049,7 +1049,7 @@ p202 analytics --group-by campaign --days 14 --sort roi --limit 10
 #### Before/after a date (`--split-at`)
 
 ```bash
-# Which countries moved after 2026-09-04? (default window: last90)
+# Which countries moved after 2026-09-04? (default window: --days 90)
 p202 analytics --group-by country --split-at 2026-09-04
 
 # Rank by the change in clicks per day, since the two sides differ in length
@@ -1071,10 +1071,12 @@ The sides are rarely the same length, so compare the `_per_day` columns: 6,500 c
 against 2,080 over 26.5 days is −68% in total but −23% per day. The table shows the clicks columns and
 the percent changes; `--json` and `--csv` carry every column, and `--fields` picks any of them.
 
-- **Window**: `--period last7|last14|last30|last90`, `--days N`, or `--time_from <unix>` with an optional
-  `--time_to <unix>` (default now); with none of them, `last90`. The calendar periods (`today`,
-  `yesterday`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`) are refused (their bounds follow the
-  account's midnight, which the CLI cannot see), as are `alltime` (no start) and `--time_to` alone.
+- **Window**: `--days N` (the last N×24 hours, ending now), or `--time_from <unix>` with an optional
+  `--time_to <unix>` (default now); with none of them, `--days 90`. Every `--period` is refused: each
+  starts at a midnight in the account's timezone (`last7` is today and the 7 whole days before it, as
+  the report pages count Last 7 Days), which the CLI cannot see, and `alltime` has no start. For the
+  window `--period last7` reads, pass that midnight as `--time_from <unix>`. `--time_to` alone is
+  refused too.
 - **Order**: by the absolute change in clicks, largest first. `--sort clicks|conversions|revenue` ranks
   by another metric's change, `--sort clicks_per_day` (or `conversions_per_day`, `revenue_per_day`) by
   the change in its per-day rate; `--sort-dir ASC` reverses; `--limit`/`--offset` apply to the ranked rows.

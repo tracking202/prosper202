@@ -324,7 +324,8 @@ One row per value with `clicks_before`, `clicks_after`, `clicks_change`, `clicks
 `clicks_per_day_before`, `clicks_per_day_after`, `clicks_per_day_change`, `clicks_per_day_change_pct`,
 and the same eight for `conversions` and `revenue`; a value seen on one side only has `0` on the other,
 and a percent change from 0 is `null`. Rows are ranked by the absolute change in clicks (`--sort
-clicks_per_day` ranks by the per-day rate). The window defaults to `last90`; `meta.before` and
+clicks_per_day` ranks by the per-day rate). The window defaults to `--days 90` (every `--period` is
+refused: it starts at the account's midnight, which the CLI cannot see); `meta.before` and
 `meta.after` give each side's exact `time_from`/`time_to` (inclusive unix seconds) and `days`. The two
 sides usually differ in length, so judge movement by the `_per_day` columns, not the totals.
 
@@ -860,7 +861,7 @@ p202 report breakdown  [-b dimension] [-s sort_col] [--sort_dir ASC|DESC]
 p202 analytics         --group-by DIM [--period P | --days N]
                        [--sort METRIC] [--sort-dir ASC|DESC] [filters...] [--json]
 p202 analytics         --group-by DIM --split-at YYYY-MM-DD|UNIX
-                       [--period last7|last14|last30|last90 | --days N | --time_from T [--time_to T]]
+                       [--days N | --time_from UNIX [--time_to UNIX]]
                        [--sort clicks|conversions|revenue[_per_day]] [--sort-dir ASC|DESC]
                        [-l limit] [-o offset] [filters...] [--json]
 p202 report timeseries [-i interval] [-p period] [filters...] [--json]

@@ -306,9 +306,7 @@ func TestAnalyticsSplitWindowSources(t *testing.T) {
 		from, to int64
 		source   string
 	}{
-		{nil, splitTestNow - 90*86400, splitTestNow, "default last90"},
-		{[]string{"--period", "last30"}, splitTestNow - 30*86400, splitTestNow, "--period last30"},
-		{[]string{"--period", "last30", "--days", "7"}, splitTestNow - 30*86400, splitTestNow, "--period last30"},
+		{nil, splitTestNow - 90*86400, splitTestNow, "default --days 90"},
 		{[]string{"--days", "40"}, splitTestNow - 40*86400, splitTestNow, "--days 40"},
 		{[]string{"--time_from", strconv.Itoa(splitTestFrom)}, splitTestFrom, splitTestNow, "--time_from to now"},
 	}
@@ -372,6 +370,8 @@ func TestAnalyticsSplitValidatesBeforeBuildingTheClient(t *testing.T) {
 		{[]string{"--split-at", "4th-sept"}, "invalid --split-at"},
 		{[]string{"--split-at", "1788480000000"}, "looks like milliseconds"},
 		{[]string{"--split-at", "2026-09-04", "--period", "today"}, "cannot be split"},
+		{[]string{"--split-at", "2026-09-04", "--period", "last30"}, "cannot be split"},
+		{[]string{"--split-at", "2026-09-04", "--period", "last30", "--days", "7"}, "cannot be split"},
 		{[]string{"--split-at", "2026-09-04", "--period", "last365"}, "--period must be one of"},
 		{[]string{"--split-at", "2026-09-04", "--time_to", strconv.Itoa(splitTestTo)}, "unbounded"},
 		{[]string{"--split-at", "2026-09-04", "--time_from", "2026-08-25"}, "--time_from must be unix seconds"},

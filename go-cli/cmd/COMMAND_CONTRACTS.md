@@ -100,7 +100,7 @@ This file captures the API paths and payload/query expectations used by upcoming
 - `analytics`
   - `GET /api/v3/reports/breakdown` with alias-mapped query params
 - `analytics --split-at <YYYY-MM-DD|unix>`
-  - the window resolved client-side to inclusive unix bounds: `last7|last14|last30|last90` as now minus N days, `--days N`, `--time_from`/`--time_to` (end defaults to now); default `last90`; the calendar periods (bounds at the account's midnight) and `alltime` (no start) refused
+  - the window resolved client-side to inclusive unix bounds: `--days N` (now minus N×24 hours), `--time_from`/`--time_to` (end defaults to now); default `--days 90`; every `--period` refused: each starts at the account's midnight (`lastN` included: today and the N whole days before it), which the CLI cannot see, and `alltime` has no start
   - two paged `GET /api/v3/reports/breakdown` reads, `time_from=start&time_to=split-1` then `time_from=split&time_to=end` (never `period`, `sort` or the caller's `limit`/`offset`), each with `limit=500` and increasing `offset` until a short page, plus the report filters
   - rows merged by breakdown `id`; sort, `--limit` and `--offset` applied client-side to the merged rows
   - no request when the split, window or sort flags are invalid

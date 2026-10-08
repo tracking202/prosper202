@@ -308,19 +308,37 @@ func TestForecastHourlyTakesTheShortNewPeriods(t *testing.T) {
 	}
 }
 
-func TestSplitAtTakesLast14AndExplainsTheCalendarPeriods(t *testing.T) {
+// Every named period starts at a midnight in the account's timezone (or, for
+// alltime, nowhere), lastN included: the server's last14 is today and the 14
+// whole days before it. --split-at computed lastN as now minus N×24 hours,
+// a window up to a day shorter than the --period it named, and said nothing;
+// it is refused now, as today and thismonth were, with --days N named.
+func TestSplitAtRefusesThePeriodsThatStartAtAMidnight(t *testing.T) {
 	_, requests := depthServer(t, func(string, url.Values) (int, string) { return 200, `{"data":[]}` })
 	at := reportNow().Unix() - 3*86400
-	if _, _, err := executeCommand("analytics", "--group-by", "country", "--split-at", fmt.Sprint(at), "--period", "last14", "--json"); err != nil {
-		t.Fatalf("--period last14 --split-at: %v", err)
+	if _, _, err := executeCommand("analytics", "--group-by", "country", "--split-at", fmt.Sprint(at), "--days", "14", "--json"); err != nil {
+		t.Fatalf("--days 14 --split-at: %v", err)
 	}
 	if got := requests(); len(got) != 2 {
 		t.Errorf("want a breakdown per side, got %+v", got)
 	}
-	for _, period := range []string{"thismonth", "yesterday", "alltime"} {
+	for _, period := range reportPeriods {
 		_, _, err := executeCommand("analytics", "--group-by", "country", "--split-at", fmt.Sprint(at), "--period", period, "--json")
-		if err == nil || exitCodeForError(err) != ExitValidation || hintFor(err) == "" {
-			t.Errorf("--period %s --split-at: %v / %q", period, err, hintFor(err))
+		if err == nil {
+			t.Errorf("--period %s --split-at: split a window the CLI cannot compute", period)
+			continue
 		}
+		if exitCodeForError(err) != ExitValidation || hintFor(err) == "" {
+			t.Errorf("--period %s --split-at: %v / %q", period, err, hintFor(err))
+			continue
+		}
+		if days, ok := strings.CutPrefix(period, "last"); ok && days != "month" && days != "year" {
+			if !strings.Contains(hintFor(err), "--days "+days+" ") {
+				t.Errorf("--period %s --split-at: the hint should name --days %s, got %q", period, days, hintFor(err))
+			}
+		}
+	}
+	if got := requests(); len(got) != 2 {
+		t.Errorf("a refused period sent a request: %+v", got)
 	}
 }

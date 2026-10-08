@@ -283,7 +283,7 @@ p202 analytics --group-by country --period last30 --sort conversions --limit 10
 `--group-by` takes the report breakdown dimensions: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer, referer_url, device_type, c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule. Aliases: `--group-by lp` -> `landing_page` (also `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`), `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`. A dimension missing from this list is sent when the server advertises it in `/capabilities` (`features.report_breakdowns`); otherwise it is refused with the list.
 
 `--split-at YYYY-MM-DD|unix` compares the two sides of a date (00:00 UTC) inside the window
-(`--period last7|last14|last30|last90`, `--days N`, `--time_from`/`--time_to`; default `last90`; the calendar periods and `alltime` are refused, their bounds being the account's midnight or none): one row per
+(`--days N`, or `--time_from`/`--time_to` in unix seconds; default `--days 90`; every `--period` is refused, its bounds being the account's midnight, lastN included, or none): one row per
 value with clicks, conversions and revenue before, after, the change and percent change, and each
 side's per-day rate, since the sides are rarely the same length. Values on one side only get zeros on
 the other; rows rank by the absolute change in clicks (`--sort clicks_per_day` for the per-day rate).
