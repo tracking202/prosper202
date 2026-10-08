@@ -362,6 +362,13 @@ class ConversionsController
                 }
                 $data['reversal_ref'] = trim((string) $payload['reversal_id']);
             }
+        } elseif (isset($payload['reversal_id'])) {
+            // A reversal_id without the status was dropped, and the body
+            // recorded a new sale: money added where the caller meant to
+            // take it back, answered 201.
+            throw new ValidationException('reversal_id is read only with status "reversed"', [
+                'reversal_id' => 'Send status "reversed" with it to reverse the sale named by transaction_id; a new sale takes no reversal_id',
+            ]);
         }
 
         // LTV: optional customer identity + product line items, whose shape

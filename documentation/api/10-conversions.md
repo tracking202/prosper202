@@ -62,7 +62,7 @@ back.
 | `transaction_id` | string | No | Deduplication key: a string of at most 255 bytes, or a JSON integer up to 9223372036854775807 read as its digits. A longer number, a fraction, `true` or an object is a `422` naming it; send a longer number as a string, because JSON decoding makes it a floating-point number, which cannot tell `12345678901234567891` from `12345678901234567892` |
 | `conv_time` | integer | No | Unix timestamp (defaults to now) |
 | `status` | string | No | Only `"reversed"`: records a reversal of the click's conversion with this `transaction_id` instead of a new conversion (a sale is reversed once; `404` when the click has no such conversion) |
-| `reversal_id` | string | No | With `status: "reversed"`, the network's id for the reversal (a non-empty string of at most 255 bytes, or a JSON integer, as `transaction_id`) |
+| `reversal_id` | string | No | With `status: "reversed"`, the network's id for the reversal (a non-empty string of at most 255 bytes, or a JSON integer, as `transaction_id`); without that status it is a 422, since the body would otherwise record a new sale |
 | `customer_id` | integer | No | The LTV customer the revenue belongs to; it wins over `customer_ref`. Anything but a positive id (`0`, `""`) is a `422` |
 | `customer_ref` | string | No | Your id for the customer: resolved to one, or a customer is created for it. `"0"` is an id like any other; a blank one is a `422`, as is anything but a string or a JSON integer (read as its digits), or one past 255 characters |
 | `customer_ref_type` | string | No | What `customer_ref` is: `email_md5`, `email_sha256`, `esp_id`, `merchant_id`, `subid` or `custom` (the default); read only with `customer_ref`, and a value not on that list is a `422` with or without one |

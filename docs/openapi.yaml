@@ -11880,7 +11880,9 @@ components:
           description: |
             The network's id for the reversal. Without one, a sale can be
             reversed once. Read as `transaction_id` is: a string of at most
-            255 bytes or a JSON integer up to 9223372036854775807.
+            255 bytes or a JSON integer up to 9223372036854775807. Only with
+            `status: reversed`; without it the body would record a new sale,
+            so it is a 422 naming reversal_id.
         customer_id:
           type: integer
           minimum: 1

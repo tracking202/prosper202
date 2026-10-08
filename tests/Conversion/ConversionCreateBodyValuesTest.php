@@ -58,6 +58,9 @@ final class ConversionCreateBodyValuesTest extends TestCase
         yield 'reversal_id true' => [$reversal . 'true', 'reversal_id'];
         yield 'reversal_id an object' => [$reversal . '{"r":1}', 'reversal_id'];
         yield 'reversal_id 256 bytes' => [$reversal . '"' . str_repeat('r', 256) . '"', 'reversal_id'];
+        // Without the status the body was a new sale: money added where the
+        // caller meant to take it back.
+        yield 'reversal_id without status reversed' => ['"transaction_id":"T-1","reversal_id":"R-1"', 'reversal_id'];
         yield 'customer_ref past PHP_INT_MAX' => ['"customer_ref":12345678901234567891', 'customer_ref'];
         yield 'customer_ref true' => ['"customer_ref":true', 'customer_ref'];
         yield 'customer_ref an object' => ['"customer_ref":{"id":1}', 'customer_ref'];
