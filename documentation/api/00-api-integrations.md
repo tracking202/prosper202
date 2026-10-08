@@ -386,6 +386,18 @@ empty is the default. These used to be cast and clamped, so `limit=1000`
 answered 500 rows that read as all of them and `updated_since=yesterday`
 answered every row.
 
+A whole number is not enough for the time filters on a list: `updated_since`
+filters only a list whose records keep an update time — forecast events do
+(`updated_at`) — and every Setup list (`/campaigns`, `/aff-networks`,
+`/ppc-networks`, `/ppc-accounts`, `/trackers`, `/landing-pages`,
+`/text-ads`) refuses it with a `422` naming it, since its records keep none;
+`deleted_since` is refused on every list, which answers live records only.
+`GET /changes/{entity}` (Admin, `sync:read`) takes both, over the changes
+made through this API. They used to answer `500` on every list (a column probe
+no server prepares). A sync job takes no `updated_since` either (`422`
+naming it); `"incremental": true` skips the records unchanged since the
+pair's last sync, and every re-sync after the first used to fail on this.
+
 ### Ids in the path
 
 An id in a path (`/campaigns/{id}`, `/rotators/{id}/rules/{ruleId}`, …) is

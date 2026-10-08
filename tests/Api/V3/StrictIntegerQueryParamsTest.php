@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use Api\V3\Controllers\AffNetworksController;
 use Api\V3\Controllers\ConversionsController;
+use Api\V3\Controllers\ForecastEventsController;
 use Api\V3\Controllers\RotatorsController;
 use Api\V3\Controllers\SyncController;
 use Api\V3\Controllers\SystemController;
@@ -83,7 +84,7 @@ final class StrictIntegerQueryParamsTest extends TestCase
     /** The bounds are inclusive, and absent or '' is no value. */
     public function testTheBoundsAreAcceptedAndAbsentIsTheDefault(): void
     {
-        foreach ([[], ['limit' => ''], ['limit' => '1'], ['limit' => '500'], ['offset' => '0'], ['cursor_ttl' => '60'], ['cursor_ttl' => '86400'], ['updated_since' => '0']] as $params) {
+        foreach ([[], ['limit' => ''], ['limit' => '1'], ['limit' => '500'], ['offset' => '0'], ['cursor_ttl' => '60'], ['cursor_ttl' => '86400']] as $params) {
             $conn = self::listing();
             $this->read('crud', $conn, $params);
             self::assertNotSame([], $conn->preparedSql, 'crud(' . json_encode($params) . ') read the list');
@@ -93,6 +94,12 @@ final class StrictIntegerQueryParamsTest extends TestCase
         $rows = $conn->statementsContaining('LIMIT');
         self::assertNotSame([], $rows);
         self::assertSame([7, 3], array_slice(end($rows)->boundValues, -2), 'the limit and offset asked for are the ones bound');
+
+        // updated_since's bound, where a list can apply it (forecast events
+        // keep an update time; a Setup list refuses it, ListTimeFiltersIntegrationTest).
+        $conn = self::listing();
+        (new ForecastEventsController($conn, 7))->list(['updated_since' => '0']);
+        self::assertNotSame([], $conn->statementsContaining('updated_at >= ?'), 'updated_since=0 filters forecast events');
     }
 
     /** A connection whose COUNT(*) answers, as a real one always does. */

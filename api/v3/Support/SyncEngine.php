@@ -22,6 +22,10 @@ class SyncEngine
         'trackers' => 'trackers',
     ];
 
+    /** Why a sync takes no updated_since, said by the job request's 422 and by a queued job that carries one. */
+    public const string UPDATED_SINCE_REFUSAL = 'A sync cannot be limited by update time: the records it carries keep none, so no list can be filtered by one. '
+        . 'Send "incremental": true instead, which skips the records unchanged since the last sync of this pair.';
+
     private const array DEPENDENCY_ORDER = [
         'aff-networks',
         'ppc-networks',
@@ -229,8 +233,23 @@ class SyncEngine
                 ? $options['manifest']
                 : ['mappings' => [], 'source_hashes' => []];
 
-            $updatedSince = isset($options['updated_since']) ? (string)$options['updated_since'] : '';
-            $sourceData = $this->fetchPortableData($sourceClient, $updatedSince !== '' ? ['updated_since' => $updatedSince] : []);
+            // The source is read whole. The records a sync carries keep no
+            // update time, so a list cannot be filtered by one: the source's
+            // lists answered `updated_since` with a 500 (a column probe no
+            // server prepares), and now refuse it. An incremental sync sent
+            // the manifest's last_sync_epoch as updated_since, so every
+            // re-sync after the first failed -- measured live, "500 from GET
+            // aff-networks". It skips what has not changed by the manifest's
+            // hashes instead (`incremental`, below), which needs no time. A
+            // job that still carries an explicit updated_since (queued before
+            // SyncController refused one) fails saying so, rather than
+            // syncing more than it asked for.
+            if (isset($options['updated_since']) && (string) $options['updated_since'] !== '') {
+                throw new ValidationException('updated_since cannot limit a sync', [
+                    'updated_since' => self::UPDATED_SINCE_REFUSAL,
+                ]);
+            }
+            $sourceData = $this->fetchPortableData($sourceClient);
             $targetData = $this->fetchPortableData($targetClient);
 
             $sourceLookups = $this->buildEntityLookups($sourceData);
@@ -241,28 +260,6 @@ class SyncEngine
             $forceUpdate = (bool)($options['force_update'] ?? false);
             $prune = (bool)($options['prune'] ?? false);
             $prunePreview = (bool)($options['prune_preview'] ?? false);
-
-            // Prune decisions must be made against the FULL source key set.
-            // When updated_since filters the fetch above, every unchanged
-            // source record is absent from $sourceData, and diffing the target
-            // against that filtered set would classify the bulk of the target
-            // install as "only in target" and delete it.
-            $pruneSourceKeys = null;
-            if (($prune || $prunePreview) && $updatedSince !== '') {
-                $fullSourceData = $this->fetchPortableData($sourceClient);
-                $fullSourceLookups = $this->buildEntityLookups($fullSourceData);
-                $pruneSourceKeys = [];
-                foreach ($entities as $pruneEntity) {
-                    $pruneSourceKeys[$pruneEntity] = [];
-                    foreach ($fullSourceData[$pruneEntity] as $fullRow) {
-                        $fullKey = $this->naturalKeyForEntity($pruneEntity, $fullRow, $fullSourceLookups);
-                        if ($fullKey !== '') {
-                            $pruneSourceKeys[$pruneEntity][$fullKey] = true;
-                        }
-                    }
-                }
-                unset($fullSourceData, $fullSourceLookups);
-            }
 
             $results = [];
             $mappings = [];
@@ -460,7 +457,9 @@ class SyncEngine
                 $pruneSpan = $this->startTraceSpan('sync.execute.prune', ['entity' => $entity]);
                 $allow = $this->normalizeEntitySet($options['prune_allowlist'] ?? []);
                 $deny = $this->normalizeEntitySet($options['prune_denylist'] ?? []);
-                $knownSourceKeys = $pruneSourceKeys !== null ? ($pruneSourceKeys[$entity] ?? []) : $sourceKeys;
+                // Every source record, the skipped-as-unchanged included: the
+                // source is read whole, so nothing it holds is "only in target".
+                $knownSourceKeys = $sourceKeys;
 
                 foreach ($targetData[$entity] as $targetRow) {
                     $targetKey = $this->naturalKeyForEntity($entity, $targetRow, $targetLookups);

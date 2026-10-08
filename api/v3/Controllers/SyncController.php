@@ -30,7 +30,16 @@ class SyncController
     /** What a sync job body may carry; resolveSyncOptions() and resolveProfiles() read them. */
     private const JOB_FIELDS = [
         'source', 'from', 'target', 'to', 'entity', 'dry_run', 'skip_errors', 'force_update', 'incremental',
-        'prune', 'prune_preview', 'confirmation_token', 'prune_allowlist', 'prune_denylist', 'updated_since', 'max_attempts',
+        'prune', 'prune_preview', 'confirmation_token', 'prune_allowlist', 'prune_denylist', 'max_attempts',
+    ];
+
+    /**
+     * A field a job body used to carry, refused saying why. `updated_since`
+     * was handed to the source's lists, none of which can filter by update
+     * time, so a job given one failed on its first run.
+     */
+    private const NOT_JOB_FIELDS = [
+        'updated_since' => SyncEngine::UPDATED_SINCE_REFUSAL,
     ];
 
     public function plan(array $payload): array
@@ -57,7 +66,7 @@ class SyncController
 
     public function createJob(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a sync job');
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a sync job', self::NOT_JOB_FIELDS);
         [$source, $target] = $this->resolveProfiles($payload);
         $entity = trim((string)($payload['entity'] ?? 'all'));
         $this->enforceQueueLimit($source, $target);
@@ -170,7 +179,7 @@ class SyncController
 
     public function reSync(array $payload): array
     {
-        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a re-sync job');
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::JOB_FIELDS, 'a re-sync job', self::NOT_JOB_FIELDS);
         $payload['incremental'] = true;
         return $this->createJob($payload);
     }
@@ -360,9 +369,10 @@ class SyncController
 
             $pairKey = SyncEngine::pairKeyFor($source, $target);
             $manifest = $this->store->loadSyncManifest($pairKey);
-            if (!empty($options['incremental']) && empty($options['updated_since']) && !empty($manifest['last_sync_epoch'])) {
-                $options['updated_since'] = (string)((int)$manifest['last_sync_epoch']);
-            }
+            // An incremental sync skips what the manifest's hashes show
+            // unchanged (SyncEngine). It also sent last_sync_epoch as the
+            // source lists' updated_since, which no list can apply, so every
+            // re-sync after the first failed.
             $options['manifest'] = $manifest;
 
             $pairLock = $this->store->acquirePairLock((string)($source['url'] ?? ''), (string)($target['url'] ?? ''));
@@ -528,7 +538,6 @@ class SyncController
             'confirmation_token' => (string)($payload['confirmation_token'] ?? ''),
             'prune_allowlist' => $payload['prune_allowlist'] ?? [],
             'prune_denylist' => $payload['prune_denylist'] ?? [],
-            'updated_since' => isset($payload['updated_since']) ? (string)$payload['updated_since'] : '',
         ];
     }
 

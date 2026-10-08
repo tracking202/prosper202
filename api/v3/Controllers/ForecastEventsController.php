@@ -14,6 +14,10 @@ class ForecastEventsController extends Controller
     // event_id breaks same-date ties so offset/cursor pages stay stable.
     protected function listOrderBy(): string { return 'event_date ASC, event_id ASC'; }
 
+    // beforeCreate() and beforeUpdate() stamp it, so updated_since filters on it.
+    #[\Override]
+    protected function updatedAtColumn(): ?string { return 'updated_at'; }
+
     protected function fields(): array
     {
         return [

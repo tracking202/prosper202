@@ -732,22 +732,34 @@ abstract class Controller
             $types .= $bindType;
         }
 
+        // A time filter applies where the records keep that time, or it is
+        // refused naming it. These probed the table with `SHOW COLUMNS FROM
+        // t LIKE ?`, which no server prepares, so every updated_since or
+        // deleted_since on a list was a 500 (measured live: GET
+        // /campaigns?updated_since=<now>) -- and had the probe answered, the
+        // Setup tables have none of the columns it looked for, so the
+        // filter would have been dropped and every row answered as though
+        // filtered. Which column holds the time is declared, not probed:
+        // updatedAtColumn().
         if ($updatedSince >= 0) {
-            $updatedColumn = $this->detectTimestampColumn(['updated_at', 'updated_time', 'last_modified', 'modified_at']);
-            if ($updatedColumn !== null) {
-                $where[] = "$updatedColumn >= ?";
-                $binds[] = $updatedSince;
-                $types .= 'i';
+            $updatedColumn = $this->updatedAtColumn();
+            if ($updatedColumn === null) {
+                $entity = $this->changeEntityName();
+                throw new ValidationException('updated_since cannot filter this list', [
+                    'updated_since' => 'This list cannot be filtered by update time: its records keep none.'
+                        . ($entity === null ? '' : ' GET /changes/' . $entity . '?updated_since=… (Admin, sync:read) lists the changes made through this API since then.'),
+                ]);
             }
+            $where[] = "$updatedColumn >= ?";
+            $binds[] = $updatedSince;
+            $types .= 'i';
         }
-
-        if ($deletedSince >= 0 && $this->deletedColumn() !== null) {
-            $deletedColumn = $this->detectTimestampColumn(['deleted_at', 'deleted_time', 'removed_at']);
-            if ($deletedColumn !== null) {
-                $where[] = "$deletedColumn >= ?";
-                $binds[] = $deletedSince;
-                $types .= 'i';
-            }
+        if ($deletedSince >= 0) {
+            $entity = $this->changeEntityName();
+            throw new ValidationException('deleted_since cannot filter this list', [
+                'deleted_since' => 'A list answers live records only, so it cannot be filtered by when one was removed.'
+                    . ($entity === null ? '' : ' GET /changes/' . $entity . '?deleted_since=… (Admin, sync:read) lists the removals made through this API since then.'),
+            ]);
         }
 
         // Everything the request names has been read and checked; a refused
@@ -1380,32 +1392,16 @@ abstract class Controller
         return max(0, (int)($decoded['offset'] ?? 0));
     }
 
-    protected function detectTimestampColumn(array $candidates): ?string
-    {
-        foreach ($candidates as $column) {
-            if ($this->hasColumn($column)) {
-                return $column;
-            }
-        }
-        return null;
-    }
-
     /**
-     * Whether this resource's table has $column. A probe that fails does not
-     * know, and says so by throwing: answered "no column", a list's
-     * updated_since/deleted_since filter was dropped and every row answered
-     * as though filtered (CLAUDE.md #11: a predicate must not answer when it
-     * does not know).
+     * The column holding the unix time a record was last written, which a
+     * list's `updated_since` filters on; null when the records keep none,
+     * and the filter is then refused. Declared by the resource (the schema
+     * names it), never probed: none of the Setup tables has one, and
+     * forecast events keep `updated_at`.
      */
-    protected function hasColumn(string $column): bool
+    protected function updatedAtColumn(): ?string
     {
-        $sql = sprintf('SHOW COLUMNS FROM %s LIKE ?', $this->tableName());
-        $stmt = $this->prepare($sql);
-        $this->bind($stmt, 's', $column);
-        $this->execute($stmt, 'Column probe failed');
-        $row = $this->resultOf($stmt, 'Column probe failed')->fetch_assoc();
-        $stmt->close();
-        return (bool)$row;
+        return null;
     }
 
     protected function recordChange(string $operation, array $record): void

@@ -8936,8 +8936,7 @@ paths:
                   type: boolean
                 incremental:
                   type: boolean
-                updated_since:
-                  type: string
+                  description: Skip the records unchanged since this pair's last sync, by content. A sync takes no `updated_since` (a 422 naming it), since the records it carries keep no update time.
                 max_attempts:
                   type: integer
                   minimum: 1
@@ -9191,8 +9190,7 @@ paths:
                   type: boolean
                 incremental:
                   type: boolean
-                updated_since:
-                  type: string
+                  description: Skip the records unchanged since this pair's last sync, by content. A sync takes no `updated_since` (a 422 naming it), since the records it carries keep no update time.
                 max_attempts:
                   type: integer
                   minimum: 1
