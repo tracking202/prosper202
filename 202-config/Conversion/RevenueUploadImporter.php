@@ -258,14 +258,33 @@ final class RevenueUploadImporter
     }
 
     /**
+     * Words that name the affiliate's money, the likeliest first: a network
+     * report's "Commission" or "Payout" is the affiliate's take, its
+     * "Revenue", "Amount" or "Sale" more often the order's value.
+     */
+    private const AMOUNT_WORDS = ['commission', 'payout', 'earning', 'revenue', 'income', 'amount', 'sale'];
+
+    /**
+     * A header that names one of these is not a money column, whatever money
+     * word it also holds: "Sale ID", "Commission Rate", "Payout Date",
+     * "Sale Count", "Commission Status".
+     */
+    private const NOT_AMOUNT = '/\bid\b|_id\b|\bno\b|\bnumber\b|#|date|time|count|\bqty\b|quantity|rate|%|percent|status|type|currency/';
+
+    /**
      * The subid and commission columns a revenue report's header names, when
      * it names them plainly: the column picker pre-selects them and says so,
      * the API uses them when no column is named, and the person changes them
      * if the guess is wrong (UI standard, rule 4).
      *
-     * The first header that matches wins; a header that matches both is taken
-     * for the subid. Null when nothing matches — the column is then left for
-     * the person to choose, never guessed at random.
+     * The subid is the first header that names one. The commission is the
+     * header with the likeliest money word (AMOUNT_WORDS), the first of those
+     * on a tie, never one that names an id, a date, a count, a rate or a
+     * status (NOT_AMOUNT). It took the first header with any money word, so
+     * "Date,Sub ID,Sale Amount,Commission" recorded each order's total as the
+     * commission, and "Sale ID,Sub ID,Commission" each sale's id (measured).
+     * Null when nothing qualifies — the column is then left for the person to
+     * choose, never guessed at random.
      *
      * @param list<string> $header
      * @return array{subid: ?int, amount: ?int}
@@ -274,14 +293,22 @@ final class RevenueUploadImporter
     {
         $subid = null;
         $amount = null;
+        $amountRank = PHP_INT_MAX;
         foreach ($header as $index => $name) {
             $name = strtolower(trim((string) $name));
             if ($subid === null && preg_match('/sub[\s_-]*id|click[\s_-]*id|\bt202|\baff[\s_-]*sub|\bsid\b/', $name)) {
                 $subid = (int) $index;
                 continue;
             }
-            if ($amount === null && preg_match('/commission|payout|revenue|amount|earning|sale|income/', $name)) {
-                $amount = (int) $index;
+            if (preg_match(self::NOT_AMOUNT, $name)) {
+                continue;
+            }
+            foreach (self::AMOUNT_WORDS as $rank => $word) {
+                if ($rank < $amountRank && str_contains($name, $word)) {
+                    $amount = (int) $index;
+                    $amountRank = $rank;
+                    break;
+                }
             }
         }
         return ['subid' => $subid, 'amount' => $amount];

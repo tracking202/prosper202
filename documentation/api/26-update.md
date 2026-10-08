@@ -223,7 +223,7 @@ curl -X POST "$P202/api/v3/conversions/uploads" -H "Authorization: Bearer $KEY" 
 | ----- | ---- | ----------- |
 | `csv` | string | Required. The report's text: comma-separated, double-quoted fields, a header line |
 | `file_name` | string | The name the batch is listed under (default `api-upload.csv`) |
-| `subid_column`, `amount_column` | integer or string | The column by 0-based index, or by header (case ignored). Either may be left out when the header names it plainly — subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission: `commission`, `payout`, `revenue`, `amount`, `earning`, `sale`, `income` — and `columns.guessed` says which were |
+| `subid_column`, `amount_column` | integer or string | The column by 0-based index, or by header (case ignored). Either may be left out when the header names it plainly — subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission, likeliest first: `commission`, `payout`, `earning`, `revenue`, `income`, `amount`, `sale`, never a header that also names an id, a date, a count, a rate or a status ("Sale ID", "Commission Rate") — and `columns.guessed` says which were |
 
 Every line is accounted for, as the page accounts for it: `recorded`
 (`would_record` in a dry run) counts the recorded lines and `totals` sums them

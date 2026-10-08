@@ -2076,9 +2076,11 @@ paths:
 
         The columns are named by 0-based index or by header (case is
         ignored); either may be left out when the header names it plainly
-        (subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission:
-        `commission`, `payout`, `revenue`, `amount`, `earning`, `sale`,
-        `income`), and `columns.guessed` says which were. The first line is
+        (subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission,
+        likeliest first: `commission`, `payout`, `earning`, `revenue`,
+        `income`, `amount`, `sale`, never a header that also names an id, a
+        date, a count, a rate or a status), and `columns.guessed` says which
+        were. The first line is
         read as the header when its subid cell is not a click id. Every line
         is accounted for, as the page accounts for it: `recorded`
         (`would_record`) counts the recorded lines and `totals` sums them per
