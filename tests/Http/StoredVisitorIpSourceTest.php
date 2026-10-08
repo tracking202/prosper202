@@ -156,7 +156,34 @@ final class StoredVisitorIpSourceTest extends TestCase
 
         self::assertSame([], $found, "A click is looked up by address in hand-written SQL:\n  "
             . implode("\n  ", $found)
-            . "\nUse LastClickFromAddress::find(\$conn, p202StoredVisitorIp(), \$userId, \$since).");
+            . "\nUse LastClickFromAddress::find(\$conn, p202StoredVisitorIp(), \$userId, \$since, !trackingEnabled()).");
+    }
+
+    /**
+     * The by-address fallback is told whether the address it looks up is
+     * masked, by the rule that masked it (p202StoredVisitorIp() masks when
+     * trackingEnabled() is false): a masked address names a block, and is
+     * answered only when one click matches it. A call that passed anything
+     * else would let the latest neighbour in the block take the sale.
+     */
+    public function testEveryAddressLookupSaysWhetherTheAddressIsMasked(): void
+    {
+        $calls = 0;
+        $wrong = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            foreach (CallArgs::calls($source, ['find']) as $call) {
+                if ($call['operator'] !== '::' || !str_ends_with($call['receiver'], 'LastClickFromAddress')) {
+                    continue;
+                }
+                $calls++;
+                $masked = preg_replace('/\s+/', '', CallArgs::text($call['args'][4] ?? []));
+                if (count($call['args']) !== 5 || $masked !== '!trackingEnabled()') {
+                    $wrong[] = $path . ':' . $call['line'] . ' passes ' . var_export($masked, true);
+                }
+            }
+        }
+        self::assertGreaterThanOrEqual(5, $calls, 'the scan found the pixels\' and redirects\' lookups');
+        self::assertSame([], $wrong, 'Pass !trackingEnabled() as LastClickFromAddress::find()\'s $masked.');
     }
 
     /** @return iterable<string, array{string, bool}> */

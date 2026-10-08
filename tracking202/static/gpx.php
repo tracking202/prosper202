@@ -46,7 +46,8 @@ if ($requestedClick['click_id'] !== null) {
                 new \Prosper202\Database\Connection($db),
                 p202StoredVisitorIp(),
                 (int) $mysql['user_id'],
-                $daysago
+                $daysago,
+                !trackingEnabled()
             );
 
             if ($click_row1 !== null) {

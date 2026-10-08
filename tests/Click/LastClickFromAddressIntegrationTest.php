@@ -26,7 +26,7 @@ final class LastClickFromAddressIntegrationTest extends TestCase
 {
     private const USER = 5701;
     private const OTHER = 5702;
-    private const CLICKS = [970000, 970001, 970002, 970003, 970004, 970005, 970006, 970008];
+    private const CLICKS = [970000, 970001, 970002, 970003, 970004, 970005, 970006, 970007, 970008];
 
     private static ?\mysqli $db = null;
     private static ?Connection $conn = null;
@@ -114,7 +114,7 @@ final class LastClickFromAddressIntegrationTest extends TestCase
 
     public function testTheLatestClickOfThisAddressForThisAccount(): void
     {
-        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 30 * 86400);
+        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 30 * 86400, false);
         // 970003 is newer but another account's, 970005 outside the window,
         // 970002 and 970006 other addresses.
         self::assertSame(
@@ -127,37 +127,57 @@ final class LastClickFromAddressIntegrationTest extends TestCase
     {
         // Both 202_ips rows for the address hold a click inside three hours;
         // 970001 is the newer. With it gone, the other row's click is found.
-        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 3 * 3600);
+        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 3 * 3600, false);
         self::assertSame(970001, $row['click_id'] ?? null);
         self::q('DELETE FROM 202_clicks WHERE click_id = 970001');
-        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 3 * 3600);
+        $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 3 * 3600, false);
         self::assertSame(970000, $row['click_id'] ?? null, 'the click stored under the second 202_ips row');
         self::insertClick(970001, self::USER, time() - 3600);
     }
 
     public function testAnIpv6ClickIsFoundThroughItsTable(): void
     {
-        $row = LastClickFromAddress::find(self::$conn, '2001:db8:abcd:12::9', self::USER, time() - 86400);
+        $row = LastClickFromAddress::find(self::$conn, '2001:db8:abcd:12::9', self::USER, time() - 86400, false);
         self::assertSame(970004, $row['click_id'] ?? null);
     }
 
     public function testAMaskedAddressFindsOnlyClicksStoredMasked(): void
     {
-        $row = LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 86400);
+        $row = LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 86400, true);
         self::assertSame(970006, $row['click_id'] ?? null);
+    }
+
+    /**
+     * A masked address names a block, not a visitor: with a second click
+     * from the block in the window, the latest of them is anyone's in it,
+     * so none is credited. Unmasked, the same rows answer the latest.
+     */
+    public function testAMaskedAddressAnswersOnlyWhenOneClickMatches(): void
+    {
+        $masked = (int) self::$db->query("SELECT ip_id FROM 202_ips WHERE ip_address = '203.0.113.0' ORDER BY ip_id LIMIT 1")->fetch_row()[0];
+        self::insertClick(970007, self::USER, time() - 120);
+        self::q("INSERT INTO 202_clicks_advance SET click_id = 970007, ip_id = $masked, keyword_id = 11");
+        try {
+            self::assertNull(LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 86400, true), 'two clicks from the block: nobody\'s to choose');
+            self::assertSame(970007, LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 86400, false)['click_id'] ?? null, 'unmasked, the latest');
+            self::assertSame(970007, LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 200, true)['click_id'] ?? null, 'one click in a shorter window is answered');
+        } finally {
+            self::q('DELETE FROM 202_clicks WHERE click_id = 970007');
+            self::q('DELETE FROM 202_clicks_advance WHERE click_id = 970007');
+        }
     }
 
     public function testNoClickIsNull(): void
     {
-        self::assertNull(LastClickFromAddress::find(self::$conn, '192.0.2.1', self::USER, 0));
-        self::assertNull(LastClickFromAddress::find(self::$conn, '203.0.113.9', 999999, 0));
-        self::assertNull(LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() + 60));
+        self::assertNull(LastClickFromAddress::find(self::$conn, '192.0.2.1', self::USER, 0, false));
+        self::assertNull(LastClickFromAddress::find(self::$conn, '203.0.113.9', 999999, 0, false));
+        self::assertNull(LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() + 60, false));
     }
 
     public function testNoAddressIsNoLookup(): void
     {
-        self::assertNull(LastClickFromAddress::find(self::$conn, '', self::USER, 0));
-        self::assertNull(LastClickFromAddress::find(self::$conn, 'nope', self::USER, 0));
+        self::assertNull(LastClickFromAddress::find(self::$conn, '', self::USER, 0, false));
+        self::assertNull(LastClickFromAddress::find(self::$conn, 'nope', self::USER, 0, false));
     }
 
     private static function cleanUp(): void

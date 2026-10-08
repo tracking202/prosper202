@@ -52,7 +52,8 @@ if ($cookie !== '') {
 		new \Prosper202\Database\Connection($db),
 		p202StoredVisitorIp(),
 		(int) $mysql['user_id'],
-		$daysago
+		$daysago,
+		!trackingEnabled()
 	);
 	if ($click_row1 !== null) {
 		$click_id = $click_row1['click_id'];

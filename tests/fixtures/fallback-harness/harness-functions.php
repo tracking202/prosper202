@@ -79,6 +79,13 @@ function p202StoredVisitorIp(): string
     return '';
 }
 
+// Whether the address above is stored masked, which LastClickFromAddress is
+// told; the address is empty, so the answer changes nothing here.
+function trackingEnabled(): bool
+{
+    return true;
+}
+
 // connect2.php's click-cookie reader, as it is: the cookie or its -legacy twin.
 function getCookie202($cookieName)
 {

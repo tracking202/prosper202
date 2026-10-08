@@ -596,7 +596,8 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 		new \Prosper202\Database\Connection($db),
 		p202StoredVisitorIp(),
 		(int) $user_id,
-		time() - 2592000
+		time() - 2592000,
+		!trackingEnabled()
 	);
 
 	if ($click_row1 && !empty($click_row1['click_id'])) {

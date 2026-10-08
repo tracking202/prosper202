@@ -154,8 +154,15 @@ so two visitors in one /24 within a day count as one and the second click is
 filtered. The "don't count my own clicks" filter compares the address a click
 arrived from with the address you signed in from (stored as it arrived; it is
 an operator's record, like the sign-in log), so your own clicks are filtered
-under every setting and nobody else in your /24 is. Rate limits on the public
-endpoints key on the connection's address as it arrived and are not affected.
+under every setting and nobody else in your /24 is. A conversion pixel or
+`off.php` that names no click and finds no cookie (always the case for a
+visitor held back, who has none) falls back to the visitor's last click by
+address; under privacy that address names a /24, so a click is credited only
+when it is the one click from that block in the look-back window, and with
+two or more none is, and the miss is logged, rather than crediting the sale
+to whichever neighbour clicked last. Pass the subid in the pixel to credit
+every one. Rate limits on the public endpoints key on the connection's
+address as it arrived and are not affected.
 
 ## Examples
 

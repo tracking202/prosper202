@@ -57,7 +57,8 @@ else if ($db && $pci === '') {
         new \Prosper202\Database\Connection($db),
         p202StoredVisitorIp(),
         (int) $mysql['user_id'],
-        $daysago
+        $daysago,
+        !trackingEnabled()
     ) ?? [];
     $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
     $click_id = $mysql['click_id'];
