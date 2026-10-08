@@ -189,7 +189,11 @@ permission), and so do `report breakdown`'s `--min-clicks`, `--min-cost`,
 `--zero-leads` and a `--having` on one of those figures; a `--having` on a
 ratio (`'roi<0'`) still filters, and its rows keep `"masked": true`. Setup records
 (`campaign list` and the like) are refused outright for a role without
-`access_to_setup_section`, with a 403 that names the permission.
+`access_to_setup_section`, with a 403 that names the permission. Goals
+(`p202 goal …`) are Setup's too: every goal command needs
+`access_to_setup_section`, and changing an app's or the account's goal needs
+`manage_attribution_models` as well; a goal's payouts and values read as
+`null` with `masked` for a role without `access_to_campaign_data`.
 
 ### Error
 
