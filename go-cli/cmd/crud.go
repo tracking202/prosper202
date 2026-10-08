@@ -1252,7 +1252,7 @@ var crudEntities = []crudEntity{
 		IDField:       "tracker_id",
 		PublicIDField: "tracker_id_public",
 		Fields: []crudField{
-			{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for a link to a redirector (--rotator_id) or an advanced landing page", Required: true},
 			{Name: "ppc_account_id", Desc: "PPC account ID"},
 			{Name: "text_ad_id", Desc: "Text ad ID"},
 			{Name: "landing_page_id", Desc: "Landing page ID"},
@@ -1278,10 +1278,10 @@ var crudEntities = []crudEntity{
 		URLFields:     []string{"landing_page_url", "leave_behind_page_url"},
 		Fields: []crudField{
 			{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
-			{Name: "aff_campaign_id", Desc: "Campaign ID", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for an advanced landing page (--landing_page_type 1), which promotes several offers", Required: true},
 			{Name: "landing_page_nickname", Desc: "Landing page nickname", Required: true},
 			{Name: "leave_behind_page_url", Desc: "Leave-behind page URL", Clearable: true},
-			{Name: "landing_page_type", Desc: "Landing page type (integer)"},
+			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff_campaign_id 0)"},
 		},
 		ListParams: []crudField{
 			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
