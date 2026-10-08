@@ -221,7 +221,8 @@ class RotatorsController
         \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::ROTATOR_FIELDS, 'public_id', ...self::READ_ONLY], 'a redirector');
         // public_id is what the redirects resolve: it was ignored here, so a
         // caller who sent a new one believed the links had moved.
-        self::refuseChangedReadOnly($payload, (array) $this->get($id)['data'], [...self::READ_ONLY, 'public_id']);
+        $current = (array) $this->get($id)['data'];
+        self::refuseChangedReadOnly($payload, $current, [...self::READ_ONLY, 'public_id']);
 
         $sets = [];
         $binds = [];
@@ -237,14 +238,26 @@ class RotatorsController
         // rest, the auto-monetizer included. Setting only default_url left a
         // default campaign in place, and rtr.php, which prefers the campaign,
         // went on sending clicks there.
-        if (array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== []) {
-            $default = $this->destination($payload, self::DEFAULT_KEYS, false);
+        //
+        // A body that restates the default the rotator holds -- a GET body
+        // sent back with a new name -- changes nothing. It rewrote the
+        // default, so a rotator whose default is the auto-monetizer (which
+        // GET shows as auto_monetizer, every default_* null) lost it on a
+        // rename, answered 200 (measured), and one whose default campaign was
+        // deleted since could not be renamed at all.
+        $namesDefault = array_intersect_key($payload, array_flip(self::DEFAULT_KEYS)) !== [];
+        $heldDefault = ['url' => $current['default_url'] ?? null, 'campaign' => $current['default_campaign'] ?? null, 'lp' => $current['default_lp'] ?? null];
+        if ($namesDefault && !self::restates($payload, self::DEFAULT_KEYS, $heldDefault)) {
+            $default = $this->destination($payload, self::DEFAULT_KEYS, false, '', $heldDefault);
             $sets[] = 'default_url = ?, default_campaign = ?, default_lp = ?, auto_monetizer = NULL';
             array_push($binds, $default['url'], $default['campaign'], $default['lp']);
             $types .= 'sii';
         }
 
         if (empty($sets)) {
+            if ($namesDefault) {
+                return $this->get($id); // the default restated, nothing else named
+            }
             throw new ValidationException('No fields to update');
         }
 
@@ -259,6 +272,26 @@ class RotatorsController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * Whether every part of a destination the payload names is the part the
+     * record holds, "none" (null, '', 0, '0') matching "none".
+     *
+     * @param array<string, mixed> $payload
+     * @param array{url: string, campaign: string, lp: string} $keys
+     * @param array{url: mixed, campaign: mixed, lp: mixed} $held
+     */
+    private static function restates(array $payload, array $keys, array $held): bool
+    {
+        $none = static fn (mixed $v): mixed => ($v === null || $v === '' || $v === 0 || $v === '0') ? null : $v;
+        foreach ($keys as $kind => $key) {
+            if (array_key_exists($key, $payload) && !PayloadKeys::same($none($payload[$key]), $none($held[$kind]))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** The payload keys of a rotator's default, in the order destination() reads them. */
@@ -283,11 +316,17 @@ class RotatorsController
      *
      * Empty (null, '', 0, '0') means "not this kind".
      *
+     * A part the record already holds ($held) is taken as it is, unchecked,
+     * as the base Controller's assertLinksOwned() takes an unchanged link: a
+     * campaign deleted since it was chosen must not make the rest of the
+     * record unwritable.
+     *
      * @param array<string, mixed> $raw
      * @param array{url: string, campaign: string, lp: string} $keys
+     * @param array<string, mixed> $held the parts the record holds, by kind
      * @return array{url: ?string, campaign: ?int, lp: ?int}
      */
-    private function destination(array $raw, array $keys, bool $required, string $where = ''): array
+    private function destination(array $raw, array $keys, bool $required, string $where = '', array $held = []): array
     {
         $out = ['url' => null, 'campaign' => null, 'lp' => null];
         $errors = [];
@@ -297,6 +336,10 @@ class RotatorsController
                 continue;
             }
             $field = $where . $key;
+            if (isset($held[$kind]) && PayloadKeys::same($value, $held[$kind])) {
+                $out[$kind] = $kind === 'url' ? (string) $value : (int) $value;
+                continue;
+            }
             if ($kind === 'url') {
                 $url = is_string($value) ? trim($value) : '';
                 $parts = $url !== '' ? parse_url($url) : false;
@@ -505,8 +548,14 @@ class RotatorsController
      * @param array<string, mixed> $payload
      * @return array{criteria: ?list<array{type: string, statement: string, value: string}>, redirects: ?list<array{url: ?string, campaign: ?int, lp: ?int, monetizer: ?string, weight: string, name: string}>}
      */
-    private function ruleParts(array $payload): array
+    private function ruleParts(array $payload, ?array $rule = null): array
     {
+        $heldRedirects = [];
+        foreach ((array) ($rule['redirects'] ?? []) as $entry) {
+            if (is_array($entry) && isset($entry['id'])) {
+                $heldRedirects[(string) $entry['id']] = $entry;
+            }
+        }
         $out = ['criteria' => null, 'redirects' => null];
         if (array_key_exists('criteria', $payload) && $payload['criteria'] !== null) {
             if (!is_array($payload['criteria']) || !array_is_list($payload['criteria'])) {
@@ -576,7 +625,15 @@ class RotatorsController
                     }
                     $destination['monetizer'] = (string) $monetizer;
                 } else {
-                    $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.") + ['monetizer' => null];
+                    // A redirect sent back as GET showed it keeps what it
+                    // holds, a campaign deleted since included.
+                    $heldEntry = self::heldEntry($r, $heldRedirects);
+                    $held = $heldEntry === null ? [] : [
+                        'url' => $heldEntry['redirect_url'] ?? null,
+                        'campaign' => $heldEntry['redirect_campaign'] ?? null,
+                        'lp' => $heldEntry['redirect_lp'] ?? null,
+                    ];
+                    $destination = $this->destination($r, self::REDIRECT_KEYS, true, "$at.", $held) + ['monetizer' => null];
                 }
                 $weight = $r['weight'] ?? 100;
                 if ((!is_int($weight) && !is_string($weight)) || preg_match('/^(?:100|[1-9]?[0-9])$/D', (string)$weight) !== 1) {
@@ -787,7 +844,7 @@ class RotatorsController
         }
         // Every entry checked before the first write: the transaction would
         // roll a mid-list failure back, but a refusal should not need one.
-        $parts = $this->ruleParts($payload);
+        $parts = $this->ruleParts($payload, $rule);
 
         $this->transaction(function () use ($binds, $hasCriteria, $hasRedirects, $parts, $rotatorId, $ruleId, $setParts, $types): void {
             if (!empty($setParts)) {

@@ -11991,7 +11991,7 @@ components:
 
     RotatorUpdate:
       type: object
-      description: Naming any of default_url, default_campaign, default_lp replaces the whole default and clears the others (and the auto-monetizer).
+      description: "Naming any of default_url, default_campaign, default_lp replaces the whole default and clears the others (and the auto-monetizer); a body that restates the default the redirector holds (a GET body sent back) changes nothing, and a campaign or landing page it already names is kept even if deleted since."
       properties:
         name:
           type: string

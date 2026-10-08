@@ -351,4 +351,62 @@ final class RotatorDestinationsIntegrationTest extends TestCase
             self::assertSame(['redirects.1.auto_monetizer'], array_keys($e->getFieldErrors()));
         }
     }
+
+    /**
+     * A rotator read with GET and sent back with a new name changes nothing
+     * else. The rewrite of the default it restated cleared an auto-monetizer
+     * default (GET shows it as auto_monetizer, every default_* null) and
+     * answered 200, and a default campaign deleted since made the rotator
+     * impossible to rename. Naming that campaign as a new default is still
+     * refused.
+     */
+    public function testARotatorReadWithGetCanBeSentBackWhole(): void
+    {
+        $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
+        // As tracking202/ajax/rotator.php stores an auto-monetizer default.
+        self::$db->query("UPDATE 202_rotators SET default_url = NULL, auto_monetizer = '1' WHERE id = $id");
+        $read = $this->rotators()->get($id)['data'];
+        unset($read['rules']);
+        $this->rotators()->update($id, ['name' => 'renamed'] + $read);
+        self::assertSame([null, null, null, '1'], self::storedDefault($id), 'the monetizer default survives a rename');
+
+        $gone = self::campaign(self::USER);
+        $this->rotators()->update($id, ['default_campaign' => $gone]);
+        self::$db->query("UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = $gone");
+        $read = $this->rotators()->get($id)['data'];
+        unset($read['rules']);
+        $this->rotators()->update($id, ['name' => 'renamed again'] + $read);
+        self::assertSame([null, (string) $gone, null, null], self::storedDefault($id), 'a deleted default campaign does not block a rename');
+
+        $other = (int) $this->rotators()->create(['name' => 'o', 'default_url' => 'https://o.example/'])['data']['id'];
+        try {
+            $this->rotators()->update($other, ['default_campaign' => $gone]);
+            self::fail('a deleted campaign was accepted as a new default');
+        } catch (ValidationException $e) {
+            self::assertSame(['default_campaign'], array_keys($e->getFieldErrors()));
+        }
+    }
+
+    /** A rule sent back whole keeps a redirect whose campaign was deleted since; a new one to it is refused. */
+    public function testARuleKeepsARedirectWhoseCampaignWasDeleted(): void
+    {
+        $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
+        $gone = self::campaign(self::USER);
+        $made = $this->rotators()->createRule($id, ['rule_name' => 'k', 'redirects' => [['redirect_campaign' => $gone]]]);
+        $ruleId = (int) $made['data']['rules'][0]['id'];
+        self::$db->query("UPDATE 202_aff_campaigns SET aff_campaign_deleted = 1 WHERE aff_campaign_id = $gone");
+
+        $read = $this->rotators()->listRules($id)['data'][0];
+        $read['rule_name'] = 'kept';
+        $this->rotators()->updateRule($id, $ruleId, $read);
+        $row = self::$db->query("SELECT redirect_campaign FROM 202_rotator_rules_redirects WHERE rule_id = $ruleId")->fetch_row();
+        self::assertSame([(string) $gone], $row);
+
+        try {
+            $this->rotators()->updateRule($id, $ruleId, ['redirects' => [['redirect_campaign' => $gone]]]);
+            self::fail('a new redirect to a deleted campaign was accepted');
+        } catch (ValidationException $e) {
+            self::assertSame(['redirects.0.redirect_campaign'], array_keys($e->getFieldErrors()));
+        }
+    }
 }

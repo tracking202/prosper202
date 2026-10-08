@@ -38,7 +38,10 @@ and a create refuses them.
 of `default_url`, `default_campaign` and `default_lp`. On an update, naming any
 of them replaces the whole default and clears the others (and the
 auto-monetizer), so a redirector whose default was a campaign can be switched
-to a URL in one request. Sending two is a `422`; so is a campaign or landing
+to a URL in one request. A body that restates the default the redirector holds
+(a GET body sent back with a new name) changes nothing, the auto-monetizer
+included, and a campaign or landing page it already names is kept even if it
+was deleted since. Sending two is a `422`; so is naming a campaign or landing
 page that is not yours or is deleted, and a URL that is not http(s). `null`,
 `0` and `""` mean "not this kind".
 
