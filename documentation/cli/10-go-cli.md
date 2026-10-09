@@ -329,7 +329,7 @@ envelope, so an agent reads structured fields instead of parsing prose:
 
 | Field | Always | Meaning |
 | --- | --- | --- |
-| `category` | yes | `validation`, `auth`, `network`, `server`, or `partial_failure` |
+| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, or `licence` |
 | `message` | yes | What failed |
 | `exit_code` | yes | The process exit code (table below) |
 | `command` | yes | The command that ran, e.g. `p202 rotator create` |
@@ -411,6 +411,7 @@ wrong state points at `p202 change show`; and only an actual duplicate gets
 | 3 | Network error (connection timeout, DNS failure) |
 | 4 | Server error (5xx response) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
+| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the 7-day trial |
 
 ## Telemetry
 

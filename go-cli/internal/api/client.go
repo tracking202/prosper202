@@ -671,6 +671,10 @@ func categoryForHTTPStatus(status int) string {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return "auth"
+	case status == http.StatusPaymentRequired:
+		// The install refuses p202-cli without a Pro licence (402): an
+		// entitlement problem, not bad input and not a bad key.
+		return "licence"
 	case status >= 500:
 		return "server"
 	case status >= 400:

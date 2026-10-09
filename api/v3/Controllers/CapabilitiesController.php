@@ -314,17 +314,33 @@ class CapabilitiesController
         return $result['paid'];
     }
 
-    /** First non-empty ClickServer key on the install (the account owner's). */
+    /**
+     * The account owner's ClickServer key for the requesting user's install:
+     * same rule as AUTH::determineAccountOwnerId (same install_hash, active,
+     * not deleted, lowest user_id with a key). No install_hash, no fallback.
+     */
     private function loadOwnerClickServerKey(): string
     {
-        $result = $this->db->query(
-            "SELECT p202_customer_api_key FROM 202_users WHERE p202_customer_api_key <> '' ORDER BY user_id ASC LIMIT 1"
+        $stmt = $this->db->prepare(
+            'SELECT o.p202_customer_api_key FROM 202_users u '
+            . 'JOIN 202_users o ON o.install_hash = u.install_hash '
+            . 'WHERE u.user_id = ? AND u.install_hash IS NOT NULL AND u.install_hash != "" '
+            . 'AND o.user_deleted != 1 AND o.user_active = 1 '
+            . 'AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != "" '
+            . 'ORDER BY o.user_id ASC LIMIT 1'
         );
-        if (!$result instanceof \mysqli_result) {
+        if (!$stmt) {
             return '';
         }
-        $row = $result->fetch_assoc();
-        $result->free();
+        $userId = $this->userId;
+        $stmt->bind_param('i', $userId);
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            return '';
+        }
+        $result = $stmt->get_result();
+        $row = $result === false ? null : $result->fetch_assoc();
+        $stmt->close();
         return trim((string)($row['p202_customer_api_key'] ?? ''));
     }
 

@@ -18,6 +18,7 @@ const (
 	ExitNetwork        = 3 // connection timeout, DNS failure
 	ExitServer         = 4 // API returned 5xx
 	ExitPartialFailure = 5 // bulk operation with some successes and some failures
+	ExitLicence        = 6 // the install requires a Pro licence for the CLI (HTTP 402)
 )
 
 // CLIError is a structured error for CLI-level failures.
@@ -130,6 +131,8 @@ func exitCodeForError(err error) int {
 		return ExitServer
 	case "partial_failure":
 		return ExitPartialFailure
+	case "licence":
+		return ExitLicence
 	default:
 		return ExitValidation
 	}

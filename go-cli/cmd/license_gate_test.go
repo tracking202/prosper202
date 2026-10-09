@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 // An install with the Pro-only CLI gate answers 402 to p202-cli when its
@@ -28,5 +30,13 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	}
 	if h := hintFor(err); !strings.Contains(h, "7-day free trial") || strings.Contains(h, "Verify your API key") {
 		t.Errorf("hint %q should point at the trial, not the key", h)
+	}
+	// A stable contract for agents: its own category and exit code, not
+	// "validation"/1 (bad input) and not "auth"/2 (bad key).
+	if got := api.ErrorCategory(err); got != "licence" {
+		t.Errorf("category = %q, want licence", got)
+	}
+	if got := exitCodeForError(err); got != ExitLicence {
+		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
 	}
 }

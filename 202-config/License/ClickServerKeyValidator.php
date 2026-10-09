@@ -53,15 +53,41 @@ class ClickServerKeyValidator
 
         $response = curl_exec($ch);
         $failed = curl_errno($ch) || $response === false;
+        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
 
         if ($failed) {
             return null;
         }
 
-        $data = json_decode((string)$response, true);
-        $valid = is_array($data) && ($data['msg'] ?? '') === 'Key valid';
-        $paid = (is_array($data) && array_key_exists('paid', $data)) ? ($data['paid'] === true) : null;
+        return self::interpret($status, (string)$response);
+    }
+
+    /**
+     * Turn the endpoint's HTTP answer into a verdict.
+     *
+     * Only a well-formed, authoritative answer decides: 200 + JSON msg
+     * (valid only when msg is 'Key valid'), or 404 + JSON (the endpoint's
+     * "invalid key" answer). Anything else (5xx, a redirect, an HTML error
+     * page, malformed JSON) is an outage and returns null, so callers fail
+     * open instead of caching a denial.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    public static function interpret(int $status, string $body): ?array
+    {
+        $data = json_decode($body, true);
+        if (!is_array($data) || !isset($data['msg']) || !is_string($data['msg'])) {
+            return null;
+        }
+        if ($status === 200) {
+            $valid = $data['msg'] === 'Key valid';
+        } elseif ($status === 404) {
+            $valid = false;
+        } else {
+            return null;
+        }
+        $paid = array_key_exists('paid', $data) ? ($data['paid'] === true) : null;
         return ['valid' => $valid, 'paid' => $valid ? $paid : false];
     }
 }
