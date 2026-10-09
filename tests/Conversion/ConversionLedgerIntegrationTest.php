@@ -433,14 +433,6 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('9.00000', $this->clickState(200)['payout']);
     }
 
-    /**
-     * A report whose lines are mostly not recorded — the wrong subid column
-     * skips every one — lists the first LISTED_LINES of them, counts the
-     * rest, and counts every skipped line by its reason; preview() reads the
-     * stream twice and answers what import() then records. Listing every
-     * line, and holding the report to preview it, took 376 MB for 440,000
-     * lines, past PHP's default 128 MB (measured).
-     */
     public function testAReportListsItsFirstUnrecordedLinesAndCountsEveryOne(): void
     {
         $this->campaign(7);
@@ -482,12 +474,7 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('2.50000', $this->clickState(100)['payout']);
     }
 
-    /**
-     * A record longer than any length fgetcsv() was given is still one line:
-     * cut at 100,000 bytes, a long column before the subid made the line a
-     * piece without its subid and a piece without its commission, both
-     * skipped, and every later line's number moved by one (measured).
-     */
+    /** fgetcsv() with a length split a longer record into two lines. */
     public function testALongRecordIsReadAsOneLine(): void
     {
         $this->campaign(7);
@@ -512,7 +499,6 @@ final class ConversionLedgerIntegrationTest extends TestCase
     public function testAPreviewRefusesAStreamItCannotReadTwice(): void
     {
         $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
-        // A pipe: refused before anything is read from it.
         $pipe = popen('true', 'r');
         self::assertIsResource($pipe);
         $this->expectException(\RuntimeException::class);

@@ -360,9 +360,7 @@ flash "$OUT/up-twice.html" 'This file does not exist that you are trying to impo
 eq "$(rows $C3)" "2" "and records nothing more"
 
 say "Upload Revenue Reports: more lines not recorded than the page lists"
-# The importer lists the first 1,000 lines it did not record (here the header
-# and 999 skipped ones) and counts the rest: the pill counts every skipped
-# line, and a sentence says how many were not listed and why.
+# 1,000 lines not recorded are listed (the header and 999 skipped); the rest are counted.
 { printf 'Sub ID,Commission\n'; for i in $(seq 1 1005); do printf 'order-%s,1\n' "$i"; done; } > "$OUT/u5-big.csv"
 LOC=$(curl -sS -b "$JAR" -c "$JAR" -o /dev/null -w '%{redirect_url}' -F "token=$UT" -F "csv=@$OUT/u5-big.csv" "$BASE/tracking202/update/upload.php")
 BIGFILE=$(printf '%s' "$LOC" | sed -n 's/.*[?&]file=\([^&]*\).*/\1/p')

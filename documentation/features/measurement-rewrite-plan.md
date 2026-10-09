@@ -2826,7 +2826,7 @@ correction URLs are `Prosper202\Notifications\CorrectionUrls`.
   token, not code; PR 7's SDK (`sdk/android-attribution`, now merged) has
   its own guide (`25-android-sdk.md`), and the snippet on this page is
   left for a follow-up.
-- **The PHP CLI's `--postback_version`.** `--version` is Symfony's own
+- **The PHP CLI's `--postback-version`.** `--version` is Symfony's own
   option; `app:report` shipped a `--version` filter that made the command
   refuse to start, found only by running it.
   `CommandOptionsDoNotShadowTheApplicationTest` now merges every command's

@@ -64,17 +64,17 @@ var userCreateCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("user_name")
 		email, _ := cmd.Flags().GetString("user_email")
 		if name == "" {
-			return validationError("required flag --user_name is missing")
+			return validationError("required flag --user-name is missing")
 		}
 		if email == "" {
-			return validationError("required flag --user_email is missing")
+			return validationError("required flag --user-email is missing")
 		}
 		body := map[string]interface{}{
 			"user_name":  name,
 			"user_email": email,
 		}
 		// Secure password input: a hidden prompt (asked twice), or one line
-		// of piped stdin. --user_pass works too, into shell history.
+		// of piped stdin. --user-pass works too, into shell history.
 		pass, _ := cmd.Flags().GetString("user_pass")
 		if pass == "" {
 			var err error
@@ -120,8 +120,8 @@ var userUpdateCmd = &cobra.Command{
 		setPassword, _ := cmd.Flags().GetBool("set-password")
 		askCurrent, _ := cmd.Flags().GetBool("current-password")
 		if setPassword && cmd.Flags().Changed("user_pass") {
-			return validationError("--set-password and --user_pass both set the password; use one").
-				WithHint("--set-password reads it without echo (prompt or piped stdin); --user_pass leaves it in shell history.")
+			return validationError("--set-password and --user-pass both set the password; use one").
+				WithHint("--set-password reads it without echo (prompt or piped stdin); --user-pass leaves it in shell history.")
 		}
 		// The current password comes first: a piped caller sends it on the
 		// first line and the new one on the second.
@@ -149,7 +149,7 @@ var userUpdateCmd = &cobra.Command{
 		}
 		if askCurrent && body["user_pass"] == nil {
 			return validationError("--current-password is only needed with a new password").
-				WithHint("Add --set-password (or --user_pass) to change the password.")
+				WithHint("Add --set-password (or --user-pass) to change the password.")
 		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update")
@@ -182,7 +182,7 @@ var userUpdateCmd = &cobra.Command{
 }
 
 // passwordInputHint is the recovery step for a missing password value.
-const passwordInputHint = "Type it at the hidden prompt, or pipe it on stdin (one line); it is never echoed. A --user_pass value works too, but stays in your shell history."
+const passwordInputHint = "Type it at the hidden prompt, or pipe it on stdin (one line); it is never echoed. A --user-pass value works too, but stays in your shell history."
 
 // needsCurrentPassword reports whether err is the server asking for the
 // current password (a 422 naming current_password).
@@ -239,7 +239,7 @@ var userRoleAssignCmd = &cobra.Command{
 		}
 		roleIDStr := roleIDFrom(cmd, args)
 		if roleIDStr == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role-id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		roleID, err := strconv.Atoi(roleIDStr)
 		if err != nil {
@@ -267,7 +267,7 @@ var userRoleRemoveCmd = &cobra.Command{
 		}
 		roleID := roleIDFrom(cmd, args)
 		if roleID == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role-id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
@@ -294,7 +294,7 @@ var userRoleRemoveCmd = &cobra.Command{
 	},
 }
 
-// roleIDFrom resolves the role id from the second positional arg or --role_id.
+// roleIDFrom resolves the role id from the second positional arg or --role-id.
 func roleIDFrom(cmd *cobra.Command, args []string) string {
 	if len(args) >= 2 {
 		return args[1]
@@ -680,11 +680,11 @@ var userPrefsUpdateCmd = &cobra.Command{
 	Short: "Update user preferences (profile, report defaults, integration keys, LTV settings)",
 	Long: "Sets the preferences the settings pages set: Personal settings (time zone is on `user update`), the report\n" +
 		"defaults, Integrations' network keys and LTV › Settings. Each value is checked against the page's own choices\n" +
-		"before any request; a free-text value given as \"\" clears it. Changing --user_account_currency re-prices every\n" +
+		"before any request; a free-text value given as \"\" clears it. Changing --user-account-currency re-prices every\n" +
 		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service.",
-	Example: "  p202 user prefs update 1 --user_daily_email 07 --user_pref_time_predefined last7\n" +
-		"  p202 user prefs update 1 --user_tracking_domain \"\"     # back to this install's own domain\n" +
-		"  p202 user prefs update 1 --user_account_currency EUR",
+	Example: "  p202 user prefs update 1 --user-daily-email 07 --user-pref-time-predefined last7\n" +
+		"  p202 user prefs update 1 --user-tracking-domain \"\"     # back to this install's own domain\n" +
+		"  p202 user prefs update 1 --user-account-currency EUR",
 	Args: cobra.ExactArgs(1),
 	RunE: runUserPrefsUpdate,
 }

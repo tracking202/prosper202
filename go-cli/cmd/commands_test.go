@@ -87,7 +87,7 @@ func TestCommandsJSONDescribesTheWholeTreeOnce(t *testing.T) {
 
 	list := findCommand(tree, "p202 conversion list")
 	if list == nil || findFlag(list, "campaign_id") != nil || findFlag(list, "campaign-id") != nil {
-		t.Error("a hidden flag (conversion list --campaign_id) is listed")
+		t.Error("a hidden flag (conversion list --campaign-id) is listed")
 	}
 	if create := findCommand(tree, "p202 conversion create"); create == nil || !findFlag(create, "click-id").Required {
 		t.Error("conversion create --click-id is not marked required")

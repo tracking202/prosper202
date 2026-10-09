@@ -55,7 +55,7 @@
         "runs_one_of": [
           "--period lastmonth",
           "-p lastmonth",
-          "--time_from"
+          "--time-from"
         ],
         "never_runs": [
           "conversion create",

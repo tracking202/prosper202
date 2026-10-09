@@ -106,7 +106,7 @@ Examples:
   p202 forecast --metric profit --horizon 14 --method auto --seasonal
   p202 forecast --all-metrics --horizon 7
   p202 forecast --metric conv_rate --history last30 --interval week --horizon 4
-  p202 forecast --metric revenue --aff_campaign_id 5 --horizon 7
+  p202 forecast --metric revenue --aff-campaign-id 5 --horizon 7
   p202 forecast --metric revenue --events --horizon 14
   p202 forecast --metric clicks --events --event-tag us-holidays
   p202 forecast --metric clicks --no-anomaly-mask --json`,

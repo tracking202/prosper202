@@ -34,7 +34,7 @@
       "priority": "medium",
       "state": "seeded fixture plus an advanced landing page 'EVAL Adv LP' (landing_page_type 1) of EVAL Campaign A, created in setup",
       "setup": [
-        "a=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign A\") | .aff_campaign_id' | head -1) && p202 landing-page list --all --json | jq -e '.data[] | select(.landing_page_nickname==\"EVAL Adv LP\")' >/dev/null || p202 landing-page create --landing_page_url https://example.com/adv-lp --aff_campaign_id \"$a\" --landing_page_nickname 'EVAL Adv LP' --landing_page_type 1 --json >/dev/null"
+        "a=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign A\") | .aff_campaign_id' | head -1) && p202 landing-page list --all --json | jq -e '.data[] | select(.landing_page_nickname==\"EVAL Adv LP\")' >/dev/null || p202 landing-page create --landing-page-url https://example.com/adv-lp --aff-campaign-id \"$a\" --landing-page-nickname 'EVAL Adv LP' --landing-page-type 1 --json >/dev/null"
       ],
       "ask": "The EVAL Adv LP page shows two offers: EVAL Campaign B first, then the EVAL Geo Split redirector. Give me the link for each of the two buttons.",
       "expected": {

@@ -91,6 +91,8 @@ the set is refused before any request, with every accepted value in the message.
 
 ## Global flags
 
+Flags are written in kebab-case (`--aff-campaign-id`); the snake_case spelling (`--aff_campaign_id`) is accepted too.
+
 | Flag       | Description                              |
 |------------|------------------------------------------|
 | `--json`   | Output pretty-printed JSON instead of formatted tables |
@@ -258,7 +260,7 @@ Seven resource types share identical CRUD commands:
 p202 campaign list
 p202 campaign list --limit 10 --offset 20
 p202 campaign list --page 3
-p202 campaign list --aff_network_id 5
+p202 campaign list --aff-network-id 5
 ```
 
 | Flag | Description |
@@ -268,7 +270,7 @@ p202 campaign list --aff_network_id 5
 | `--page <n>` | Page number |
 | `--all` | Fetch all rows across pages (overrides `--limit`) |
 | `--resolve-names` | Resolve foreign key IDs to human-readable names |
-| Entity-specific filter flags (for example `--aff_network_id`) | Filter by related entity |
+| Entity-specific filter flags (for example `--aff-network-id`) | Filter by related entity |
 
 When the response contains more rows than shown, a truncation warning appears on stderr: `Warning: Showing N of M results. Use --all to fetch all.` This warning is suppressed in `--json` mode.
 
@@ -286,8 +288,8 @@ p202 campaign get 42
 
 ```bash
 p202 campaign create \
-  --aff_campaign_name "Q1 Offer" \
-  --aff_campaign_url "https://example.com/offer"
+  --aff-campaign-name "Q1 Offer" \
+  --aff-campaign-url "https://example.com/offer"
 ```
 
 Required and optional fields vary by resource type. The CLI validates required fields before making the API call.
@@ -295,7 +297,7 @@ Required and optional fields vary by resource type. The CLI validates required f
 ### Update a resource
 
 ```bash
-p202 campaign update 42 --aff_campaign_name "Q1 Offer (Updated)"
+p202 campaign update 42 --aff-campaign-name "Q1 Offer (Updated)"
 ```
 
 At least one field flag must be provided.
@@ -321,22 +323,22 @@ Bulk delete (`--ids`) processes each ID individually and reports a summary. If a
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--aff_campaign_name` | Yes | Campaign name |
-| `--aff_campaign_url` | Yes | Primary offer URL |
-| `--aff_campaign_url_2` | No | Offer URL 2 (on update, `""` clears it) |
-| `--aff_campaign_url_3` | No | Offer URL 3 (on update, `""` clears it) |
-| `--aff_campaign_url_4` | No | Offer URL 4 (on update, `""` clears it) |
-| `--aff_campaign_url_5` | No | Offer URL 5 (on update, `""` clears it) |
-| `--aff_campaign_payout` | Yes | Default payout |
-| `--aff_campaign_currency` | No | Currency code |
-| `--aff_campaign_foreign_payout` | No | Foreign currency payout |
-| `--aff_network_id` | Yes | Category (affiliate network) id, from `p202 aff-network list` |
-| `--aff_campaign_cloaking` | No | Enable cloaking (0/1) |
-| `--aff_campaign_rotate` | No | Enable rotation (0/1) |
-| `--payout_mode` | No | How conversions set a click's value: `replace` (default) or `accumulate` |
-| `--identity_signals` | No | Link this campaign's clicks into multi-touch journeys (1, default) or not (0) |
-| `--app_registration_id` | No | The Android app registration the campaign's store links install (0 unlinks) |
-| `--attribution_model_id` | No | The attribution model its conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default) |
+| `--aff-campaign-name` | Yes | Campaign name |
+| `--aff-campaign-url` | Yes | Primary offer URL |
+| `--aff-campaign-url-2` | No | Offer URL 2 (on update, `""` clears it) |
+| `--aff-campaign-url-3` | No | Offer URL 3 (on update, `""` clears it) |
+| `--aff-campaign-url-4` | No | Offer URL 4 (on update, `""` clears it) |
+| `--aff-campaign-url-5` | No | Offer URL 5 (on update, `""` clears it) |
+| `--aff-campaign-payout` | Yes | Default payout |
+| `--aff-campaign-currency` | No | Currency code |
+| `--aff-campaign-foreign-payout` | No | Foreign currency payout |
+| `--aff-network-id` | Yes | Category (affiliate network) id, from `p202 aff-network list` |
+| `--aff-campaign-cloaking` | No | Enable cloaking (0/1) |
+| `--aff-campaign-rotate` | No | Enable rotation (0/1) |
+| `--payout-mode` | No | How conversions set a click's value: `replace` (default) or `accumulate` |
+| `--identity-signals` | No | Link this campaign's clicks into multi-touch journeys (1, default) or not (0) |
+| `--app-registration-id` | No | The Android app registration the campaign's store links install (0 unlinks) |
+| `--attribution-model-id` | No | The attribution model its conversions are credited with, overriding the account default (`p202 attribution model list`; 0 returns it to the default) |
 
 Campaign utility subcommand:
 
@@ -478,10 +480,10 @@ p202 campaign list --with-stats --period last90 --min-clicks 1
 | `--days <n>` | Window of the last N days instead; `--period` wins when both are given (as in `analytics`) |
 | `--min-clicks <n>` | Only campaigns with at least N clicks in the window; searches every page, so no `--page/--limit/--offset` |
 
-`--with-stats` works with `--url-contains`, `--all`, `--aff_network_id` and plain paging. It reads the
+`--with-stats` works with `--url-contains`, `--all`, `--aff-network-id` and plain paging. It reads the
 campaign breakdown once (`GET /reports/breakdown?breakdown=campaign`, paged 500 rows at a time),
 so the API key needs `reports:read` (or `read`) as well as `campaigns:read`; a 403 there says so. The
-stats are not narrowed by `--aff_network_id`: a campaign's clicks count wherever they were recorded.
+stats are not narrowed by `--aff-network-id`: a campaign's clicks count wherever they were recorded.
 The window flags are refused without `--with-stats`. There is no last-click date: no API endpoint
 returns one per campaign without a request per campaign.
 
@@ -489,14 +491,14 @@ returns one per campaign without a request per campaign.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--aff_network_name` | Yes | Network name |
-| `--dni_network_id` | No | DNI network ID |
+| `--aff-network-name` | Yes | Network name |
+| `--dni-network-id` | No | DNI network ID |
 
 ### PPC network (`p202 ppc-network`)
 
 | Flag                 | Required | Description  |
 |----------------------|----------|--------------|
-| `--ppc_network_name` | Yes      | Network name |
+| `--ppc-network-name` | Yes      | Network name |
 
 A traffic source's custom variables — the extra `parameter=placeholder` pairs
 its tracking links carry, edited in Setup › Traffic Sources › variables:
@@ -521,9 +523,9 @@ the page shows its variables dialog only to such a role.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--ppc_account_name` | Yes | Account name |
-| `--ppc_network_id` | Yes | PPC network ID |
-| `--ppc_account_default` | No | Set as default account (0/1) |
+| `--ppc-account-name` | Yes | Account name |
+| `--ppc-network-id` | Yes | PPC network ID |
+| `--ppc-account-default` | No | Set as default account (0/1) |
 
 The pixels an account fires when one of its clicks converts (Setup › Traffic
 Sources › the account's Advanced):
@@ -547,22 +549,22 @@ URL in the same order. A removed pixel goes with its correction URL.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--aff_campaign_id` | Yes | Campaign ID |
-| `--ppc_account_id` | No | PPC account ID |
-| `--text_ad_id` | No | Text ad ID |
-| `--landing_page_id` | No | Landing page ID |
-| `--rotator_id` | No | Rotator ID |
-| `--click_cpc` | No | Cost per click (0 to 99.99999). On `update`, switches a CPA tracker to CPC |
-| `--click_cpa` | No | Cost per action (0 to 99.99999). On `update`, switches a CPC tracker to CPA. Not with `--click_cpc` |
-| `--click_cloaking` | No | `-1` the campaign's setting (the default), `0` off, `1` on |
+| `--aff-campaign-id` | Yes | Campaign ID |
+| `--ppc-account-id` | No | PPC account ID |
+| `--text-ad-id` | No | Text ad ID |
+| `--landing-page-id` | No | Landing page ID |
+| `--rotator-id` | No | Rotator ID |
+| `--click-cpc` | No | Cost per click (0 to 99.99999). On `update`, switches a CPA tracker to CPC |
+| `--click-cpa` | No | Cost per action (0 to 99.99999). On `update`, switches a CPC tracker to CPA. Not with `--click-cpc` |
+| `--click-cloaking` | No | `-1` the campaign's setting (the default), `0` off, `1` on |
 
 Tracker utility subcommands:
 
 ```bash
 p202 tracker get-url 56
 p202 tracker get-url 56 --t202kw '{keyword}' --c1 '{placement}'
-p202 tracker create-with-url --aff_campaign_id 42
-p202 tracker bulk-urls --aff_campaign_id 42 --concurrency 5
+p202 tracker create-with-url --aff-campaign-id 42
+p202 tracker bulk-urls --aff-campaign-id 42 --concurrency 5
 p202 tracker list --all --resolve-names
 ```
 
@@ -570,8 +572,8 @@ The link is the one **Get Links** builds: the tracking domain from Settings
 (or this server's own address when none is set) and the install directory,
 then the traffic source's custom variables, then the built-in tokens.
 `get-url`, `create-with-url` and `bulk-urls` take a flag per built-in token —
-`--c1` … `--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`,
-`--utm_term`, `--utm_content`, `--t202ref`, `--t202b`, `--t202kw` — whose value
+`--c1` … `--c4`, `--utm-source`, `--utm-medium`, `--utm-campaign`,
+`--utm-term`, `--utm-content`, `--t202ref`, `--t202b`, `--t202kw` — whose value
 is written into the link as given, so pass the traffic source's macro. A value
 containing `&`, `#`, `?`, whitespace or control characters is refused before
 anything is sent; with `create-with-url` that means no tracker is created.
@@ -588,11 +590,11 @@ not combinable with `--page`/`--limit`/`--offset`).
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--landing_page_url` | Yes | Landing page URL |
-| `--aff_campaign_id` | Yes | Campaign ID |
-| `--landing_page_nickname` | Yes | Landing page nickname |
-| `--leave_behind_page_url` | No | Leave-behind page URL (on update, `""` clears it) |
-| `--landing_page_type` | No | Landing page type: 0 simple (one campaign), 1 advanced (several offers) |
+| `--landing-page-url` | Yes | Landing page URL |
+| `--aff-campaign-id` | Yes | Campaign ID |
+| `--landing-page-nickname` | Yes | Landing page nickname |
+| `--leave-behind-page-url` | No | Leave-behind page URL (on update, `""` clears it) |
+| `--landing-page-type` | No | Landing page type: 0 simple (one campaign), 1 advanced (several offers) |
 
 The page's tracking code, as Setup › Get LP Code hands it out:
 
@@ -614,13 +616,13 @@ carries (`lpip=`) is accepted too.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--text_ad_name` | Yes | Text ad name |
-| `--text_ad_headline` | Yes | Headline |
-| `--text_ad_description` | Yes | Description text |
-| `--text_ad_display_url` | Yes | Display URL |
-| `--aff_campaign_id` | No | Campaign ID |
-| `--landing_page_id` | No | Landing page ID |
-| `--text_ad_type` | No | Text ad type |
+| `--text-ad-name` | Yes | Text ad name |
+| `--text-ad-headline` | Yes | Headline |
+| `--text-ad-description` | Yes | Description text |
+| `--text-ad-display-url` | Yes | Display URL |
+| `--aff-campaign-id` | No | Campaign ID |
+| `--landing-page-id` | No | Landing page ID |
+| `--text-ad-type` | No | Text ad type |
 
 ## Clicks
 
@@ -630,8 +632,8 @@ Clicks are read-only.
 
 ```bash
 p202 click list
-p202 click list --limit 100 --time_from 1700000000 --time_to 1700100000
-p202 click list --aff_campaign_id 5 --click_lead 1
+p202 click list --limit 100 --time-from 1700000000 --time-to 1700100000
+p202 click list --aff-campaign-id 5 --click-lead 1
 p202 click list --all
 p202 click list --follow                         # the Spy page: newest 10, then each new click
 p202 click list --follow --ndjson --stop-after 10m
@@ -642,18 +644,18 @@ p202 click list --follow --ndjson --stop-after 10m
 | `-l, --limit`       | 50      | Maximum results                      |
 | `-o, --offset`      | 0       | Pagination offset                    |
 | `--page`            |         | Page number (maps to offset)         |
-| `--time_from`       |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
-| `--time_to`         |         | End, inclusive: the same forms (a date runs through its last second) |
-| `--aff_campaign_id` |         | Filter by campaign                   |
-| `--ppc_account_id`  |         | Filter by PPC account                |
-| `--landing_page_id` |         | Filter by landing page               |
-| `--click_lead`      |         | 0 = clicks only, 1 = conversions only |
-| `--click_bot`       |         | 0 = human, 1 = bot                   |
+| `--time-from`       |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
+| `--time-to`         |         | End, inclusive: the same forms (a date runs through its last second) |
+| `--aff-campaign-id` |         | Filter by campaign                   |
+| `--ppc-account-id`  |         | Filter by PPC account                |
+| `--landing-page-id` |         | Filter by landing page               |
+| `--click-lead`      |         | 0 = clicks only, 1 = conversions only |
+| `--click-bot`       |         | 0 = human, 1 = bot                   |
 | `-p, --period`      |         | A named window in the account's timezone: `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` |
 | `--keyword`, `--referer` | | The keyword, or the referring URL, contains this text |
 | `--ip`              |         | One address, IPv4 or IPv6            |
 | `--show`            | all     | `all`, `real`, `filtered`, `filtered_bot`, `leads` |
-| `--device_type`, `--method_of_promotion`, `--aff_network_id`, `--ppc_network_id`, `--text_ad_id`, `--country_id`, `--region_id`, `--isp_id`, `--browser_id`, `--platform_id` | | The rest of the Visitors page's filters, as `p202 report` takes them |
+| `--device-type`, `--method-of-promotion`, `--aff-network-id`, `--ppc-network-id`, `--text-ad-id`, `--country-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id` | | The rest of the Visitors page's filters, as `p202 report` takes them |
 | `--all`             | false   | Fetch all rows across pages          |
 | `--follow`          |         | Print the newest `--limit` clicks (default 10), then each new click as it arrives |
 | `--interval`        | 5s      | With `--follow`: how often to poll (at least 1s) |
@@ -664,7 +666,7 @@ output (`--json`, `--ndjson`, or chosen for an agent) is one object per line.
 Each poll re-reads the 15 seconds behind the newest click it has seen, so a
 click whose row is written a moment after a later click's still appears. A
 failed poll ends it with that error's exit code (2–4); `--all`, `--offset`,
-`--page`, `--time_from`, `--time_to` and `--csv` are refused with it.
+`--page`, `--time-from`, `--time-to` and `--csv` are refused with it.
 
 ### Get a click
 
@@ -713,8 +715,8 @@ staged. Reports show the new cost once the data engine rebuilds the hours.
 
 ```bash
 p202 conversion list
-p202 conversion list --campaign_id 3 --time_from 1700000000
-p202 conversion list --click_id 12345
+p202 conversion list --campaign-id 3 --time-from 1700000000
+p202 conversion list --click-id 12345
 p202 conversion list --source goal --goal 7
 p202 conversion list --all
 ```
@@ -723,10 +725,10 @@ p202 conversion list --all
 |-----------------|---------|------------------------|
 | `-l, --limit`   | 50      | Maximum results        |
 | `-o, --offset`  | 0       | Pagination offset      |
-| `--campaign_id` |         | Filter by campaign     |
-| `--time_from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
-| `--time_to`     |         | End, inclusive: the same forms |
-| `--click_id`    |         | Only this click's conversions |
+| `--campaign-id` |         | Filter by campaign     |
+| `--time-from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
+| `--time-to`     |         | End, inclusive: the same forms |
+| `--click-id`    |         | Only this click's conversions |
 | `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
@@ -745,25 +747,25 @@ p202 conversion get 789
 ### Create a conversion
 
 ```bash
-p202 conversion create --click_id 12345
-p202 conversion create --click_id 12345 --payout 4.50 --transaction_id "TXN-001"
+p202 conversion create --click-id 12345
+p202 conversion create --click-id 12345 --payout 4.50 --transaction-id "TXN-001"
 ```
 
 | Flag               | Required | Description              |
 |--------------------|----------|--------------------------|
-| `--click_id`       | Yes      | Click ID to attribute    |
+| `--click-id`       | Yes      | Click ID to attribute    |
 | `--payout`         | No       | Payout amount            |
-| `--transaction_id` | No       | Transaction ID (dedup)   |
+| `--transaction-id` | No       | Transaction ID (dedup)   |
 | `--conv-time`      | No       | When it converted, unix seconds (default now) |
-| `--status reversed`| No       | Record a reversal of the click's conversion with this `--transaction_id` instead |
+| `--status reversed`| No       | Record a reversal of the click's conversion with this `--transaction-id` instead |
 | `--reversal-id`    | No       | The network's id for the reversal (with `--status reversed`) |
 | `--customer-id` / `--customer-ref` | No | The LTV customer (one of them); `--customer-ref-type` says what the ref is, `--customer-crm '{…}'` seeds a customer the ref creates |
 | `--item` / `--items-file` | No | Product line items (JSON objects) on the customer's revenue event; they need a customer — named here, already linked to the click, or the account's customer c-param — or the server refuses them (`422` naming `items`) and records nothing |
 
 ```bash
-p202 conversion create --click_id 12345 --payout 49 --transaction_id ORD-1 \
+p202 conversion create --click-id 12345 --payout 49 --transaction-id ORD-1 \
     --customer-ref CUST-77 --item '{"sku":"PRO-1","quantity":1,"unit_price":49}'
-p202 conversion create --click_id 12345 --status reversed --transaction_id ORD-1
+p202 conversion create --click-id 12345 --status reversed --transaction-id ORD-1
 ```
 
 A transaction id the click already has records nothing: the answer is that
@@ -879,8 +881,8 @@ The CLI accepts the following legacy flags for backward compatibility:
 
 | Legacy flag            | Preferred flag |
 |------------------------|----------------|
-| `--click_id_public`    | `--click_id`   |
-| `--conversion_payout`  | `--payout`     |
+| `--click-id-public`    | `--click-id`   |
+| `--conversion-payout`  | `--payout`     |
 
 ### Delete a conversion
 
@@ -948,28 +950,28 @@ All report commands (`report summary|breakdown|timeseries|daypart|weekpart|cross
 | Flag                | Description              |
 |---------------------|--------------------------|
 | `-p, --period`      | Preset: today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime. Calendar presets start at the account's midnight (its timezone); lastN is today and the N whole days before it, from that day's midnight |
-| `--time_from`       | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset (`2026-10-01T09:30:00Z`) |
-| `--time_to`         | End, inclusive: the same forms (a date runs through its last second) |
-| `--aff_campaign_id` | Filter by campaign       |
-| `--ppc_account_id`  | Filter by PPC account    |
-| `--aff_network_id`  | Filter by aff network    |
-| `--ppc_network_id`  | Filter by PPC network    |
-| `--landing_page_id` | Filter by landing page   |
-| `--country_id`      | Filter by country        |
-| `--text_ad_id`      | Filter by text ad        |
-| `--region_id`       | Filter by region (the id of a `--breakdown region` row) |
-| `--isp_id`          | Filter by ISP/carrier (the id of a `--breakdown isp` row) |
-| `--browser_id`      | Filter by browser (the id of a `--breakdown browser` row) |
-| `--platform_id`     | Filter by platform/OS (the id of a `--breakdown platform` row) |
-| `--device_type`     | Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot |
-| `--method_of_promotion` | `directlink` or `landingpage` |
+| `--time-from`       | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset (`2026-10-01T09:30:00Z`) |
+| `--time-to`         | End, inclusive: the same forms (a date runs through its last second) |
+| `--aff-campaign-id` | Filter by campaign       |
+| `--ppc-account-id`  | Filter by PPC account    |
+| `--aff-network-id`  | Filter by aff network    |
+| `--ppc-network-id`  | Filter by PPC network    |
+| `--landing-page-id` | Filter by landing page   |
+| `--country-id`      | Filter by country        |
+| `--text-ad-id`      | Filter by text ad        |
+| `--region-id`       | Filter by region (the id of a `--breakdown region` row) |
+| `--isp-id`          | Filter by ISP/carrier (the id of a `--breakdown isp` row) |
+| `--browser-id`      | Filter by browser (the id of a `--breakdown browser` row) |
+| `--platform-id`     | Filter by platform/OS (the id of a `--breakdown platform` row) |
+| `--device-type`     | Filter by device type: 1 Desktop, 2 Mobile, 3 Tablet, 4 Bot |
+| `--method-of-promotion` | `directlink` or `landingpage` |
 | `--show`            | Which clicks count: `all` (default), `real` (not filtered), `filtered`, `filtered_bot`, `leads` (converted) |
 | `--keyword`         | Keyword contains this text (case-insensitive; `%` and `_` are literal) |
 | `--ip`              | One IPv4 or IPv6 address, exactly |
 | `--referer`         | Referring URL contains this text (case-insensitive) |
 
 A filter the server does not know, or a malformed value (`--ip 999.1.1.1`), is a
-validation error naming it; `--show`, `--method_of_promotion` and `--period` are
+validation error naming it; `--show`, `--method-of-promotion` and `--period` are
 checked before anything is sent. An id of `0` is no filter.
 
 ### Dashboard
@@ -978,7 +980,7 @@ Dashboard summary is a shortcut to `reports/summary`.
 
 ```bash
 p202 dashboard
-p202 dashboard --period last7 --aff_campaign_id 42
+p202 dashboard --period last7 --aff-campaign-id 42
 p202 dashboard --all-profiles
 p202 dashboard --profiles prod,staging
 p202 dashboard --group env:prod
@@ -992,8 +994,8 @@ Aggregate totals for the selected time period and filters.
 
 ```bash
 p202 report summary --period today
-p202 report summary --time_from 1700000000 --time_to 1700100000
-p202 report summary --time_from 2026-09-01 --time_to 2026-09-30
+p202 report summary --time-from 1700000000 --time-to 1700100000
+p202 report summary --time-from 2026-09-01 --time-to 2026-09-30
 p202 report summary --all-profiles --period today
 p202 report summary --profiles prod,staging --period today
 p202 report summary --group env:prod --period today
@@ -1015,8 +1017,8 @@ Performance broken down by a dimension.
 
 ```bash
 p202 report breakdown --breakdown campaign --period last7
-p202 report breakdown --breakdown country --sort total_net --sort_dir ASC --limit 10
-p202 report breakdown --breakdown referer --period lastmonth --show real --device_type 2
+p202 report breakdown --breakdown country --sort total_net --sort-dir ASC --limit 10
+p202 report breakdown --breakdown referer --period lastmonth --show real --device-type 2
 p202 report breakdown --breakdown ip --keyword "running shoes" --period thismonth
 p202 report groups --by ppc_network,campaign,keyword --period last7   # the Group Overview: nested, each group with its totals
 ```
@@ -1025,7 +1027,7 @@ p202 report groups --by ppc_network,campaign,keyword --period last7   # the Grou
 |--------------------|---------------|----------------------------|
 | `-b, --breakdown`  | campaign      | Dimension (see below)      |
 | `-s, --sort`       | total_clicks  | Sort column                |
-| `--sort_dir`       | DESC          | Sort direction: ASC or DESC |
+| `--sort-dir`       | DESC          | Sort direction: ASC or DESC |
 | `-l, --limit`      | 50            | Maximum results (1–500)    |
 | `-o, --offset`     | 0             | Pagination offset          |
 
@@ -1074,11 +1076,11 @@ The sides are rarely the same length, so compare the `_per_day` columns: 6,500 c
 against 2,080 over 26.5 days is −68% in total but −23% per day. The table shows the clicks columns and
 the percent changes; `--json` and `--csv` carry every column, and `--fields` picks any of them.
 
-- **Window**: `--days N` (the last N×24 hours, ending now), or `--time_from <unix>` with an optional
-  `--time_to <unix>` (default now); with none of them, `--days 90`. Every `--period` is refused: each
+- **Window**: `--days N` (the last N×24 hours, ending now), or `--time-from <unix>` with an optional
+  `--time-to <unix>` (default now); with none of them, `--days 90`. Every `--period` is refused: each
   starts at a midnight in the account's timezone (`last7` is today and the 7 whole days before it, as
   the report pages count Last 7 Days), which the CLI cannot see, and `alltime` has no start. For the
-  window `--period last7` reads, pass that midnight as `--time_from <unix>`. `--time_to` alone is
+  window `--period last7` reads, pass that midnight as `--time-from <unix>`. `--time-to` alone is
   refused too.
 - **Order**: by the absolute change in clicks, largest first. `--sort clicks|conversions|revenue` ranks
   by another metric's change, `--sort clicks_per_day` (or `conversions_per_day`, `revenue_per_day`) by
@@ -1095,7 +1097,7 @@ Performance data over time intervals.
 
 ```bash
 p202 report timeseries --period last30 --interval day
-p202 report timeseries --interval hour --time_from 1700000000
+p202 report timeseries --interval hour --time-from 1700000000
 ```
 
 | Flag            | Default | Description                   |
@@ -1104,7 +1106,7 @@ p202 report timeseries --interval hour --time_from 1700000000
 
 Invalid `--interval` values now return a validation error from the API (`422`) instead of silently defaulting.
 
-Buckets come oldest first, at most 2000 per response. When the window holds more, the server cuts the newest ones and says so (`"truncated": true`, `"limit": 2000` in `--json` output), and the CLI prints a warning to stderr naming the last bucket returned, with a hint: narrow `--time_from`/`--time_to` (or use a shorter `--period`), or use a coarser `--interval` (`week` or `month`). A server from before the flag cuts at 2000 without saying so; 2000 buckets from one of those get the same warning, as "may be missing".
+Buckets come oldest first, at most 2000 per response. When the window holds more, the server cuts the newest ones and says so (`"truncated": true`, `"limit": 2000` in `--json` output), and the CLI prints a warning to stderr naming the last bucket returned, with a hint: narrow `--time-from`/`--time-to` (or use a shorter `--period`), or use a coarser `--interval` (`week` or `month`). A server from before the flag cuts at 2000 without saying so; 2000 buckets from one of those get the same warning, as "may be missing".
 
 ### Daypart
 
@@ -1112,13 +1114,13 @@ Performance aggregated by hour-of-day (`0`-`23`) across the selected date range.
 
 ```bash
 p202 report daypart --period last30
-p202 report daypart --sort roi --sort_dir DESC --country_id 223
+p202 report daypart --sort roi --sort-dir DESC --country-id 223
 ```
 
 | Flag            | Default      | Description |
 |-----------------|--------------|-------------|
 | `-s, --sort`    | hour_of_day  | Sort by: hour_of_day, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
-| `--sort_dir`    | ASC          | Sort direction: ASC or DESC |
+| `--sort-dir`    | ASC          | Sort direction: ASC or DESC |
 
 ### Weekpart
 
@@ -1126,13 +1128,13 @@ Performance aggregated by day-of-week (`0` = Monday ... `6` = Sunday) across the
 
 ```bash
 p202 report weekpart --period last30
-p202 report weekpart --sort roi --sort_dir DESC --country_id 223
+p202 report weekpart --sort roi --sort-dir DESC --country-id 223
 ```
 
 | Flag            | Default      | Description |
 |-----------------|--------------|-------------|
 | `-s, --sort`    | day_of_week  | Sort by: day_of_week, total_clicks, total_click_throughs, total_leads, total_income, total_cost, total_net, epc, avg_cpc, conv_rate, roi, cpa |
-| `--sort_dir`    | ASC          | Sort direction: ASC or DESC |
+| `--sort-dir`    | ASC          | Sort direction: ASC or DESC |
 
 ## Forecasting
 
@@ -1172,7 +1174,7 @@ p202 rotator list --all
 p202 rotator get 5
 p202 rotator stats 5 --period last30          # totals, each rule, and the default
 p202 rotator create --name "Geo Split"
-p202 rotator update 5 --name "Geo Split v2" --default_url "https://fallback.example.com"
+p202 rotator update 5 --name "Geo Split v2" --default-url "https://fallback.example.com"
 p202 rotator delete 5
 p202 rotator delete --ids 5,6 --force
 ```
@@ -1180,9 +1182,9 @@ p202 rotator delete --ids 5,6 --force
 | Flag                 | Required (create) | Description             |
 |----------------------|-------------------|-------------------------|
 | `--name`             | Yes               | Rotator name            |
-| `--default_url`      | No                | Default destination: an http(s) URL |
-| `--default_campaign` | No                | Default destination: one of your campaign ids |
-| `--default_lp`       | No                | Default destination: one of your landing page ids |
+| `--default-url`      | No                | Default destination: an http(s) URL |
+| `--default-campaign` | No                | Default destination: one of your campaign ids |
+| `--default-lp`       | No                | Default destination: one of your landing page ids |
 
 The default is one destination: give at most one of the three. On `update`,
 giving one replaces the default whatever its kind (a campaign default becomes a
@@ -1205,18 +1207,18 @@ every rule of every rotator in one breakdown, without the defaults.
 
 ```bash
 p202 rotator rule-create 5 \
-  --rule_name "US Traffic" \
-  --criteria_json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
-  --redirects_json '[{"redirect_url":"https://us.example.com","weight":"100","name":"US Offer"}]'
+  --rule-name "US Traffic" \
+  --criteria-json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
+  --redirects-json '[{"redirect_url":"https://us.example.com","weight":"100","name":"US Offer"}]'
 ```
 
 | Flag               | Required | Description                |
 |--------------------|----------|----------------------------|
-| `--rule_name`      | Yes      | Rule name                  |
+| `--rule-name`      | Yes      | Rule name                  |
 | `--splittest`      | No       | Enable split test (0 or 1) |
 | `--status`         | No       | 1 active (default), 0 created paused |
-| `--criteria_json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges) |
-| `--redirects_json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
+| `--criteria-json`  | No       | Criteria as JSON array: `type` country, region, city, isp, ip, platform, device or browser; `statement` is or is_not; `value` comma-separated, countries as `United States(US)`, `ip` as single IPv4/IPv6 addresses (no ranges) |
+| `--redirects-json` | No       | Redirects as JSON array: each with exactly one of `redirect_url`, `redirect_campaign`, `redirect_lp`, plus `weight` (0-100) and `name` |
 
 Both JSON fields are checked for syntax before sending, and the server checks
 the rest before writing anything: an unknown criterion type, a country written
@@ -1234,20 +1236,20 @@ p202 rotator rule-delete 5 --ids 12,13 --force
 ### Update a rule
 
 ```bash
-p202 rotator rule-update 5 12 --rule_name "US Traffic v2"
+p202 rotator rule-update 5 12 --rule-name "US Traffic v2"
 p202 rotator rule-update 5 12 --status 0
 p202 rotator rule-update 5 12 \
-  --criteria_json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
-  --redirects_json '[{"redirect_campaign":"4","weight":"100","name":"US Offer"}]'
+  --criteria-json '[{"type":"country","statement":"is","value":"United States(US)"}]' \
+  --redirects-json '[{"redirect_campaign":"4","weight":"100","name":"US Offer"}]'
 ```
 
 | Flag               | Description                |
 |--------------------|----------------------------|
-| `--rule_name`      | Rule name                  |
+| `--rule-name`      | Rule name                  |
 | `--splittest`      | Enable split test (0 or 1) |
 | `--status`         | Rule status (0 or 1)       |
-| `--criteria_json`  | Criteria as JSON array     |
-| `--redirects_json` | Redirects as JSON array    |
+| `--criteria-json`  | Criteria as JSON array     |
+| `--redirects-json` | Redirects as JSON array    |
 
 ## Attribution
 
@@ -1425,28 +1427,28 @@ Every LTV write refuses the global `--staged` flag before sending anything
 ```bash
 p202 user list
 p202 user get 1
-p202 user create --user_name admin2 --user_email admin2@example.com
-p202 user update 1 --user_fname "Jane" --user_lname "Doe"
+p202 user create --user-name admin2 --user-email admin2@example.com
+p202 user update 1 --user-fname "Jane" --user-lname "Doe"
 p202 user delete 2
 ```
 
-When creating a user without `--user_pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A `--user_pass` value works on both but stays in shell history.
+When creating a user without `--user-pass`, the CLI asks for the password without echo (twice, so a typo is caught), or reads it as one line of stdin when piped. To change a password on update, use `--set-password` (the same prompt or pipe); changing your **own** password also needs `--current-password`, read first. A `--user-pass` value works on both but stays in shell history.
 
 | Flag              | Required (create) | Description         |
 |-------------------|-------------------|---------------------|
-| `--user_name`     | Yes               | Username            |
-| `--user_email`    | Yes               | Email address       |
-| `--user_pass`     | Yes (prompted or piped) | Password, 8-72 characters |
-| `--user_fname`    | No                | First name          |
-| `--user_lname`    | No                | Last name           |
-| `--user_timezone` | No                | Timezone (default: UTC) |
-| `--user_active`   | No                | 1 = active, 0 = inactive |
+| `--user-name`     | Yes               | Username            |
+| `--user-email`    | Yes               | Email address       |
+| `--user-pass`     | Yes (prompted or piped) | Password, 8-72 characters |
+| `--user-fname`    | No                | First name          |
+| `--user-lname`    | No                | Last name           |
+| `--user-timezone` | No                | Timezone (default: UTC) |
+| `--user-active`   | No                | 1 = active, 0 = inactive |
 
 ### Roles
 
 ```bash
 p202 user role list                    # List all available roles
-p202 user role assign 2 --role_id 1   # Assign role to user
+p202 user role assign 2 --role-id 1   # Assign role to user
 p202 user role remove 2 3             # Remove role 3 from user 2
 ```
 
@@ -1487,8 +1489,8 @@ linking; clicks already linked stay linked.
 ```bash
 p202 user prefs get 1
 p202 user prefs update 1 \
-  --user_tracking_domain "trk.example.com" \
-  --user_account_currency "USD"
+  --user-tracking-domain "trk.example.com" \
+  --user-account-currency "USD"
 ```
 
 Every preference the settings pages set has a flag; `p202 user prefs update --help`
@@ -1497,13 +1499,13 @@ request. A free-text flag given `""` clears it.
 
 | Flag | Values |
 |------|--------|
-| `--user_tracking_domain` | host, e.g. `trk.example.com`; `""` uses the install's own domain |
-| `--user_daily_email` | `never`, `00`-`23` (hour, your time zone) |
-| `--user_account_currency` | 3-letter code; re-prices every campaign's payout into it |
-| `--user_keyword_searched_or_bidded`, `--user_pref_referer_data`, `--user_pref_dynamic_bid`, `--user_pref_privacy`, `--user_pref_cloak_referer`, `--user_pref_ad_settings` | Personal settings' choices |
-| `--user_pref_time_predefined`, `--user_pref_limit`, `--user_cpc_or_cpv`, `--chart_time_range` | report and chart defaults |
-| `--user_slack_incoming_webhook`, `--ipqs_api_key`, `--cb_key`, `--zaxaa_api_signature`, `--jvzoo_ipn_secret_key` | Integrations (a value here stays in shell history) |
-| `--user_ltv_customer_cparam`, `--user_ltv_personalization_fields`, `--user_ltv_score_weights`, `--user_ltv_rec_fatigue` | LTV › Settings |
+| `--user-tracking-domain` | host, e.g. `trk.example.com`; `""` uses the install's own domain |
+| `--user-daily-email` | `never`, `00`-`23` (hour, your time zone) |
+| `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
+| `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
+| `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
+| `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
+| `--user-ltv-customer-cparam`, `--user-ltv-personalization-fields`, `--user-ltv-score-weights`, `--user-ltv-rec-fatigue` | LTV › Settings |
 
 ## Export and import
 

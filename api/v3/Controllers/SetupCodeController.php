@@ -330,7 +330,7 @@ final class SetupCodeController
         $this->bind($stmt, 'ii', $campaignId, $this->userId);
         if ($this->fetchOne($stmt, 'Campaign lookup failed') === null) {
             throw new ValidationException('This landing page\'s campaign was removed', [
-                'aff_campaign_id' => 'Landing page ' . (int) $page['landing_page_id'] . " promotes campaign $campaignId, which is not yours or was removed: Get LP Code does not offer its code. Point it at a live campaign first (`p202 landing-page update " . (int) $page['landing_page_id'] . ' --aff_campaign_id <id>`).',
+                'aff_campaign_id' => 'Landing page ' . (int) $page['landing_page_id'] . " promotes campaign $campaignId, which is not yours or was removed: Get LP Code does not offer its code. Point it at a live campaign first (`p202 landing-page update " . (int) $page['landing_page_id'] . ' --aff-campaign-id <id>`).',
             ]);
         }
     }

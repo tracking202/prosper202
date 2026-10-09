@@ -274,7 +274,7 @@ func applyReportSort(cmd *cobra.Command, params map[string]string) {
 	}
 }
 
-// addSortFlags registers --sort (one of columns) and --sort_dir on a report
+// addSortFlags registers --sort (one of columns) and --sort-dir on a report
 // subcommand. The global flag normalizer makes --sort-dir an accepted
 // spelling automatically.
 func addSortFlags(cmd *cobra.Command, columns []string) {

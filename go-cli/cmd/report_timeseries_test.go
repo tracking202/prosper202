@@ -52,7 +52,7 @@ func TestReportTimeseriesWarnsWhenServerSaysTruncated(t *testing.T) {
 
 	for _, want := range []string{
 		"Warning: the series was cut at the server's 2000-bucket limit; buckets after p1999 are missing.",
-		"Hint: Narrow --time_from/--time_to (or use a shorter --period), or use --interval day|week|month",
+		"Hint: Narrow --time-from/--time-to (or use a shorter --period), or use --interval day|week|month",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q, got:\n%s", want, stderr)
@@ -115,7 +115,7 @@ func TestTimeseriesTruncationWarningHintFollowsInterval(t *testing.T) {
 		"hour":  ", or use --interval day|week|month,",
 		"day":   ", or use --interval week|month,",
 		"week":  ", or use --interval month,",
-		"month": "Narrow --time_from/--time_to (or use a shorter --period).",
+		"month": "Narrow --time-from/--time-to (or use a shorter --period).",
 	}
 	noPeriod := timeseriesTruncationWarning([]byte(`{"data":[{"total_clicks":1}],"truncated":true,"limit":1}`), "day")
 	if !strings.Contains(noPeriod, "buckets after the last bucket returned are missing") {

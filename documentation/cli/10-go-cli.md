@@ -107,6 +107,8 @@ listed once and hidden flags are left out. `p202 --help` points at all three.
 
 ## Commands
 
+Flags are written in kebab-case (`--aff-campaign-id`); the snake_case spelling (`--aff_campaign_id`) is accepted too.
+
 For the command that does what a given page of the web UI does, and what
 still needs the browser, see [UI parity](12-ui-parity.md).
 
@@ -124,7 +126,7 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 aff-network list` | List affiliate networks (alias: `category`) |
 | `p202 ppc-network list` | List PPC/traffic networks (alias: `traffic-network`) |
 | `p202 tracker list` | List trackers |
-| `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm_source`, `--utm_medium`, `--utm_campaign`, `--utm_term`, `--utm_content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
+| `p202 tracker get-url <id>` | The tracker's link as Get Links builds it: the tracking domain (or this server's address when none is set) and install directory, the traffic source's custom variables, then the built-in tokens. `--c1`..`--c4`, `--utm-source`, `--utm-medium`, `--utm-campaign`, `--utm-term`, `--utm-content`, `--t202ref`, `--t202b` and `--t202kw` fill a token with the value as given (the traffic source's macro, e.g. `--t202kw '{keyword}'`); `&`, `#`, `?`, whitespace and control characters are refused before any request. `create-with-url` and `bulk-urls` take the same flags; if `create-with-url` creates the tracker and then cannot fetch its link, the hint names the new `tracker_id` so the retry is `get-url`, not a second create |
 | `p202 landing-page list` | List landing pages; `--url-contains <text>` returns every landing page whose `landing_page_url` or `leave_behind_page_url` contains the text |
 | `p202 landing-page code <id>` | The page's tracking code, as Setup > Get LP Code hands it out: the loader script and the ways out to the offer; an advanced page's offers with `--offer campaign:<id>`/`--offer rotator:<id>`, in order. See [Setup code and traffic-source settings](#setup-code-and-traffic-source-settings) |
 | `p202 ppc-network variable list\|create\|update\|delete` | A traffic source's custom variables, the `parameter=placeholder` pairs its tracking links carry (Setup > Traffic Sources) |
@@ -138,15 +140,15 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 conversion upload-revenue <file.csv>` | Record a network's revenue report as a new upload batch (the UI's Upload Revenue Reports): columns read from the header or named with `--subid-column`/`--amount-column`; the newest report replaces earlier uploads' values |
 | `p202 conversion postback-url` | The server-to-server postback URL to give your network (Setup > Postback / Pixel), on this install's tracking domain: `--subid` your network's sub id macro, `--amount` a number or its payout macro, `--campaign` for the advanced postback's `cid`, `--scheme`; stdout is the URL alone |
 | `p202 conversion pixel` | The conversion pixel for the thank-you page: `--type simple\|advanced\|universal` (`--iframe` for the universal pixel's iframe), the same value flags; `--json` prints every pixel and postback the page shows |
-| `p202 conversion list` | List conversions, with their provenance (`--click_id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
+| `p202 conversion list` | List conversions, with their provenance (`--click-id`, `--source`, `--goal` filter by click, by what produced them and by goal) |
 | `p202 conversion create` | Record a conversion on `--click-id` (`--payout`, `--transaction-id`, `--conv-time`); `--status reversed` (with the sale's `--transaction-id`, optionally `--reversal-id`) records a reversal instead. `--customer-id` or `--customer-ref` (+ `--customer-ref-type`, `--customer-crm '{…}'`) links it to an LTV customer, and `--item '{…}'`/`--items-file` add product line items, which need a customer: named here, already linked to the click, or the account's customer c-param. With none, the server refuses (`422` naming `items`, nothing written) and the hint names `--customer-ref` / `--customer-id` |
 | `p202 conversion import <file>` | Record a network's conversion export (CSV with a header row, or a JSON array of objects) against the clicks its subids name, for installs whose postbacks were never wired. Columns are auto-detected from common headers (subid: `subid`, `sub_id`, `aff_sub`, `sub1`, `click_id`, `clickid`, `s2`; payout: `payout`, `commission`, `amount`, `revenue`; transaction id: `transaction_id`, `order_id`, `txid`; time: `date`, `time`, `conversion_date`, `created_at`) and reported on stderr and in `meta.columns`; two candidate headers for one column are refused, and `--subid-column`/`--payout-column`/`--txid-column`/`--time-column` choose. The subid is read as the postback reads it (the click id: digits, no leading zero); rows are `invalid` (with the reason), `duplicate_in_file`, or ready. `--dry-run` sends nothing (`--check-clicks` adds one read-only `GET /clicks/{id}/conversions` per click). Otherwise the clicks are read first, you confirm (`--force` skips; `--staged` records proposals), and each ready row is `POST /conversions` with an `Idempotency-Key` derived from its click, transaction id, payout and time. Rows end `created`, `duplicate` (already on the click), `conflict` (the click has the transaction id with another payout or time; not sent), `click_not_found`, `failed` or `staged`; re-running the same file sends only what is not recorded yet; exit 5 if any row failed or conflicts |
 | `p202 rotator list` | List rotators |
 | `p202 rotator stats <id>` | A rotator's totals, each rule (the rule a click matched) and its default (clicks no rule matched) over the report window and filters (`GET /rotators/{id}/stats`); rules plus default add up to the totals, and a rule deleted since is listed with `deleted: true` |
 | `p202 report summary` | Performance summary |
 | `p202 report groups` | The Group Overview: traffic grouped by up to four dimensions (`--by ppc_network,campaign,keyword`), nested, every group with its totals; the clicks a level has no value for are its `[no …]` row, so a group is the sum of its rows. `--json` is the tree; the table, CSV and `--ndjson` are one row per group, marked by level, then a Total row |
-| `p202 report breakdown` | Performance by dimension, including the Analyze pages' `ip`, `referer` (domain), `referer_url`, `device_type`, `c1`-`c4`, `utm_*`, `rotator` and `rotator_rule`; rows tied on `--sort` come in id order, so `--offset` paging neither skips nor repeats a row. Every report command takes the Analyze pages' filters: `--text_ad_id`, `--region_id`, `--isp_id`, `--browser_id`, `--platform_id`, `--device_type`, `--method_of_promotion`, `--show all\|real\|filtered\|filtered_bot\|leads`, `--keyword` (contains), `--ip` (exact), `--referer` (contains), and the periods `last14`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` beside `today`, `yesterday`, `last7`, `last30`, `last90` (calendar periods start at the account's midnight). An unknown filter, value or `--sort` is a validation error naming it |
-| `p202 report timeseries` | Performance over time (`--interval hour\|day\|week\|month`), oldest bucket first, at most 2000 buckets. A series the server cut has `truncated: true` and `limit` in `--json`, and stderr warns with the last bucket returned and a hint to narrow `--time_from`/`--time_to` or use a coarser `--interval`; 2000 buckets from a server that predates the flag get the same warning as "may be missing" |
+| `p202 report breakdown` | Performance by dimension, including the Analyze pages' `ip`, `referer` (domain), `referer_url`, `device_type`, `c1`-`c4`, `utm_*`, `rotator` and `rotator_rule`; rows tied on `--sort` come in id order, so `--offset` paging neither skips nor repeats a row. Every report command takes the Analyze pages' filters: `--text-ad-id`, `--region-id`, `--isp-id`, `--browser-id`, `--platform-id`, `--device-type`, `--method-of-promotion`, `--show all\|real\|filtered\|filtered_bot\|leads`, `--keyword` (contains), `--ip` (exact), `--referer` (contains), and the periods `last14`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` beside `today`, `yesterday`, `last7`, `last30`, `last90` (calendar periods start at the account's midnight). An unknown filter, value or `--sort` is a validation error naming it |
+| `p202 report timeseries` | Performance over time (`--interval hour\|day\|week\|month`), oldest bucket first, at most 2000 buckets. A series the server cut has `truncated: true` and `limit` in `--json`, and stderr warns with the last bucket returned and a hint to narrow `--time-from`/`--time-to` or use a coarser `--interval`; 2000 buckets from a server that predates the flag get the same warning as "may be missing" |
 | `p202 attribution model list` | List attribution models |
 | `p202 attribution export create` | Queue a multi-touch export: every group of a breakdown as CSV, now or at `--run-at`, optionally POSTed to an https `--webhook-url` (signed; public addresses only, pinned, no redirects). `export list`, `get`, `download <id> --output file`, `retry`, `delete` |
 | `p202 app postbacks list` | List received SKAdNetwork and AdAttributionKit postbacks (`--registration-id`, `--protocol skan\|aak`, `--conversion-type`, `--ad-interaction-type`, `--signature valid\|invalid\|unverifiable\|development`; `app postbacks get <id>` for one). `--redownload` and `--fidelity-type` are SKAdNetwork's spellings of the same two filters and match both protocols — `--redownload 1\|0` selects `conversion_type` `redownload`\|`download`, `--fidelity-type 1\|0` selects `ad_interaction_type` `click`\|`view` — but only `--conversion-type` can name `re-engagement`, so prefer the neutral pair |
@@ -283,7 +285,7 @@ p202 analytics --group-by country --period last30 --sort conversions --limit 10
 `--group-by` takes the report breakdown dimensions: campaign, aff_network, ppc_account, ppc_network, landing_page, keyword, country, city, region, browser, platform, device, isp, text_ad, ip, referer, referer_url, device_type, c1, c2, c3, c4, utm_source, utm_medium, utm_campaign, utm_term, utm_content, rotator, rotator_rule. Aliases: `--group-by lp` -> `landing_page` (also `source`, `network`, `offer`, `geo`, `referrer`, `referrer_url`, `rule`), `--sort conversions` -> `total_leads`, `--sort revenue` -> `total_income`. A dimension missing from this list is sent when the server advertises it in `/capabilities` (`features.report_breakdowns`); otherwise it is refused with the list.
 
 `--split-at YYYY-MM-DD|unix` compares the two sides of a date (00:00 UTC) inside the window
-(`--days N`, or `--time_from`/`--time_to` in unix seconds; default `--days 90`; every `--period` is refused, its bounds being the account's midnight, lastN included, or none): one row per
+(`--days N`, or `--time-from`/`--time-to` in unix seconds; default `--days 90`; every `--period` is refused, its bounds being the account's midnight, lastN included, or none): one row per
 value with clicks, conversions and revenue before, after, the change and percent change, and each
 side's per-day rate, since the sides are rarely the same length. Values on one side only get zeros on
 the other; rows rank by the absolute change in clicks (`--sort clicks_per_day` for the per-day rate).
@@ -535,7 +537,7 @@ pointing at `--help`: a CLI with no server configured (exit 1; the hint
 names `p202 config set-url`, `p202 config set-key` and `p202 config test`,
 or `set-key` alone when the URL is set), and a create missing required
 flags, which names every missing flag in one message and, for an id flag,
-the list command its value comes from (that `--aff_network_id` takes an
+the list command its value comes from (that `--aff-network-id` takes an
 id from `p202 aff-network list`, for example).
 
 An unknown command or flag exits 1 with a hint naming `<command> --help` and
@@ -555,16 +557,16 @@ the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
 
-A flag given an **empty value** (`--click_id ""`, or `--source "$SOURCE"`
+A flag given an **empty value** (`--click-id ""`, or `--source "$SOURCE"`
 with the variable unset) is refused before the command runs:
-`Error [validation]: --click_id was given an empty value`, exit 1, with a
+`Error [validation]: --click-id was given an empty value`, exit 1, with a
 hint to omit the flag or give it a value. Read as "not given", an empty
 filter would list everything as though filtered, and an empty update field
 would silently leave the field as it was. The few flags whose empty value
 is a deliberate write — clearing an app's `--notes` on `p202 app update`,
 the fields of `p202 app encoding update`, and the clearable fields of the
 CRUD `update` commands (`--help` marks each `"" clears it`) — pass it
-through; a clearable date (`p202 forecast-event update <id> --end_date ""`)
+through; a clearable date (`p202 forecast-event update <id> --end-date ""`)
 goes as JSON `null`, the one clear a date column takes, and every date flag
 is checked as a `YYYY-MM-DD` day that exists before a request. The root
 flags `--fields`, `--profile` and `--group` keep their "empty is the

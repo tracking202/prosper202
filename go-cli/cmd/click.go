@@ -22,13 +22,13 @@ var clickListCmd = &cobra.Command{
 	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
 		"traffic source, keyword, IP, location, device, referrer and landing URLs. It takes\n" +
 		"the Visitors page's filters, as `p202 report` does: --keyword and --referer\n" +
-		"(contains), --ip, --device_type, --show real|filtered|filtered_bot|leads, location,\n" +
+		"(contains), --ip, --device-type, --show real|filtered|filtered_bot|leads, location,\n" +
 		"browser and platform ids, and --period.\n\n" +
 		"--follow is the Spy page: it prints the newest --limit clicks (default 10), then\n" +
 		"each new click as it arrives, polling every --interval, until interrupted or\n" +
 		"--stop-after elapses. Under --json or --ndjson it writes one JSON object per\n" +
 		"click per line.\n\n" +
-		"  p202 click list --aff_campaign_id 12 --time_from 2026-10-01 --all --csv\n" +
+		"  p202 click list --aff-campaign-id 12 --time-from 2026-10-01 --all --csv\n" +
 		"  p202 click list --keyword shoes --show real --period last7\n" +
 		"  p202 click list --follow --ndjson --stop-after 10m",
 	RunE: func(cmd *cobra.Command, args []string) error {

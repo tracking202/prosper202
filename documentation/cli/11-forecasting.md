@@ -541,7 +541,7 @@ mask catch what you did not.
 | `--events`, `--event-tag` | off | Section 9 |
 | `--no-level-shift` | off | Section 6 |
 | `--no-anomaly-mask`, `--anomaly-sigma`, `--anomaly-cycles` | off / 5 / 4 | Section 7 |
-| entity filters | | `--aff_campaign_id`, `--ppc_account_id`, `--aff_network_id`, `--ppc_network_id`, `--landing_page_id`, `--country_id` |
+| entity filters | | `--aff-campaign-id`, `--ppc-account-id`, `--aff-network-id`, `--ppc-network-id`, `--landing-page-id`, `--country-id` |
 
 ---
 

@@ -64,7 +64,7 @@ case "$ask" in
         campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
         tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id // empty')
         if [ -z "$tracker" ]; then
-            printf 'EVAL Campaign B has no tracker (`p202 tracker list`); create one with `p202 tracker create-with-url --aff_campaign_id %s`.\n' "$campaign"
+            printf 'EVAL Campaign B has no tracker (`p202 tracker list`); create one with `p202 tracker create-with-url --aff-campaign-id %s`.\n' "$campaign"
         else
             link=$(p202 tracker get-url "$tracker" --t202kw '{keyword}' --c1 google --json | jq -r '.data.direct_url')
             printf 'The tracking link for EVAL Campaign B (tracker %s), with Google Ads'"'"' keyword macro and c1=google:\n%s\n' "$tracker" "$link"
@@ -81,9 +81,9 @@ case "$ask" in
         ;;
     *"from the IP address 203.0.113.50"*)
         rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Geo Split")][0].id')
-        p202 rotator rule-create "$rotator" --rule_name "EVAL IP 203.0.113.50" \
-            --criteria_json '[{"type":"ip","statement":"is","value":"203.0.113.50"}]' \
-            --redirects_json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
+        p202 rotator rule-create "$rotator" --rule-name "EVAL IP 203.0.113.50" \
+            --criteria-json '[{"type":"ip","statement":"is","value":"203.0.113.50"}]' \
+            --redirects-json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
         printf 'Added rule "EVAL IP 203.0.113.50" to EVAL Geo Split (redirector %s): visitors from 203.0.113.50 go to https://eval-ip-rule.example/landing; everyone else still follows the existing rules and the default.\n' "$rotator"
         ;;
     # The Update section (update.json). First, because two of the asks say
@@ -353,7 +353,7 @@ case "$ask" in
         # own classification — never a guess.
         reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.summit") | .registration_id' | head -1)
         campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL ANDROID CAMPAIGN") | .aff_campaign_id' | head -1)
-        click=$(p202 click list --aff_campaign_id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
+        click=$(p202 click list --aff-campaign-id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
         answer=$(p202 app install simulate "$reg" --click "$click" --json)
         match=$(printf '%s' "$answer" | jq -r '.data.match')
         reason=$(printf '%s' "$answer" | jq -r '.data.reason')
@@ -522,7 +522,7 @@ case "$ask" in
         entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="clickbank")')
         printf 'Paste %s into ClickBank as the Instant Notification (INS) URL, per `p202 system integrations`. The ClickBank secret key is %s.\n' \
             "$(printf '%s' "$entry" | jq -r '.url')" \
-            "$(if [ "$(printf '%s' "$entry" | jq -r '.secret_stored')" = true ]; then printf 'stored'; else printf 'not stored yet: set it with `p202 user prefs update <user_id> --cb_key ...`'; fi)"
+            "$(if [ "$(printf '%s' "$entry" | jq -r '.secret_stored')" = true ]; then printf 'stored'; else printf 'not stored yet: set it with `p202 user prefs update <user_id> --cb-key ...`'; fi)"
         ;;
     *"eval-viewer profile"*)
         # Run what was asked with the key asked for; a refusal is reported

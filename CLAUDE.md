@@ -1289,6 +1289,12 @@ once and must know what to do next without guessing, so every error path in
    `hintFor(err)` (see `cmd/cli_errors_test.go` and the forecast hint
    tests for the pattern).
 
+Flags are written in kebab-case everywhere text shows them (help, hints,
+errors, docs, examples), in both CLIs; the snake_case spelling is accepted as
+an alias and never shown. `scripts/check-flag-spelling.py` (PR checks) holds
+tracked text to it, and `canonicalFlags()` rewrites flag names an error builds
+from API field names.
+
 When adding a command, run it once with a wrong flag and once against a
 dead URL under `--json` and read the envelopes as an agent would: if either
 leaves you unsure what to do next, the error needs a hint. The user-facing
@@ -1778,6 +1784,7 @@ where a check quietly fails to check what it appears to.
 </verify_assumptions>
 
 ## Review discipline
+- Keep comments short: add one only when it records something the code cannot say. No narrative docblocks, no history.
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.

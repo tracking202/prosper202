@@ -178,8 +178,8 @@ func TestCreateSendsIdempotencyKeyHeader(t *testing.T) {
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
 	_, _, err := executeCommand("campaign", "create",
-		"--aff_campaign_name", "A", "--aff_campaign_url", "https://x.example",
-		"--aff_campaign_payout", "1", "--aff_network_id", "1",
+		"--aff-campaign-name", "A", "--aff-campaign-url", "https://x.example",
+		"--aff-campaign-payout", "1", "--aff-network-id", "1",
 		"--idempotency-key", "create-A-1")
 	if err != nil {
 		t.Fatalf("campaign create --idempotency-key error: %v", err)
@@ -207,8 +207,8 @@ func TestCreateWithoutIdempotencyKeyOmitsHeader(t *testing.T) {
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
 	_, _, err := executeCommand("campaign", "create",
-		"--aff_campaign_name", "A", "--aff_campaign_url", "https://x.example",
-		"--aff_campaign_payout", "1", "--aff_network_id", "1")
+		"--aff-campaign-name", "A", "--aff-campaign-url", "https://x.example",
+		"--aff-campaign-payout", "1", "--aff-network-id", "1")
 	if err != nil {
 		t.Fatalf("campaign create error: %v", err)
 	}
@@ -446,8 +446,8 @@ func TestGlobalStagedFlagStampsWrites(t *testing.T) {
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
 	stdout, _, err := executeCommand("campaign", "create",
-		"--aff_campaign_name", "A", "--aff_campaign_url", "https://x.example",
-		"--aff_campaign_payout", "1", "--aff_network_id", "1",
+		"--aff-campaign-name", "A", "--aff-campaign-url", "https://x.example",
+		"--aff-campaign-payout", "1", "--aff-network-id", "1",
 		"--staged", "--json")
 	if err != nil {
 		t.Fatalf("campaign create --staged error: %v", err)

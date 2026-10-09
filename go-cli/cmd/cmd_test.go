@@ -2100,7 +2100,7 @@ func TestCampaignListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("campaign", "list", "--aff_network_id=5")
+	_, _, err := executeCommand("campaign", "list", "--aff-network-id=5")
 	if err != nil {
 		t.Fatalf("campaign list with filter error: %v", err)
 	}
@@ -2181,17 +2181,17 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"campaign", "create",
-		"--aff_campaign_name=Campaign A",
-		"--aff_campaign_url=https://offer.example.com",
-		"--aff_campaign_url_2=https://offer2.example.com",
-		"--aff_campaign_payout=5",
-		"--aff_network_id=3",
-		"--aff_campaign_currency=USD",
-		"--aff_campaign_foreign_payout=12.34",
-		"--aff_campaign_cloaking=1",
-		"--aff_campaign_rotate=1",
-		"--payout_mode=accumulate",
-		"--identity_signals=0",
+		"--aff-campaign-name=Campaign A",
+		"--aff-campaign-url=https://offer.example.com",
+		"--aff-campaign-url-2=https://offer2.example.com",
+		"--aff-campaign-payout=5",
+		"--aff-network-id=3",
+		"--aff-campaign-currency=USD",
+		"--aff-campaign-foreign-payout=12.34",
+		"--aff-campaign-cloaking=1",
+		"--aff-campaign-rotate=1",
+		"--payout-mode=accumulate",
+		"--identity-signals=0",
 	)
 	if err != nil {
 		t.Fatalf("campaign create error: %v", err)
@@ -2223,11 +2223,11 @@ func TestLandingPageCreateRequiresAffCampaignID(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
 
-	_, _, err := executeCommand("landing-page", "create", "--landing_page_url=https://lp.example.com", "--landing_page_nickname=lp")
+	_, _, err := executeCommand("landing-page", "create", "--landing-page-url=https://lp.example.com", "--landing-page-nickname=lp")
 	if err == nil {
 		t.Fatal("expected required flag error")
 	}
-	if !strings.Contains(err.Error(), "required flag --aff_campaign_id is missing") {
+	if !strings.Contains(err.Error(), "required flag --aff-campaign-id is missing") {
 		t.Errorf("error = %q, expected missing aff_campaign_id", err.Error())
 	}
 }
@@ -2252,13 +2252,13 @@ func TestTrackerCreateUsesClickFields(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"tracker", "create",
-		"--aff_campaign_id=44",
-		"--ppc_account_id=55",
-		"--text_ad_id=11",
-		"--rotator_id=22",
-		"--click_cpc=0.65",
-		"--click_cpa=4.5",
-		"--click_cloaking=1",
+		"--aff-campaign-id=44",
+		"--ppc-account-id=55",
+		"--text-ad-id=11",
+		"--rotator-id=22",
+		"--click-cpc=0.65",
+		"--click-cpa=4.5",
+		"--click-cloaking=1",
 	)
 	if err != nil {
 		t.Fatalf("tracker create error: %v", err)
@@ -2327,13 +2327,13 @@ func TestTextAdCreateUsesDescriptionField(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"text-ad", "create",
-		"--text_ad_name=Ad Name",
-		"--text_ad_headline=Ad headline",
-		"--text_ad_description=Ad description",
-		"--text_ad_display_url=example.com",
-		"--aff_campaign_id=9",
-		"--landing_page_id=10",
-		"--text_ad_type=1",
+		"--text-ad-name=Ad Name",
+		"--text-ad-headline=Ad headline",
+		"--text-ad-description=Ad description",
+		"--text-ad-display-url=example.com",
+		"--aff-campaign-id=9",
+		"--landing-page-id=10",
+		"--text-ad-type=1",
 	)
 	if err != nil {
 		t.Fatalf("text-ad create error: %v", err)
@@ -2399,9 +2399,9 @@ func TestTrackerListFriendlyFiltersMapToAPIFilters(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"tracker", "list",
-		"--aff_campaign_id=10",
-		"--ppc_account_id=20",
-		"--landing_page_id=30",
+		"--aff-campaign-id=10",
+		"--ppc-account-id=20",
+		"--landing-page-id=30",
 	)
 	if err != nil {
 		t.Fatalf("tracker list with filters error: %v", err)
@@ -2459,7 +2459,7 @@ func TestLandingPageListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("landing-page", "list", "--aff_campaign_id=15")
+	_, _, err := executeCommand("landing-page", "list", "--aff-campaign-id=15")
 	if err != nil {
 		t.Fatalf("landing-page list with filter error: %v", err)
 	}
@@ -2483,7 +2483,7 @@ func TestTextAdListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("text-ad", "list", "--aff_campaign_id=25")
+	_, _, err := executeCommand("text-ad", "list", "--aff-campaign-id=25")
 	if err != nil {
 		t.Fatalf("text-ad list with filter error: %v", err)
 	}
@@ -2507,7 +2507,7 @@ func TestPpcAccountListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("ppc-account", "list", "--ppc_network_id=35")
+	_, _, err := executeCommand("ppc-account", "list", "--ppc-network-id=35")
 	if err != nil {
 		t.Fatalf("ppc-account list with filter error: %v", err)
 	}
@@ -2617,7 +2617,7 @@ func TestTrackerCreateWithURL(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("tracker", "create-with-url", "--aff_campaign_id=1")
+	stdout, _, err := executeCommand("tracker", "create-with-url", "--aff-campaign-id=1")
 	if err != nil {
 		t.Fatalf("tracker create-with-url error: %v", err)
 	}
@@ -2673,7 +2673,7 @@ func TestTrackerBulkURLs(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("tracker", "bulk-urls", "--aff_campaign_id=10", "--concurrency=2")
+	stdout, _, err := executeCommand("tracker", "bulk-urls", "--aff-campaign-id=10", "--concurrency=2")
 	if err != nil {
 		t.Fatalf("tracker bulk-urls error: %v", err)
 	}
@@ -2737,7 +2737,7 @@ func TestReportBreakdownPassesQueryParams(t *testing.T) {
 	_, _, err := executeCommand("report", "breakdown",
 		"--breakdown=country",
 		"--sort=total_clicks",
-		"--sort_dir=ASC",
+		"--sort-dir=ASC",
 		"--limit=25",
 		"--period=last7")
 	if err != nil {
@@ -2805,7 +2805,7 @@ func TestReportDaypartPassesSortParams(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("report", "daypart", "--sort=roi", "--sort_dir=DESC")
+	_, _, err := executeCommand("report", "daypart", "--sort=roi", "--sort-dir=DESC")
 	if err != nil {
 		t.Fatalf("report daypart sort error: %v", err)
 	}
@@ -2832,7 +2832,7 @@ func TestReportDaypartPassesFilterParams(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("report", "daypart", "--period=last7", "--country_id=223")
+	_, _, err := executeCommand("report", "daypart", "--period=last7", "--country-id=223")
 	if err != nil {
 		t.Fatalf("report daypart filter error: %v", err)
 	}
@@ -3106,7 +3106,7 @@ func TestDashboardPassesExplicitFilters(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("dashboard", "--period=last7", "--aff_campaign_id=7", "--country_id=223")
+	_, _, err := executeCommand("dashboard", "--period=last7", "--aff-campaign-id=7", "--country-id=223")
 	if err != nil {
 		t.Fatalf("dashboard with filters error: %v", err)
 	}
@@ -3887,7 +3887,7 @@ func TestConversionCreateSupportsLegacyAliases(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("conversion", "create", "--click_id_public=12345", "--conversion_payout=1.25")
+	_, _, err := executeCommand("conversion", "create", "--click-id-public=12345", "--conversion-payout=1.25")
 	if err != nil {
 		t.Fatalf("conversion create alias flags error: %v", err)
 	}
@@ -3932,9 +3932,9 @@ func TestRotatorRuleUpdateCommand(t *testing.T) {
 
 	stdout, _, err := executeCommand(
 		"rotator", "rule-update", "3", "11",
-		"--rule_name=US Premium v2",
+		"--rule-name=US Premium v2",
 		"--status=1",
-		"--criteria_json=[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"US\"}]",
+		"--criteria-json=[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"US\"}]",
 	)
 	if err != nil {
 		t.Fatalf("rotator rule-update error: %v", err)
@@ -4393,8 +4393,8 @@ func TestAPI422ErrorShowsFieldErrors(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("campaign", "create", "--aff_campaign_name=test", "--aff_campaign_url=http://example.com",
-		"--aff_campaign_payout=1", "--aff_network_id=1")
+	_, _, err := executeCommand("campaign", "create", "--aff-campaign-name=test", "--aff-campaign-url=http://example.com",
+		"--aff-campaign-payout=1", "--aff-network-id=1")
 	if err == nil {
 		t.Fatal("expected error for 422 response")
 	}

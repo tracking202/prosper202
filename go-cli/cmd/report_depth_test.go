@@ -49,10 +49,10 @@ func depthServer(t *testing.T, respond func(path string, q url.Values) (int, str
 
 // reportFilterArgs sets every report filter flag, and the query each must send.
 var reportFilterArgs = []string{
-	"--text_ad_id", "3", "--region_id", "4", "--isp_id", "5", "--browser_id", "6", "--platform_id", "7",
-	"--device_type", "2", "--method_of_promotion", "directlink", "--show", "real",
+	"--text-ad-id", "3", "--region-id", "4", "--isp-id", "5", "--browser-id", "6", "--platform-id", "7",
+	"--device-type", "2", "--method-of-promotion", "directlink", "--show", "real",
 	"--keyword", "blue widgets", "--ip", "2001:db8::1", "--referer", "news.example",
-	"--aff_campaign_id", "11", "--ppc_account_id", "12",
+	"--aff-campaign-id", "11", "--ppc-account-id", "12",
 }
 
 var reportFilterQuery = map[string]string{
@@ -134,7 +134,7 @@ func TestTheNewPeriodsAndDimensionsAreAccepted(t *testing.T) {
 	}
 }
 
-// A value outside --show's or --method_of_promotion's list is refused before
+// A value outside --show's or --method-of-promotion's list is refused before
 // anything is sent, and the message lists the values.
 func TestShowAndMethodOfPromotionRefuseAnUnknownValueOffline(t *testing.T) {
 	cases := []struct {
@@ -143,7 +143,7 @@ func TestShowAndMethodOfPromotionRefuseAnUnknownValueOffline(t *testing.T) {
 	}{
 		{[]string{"report", "summary", "--show", "bots"}, "all, real, filtered, filtered_bot, leads"},
 		{[]string{"analytics", "--group-by", "ip", "--show", "everything"}, "all, real, filtered, filtered_bot, leads"},
-		{[]string{"report", "breakdown", "--method_of_promotion", "email"}, "directlink, landingpage"},
+		{[]string{"report", "breakdown", "--method-of-promotion", "email"}, "directlink, landingpage"},
 		{[]string{"report", "summary", "--period", "last60"}, "last14"},
 	}
 	for _, c := range cases {

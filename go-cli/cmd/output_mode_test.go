@@ -229,7 +229,7 @@ func TestRecoverCommandContextDetectsAgent(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"campaign", "get", "--table"},
-		{"campaign", "get", "--raw_headers"},
+		{"campaign", "get", "--raw-headers"},
 		{"campaign", "get", "--fields=aff_campaign_id"},
 	} {
 		activeCommandPath, jsonOutput, ndjsonOutput = "", false, false

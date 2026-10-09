@@ -252,7 +252,7 @@ func timeseriesTruncationWarning(data []byte, interval string) string {
 		return ""
 	}
 
-	hint := "Narrow --time_from/--time_to (or use a shorter --period)"
+	hint := "Narrow --time-from/--time-to (or use a shorter --period)"
 	if coarser := coarserIntervals(interval); coarser != "" {
 		hint += ", or use --interval " + coarser + ", which the server buckets into fewer rows"
 	}

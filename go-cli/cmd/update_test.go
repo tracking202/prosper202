@@ -539,10 +539,6 @@ func TestUploadRevenueThatWouldRecordNothingIsRefusedWithoutWriting(t *testing.T
 	}
 }
 
-// An answer lists the first lines not recorded and the first clicks' totals,
-// and counts the rest: the summary takes the click count and the total from
-// the answer's exact fields, never from the lists, and says what was not
-// listed and why.
 func TestUploadRevenueSummaryReadsTheExactCountsNotTheListedOnes(t *testing.T) {
 	csv := filepath.Join(t.TempDir(), "big.csv")
 	if err := os.WriteFile(csv, []byte("subid,payout\n1,2\n"), 0o600); err != nil {
@@ -572,8 +568,6 @@ func TestUploadRevenueRefusesAnAnswerWithoutTheExactCounts(t *testing.T) {
 	if err := os.WriteFile(csv, []byte("subid,payout\n1,2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The answer as it was before it carried clicks and total: summing the
-	// listed totals would understate a report with more clicks than listed.
 	updateServer(t, func(updateRequest) (int, string) {
 		return 200, `{"data":{"dry_run":true,"batch_id":null,"would_record":1,"skipped":0,"columns":{"subid":{"index":0,"header":"subid"},"amount":{"index":1,"header":"payout"},"guessed":[]},"totals":[{"click_id":1,"total":"2.00000"}],"lines":[]}}`
 	})

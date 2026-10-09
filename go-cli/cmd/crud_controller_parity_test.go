@@ -27,9 +27,9 @@ type controllerField struct {
 // The API drops a field it does not know without a word
 // (Controller::validatePayload), so a CLI flag that names a field the
 // controller lacks reports success and saves nothing. Five did:
-// campaign --aff_campaign_cpc, --aff_campaign_postback_url,
-// --aff_campaign_postback_append and aff-network --aff_network_postback_url,
-// --aff_network_postback_append — columns that exist nowhere in the schema.
+// campaign --aff-campaign-cpc, --aff-campaign-postback-url,
+// --aff-campaign-postback-append and aff-network --aff-network-postback-url,
+// --aff-network-postback-append — columns that exist nowhere in the schema.
 // This reads each CRUD entity's controller and holds every flag to a field
 // it writes, and Required to what it requires.
 func TestCRUDFlagsMatchTheirControllers(t *testing.T) {
@@ -143,7 +143,7 @@ func controllerFields(t *testing.T, path string) map[string]controllerField {
 // emptied box); any other field refuses it before a request.
 func TestCRUDUpdateClearsOnlyClearableFields(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{}}`)
-	if _, _, err := executeCommand("campaign", "update", "5", "--aff_campaign_url_2", ""); err != nil {
+	if _, _, err := executeCommand("campaign", "update", "5", "--aff-campaign-url-2", ""); err != nil {
 		t.Fatalf("clearing url_2: %v", err)
 	}
 	if len(*seen) != 1 || (*seen)[0].Method != "PUT" {
@@ -154,7 +154,7 @@ func TestCRUDUpdateClearsOnlyClearableFields(t *testing.T) {
 	}
 
 	_, seen = goalServer(t, 200, `{"data":{}}`)
-	_, _, err := executeCommand("campaign", "update", "5", "--aff_campaign_name", "")
+	_, _, err := executeCommand("campaign", "update", "5", "--aff-campaign-name", "")
 	if err == nil || exitCodeForError(err) != 1 {
 		t.Fatalf("err = %v, want a validation error for an empty name", err)
 	}
@@ -167,9 +167,9 @@ func TestCRUDUpdateClearsOnlyClearableFields(t *testing.T) {
 // no config here, and the error is about the flag, not the URL.
 func TestCRUDCreateNamesAMissingRequiredFlagBeforeConfig(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	_, _, err := executeCommand("campaign", "create", "--aff_campaign_name", "X", "--aff_campaign_url", "https://x.example")
-	if err == nil || !strings.Contains(err.Error(), "--aff_campaign_payout") {
-		t.Fatalf("err = %v, want the missing --aff_campaign_payout named", err)
+	_, _, err := executeCommand("campaign", "create", "--aff-campaign-name", "X", "--aff-campaign-url", "https://x.example")
+	if err == nil || !strings.Contains(err.Error(), "--aff-campaign-payout") {
+		t.Fatalf("err = %v, want the missing --aff-campaign-payout named", err)
 	}
 	if hint := hintFor(err); !strings.Contains(hint, "p202 campaign create --help") {
 		t.Errorf("hint = %q", hint)
@@ -180,7 +180,7 @@ func TestCRUDCreateNamesAMissingRequiredFlagBeforeConfig(t *testing.T) {
 // column (it was a 500 under strict SQL mode), and null is how it clears one.
 func TestCRUDUpdateClearsADateWithNull(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{}}`)
-	if _, _, err := executeCommand("forecast-event", "update", "5", "--end_date", ""); err != nil {
+	if _, _, err := executeCommand("forecast-event", "update", "5", "--end-date", ""); err != nil {
 		t.Fatalf("clearing end_date: %v", err)
 	}
 	if len(*seen) != 1 || (*seen)[0].Method != "PUT" {
@@ -191,7 +191,7 @@ func TestCRUDUpdateClearsADateWithNull(t *testing.T) {
 	}
 
 	_, seen = goalServer(t, 200, `{"data":{}}`)
-	if _, _, err := executeCommand("forecast-event", "update", "5", "--end_date", "2026-12-01"); err != nil {
+	if _, _, err := executeCommand("forecast-event", "update", "5", "--end-date", "2026-12-01"); err != nil {
 		t.Fatalf("setting end_date: %v", err)
 	}
 	if v := (*seen)[0].Body["end_date"]; v != "2026-12-01" {
@@ -204,8 +204,8 @@ func TestCRUDUpdateClearsADateWithNull(t *testing.T) {
 func TestCRUDDateFlagsRefuseWhatIsNotADay(t *testing.T) {
 	for _, bad := range []string{"2026-02-30", "27/11/2026", "2026-1-1", "2026-11-27 00:00", "0999-12-31", "tomorrow"} {
 		for _, args := range [][]string{
-			{"forecast-event", "create", "--event_name", "X", "--event_date", bad},
-			{"forecast-event", "update", "5", "--end_date", bad},
+			{"forecast-event", "create", "--event-name", "X", "--event-date", bad},
+			{"forecast-event", "update", "5", "--end-date", bad},
 		} {
 			_, seen := goalServer(t, 200, `{"data":{}}`)
 			_, _, err := executeCommand(args...)
@@ -220,8 +220,8 @@ func TestCRUDDateFlagsRefuseWhatIsNotADay(t *testing.T) {
 			}
 		}
 	}
-	_, _, err := executeCommand("forecast-event", "update", "5", "--end_date", "2026-02-30")
-	if hint := hintFor(err); !strings.Contains(hint, `--end_date ""`) {
+	_, _, err := executeCommand("forecast-event", "update", "5", "--end-date", "2026-02-30")
+	if hint := hintFor(err); !strings.Contains(hint, `--end-date ""`) {
 		t.Errorf("hint = %q, want the clear named", hint)
 	}
 }

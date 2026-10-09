@@ -1188,7 +1188,7 @@ var crudEntities = []crudEntity{
 		Fields: []crudField{
 			{Name: "aff_campaign_name", Desc: "Campaign name", Required: true},
 			{Name: "aff_campaign_url", Desc: "Primary offer URL", Required: true},
-			{Name: "aff_campaign_url_2", Desc: "Offer URL 2 (used with --aff_campaign_rotate 1)", Clearable: true},
+			{Name: "aff_campaign_url_2", Desc: "Offer URL 2 (used with --aff-campaign-rotate 1)", Clearable: true},
 			{Name: "aff_campaign_url_3", Desc: "Offer URL 3", Clearable: true},
 			{Name: "aff_campaign_url_4", Desc: "Offer URL 4", Clearable: true},
 			{Name: "aff_campaign_url_5", Desc: "Offer URL 5", Clearable: true},
@@ -1252,13 +1252,13 @@ var crudEntities = []crudEntity{
 		IDField:       "tracker_id",
 		PublicIDField: "tracker_id_public",
 		Fields: []crudField{
-			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for a link to a redirector (--rotator_id) or an advanced landing page", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for a link to a redirector (--rotator-id) or an advanced landing page", Required: true},
 			{Name: "ppc_account_id", Desc: "PPC account ID"},
 			{Name: "text_ad_id", Desc: "Text ad ID"},
 			{Name: "landing_page_id", Desc: "Landing page ID"},
 			{Name: "rotator_id", Desc: "Rotator ID"},
 			{Name: "click_cpc", Desc: "Cost per click, 0-99.99999; on update, makes the tracker CPC and clears its cost per action"},
-			{Name: "click_cpa", Desc: "Cost per action, 0-99.99999; on update, makes the tracker CPA and clears its cost per click. Not with --click_cpc"},
+			{Name: "click_cpa", Desc: "Cost per action, 0-99.99999; on update, makes the tracker CPA and clears its cost per click. Not with --click-cpc"},
 			{Name: "click_cloaking", Desc: "Cloaking: 1 on, 0 off, -1 use the campaign's setting", Enum: []string{"-1", "0", "1"}},
 			{Name: "tracker_id_public", Desc: "Public tracker ID"},
 		},
@@ -1278,10 +1278,10 @@ var crudEntities = []crudEntity{
 		URLFields:     []string{"landing_page_url", "leave_behind_page_url"},
 		Fields: []crudField{
 			{Name: "landing_page_url", Desc: "Landing page URL", Required: true},
-			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for an advanced landing page (--landing_page_type 1), which promotes several offers", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for an advanced landing page (--landing-page-type 1), which promotes several offers", Required: true},
 			{Name: "landing_page_nickname", Desc: "Landing page nickname", Required: true},
 			{Name: "leave_behind_page_url", Desc: "Leave-behind page URL", Clearable: true},
-			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff_campaign_id 0)"},
+			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff-campaign-id 0)"},
 		},
 		ListParams: []crudField{
 			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},

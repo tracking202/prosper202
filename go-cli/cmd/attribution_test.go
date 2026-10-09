@@ -28,7 +28,7 @@ func TestAttributionCommandsValidateBeforeTheyConnect(t *testing.T) {
 		{"create with a model the engine cannot compute", []string{"attribution", "model", "create", "--model-name", "A", "--model-type", "algorithmic"}, `--model-type must be one of: last_touch, first_touch, linear, time_decay, position_based; got "algorithmic"`, ""},
 		{"create with unparseable weighting config", []string{"attribution", "model", "create", "--model-name", "L", "--model-type", "linear", "--weighting-config", "{"}, "invalid --weighting-config: a JSON object is required", "half_life_hours"},
 		{"a weighting config that is not an object", []string{"attribution", "model", "create", "--model-name", "L", "--model-type", "linear", "--weighting-config", "[1]"}, "invalid --weighting-config", "position_based"},
-		{"snake_case flags still work", []string{"attribution", "model", "create", "--model_name", "L", "--model_type", "linear", "--lookback_days", "0"}, "invalid --lookback-days 0", ""},
+		{"snake_case flags still work", []string{"attribution", "model", "create", "--model-name", "L", "--model-type", "linear", "--lookback_days", "0"}, "invalid --lookback-days 0", ""},
 		{"a lookback over a year", []string{"attribution", "model", "update", "3", "--lookback-days", "400"}, "invalid --lookback-days 400", ""},
 		{"a status the engine sets", []string{"attribution", "model", "update", "3", "--status", "invalid"}, `--status must be one of: active, inactive; got "invalid"`, ""},
 		{"update with no fields", []string{"attribution", "model", "update", "1"}, "no fields specified", ""},

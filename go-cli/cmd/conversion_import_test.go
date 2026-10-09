@@ -789,7 +789,7 @@ func TestConversionCreateOfADeletedTransactionIDIsExplained(t *testing.T) {
 	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", deleted: true}}
 	setupConvImportFake(t, f)
 
-	_, _, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T7")
+	_, _, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T7")
 	if err == nil {
 		t.Fatal("a deleted conversion's transaction id must be refused")
 	}
@@ -811,7 +811,7 @@ func TestConversionCreateOfADifferentSaleIsExplained(t *testing.T) {
 	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", amount: "10.00000"}}
 	setupConvImportFake(t, f)
 
-	_, _, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T7", "--payout", "20")
+	_, _, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T7", "--payout", "20")
 	if err == nil {
 		t.Fatal("a different sale under a recorded transaction id must be refused")
 	}
@@ -1211,7 +1211,7 @@ func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing
 	f := newConvImportFake(107)
 	setupConvImportFake(t, f)
 
-	_, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	_, stderr, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T9")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -1219,7 +1219,7 @@ func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing
 		t.Errorf("a new conversion carries no note, got %q", stderr)
 	}
 
-	stdout, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	stdout, stderr, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T9")
 	if err != nil {
 		t.Fatalf("second create: %v", err)
 	}

@@ -69,13 +69,13 @@ func linkTokenServer(t *testing.T) (*httptest.Server, *linkTokenRequests) {
 func TestLinkTokenFlagsReachTheURLRequest(t *testing.T) {
 	commands := map[string][]string{
 		"get-url":         {"tracker", "get-url", "56"},
-		"create-with-url": {"tracker", "create-with-url", "--aff_campaign_id=1"},
+		"create-with-url": {"tracker", "create-with-url", "--aff-campaign-id=1"},
 		"bulk-urls":       {"tracker", "bulk-urls"},
 	}
 	for name, args := range commands {
 		t.Run(name, func(t *testing.T) {
 			_, seen := linkTokenServer(t)
-			args := append(append([]string{}, args...), "--t202kw={keyword}", "--c1", " fb ", "--utm_source=[src]")
+			args := append(append([]string{}, args...), "--t202kw={keyword}", "--c1", " fb ", "--utm-source=[src]")
 			if _, _, err := executeCommand(args...); err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
@@ -95,7 +95,7 @@ func TestALinkTokenThatCannotGoInALinkSendsNothing(t *testing.T) {
 	for _, bad := range []string{"a&b", "a#b", "a?b", "a b", "a\tb", "\x00", strings.Repeat("x", 256)} {
 		for _, args := range [][]string{
 			{"tracker", "get-url", "56"},
-			{"tracker", "create-with-url", "--aff_campaign_id=1"},
+			{"tracker", "create-with-url", "--aff-campaign-id=1"},
 			{"tracker", "bulk-urls"},
 		} {
 			_, seen := linkTokenServer(t)
@@ -130,7 +130,7 @@ func TestCreateWithURLSaysTheTrackerExistsWhenTheLinkFails(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("tracker", "create-with-url", "--aff_campaign_id=1")
+	_, _, err := executeCommand("tracker", "create-with-url", "--aff-campaign-id=1")
 	if err == nil {
 		t.Fatal("a failed link fetch reported success")
 	}

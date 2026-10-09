@@ -26,16 +26,8 @@ use RuntimeException;
  * Every line is accounted for in the result. A line whose subid is not an
  * exact click id of this account, or whose amount is not a number, is
  * skipped with the reason, never silently (CLAUDE.md error pattern #4).
- * The result counts every line; it lists the ones not recorded — the header
- * and each skipped line — up to LISTED_LINES of them, counts the rest
- * (`unlisted`) and counts every skipped line by its reason (`reasons`). A
- * recorded line is in its click's sum in `totals`.
- *
- * Neither surface holds the report's lines in memory: the route takes an
- * 8 MB report, and keeping every line read as an array (and listing every
- * one) took 376 MB to preview 440,000 lines — past the 128 MB a PHP request
- * gets by default, so the request died (measured). What grows with the
- * report is the per-click totals and, in preview(), the set of subids read.
+ * Lines are not held in memory: the route takes 8 MB reports, and holding
+ * 440,000 lines took 376 MB.
  *
  * One reader behind every surface that uploads a report — the Upload Revenue
  * Reports page and POST /api/v3/conversions/uploads — and behind preview(),
@@ -47,12 +39,7 @@ final class RevenueUploadImporter
     public const SKIPPED = 'skipped';
     public const HEADER = 'header';
 
-    /**
-     * The most lines a result lists. A report whose subid column is the wrong
-     * one skips every line, and listing 440,000 of them made an answer of
-     * tens of megabytes that the CLI (which reads 10 MB) could not read; the
-     * counts by reason say what the unlisted lines are.
-     */
+    /** The most lines not recorded a result lists; the rest are counted. */
     public const LISTED_LINES = 1000;
 
     private const NO_CLICK = 'no click with this subid in your account';
@@ -74,11 +61,8 @@ final class RevenueUploadImporter
      *     total: string,
      *     recorded: int,
      *     skipped: int
-     * } lines: the lines not recorded, in file order, at most LISTED_LINES —
-     *   status skipped, or header (line 1 when it holds no subid); unlisted:
-     *   how many more were not recorded; reasons: every skipped line counted
-     *   by its reason; totals: click_id => the sum of this file's recorded
-     *   lines for it; total: the sum of every recorded line.
+     * } lines: the first LISTED_LINES not recorded (skipped, or the header);
+     *   reasons: skipped lines counted by reason; totals: click_id => sum.
      * @throws BatchInterrupted when a line's write fails after the batch was
      *         created: the lines before it are committed rows of the batch
      */
@@ -164,13 +148,8 @@ final class RevenueUploadImporter
      * What import() would record, writing nothing: the same lines read by the
      * same rules, each line whose subid is a click of the account counted as
      * would_record (and summed into the totals), and every other line skipped
-     * or read as the header with the reason import() gives, listed as
-     * import() lists them.
-     *
-     * The report is read twice — once for the subids, asked of the database in
-     * chunks, then again for the lines — rather than held in memory between
-     * the two, so the stream has to be seekable (an upload's file, or
-     * php://temp).
+     * or read as the header with the reason import() gives. Reads the stream
+     * twice (subids, then lines) instead of holding it, so it must be seekable.
      *
      * @param resource $handle An open, seekable CSV stream positioned at its start.
      * @return array{
@@ -250,8 +229,6 @@ final class RevenueUploadImporter
     }
 
     /**
-     * An empty list of the lines not recorded, as notRecorded() fills it.
-     *
      * @return array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>}
      */
     private static function unrecorded(): array
@@ -260,10 +237,6 @@ final class RevenueUploadImporter
     }
 
     /**
-     * A line that was not recorded: counted by its reason when it was skipped,
-     * and listed while fewer than LISTED_LINES are, otherwise counted as
-     * unlisted.
-     *
      * @param array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>} $unrecorded
      * @param array<string, mixed> $line
      */

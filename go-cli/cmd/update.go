@@ -926,9 +926,7 @@ type uploadAnswer struct {
 			} `json:"amount"`
 			Guessed []string `json:"guessed"`
 		} `json:"columns"`
-		// Clicks and Total are exact; Totals lists the first clicks and
-		// Lines the first lines not recorded, and the *Unlisted counts say
-		// how many more there were.
+		// Totals and Lines are capped; Clicks, Total and the *Unlisted counts are exact.
 		Clicks         *int64      `json:"clicks"`
 		Total          json.Number `json:"total"`
 		TotalsUnlisted *int64      `json:"totals_unlisted"`
@@ -954,15 +952,12 @@ func (a uploadAnswer) columns() string {
 		a.Data.Columns.Subid.Header, a.Data.Columns.Subid.Index, a.Data.Columns.Amount.Header, a.Data.Columns.Amount.Index, guessed)
 }
 
-// total is the sum of every line the report records, as the server summed
-// it, without trailing zeros.
+// total is the server's sum of the recorded lines, without trailing zeros.
 func (a uploadAnswer) total() string {
 	sum, _ := new(big.Rat).SetString(a.Data.Total.String())
 	return strings.TrimRight(strings.TrimRight(sum.FloatString(5), "0"), ".")
 }
 
-// skippedByReason says how many lines each reason skipped, for a report whose
-// skipped lines are not all listed.
 func (a uploadAnswer) skippedByReason() string {
 	parts := make([]string, 0, len(a.Data.SkippedReasons))
 	for _, r := range a.Data.SkippedReasons {
@@ -971,8 +966,6 @@ func (a uploadAnswer) skippedByReason() string {
 	return strings.Join(parts, "; ")
 }
 
-// listed says which lines not recorded (the skipped ones, and a header)
-// the output lists.
 func (a uploadAnswer) listed() string {
 	if *a.Data.LinesUnlisted == 0 {
 		return "listed"

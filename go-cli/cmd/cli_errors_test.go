@@ -244,3 +244,21 @@ func TestHintForNamesTheSiblingCommand(t *testing.T) {
 		t.Errorf("404 from ltv customer update: hint = %q", got)
 	}
 }
+
+func TestCanonicalFlagsSpellsKnownFlagsAsHelpDoes(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"--aff_campaign_id is required", "--aff-campaign-id is required"},
+		{"window --time_from/--time_to", "window --time-from/--time-to"},
+		{"use `--user_active 1`", "use `--user-active 1`"},
+		{"--not_a_flag stays as typed", "--not_a_flag stays as typed"},
+		{"value \"x--aff_campaign_id\" is quoted text", "value \"x--aff_campaign_id\" is quoted text"},
+	} {
+		if got := canonicalFlags(tc.in); got != tc.want {
+			t.Errorf("canonicalFlags(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	err := validationError("--%s is required", "aff_campaign_id").WithHint("Pass --%s.", "aff_campaign_id")
+	if err.Error() != "--aff-campaign-id is required" || hintFor(err) != "Pass --aff-campaign-id." {
+		t.Errorf("error %q / hint %q, want both in kebab-case", err.Error(), hintFor(err))
+	}
+}

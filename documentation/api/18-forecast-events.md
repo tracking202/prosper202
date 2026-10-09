@@ -38,7 +38,7 @@ range a `DATE` column holds): `2026-02-30`, `27/11/2026`, `2026-1-1`, a time
 (`2026-11-27 00:00:00`), a JSON number and `""` are each a `422` naming the
 field. `""` used to reach the database and answer `500` (strict SQL mode
 refuses it for a `DATE`); clear `end_date` with `null`. `p202 forecast-event
-update <id> --end_date ""` sends that `null`, and the CLI checks every date
+update <id> --end-date ""` sends that `null`, and the CLI checks every date
 before it sends anything.
 
 ## Filtering

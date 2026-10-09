@@ -392,16 +392,8 @@ final class UpdateController
     private const LISTED_CLICKS = 1000;
 
     /**
-     * What an upload's answer says beyond its counts, sized by the clicks and
-     * lines it lists rather than by the report: a recorded line is counted
-     * and in its click's sum; a line not recorded — the header, each skipped
-     * line with its reason — is listed as the page lists it, up to
-     * RevenueUploadImporter::LISTED_LINES, and every skipped line is counted
-     * by its reason. clicks and total are exact; totals lists the first
-     * LISTED_CLICKS clicks in the order the report names them. Listing every
-     * line made a 440,000-line report answer about 48 MB, and every line
-     * skipped (the wrong subid column) or every click distinct still made one
-     * the CLI, which reads 10 MB, could not read.
+     * Bounded by what it lists, not by the report: an unbounded answer
+     * outgrew the 10 MB the CLI reads. clicks and total are exact.
      *
      * @param array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>, totals: array<int, string>, total: string} $result
      * @return array<string, mixed>

@@ -158,7 +158,7 @@ final class PayloadValidationIntegrationTest extends TestCase
     /**
      * A DATE column under strict SQL mode refuses "" and any day that does
      * not exist with an error, which the API answered as a 500: `p202
-     * forecast-event update <id> --end_date ""` sent exactly that. Each is a
+     * forecast-event update <id> --end-date ""` sent exactly that. Each is a
      * 422 on the field now, the row is untouched, and null clears end_date.
      */
     public function testAForecastEventDateIsADayOrARefusalNeverADatabaseError(): void

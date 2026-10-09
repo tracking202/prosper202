@@ -3,7 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"p202/internal/api"
 	configpkg "p202/internal/config"
@@ -59,7 +63,7 @@ func (e *CLIError) HintText() string {
 //
 //	return validationError("--tracker is required").WithHint("run `p202 tracker list` to find ids")
 func (e *CLIError) WithHint(format string, args ...interface{}) *CLIError {
-	e.Hint = fmt.Sprintf(format, args...)
+	e.Hint = canonicalFlags(fmt.Sprintf(format, args...))
 	return e
 }
 
@@ -80,14 +84,14 @@ func withHint(err error, format string, args ...interface{}) error {
 	if err == nil {
 		return nil
 	}
-	return &hintedError{err: err, hint: fmt.Sprintf(format, args...)}
+	return &hintedError{err: err, hint: canonicalFlags(fmt.Sprintf(format, args...))}
 }
 
 // validationError creates a CLI validation error (bad input, missing flags, etc.).
 func validationError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "validation",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitValidation,
 	}
 }
@@ -96,7 +100,7 @@ func validationError(format string, args ...interface{}) *CLIError {
 func partialFailureError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "partial_failure",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitPartialFailure,
 	}
 }
@@ -146,7 +150,7 @@ var activeCommandPath string
 // without parsing prose.
 func errorEnvelope(err error) map[string]interface{} {
 	env := map[string]interface{}{
-		"message":   err.Error(),
+		"message":   canonicalFlags(err.Error()),
 		"exit_code": exitCodeForError(err),
 	}
 	if category := api.ErrorCategory(err); category != "" {
@@ -192,6 +196,52 @@ func unknownInputHint(err error) string {
 // by the command or the API layer, else a generic pointer to --help for
 // validation errors from a known command.
 func hintFor(err error) string {
+	return canonicalFlags(rawHintFor(err))
+}
+
+// snakeFlagToken matches a flag spelled in snake_case; Go's regexp has no
+// lookbehind, so the character before it is captured.
+var snakeFlagToken = regexp.MustCompile(`(^|[^A-Za-z0-9_-])--([a-z0-9]+(?:_[a-z0-9]+)+)`)
+
+// canonicalFlags spells each flag of this CLI written in snake_case as --help does.
+func canonicalFlags(s string) string {
+	if !strings.Contains(s, "_") {
+		return s
+	}
+	known := knownFlagNames()
+	return snakeFlagToken.ReplaceAllStringFunc(s, func(m string) string {
+		i := strings.Index(m, "--")
+		name := strings.ReplaceAll(m[i+2:], "_", "-")
+		if !known[name] {
+			return m
+		}
+		return m[:i+2] + name
+	})
+}
+
+// flagRoot is rootCmd, set in init: naming rootCmd here would be an
+// initialization cycle.
+var flagRoot *cobra.Command
+
+func knownFlagNames() map[string]bool {
+	known := map[string]bool{}
+	if flagRoot == nil {
+		return known
+	}
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		add := func(f *pflag.Flag) { known[f.Name] = true }
+		c.Flags().VisitAll(add)
+		c.PersistentFlags().VisitAll(add)
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(flagRoot)
+	return known
+}
+
+func rawHintFor(err error) string {
 	if hint := api.HintFor(err); hint != "" {
 		return siblingCommandHint(hint)
 	}

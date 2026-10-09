@@ -9,8 +9,8 @@ import (
 // paused.
 func TestRotatorRuleCreateSendsStatus(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{"id":7,"rules":[]}}`)
-	if _, _, err := executeCommand("rotator", "rule-create", "7", "--rule_name", "paused", "--status", "0",
-		"--redirects_json", `[{"redirect_url":"https://a.example/","weight":"100","name":"A"}]`); err != nil {
+	if _, _, err := executeCommand("rotator", "rule-create", "7", "--rule-name", "paused", "--status", "0",
+		"--redirects-json", `[{"redirect_url":"https://a.example/","weight":"100","name":"A"}]`); err != nil {
 		t.Fatalf("rule-create: %v", err)
 	}
 	if len(*seen) != 1 || (*seen)[0].Method != "POST" || (*seen)[0].Body["status"] != "0" {
@@ -28,11 +28,11 @@ func TestRotatorInputErrorsAreValidationErrorsBeforeAnyRequest(t *testing.T) {
 	}{
 		{[]string{"rotator", "create"}, "--name is missing"},
 		{[]string{"rotator", "update", "7"}, "no fields specified"},
-		{[]string{"rotator", "rule-create", "7"}, "--rule_name is missing"},
-		{[]string{"rotator", "rule-create", "7", "--rule_name", "r", "--criteria_json", "[{"}, "invalid --criteria_json"},
-		{[]string{"rotator", "rule-create", "7", "--rule_name", "r", "--redirects_json", "nope"}, "invalid --redirects_json"},
+		{[]string{"rotator", "rule-create", "7"}, "--rule-name is missing"},
+		{[]string{"rotator", "rule-create", "7", "--rule-name", "r", "--criteria-json", "[{"}, "invalid --criteria-json"},
+		{[]string{"rotator", "rule-create", "7", "--rule-name", "r", "--redirects-json", "nope"}, "invalid --redirects-json"},
 		{[]string{"rotator", "rule-update", "7"}, "rule id is required"},
-		{[]string{"rotator", "rule-update", "7", "3", "--criteria_json", "{"}, "invalid --criteria_json"},
+		{[]string{"rotator", "rule-update", "7", "3", "--criteria-json", "{"}, "invalid --criteria-json"},
 		{[]string{"rotator", "rule-update", "7", "3"}, "no fields specified"},
 	} {
 		// No configuration at all: a command that built its client before

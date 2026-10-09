@@ -173,9 +173,9 @@ func printError(w io.Writer, err error) {
 		}
 	}
 	if category := api.ErrorCategory(err); category != "" {
-		fmt.Fprintf(w, "Error [%s]: %v\n", category, err)
+		fmt.Fprintf(w, "Error [%s]: %s\n", category, canonicalFlags(err.Error()))
 	} else {
-		fmt.Fprintln(w, "Error:", err)
+		fmt.Fprintln(w, "Error:", canonicalFlags(err.Error()))
 	}
 	if hint := hintFor(err); hint != "" {
 		fmt.Fprintf(w, "Hint: %s\n", hint)
@@ -195,6 +195,7 @@ func normalizeFlagName(_ *pflag.FlagSet, name string) pflag.NormalizedName {
 }
 
 func init() {
+	flagRoot = rootCmd
 	rootCmd.SetGlobalNormalizationFunc(normalizeFlagName)
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output pretty-printed JSON instead of tables")
 	rootCmd.PersistentFlags().BoolVar(&tableOutput, "table", false, "Output tables even when an AI agent would get JSON")

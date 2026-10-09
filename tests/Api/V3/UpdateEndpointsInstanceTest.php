@@ -395,9 +395,7 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertSame([], $next['data']['columns']['guessed']);
         $this->assertSame('5.00', number_format((float) $this->click($one)['click_payout'], 2, '.', ''), 'the newest report replaces the earlier one');
 
-        // A report the wrong subid column makes all skipped: the first 1,000
-        // lines not recorded are listed and the rest counted, by reason, so
-        // the answer stays small enough for the CLI to read.
+        // The wrong subid column skips every line: 1,000 are listed, the rest counted.
         $junk = "subid,payout\n";
         for ($i = 0; $i < 1500; $i++) {
             $junk .= 'order-' . $i . ",1\n";

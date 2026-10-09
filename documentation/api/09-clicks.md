@@ -89,7 +89,7 @@ remembered against the next human visitor from it.
 | "Real clicks" | not counted |
 | "Filtered out clicks" | counted |
 | "Filtered out bot clicks" | the only clicks shown |
-| `GET /clicks?click_bot=1`, `p202 click list --click_bot 1` | the only clicks listed |
+| `GET /clicks?click_bot=1`, `p202 click list --click-bot 1` | the only clicks listed |
 
 Until this detector, `click_bot` was rarely set: the old rule waited for a
 ua-parser device family of `Bot`, and ua-parser calls crawlers `Spider`. From

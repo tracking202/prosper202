@@ -155,7 +155,7 @@ var reportBreakevenCmd = &cobra.Command{
 	Short: "Break-even CPC per row: max biddable click price (payout × conversion rate)",
 	Long: "Computes the maximum profitable cost-per-click for each breakdown row.\n" +
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
-		"Requires --aff_campaign_id (the INTERNAL id from `campaign list`) to read the payout.",
+		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -163,7 +163,7 @@ var reportBreakevenCmd = &cobra.Command{
 		}
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 		if campaignID == "" {
-			return validationError("--aff_campaign_id is required (the internal id from `campaign list`)")
+			return validationError("--aff-campaign-id is required (the internal id from `campaign list`)")
 		}
 		maxCPC, _ := cmd.Flags().GetFloat64("max-cpc")
 
@@ -265,7 +265,7 @@ func (c *starterCheck) firstTouchROI(a map[string]interface{}) (roi float64, ok 
 // filterDimension is the breakdown each report filter (reportFilterFlags) narrows to, "" for none. The attribution report
 // takes no filters, so its rows match the classic ones only when the filter is the breakdown itself (the same keys,
 // account-wide either way). Every report filter is listed: one missing here would leave the check comparing filtered
-// classic rows with unfiltered credit — --show real, --keyword or --device_type narrows the classic rows only.
+// classic rows with unfiltered credit — --show real, --keyword or --device-type narrows the classic rows only.
 var filterDimension = map[string]string{
 	"aff_campaign_id": "campaign", "ppc_account_id": "ppc_account", "landing_page_id": "landing_page",
 	"country_id": "country", "aff_network_id": "", "ppc_network_id": "",
@@ -294,7 +294,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 	// The classic report applies both a period and a time range (their overlap); the attribution report takes one,
 	// so a mixed range (often a configured default period plus explicit times) can't be mirrored.
 	if params["period"] != "" && (bound("time_from") != "" || bound("time_to") != "") {
-		return nil, []string{"attribution check skipped: --period and --time_from/--time_to are both set (perhaps a configured " +
+		return nil, []string{"attribution check skipped: --period and --time-from/--time-to are both set (perhaps a configured " +
 			"default period), and the attribution report takes one range. Pass only one to check attribution"}
 	}
 	// A filter other than the breakdown itself would compare campaign-scoped rows with account-wide credit, so a row
@@ -309,7 +309,7 @@ func loadAttributionCheck(c *api.Client, cmd *cobra.Command, dimension string, p
 			if filterDimension[f] != "" {
 				hint += ", or break down by " + filterDimension[f] + " instead"
 			}
-			return nil, []string{"attribution check skipped: the attribution report can't be filtered by --" + f +
+			return nil, []string{"attribution check skipped: the attribution report can't be filtered by --" + strings.ReplaceAll(f, "_", "-") +
 				", so its numbers wouldn't match these rows. " + hint}
 		}
 	}
@@ -707,7 +707,7 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 			}
 
 			// The break-even CPC target: --max-cpc as given, else payout × each row's conversion rate (in classify).
-			// --payout sets the payout without filtering the report; --aff_campaign_id reads its campaign's payout but
+			// --payout sets the payout without filtering the report; --aff-campaign-id reads its campaign's payout but
 			// also filters the report to that campaign, which turns the attribution check off.
 			var payout float64
 			switch {
@@ -926,7 +926,7 @@ func init() {
 	losers := triageCmd("losers", "Rows to CUT: over-bid keywords/geos and zero-conversion spend; rows that start sales come back as TEST", false)
 	losers.Long = "Rows to CUT from the classic (last-click) report: zero conversions with spend, or CPC above break-even.\n" +
 		"Break-even is --max-cpc, or a payout × the row's own conversion rate: --payout (your revenue per conversion) or\n" +
-		"the payout of --aff_campaign_id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
+		"the payout of --aff-campaign-id. Without one, only zero-conversion spend is CUT: a row that sells at a loss is\n" +
 		"WATCH and isn't listed. --payout doesn't filter the report, so the attribution check below still runs, and it\n" +
 		"values every sale the command reports at that payout: total_net, and the first-touch ROI below. The classic report\n" +
 		"counts a converted click once however many sales it had, so the check also reads the Last touch model, whose\n" +
@@ -961,7 +961,7 @@ func init() {
 		enumFlag(c, "breakdown", dimensionEnum(breakdownDimensions))
 		c.Flags().Float64("min-clicks", 1, "Ignore rows with fewer than N clicks (significance floor)")
 		c.Flags().Float64("max-cpc", 0, "Break-even CPC target (else payout × each row's CVR, from --payout or the campaign)")
-		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate, and its profit (total_net) and first-touch ROI value each sale at this. Unlike --aff_campaign_id it doesn't filter the report, so the attribution check still runs")
+		c.Flags().Float64("payout", 0, "Revenue per conversion, e.g. your average order value: each row's break-even CPC is this × its conversion rate, and its profit (total_net) and first-touch ROI value each sale at this. Unlike --aff-campaign-id it doesn't filter the report, so the attribution check still runs")
 		reportCmd.AddCommand(c)
 	}
 	losers.Flags().String("first-touch-model", "", "Attribution model id for the starter check (default: the first active First touch model)")

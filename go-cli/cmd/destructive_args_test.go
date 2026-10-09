@@ -50,7 +50,7 @@ func TestBlankOrNonNumericIDsAreRejectedBeforeAnyRequest(t *testing.T) {
 		{"campaign delete blank", []string{"campaign", "delete", "", "--force"}},
 		{"campaign delete whitespace", []string{"campaign", "delete", "   ", "--force"}},
 		{"campaign delete non-numeric", []string{"campaign", "delete", "../users", "--force"}},
-		{"campaign update blank", []string{"campaign", "update", "", "--aff_campaign_name", "x"}},
+		{"campaign update blank", []string{"campaign", "update", "", "--aff-campaign-name", "x"}},
 		{"rotator delete blank", []string{"rotator", "delete", "", "--force"}},
 		{"conversion delete blank", []string{"conversion", "delete", "", "--force"}},
 		{"user delete blank", []string{"user", "delete", "", "--force"}},

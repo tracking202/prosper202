@@ -209,7 +209,7 @@ func HintFor(err error) string {
 		// instead of creating" is wrong advice for all but the last. Match
 		// the specific causes first; the duplicate stays the fallback.
 		case apiErr.Status == 409 && DeletedConversionID(err) > 0:
-			return "The click's ledger keeps a deleted conversion's key, so the same conversion is never recorded again; nothing was written. `p202 click conversions <click_id>` shows the deleted row. A different sale needs its own --transaction_id."
+			return "The click's ledger keeps a deleted conversion's key, so the same conversion is never recorded again; nothing was written. `p202 click conversions <click_id>` shows the deleted row. A different sale needs its own --transaction-id."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "still in flight"):
 			return "The first request carrying this Idempotency-Key is still running. Wait, then retry the same command to receive its recorded response."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "idempotency-key"):

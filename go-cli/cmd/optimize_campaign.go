@@ -102,8 +102,8 @@ var campaignOptimizeCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Recommendation: this offer is losing money. Highest-EPC alternative for this traffic is %q (EPC $%.3f, vs $%.3f here).\n",
 				top.name, top.epc, epc)
 			fmt.Fprintf(os.Stderr, "Next: create a rotator defaulting to the salvage offer, keep converting geos on this one:\n")
-			fmt.Fprintf(os.Stderr, "  p202 rotator create --name \"Salvage\" --default_campaign <salvage_id>\n")
-			fmt.Fprintf(os.Stderr, "  p202 rotator rule-create <rid> --rule_name \"US\" --country US --redirect-campaign %s\n\n", id)
+			fmt.Fprintf(os.Stderr, "  p202 rotator create --name \"Salvage\" --default-campaign <salvage_id>\n")
+			fmt.Fprintf(os.Stderr, "  p202 rotator rule-create <rid> --rule-name \"US\" --country US --redirect-campaign %s\n\n", id)
 		} else if net >= 0 {
 			fmt.Fprintln(os.Stderr, "Recommendation: profitable — scale the winning sources (`report winners`).")
 		}

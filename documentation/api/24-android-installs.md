@@ -41,7 +41,7 @@ https://play.google.com/store/apps/details?id=com.example.app&referrer=p202%3D[[
   cached fallback also expands it empty.
 - Link the campaign to the app: `app_registration_id` on the campaign
   (`PUT /campaigns/{id}` or `p202 campaign update <id>
-  --app_registration_id <registration>`). `p202 app link <id> --campaign-id
+  --app-registration-id <registration>`). `p202 app link <id> --campaign-id
   N --apply` (or the link builder on Setup › Mobile Apps) does both steps at
   once — the store link as the offer URL, and the link — and `GET
   /apps/{id}/store-link?campaign_id=N` says whether a campaign is ready and,

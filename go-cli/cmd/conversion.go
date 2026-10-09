@@ -27,7 +27,7 @@ var conversionListCmd = &cobra.Command{
 		// right one.
 		if v, _ := cmd.Flags().GetString("click_id"); v != "" {
 			if !positiveIDPattern.MatchString(v) {
-				return validationError("--click_id must be a positive integer, got %q", v).
+				return validationError("--click-id must be a positive integer, got %q", v).
 					WithHint("Use the internal click id from `p202 click list`; `p202 click conversions <id>` explains that click's value.")
 			}
 			params["click_id"] = v
@@ -46,8 +46,8 @@ var conversionListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// Accept --aff_campaign_id (the name every other command uses); fall back
-		// to the legacy --campaign_id spelling.
+		// Accept --aff-campaign-id (the name every other command uses); fall back
+		// to the legacy --campaign-id spelling.
 		if v, _ := cmd.Flags().GetString("aff_campaign_id"); v != "" {
 			params["campaign_id"] = v
 		} else if v, _ := cmd.Flags().GetString("campaign_id"); v != "" {
@@ -128,12 +128,12 @@ var conversionCreateCmd = &cobra.Command{
 			clickIDStr, _ = cmd.Flags().GetString("click_id_public")
 		}
 		if clickIDStr == "" {
-			return validationError("required flag --click_id (or --click_id_public) is missing").
+			return validationError("required flag --click-id (or --click-id-public) is missing").
 				WithHint("Use the internal click id from `p202 click list`.")
 		}
 		clickID, err := strconv.Atoi(clickIDStr)
 		if err != nil || clickID <= 0 {
-			return validationError("--click_id must be a positive integer: %s", clickIDStr).
+			return validationError("--click-id must be a positive integer: %s", clickIDStr).
 				WithHint("Use the internal click id from `p202 click list`.")
 		}
 		body := map[string]interface{}{
@@ -291,7 +291,7 @@ func init() {
 	conversionListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	conversionListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	conversionListCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
-	conversionListCmd.Flags().String("campaign_id", "", "Legacy alias for --aff_campaign_id")
+	conversionListCmd.Flags().String("campaign_id", "", "Legacy alias for --aff-campaign-id")
 	_ = conversionListCmd.Flags().MarkHidden("campaign_id")
 	conversionListCmd.Flags().String("time_from", "", timeFromHelp)
 	conversionListCmd.Flags().String("time_to", "", timeToHelp)
@@ -301,13 +301,13 @@ func init() {
 	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
 	// An empty filter is refused by name (empty_flags.go): read as "not
 	// given" it would list every conversion as though filtered.
-	emptyHint(conversionListCmd, "click_id", "Omit --click_id to list every click's conversions, or pass an internal click id from `p202 click list`.")
+	emptyHint(conversionListCmd, "click_id", "Omit --click-id to list every click's conversions, or pass an internal click id from `p202 click list`.")
 	emptyHint(conversionListCmd, "source", "Omit --source to list every source, or pass one of: "+strings.Join(conversionSources, ", ")+".")
 	emptyHint(conversionListCmd, "goal", "Omit --goal to list every goal's conversions, or pass a goal id from `p202 goal list`.")
-	emptyHint(conversionListCmd, "aff_campaign_id", "Omit --aff_campaign_id to list every campaign's conversions, or pass a campaign id from `p202 campaign list`.")
+	emptyHint(conversionListCmd, "aff_campaign_id", "Omit --aff-campaign-id to list every campaign's conversions, or pass a campaign id from `p202 campaign list`.")
 
 	conversionCreateCmd.Flags().String("click_id", "", "Click ID (required)")
-	conversionCreateCmd.Flags().String("click_id_public", "", "Legacy alias for --click_id")
+	conversionCreateCmd.Flags().String("click_id_public", "", "Legacy alias for --click-id")
 	conversionCreateCmd.Flags().String("payout", "", "Payout amount")
 	conversionCreateCmd.Flags().String("conversion_payout", "", "Legacy alias for --payout")
 	conversionCreateCmd.Flags().String("transaction_id", "", "Transaction ID for deduplication")

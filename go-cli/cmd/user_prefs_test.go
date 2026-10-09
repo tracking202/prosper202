@@ -101,14 +101,14 @@ func TestPrefFlagsMatchThePreferenceRules(t *testing.T) {
 		t.Fatal("UsersController::SUPPORTED_CURRENCIES could not be read")
 	}
 	if got, want := strings.Join(accountCurrencies, ","), strings.Join(phpStringList(string(m[1])), ","); got != want {
-		t.Errorf("--user_account_currency offers %s, the server supports %s", got, want)
+		t.Errorf("--user-account-currency offers %s, the server supports %s", got, want)
 	}
 }
 
 func TestUserPrefsUpdateSendsWhatTheFlagsSay(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{}}`)
-	_, _, err := executeCommand("user", "prefs", "update", "1", "--user_daily_email", "never", "--user_tracking_domain", "",
-		"--user_pref_limit", "100", "--chart_time_range", "hours")
+	_, _, err := executeCommand("user", "prefs", "update", "1", "--user-daily-email", "never", "--user-tracking-domain", "",
+		"--user-pref-limit", "100", "--chart-time-range", "hours")
 	if err != nil {
 		t.Fatalf("prefs update: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestUserPrefsUpdateSendsWhatTheFlagsSay(t *testing.T) {
 
 func TestUserPrefsUpdateRefusesAChoiceTheServerDoesNotOfferBeforeAnyRequest(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":{}}`)
-	_, _, err := executeCommand("user", "prefs", "update", "1", "--user_daily_email", "off")
+	_, _, err := executeCommand("user", "prefs", "update", "1", "--user-daily-email", "off")
 	if err == nil || !strings.Contains(err.Error(), "never, 00") {
 		t.Fatalf("err = %v, want the hours listed", err)
 	}

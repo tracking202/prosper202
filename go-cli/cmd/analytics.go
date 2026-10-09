@@ -27,7 +27,7 @@ var analyticsSortAliases = map[string]string{
 // whole days before it, as the report pages count them.
 var reportPeriods = []string{"today", "yesterday", "last7", "last14", "last30", "last90", "thismonth", "lastmonth", "thisyear", "lastyear", "alltime"}
 
-// applyReportWindow maps --period, --days and --time_from/--time_to onto report
+// applyReportWindow maps --period, --days and --time-from/--time-to onto report
 // params: --period wins, and --days applies only without an explicit range.
 func applyReportWindow(params map[string]string, period string, days int, timeFrom, timeTo string) error {
 	if days < 0 {

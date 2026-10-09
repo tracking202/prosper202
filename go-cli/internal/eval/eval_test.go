@@ -120,7 +120,7 @@ func TestRunnerDetectsStateMutation(t *testing.T) {
 
 	r := &Runner{
 		P202Bin:  bin,
-		AgentCmd: `p202 campaign create --aff_campaign_name X >/dev/null; echo created`,
+		AgentCmd: `p202 campaign create --aff-campaign-name X >/dev/null; echo created`,
 		Timeout:  30 * time.Second,
 		Stderr:   io.Discard,
 	}

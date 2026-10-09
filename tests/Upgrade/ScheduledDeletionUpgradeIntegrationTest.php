@@ -67,10 +67,6 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
 
         $shape = static fn (): string => (string) $db->query('SHOW CREATE TABLE 202_users_pref')->fetch_row()[1];
         $this->assertSame($fresh, $shape(), 'the upgraded table is the installed one');
-        // The ladder's error log is where a step that did not converge says
-        // so, and tests/live/upgrade-equals-install.sh fails on any
-        // "Prosper202 upgrade" line in it: the ALTER this rung applies on
-        // every install it upgrades is its work, not such a line.
         $this->assertStringNotContainsString(
             'Prosper202 upgrade',
             (string) file_get_contents($log),

@@ -120,7 +120,7 @@ The CLIs:
 ```bash
 p202 event send --click-id 123 --name purchase --id ORD-1001 --revenue 49 --props '{"plan":"pro"}'
 p202 event send --click-id 123 --file events.json            # a list of events, or {"events": [...]}
-bin/p202 event:send --click_id=123 --name=purchase --id=ORD-1001 --revenue=49
+bin/p202 event:send --click-id=123 --name=purchase --id=ORD-1001 --revenue=49
 ```
 
 A file (or `--props`) holds exactly one JSON value: anything after it but

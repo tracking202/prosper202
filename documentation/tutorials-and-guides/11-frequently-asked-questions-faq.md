@@ -50,7 +50,7 @@ No. A fresh install has no tracking domain stored, and until you set one:
 - Anything sent to someone else uses the server's own name and port instead: the address registered with the hosted service (which runs the automatic cron jobs and sends the daily email by calling your install back) and its cookie for your install's address. Behind a reverse proxy or a published container port, that may be an address nobody outside can reach.
 - The password reset email has no link (see above).
 
-To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user_tracking_domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
+To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user-tracking-domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
 
  ## Is Memcache required?
 

@@ -137,7 +137,7 @@ func TestLtvCustomersSendsSearchSegmentAndDottedFieldFilters(t *testing.T) {
 // as given: a local unix-only check refused dates the server reads.
 func TestLtvWindowGoesAsGiven(t *testing.T) {
 	srv := newLtvServer(t, nil)
-	if _, _, err := executeCommand("ltv", "summary", "--time_from", "2026-10-01", "--time_to", "2026-10-07T23:59:59Z"); err != nil {
+	if _, _, err := executeCommand("ltv", "summary", "--time-from", "2026-10-01", "--time-to", "2026-10-07T23:59:59Z"); err != nil {
 		t.Fatalf("ltv summary: %v", err)
 	}
 	q, err := url.ParseQuery(srv.only(t).RawQuery)

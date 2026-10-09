@@ -11,7 +11,7 @@ func TestUserCreateReadsThePasswordFromPipedStdin(t *testing.T) {
 	_, seen := goalServer(t, 201, `{"data":{"user_id":9}}`)
 	answerPrompts(t, "piped-secret-1\n")
 
-	if _, _, err := executeCommand("user", "create", "--user_name", "ann", "--user_email", "ann@example.com"); err != nil {
+	if _, _, err := executeCommand("user", "create", "--user-name", "ann", "--user-email", "ann@example.com"); err != nil {
 		t.Fatalf("user create: %v", err)
 	}
 	if len(*seen) != 1 || (*seen)[0].Body["user_pass"] != "piped-secret-1" {
@@ -23,7 +23,7 @@ func TestUserCreateWithAnEmptyPipeRefusesBeforeAnyRequest(t *testing.T) {
 	_, seen := goalServer(t, 201, `{"data":{}}`)
 	answerPrompts(t, "")
 
-	_, _, err := executeCommand("user", "create", "--user_name", "ann", "--user_email", "ann@example.com")
+	_, _, err := executeCommand("user", "create", "--user-name", "ann", "--user-email", "ann@example.com")
 	if err == nil || !strings.Contains(err.Error(), "password is required") {
 		t.Fatalf("err = %v, want the missing password named", err)
 	}
@@ -77,7 +77,7 @@ func TestUserUpdatePasswordFlagMisuseIsRefusedBeforeAnyRequest(t *testing.T) {
 		stdin string
 		want  string
 	}{
-		{[]string{"user", "update", "2", "--set-password", "--user_pass", "x12345678"}, "", "both set the password"},
+		{[]string{"user", "update", "2", "--set-password", "--user-pass", "x12345678"}, "", "both set the password"},
 		{[]string{"user", "update", "2", "--current-password"}, "old-secret-1\n", "only needed with a new password"},
 		{[]string{"user", "update", "2", "--set-password"}, "\n", "empty password"},
 	}

@@ -143,7 +143,7 @@ final class RotatorDestinationsIntegrationTest extends TestCase
         $id = (int) $this->rotators()->create(['name' => 'r', 'default_url' => 'https://d.example/'])['data']['id'];
         $this->rotators()->createRule($id, [
             'rule_name' => 'us', 'criteria' => [['type' => 'country', 'statement' => 'is', 'value' => 'United States(US)']],
-            // As `p202 rotator rule-create --redirects_json` sends them: the
+            // As `p202 rotator rule-create --redirects-json` sends them: the
             // unused parts as 0 and '' are "not this kind".
             'redirects' => [['redirect_url' => 'https://rule.example/', 'redirect_campaign' => '0', 'redirect_lp' => 0, 'weight' => '100', 'name' => 'A']],
         ]);

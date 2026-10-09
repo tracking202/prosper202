@@ -60,7 +60,7 @@ class ConversionsController
         $types = 'i';
 
         // Read as its siblings below read theirs. It was !empty(), and
-        // empty('0') is true, so campaign_id=0 (`--aff_campaign_id 0`) was no
+        // empty('0') is true, so campaign_id=0 (`--aff-campaign-id 0`) was no
         // filter and answered with every campaign's conversions; a value that
         // was not a number was cast to 0 and answered with none.
         if (array_key_exists('campaign_id', $params)) {

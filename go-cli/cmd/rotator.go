@@ -158,7 +158,7 @@ var rotatorUpdateCmd = &cobra.Command{
 		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update").
-				WithHint("--name, or one of --default_url, --default_campaign, --default_lp (the default is one of them; setting one clears the others).")
+				WithHint("--name, or one of --default-url, --default-campaign, --default-lp (the default is one of them; setting one clears the others).")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -202,7 +202,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ruleName, _ := cmd.Flags().GetString("rule_name")
 		if ruleName == "" {
-			return validationError("required flag --rule_name is missing")
+			return validationError("required flag --rule-name is missing")
 		}
 		body := map[string]interface{}{
 			"rule_name": ruleName,
@@ -215,7 +215,7 @@ var rotatorRuleCreateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return validationError("invalid --criteria_json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
+				return validationError("invalid --criteria-json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
 			body["criteria"] = criteria
 		} else if code, _ := cmd.Flags().GetString("country"); code != "" {
@@ -223,14 +223,14 @@ var rotatorRuleCreateCmd = &cobra.Command{
 			// never has to know the exact "Name(CC)" value string.
 			value := countryCriteriaValue(code)
 			if value == "" {
-				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria_json", code)
+				return validationError("unknown country code %q (see `rotator criteria-values --search ...`); or use --criteria-json", code)
 			}
 			body["criteria"] = []map[string]string{{"type": "country", "statement": "is", "value": value}}
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return validationError("invalid --redirects_json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
+				return validationError("invalid --redirects-json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
 			}
 			body["redirects"] = redirects
 		} else if camp, _ := cmd.Flags().GetString("redirect-campaign"); camp != "" {
@@ -273,7 +273,7 @@ var rotatorRuleDeleteCmd = &cobra.Command{
 var rotatorRuleUpdateCmd = &cobra.Command{
 	Use:   "rule-update <rotator_id> <rule_id>",
 	Short: "Update a routing rule on a redirector/rotator",
-	// Accept the rule id as a second positional OR via --rule_id, matching the
+	// Accept the rule id as a second positional OR via --rule-id, matching the
 	// flag-flexible style of rule-delete. RangeArgs(1,2) allows either form
 	// (and both together); the positional wins and is resolved in RunE.
 	Args: cobra.RangeArgs(1, 2),
@@ -286,7 +286,7 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		}
 		ruleID = strings.TrimSpace(ruleID)
 		if ruleID == "" {
-			return validationError("rule id is required (pass it as the second argument or via --rule_id)").
+			return validationError("rule id is required (pass it as the second argument or via --rule-id)").
 				WithHint("`p202 rotator get <rotator_id>` lists its rules and their ids.")
 		}
 
@@ -303,14 +303,14 @@ var rotatorRuleUpdateCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("criteria_json"); v != "" {
 			var criteria interface{}
 			if err := json.Unmarshal([]byte(v), &criteria); err != nil {
-				return validationError("invalid --criteria_json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
+				return validationError("invalid --criteria-json: %s", err.Error()).WithHint("%s", criteriaJSONHint)
 			}
 			body["criteria"] = criteria
 		}
 		if v, _ := cmd.Flags().GetString("redirects_json"); v != "" {
 			var redirects interface{}
 			if err := json.Unmarshal([]byte(v), &redirects); err != nil {
-				return validationError("invalid --redirects_json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
+				return validationError("invalid --redirects-json: %s", err.Error()).WithHint("%s", redirectsJSONHint)
 			}
 			body["redirects"] = redirects
 		}
@@ -339,7 +339,7 @@ func init() {
 	registerIdempotencyKeyFlag(rotatorCreateCmd)
 	registerIdempotencyKeyFlag(rotatorRuleCreateCmd)
 	rotatorCreateCmd.Flags().String("name", "", "Rotator name (required)")
-	rotatorCreateCmd.Flags().String("default_url", "", "Default destination: an http(s) URL (one of --default_url, --default_campaign, --default_lp)")
+	rotatorCreateCmd.Flags().String("default_url", "", "Default destination: an http(s) URL (one of --default-url, --default-campaign, --default-lp)")
 	rotatorCreateCmd.Flags().String("default_campaign", "", "Default destination: one of your campaign ids")
 	rotatorCreateCmd.Flags().String("default_lp", "", "Default destination: one of your landing page ids")
 
@@ -357,8 +357,8 @@ func init() {
 	enumFlag(rotatorRuleCreateCmd, "status", newEnum(binaryValues))
 	rotatorRuleCreateCmd.Flags().String("criteria_json", "", `Criteria JSON array, e.g. [{"type":"country","statement":"is","value":"United States(US)"}]`)
 	rotatorRuleCreateCmd.Flags().String("redirects_json", "", `Redirects JSON array, e.g. [{"redirect_campaign":"90008","weight":"100","name":"A"}]`)
-	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria_json")
-	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects_json")
+	rotatorRuleCreateCmd.Flags().String("country", "", "Sugar: ISO country code (e.g. US) -> a country `is` criterion; avoids hand-writing --criteria-json")
+	rotatorRuleCreateCmd.Flags().String("redirect-campaign", "", "Sugar: redirect to this campaign id at full weight; avoids hand-writing --redirects-json")
 
 	registerDeleteFlags(rotatorRuleDeleteCmd, "rule")
 

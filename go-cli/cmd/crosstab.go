@@ -44,7 +44,7 @@ var reportCrosstabCmd = &cobra.Command{
 	Use:   "crosstab",
 	Short: "Two-dimension breakdown (e.g. traffic source × country) for one metric",
 	Long: "Pivots one metric across two dimensions by fanning out a breakdown per row.\n" +
-		"Example: report crosstab --rows ppc_account --cols country --metric profit --aff_campaign_id 90008",
+		"Example: report crosstab --rows ppc_account --cols country --metric profit --aff-campaign-id 90008",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {

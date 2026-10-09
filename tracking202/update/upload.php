@@ -224,8 +224,6 @@ switch ($case) {
 							['id' => 'upload-skipped', 'caption' => 'Lines of the report that were not recorded, and why']
 						); ?>
 						<?php if ((int) $import['unlisted'] > 0) {
-							// The importer lists the first lines it did not record and
-							// counts the rest; every skipped line is counted by reason.
 							$byReason = [];
 							foreach ($import['reasons'] as $reason => $count) {
 								$byReason[] = p202_setup_e((string) $reason) . ' (' . number_format((int) $count) . ')';

@@ -139,7 +139,7 @@ func TestClickFollowPrintsEachNewClickOnce(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("click", "list", "--follow", "--ndjson", "--interval", "5ms", "--stop-after", "300ms", "--aff_campaign_id", "7")
+	stdout, _, err := executeCommand("click", "list", "--follow", "--ndjson", "--interval", "5ms", "--stop-after", "300ms", "--aff-campaign-id", "7")
 	if err != nil {
 		t.Fatalf("follow: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestClickFollowRefusesWhatItCannotHonour(t *testing.T) {
 	setTestHome(t, tmp) // nothing configured: these fail before any client
 	for _, args := range [][]string{
 		{"click", "list", "--follow", "--all"},
-		{"click", "list", "--follow", "--time_from", "2026-10-01"},
+		{"click", "list", "--follow", "--time-from", "2026-10-01"},
 		{"click", "list", "--follow", "--period", "last7"},
 		{"click", "list", "--follow", "--page", "2"},
 		{"click", "list", "--interval", "10s"},
@@ -269,8 +269,8 @@ func TestClickListSendsTheVisitorsFilters(t *testing.T) {
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
 	_, _, err := executeCommand("click", "list", "--keyword", "shoes", "--show", "real", "--period", "last7",
-		"--device_type", "2", "--ip", "203.0.113.9", "--referer", "news", "--ppc_network_id", "4",
-		"--method_of_promotion", "directlink", "--click_bot", "0", "--json")
+		"--device-type", "2", "--ip", "203.0.113.9", "--referer", "news", "--ppc-network-id", "4",
+		"--method-of-promotion", "directlink", "--click-bot", "0", "--json")
 	if err != nil {
 		t.Fatalf("click list: %v", err)
 	}
