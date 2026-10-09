@@ -22,11 +22,11 @@ class ShellAccessCache
 
     public static function read(string $key, int $maxAgeSeconds = self::TTL_SECONDS): ?bool
     {
-        $path = self::path($key);
+        $path = static::path($key);
         if ($path === null || !is_file($path) || is_link($path)) {
             return null;
         }
-        if (fileowner($path) !== self::processUserId()) {
+        if (fileowner($path) !== static::processUserId()) {
             return null;
         }
         $mtime = filemtime($path);
@@ -51,7 +51,7 @@ class ShellAccessCache
 
     public static function write(string $key, bool $valid): void
     {
-        $path = self::path($key);
+        $path = static::path($key);
         if ($path === null) {
             return;
         }
@@ -66,22 +66,28 @@ class ShellAccessCache
 
     public static function invalidate(string $key): void
     {
-        $path = self::path($key);
+        $path = static::path($key);
         if ($path !== null) {
             @unlink($path);
         }
     }
 
-    private static function path(string $key): ?string
+    protected static function path(string $key): ?string
     {
         if ($key === '') {
             return null;
         }
-        $dir = self::dir();
+        $dir = static::dir();
         if ($dir === null) {
             return null;
         }
         return $dir . '/' . hash('sha256', $key) . '.cache';
+    }
+
+    /** Directory name under the system temp dir; subclasses keep separate caches. */
+    protected static function cacheDirName(): string
+    {
+        return 'p202-shell-access';
     }
 
     /**
@@ -89,19 +95,19 @@ class ShellAccessCache
      * with safe ownership (callers then skip caching entirely rather than
      * trust a directory another user may control).
      */
-    private static function dir(): ?string
+    protected static function dir(): ?string
     {
-        $dir = sys_get_temp_dir() . '/p202-shell-access';
+        $dir = sys_get_temp_dir() . '/' . static::cacheDirName();
         if (!is_dir($dir) && !@mkdir($dir, 0700) && !is_dir($dir)) {
             return null;
         }
-        if (is_link($dir) || fileowner($dir) !== self::processUserId()) {
+        if (is_link($dir) || fileowner($dir) !== static::processUserId()) {
             return null;
         }
         return $dir;
     }
 
-    private static function processUserId(): int
+    protected static function processUserId(): int
     {
         return function_exists('posix_geteuid') ? posix_geteuid() : (int)getmyuid();
     }

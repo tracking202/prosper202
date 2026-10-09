@@ -174,6 +174,8 @@ func HintFor(err error) string {
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
+		case apiErr.Status == 402:
+			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks within an hour)."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
 		// A 409 has several unrelated causes -- a repeat of a deleted

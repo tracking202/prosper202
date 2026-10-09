@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Prosper202\License\ClickServerKeyValidator;
+use Prosper202\License\CliAccessCache;
 use Prosper202\License\ShellAccessCache;
 
 class CapabilitiesController
@@ -149,6 +150,7 @@ class CapabilitiesController
                     ],
                 ],
                 'shell' => $this->shellAccess(),
+                'cli' => $this->cliAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -272,6 +274,58 @@ class CapabilitiesController
         }
         ShellAccessCache::write($customerKey, $result);
         return $result;
+    }
+
+    /**
+     * Whether the Go CLI may run against this install: the ClickServer key's
+     * account has an active Prosper202 ClickServer subscription (trials count).
+     *
+     * Cached per key (CliAccessCache, 1 h). Fails OPEN when the answer is
+     * unknown (my.tracking202.com unreachable, or an answer without a 'paid'
+     * field) and no earlier result exists, so a backend outage never locks a
+     * paying customer out of the CLI. Falls back to the install owner's key
+     * when the API user has none, so sub-users of a paid install are covered.
+     */
+    public function cliAccess(): bool
+    {
+        if ($this->userId === null) {
+            return false;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '') {
+            $customerKey = $this->loadOwnerClickServerKey();
+        }
+        if ($customerKey === '') {
+            return false;
+        }
+
+        $cached = CliAccessCache::read($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        if ($result === null || $result['paid'] === null) {
+            $stale = CliAccessCache::readStale($customerKey);
+            return $stale ?? true;
+        }
+        CliAccessCache::write($customerKey, $result['paid']);
+        return $result['paid'];
+    }
+
+    /** First non-empty ClickServer key on the install (the account owner's). */
+    private function loadOwnerClickServerKey(): string
+    {
+        $result = $this->db->query(
+            "SELECT p202_customer_api_key FROM 202_users WHERE p202_customer_api_key <> '' ORDER BY user_id ASC LIMIT 1"
+        );
+        if (!$result instanceof \mysqli_result) {
+            return '';
+        }
+        $row = $result->fetch_assoc();
+        $result->free();
+        return trim((string)($row['p202_customer_api_key'] ?? ''));
     }
 
     private function loadClickServerKey(): string

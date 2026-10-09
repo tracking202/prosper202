@@ -215,6 +215,24 @@ try {
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
 
+    // Pro-only Go CLI: requests from p202-cli need this install's ClickServer
+    // key to belong to an active Prosper202 ClickServer subscription (trials
+    // count). /capabilities and the API root stay open so the CLI can explain
+    // the refusal. Fails open when my.tracking202.com can't be reached (see
+    // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
+    if (str_starts_with((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/')
+        && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
+        && !str_starts_with($path, '/system')   // diagnostics stay usable
+        && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
+        Bootstrap::errorResponse(
+            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. '
+            . 'Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support',
+            402,
+            ['category' => 'licence']
+        );
+        exit;
+    }
+
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();
     $bucketKey = 'user:' . $userId;

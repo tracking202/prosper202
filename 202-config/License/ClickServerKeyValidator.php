@@ -19,6 +19,23 @@ class ClickServerKeyValidator
      */
     public static function validate(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?bool
     {
+        $result = self::check($key, $connectTimeoutSeconds, $timeoutSeconds);
+        return $result === null ? null : $result['valid'];
+    }
+
+    /**
+     * Full licence answer for a key.
+     *
+     * 'paid' is true when the key's account has an active Prosper202
+     * ClickServer subscription (trials count). It is null when the answer
+     * carried no 'paid' field (older backend, or the edge fallback that
+     * answers while the backend is unreachable); callers must treat null as
+     * "unknown", not as "not paid".
+     *
+     * @return array{valid: bool, paid: ?bool}|null null = network failure
+     */
+    public static function check(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
+    {
         $ch = curl_init();
         if ($ch === false) {
             return null;
@@ -43,6 +60,8 @@ class ClickServerKeyValidator
         }
 
         $data = json_decode((string)$response, true);
-        return is_array($data) && ($data['msg'] ?? '') === 'Key valid';
+        $valid = is_array($data) && ($data['msg'] ?? '') === 'Key valid';
+        $paid = (is_array($data) && array_key_exists('paid', $data)) ? ($data['paid'] === true) : null;
+        return ['valid' => $valid, 'paid' => $valid ? $paid : false];
     }
 }
