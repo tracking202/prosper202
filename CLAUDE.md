@@ -1532,6 +1532,15 @@ Check here before burning time on tooling failures.
   build has in `ALL_WITH_BC` but not in `listIdentifiers()`
   (`America/Montreal`), and do not conclude from a refusal here what a
   production build does.
+- **`php -S` here has no memory limit.** This sandbox's CLI `php.ini` sets
+  `memory_limit = -1`, and the built-in server reads it, so a request that
+  needs 376 MB answers 200 here and dies at the 128 MB a production PHP
+  request gets by default. POST /conversions/uploads was measured previewing
+  440,000 lines "in about 8 seconds" this way and shipped holding every line;
+  at 128 MB it answered 500 (`Allowed memory size of 134217728 bytes
+  exhausted`). Measure a size a route accepts on a server started with
+  `php -d memory_limit=128M -S …`, and size the answer too: a list the input
+  can grow is listed up to a bound, with counts for the rest.
 - **`tests/live/upgrade-equals-install.sh` runs here.** It installs 1.9.55
   on PHP 7.4, which Ubuntu 24.04 does not carry; `ppa.launchpadcontent.net`
   is reachable, so add `ondrej/php` for noble with its key

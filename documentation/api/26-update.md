@@ -210,11 +210,16 @@ curl -X POST "$P202/api/v3/conversions/uploads" -H "Authorization: Bearer $KEY" 
     "recorded": 2,
     "skipped": 1,
     "columns": {"subid": {"index": 0, "header": "Sub ID"}, "amount": {"index": 2, "header": "Commission"}, "guessed": ["subid_column", "amount_column"]},
+    "skipped_reasons": [{"reason": "the commission is not a number", "lines": 1}],
+    "clicks": 1,
+    "total": "3.75000",
     "totals": [{"click_id": 940001, "total": "3.75000"}],
+    "totals_unlisted": 0,
     "lines": [
       {"line": 1, "subid": "Sub ID", "amount": "Commission", "status": "header", "reason": "read as the header row (not a subid)"},
       {"line": 4, "subid": "940002", "amount": "abc", "status": "skipped", "reason": "the commission is not a number"}
-    ]
+    ],
+    "lines_unlisted": 0
   }
 }
 ```
@@ -226,11 +231,17 @@ curl -X POST "$P202/api/v3/conversions/uploads" -H "Authorization: Bearer $KEY" 
 | `subid_column`, `amount_column` | integer or string | The column by 0-based index, or by header (case ignored). Either may be left out when the header names it plainly — subid: `sub id`, `click id`, `t202…`, `aff_sub`, `sid`; commission, likeliest first: `commission`, `payout`, `earning`, `revenue`, `income`, `amount`, `sale`, never a header that also names an id, a date, a count, a rate or a status ("Sale ID", "Commission Rate") — and `columns.guessed` says which were |
 
 Every line is accounted for, as the page accounts for it: `recorded`
-(`would_record` in a dry run) counts the recorded lines and `totals` sums them
-per click, and `lines` lists each line that was not recorded — `skipped` with
-the reason (not a subid, the commission is not a number, no click with this
-subid in your account), or `header` (line 1 when its subid cell is not a
-click id). Amounts may carry `$`, spaces and a comma between groups of three
+(`would_record` in a dry run) counts the recorded lines, `clicks` counts the
+clicks they are on and `total` sums them, and `totals` gives each click's sum.
+`lines` lists each line that was not recorded — `skipped` with the reason (not
+a subid, the commission is not a number, no click with this subid in your
+account), or `header` (line 1 when its subid cell is not a click id) — and
+`skipped_reasons` counts every skipped line by its reason. The answer is
+sized by what it lists, not by the report: `lines` holds the first 1,000
+lines not recorded and `totals` the first 1,000 clicks (in the order the
+report names them), and `lines_unlisted` and `totals_unlisted` say how many
+more there were. A report whose subid column is the wrong one skips every
+line; `skipped_reasons` then says why without listing them all. Amounts may carry `$`, spaces and a comma between groups of three
 digits (`1,234.56`); any other comma is not read as a number, so a report
 written with a decimal comma (`12,50`, `1.234,56`) has those lines skipped
 rather than recorded at a hundred times the amount. A header
@@ -240,8 +251,11 @@ the same column for both are `422`s that list the header's columns.
 The request body may be up to **8 MB** (every other endpoint takes 1 MB): a
 larger one is a `413` with `max_bytes`. PHP's `post_max_size` (8M by
 default) and the web server in front may set their own, lower limits.
-Measured on `php -S`: a 7 MB report (440,000 lines) previews in about 8
-seconds.
+A preview reads the report twice — once for the subids, once for the lines —
+and holds neither in memory: a 440,000-line report previews within about 4 MB
+(33 MB when every line names a different click), where holding it took 376 MB
+and failed under PHP's default 128 MB limit (measured in-process, MariaDB
+10.11).
 
 ## From the CLI
 

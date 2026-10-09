@@ -2095,9 +2095,12 @@ paths:
         were. The first line is
         read as the header when its subid cell is not a click id. Every line
         is accounted for, as the page accounts for it: `recorded`
-        (`would_record`) counts the recorded lines and `totals` sums them per
-        click, and `lines` lists each line that was not recorded — `skipped`
-        with the reason, or the `header`.
+        (`would_record`) counts the recorded lines, `clicks` and `total` count
+        their clicks and sum them, `totals` gives each click's sum, `lines`
+        lists each line that was not recorded — `skipped` with the reason, or
+        the `header` — and `skipped_reasons` counts the skipped lines by
+        reason. `lines` and `totals` list at most 1,000 entries each;
+        `lines_unlisted` and `totals_unlisted` count the rest.
 
         Needs `access_to_update_section` and `conversions:write`. The body
         may be up to 8 MB (every other route takes 1 MB). Not stageable.
@@ -11715,17 +11718,28 @@ components:
                 subid: {type: object, properties: {index: {type: integer}, header: {type: string}}}
                 amount: {type: object, properties: {index: {type: integer}, header: {type: string}}}
                 guessed: {type: array, items: {type: string}, description: "subid_column and/or amount_column when read from the header."}
+            skipped_reasons:
+              type: array
+              description: Every skipped line counted by its reason, listed or not, in the order the reasons first occur.
+              items:
+                type: object
+                properties:
+                  reason: {type: string}
+                  lines: {type: integer}
+            clicks: {type: integer, description: "The clicks the recorded lines are on, all of them."}
+            total: {type: string, example: "3.75000", description: "The sum of every recorded line."}
             totals:
               type: array
-              description: Each click's sum of this report's recorded lines.
+              description: Each click's sum of this report's recorded lines, for the first 1,000 clicks in the order the report names them.
               items:
                 type: object
                 properties:
                   click_id: {type: integer}
                   total: {type: string, example: "3.75000"}
+            totals_unlisted: {type: integer, description: "Clicks with recorded lines beyond those in totals."}
             lines:
               type: array
-              description: The lines not recorded (skipped, or the header); the recorded ones are in the counts and `totals`.
+              description: The first 1,000 lines not recorded (skipped, or the header); the recorded ones are in the counts and `totals`.
               items:
                 type: object
                 properties:
@@ -11734,6 +11748,7 @@ components:
                   amount: {type: string}
                   status: {type: string, enum: [skipped, header]}
                   reason: {type: string, description: "Why a line was skipped (or read as the header)."}
+            lines_unlisted: {type: integer, description: "Lines not recorded beyond those in lines."}
 
     LtvCustomerCrm:
       type: object

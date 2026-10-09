@@ -466,7 +466,11 @@ p202 conversion reset-subids --aff-network-id 3 --aff-campaign-id 12 --dry-run -
 # A commission report (one batch; the newest report replaces earlier uploads' values).
 p202 conversion upload-revenue march.csv --dry-run --json
 # => {"data":{"would_record":2,"skipped":1,"columns":{"subid":{"index":0,"header":"Sub ID"},...},
-#             "totals":[{"click_id":940001,"total":"3.75000"}],"lines":[...the lines not recorded...]}}
+#             "skipped_reasons":[{"reason":"the commission is not a number","lines":1}],
+#             "clicks":1,"total":"3.75000","totals":[{"click_id":940001,"total":"3.75000"}],"totals_unlisted":0,
+#             "lines":[...the lines not recorded...],"lines_unlisted":0}}
+# lines and totals list at most 1,000 entries; clicks, total, skipped_reasons and the *_unlisted
+# counts are exact, so read them, not the length of a list.
 ```
 
 `update-cpc` writes only the clicks the check counted: a click recorded later

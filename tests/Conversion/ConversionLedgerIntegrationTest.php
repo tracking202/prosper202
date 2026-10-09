@@ -433,6 +433,70 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('9.00000', $this->clickState(200)['payout']);
     }
 
+    /**
+     * A report whose lines are mostly not recorded — the wrong subid column
+     * skips every one — lists the first LISTED_LINES of them, counts the
+     * rest, and counts every skipped line by its reason; preview() reads the
+     * stream twice and answers what import() then records. Listing every
+     * line, and holding the report to preview it, took 376 MB for 440,000
+     * lines, past PHP's default 128 MB (measured).
+     */
+    public function testAReportListsItsFirstUnrecordedLinesAndCountsEveryOne(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $listed = RevenueUploadImporter::LISTED_LINES;
+        $text = "subid,amount\n100,1.50\n";
+        for ($i = 0; $i < $listed + 5; $i++) {
+            $text .= (900000 + $i) . ",1\n"; // no click of the account
+        }
+        $text .= "101,oops\nxyz,2\n101,2.25\n100,1\n";
+        $stream = static function (string $text) {
+            $h = fopen('php://temp', 'r+');
+            fwrite($h, $text);
+            rewind($h);
+            return $h;
+        };
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+
+        $preview = $importer->preview(1, $stream($text), 0, 1);
+        $import = $importer->import(1, 'big.csv', $stream($text), 0, 1);
+
+        foreach (['preview' => $preview, 'import' => $import] as $what => $r) {
+            self::assertSame($listed + 7, $r['skipped'], $what);
+            self::assertCount($listed, $r['lines'], "$what lists at most LISTED_LINES lines");
+            self::assertSame(['line' => 1, 'status' => 'header'], ['line' => $r['lines'][0]['line'], 'status' => $r['lines'][0]['status']], "$what lists the header first");
+            self::assertSame(3, $r['lines'][1]['line'], "$what lists the lines not recorded, in file order");
+            self::assertSame(8, $r['unlisted'], "$what: header + $listed + 7 skipped, $listed listed");
+            self::assertSame([
+                'no click with this subid in your account' => $listed + 5,
+                'the commission is not a number' => 1,
+                'not a subid (a click id is a whole number)' => 1,
+            ], $r['reasons'], "$what counts every skipped line by reason, listed or not");
+            self::assertSame(['100' => '2.50000', '101' => '2.25000'], array_map('strval', $r['totals']), $what);
+            self::assertSame('4.75000', $r['total'], $what);
+        }
+        self::assertSame(3, $preview['would_record']);
+        self::assertSame(3, $import['recorded']);
+        self::assertSame('2.50000', $this->clickState(100)['payout']);
+    }
+
+    public function testAPreviewRefusesAStreamItCannotReadTwice(): void
+    {
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+        // A pipe: refused before anything is read from it.
+        $pipe = popen('true', 'r');
+        self::assertIsResource($pipe);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('preview() needs a seekable stream');
+        try {
+            $importer->preview(1, $pipe, 0, 1);
+        } finally {
+            pclose($pipe);
+        }
+    }
+
     public function testAHeaderlessFileStillListsItsFirstLine(): void
     {
         $this->campaign(7);

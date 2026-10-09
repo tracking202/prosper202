@@ -931,7 +931,8 @@ status (`marked`/`cleared`, `already_converted`, `not_found`, `not_a_subid`,
 `duplicate_in_list`). `upload-revenue` records a commission report as one
 batch: a click's lines are summed and the newest report replaces earlier
 uploads' values (unlike `conversion import`, which records each sale with its
-transaction id); its table lists the lines not recorded, with the reason.
+transaction id); its table lists the lines not recorded, with the reason (the
+first 1,000; the summary counts every skipped line by reason).
 `delete-subids`, `reset-subids` and `upload-revenue` ask before writing
 (`--force` skips). All need the `access_to_update_section` role permission
 (`delete-subids` also `delete_individual_subids`), refuse `--staged`, and are

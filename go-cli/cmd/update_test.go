@@ -485,8 +485,8 @@ func TestUploadRevenueSendsTheReportAndItsColumns(t *testing.T) {
 	if err := os.WriteFile(csv, []byte("Sub ID,Order,Commission\n940001,a,$1.50\n940001,b,2.25\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	preview := `{"data":{"dry_run":true,"batch_id":null,"would_record":2,"skipped":0,"columns":{"subid":{"index":0,"header":"Sub ID"},"amount":{"index":2,"header":"Commission"},"guessed":[]},"totals":[{"click_id":940001,"total":"3.75000"}],"lines":[{"line":1,"subid":"Sub ID","amount":"Commission","status":"header","reason":"read as the header row (not a subid)"}]}}`
-	done := `{"data":{"dry_run":false,"batch_id":7,"recorded":2,"skipped":0,"columns":{"subid":{"index":0,"header":"Sub ID"},"amount":{"index":2,"header":"Commission"},"guessed":[]},"totals":[{"click_id":940001,"total":"3.75000"}],"lines":[]}}`
+	preview := `{"data":{"dry_run":true,"batch_id":null,"would_record":2,"skipped":0,"columns":{"subid":{"index":0,"header":"Sub ID"},"amount":{"index":2,"header":"Commission"},"guessed":[]},"skipped_reasons":[],"clicks":1,"total":"3.75000","totals":[{"click_id":940001,"total":"3.75000"}],"totals_unlisted":0,"lines":[{"line":1,"subid":"Sub ID","amount":"Commission","status":"header","reason":"read as the header row (not a subid)"}],"lines_unlisted":0}}`
+	done := `{"data":{"dry_run":false,"batch_id":7,"recorded":2,"skipped":0,"columns":{"subid":{"index":0,"header":"Sub ID"},"amount":{"index":2,"header":"Commission"},"guessed":[]},"skipped_reasons":[],"clicks":1,"total":"3.75000","totals":[{"click_id":940001,"total":"3.75000"}],"totals_unlisted":0,"lines":[],"lines_unlisted":0}}`
 	seen := updateServer(t, func(r updateRequest) (int, string) {
 		if r.dryRun() {
 			return 200, preview
@@ -518,7 +518,7 @@ func TestUploadRevenueThatWouldRecordNothingIsRefusedWithoutWriting(t *testing.T
 		t.Fatal(err)
 	}
 	seen := updateServer(t, func(updateRequest) (int, string) {
-		return 200, `{"data":{"dry_run":true,"batch_id":null,"would_record":0,"skipped":1,"columns":{"subid":{"index":0,"header":"Order"},"amount":{"index":1,"header":"Sub ID"},"guessed":[]},"totals":[],"lines":[{"line":2,"subid":"abc","amount":"1","status":"skipped","reason":"not a subid (a click id is a whole number)"}]}}`
+		return 200, `{"data":{"dry_run":true,"batch_id":null,"would_record":0,"skipped":1,"columns":{"subid":{"index":0,"header":"Order"},"amount":{"index":1,"header":"Sub ID"},"guessed":[]},"skipped_reasons":[{"reason":"not a subid (a click id is a whole number)","lines":1}],"clicks":0,"total":"0.00000","totals":[],"totals_unlisted":0,"lines":[{"line":2,"subid":"abc","amount":"1","status":"skipped","reason":"not a subid (a click id is a whole number)"}],"lines_unlisted":0}}`
 	})
 	stdout, _, err := executeCommand("conversion", "upload-revenue", csv, "--subid-column", "0", "--amount-column", "1", "--force", "--json")
 	if err == nil {
@@ -531,8 +531,55 @@ func TestUploadRevenueThatWouldRecordNothingIsRefusedWithoutWriting(t *testing.T
 	if hint := hintFor(err); !strings.Contains(hint, `it was "Order"`) || !strings.Contains(hint, "--subid-column") {
 		t.Errorf("hint = %q", hint)
 	}
+	if !strings.Contains(err.Error(), "by reason: not a subid (a click id is a whole number) (1)") {
+		t.Errorf("error = %q, want the skipped lines counted by reason", err)
+	}
 	if len(*seen) != 1 {
 		t.Errorf("requests = %+v, want only the dry run", *seen)
+	}
+}
+
+// An answer lists the first lines not recorded and the first clicks' totals,
+// and counts the rest: the summary takes the click count and the total from
+// the answer's exact fields, never from the lists, and says what was not
+// listed and why.
+func TestUploadRevenueSummaryReadsTheExactCountsNotTheListedOnes(t *testing.T) {
+	csv := filepath.Join(t.TempDir(), "big.csv")
+	if err := os.WriteFile(csv, []byte("subid,payout\n1,2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview := `{"data":{"dry_run":true,"batch_id":null,"would_record":1500,"skipped":3000,"columns":{"subid":{"index":0,"header":"subid"},"amount":{"index":1,"header":"payout"},"guessed":[]},` +
+		`"skipped_reasons":[{"reason":"no click with this subid in your account","lines":2999},{"reason":"the commission is not a number","lines":1}],` +
+		`"clicks":1500,"total":"18510.00000","totals":[{"click_id":1,"total":"12.34000"}],"totals_unlisted":1499,` +
+		`"lines":[{"line":2,"subid":"9","amount":"1","status":"skipped","reason":"no click with this subid in your account"}],"lines_unlisted":2999}}`
+	updateServer(t, func(updateRequest) (int, string) { return 200, preview })
+	_, stderr, err := executeCommand("conversion", "upload-revenue", csv, "--dry-run")
+	if err != nil {
+		t.Fatalf("upload-revenue --dry-run: %v\n%s", err, stderr)
+	}
+	for _, want := range []string{
+		"1500 line(s) would be recorded on 1500 click(s), $18510 in all",
+		"3000 skipped (listing 1 of the 3000 lines not recorded; by reason: no click with this subid in your account (2999); the commission is not a number (1))",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want %q", stderr, want)
+		}
+	}
+}
+
+func TestUploadRevenueRefusesAnAnswerWithoutTheExactCounts(t *testing.T) {
+	csv := filepath.Join(t.TempDir(), "r.csv")
+	if err := os.WriteFile(csv, []byte("subid,payout\n1,2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The answer as it was before it carried clicks and total: summing the
+	// listed totals would understate a report with more clicks than listed.
+	updateServer(t, func(updateRequest) (int, string) {
+		return 200, `{"data":{"dry_run":true,"batch_id":null,"would_record":1,"skipped":0,"columns":{"subid":{"index":0,"header":"subid"},"amount":{"index":1,"header":"payout"},"guessed":[]},"totals":[{"click_id":1,"total":"2.00000"}],"lines":[]}}`
+	})
+	_, _, err := executeCommand("conversion", "upload-revenue", csv, "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "the click count or the count of lines not listed is missing") {
+		t.Fatalf("err = %v, want the answer refused as malformed", err)
 	}
 }
 

@@ -109,7 +109,7 @@ DELETE FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'u5-pass-%';
 DELETE FROM 202_aff_networks WHERE aff_network_name LIKE 'u5-pass-%';
 DELETE FROM 202_ppc_accounts WHERE ppc_account_name LIKE 'u5-pass-%';
 DELETE FROM 202_ppc_networks WHERE ppc_network_name LIKE 'u5-pass-%';
-DELETE FROM 202_conversion_uploads WHERE file_name='${FILE:-none}';
+DELETE FROM 202_conversion_uploads WHERE file_name IN ('${FILE:-none}', '${BIGFILE:-none}');
 SQL
 }
 cleanup
@@ -358,6 +358,21 @@ eq "$(Q "SELECT CONCAT(click_lead, '/', click_payout) FROM 202_clicks WHERE clic
 submit "$OUT/up-pick.html" click_id "tracking202/update/upload.php?case=2" "$OUT/up-twice.html"
 flash "$OUT/up-twice.html" 'This file does not exist that you are trying to import' "applying the same file twice is refused: it was used up"
 eq "$(rows $C3)" "2" "and records nothing more"
+
+say "Upload Revenue Reports: more lines not recorded than the page lists"
+# The importer lists the first 1,000 lines it did not record (here the header
+# and 999 skipped ones) and counts the rest: the pill counts every skipped
+# line, and a sentence says how many were not listed and why.
+{ printf 'Sub ID,Commission\n'; for i in $(seq 1 1005); do printf 'order-%s,1\n' "$i"; done; } > "$OUT/u5-big.csv"
+LOC=$(curl -sS -b "$JAR" -c "$JAR" -o /dev/null -w '%{redirect_url}' -F "token=$UT" -F "csv=@$OUT/u5-big.csv" "$BASE/tracking202/update/upload.php")
+BIGFILE=$(printf '%s' "$LOC" | sed -n 's/.*[?&]file=\([^&]*\).*/\1/p')
+[ -n "$BIGFILE" ] && ok "a report of 1,005 lines goes on to the column picker" || bad "a report of 1,005 lines goes on to the column picker (got '$LOC')"
+get "tracking202/update/upload.php?case=1&file=$BIGFILE" "$OUT/up-bigpick.html"
+submit "$OUT/up-bigpick.html" click_id "tracking202/update/upload.php?case=2" "$OUT/up-big.html"
+flash "$OUT/up-big.html" 'Your report has been uploaded: 0 line(s) recorded, 1005 skipped (listed below).' "every line of the report is counted"
+has "$OUT/up-big.html" '<span class="p202-pill p202-pill--warn">1,005 skipped</span>' "the pill counts every skipped line, not the listed ones"
+eq "$(grep -o '<td[^>]*>order-[0-9]*</td>' "$OUT/up-big.html" | wc -l | tr -d ' ')" "999" "the table lists the first 999 skipped lines"
+has "$OUT/up-big.html" 'The first 999 are listed; 6 more were skipped. Every skipped line, by reason: not a subid (a click id is a whole number) (1,005).' "and says how many more were skipped, and why"
 
 if [ -n "$SERVER_LOG" ] && [ -f "$SERVER_LOG" ]; then
   say "the server logged no PHP warnings from the Update pages"

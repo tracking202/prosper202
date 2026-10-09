@@ -26,6 +26,16 @@ use RuntimeException;
  * Every line is accounted for in the result. A line whose subid is not an
  * exact click id of this account, or whose amount is not a number, is
  * skipped with the reason, never silently (CLAUDE.md error pattern #4).
+ * The result counts every line; it lists the ones not recorded — the header
+ * and each skipped line — up to LISTED_LINES of them, counts the rest
+ * (`unlisted`) and counts every skipped line by its reason (`reasons`). A
+ * recorded line is in its click's sum in `totals`.
+ *
+ * Neither surface holds the report's lines in memory: the route takes an
+ * 8 MB report, and keeping every line read as an array (and listing every
+ * one) took 376 MB to preview 440,000 lines — past the 128 MB a PHP request
+ * gets by default, so the request died (measured). What grows with the
+ * report is the per-click totals and, in preview(), the set of subids read.
  *
  * One reader behind every surface that uploads a report — the Upload Revenue
  * Reports page and POST /api/v3/conversions/uploads — and behind preview(),
@@ -33,11 +43,17 @@ use RuntimeException;
  */
 final class RevenueUploadImporter
 {
-    /** A line's status: recorded by import(); would be, by preview(). */
-    public const RECORDED = 'recorded';
-    public const WOULD_RECORD = 'would_record';
+    /** The status of a line not recorded: skipped with a reason, or read as the header. */
     public const SKIPPED = 'skipped';
     public const HEADER = 'header';
+
+    /**
+     * The most lines a result lists. A report whose subid column is the wrong
+     * one skips every line, and listing 440,000 of them made an answer of
+     * tens of megabytes that the CLI (which reads 10 MB) could not read; the
+     * counts by reason say what the unlisted lines are.
+     */
+    public const LISTED_LINES = 1000;
 
     private const NO_CLICK = 'no click with this subid in your account';
 
@@ -52,11 +68,17 @@ final class RevenueUploadImporter
      * @return array{
      *     batch_id: int,
      *     lines: list<array{line: int, subid: string, amount: string, status: string, reason: string}>,
-     *         status is recorded, skipped, or header (line 1 when it holds no subid),
+     *     unlisted: int,
+     *     reasons: array<string, int>,
      *     totals: array<int, string>,
+     *     total: string,
      *     recorded: int,
      *     skipped: int
-     * } totals: click_id => the sum of this file's recorded lines for it.
+     * } lines: the lines not recorded, in file order, at most LISTED_LINES —
+     *   status skipped, or header (line 1 when it holds no subid); unlisted:
+     *   how many more were not recorded; reasons: every skipped line counted
+     *   by its reason; totals: click_id => the sum of this file's recorded
+     *   lines for it; total: the sum of every recorded line.
      * @throws BatchInterrupted when a line's write fails after the batch was
      *         created: the lines before it are committed rows of the batch
      */
@@ -68,8 +90,9 @@ final class RevenueUploadImporter
 
         $batchId = $this->createBatch($userId, $fileName);
 
-        $lines = [];
+        $unrecorded = self::unrecorded();
         $totals = [];
+        $total = '0.00000';
         $recorded = 0;
         $skipped = 0;
         $lineNo = 0;
@@ -82,7 +105,7 @@ final class RevenueUploadImporter
                 if ($line['status'] === self::SKIPPED) {
                     $skipped++;
                 }
-                $lines[] = $line;
+                self::notRecorded($unrecorded, $line);
                 continue;
             }
             $clickId = (int) $line['click_id'];
@@ -117,14 +140,14 @@ final class RevenueUploadImporter
 
             if (!$result['clickFound']) {
                 $skipped++;
-                $lines[] = ['line' => $lineNo, 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
-                    'reason' => self::NO_CLICK];
+                self::notRecorded($unrecorded, ['line' => $lineNo, 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
+                    'reason' => self::NO_CLICK]);
                 continue;
             }
 
             $recorded++;
             $totals[$clickId] = Amount::fromUnits(Amount::toUnits($totals[$clickId] ?? '0') + Amount::toUnits($amount));
-            $lines[] = ['line' => $lineNo, 'subid' => $line['subid'], 'amount' => $amount, 'status' => self::RECORDED, 'reason' => ''];
+            $total = Amount::fromUnits(Amount::toUnits($total) + Amount::toUnits($amount));
         }
 
         try {
@@ -133,42 +156,49 @@ final class RevenueUploadImporter
             throw new BatchInterrupted('closing batch ' . $batchId, $recorded, $batchId, $e);
         }
 
-        return ['batch_id' => $batchId, 'lines' => $lines, 'totals' => $totals, 'recorded' => $recorded, 'skipped' => $skipped];
+        return ['batch_id' => $batchId] + $unrecorded
+            + ['totals' => $totals, 'total' => $total, 'recorded' => $recorded, 'skipped' => $skipped];
     }
 
     /**
      * What import() would record, writing nothing: the same lines read by the
-     * same rules, each line whose subid is a click of the account marked
+     * same rules, each line whose subid is a click of the account counted as
      * would_record (and summed into the totals), and every other line skipped
-     * or read as the header with the reason import() gives.
+     * or read as the header with the reason import() gives, listed as
+     * import() lists them.
      *
-     * @param resource $handle An open CSV stream positioned at its start.
+     * The report is read twice — once for the subids, asked of the database in
+     * chunks, then again for the lines — rather than held in memory between
+     * the two, so the stream has to be seekable (an upload's file, or
+     * php://temp).
+     *
+     * @param resource $handle An open, seekable CSV stream positioned at its start.
      * @return array{
      *     lines: list<array{line: int, subid: string, amount: string, status: string, reason: string}>,
+     *     unlisted: int,
+     *     reasons: array<string, int>,
      *     totals: array<int, string>,
+     *     total: string,
      *     would_record: int,
      *     skipped: int
-     * }
+     * } as import() answers, with would_record for recorded
      */
     public function preview(int $userId, $handle, int $subidColumn, int $amountColumn): array
     {
         if ($subidColumn < 0 || $amountColumn < 0) {
             throw new RuntimeException('choose the subid column and the commission column');
         }
-
-        $read = [];
-        $lineNo = 0;
-        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
-            if ($line !== null) {
-                $read[] = $line;
-            }
+        $start = ftell($handle);
+        if ($start === false || !stream_get_meta_data($handle)['seekable']) {
+            throw new RuntimeException('the report cannot be read twice: preview() needs a seekable stream');
         }
 
         // Which of the subids are the account's clicks, read in chunks: the
         // question record() answers with clickFound.
         $ids = [];
-        foreach ($read as $line) {
-            if ($line['status'] === null) {
+        $lineNo = 0;
+        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
+            if ($line !== null && $line['status'] === null) {
                 $ids[(int) $line['click_id']] = true;
             }
         }
@@ -182,32 +212,72 @@ final class RevenueUploadImporter
                 $owned[(int) $row['click_id']] = true;
             }
         }
+        unset($ids);
 
-        $lines = [];
+        if (fseek($handle, $start) !== 0) {
+            throw new RuntimeException('the report could not be read a second time');
+        }
+        $unrecorded = self::unrecorded();
         $totals = [];
+        $total = '0.00000';
         $wouldRecord = 0;
         $skipped = 0;
-        foreach ($read as $line) {
+        $lineNo = 0;
+        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
+            if ($line === null) {
+                continue; // a blank line
+            }
             if ($line['status'] !== null) {
                 if ($line['status'] === self::SKIPPED) {
                     $skipped++;
                 }
-                $lines[] = $line;
+                self::notRecorded($unrecorded, $line);
                 continue;
             }
             $clickId = (int) $line['click_id'];
             if (!isset($owned[$clickId])) {
                 $skipped++;
-                $lines[] = ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
-                    'reason' => self::NO_CLICK];
+                self::notRecorded($unrecorded, ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
+                    'reason' => self::NO_CLICK]);
                 continue;
             }
             $wouldRecord++;
             $totals[$clickId] = Amount::fromUnits(Amount::toUnits($totals[$clickId] ?? '0') + Amount::toUnits((string) $line['amount']));
-            $lines[] = ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => (string) $line['amount'], 'status' => self::WOULD_RECORD, 'reason' => ''];
+            $total = Amount::fromUnits(Amount::toUnits($total) + Amount::toUnits((string) $line['amount']));
         }
 
-        return ['lines' => $lines, 'totals' => $totals, 'would_record' => $wouldRecord, 'skipped' => $skipped];
+        return $unrecorded + ['totals' => $totals, 'total' => $total, 'would_record' => $wouldRecord, 'skipped' => $skipped];
+    }
+
+    /**
+     * An empty list of the lines not recorded, as notRecorded() fills it.
+     *
+     * @return array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>}
+     */
+    private static function unrecorded(): array
+    {
+        return ['lines' => [], 'unlisted' => 0, 'reasons' => []];
+    }
+
+    /**
+     * A line that was not recorded: counted by its reason when it was skipped,
+     * and listed while fewer than LISTED_LINES are, otherwise counted as
+     * unlisted.
+     *
+     * @param array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>} $unrecorded
+     * @param array<string, mixed> $line
+     */
+    private static function notRecorded(array &$unrecorded, array $line): void
+    {
+        if ($line['status'] === self::SKIPPED) {
+            $reason = (string) $line['reason'];
+            $unrecorded['reasons'][$reason] = ($unrecorded['reasons'][$reason] ?? 0) + 1;
+        }
+        if (count($unrecorded['lines']) < self::LISTED_LINES) {
+            $unrecorded['lines'][] = ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['amount'], 'status' => $line['status'], 'reason' => $line['reason']];
+            return;
+        }
+        $unrecorded['unlisted']++;
     }
 
     /**

@@ -367,6 +367,15 @@ final class UpdateEndpointsInstanceTest extends TestCase
         // recorded ones are counted and summed per click.
         $this->assertSame([1, 4, 5, 6], array_column($preview['data']['lines'], 'line'));
         $this->assertSame(['header', 'skipped', 'skipped', 'skipped'], array_column($preview['data']['lines'], 'status'));
+        $this->assertSame(0, $preview['data']['lines_unlisted']);
+        $this->assertSame(1, $preview['data']['clicks']);
+        $this->assertSame('3.75000', $preview['data']['total']);
+        $this->assertSame(0, $preview['data']['totals_unlisted']);
+        $this->assertSame([
+            ['reason' => 'the commission is not a number', 'lines' => 1],
+            ['reason' => 'not a subid (a click id is a whole number)', 'lines' => 1],
+            ['reason' => 'no click with this subid in your account', 'lines' => 1],
+        ], $preview['data']['skipped_reasons']);
         $this->assertNull($preview['data']['batch_id']);
         $this->assertSame(0, (int) $this->click($one)['click_lead'], 'a dry run writes nothing');
 
@@ -385,6 +394,21 @@ final class UpdateEndpointsInstanceTest extends TestCase
         $this->assertSame(200, $status, json_encode($next));
         $this->assertSame([], $next['data']['columns']['guessed']);
         $this->assertSame('5.00', number_format((float) $this->click($one)['click_payout'], 2, '.', ''), 'the newest report replaces the earlier one');
+
+        // A report the wrong subid column makes all skipped: the first 1,000
+        // lines not recorded are listed and the rest counted, by reason, so
+        // the answer stays small enough for the CLI to read.
+        $junk = "subid,payout\n";
+        for ($i = 0; $i < 1500; $i++) {
+            $junk .= 'order-' . $i . ",1\n";
+        }
+        [$status, $wrong] = $this->post('/conversions/uploads?dry_run=1', ['csv' => $junk]);
+        $this->assertSame(200, $status, json_encode($wrong));
+        $this->assertSame(1500, $wrong['data']['skipped']);
+        $this->assertCount(1000, $wrong['data']['lines']);
+        $this->assertSame(501, $wrong['data']['lines_unlisted'], 'the header and 1,500 skipped lines, 1,000 listed');
+        $this->assertSame([['reason' => 'not a subid (a click id is a whole number)', 'lines' => 1500]], $wrong['data']['skipped_reasons']);
+        $this->assertSame([0, '0.00000', []], [$wrong['data']['clicks'], $wrong['data']['total'], $wrong['data']['totals']]);
 
         $refusals = [
             [['csv' => ''], 'csv', 'is required'],

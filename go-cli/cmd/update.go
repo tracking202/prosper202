@@ -926,11 +926,22 @@ type uploadAnswer struct {
 			} `json:"amount"`
 			Guessed []string `json:"guessed"`
 		} `json:"columns"`
-		Totals []struct {
+		// Clicks and Total are exact; Totals lists the first clicks and
+		// Lines the first lines not recorded, and the *Unlisted counts say
+		// how many more there were.
+		Clicks         *int64      `json:"clicks"`
+		Total          json.Number `json:"total"`
+		TotalsUnlisted *int64      `json:"totals_unlisted"`
+		Totals         []struct {
 			ClickID json.Number `json:"click_id"`
 			Total   json.Number `json:"total"`
 		} `json:"totals"`
-		Lines []map[string]interface{} `json:"lines"`
+		Lines          []map[string]interface{} `json:"lines"`
+		LinesUnlisted  *int64                   `json:"lines_unlisted"`
+		SkippedReasons []struct {
+			Reason string `json:"reason"`
+			Lines  int64  `json:"lines"`
+		} `json:"skipped_reasons"`
 	} `json:"data"`
 }
 
@@ -943,15 +954,31 @@ func (a uploadAnswer) columns() string {
 		a.Data.Columns.Subid.Header, a.Data.Columns.Subid.Index, a.Data.Columns.Amount.Header, a.Data.Columns.Amount.Index, guessed)
 }
 
-// total is the sum of the report's per-click totals, exactly.
+// total is the sum of every line the report records, as the server summed
+// it, without trailing zeros.
 func (a uploadAnswer) total() string {
-	sum := new(big.Rat)
-	for _, t := range a.Data.Totals {
-		if r, ok := new(big.Rat).SetString(t.Total.String()); ok {
-			sum.Add(sum, r)
-		}
-	}
+	sum, _ := new(big.Rat).SetString(a.Data.Total.String())
 	return strings.TrimRight(strings.TrimRight(sum.FloatString(5), "0"), ".")
+}
+
+// skippedByReason says how many lines each reason skipped, for a report whose
+// skipped lines are not all listed.
+func (a uploadAnswer) skippedByReason() string {
+	parts := make([]string, 0, len(a.Data.SkippedReasons))
+	for _, r := range a.Data.SkippedReasons {
+		parts = append(parts, fmt.Sprintf("%s (%d)", r.Reason, r.Lines))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// listed says which lines not recorded (the skipped ones, and a header)
+// the output lists.
+func (a uploadAnswer) listed() string {
+	if *a.Data.LinesUnlisted == 0 {
+		return "listed"
+	}
+	return fmt.Sprintf("listing %d of the %d lines not recorded; by reason: %s",
+		len(a.Data.Lines), int64(len(a.Data.Lines))+*a.Data.LinesUnlisted, a.skippedByReason())
 }
 
 func readUploadAnswer(data []byte, what string, dryRun bool) (uploadAnswer, error) {
@@ -961,6 +988,12 @@ func readUploadAnswer(data []byte, what string, dryRun bool) (uploadAnswer, erro
 	}
 	if a.Data.Skipped == nil || a.Data.Lines == nil || (dryRun && a.Data.WouldRecord == nil) || (!dryRun && (a.Data.Recorded == nil || a.Data.BatchID == nil)) {
 		return a, updateMalformed(what, errors.New("a count or the lines are missing"))
+	}
+	if a.Data.Clicks == nil || a.Data.LinesUnlisted == nil || a.Data.TotalsUnlisted == nil || a.Data.SkippedReasons == nil {
+		return a, updateMalformed(what, errors.New("the click count or the count of lines not listed is missing"))
+	}
+	if _, ok := new(big.Rat).SetString(a.Data.Total.String()); !ok {
+		return a, updateMalformed(what, fmt.Errorf("the total %q is not a number", a.Data.Total.String()))
 	}
 	return a, nil
 }
@@ -1045,19 +1078,19 @@ func runConversionUploadRevenue(cmd *cobra.Command, args []string) error {
 		if err := renderUpload(data, check); err != nil {
 			return err
 		}
-		output.Success("Dry run: %d line(s) would be recorded on %d click(s), %s in all; %d skipped (listed). Columns: %s. Nothing was written; drop --dry-run to upload (it asks first).",
-			*check.Data.WouldRecord, len(check.Data.Totals), "$"+check.total(), *check.Data.Skipped, check.columns())
+		output.Success("Dry run: %d line(s) would be recorded on %d click(s), %s in all; %d skipped (%s). Columns: %s. Nothing was written; drop --dry-run to upload (it asks first).",
+			*check.Data.WouldRecord, *check.Data.Clicks, "$"+check.total(), *check.Data.Skipped, check.listed(), check.columns())
 		return nil
 	}
 	if *check.Data.WouldRecord == 0 {
 		// Nothing on stdout: a failure prints only its error (the CLI's
 		// contract), and --dry-run is how the lines are listed.
-		return validationError("none of the lines of %s can be recorded (%d skipped; %s)", args[0], *check.Data.Skipped, check.columns()).
-			WithHint("If the subid column is the wrong one (it was %q), name the right one with --subid-column <header or 0-based number>; --dry-run lists every skipped line with its reason.", check.Data.Columns.Subid.Header)
+		return validationError("none of the lines of %s can be recorded (%d skipped, by reason: %s; %s)", args[0], *check.Data.Skipped, check.skippedByReason(), check.columns()).
+			WithHint("If the subid column is the wrong one (it was %q), name the right one with --subid-column <header or 0-based number>; --dry-run lists the skipped lines with their reasons.", check.Data.Columns.Subid.Header)
 	}
 	if !force {
 		fmt.Fprintf(os.Stderr, "%d line(s) of %s will be recorded on %d click(s), %s in all, as a new upload batch: each click's value becomes its sum in this report, replacing what earlier uploads and conversions set. %d line(s) are skipped. Columns: %s.\n",
-			*check.Data.WouldRecord, fileName, len(check.Data.Totals), "$"+check.total(), *check.Data.Skipped, check.columns())
+			*check.Data.WouldRecord, fileName, *check.Data.Clicks, "$"+check.total(), *check.Data.Skipped, check.columns())
 		ok, err := confirmAction(cmd, "Upload %s?", fileName)
 		if err != nil {
 			return err
@@ -1078,8 +1111,8 @@ func runConversionUploadRevenue(cmd *cobra.Command, args []string) error {
 	if err := renderUpload(data, done); err != nil {
 		return err
 	}
-	output.Success("Uploaded %s as batch %d: %d line(s) recorded on %d click(s), %s in all; %d skipped.",
-		fileName, *done.Data.BatchID, *done.Data.Recorded, len(done.Data.Totals), "$"+done.total(), *done.Data.Skipped)
+	output.Success("Uploaded %s as batch %d: %d line(s) recorded on %d click(s), %s in all; %d skipped (%s).",
+		fileName, *done.Data.BatchID, *done.Data.Recorded, *done.Data.Clicks, "$"+done.total(), *done.Data.Skipped, done.listed())
 	return nil
 }
 
@@ -1095,7 +1128,8 @@ func newConversionUploadRevenueCmd() *cobra.Command {
 			"t202…, aff_sub, sid; commission: commission, payout, revenue, amount, earning, sale,\n" +
 			"income); name others with --subid-column/--amount-column (a header, or a 0-based column\n" +
 			"number). The report is read on the server first (--dry-run stops there), then you confirm\n" +
-			"(--force skips). Lines not recorded are listed with the reason. Unlike `conversion import`,\n" +
+			"(--force skips). Lines not recorded are listed with the reason, the first 1,000 of them, and\n" +
+			"every skipped line is counted by reason. Unlike `conversion import`,\n" +
 			"this is the UI's upload: one batch, values replacing earlier uploads, no transaction ids.\n\n" +
 			"Needs a role with access_to_update_section and a key with conversions:write. At most 8 MB.\n" +
 			"Cannot be staged.",

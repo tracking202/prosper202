@@ -360,9 +360,7 @@ final class UpdateController
                     'would_record' => $preview['would_record'],
                     'skipped' => $preview['skipped'],
                     'columns' => $columns,
-                    'totals' => self::totals($preview['totals']),
-                    'lines' => self::unrecorded($preview['lines']),
-                ]];
+                ] + self::uploadAnswer($preview)];
             }
 
             set_time_limit(0);
@@ -387,26 +385,43 @@ final class UpdateController
             'recorded' => $import['recorded'],
             'skipped' => $import['skipped'],
             'columns' => $columns,
-            'totals' => self::totals($import['totals']),
-            'lines' => self::unrecorded($import['lines']),
-        ]];
+        ] + self::uploadAnswer($import)];
     }
 
+    /** The most per-click totals an upload's answer lists. */
+    private const LISTED_CLICKS = 1000;
+
     /**
-     * The lines of a report that were not recorded — the header, and each
-     * skipped line with its reason — as the page lists them. A recorded line
-     * is in `recorded` and in its click's sum in `totals`; listing every one
-     * as well made a 440,000-line report answer about 48 MB.
+     * What an upload's answer says beyond its counts, sized by the clicks and
+     * lines it lists rather than by the report: a recorded line is counted
+     * and in its click's sum; a line not recorded — the header, each skipped
+     * line with its reason — is listed as the page lists it, up to
+     * RevenueUploadImporter::LISTED_LINES, and every skipped line is counted
+     * by its reason. clicks and total are exact; totals lists the first
+     * LISTED_CLICKS clicks in the order the report names them. Listing every
+     * line made a 440,000-line report answer about 48 MB, and every line
+     * skipped (the wrong subid column) or every click distinct still made one
+     * the CLI, which reads 10 MB, could not read.
      *
-     * @param list<array<string, mixed>> $lines
-     * @return list<array<string, mixed>>
+     * @param array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>, totals: array<int, string>, total: string} $result
+     * @return array<string, mixed>
      */
-    private static function unrecorded(array $lines): array
+    private static function uploadAnswer(array $result): array
     {
-        return array_values(array_filter(
-            $lines,
-            static fn (array $line): bool => $line['status'] !== RevenueUploadImporter::RECORDED && $line['status'] !== RevenueUploadImporter::WOULD_RECORD
-        ));
+        $reasons = [];
+        foreach ($result['reasons'] as $reason => $count) {
+            $reasons[] = ['reason' => (string) $reason, 'lines' => $count];
+        }
+
+        return [
+            'skipped_reasons' => $reasons,
+            'clicks' => count($result['totals']),
+            'total' => $result['total'],
+            'totals' => self::totals(array_slice($result['totals'], 0, self::LISTED_CLICKS, true)),
+            'totals_unlisted' => max(0, count($result['totals']) - self::LISTED_CLICKS),
+            'lines' => $result['lines'],
+            'lines_unlisted' => $result['unlisted'],
+        ];
     }
 
     // ─── Reading the request ────────────────────────────────────────────
