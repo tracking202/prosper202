@@ -625,7 +625,7 @@ final class UpdateController
     {
         $handle = self::stream($csv);
         try {
-            $row = fgetcsv($handle, 100000, ',', '"', '\\');
+            $row = fgetcsv($handle, null, ',', '"', '\\');
         } finally {
             fclose($handle);
         }

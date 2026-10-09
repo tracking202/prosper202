@@ -298,7 +298,7 @@ final class RevenueUploadImporter
      */
     private static function readLine($handle, int &$lineNo, int $subidColumn, int $amountColumn): array|null|false
     {
-        $row = fgetcsv($handle, 100000, ',', '"', '\\');
+        $row = fgetcsv($handle, null, ',', '"', '\\');
         if ($row === false) {
             return false;
         }

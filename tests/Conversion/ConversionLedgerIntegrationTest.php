@@ -482,6 +482,33 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertSame('2.50000', $this->clickState(100)['payout']);
     }
 
+    /**
+     * A record longer than any length fgetcsv() was given is still one line:
+     * cut at 100,000 bytes, a long column before the subid made the line a
+     * piece without its subid and a piece without its commission, both
+     * skipped, and every later line's number moved by one (measured).
+     */
+    public function testALongRecordIsReadAsOneLine(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $text = "note,subid,amount\n" . str_repeat('x', 150000) . ",100,2.50\nshort,101,1\n";
+        $stream = static function (string $text) {
+            $h = fopen('php://temp', 'r+');
+            fwrite($h, $text);
+            rewind($h);
+            return $h;
+        };
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+
+        foreach (['preview' => $importer->preview(1, $stream($text), 1, 2), 'import' => $importer->import(1, 'long.csv', $stream($text), 1, 2)] as $what => $r) {
+            self::assertSame(0, $r['skipped'], $what);
+            self::assertSame(['100' => '2.50000', '101' => '1.00000'], array_map('strval', $r['totals']), "$what records the long line and the one after it");
+            self::assertSame([1], array_column($r['lines'], 'line'), "$what lists only the header");
+        }
+    }
+
     public function testAPreviewRefusesAStreamItCannotReadTwice(): void
     {
         $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);

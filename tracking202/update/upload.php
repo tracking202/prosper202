@@ -63,9 +63,9 @@ switch ($case) {
 		if ($handle === false) {
 			p202_upload_stop('The uploaded report could not be read. Nothing was changed; please upload it again.', 'Upload a report', $self);
 		}
-		$row = fgetcsv($handle, 100000, ",", escape: '\\');
+		$row = fgetcsv($handle, null, ",", escape: '\\');
 		// The first data line, so each column shows what it holds.
-		$sample = $row === false ? false : fgetcsv($handle, 100000, ",", escape: '\\');
+		$sample = $row === false ? false : fgetcsv($handle, null, ",", escape: '\\');
 		fclose($handle);
 		if (!is_array($row) || $row === [null]) {
 			p202_upload_stop('The report has no header line to choose the columns from. Nothing was changed.', 'Upload another report', $self);
@@ -284,7 +284,7 @@ switch ($case) {
 
 			if (!$error && $handle !== false) {
 				//this counter, will help us determine the first row of the array
-				$row = @fgetcsv($handle, 100000, ",", escape: '\\');
+				$row = @fgetcsv($handle, null, ",", escape: '\\');
 
 				#if there was no row detected, an error occured on this uploaded
 				if (!$row) {
