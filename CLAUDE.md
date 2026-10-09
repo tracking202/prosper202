@@ -1244,6 +1244,17 @@ remote held `v1.9.76` — so before touching the ladder ask the remote
 already there, bump it. Prove an upgrade by installing from the latest tag,
 not only from an older one.
 
+And from the oldest one, through the script CI runs. The 1.9.77 step reused
+`_upgrade_measurement_tables()`, which logged every ALTER it applied as
+`Prosper202 upgrade: reconciled …`; `tests/live/upgrade-equals-install.sh`
+reads any `Prosper202 upgrade` line in the server log as a step that did not
+converge, so the step's own work failed the check on every upgrade it ran.
+That workflow runs on a pull request and on master only, so the branch had
+never run it. The ladder's error log carries only what a step could not do
+(`ScheduledDeletionUpgradeIntegrationTest` holds the 1.9.76 rung to logging
+nothing), and a ladder change runs the script locally before it is pushed
+(see the development notes for PHP 7.4 here).
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -1521,6 +1532,16 @@ Check here before burning time on tooling failures.
   build has in `ALL_WITH_BC` but not in `listIdentifiers()`
   (`America/Montreal`), and do not conclude from a refusal here what a
   production build does.
+- **`tests/live/upgrade-equals-install.sh` runs here.** It installs 1.9.55
+  on PHP 7.4, which Ubuntu 24.04 does not carry; `ppa.launchpadcontent.net`
+  is reachable, so add `ondrej/php` for noble with its key
+  (`14AA40EC0831756756D7F66C4F4EA0AAE5267A6C`, from keyserver.ubuntu.com)
+  under `signed-by`, and `apt-get install php7.4-cli php7.4-mysql
+  php7.4-mbstring php7.4-curl php7.4-xml php7.4-json` — `php` stays 8.3. The
+  shallow clone lacks the origin commit: `git fetch --depth=1 origin
+  45897876895372162e83209167e750e078d3e3e5`. Run it as a TCP user granted on
+  `p202\_uei\_%` (`P202_DB_USER`, `P202_DB_PASS`, `P202_ORIGIN_PHP=php7.4`);
+  here the server is MariaDB 10.11 and in CI MySQL 8.0, so read CI's run too.
 
 ## Closing the loop on mistakes
 

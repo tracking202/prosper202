@@ -47,7 +47,9 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
         mysqli_report(MYSQLI_REPORT_STRICT);
         require_once __DIR__ . '/../../202-config/functions-upgrade.php';
         $GLOBALS['db'] = $db;
-        ini_set('error_log', sys_get_temp_dir() . '/p202-scheduled-deletion-upgrade-it.log');
+        $log = tempnam(sys_get_temp_dir(), 'p202-scheduled-deletion-upgrade-');
+        $this->assertIsString($log);
+        ini_set('error_log', $log);
 
         $db->query('DROP TABLE IF EXISTS 202_users_pref');
         $this->assertTrue($db->query(UserTables::usersPref()->createStatement));
@@ -65,6 +67,15 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
 
         $shape = static fn (): string => (string) $db->query('SHOW CREATE TABLE 202_users_pref')->fetch_row()[1];
         $this->assertSame($fresh, $shape(), 'the upgraded table is the installed one');
+        // The ladder's error log is where a step that did not converge says
+        // so, and tests/live/upgrade-equals-install.sh fails on any
+        // "Prosper202 upgrade" line in it: the ALTER this rung applies on
+        // every install it upgrades is its work, not such a line.
+        $this->assertStringNotContainsString(
+            'Prosper202 upgrade',
+            (string) file_get_contents($log),
+            'a rung that converged logs nothing'
+        );
         $this->assertSame(
             ['user_delete_data_clickid' => '4242', 'user_delete_data_before' => null],
             $db->query('SELECT user_delete_data_clickid, user_delete_data_before FROM 202_users_pref WHERE user_id = 1')
@@ -78,5 +89,6 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
         // Leave the table as the installer makes it, empty.
         $db->query('DROP TABLE IF EXISTS 202_users_pref');
         $this->assertTrue($db->query(UserTables::usersPref()->createStatement));
+        unlink($log);
     }
 }

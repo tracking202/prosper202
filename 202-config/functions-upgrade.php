@@ -487,7 +487,16 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * on such a database — 202_conversion_logs and 202_aff_campaigns — and
      * the columns this release adds to those arrive through it. See
      * 202-config/Database/SchemaReconciler.php for what it will and will
-     * not change.
+     * not change. The 1.9.76 rung runs it for 202_users_pref alone, where
+     * the table always exists and the reconciler adds the column.
+     *
+     * What it writes to the error log is what it could not do — a
+     * difference left in place, a statement that failed — because that log
+     * is where the ladder reports a step that did not converge, and
+     * tests/live/upgrade-equals-install.sh reads every "Prosper202 upgrade"
+     * line there as one. An ALTER it applied is the step doing its work and
+     * is not logged: the 1.9.76 rung applies one on every install it
+     * upgrades.
      *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @return bool True when every table exists and matches its definition.
@@ -564,9 +573,6 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
-        foreach ($reconciler->getApplied() as $statement) {
-            error_log('Prosper202 upgrade: reconciled measurement schema: ' . $statement);
-        }
         foreach ($reconciler->getUnreconciled() as $note) {
             error_log('Prosper202 upgrade: measurement schema difference left in place: ' . $note);
         }
