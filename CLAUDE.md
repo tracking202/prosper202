@@ -3,6 +3,32 @@
 ## Project
 Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
 
+## Branches: every version has its own, and master takes only finished versions
+- **All work for a new version is pull-requested into the branch named for
+  that version**, never into master. The name is the version exactly as
+  `202-config/version.php` spells it: `1.9.77`, with no `v` (the `v` is the
+  release tag's, `v1.9.77`, so a branch and its tag never share a name).
+  A feature or fix branch opens its PR against the version branch its
+  `version.php` names.
+- **When the version is done, the version branch is merged into master**, in
+  one PR from the version branch to master. The release owner then tags
+  master `v<version>` (RELEASING.md). Nothing else is merged into master.
+- **A new version starts from master after the previous one is merged and
+  tagged**: branch the version branch from master, and make its first commit
+  the `version.php` bump. A version that is already tagged is frozen (#33),
+  so work that finds `version.php` naming a tagged version belongs to the
+  next one.
+- **If the version branch does not exist on the remote yet**, it has to be
+  created from master before the first PR can target it (`git ls-remote
+  --heads origin` lists the branches). A session limited to pushing one
+  branch asks for it rather than creating it.
+- **CI runs on a PR into a version branch as on one into master**: no
+  workflow filters `pull_request` by its base branch, and `pr-checks.yml`'s
+  `branches: ["*"]` matches any name without a `/`. Keep version branch
+  names free of `/` (`release/1.9.77` would not match). Agent Evals and the
+  upgrade-equals-install check run on pushes to master only, so the PR is
+  where they run for a version branch: read them there before merging.
+
 ## Error patterns to avoid
 
 ### 1. Unchecked return values after fallible calls

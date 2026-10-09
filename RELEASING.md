@@ -103,14 +103,18 @@ release without bumping it, or the zip name and the in-app version will disagree
 
 This is the normal path. CI builds and publishes; you only tag.
 
-1. **Bump the version.** Edit `$version_string` in `202-config/version.php`,
-   commit it (e.g. `chore: release vX.Y.Z`), and push to the default branch via
-   the usual PR process.
+1. **Bump the version, on the version's branch.** Each version is developed
+   on a branch named for it (`1.9.77`, no `v`), cut from master once the
+   previous version is merged and tagged; its first commit edits
+   `$version_string` in `202-config/version.php` (e.g. `chore: release
+   vX.Y.Z`), and every pull request for that version targets that branch.
+   When the version is done, merge the version branch into master in one
+   pull request. See CLAUDE.md, "Branches".
 
 2. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 
    ```bash
-   git checkout main && git pull
+   git checkout master && git pull   # after the version branch is merged
    git tag v1.9.59          # must match version.php (currently 1.9.59)
    git push origin v1.9.59
    ```
