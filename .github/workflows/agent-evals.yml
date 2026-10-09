@@ -123,6 +123,36 @@ jobs:
           echo "MySQL did not become ready in time" >&2
           exit 1
 
+      # The install validates its ClickServer key against my.tracking202.com
+      # on every signed-in page. Production rejects unknown keys (since
+      # 2026-10-09), and CI's key is made up, so point the install at a local
+      # stub instead: the evals must never depend on production's licence
+      # rules. P202_LICENSE_VALIDATE_URL is honoured only for loopback hosts
+      # (ClickServerKeyValidator::url()).
+      - name: Stub the licence service (loopback only)
+        run: |
+          STUB="${{ runner.temp }}/licence-stub"
+          mkdir -p "$STUB"
+          cat > "$STUB/index.php" <<'PHP'
+          <?php
+          header('Content-Type: application/json');
+          $key = trim((string)($_POST['key'] ?? ''));
+          if ($key === '') {
+              http_response_code(404);
+              echo json_encode(['code' => 404, 'msg' => 'Key not found']);
+              exit;
+          }
+          echo json_encode(['code' => 200, 'msg' => 'Key valid', 'paid' => true]);
+          PHP
+          php -S 127.0.0.1:8099 -t "$STUB" > "$STUB/server.log" 2>&1 &
+          echo $! > "$STUB/pid"
+          for _ in $(seq 1 20); do
+            curl -sf -X POST -d key=probe http://127.0.0.1:8099/ | grep -q 'Key valid' && break
+            sleep 0.5
+          done
+          curl -sf -X POST -d key=probe http://127.0.0.1:8099/ | grep -q 'Key valid'
+          echo "P202_LICENSE_VALIDATE_URL=http://127.0.0.1:8099/" >> "$GITHUB_ENV"
+
       - name: Install a throwaway instance (headless web installer)
         id: install
         env:
@@ -240,3 +270,9 @@ jobs:
             eval-results.json
             ${{ runner.temp }}/p202-eval/php-server.log
           if-no-files-found: ignore
+
+      - name: Stop the licence stub
+        if: always()
+        run: |
+          PIDFILE="${{ runner.temp }}/licence-stub/pid"
+          if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; fi
