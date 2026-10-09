@@ -7,6 +7,8 @@ namespace Api\V3\Controllers;
 use Prosper202\License\ClickServerKeyValidator;
 use Prosper202\License\CliAccessCache;
 use Prosper202\License\ShellAccessCache;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 
 class CapabilitiesController
 {
@@ -321,19 +323,21 @@ class CapabilitiesController
      */
     private function loadOwnerClickServerKey(): string
     {
-        $stmt = $this->db->prepare(
-            'SELECT o.p202_customer_api_key FROM 202_users u '
+        // Connection::bind (CLAUDE.md #7), not a direct $stmt->bind_param().
+        $conn = new Connection($this->db);
+        try {
+            $stmt = $conn->prepareRead(
+                'SELECT o.p202_customer_api_key FROM 202_users u '
             . 'JOIN 202_users o ON o.install_hash = u.install_hash '
             . 'WHERE u.user_id = ? AND u.install_hash IS NOT NULL AND u.install_hash != "" '
             . 'AND o.user_deleted != 1 AND o.user_active = 1 '
             . 'AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != "" '
             . 'ORDER BY o.user_id ASC LIMIT 1'
-        );
-        if (!$stmt) {
+            );
+            $conn->bind($stmt, 'i', [$this->userId]);
+        } catch (QueryException) {
             return '';
         }
-        $userId = $this->userId;
-        $stmt->bind_param('i', $userId);
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
             return '';
