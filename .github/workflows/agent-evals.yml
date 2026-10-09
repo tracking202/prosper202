@@ -173,8 +173,9 @@ jobs:
           server.socket = ctx.wrap_socket(server.socket, server_side=True)
           server.serve_forever()
           PY
-          sudo python3 "$STUB/stub.py" "$STUB/cert.pem" "$STUB/key.pem" > "$STUB/requests.log" 2>&1 &
-          echo $! > "$STUB/pid"
+          # Port 443 needs root; the log redirect runs inside the root shell too.
+          sudo sh -c 'exec python3 "$1" "$2" "$3" > "$4" 2>&1' _ \
+            "$STUB/stub.py" "$STUB/cert.pem" "$STUB/key.pem" "$STUB/requests.log" &
           URL=https://my.tracking202.com/api/v2/validate-customers-key
           for _ in $(seq 1 20); do
             curl -sf -X POST -d key=probe "$URL" | grep -q 'Key valid' && break
@@ -182,7 +183,24 @@ jobs:
           done
           curl -sf -X POST -d key=probe "$URL" | grep -q 'Key valid'
           # PHP's curl must verify the stub's certificate exactly as it would prod's.
-          php -r '$c = curl_init(getenv("URL")); curl_setopt_array($c, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => "key=probe", CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2]); $r = curl_exec($c); if (strpos((string)$r, "Key valid") === false) { fwrite(STDERR, "PHP curl to the stub failed: " . curl_error($c) . "\n"); exit(1); } echo "PHP curl verified the stub over TLS\n";'
+          cat > "$STUB/verify.php" <<'PHP'
+          <?php
+          $c = curl_init(getenv('URL'));
+          curl_setopt_array($c, [
+              CURLOPT_POST => true,
+              CURLOPT_POSTFIELDS => 'key=probe',
+              CURLOPT_RETURNTRANSFER => true,
+              CURLOPT_SSL_VERIFYPEER => true,
+              CURLOPT_SSL_VERIFYHOST => 2,
+          ]);
+          $r = curl_exec($c);
+          if (strpos((string)$r, 'Key valid') === false) {
+              fwrite(STDERR, 'PHP curl to the stub failed: ' . curl_error($c) . "\n");
+              exit(1);
+          }
+          echo "PHP curl verified the stub over TLS\n";
+          PHP
+          php "$STUB/verify.php"
         env:
           URL: https://my.tracking202.com/api/v2/validate-customers-key
 
@@ -308,5 +326,5 @@ jobs:
         if: always()
         run: |
           STUB="${{ runner.temp }}/p202-stub"
-          if [ -f "$STUB/pid" ]; then sudo kill "$(cat "$STUB/pid")" 2>/dev/null || true; fi
+          sudo pkill -f "$STUB/stub.py" || true
           if [ -f "$STUB/requests.log" ]; then echo "Requests the install sent to my.tracking202.com:"; sort "$STUB/requests.log" | uniq -c; fi
