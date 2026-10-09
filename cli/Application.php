@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace P202Cli;
 
 use Symfony\Component\Console\Application as ConsoleApplication;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * The legacy PHP CLI, bin/p202.
@@ -42,6 +44,13 @@ class Application extends ConsoleApplication
     public function getLongVersion(): string
     {
         return parent::getLongVersion() . "\n" . self::GO_CLI_POINTER;
+    }
+
+    /** With no input given, argv is read with snake_case option names as their kebab-case spelling. */
+    #[\Override]
+    public function run(?InputInterface $input = null, ?OutputInterface $output = null): int
+    {
+        return parent::run($input ?? new KebabCaseArgvInput(), $output);
     }
 
     private function registerCommands(): void

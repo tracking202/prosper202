@@ -12,7 +12,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class LtvSummaryCommand extends BaseCommand
 {
-    /** Query options shared by the LTV read commands. */
+    /** Query parameters shared by the LTV read commands, as the API names them (collectOptions() reads their options). */
     public const array LTV_PARAMS = ['period', 'time_from', 'time_to', 'by', 'sort', 'dir', 'limit', 'offset'];
 
     protected static $defaultName = 'ltv:summary';
@@ -23,8 +23,8 @@ class LtvSummaryCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Realized LTV totals — customers, revenue, avg LTV, AOV, repeat rate, MRR')
             ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

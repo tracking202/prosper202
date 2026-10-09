@@ -246,8 +246,8 @@ has "$OUT/go-r.txt" "deleted" "the deleted row says so"
 p202 --json click conversions $A > "$OUT/go-a.json" 2>/dev/null
 eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])))" "$OUT/go-a.json" "$OUT/bd-a.json")" True \
    "--json is the API's answer unchanged"
-p202 --json conversion list --click_id $A --source goal > "$OUT/go-list.json" 2>/dev/null
-eq "$(pyf "$OUT/go-list.json" "len(d['data'])")" 3 "conversion list --click_id --source sends both filters"
+p202 --json conversion list --click-id $A --source goal > "$OUT/go-list.json" 2>/dev/null
+eq "$(pyf "$OUT/go-list.json" "len(d['data'])")" 3 "conversion list --click-id --source sends both filters"
 p202 --json click conversions 12x > /dev/null 2> "$OUT/go-bad.err"
 eq "$?" 1 "a bad click id exits 1 (validation)"
 eq "$(pyf "$OUT/go-bad.err" "[d['error']['category'], 'p202 click list' in d['error']['hint']]")" '["validation", true]' "with a validation envelope and a hint naming click list"
@@ -267,8 +267,8 @@ else
   has "$OUT/php-a.txt" "unpaid" "with the same reasons"
   pcli click:conversions $A --json > "$OUT/php-a.json" 2>&1
   eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])))" "$OUT/php-a.json" "$OUT/bd-a.json")" True "--json is the API's answer unchanged"
-  pcli conversion:list --click_id=$A --source=goal --json > "$OUT/php-list.json" 2>&1
-  eq "$(pyf "$OUT/php-list.json" "len(d['data'])")" 3 "conversion:list --click_id --source sends both filters"
+  pcli conversion:list --click-id=$A --source=goal --json > "$OUT/php-list.json" 2>&1
+  eq "$(pyf "$OUT/php-list.json" "len(d['data'])")" 3 "conversion:list --click-id --source sends both filters"
   pcli conversion:list --source=webhook > "$OUT/php-bad.txt" 2>&1
   eq "$?" 1 "an unknown source is refused before any request"
   has "$OUT/php-bad.txt" "--source must be one of pixel, postback" "naming what is accepted"

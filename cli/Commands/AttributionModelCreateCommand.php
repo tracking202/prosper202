@@ -19,20 +19,20 @@ class AttributionModelCreateCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Create an attribution model')
-            ->addOption('model_name', null, InputOption::VALUE_REQUIRED, 'Model name (required)')
-            ->addOption('model_type', null, InputOption::VALUE_REQUIRED, 'Type: ' . implode(', ', ModelType::values()) . ' (required)')
-            ->addOption('weighting_config', null, InputOption::VALUE_REQUIRED, 'Weighting config as a JSON object: time_decay takes {"half_life_hours":48}, position_based {"first_weight":0.4,"last_weight":0.4}')
-            ->addOption('lookback_days', null, InputOption::VALUE_REQUIRED, 'Days before a conversion whose clicks can earn credit, 1-365 (default 30)')
+            ->addOption('model-name', null, InputOption::VALUE_REQUIRED, 'Model name (required)')
+            ->addOption('model-type', null, InputOption::VALUE_REQUIRED, 'Type: ' . implode(', ', ModelType::values()) . ' (required)')
+            ->addOption('weighting-config', null, InputOption::VALUE_REQUIRED, 'Weighting config as a JSON object: time_decay takes {"half_life_hours":48}, position_based {"first_weight":0.4,"last_weight":0.4}')
+            ->addOption('lookback-days', null, InputOption::VALUE_REQUIRED, 'Days before a conversion whose clicks can earn credit, 1-365 (default 30)')
             ->addOption('status', null, InputOption::VALUE_REQUIRED, 'active or inactive (default active)')
             ->addOption('default', null, InputOption::VALUE_NONE, 'Make this the account default model');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $name = $input->getOption('model_name');
-        $type = $input->getOption('model_type');
+        $name = $input->getOption('model-name');
+        $type = $input->getOption('model-type');
         if (!$name || !$type) {
-            $output->writeln('<error>--model_name and --model_type are required</error>');
+            $output->writeln('<error>--model-name and --model-type are required</error>');
             return Command::FAILURE;
         }
 

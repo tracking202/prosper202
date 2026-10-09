@@ -14,7 +14,7 @@ use Symfony\Component\Console\Output\OutputInterface;
  * GET /apps/{id}/store-link: the link builder — the store link a campaign
  * should send this app's clicks to (Android: with [[p202_install_token]] in
  * the Play referrer; iOS: the App Store link and the SKAN/AAK setup), and
- * with --campaign_id whether that campaign does. --apply makes it so with
+ * with --campaign-id whether that campaign does. --apply makes it so with
  * PUT /campaigns/{id}. The Go CLI's `p202 app link`.
  */
 class AppLinkCommand extends BaseCommand
@@ -27,7 +27,7 @@ class AppLinkCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Show the store link for an app\'s campaigns, whether a campaign uses it, and apply it')
             ->addArgument('registration_id', InputArgument::REQUIRED, 'The app\'s registration id')
-            ->addOption('campaign_id', null, InputOption::VALUE_REQUIRED, 'Say whether this campaign is ready')
+            ->addOption('campaign-id', null, InputOption::VALUE_REQUIRED, 'Say whether this campaign is ready')
             ->addOption('apply', null, InputOption::VALUE_NONE, 'Set the campaign\'s offer URL (and, for Android, its app link)');
     }
 
@@ -37,14 +37,14 @@ class AppLinkCommand extends BaseCommand
         if (preg_match('/^[1-9][0-9]*$/D', $id) !== 1) {
             throw new \RuntimeException('The registration id must be a positive whole number, got "' . $id . '".');
         }
-        $campaign = $input->getOption('campaign_id');
+        $campaign = $input->getOption('campaign-id');
         $campaign = $campaign === null ? '' : (string) $campaign;
         if ($campaign !== '' && preg_match('/^[1-9][0-9]*$/D', $campaign) !== 1) {
-            throw new \RuntimeException('--campaign_id must be a positive whole number, got "' . $campaign . '".');
+            throw new \RuntimeException('--campaign-id must be a positive whole number, got "' . $campaign . '".');
         }
         $apply = (bool) $input->getOption('apply');
         if ($apply && $campaign === '') {
-            throw new \RuntimeException('--apply needs --campaign_id: it changes that campaign\'s offer URL (and, for Android, links it to the app).');
+            throw new \RuntimeException('--apply needs --campaign-id: it changes that campaign\'s offer URL (and, for Android, links it to the app).');
         }
 
         $answer = $this->client()->get('apps/' . $id . '/store-link', $campaign === '' ? [] : ['campaign_id' => $campaign]);

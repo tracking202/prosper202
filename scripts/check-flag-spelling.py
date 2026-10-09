@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse a --snake_case flag in any tracked text file.
+"""Refuse a flag spelled in snake_case in any tracked text file.
 
 Both CLIs show and document their flags in kebab-case (--aff-campaign-id) and
 accept the snake_case spelling as an alias. A line may still show a snake
@@ -21,6 +21,8 @@ SKIP_SUFFIXES = ('.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.wof
 # Tests that pass the snake_case alias on purpose, to prove it still works.
 ALIAS_TESTS = {
     'go-cli/cmd/cli_errors_test.go',
+    'tests/Cli/KebabCaseArgvInputTest.php',
+    'tests/Cli/SnakeCaseOptionsStillWorkTest.php',
 }
 
 

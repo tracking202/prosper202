@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\OptionName;
 use P202Cli\ServerLists;
 use Prosper202\Attribution\AttributionReports;
 use Symfony\Component\Console\Command\Command;
@@ -20,12 +21,12 @@ class AttributionBreakdownCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Attributed conversions, revenue, cost and ROI grouped by a click dimension')
-            ->addOption('group_by', 'g', InputOption::VALUE_REQUIRED, 'Dimension: ' . implode(', ', AttributionReports::dimensions()), 'campaign')
-            ->addOption('model_id', 'm', InputOption::VALUE_REQUIRED, 'Model (default: each campaign\'s override, else the account default)')
-            ->addOption('compare_model_id', null, InputOption::VALUE_REQUIRED, 'A second model, side by side')
+            ->addOption('group-by', 'g', InputOption::VALUE_REQUIRED, 'Dimension: ' . implode(', ', AttributionReports::dimensions()), 'campaign')
+            ->addOption('model-id', 'm', InputOption::VALUE_REQUIRED, 'Model (default: each campaign\'s override, else the account default)')
+            ->addOption('compare-model-id', null, InputOption::VALUE_REQUIRED, 'A second model, side by side')
             ->addOption('period', 'p', InputOption::VALUE_REQUIRED, ServerLists::list(ServerLists::periods()))
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Unix start time')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Unix end time')
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Unix start time')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'Unix end time')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows, 1-1000 (default 100)')
             ->addOption('offset', null, InputOption::VALUE_REQUIRED, 'Rows to skip, for reading past --limit (default 0)')
             ->addOption('cohort', null, InputOption::VALUE_REQUIRED, 'conversion: sales made in the range (default); click: what the clicks made in it earned, as the classic reports count')
@@ -36,7 +37,7 @@ class AttributionBreakdownCommand extends BaseCommand
     {
         $params = [];
         foreach (['group_by', 'model_id', 'compare_model_id', 'period', 'time_from', 'time_to', 'limit', 'offset'] as $opt) {
-            $v = $input->getOption($opt);
+            $v = $input->getOption(OptionName::of($opt));
             if ($v !== null && $v !== '') {
                 $params[$opt] = (string) $v;
             }

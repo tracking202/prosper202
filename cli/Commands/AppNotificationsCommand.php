@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\OptionName;
 use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -28,18 +29,18 @@ class AppNotificationsCommand extends BaseCommand
         $this->setDescription('List the traffic-source postbacks app installs\' goals queued: sent, failed, pending, cancelled, suppressed')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Max results', '50')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Offset', '0')
-            ->addOption('registration_id', null, InputOption::VALUE_REQUIRED, 'Only this app\'s postbacks')
+            ->addOption('registration-id', null, InputOption::VALUE_REQUIRED, 'Only this app\'s postbacks')
             ->addOption('status', null, InputOption::VALUE_REQUIRED, ServerLists::list(ServerLists::appNotificationStatuses()))
             ->addOption('kind', null, InputOption::VALUE_REQUIRED, ServerLists::list(\Api\V3\Controllers\AppNotificationsController::KINDS))
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Queued at or after (unix)')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Queued at or before (unix)');
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Queued at or after (unix)')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'Queued at or before (unix)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
         $params = ['limit' => $input->getOption('limit'), 'offset' => $input->getOption('offset')];
         foreach (self::FILTERS as $filter) {
-            $value = $input->getOption($filter);
+            $value = $input->getOption(OptionName::of($filter));
             if ($value !== null && $value !== '') {
                 $params[$filter] = $value;
             }

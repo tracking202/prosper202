@@ -1293,7 +1293,9 @@ Flags are written in kebab-case everywhere text shows them (help, hints,
 errors, docs, examples), in both CLIs; the snake_case spelling is accepted as
 an alias and never shown. `scripts/check-flag-spelling.py` (PR checks) holds
 tracked text to it, and `canonicalFlags()` rewrites flag names an error builds
-from API field names.
+from API field names. In the PHP CLI an option for an API field is named and
+read through `OptionName`, `KebabCaseArgvInput` takes the alias, and
+`FlagsAreKebabCaseTest` refuses an underscore in an option name.
 
 When adding a command, run it once with a wrong flag and once against a
 dead URL under `--json` and read the envelopes as an agent would: if either

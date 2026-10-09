@@ -7,6 +7,7 @@ namespace Tests\Cli;
 use Api\V3\Controllers\ReportsController;
 use Api\V3\Exception\ValidationException;
 use P202Cli\Application;
+use P202Cli\OptionName;
 use P202Cli\ServerLists;
 use Tests\Support\FakeMysqliConnection;
 use Tests\TestCase;
@@ -106,7 +107,7 @@ final class ServerListsTest extends TestCase
         yield 'conversion:list --source' => ['conversion:list', 'source', ServerLists::conversionSources()];
         yield 'app:notifications --status' => ['app:notifications', 'status', ServerLists::appNotificationStatuses()];
         yield 'app:notifications --kind' => ['app:notifications', 'kind', \Api\V3\Controllers\AppNotificationsController::KINDS];
-        yield 'app:report --group_by' => ['app:report', 'group_by', \Api\V3\Controllers\AppReportController::IOS_GROUPINGS];
+        yield 'app:report --group-by' => ['app:report', 'group-by', \Api\V3\Controllers\AppReportController::IOS_GROUPINGS];
     }
 
     /**
@@ -151,7 +152,7 @@ final class ServerListsTest extends TestCase
         $cliOnly = ['json', 'help', 'quiet', 'verbose', 'version', 'ansi', 'no-interaction'];
         foreach (['summary', 'breakdown', 'timeseries', 'daypart', 'weekpart'] as $report) {
             $definition = (new Application())->find('report:' . $report)->getDefinition();
-            $taken = ReportsController::reportParams($report);
+            $taken = array_map(OptionName::of(...), ReportsController::reportParams($report));
             foreach (array_keys($definition->getOptions()) as $option) {
                 if (in_array($option, $cliOnly, true)) {
                     continue;

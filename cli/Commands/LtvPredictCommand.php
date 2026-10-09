@@ -21,8 +21,8 @@ class LtvPredictCommand extends BaseCommand
         $this->setDescription('Predictive LTV — deterministic projection with guards; every number ships with its inputs')
             ->addOption('by', 'b', InputOption::VALUE_REQUIRED, 'Also project per cohort: ' . ServerLists::list(ServerLists::LTV_BREAKDOWNS))
             ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Acquisition window start (unix)')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'Acquisition window end (unix)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

@@ -21,8 +21,8 @@ class LtvBreakdownCommand extends BaseCommand
         $this->setDescription('LTV by acquisition source (campaign, ppc_account, landing_page) or by product')
             ->addOption('by', 'b', InputOption::VALUE_REQUIRED, 'Dimension: ' . ServerLists::list(ServerLists::LTV_BREAKDOWNS), 'campaign')
             ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Window start (unix)')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'Window end (unix)')
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Window start (unix)')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'Window end (unix)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Rows per page (max 500)')
             ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Pagination offset');
     }

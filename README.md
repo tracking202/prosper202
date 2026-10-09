@@ -350,6 +350,8 @@ a server set up with either is the one both use. Call each by its path
 
 Symfony Console CLI for managing remote Prosper202 installations; a subset of
 the Go CLI's commands. It stays at `bin/p202` for the scripts that call it.
+Like the Go CLI's, its flags are written in kebab-case; the snake_case
+spelling is accepted too (`--aff-campaign-id` or `--aff_campaign_id`).
 
 ```bash
 # Configure

@@ -21,9 +21,9 @@ class RotatorUpdateCommand extends BaseCommand
         $this->setDescription('Update a rotator')
             ->addArgument('id', InputArgument::REQUIRED, 'Rotator ID')
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Rotator name')
-            ->addOption('default_url', null, InputOption::VALUE_REQUIRED, 'Default URL')
-            ->addOption('default_campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
-            ->addOption('default_lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
+            ->addOption('default-url', null, InputOption::VALUE_REQUIRED, 'Default URL')
+            ->addOption('default-campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
+            ->addOption('default-lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
