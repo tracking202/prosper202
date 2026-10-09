@@ -167,6 +167,17 @@ final class LastClickFromAddressIntegrationTest extends TestCase
         }
     }
 
+    public function testAReClickedMaskedClickIsStillOneClick(): void
+    {
+        $revisit = time() - 100;
+        self::insertClick(970006, self::USER, $revisit);
+        try {
+            self::assertSame(970006, LastClickFromAddress::find(self::$conn, '203.0.113.0', self::USER, time() - 86400, true)['click_id'] ?? null);
+        } finally {
+            self::q("DELETE FROM 202_clicks WHERE click_id = 970006 AND click_time = $revisit");
+        }
+    }
+
     public function testNoClickIsNull(): void
     {
         self::assertNull(LastClickFromAddress::find(self::$conn, '192.0.2.1', self::USER, 0, false));

@@ -54,12 +54,14 @@ final class LastClickFromAddress
 
         $in = implode(',', array_fill(0, count($ipIds), '?'));
         $stmt = $conn->prepareRead(
-            'SELECT c.click_id, c.ppc_account_id, a.keyword_id, r.click_id_public'
+            // A re-click gives a click another 202_clicks row: one click, not two.
+            'SELECT c.click_id, MAX(c.ppc_account_id) AS ppc_account_id, MAX(a.keyword_id) AS keyword_id,'
+            . ' MAX(r.click_id_public) AS click_id_public'
             . ' FROM 202_clicks_advance AS a'
             . ' INNER JOIN 202_clicks AS c ON (c.click_id = a.click_id)'
             . ' LEFT JOIN 202_clicks_record AS r ON (r.click_id = c.click_id)'
             . ' WHERE a.ip_id IN (' . $in . ') AND c.user_id = ? AND c.click_time >= ?'
-            . ' ORDER BY c.click_id DESC LIMIT 2'
+            . ' GROUP BY c.click_id ORDER BY c.click_id DESC LIMIT 2'
         );
         $conn->bind($stmt, str_repeat('i', count($ipIds)) . 'ii', [...$ipIds, $userId, $since]);
         $rows = $conn->fetchAll($stmt);
