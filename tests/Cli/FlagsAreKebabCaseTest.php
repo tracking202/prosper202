@@ -145,8 +145,10 @@ final class FlagsAreKebabCaseTest extends TestCase
             }
             $reflection = new \ReflectionClass($class);
             $constructor = $reflection->getConstructor();
-            if ($reflection->isSubclassOf(Command::class) && !$reflection->isAbstract()
-                && ($constructor === null || $constructor->getNumberOfRequiredParameters() === 0)) {
+            if (
+                $reflection->isSubclassOf(Command::class) && !$reflection->isAbstract()
+                && ($constructor === null || $constructor->getNumberOfRequiredParameters() === 0)
+            ) {
                 $classes[] = $class;
             }
         }
@@ -166,8 +168,10 @@ final class FlagsAreKebabCaseTest extends TestCase
         if ($token[0] === T_STRING && in_array($name, self::OPTION_CALLS, true)) {
             return true;
         }
-        if (!in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
-            || !str_ends_with('\\' . $name, '\\inputoption')) {
+        if (
+            !in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)
+            || !str_ends_with('\\' . $name, '\\inputoption')
+        ) {
             return false;
         }
         $previous = self::skipWhitespace($tokens, $i - 1, -1);
