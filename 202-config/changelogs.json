@@ -1,4 +1,24 @@
 {
+  "1.9.77": {
+    "version": "1.9.77",
+    "logs": [
+      "Important: This upgrade changes your database in place (a new setting for the scheduled click deletion). Back up the Prosper202 database before you start: restoring that backup is the only way back",
+      "New: The web UI's pages can be done from the REST API and the p202 CLI: Update CPC, subids and revenue uploads; Setup's landing-page code, pixels, postback URLs and traffic-source variables; Account settings and integrations; the Analyze pages' dimensions and filters, Visitors, Spy (p202 click list --follow) and the Group Overview; and every LTV write. documentation/cli/12-ui-parity.md maps each page to its route and command, and says what is still partial",
+      "Changed: The REST API refuses what it cannot do, with a 422 or 404 naming the field, where it used to answer success having done less: an unknown or misspelt field, a number, date or switch it cannot read, an id in the path that is not one, and ?dry_run=1 on a write that has no preview. Check scripts that relied on a field being ignored",
+      "Changed: API answers give money and counts as JSON numbers, and report periods (today, last 7 days and the rest) are the account's calendar days, as on the report pages",
+      "Changed: An API key is held to its user's role, as the pages hold that user: Setup, Update, goals and personal settings need the page's permission, a deactivated user's keys stop working, and an Admin can no longer make itself Super user",
+      "Fixed: Security. Visitors, Spy and the click breakdown listed every account's visitors, the Overview chart and the daily email counted every account's clicks, and a record naming another account's record by id showed that account's names, payouts and settings. Each now reads the signed-in account's own records",
+      "Fixed: Security. The password reset email's link was built from the request's host, so a stranger could have it point elsewhere; it uses your stored tracking domain. A blanked session token no longer passes the forms' token check",
+      "Fixed: The privacy setting does what it says: \"Enabled for European Traffic\" works, every stored visitor address is masked under privacy (the full address was kept on clicks, conversions and app installs), and the setting of the account that owns the link applies, not only the install's",
+      "Fixed: Reports count days and hours in your account's time zone, through daylight-saving changes and half-hour offsets, and follow a change of zone without signing in again. A renamed zone your account uses (Europe/Kiev) is no longer lost when Personal Settings is saved",
+      "Fixed: Automatic click-data deletion deleted almost nothing, and \"Delete click data from before\" could delete a click from the day itself. Both now delete exactly the clicks older than the day you set, from every click table, and the reports are recomputed from the clicks that remain",
+      "Fixed: Tracking links. Click cookies work on an install served from a non-default port, Get Links' landing-page links record their clicks, links on an install with no tracking domain name the address you use, and cloaked redirects work behind a TLS proxy or in a subdirectory",
+      "Fixed: Redirectors. An offer rotator's rules choose by weight, an IP rule matches an address however it is written, and the Rotator Breakdown counts each rule's own clicks",
+      "Fixed: Upload Revenue Reports picks the commission column, not an order total or a sale id; a decimal comma (12,50) is skipped instead of read as 1250; a very long line is read as one; and a large report lists its first 1,000 skipped lines and counts the rest by reason",
+      "Fixed: An hour whose report rollup failed is retried instead of being marked done, and report rows follow a traffic source account or campaign that moves",
+      "New: Go CLI for people and AI agents: p202 commands --brief lists every command with the UI page it does, p202 search finds a command by a page's name or the task's words, and a command no longer exits 0 for something it did not do"
+    ]
+  },
   "1.9.76": {
     "version": "1.9.76",
     "logs": [
