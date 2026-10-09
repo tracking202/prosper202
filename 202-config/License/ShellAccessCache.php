@@ -34,10 +34,16 @@ class ShellAccessCache
             return null;
         }
         $content = @file_get_contents($path);
-        if ($content === false) {
-            return null;
+        // Only an exact entry is a verdict. An empty or partial file (an
+        // interrupted write, a full disk) is "unknown", so the caller
+        // revalidates instead of treating it as a denial.
+        if ($content === '1') {
+            return true;
         }
-        return $content === '1';
+        if ($content === '0') {
+            return false;
+        }
+        return null;
     }
 
     /**
@@ -55,13 +61,18 @@ class ShellAccessCache
         if ($path === null) {
             return;
         }
-        if (@file_put_contents($path, $valid ? '1' : '0', LOCK_EX) === false) {
+        // Write a private temp file and rename it into place, so a reader
+        // never sees a half-written entry.
+        $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+        if (@file_put_contents($tmp, $valid ? '1' : '0') === false
+            || !@chmod($tmp, 0600)
+            || !@rename($tmp, $path)) {
+            @unlink($tmp);
             // Not fatal (the next request just revalidates), but worth a trace
             // so repeated external validation calls can be diagnosed.
             error_log('ShellAccessCache: failed to write ' . $path);
             return;
         }
-        @chmod($path, 0600);
     }
 
     public static function invalidate(string $key): void

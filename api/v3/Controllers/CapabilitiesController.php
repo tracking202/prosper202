@@ -21,6 +21,9 @@ class CapabilitiesController
      */
     private array $licenceChecks = [];
 
+    /** Set when reading a ClickServer key from the DB failed (vs "no key"). */
+    private bool $keyLookupFailed = false;
+
     /**
      * Whether a request comes from the Go CLI, the only client the Pro gate
      * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
@@ -306,6 +309,18 @@ class CapabilitiesController
      */
     public function cliAccess(): bool
     {
+        // A broken lookup must never become a denial: any error here is
+        // "unknown", and unknown lets the CLI through.
+        try {
+            return $this->cliAccessVerdict();
+        } catch (\Throwable $e) {
+            error_log('p202: CLI licence check failed, allowing: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    private function cliAccessVerdict(): bool
+    {
         if ($this->userId === null) {
             return false;
         }
@@ -315,7 +330,9 @@ class CapabilitiesController
             $customerKey = $this->loadOwnerClickServerKey();
         }
         if ($customerKey === '') {
-            return false;
+            // No key on the install is a real "not licensed"; a failed lookup
+            // is unknown, which fails open.
+            return $this->keyLookupFailed;
         }
 
         $cached = CliAccessCache::read($customerKey);
@@ -351,13 +368,18 @@ class CapabilitiesController
             );
             $conn->bind($stmt, 'i', [$this->userId]);
         } catch (QueryException) {
+            $this->keyLookupFailed = true;
             return '';
         }
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
+            $this->keyLookupFailed = true;
             return '';
         }
         $result = $stmt->get_result();
+        if ($result === false) {
+            $this->keyLookupFailed = true;
+        }
         $row = $result === false ? null : $result->fetch_assoc();
         $stmt->close();
         return trim((string)($row['p202_customer_api_key'] ?? ''));
@@ -391,6 +413,7 @@ class CapabilitiesController
             'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
         );
         if (!$stmt) {
+            $this->keyLookupFailed = true;
             return '';
         }
         // bind_param() binds by reference; a readonly property can't be passed
@@ -400,11 +423,13 @@ class CapabilitiesController
         $stmt->bind_param('i', $userId);
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
+            $this->keyLookupFailed = true;
             return '';
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
+            $this->keyLookupFailed = true;
             return '';
         }
         $row = $result->fetch_assoc();
