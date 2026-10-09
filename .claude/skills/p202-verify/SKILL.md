@@ -79,8 +79,10 @@ suggestion.
 
 # after committing, --changed has nothing left to look at and every tier it
 # selects from the diff skips. Compare against a ref instead, which covers the
-# commits AND anything still uncommitted:
-.claude/skills/p202-verify/scripts/verify.sh --since origin/master --changed
+# commits AND anything still uncommitted. The ref is the branch the work's pull
+# request targets: the version branch (CLAUDE.md, "Branches"), e.g. 1.9.77, or
+# master for the version branch's own merge:
+.claude/skills/p202-verify/scripts/verify.sh --since origin/1.9.77 --changed
 
 # one tier
 .claude/skills/p202-verify/scripts/verify.sh --tier phpstan
