@@ -1995,7 +1995,7 @@ function api_key_validate($key)
     // Initiate curl
     $ch = curl_init();
     // Set the url
-    curl_setopt($ch, CURLOPT_URL, \Prosper202\License\ClickServerKeyValidator::url());
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
     // Disable SSL verification
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -2563,7 +2563,7 @@ function validateCustomersApiKey($key)
     $fields = http_build_query($fields);
 
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, \Prosper202\License\ClickServerKeyValidator::url());
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
