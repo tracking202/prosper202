@@ -42,6 +42,11 @@ type followedClick struct {
 	row  map[string]interface{}
 }
 
+// visitKey names one visit: a rotator re-click reuses its click's id.
+type visitKey struct{ id, time int64 }
+
+func (c followedClick) visit() visitKey { return visitKey{c.id, c.time} }
+
 // followClicks is the Spy page (tracking202/spy): the newest clicks, then
 // each new one as it arrives, by polling GET /clicks. The cursor is the
 // newest click time the server returned, never this machine's clock, so
@@ -76,7 +81,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		defer cancel()
 	}
 
-	seen := map[int64]int64{} // click id -> click time
+	seen := map[visitKey]struct{}{}
 	var newest int64
 
 	// The backlog is the newest --limit clicks. The lookback window behind
@@ -104,15 +109,15 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 			return err
 		}
 		masked = masked || windowMasked
-		byID := map[int64]followedClick{}
+		byVisit := map[visitKey]followedClick{}
 		for _, r := range append(first, window...) {
-			byID[r.id] = r
+			byVisit[r.visit()] = r
 			if r.time > newest {
 				newest = r.time
 			}
 		}
-		all := make([]followedClick, 0, len(byID))
-		for _, r := range byID {
+		all := make([]followedClick, 0, len(byVisit))
+		for _, r := range byVisit {
 			all = append(all, r)
 		}
 		sortClicks(all)
@@ -121,7 +126,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 			cut = 0
 		}
 		for _, r := range all[:cut] {
-			seen[r.id] = r.time
+			seen[r.visit()] = struct{}{}
 		}
 		if err := emitFollowed(all[cut:], seen, masked); err != nil {
 			return err
@@ -139,7 +144,7 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		}
 		var fresh []followedClick
 		for _, r := range rows {
-			if _, ok := seen[r.id]; !ok {
+			if _, ok := seen[r.visit()]; !ok {
 				fresh = append(fresh, r)
 			}
 			if r.time > newest {
@@ -151,9 +156,9 @@ func followClicks(cmd *cobra.Command, c *api.Client, params map[string]string) e
 		}
 		// Forget what the next window can no longer return.
 		floor := newest - int64(clickFollowLookback/time.Second)
-		for id, t := range seen {
-			if t < floor {
-				delete(seen, id)
+		for k := range seen {
+			if k.time < floor {
+				delete(seen, k)
 			}
 		}
 		return nil
@@ -259,17 +264,17 @@ func intField(v interface{}) (int64, bool) {
 // JSON document); the table view prints each batch under its own header.
 // A masked answer's flag goes with its rows, as `click list` prints them: each
 // line carries "masked":true, and the table its note.
-func emitFollowed(rows []followedClick, seen map[int64]int64, masked bool) error {
+func emitFollowed(rows []followedClick, seen map[visitKey]struct{}, masked bool) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	sortClicks(rows)
 	batch := make([]map[string]interface{}, 0, len(rows))
 	for _, r := range rows {
-		if _, dup := seen[r.id]; dup {
+		if _, dup := seen[r.visit()]; dup {
 			continue
 		}
-		seen[r.id] = r.time
+		seen[r.visit()] = struct{}{}
 		batch = append(batch, r.row)
 	}
 	if len(batch) == 0 {

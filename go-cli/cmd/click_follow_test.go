@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -165,6 +166,32 @@ func TestClickFollowPrintsEachNewClickOnce(t *testing.T) {
 		if from := q["time_from"]; from != "" && from != "997" && from != "998" && from != "999" {
 			t.Fatalf("a poll read from %s, not the lookback behind the newest click: %v", from, q)
 		}
+	}
+}
+
+func TestClickFollowPrintsAReClickAsItsOwnVisit(t *testing.T) {
+	lowerFollowLimits(t, 4)
+	feed := &clickFeed{}
+	for id := int64(1); id <= 3; id++ {
+		feed.add(id, 1000+id)
+	}
+	feed.onRequest = func(n int, f *clickFeed) {
+		if n == 4 {
+			f.add(3, 1006) // a rotator re-click: click 3's id, a new visit
+		}
+	}
+	srv := httptest.NewServer(feed)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+
+	stdout, _, err := executeCommand("click", "list", "--follow", "--ndjson", "--interval", "5ms", "--stop-after", "200ms")
+	if err != nil {
+		t.Fatalf("follow: %v", err)
+	}
+	if got := followedIDs(t, stdout); fmt.Sprint(got) != "[1 2 3 3]" {
+		t.Fatalf("printed clicks %v, want [1 2 3 3]: the re-click is a visit of its own, printed once", got)
 	}
 }
 
