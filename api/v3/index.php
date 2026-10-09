@@ -215,12 +215,12 @@ try {
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
 
-    // Pro-only Go CLI: requests from p202-cli need this install's ClickServer
+    // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
     // key to belong to an active Prosper202 ClickServer subscription (trials
     // count). /capabilities and the API root stay open so the CLI can explain
     // the refusal. Fails open when my.tracking202.com can't be reached (see
     // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
-    if (str_starts_with((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 'p202-cli/')
+    if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
         && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
         && !str_starts_with($path, '/system')   // diagnostics stay usable
         && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {

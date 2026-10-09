@@ -12,6 +12,25 @@ use Prosper202\Database\Exceptions\QueryException;
 
 class CapabilitiesController
 {
+    /**
+     * Licence answers already fetched in this request, per key, so
+     * /capabilities asks my.tracking202.com at most once per key on a cold
+     * cache (shell and cli share it). Holds null for "unknown" too.
+     *
+     * @var array<string, array{valid: bool, paid: ?bool}|null>
+     */
+    private array $licenceChecks = [];
+
+    /**
+     * Whether a request comes from the Go CLI, the only client the Pro gate
+     * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
+     * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
+     */
+    public static function isGoCliUserAgent(string $userAgent): bool
+    {
+        return str_starts_with($userAgent, 'p202-cli/') && str_contains($userAgent, '(Go)');
+    }
+
     public function __construct(
         private readonly \mysqli $db,
         private readonly ?int $userId = null,
@@ -268,14 +287,11 @@ class CapabilitiesController
             return $cached;
         }
 
-        // Short timeouts: this runs on the synchronous request path, so a
-        // slow ClickServer must not stall /capabilities for long.
-        $result = ClickServerKeyValidator::validate($customerKey, 2, 4);
+        $result = $this->checkKey($customerKey);
         if ($result === null) {
             return ShellAccessCache::readStale($customerKey) === true;
         }
-        ShellAccessCache::write($customerKey, $result);
-        return $result;
+        return $result['valid'];
     }
 
     /**
@@ -307,12 +323,11 @@ class CapabilitiesController
             return $cached;
         }
 
-        $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
             $stale = CliAccessCache::readStale($customerKey);
             return $stale ?? true;
         }
-        CliAccessCache::write($customerKey, $result['paid']);
         return $result['paid'];
     }
 
@@ -346,6 +361,28 @@ class CapabilitiesController
         $row = $result === false ? null : $result->fetch_assoc();
         $stmt->close();
         return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
+    /**
+     * One licence call per key per request, filling both caches from it.
+     * Short timeouts: this runs on the synchronous request path, so a slow
+     * my.tracking202.com must not stall /capabilities for long.
+     *
+     * @return array{valid: bool, paid: ?bool}|null null = unknown (outage)
+     */
+    private function checkKey(string $customerKey): ?array
+    {
+        if (array_key_exists($customerKey, $this->licenceChecks)) {
+            return $this->licenceChecks[$customerKey];
+        }
+        $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        if ($result !== null) {
+            ShellAccessCache::write($customerKey, $result['valid']);
+            if ($result['paid'] !== null) {
+                CliAccessCache::write($customerKey, $result['paid']);
+            }
+        }
+        return $this->licenceChecks[$customerKey] = $result;
     }
 
     private function loadClickServerKey(): string
