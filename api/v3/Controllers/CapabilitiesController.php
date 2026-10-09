@@ -5,10 +5,35 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Prosper202\License\ClickServerKeyValidator;
+use Prosper202\License\CliAccessCache;
 use Prosper202\License\ShellAccessCache;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 
 class CapabilitiesController
 {
+    /**
+     * Licence answers already fetched in this request, per key, so
+     * /capabilities asks my.tracking202.com at most once per key on a cold
+     * cache (shell and cli share it). Holds null for "unknown" too.
+     *
+     * @var array<string, array{valid: bool, paid: ?bool}|null>
+     */
+    private array $licenceChecks = [];
+
+    /** Set when reading a ClickServer key from the DB failed (vs "no key"). */
+    private bool $keyLookupFailed = false;
+
+    /**
+     * Whether a request comes from the Go CLI, the only client the Pro gate
+     * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
+     * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
+     */
+    public static function isGoCliUserAgent(string $userAgent): bool
+    {
+        return str_starts_with($userAgent, 'p202-cli/') && str_contains($userAgent, '(Go)');
+    }
+
     public function __construct(
         private readonly \mysqli $db,
         private readonly ?int $userId = null,
@@ -149,6 +174,7 @@ class CapabilitiesController
                     ],
                 ],
                 'shell' => $this->shellAccess(),
+                'cli' => $this->cliAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -264,14 +290,121 @@ class CapabilitiesController
             return $cached;
         }
 
-        // Short timeouts: this runs on the synchronous request path, so a
-        // slow ClickServer must not stall /capabilities for long.
-        $result = ClickServerKeyValidator::validate($customerKey, 2, 4);
+        $result = $this->checkKey($customerKey);
         if ($result === null) {
             return ShellAccessCache::readStale($customerKey) === true;
         }
-        ShellAccessCache::write($customerKey, $result);
-        return $result;
+        return $result['valid'];
+    }
+
+    /**
+     * Whether the Go CLI may run against this install: the ClickServer key's
+     * account has an active Prosper202 ClickServer subscription (trials count).
+     *
+     * Cached per key (CliAccessCache, 1 h). Fails OPEN when the answer is
+     * unknown (my.tracking202.com unreachable, or an answer without a 'paid'
+     * field) and no earlier result exists, so a backend outage never locks a
+     * paying customer out of the CLI. Falls back to the install owner's key
+     * when the API user has none, so sub-users of a paid install are covered.
+     */
+    public function cliAccess(): bool
+    {
+        // A broken lookup must never become a denial: any error here is
+        // "unknown", and unknown lets the CLI through.
+        try {
+            return $this->cliAccessVerdict();
+        } catch (\Throwable $e) {
+            error_log('p202: CLI licence check failed, allowing: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    private function cliAccessVerdict(): bool
+    {
+        if ($this->userId === null) {
+            return false;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '') {
+            $customerKey = $this->loadOwnerClickServerKey();
+        }
+        if ($customerKey === '') {
+            // No key on the install is a real "not licensed"; a failed lookup
+            // is unknown, which fails open.
+            return $this->keyLookupFailed;
+        }
+
+        $cached = CliAccessCache::read($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $result = $this->checkKey($customerKey);
+        if ($result === null || $result['paid'] === null) {
+            $stale = CliAccessCache::readStale($customerKey);
+            return $stale ?? true;
+        }
+        return $result['paid'];
+    }
+
+    /**
+     * The account owner's ClickServer key for the requesting user's install:
+     * same rule as AUTH::determineAccountOwnerId (same install_hash, active,
+     * not deleted, lowest user_id with a key). No install_hash, no fallback.
+     */
+    private function loadOwnerClickServerKey(): string
+    {
+        // Connection::bind (CLAUDE.md #7), not a direct $stmt->bind_param().
+        $conn = new Connection($this->db);
+        try {
+            $stmt = $conn->prepareRead(
+                'SELECT o.p202_customer_api_key FROM 202_users u '
+            . 'JOIN 202_users o ON o.install_hash = u.install_hash '
+            . 'WHERE u.user_id = ? AND u.install_hash IS NOT NULL AND u.install_hash != "" '
+            . 'AND o.user_deleted != 1 AND o.user_active = 1 '
+            . 'AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != "" '
+            . 'ORDER BY o.user_id ASC LIMIT 1'
+            );
+            $conn->bind($stmt, 'i', [$this->userId]);
+        } catch (QueryException) {
+            $this->keyLookupFailed = true;
+            return '';
+        }
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            $this->keyLookupFailed = true;
+            return '';
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $this->keyLookupFailed = true;
+        }
+        $row = $result === false ? null : $result->fetch_assoc();
+        $stmt->close();
+        return trim((string)($row['p202_customer_api_key'] ?? ''));
+    }
+
+    /**
+     * One licence call per key per request, filling both caches from it.
+     * Short timeouts: this runs on the synchronous request path, so a slow
+     * my.tracking202.com must not stall /capabilities for long.
+     *
+     * @return array{valid: bool, paid: ?bool}|null null = unknown (outage)
+     */
+    private function checkKey(string $customerKey): ?array
+    {
+        if (array_key_exists($customerKey, $this->licenceChecks)) {
+            return $this->licenceChecks[$customerKey];
+        }
+        $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        if ($result !== null) {
+            ShellAccessCache::write($customerKey, $result['valid']);
+            if ($result['paid'] !== null) {
+                CliAccessCache::write($customerKey, $result['paid']);
+            }
+        }
+        return $this->licenceChecks[$customerKey] = $result;
     }
 
     private function loadClickServerKey(): string
@@ -280,6 +413,7 @@ class CapabilitiesController
             'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
         );
         if (!$stmt) {
+            $this->keyLookupFailed = true;
             return '';
         }
         // bind_param() binds by reference; a readonly property can't be passed
@@ -289,11 +423,13 @@ class CapabilitiesController
         $stmt->bind_param('i', $userId);
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
+            $this->keyLookupFailed = true;
             return '';
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
+            $this->keyLookupFailed = true;
             return '';
         }
         $row = $result->fetch_assoc();

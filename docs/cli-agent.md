@@ -163,7 +163,7 @@ On failure nothing is written to stdout. With `--json` or `--ndjson`, and whenev
 
 | Field | Present | Use it for |
 |-------|---------|------------|
-| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure` |
+| `category` | always | Branching: `validation`, `auth`, `network`, `server`, `partial_failure`, `licence` |
 | `message` | always | What failed (includes the API's own text when there is one) |
 | `hint` | when there is a next step | **Do this before retrying.** It names the command that produces the right value, the flag to change, or the order to follow |
 | `exit_code` | always | Same value the process exits with |
@@ -178,17 +178,18 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | Exit code | Category | Meaning | Typical hint |
 |-----------|----------|---------|--------------|
 | 0 | | Success | |
-| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth | Lists valid values, or `Run <command> --help` |
+| 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
+| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402) | Start the 7-day trial at the link in the hint, then retry (the install re-checks within an hour) |
 
 Decision procedure for an agent:
 
 1. Exit code 0: parse stdout as JSON.
 2. Otherwise read the envelope on stderr. If `hint` is present, it is the intended next action: follow it, then retry. Do not guess at flags.
-3. `category: auth` and `network` are environment problems, not input problems; do not vary the command, fix the configuration the hint names.
+3. `category: auth`, `network` and `licence` are environment problems, not input problems; do not vary the command, fix what the hint names (for `licence`, the install's ClickServer key needs an active Pro subscription; the CLI's own config is fine).
 4. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
 5. `field_errors`: change exactly those fields.
 
