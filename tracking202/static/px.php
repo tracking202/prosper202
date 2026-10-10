@@ -22,6 +22,11 @@ $aff_campaign_row =  memcache_mysql_fetch_assoc($aff_campaign_sql);
 if (!$aff_campaign_row) { die(); }
 
 $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']);
+// The privacy setting in force: the stricter of the install's and the
+// campaign's account's (p202ApplyOwnerPrivacy()) — whose clicks the lookup
+// below searches, and whose click alone may convert here — before the
+// address is looked up or stored.
+p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 
 //see if it has the cookie, do whatever we can to grab to grab SOMETHING to tie this lead to
 // A cookie is untrusted input: only an exact positive integer names a click
@@ -30,7 +35,7 @@ $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']
 // the IP fallback below is for a browser with no cookie, and behind a NAT it
 // would otherwise credit whichever of the owner's clicks last came from that
 // address to a request whose own identity was garbage.
-$cookie = isset($_COOKIE['tracking202subid']) ? (string) $_COOKIE['tracking202subid'] : '';
+$cookie = (string) (getCookie202('tracking202subid') ?? '');
 $click_id = 0;
 if ($cookie !== '') {
 	$click_id = p202ParseClickId($cookie) ?? 0;
@@ -40,22 +45,18 @@ if ($cookie !== '') {
 	}
 } else {
 
-	//ok grab the last click from this ip_id
-	$mysql['ip_address'] = $db->real_escape_string((string)($_SERVER['REMOTE_ADDR'] ?? ''));
+	// The visitor's last click by the address the click path stored
+	// (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
 	$daysago = time() - 2592000; // 30 days ago
-	$click_sql1 = "	SELECT 	202_clicks.click_id 
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					WHERE 	202_ips.ip_address='".$mysql['ip_address']."'
-					AND		202_clicks.user_id='".$mysql['user_id']."'  
-					AND		202_clicks.click_time >= '".$daysago."'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-	$click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-	$click_row1 = $click_result1->fetch_assoc();
-	if ($click_row1) {
-		$click_id = (int) $click_row1['click_id'];
+	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+		new \Prosper202\Database\Connection($db),
+		p202StoredVisitorIp(),
+		(int) $mysql['user_id'],
+		$daysago,
+		!trackingEnabled()
+	);
+	if ($click_row1 !== null) {
+		$click_id = $click_row1['click_id'];
 	}
 
 }
@@ -83,7 +84,7 @@ if ($click_id > 0) {
 		// belongs to the campaign's owner may convert for this campaign.
 		$outcome = p202RecordLegacyConversion($db, $click_id, 1, [
 			'user_id'    => (int) $mysql['user_id'],
-			'ip'         => p202ClientIp($_SERVER),
+			'ip'         => p202StoredVisitorIp(),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
 			'event_name' => $webEvent['event_name'] ?? null,
 		]);

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 /*
  * Setup › Campaigns' offer browser for a Direct Network Integration: every
@@ -25,7 +26,7 @@ $mysql['dni_id'] = $db->real_escape_string($dni_id);
 function p202_dni_require_token(): void
 {
 	if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST'
-		|| !hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+		|| !AUTH::check_csrf_token()) {
 		http_response_code(403);
 		die('Invalid token, please reload the page and try again.');
 	}

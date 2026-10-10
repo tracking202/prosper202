@@ -18,7 +18,9 @@ import (
 	"sync"
 	"testing"
 
+	"p202/internal/api"
 	configpkg "p202/internal/config"
+	syncdata "p202/internal/sync"
 	"p202/internal/syncstate"
 )
 
@@ -1709,6 +1711,57 @@ func TestSyncDependencyOrder(t *testing.T) {
 	}
 }
 
+// A server-side sync job that did not succeed is the command's failure: a
+// failed, partial or cancelled job exited 0 with its outcome only in the body.
+func TestSyncServerJobThatDidNotSucceedIsAPartialFailure(t *testing.T) {
+	for _, status := range []string{"succeeded", "partial", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			orchestrator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/versions":
+					_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/capabilities":
+					_, _ = w.Write([]byte(`{"data":{"sync_features":{"async_jobs":true}}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/jobs":
+					_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"queued"}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/sync/worker/run":
+					_, _ = w.Write([]byte(`{"data":{"processed":1}}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/sync/jobs/j1":
+					_, _ = w.Write([]byte(`{"data":{"job_id":"j1","status":"` + status + `"}}`))
+				default:
+					w.WriteHeader(404)
+					_, _ = w.Write([]byte(`{"message":"not found"}`))
+				}
+			}))
+			defer orchestrator.Close()
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`))
+			}))
+			defer target.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfigWithProfiles(t, tmp, "source", map[string]map[string]interface{}{
+				"source": {"url": orchestrator.URL, "api_key": "source-key-123456"},
+				"target": {"url": target.URL, "api_key": "target-key-123456"},
+			})
+
+			stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--json")
+			if !strings.Contains(stdout, `"status": "`+status+`"`) {
+				t.Errorf("the job is rendered:\n%s", stdout)
+			}
+			if status == "succeeded" {
+				if err != nil {
+					t.Errorf("a job that succeeded: %v", err)
+				}
+				return
+			}
+			if err == nil || exitCodeForError(err) != ExitPartialFailure || !strings.Contains(err.Error(), "ended "+status) {
+				t.Errorf("a %s job: want a partial failure naming it, got %v (exit %d)", status, err, exitCodeForError(err))
+			}
+		})
+	}
+}
+
 func TestSyncUnresolvableFK(t *testing.T) {
 	source := newEntityDataServer(t, map[string][]map[string]interface{}{
 		"campaigns": {
@@ -1727,9 +1780,11 @@ func TestSyncUnresolvableFK(t *testing.T) {
 		"target": {"url": target.URL, "api_key": "target-key-123456"},
 	})
 
+	// --skip-errors goes on past the record and reports it; the sync is a
+	// partial failure (exit 5), never a success a script reads as complete.
 	stdout, _, err := executeCommand("sync", "campaigns", "--from", "source", "--to", "target", "--skip-errors", "--json")
-	if err != nil {
-		t.Fatalf("sync campaigns with --skip-errors should not fail hard: %v", err)
+	if err == nil || exitCodeForError(err) != ExitPartialFailure {
+		t.Fatalf("sync with a skipped record: want a partial failure (exit %d), got %v (exit %d)", ExitPartialFailure, err, exitCodeForError(err))
 	}
 	if capture.PostCalls != 0 {
 		t.Fatalf("expected no posts for unresolvable FK, got %d", capture.PostCalls)
@@ -2045,7 +2100,7 @@ func TestCampaignListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("campaign", "list", "--aff_network_id=5")
+	_, _, err := executeCommand("campaign", "list", "--aff-network-id=5")
 	if err != nil {
 		t.Fatalf("campaign list with filter error: %v", err)
 	}
@@ -2126,15 +2181,17 @@ func TestCampaignCreatePassesExtendedFields(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"campaign", "create",
-		"--aff_campaign_name=Campaign A",
-		"--aff_campaign_url=https://offer.example.com",
-		"--aff_campaign_url_2=https://offer2.example.com",
-		"--aff_campaign_currency=USD",
-		"--aff_campaign_foreign_payout=12.34",
-		"--aff_campaign_cloaking=1",
-		"--aff_campaign_rotate=1",
-		"--payout_mode=accumulate",
-		"--identity_signals=0",
+		"--aff-campaign-name=Campaign A",
+		"--aff-campaign-url=https://offer.example.com",
+		"--aff-campaign-url-2=https://offer2.example.com",
+		"--aff-campaign-payout=5",
+		"--aff-network-id=3",
+		"--aff-campaign-currency=USD",
+		"--aff-campaign-foreign-payout=12.34",
+		"--aff-campaign-cloaking=1",
+		"--aff-campaign-rotate=1",
+		"--payout-mode=accumulate",
+		"--identity-signals=0",
 	)
 	if err != nil {
 		t.Fatalf("campaign create error: %v", err)
@@ -2166,11 +2223,11 @@ func TestLandingPageCreateRequiresAffCampaignID(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, "https://tracker.example.com", "test-key")
 
-	_, _, err := executeCommand("landing-page", "create", "--landing_page_url=https://lp.example.com")
+	_, _, err := executeCommand("landing-page", "create", "--landing-page-url=https://lp.example.com", "--landing-page-nickname=lp")
 	if err == nil {
 		t.Fatal("expected required flag error")
 	}
-	if !strings.Contains(err.Error(), "required flag --aff_campaign_id is missing") {
+	if !strings.Contains(err.Error(), "required flag --aff-campaign-id is missing") {
 		t.Errorf("error = %q, expected missing aff_campaign_id", err.Error())
 	}
 }
@@ -2195,13 +2252,13 @@ func TestTrackerCreateUsesClickFields(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"tracker", "create",
-		"--aff_campaign_id=44",
-		"--ppc_account_id=55",
-		"--text_ad_id=11",
-		"--rotator_id=22",
-		"--click_cpc=0.65",
-		"--click_cpa=4.5",
-		"--click_cloaking=1",
+		"--aff-campaign-id=44",
+		"--ppc-account-id=55",
+		"--text-ad-id=11",
+		"--rotator-id=22",
+		"--click-cpc=0.65",
+		"--click-cpa=4.5",
+		"--click-cloaking=1",
 	)
 	if err != nil {
 		t.Fatalf("tracker create error: %v", err)
@@ -2270,11 +2327,13 @@ func TestTextAdCreateUsesDescriptionField(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"text-ad", "create",
-		"--text_ad_name=Ad Name",
-		"--text_ad_description=Ad description",
-		"--aff_campaign_id=9",
-		"--landing_page_id=10",
-		"--text_ad_type=1",
+		"--text-ad-name=Ad Name",
+		"--text-ad-headline=Ad headline",
+		"--text-ad-description=Ad description",
+		"--text-ad-display-url=example.com",
+		"--aff-campaign-id=9",
+		"--landing-page-id=10",
+		"--text-ad-type=1",
 	)
 	if err != nil {
 		t.Fatalf("text-ad create error: %v", err)
@@ -2340,9 +2399,9 @@ func TestTrackerListFriendlyFiltersMapToAPIFilters(t *testing.T) {
 
 	_, _, err := executeCommand(
 		"tracker", "list",
-		"--aff_campaign_id=10",
-		"--ppc_account_id=20",
-		"--landing_page_id=30",
+		"--aff-campaign-id=10",
+		"--ppc-account-id=20",
+		"--landing-page-id=30",
 	)
 	if err != nil {
 		t.Fatalf("tracker list with filters error: %v", err)
@@ -2400,7 +2459,7 @@ func TestLandingPageListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("landing-page", "list", "--aff_campaign_id=15")
+	_, _, err := executeCommand("landing-page", "list", "--aff-campaign-id=15")
 	if err != nil {
 		t.Fatalf("landing-page list with filter error: %v", err)
 	}
@@ -2424,7 +2483,7 @@ func TestTextAdListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("text-ad", "list", "--aff_campaign_id=25")
+	_, _, err := executeCommand("text-ad", "list", "--aff-campaign-id=25")
 	if err != nil {
 		t.Fatalf("text-ad list with filter error: %v", err)
 	}
@@ -2448,7 +2507,7 @@ func TestPpcAccountListFriendlyFilterMapsToAPIFilter(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("ppc-account", "list", "--ppc_network_id=35")
+	_, _, err := executeCommand("ppc-account", "list", "--ppc-network-id=35")
 	if err != nil {
 		t.Fatalf("ppc-account list with filter error: %v", err)
 	}
@@ -2558,7 +2617,7 @@ func TestTrackerCreateWithURL(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("tracker", "create-with-url", "--aff_campaign_id=1")
+	stdout, _, err := executeCommand("tracker", "create-with-url", "--aff-campaign-id=1")
 	if err != nil {
 		t.Fatalf("tracker create-with-url error: %v", err)
 	}
@@ -2614,7 +2673,7 @@ func TestTrackerBulkURLs(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	stdout, _, err := executeCommand("tracker", "bulk-urls", "--aff_campaign_id=10", "--concurrency=2")
+	stdout, _, err := executeCommand("tracker", "bulk-urls", "--aff-campaign-id=10", "--concurrency=2")
 	if err != nil {
 		t.Fatalf("tracker bulk-urls error: %v", err)
 	}
@@ -2678,7 +2737,7 @@ func TestReportBreakdownPassesQueryParams(t *testing.T) {
 	_, _, err := executeCommand("report", "breakdown",
 		"--breakdown=country",
 		"--sort=total_clicks",
-		"--sort_dir=ASC",
+		"--sort-dir=ASC",
 		"--limit=25",
 		"--period=last7")
 	if err != nil {
@@ -2746,7 +2805,7 @@ func TestReportDaypartPassesSortParams(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("report", "daypart", "--sort=roi", "--sort_dir=DESC")
+	_, _, err := executeCommand("report", "daypart", "--sort=roi", "--sort-dir=DESC")
 	if err != nil {
 		t.Fatalf("report daypart sort error: %v", err)
 	}
@@ -2773,7 +2832,7 @@ func TestReportDaypartPassesFilterParams(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("report", "daypart", "--period=last7", "--country_id=223")
+	_, _, err := executeCommand("report", "daypart", "--period=last7", "--country-id=223")
 	if err != nil {
 		t.Fatalf("report daypart filter error: %v", err)
 	}
@@ -3047,7 +3106,7 @@ func TestDashboardPassesExplicitFilters(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("dashboard", "--period=last7", "--aff_campaign_id=7", "--country_id=223")
+	_, _, err := executeCommand("dashboard", "--period=last7", "--aff-campaign-id=7", "--country-id=223")
 	if err != nil {
 		t.Fatalf("dashboard with filters error: %v", err)
 	}
@@ -3503,6 +3562,149 @@ func TestImportCampaignsStripsImmutableFields(t *testing.T) {
 	}
 }
 
+// import flattened a record's API error into its message with %s: a 401
+// exited 1 as a validation error with the --help hint, and the server's
+// refusal of a read-only or unknown field lost the hint that says to remove
+// it from the file's records. The error is wrapped, so its category, exit
+// code and class hint survive, with the record named.
+func TestImportKeepsTheRecordsAPIError(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer string
+		status       int
+		exit         int
+		hint         string
+	}{
+		{"401", `{"error":true,"message":"Invalid API key","status":401}`, 401, ExitAuth, "p202 config set-key"},
+		{"422 unknown field", `{"error":true,"message":"Validation failed","status":422,` +
+			`"field_errors":{"aff_campaign_nmae":"aff_campaign_nmae is not a field of campaigns"}}`, 422, ExitValidation, "from the file's records"},
+		{"500", `{"error":true,"message":"boom","status":500}`, 500, ExitServer, "p202 system health"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+					posts++
+					if posts == 1 {
+						w.WriteHeader(201)
+						w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+						return
+					}
+					w.WriteHeader(tc.status)
+					w.Write([]byte(tc.answer))
+					return
+				}
+				w.WriteHeader(404)
+				w.Write([]byte(`{"message":"not found"}`))
+			}))
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			inFile := filepath.Join(tmp, "campaigns.json")
+			if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"}]`), 0600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+
+			stdout, _, err := executeCommand("import", "campaigns", inFile, "--json")
+			if err == nil {
+				t.Fatalf("a failed record must fail the import: %s", stdout)
+			}
+			if code := exitCodeForError(err); code != tc.exit {
+				t.Errorf("exit %d, want %d (%v)", code, tc.exit, err)
+			}
+			if h := hintFor(err); !strings.Contains(h, tc.hint) {
+				t.Errorf("hint %q, want the API error's class hint naming %q", h, tc.hint)
+			}
+			if !strings.Contains(err.Error(), "record 2 of 3 (1 imported and 0 staged before it)") {
+				t.Errorf("the message must name the record and what was sent before it: %v", err)
+			}
+			if posts != 2 {
+				t.Errorf("%d POSTs, want 2: the import stops at the failed record", posts)
+			}
+		})
+	}
+}
+
+// --skip-errors goes past a record's own failure and says so in the exit
+// code (5, after the summary); it exited 0 with every record failed. A 401
+// is the key's failure, not the record's: it fails every later record the
+// same way, so it stops the import as it does without the flag.
+func TestImportSkipErrorsEndsInAPartialFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    int
+		answer    string
+		exit      int
+		posts     int
+		summary   bool
+		failFirst bool
+	}{
+		{"a 422 on one record", 422, `{"error":true,"message":"Validation failed","status":422,"field_errors":{"aff_campaign_name":"too long"}}`, ExitPartialFailure, 3, true, false},
+		{"a 401", 401, `{"error":true,"message":"Invalid API key","status":401}`, ExitAuth, 2, false, false},
+		{"none", 0, "", 0, 3, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" && r.URL.Path == "/api/v3/campaigns" {
+					posts++
+					if posts == 2 && tc.status != 0 {
+						w.WriteHeader(tc.status)
+						w.Write([]byte(tc.answer))
+						return
+					}
+					w.WriteHeader(201)
+					w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+					return
+				}
+				w.WriteHeader(404)
+				w.Write([]byte(`{"message":"not found"}`))
+			}))
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			inFile := filepath.Join(tmp, "campaigns.json")
+			if err := os.WriteFile(inFile, []byte(`[{"aff_campaign_name":"A"},{"aff_campaign_name":"B"},{"aff_campaign_name":"C"}]`), 0600); err != nil {
+				t.Fatalf("writing import file: %v", err)
+			}
+
+			stdout, _, err := executeCommand("import", "campaigns", inFile, "--skip-errors", "--json")
+			if code := exitCodeForError(err); (err == nil && tc.exit != 0) || (err != nil && code != tc.exit) {
+				t.Fatalf("exit %d (%v), want %d", code, err, tc.exit)
+			}
+			if posts != tc.posts {
+				t.Errorf("%d POSTs, want %d", posts, tc.posts)
+			}
+			if tc.summary != strings.Contains(stdout, `"total": 3`) {
+				t.Errorf("summary on stdout: %v, want %v:\n%s", !tc.summary, tc.summary, stdout)
+			}
+			if tc.exit == ExitPartialFailure && (!strings.Contains(stdout, `"failed": 1`) || !strings.Contains(err.Error(), "failed to import 1 of 3")) {
+				t.Errorf("the summary and the error must count the failed record: %v\n%s", err, stdout)
+			}
+		})
+	}
+}
+
+// sync's --skip-errors goes past a record's own failure, not the key's.
+func TestSyncSkipErrorsStopsAtTheKeysFailure(t *testing.T) {
+	var result syncdata.EntityResult
+	if !handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, true, &result) {
+		t.Error("a record's 422 under --skip-errors should go on")
+	}
+	for _, status := range []int{401, 403} {
+		if handleSyncRecordError("campaigns", "A", &api.APIError{Status: status, Message: "key"}, true, &result) {
+			t.Errorf("a %d under --skip-errors should stop the sync", status)
+		}
+	}
+	if handleSyncRecordError("campaigns", "A", &api.APIError{Status: 422, Message: "invalid"}, false, &result) {
+		t.Error("without --skip-errors every failure stops the sync")
+	}
+	if result.Failed != 4 || len(result.Errors) != 4 {
+		t.Errorf("every failure is counted and listed: %+v", result)
+	}
+}
+
 func TestUserAPIKeyRotateDeletesOldKeyByDefault(t *testing.T) {
 	var createPath, deletePath string
 
@@ -3685,7 +3887,7 @@ func TestConversionCreateSupportsLegacyAliases(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("conversion", "create", "--click_id_public=12345", "--conversion_payout=1.25")
+	_, _, err := executeCommand("conversion", "create", "--click-id-public=12345", "--conversion-payout=1.25")
 	if err != nil {
 		t.Fatalf("conversion create alias flags error: %v", err)
 	}
@@ -3730,9 +3932,9 @@ func TestRotatorRuleUpdateCommand(t *testing.T) {
 
 	stdout, _, err := executeCommand(
 		"rotator", "rule-update", "3", "11",
-		"--rule_name=US Premium v2",
+		"--rule-name=US Premium v2",
 		"--status=1",
-		"--criteria_json=[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"US\"}]",
+		"--criteria-json=[{\"type\":\"country\",\"statement\":\"is\",\"value\":\"US\"}]",
 	)
 	if err != nil {
 		t.Fatalf("rotator rule-update error: %v", err)
@@ -4191,7 +4393,8 @@ func TestAPI422ErrorShowsFieldErrors(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	_, _, err := executeCommand("campaign", "create", "--aff_campaign_name=test", "--aff_campaign_url=http://example.com")
+	_, _, err := executeCommand("campaign", "create", "--aff-campaign-name=test", "--aff-campaign-url=http://example.com",
+		"--aff-campaign-payout=1", "--aff-network-id=1")
 	if err == nil {
 		t.Fatal("expected error for 422 response")
 	}
@@ -4845,16 +5048,17 @@ func TestUserIdentityKeyRotateWithoutForceAsksAndCancels(t *testing.T) {
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
 
-	// No answer on stdin reads as "no".
-	stdout, _, err := executeCommand("user", "identity-key", "rotate", "7")
+	answerPrompts(t, "n\n")
+	stdout, stderr, err := executeCommand("user", "identity-key", "rotate", "7")
 	if err != nil {
 		t.Fatalf("identity-key rotate error: %v", err)
 	}
 	if called {
 		t.Error("rotate reached the server without confirmation")
 	}
-	if !strings.Contains(stdout, "Cancelled.") {
-		t.Errorf("expected a cancellation, got:\n%s", stdout)
+	// stderr: stdout carries data only, and this notice used to land there.
+	if !strings.Contains(stderr, "Cancelled.") || strings.Contains(stdout, "Cancelled") {
+		t.Errorf("expected the cancellation on stderr only; stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 }
 

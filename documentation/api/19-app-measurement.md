@@ -156,7 +156,11 @@ and Postbacks sent tabs are offered once the account has an Android app.
 
 The range picker offers the same preset windows as the click reports (Today,
 Yesterday, Last 7/14/30/90 Days, This Month, Last Month) plus Custom Date,
-which is what makes the two date fields live. **The dates on this page are
+which is what makes the two date fields live. Each preset is counted as the
+click reports count it (in UTC here, as below): Last 7 Days is today and the
+seven days before it, and This Month runs from the 1st to the end of today
+(it used to run to the last day of the month here). Last 90 Days is counted
+the same way. **The dates on this page are
 UTC**, unlike the click reports, which use your account timezone: postbacks
 are grouped into whole UTC days by the report itself, so a window anchored to
 a local midnight would split its first and last day across groups the report
@@ -379,7 +383,9 @@ record), `postback_sequence_index`
 `coarse_conversion_value` (`low`/`medium`/`high`), `source_app_id` (the
 publisher app), `country_code`, `signature_state`, `trusted`,
 `key_id` (the signing key the postback named, AdAttributionKit only), plus
-`received_at` and `remote_ip`. The SKAdNetwork-specific columns mirror
+`received_at` and `remote_ip` (the device's address, masked to its /24 or
+/48 when the privacy setting holds back for it, as a click's is — see
+[Privacy](14-users.md#privacy-user_pref_privacy)). The SKAdNetwork-specific columns mirror
 Apple's parameters (hyphens become underscores) and are `NULL` on other
 protocols' rows: `version`, `source_identifier` (SKAN 4; 1–4 digits,
 hierarchical), `campaign_id` (SKAN ≤ 3), `redownload` and `fidelity_type`
@@ -562,7 +568,13 @@ repeats — with one exception: a goal that counts `within` `"from":
 device such a goal is always ineligible (`no_click`) and the value would
 never be set. A goal an encoding depends on (directly or through `after`)
 cannot be edited into that shape, or archived. The old fields `event_name`
-and `revenue` are refused by name. The report decodes to each goal's name.
+and `revenue` are refused by name. A body read with `GET` can be sent back
+whole with `PUT`, as for every other resource: `encoding_id`, `user_id`,
+`effective_at`, `version` and `etag` are accepted with the encoding's own
+values and refused with any other (a stale `version` is the `409` an
+`If-Match` would give), and a create refuses each of them. They used to be
+refused on every update, so the round trip was a `422` here alone. The
+report decodes to each goal's name.
 Setup › Mobile Apps still asks for an event and a revenue: it finds (or
 creates) the app's plain goal for the event and stores the revenue as the
 override; any other goal can be encoded through the API or

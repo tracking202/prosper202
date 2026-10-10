@@ -51,7 +51,7 @@ final class IntegrationSuiteSelectionTest extends TestCase
     {
         $root = self::root();
         $view = ['integration' => [], 'instance' => []];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/tests', \FilesystemIterator::SKIP_DOTS));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/tests'));
         foreach ($files as $file) {
             /** @var \SplFileInfo $file */
             if (!str_ends_with($file->getFilename(), 'Test.php')) {

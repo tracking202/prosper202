@@ -1,6 +1,9 @@
 <?php
 
 declare(strict_types=1);
+
+use Prosper202\Click\TrackingBaseUrl;
+
 #only allow numeric t202ids, reject 0 as invalid
 $t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id) || (int)$t202id <= 0) die();
@@ -232,7 +235,7 @@ $tracker_sql = "SELECT 202_trackers.user_id,
             LEFT JOIN 202_users USING (user_id) 
     			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)					                 
+				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)					                 
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
@@ -247,6 +250,11 @@ if (!$tracker_row) {
 		'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>'
 	);
 }
+
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this tracker's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
 
 // The URL a MySQL outage redirects to (read above): kept equal to the
 // campaign's current URL, not the one it had at its first click.
@@ -382,15 +390,12 @@ $mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = !empty($tracker_row['ppc_variable_ids']) ? explode(',', (string) $tracker_row['ppc_variable_ids']) : [];
-$parameters = !empty($tracker_row['parameters']) ? explode(',', (string) $tracker_row['parameters']) : [];
-
-foreach ($parameters as $key => $value) {
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
 	$variable = (string)($_GET[$value] ?? '');
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) ($ppc_variable_ids[$key] ?? 0));
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -464,8 +469,9 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1;
 
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-$ip_id = $locationRepo->findOrCreateIp($ip);
+$ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
 
 //before we finish filter this click
@@ -480,7 +486,7 @@ if ($clickIsBot) {
 } else {
 	// Initialize click_id as 0 for the filter (will be updated after insert)
 	$click_id_temp = 0;
-	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $ip_address, $user_id);
+	$click_filtered = FILTER::startFilter($db, $click_id_temp, $ip_id, $user_id);
 	$mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 
@@ -504,10 +510,7 @@ $mysql['click_id_public'] = '';
 
 // Determine cloaking (needed for redirect decision)
 $cloaking_on = false;
-if (($tracker_row['click_cloaking'] == 1) or
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
-) {
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 	$click_id_public = random_int(1, 9) . $click_id . random_int(1, 9);
@@ -522,7 +525,7 @@ $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_
 
 $cloaking_site_url = '';
 if ($cloaking_on === true) {
-	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . '/tracking202/redirect/cl.php?pci=' . $click_id_public;
+	$cloaking_site_url = TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 }
 
 // Identity signals (the p202vid cookie, the landing page's p202lpid, a
@@ -531,9 +534,8 @@ if ($cloaking_on === true) {
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
 // A tracker with no campaign has NULL there, which leaves capture on (the
 // column's default); anything but '1' or '0' reads as off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(
 		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
 	)
@@ -591,7 +593,7 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	}
 	$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
-	$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+	$outbound_site_url = TrackingBaseUrl::requestUrl($_SERVER);
 	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
@@ -675,5 +677,3 @@ if ($mysql['click_cpa'] != NULL) {
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
-
-p202LinkImpressionToClick($db, $mysql['click_id'], null, 'dl.php');

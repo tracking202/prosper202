@@ -9,6 +9,7 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\PayloadKeys;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\EvaluationTooLarge;
 use Prosper202\Goals\GoalDefinition;
@@ -94,6 +95,21 @@ final class GoalsController
         return ['data' => $this->present($this->mustFind($id), true)];
     }
 
+    /**
+     * What owns one of this account's goals -- campaign, registration or
+     * account -- or null when the account has no such goal. The route asks
+     * more of a write to an app's goal than to a campaign's (Mobile Apps'
+     * writes need manage_attribution_models), and reads the owner here
+     * before it lets the write through; null is left to the write's own
+     * 404. A failed read throws (guard()), never "no such goal".
+     */
+    public function scopeOf(int $id): ?string
+    {
+        $goal = $this->guard(fn () => $this->goals->find($this->userId, $id));
+
+        return $goal === null ? null : (string) $goal['scope'];
+    }
+
     public function versions(int $id): array
     {
         $this->mustFind($id);
@@ -170,7 +186,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function create(array $payload): array
     {
-        self::onlyKeys($payload, ['scope', 'scope_id', 'definition', 'payable', 'payout', 'notify_traffic_source'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['scope', 'scope_id', 'definition', 'payable', 'payout', 'notify_traffic_source'], 'a goal');
         $scope = GoalScope::tryFrom(is_string($payload['scope'] ?? null) ? $payload['scope'] : '');
         if ($scope === null) {
             throw new ValidationException('Invalid scope', [
@@ -229,7 +245,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function update(int $id, array $payload): array
     {
-        self::onlyKeys($payload, ['definition'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['definition'], 'a goal update (an edit is a new definition)');
         if (!array_key_exists('definition', $payload)) {
             throw new ValidationException('Nothing to update', ['definition' => 'is required: the goal\'s whole new definition (an edit is a new version)']);
         }
@@ -295,7 +311,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function attachCampaign(int $id, int $campaignId, array $payload): array
     {
-        self::onlyKeys($payload, ['payout', 'notify_traffic_source'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['payout', 'notify_traffic_source'], 'a campaign goal');
         $payoutUnits = array_key_exists('payout', $payload) && $payload['payout'] !== null ? self::amount($payload['payout'], 'payout') : null;
         $notify = array_key_exists('notify_traffic_source', $payload) ? self::bool($payload['notify_traffic_source'], 'notify_traffic_source') : true;
 
@@ -357,7 +373,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function validate(array $payload): array
     {
-        self::onlyKeys($payload, ['definition', 'goal_id'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['definition', 'goal_id'], 'a goal validation');
         $selfId = array_key_exists('goal_id', $payload) ? self::id($payload['goal_id'], 'goal_id') : null;
         $definition = $this->parseDefinition($payload['definition'] ?? null, $selfId);
 
@@ -378,7 +394,7 @@ final class GoalsController
      */
     public function evaluate(array $payload): array
     {
-        self::onlyKeys($payload, ['goals', 'subject', 'events'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['goals', 'subject', 'events'], 'a goal evaluation');
         $goals = $payload['goals'] ?? null;
         if (!is_array($goals) || !array_is_list($goals) || $goals === [] || count($goals) > self::MAX_EVALUATE_GOALS) {
             throw new ValidationException('Invalid goals', ['goals' => 'must be a list of 1-' . self::MAX_EVALUATE_GOALS . ' goals']);
@@ -386,7 +402,7 @@ final class GoalsController
         $specs = [];
         $seen = [];
         foreach ($goals as $i => $g) {
-            $path = 'goals[' . $i . ']';
+            $path = 'goals.' . $i;
             if (!is_array($g) || array_is_list($g)) {
                 throw new ValidationException('Invalid goal', [$path => 'must be an object']);
             }
@@ -407,7 +423,7 @@ final class GoalsController
             }
             $clean = [];
             foreach ($versions as $j => $v) {
-                $vp = $path . '.versions[' . $j . ']';
+                $vp = $path . '.versions.' . $j;
                 if (!is_array($v) || array_is_list($v)) {
                     throw new ValidationException('Invalid version', [$vp => 'must be an object']);
                 }
@@ -459,12 +475,12 @@ final class GoalsController
         $ids = [];
         foreach ($rawEvents as $i => $e) {
             try {
-                $event = GoalEvent::fromArray($e, 'events[' . $i . ']');
+                $event = GoalEvent::fromArray($e, 'events.' . $i);
             } catch (InvalidGoalDefinition $ex) {
                 throw new ValidationException('Invalid event', $ex->errors());
             }
             if (isset($ids[$event->eventId])) {
-                throw new ValidationException('Invalid event', ['events[' . $i . '].event_id' => 'event id "' . $event->eventId . '" appears twice']);
+                throw new ValidationException('Invalid event', ['events.' . $i . '.event_id' => 'event id "' . $event->eventId . '" appears twice']);
             }
             $ids[$event->eventId] = true;
             $events[] = $event;
@@ -504,7 +520,7 @@ final class GoalsController
     /** @param array<string, mixed> $payload */
     public function reevaluate(int $id, array $payload): array
     {
-        self::onlyKeys($payload, ['version', 'limit', 'after', 'subject_type'], 'body');
+        PayloadKeys::refuseUnknown($payload, ['version', 'limit', 'after', 'subject_type'], 'a re-evaluation');
 
         return ['data' => $this->reevaluation($id, $payload, true)];
     }
@@ -853,10 +869,12 @@ final class GoalsController
         } elseif (is_string($value) && preg_match('/^(0|[1-9]\d{0,18})$/D', $value) === 1 && (string) (int) $value === $value) {
             $id = (int) $value;
         } else {
-            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number' . ($allowZero ? '' : ' greater than 0')]);
+            $id = null;
         }
-        if ($id < 0 || (!$allowZero && $id === 0) || $id > 4294967295) {
-            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number' . ($allowZero ? '' : ' greater than 0')]);
+        // The range is named whatever was wrong: a 20-digit id is refused for
+        // the same reason 0 is, and the message is what says which ids exist.
+        if ($id === null || $id < 0 || (!$allowZero && $id === 0) || $id > 4294967295) {
+            throw new ValidationException('Invalid ' . $field, [$field => 'must be a whole number from ' . ($allowZero ? '0' : '1') . ' to 4294967295']);
         }
 
         return $id;

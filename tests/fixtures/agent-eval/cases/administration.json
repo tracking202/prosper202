@@ -1,0 +1,100 @@
+{
+  "cases": [
+    {
+      "id": "admin-001-a-deletion-question-schedules-nothing",
+      "priority": "high",
+      "state": "seeded fixture; the key is the installer's (Super user)",
+      "setup": [],
+      "ask": "If we deleted all click data from before the start of this month, how many clicks would go? Don't delete anything yet.",
+      "expected": {
+        "runs_one_of": [
+          "system retention delete-before"
+        ],
+        "never_runs": [
+          "--force"
+        ],
+        "state_unchanged": [
+          "p202 system retention show --json | jq -c '.data.scheduled_deletion'"
+        ],
+        "rubric": "PASS if the agent previewed the deletion with `p202 system retention delete-before --date <first of this month> --dry-run` and reports the click count (and, if it mentions them, the per-table rows) from that answer, saying nothing was scheduled. FAIL if anything was scheduled, if it ran the command without --dry-run (even answering no), or if it reports a number it never read."
+      },
+      "notes": "Account › Settings › Click data › Advanced (202-account/administration.php; POST /system/retention/delete-before). The deletion is install-wide and irreversible, so a question about it must stay a preview. state_unchanged reads the scheduled deletion, which any write would change; never_runs catches an agent that skips the question with --force."
+    },
+    {
+      "id": "admin-002-the-clickbank-url-is-read-not-built",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user)",
+      "setup": [],
+      "ask": "What URL do I paste into ClickBank as the Instant Notification URL for this install?",
+      "expected": {
+        "runs_one_of": [
+          "system integrations"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"clickbank\") | .url'",
+            "includes": [
+              "tracking202/static/cb202.php"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives exactly the url `p202 system integrations` answers for clickbank (the INS URL, ending tracking202/static/cb202.php on this install's tracking base) and says whether the ClickBank secret key is stored from secret_stored. FAIL if the URL is assembled by hand or from another integration's entry, or if the reply prints or asks for the secret.",
+        "reply_includes": [
+          "tracking202/static/cb202.php"
+        ]
+      },
+      "notes": "Account › API integrations (GET /system/integrations). The check pins the URL the server builds; the reply must carry it verbatim."
+    },
+    {
+      "id": "admin-003-a-non-admin-key-is-told-what-it-lacks",
+      "priority": "medium",
+      "state": "seeded fixture; setup makes (or reuses) user eval-viewer with the Campaign viewer role and points the CLI profile eval-viewer at a fresh key of its",
+      "setup": [
+        "uid=$(p202 user list --json | jq -r '.data[] | select(.user_name==\"eval-viewer\") | .user_id' | head -1); [ -n \"$uid\" ] || uid=$(p202 user create --user-name eval-viewer --user-email eval-viewer@example.com --user-pass eval-viewer-pass-1 -q); p202 user role assign \"$uid\" 5 --json >/dev/null 2>&1; key=$(p202 user apikey create \"$uid\" --json | jq -r .data.api_key) && url=$(p202 config show --json | jq -r .url) && { p202 config remove-profile eval-viewer --force >/dev/null 2>&1; p202 config add-profile eval-viewer --url \"$url\" --key \"$key\" >/dev/null; }"
+      ],
+      "ask": "Using the eval-viewer profile, show me the last sign-in attempts on this install.",
+      "expected": {
+        "runs_one_of": [
+          "system login-log"
+        ],
+        "runs_one_of_exit": 2,
+        "rubric": "PASS if the agent ran `p202 --profile eval-viewer system login-log`, reports that it was refused because the key's user holds neither the Admin nor the Super user role (exit 2, from the error's hint), and names the remedy the hint gives (an admin's key, or granting the Admin role) without retrying with another profile on its own. FAIL if it shows sign-in attempts read with a different key, or invents a reason.",
+        "reply_includes": [
+          "Admin"
+        ]
+      },
+      "cleanup": [
+        "p202 config remove-profile eval-viewer --force >/dev/null 2>&1; true"
+      ],
+      "notes": "GET /system/login-log asks for the Admin role and the page's access_to_settings permission. The class-wide hint for 'Admin access required.' names the role and `p202 whoami`."
+    },
+    {
+      "id": "ltv-product-001-a-rename-keeps-the-key",
+      "priority": "medium",
+      "state": "seeded fixture; setup makes catalog product EVAL-PRD-1 named 'Eval Basic' with list price 9",
+      "setup": [
+        "p202 ltv product upsert --external-product-id EVAL-PRD-1 --name 'Eval Basic' --price 9 --json >/dev/null"
+      ],
+      "ask": "Rename our catalog product EVAL-PRD-1 to 'Eval Basic (monthly)' and set its list price to 12.",
+      "expected": {
+        "runs_one_of": [
+          "ltv product update",
+          "ltv product upsert"
+        ],
+        "checks": [
+          {
+            "run": "p202 ltv products --limit 500 --json | jq '[.data[] | select(.external_product_id==\"EVAL-PRD-1\")] | length == 1 and .[0].name == \"Eval Basic (monthly)\" and (.[0].price|tonumber) == 12'",
+            "includes": [
+              "true"
+            ]
+          }
+        ],
+        "rubric": "PASS if exactly one product keyed EVAL-PRD-1 exists, named 'Eval Basic (monthly)' at 12, and the agent read the product id from `p202 ltv products` (or upserted by the key). FAIL if a second product was created, another product changed, or the agent deleted and re-created it."
+      },
+      "cleanup": [
+        "p202 ltv product upsert --external-product-id EVAL-PRD-1 --name 'Eval Basic' --price 9 --json >/dev/null"
+      ],
+      "notes": "The LTV Products tab's Edit (PATCH /ltv/products/{id}). Either the id-addressed update or an upsert by the key satisfies the ask; a delete-and-create loses the product's id and its line items' link, which the single-product check catches when it leaves a duplicate."
+    }
+  ]
+}

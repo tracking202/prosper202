@@ -56,33 +56,52 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		if (filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
 			$to = '';
 		}
-		$server_name = str_replace(["\r", "\n"], '', (string) ($_SERVER['SERVER_NAME'] ?? ''));
-		// Match the scheme the request came in on so the reset link isn't downgraded to http.
-		$scheme = getSecureStatus() ? 'https' : 'http';
-		// get_absolute_url() is '' on root installs, so ensure a leading slash or
-		// the link becomes "https://example.com202-pass-reset.php" (unusable).
-		$base_path = get_absolute_url();
-		if ($base_path === '' || $base_path[0] !== '/') {
-			$base_path = '/' . $base_path;
+		// The link goes to this install's stored address, never the request's
+		// Host: the email reaches the account's owner, and the Host is the
+		// requester's to choose (PasswordResetLink). With no stored address the
+		// email carries the key and the page, without a link.
+		$domain_result = _mysqli_query($db, "SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1");
+		$domain_row = ($domain_result instanceof mysqli_result) ? $domain_result->fetch_assoc() : null;
+		if (!($domain_result instanceof mysqli_result)) {
+			prosper_log('lost-pass', 'Reading the install\'s address failed, so the reset email carries no link: ' . $db->error);
 		}
-		$reset_url = $scheme . '://' . $server_name . $base_path . '202-pass-reset.php?key=' . $user_pass_key;
-		$subject = "[Prosper202 on " . $server_name . "] Password Reset";
-
-		$message = "
+		$base = \Prosper202\User\PasswordResetLink::base((string) ($domain_row['user_tracking_domain'] ?? ''), $_SERVER, __DIR__);
+		$page = \Prosper202\User\PasswordResetLink::PAGE . '?key=' . $user_pass_key;
+		$html_user = htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8');
+		$header = '';
+		if ($base !== null) {
+			$site = rtrim($base, '/');
+			$host = \Prosper202\User\PasswordResetLink::host($base);
+			$reset_url = $base . $page;
+			$subject = "[Prosper202 on " . $host . "] Password Reset";
+			$message = "
 <p>Someone has asked to reset the password for the following site and username.</p>
 
-<p><a href=\"" . $scheme . "://" . $server_name . "\">" . $scheme . "://" . $server_name . "</a></p>
+<p><a href=\"" . htmlspecialchars($site, ENT_QUOTES, 'UTF-8') . "\">" . htmlspecialchars($site, ENT_QUOTES, 'UTF-8') . "</a></p>
 
-<p>Username: " . htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8') . "</p>
+<p>Username: " . $html_user . "</p>
 
 <p>To reset your password visit the following address, otherwise just ignore this email and nothing will happen.</p>
 
-<p><a href=\"" . $reset_url . "\">" . $reset_url . "</a></p>";
+<p><a href=\"" . htmlspecialchars($reset_url, ENT_QUOTES, 'UTF-8') . "\">" . htmlspecialchars($reset_url, ENT_QUOTES, 'UTF-8') . "</a></p>";
+			if ($host !== '') {
+				$from = "prosper202@" . $host;
+				$header .= "From: Prosper202<" . $from . "> \r\n";
+				$header .= "Reply-To: " . $from . " \r\n";
+			}
+		} else {
+			prosper_log('lost-pass', 'No tracking domain is set (Account > Settings), so the reset email names the page instead of linking to it.');
+			$subject = "[Prosper202] Password Reset";
+			$message = "
+<p>Someone has asked to reset the password for the following username on your Prosper202.</p>
 
-		$from = "prosper202@" . $server_name;
+<p>Username: " . $html_user . "</p>
 
-		$header = "From: Prosper202<" . $from . "> \r\n";
-		$header .= "Reply-To: " . $from . " \r\n";
+<p>To reset your password, open the following page on your Prosper202, at the address you sign in at; otherwise just ignore this email and nothing will happen.</p>
+
+<p>" . htmlspecialchars($page, ENT_QUOTES, 'UTF-8') . "</p>";
+		}
+
 		$header .=  "To: " . $to . " \r\n";
 		$header .= "Content-Type: text/html; charset=\"iso-8859-1\" \r\n";
 		$header .= "Content-Transfer-Encoding: 8bit \r\n";

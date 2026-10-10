@@ -20,14 +20,14 @@ class UserRoleAssignCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Assign a role to a user')
             ->addArgument('user_id', InputArgument::REQUIRED, 'User ID')
-            ->addOption('role_id', null, InputOption::VALUE_REQUIRED, 'Role ID (required)');
+            ->addOption('role-id', null, InputOption::VALUE_REQUIRED, 'Role ID (required)');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $roleId = $input->getOption('role_id');
+        $roleId = $input->getOption('role-id');
         if (!$roleId) {
-            $output->writeln('<error>--role_id is required</error>');
+            $output->writeln('<error>--role-id is required</error>');
             return Command::FAILURE;
         }
         $this->render($output, $this->client()->post('users/' . $input->getArgument('user_id') . '/roles', ['role_id' => (int)$roleId]), $input);

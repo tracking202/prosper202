@@ -362,6 +362,15 @@ func TestFormatValue(t *testing.T) {
 			input: float64(1000000),
 			want:  "1000000",
 		},
+		// Money the API sends as numbers: cents stay cents, a finer amount keeps up
+		// to four decimals as a long decimal string does, and none reads as zero.
+		{name: "float64 cents", input: float64(12.5), want: "12.50"},
+		{name: "float64 sub-cent CPC", input: float64(0.00125), want: "0.0013"},
+		{name: "float64 half-cent CPC", input: float64(0.015), want: "0.015"},
+		{name: "float64 computed metric", input: float64(0.288613861), want: "0.2886"},
+		{name: "float64 smallest stored amount", input: float64(0.00001), want: "0.00001"},
+		{name: "float64 negative sub-cent", input: float64(-0.00001), want: "-0.00001"},
+		{name: "float64 large amount", input: float64(1234567.89), want: "1234567.89"},
 		{
 			name:  "bool true",
 			input: true,
@@ -603,6 +612,7 @@ func TestTrimLongDecimal(t *testing.T) {
 		"2.20":          "2.20",  // <=4 decimals untouched
 		"90008":         "90008", // integer untouched
 		"Bing - Search": "Bing - Search",
+		"0.00001":       "0.00001", // smaller than four decimals show: not "0"
 	}
 	for in, want := range cases {
 		if got := trimLongDecimal(in); got != want {
@@ -673,6 +683,50 @@ func TestQuietIdSkipsANullForeignKeyRatherThanDroppingTheRow(t *testing.T) {
 	} {
 		if got := idOf(row); got != "8821" {
 			t.Errorf("%s: idOf = %q, want \"8821\"", name, got)
+		}
+	}
+}
+
+// A masked answer (a role without access_to_campaign_data) says so in every
+// view: the table and CSV with a note on stderr (their cells are blank), each
+// NDJSON line with "masked": true, JSON as the server sent it, and stderr
+// left to errors in the machine views.
+func TestAMaskedAnswerSaysSoInEveryView(t *testing.T) {
+	masked := []byte(`{"data":[{"name":"A","total_clicks":null,"epc":2.5}],"masked":true}`)
+	plain := []byte(`{"data":[{"name":"A","total_clicks":4,"epc":2.5}]}`)
+
+	for _, view := range []struct {
+		name string
+		opts Opts
+		note bool
+	}{
+		{"table", Opts{}, true},
+		{"csv", Opts{CSV: true}, true},
+		{"json", Opts{JSON: true}, false},
+		{"ndjson", Opts{NDJSON: true}, false},
+	} {
+		var stdout string
+		stderr := captureStderr(t, func() {
+			stdout = captureStdout(t, func() { RenderWith(masked, view.opts) })
+		})
+		if got := strings.Contains(stderr, MaskedNote); got != view.note {
+			t.Errorf("%s: note on stderr = %v, want %v (stderr %q)", view.name, got, view.note, stderr)
+		}
+		if !view.note && stderr != "" {
+			t.Errorf("%s: stderr is for errors, got %q", view.name, stderr)
+		}
+		if view.name == "ndjson" && !strings.Contains(stdout, `"masked":true`) {
+			t.Errorf("ndjson: each line carries the flag, got %q", stdout)
+		}
+		if view.name == "json" && !strings.Contains(stdout, `"masked": true`) {
+			t.Errorf("json: the flag is in the answer, got %q", stdout)
+		}
+
+		stderr = captureStderr(t, func() {
+			_ = captureStdout(t, func() { RenderWith(plain, view.opts) })
+		})
+		if stderr != "" {
+			t.Errorf("%s: an unmasked answer printed %q", view.name, stderr)
 		}
 	}
 }

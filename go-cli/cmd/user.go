@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,7 +13,6 @@ import (
 	"p202/internal/output"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var userCmd = &cobra.Command{
@@ -61,42 +61,40 @@ var userCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new user",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		name, _ := cmd.Flags().GetString("user_name")
 		email, _ := cmd.Flags().GetString("user_email")
 		if name == "" {
-			return validationError("required flag --user_name is missing")
+			return validationError("required flag --user-name is missing")
 		}
 		if email == "" {
-			return validationError("required flag --user_email is missing")
+			return validationError("required flag --user-email is missing")
 		}
 		body := map[string]interface{}{
 			"user_name":  name,
 			"user_email": email,
 		}
-		// Secure password input
+		// Secure password input: a hidden prompt (asked twice), or one line
+		// of piped stdin. --user-pass works too, into shell history.
 		pass, _ := cmd.Flags().GetString("user_pass")
 		if pass == "" {
-			fmt.Fprint(os.Stderr, "Password (hidden): ")
-			passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
-			if err != nil {
-				return fmt.Errorf("reading password: %w", err)
+			var err error
+			if pass, err = readNewPassword("Password (hidden): "); err != nil {
+				return err
 			}
-			pass = string(passBytes)
 		}
 		if pass == "" {
-			return validationError("password is required").WithHint("Pass --password, or pipe it on stdin when prompted; it is never echoed.")
+			return validationError("password is required").WithHint(passwordInputHint)
 		}
 		body["user_pass"] = pass
 
-		for _, f := range []string{"user_fname", "user_lname", "user_timezone"} {
+		for _, f := range []string{"user_fname", "user_lname", "user_timezone", "user_active"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		idemKey, _ := cmd.Flags().GetString("idempotency-key")
 		data, err := c.PostIdempotent("users", body, idemKey)
@@ -110,45 +108,91 @@ var userCreateCmd = &cobra.Command{
 
 var userUpdateCmd = &cobra.Command{
 	Use:   "update <id>",
-	Short: "Update a user",
+	Short: "Update a user: rename, name, email, timezone, active, password",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		body := map[string]interface{}{}
-		for _, f := range []string{"user_fname", "user_lname", "user_email", "user_timezone", "user_active"} {
+		for _, f := range []string{"user_name", "user_fname", "user_lname", "user_email", "user_timezone", "user_active"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				body[f] = v
 			}
 		}
-		// Secure password: if --user_pass flag is present, prompt
-		if cmd.Flags().Changed("user_pass") {
-			pass, _ := cmd.Flags().GetString("user_pass")
+		setPassword, _ := cmd.Flags().GetBool("set-password")
+		askCurrent, _ := cmd.Flags().GetBool("current-password")
+		if setPassword && cmd.Flags().Changed("user_pass") {
+			return validationError("--set-password and --user-pass both set the password; use one").
+				WithHint("--set-password reads it without echo (prompt or piped stdin); --user-pass leaves it in shell history.")
+		}
+		// The current password comes first: a piped caller sends it on the
+		// first line and the new one on the second.
+		if askCurrent {
+			current, err := readSecret("Your current password (hidden): ")
+			if err != nil {
+				return err
+			}
+			if current == "" {
+				return validationError("--current-password read an empty value").WithHint(passwordInputHint)
+			}
+			body["current_password"] = current
+		}
+		if setPassword {
+			pass, err := readNewPassword("New password (hidden): ")
+			if err != nil {
+				return err
+			}
 			if pass == "" {
-				fmt.Fprint(os.Stderr, "New password (hidden): ")
-				passBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-				fmt.Fprintln(os.Stderr)
-				if err != nil {
-					return fmt.Errorf("reading password: %w", err)
-				}
-				pass = string(passBytes)
+				return validationError("--set-password read an empty password; nothing was changed").WithHint(passwordInputHint)
 			}
-			if pass != "" {
-				body["user_pass"] = pass
-			}
+			body["user_pass"] = pass
+		} else if pass, _ := cmd.Flags().GetString("user_pass"); pass != "" {
+			body["user_pass"] = pass
+		}
+		if askCurrent && body["user_pass"] == nil {
+			return validationError("--current-password is only needed with a new password").
+				WithHint("Add --set-password (or --user-pass) to change the password.")
 		}
 		if len(body) == 0 {
 			return validationError("no fields specified; pass at least one flag to update")
 		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
 		data, err := c.Put("users/"+args[0], body)
+		if err != nil && body["user_pass"] != nil && body["current_password"] == nil && needsCurrentPassword(err) {
+			// Your own password: the server wants the current one too. At a
+			// terminal, ask and try once more; through a pipe, say how.
+			if !isTerminal(os.Stdin) {
+				return withHint(err, "Changing your own password needs your current password: re-run with --current-password "+
+					"and pipe it on the first line of stdin (the new one on the second, with --set-password), or run it at a terminal to be asked.")
+			}
+			current, rerr := readSecret("Your current password (hidden): ")
+			if rerr != nil {
+				return rerr
+			}
+			body["current_password"] = current
+			data, err = c.Put("users/"+args[0], body)
+		}
 		if err != nil {
 			return err
 		}
 		render(data)
 		return nil
 	},
+}
+
+// passwordInputHint is the recovery step for a missing password value.
+const passwordInputHint = "Type it at the hidden prompt, or pipe it on stdin (one line); it is never echoed. A --user-pass value works too, but stays in your shell history."
+
+// needsCurrentPassword reports whether err is the server asking for the
+// current password (a 422 naming current_password).
+func needsCurrentPassword(err error) bool {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		return false
+	}
+	_, ok := apiErr.FieldErrors["current_password"]
+	return ok
 }
 
 var userDeleteCmd = &cobra.Command{
@@ -195,7 +239,7 @@ var userRoleAssignCmd = &cobra.Command{
 		}
 		roleIDStr := roleIDFrom(cmd, args)
 		if roleIDStr == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role-id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		roleID, err := strconv.Atoi(roleIDStr)
 		if err != nil {
@@ -223,7 +267,7 @@ var userRoleRemoveCmd = &cobra.Command{
 		}
 		roleID := roleIDFrom(cmd, args)
 		if roleID == "" {
-			return validationError("role id is required (pass it as the second argument or via --role_id)").WithHint("`p202 user role list` lists role ids.")
+			return validationError("role id is required (pass it as the second argument or via --role-id)").WithHint("`p202 user role list` lists role ids.")
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
 			return renderDeletePreviews(c, "users/"+args[0]+"/roles", []string{roleID})
@@ -232,9 +276,15 @@ var userRoleRemoveCmd = &cobra.Command{
 			return stageDeletes(c, "users/"+args[0]+"/roles", []string{roleID})
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Remove role %s from user %s?", roleID, args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Remove role %s from user %s?", roleID, args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		if err := c.Delete("users/" + args[0] + "/roles/" + roleID); err != nil {
 			return err
@@ -244,7 +294,7 @@ var userRoleRemoveCmd = &cobra.Command{
 	},
 }
 
-// roleIDFrom resolves the role id from the second positional arg or --role_id.
+// roleIDFrom resolves the role id from the second positional arg or --role-id.
 func roleIDFrom(cmd *cobra.Command, args []string) string {
 	if len(args) >= 2 {
 		return args[1]
@@ -340,9 +390,15 @@ var userAPIKeyDeleteCmd = &cobra.Command{
 			return stageDeletes(c, "users/"+args[0]+"/api-keys", []string{args[1]})
 		}
 		force, _ := cmd.Flags().GetBool("force")
-		if !force && !confirmPrompt("Delete API key for user %s?", args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Delete API key for user %s?", args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		if err := c.Delete("users/" + args[0] + "/api-keys/" + args[1]); err != nil {
 			return err
@@ -448,8 +504,13 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			if !force {
 				// Prompt via the shared helper so the question and the outcome go
 				// to stderr; this command renders a JSON result on stdout, which
-				// the prompt text used to corrupt.
-				if !confirmPrompt("Delete old API key for user %s?", userID) {
+				// the prompt text used to corrupt. The new key exists by now, so
+				// an unanswerable question keeps the old one instead of failing
+				// a rotate that already happened; the result reports it.
+				ok, err := confirmAction(cmd, "Delete old API key for user %s?", userID)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Kept the old key: no answer could be read. Delete it with `p202 user apikey delete`, or pass --force (delete) or --keep-old (keep) next time.")
+				} else if !ok {
 					fmt.Fprintln(os.Stderr, "Skipping old key deletion.")
 				} else {
 					if err := c.Delete("users/" + userID + "/api-keys/" + oldAPIKey); err != nil {
@@ -569,9 +630,16 @@ var userIdentityKeyRotateCmd = &cobra.Command{
 		}
 		// A proposal changes nothing until someone applies it, so only a
 		// direct rotate asks first.
-		if !api.StagedMode() && !force && !confirmPrompt("Rotate the identity linking key for user %s? Every cust_sig signed with the current key stops linking.", args[0]) {
-			fmt.Println("Cancelled.")
-			return nil
+		if !api.StagedMode() && !force {
+			ok, err := confirmAction(cmd, "Rotate the identity linking key for user %s? Every cust_sig signed with the current key stops linking.", args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				// stderr: stdout carries data only (TestCancelledDeletesKeepStdoutClean).
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		data, err := c.Post("users/"+args[0]+"/identity-key/rotate", map[string]interface{}{})
 		if err != nil {
@@ -609,48 +677,37 @@ var userPrefsGetCmd = &cobra.Command{
 
 var userPrefsUpdateCmd = &cobra.Command{
 	Use:   "update <user_id>",
-	Short: "Update user preferences",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
-		body := map[string]interface{}{}
-		for _, f := range []string{
-			"user_tracking_domain", "user_account_currency",
-			"user_slack_incoming_webhook", "user_daily_email", "ipqs_api_key",
-		} {
-			if v, _ := cmd.Flags().GetString(f); v != "" {
-				body[f] = v
-			}
-		}
-		if len(body) == 0 {
-			return validationError("no preferences specified; pass at least one flag to update")
-		}
-		data, err := c.Put("users/"+args[0]+"/preferences", body)
-		if err != nil {
-			return err
-		}
-		render(data)
-		return nil
-	},
+	Short: "Update user preferences (profile, report defaults, integration keys, LTV settings)",
+	Long: "Sets the preferences the settings pages set: Personal settings (time zone is on `user update`), the report\n" +
+		"defaults, Integrations' network keys and LTV › Settings. Each value is checked against the page's own choices\n" +
+		"before any request; a free-text value given as \"\" clears it. Changing --user-account-currency re-prices every\n" +
+		"campaign's payout into the new currency, as Personal settings does, through the exchange-rate service.",
+	Example: "  p202 user prefs update 1 --user-daily-email 07 --user-pref-time-predefined last7\n" +
+		"  p202 user prefs update 1 --user-tracking-domain \"\"     # back to this install's own domain\n" +
+		"  p202 user prefs update 1 --user-account-currency EUR",
+	Args: cobra.ExactArgs(1),
+	RunE: runUserPrefsUpdate,
 }
 
 func init() {
 	// User CRUD flags
 	userCreateCmd.Flags().String("user_name", "", "Username (required)")
 	userCreateCmd.Flags().String("user_email", "", "Email (required)")
-	userCreateCmd.Flags().String("user_pass", "", "Password (prompted securely if omitted)")
+	userCreateCmd.Flags().String("user_pass", "", "Password, 8-72 characters (omit it to be asked without echo, or to pipe it on stdin; a value here stays in shell history)")
+	userCreateCmd.Flags().String("user_active", "", "1=active (default), 0=inactive")
+	enumFlag(userCreateCmd, "user_active", newEnum(binaryValues))
 	userCreateCmd.Flags().String("user_fname", "", "First name")
 	userCreateCmd.Flags().String("user_lname", "", "Last name")
 	userCreateCmd.Flags().String("user_timezone", "", "Timezone (default: UTC)")
 
+	userUpdateCmd.Flags().String("user_name", "", "New username (the sign-in name): renames the account, as the Users page does; needs a user you may manage, even yourself")
 	userUpdateCmd.Flags().String("user_fname", "", "First name")
 	userUpdateCmd.Flags().String("user_lname", "", "Last name")
 	userUpdateCmd.Flags().String("user_email", "", "Email")
-	userUpdateCmd.Flags().String("user_pass", "", "New password (prompted securely if flag given without value)")
-	userUpdateCmd.Flags().String("user_timezone", "", "Timezone")
+	userUpdateCmd.Flags().String("user_pass", "", "New password, 8-72 characters (prefer --set-password: a value here stays in shell history)")
+	userUpdateCmd.Flags().Bool("set-password", false, "Set a new password, read without echo: asked twice at a terminal, or one line of piped stdin")
+	userUpdateCmd.Flags().Bool("current-password", false, "Send your current password, which changing your OWN password needs (asked without echo, or the first line of piped stdin)")
+	userUpdateCmd.Flags().String("user_timezone", "", "Time zone, e.g. America/New_York (a PHP time zone name)")
 	userUpdateCmd.Flags().String("user_active", "", "1=active, 0=inactive")
 	enumFlag(userUpdateCmd, "user_active", newEnum(binaryValues))
 
@@ -674,12 +731,7 @@ func init() {
 	userAPIKeyRotateCmd.Flags().Bool("update-config", false, "Update local ~/.p202/config.json with the new API key")
 	userAPIKeyRotateCmd.Flags().Bool("force-config-update", false, "Update local config even if current key does not match old key")
 
-	// Preferences flags
-	userPrefsUpdateCmd.Flags().String("user_tracking_domain", "", "Tracking domain")
-	userPrefsUpdateCmd.Flags().String("user_account_currency", "", "Currency (3-letter code)")
-	userPrefsUpdateCmd.Flags().String("user_slack_incoming_webhook", "", "Slack webhook URL")
-	userPrefsUpdateCmd.Flags().String("user_daily_email", "", "Daily email: on/off")
-	userPrefsUpdateCmd.Flags().String("ipqs_api_key", "", "IPQS fraud detection API key")
+	registerPrefFlags(userPrefsUpdateCmd)
 
 	// Wire up subcommands
 	userRoleCmd.AddCommand(userRoleListCmd, userRoleAssignCmd, userRoleRemoveCmd)

@@ -35,7 +35,7 @@ final class MysqliQueryArgumentOrderTest extends TestCase
     {
         $files = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveCallbackFilterIterator(
-            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+            \Tests\Support\SourceScan::tree($root),
             static fn (\SplFileInfo $file): bool => !in_array($file->getFilename(), self::SKIP_DIRS, true)
         ));
         foreach ($iterator as $file) {

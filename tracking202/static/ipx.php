@@ -1,42 +1,26 @@
 <?php
+
+/**
+ * The impression pixel: answers a transparent 1x1 GIF and records nothing.
+ *
+ * It used to INSERT a row into 202_clicks_impressions and set a p202_ipx
+ * cookie, which the click recorders then used to link the impression to the
+ * click. No installer or upgrade creates that table (it is not in
+ * 202-config/Database/Tables, and NamedTablesExistTest now refuses SQL that
+ * names a table nothing creates), nothing in the product hands out an
+ * ipx.php URL, and nothing reads the table: the INSERT failed on every
+ * request, so no cookie was ever set, and the linking UPDATE failed and
+ * logged on every landing-page click. The writes are gone. The URL still
+ * answers the image, so a pixel embedded somewhere renders as nothing
+ * rather than as a broken image.
+ */
+
 declare(strict_types=1);
-header("content-type: image/gif"); 
+
+header('Content-Type: image/gif');
 header('Content-Length: 43');
 header('Cache-Control: no-cache, no-store, max-age=0, must-revalidate');
 header('Expires: Sun, 03 Feb 2008 05:00:00 GMT'); // Date in the past
-header("Pragma: no-cache");
-header('P3P: CP="Prosper202 does not have a P3P policy"');
+header('Pragma: no-cache');
 
-include_once(substr(__DIR__, 0,-19) . '/202-config/connect2.php'); 
-
-$t202id = $_GET['t202id'] ?? '';
-if (!is_numeric($t202id)) die();
-
-$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
-$time = time();
-$tracker_sql = "SELECT aff_campaign_id,
-					   text_ad_id,
-					   ppc_account_id,
-					   landing_page_id
-				FROM 202_trackers 
-                WHERE tracker_id_public = '".$mysql['tracker_id_public']."'";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-if (!$tracker_row) {
-	die();
-}
-
-$sql = "INSERT INTO 202_clicks_impressions 
- 		SET aff_campaign_id = '".$tracker_row['aff_campaign_id']."',
- 		landing_page_id = '".$tracker_row['landing_page_id']."',
- 		ppc_account_id = '".$tracker_row['ppc_account_id']."',
- 		text_ad_id = '".$tracker_row['text_ad_id']."',
- 		impression_time = '".$time."'";
-// Check the INSERT: on failure insert_id is 0, and writing a p202_ipx=0
-// cookie would bind that meaningless id to the visitor's later click.
-$impression_result = $db->query($sql);
-$ipx_id = $impression_result ? $db->insert_id : 0;
-
-if ($ipx_id > 0) {
-	setcookie("p202_ipx", (string) $ipx_id, ['expires' => $time + (10 * 365 * 24 * 60 * 60), 'path' => '/', 'domain' => (string) $_SERVER['SERVER_NAME']]);
-}
-echo base64_decode("R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
+echo base64_decode('R0lGODlhAQABAIAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');

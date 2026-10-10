@@ -469,6 +469,15 @@ class ReportSummaryForm extends ReportBasicForm
 		if ($gb === 'transaction_key' || $gb === 'goal_source_key') {
 			return $gb;
 		}
+		// c1-c4 group by the value itself, which is text: a value of "0" is
+		// a value. The fold below (NULL or '0' read as none) is for ids,
+		// where 0 means none; applied to a c1 it put every click with c1=0
+		// under "[No c1]" with the clicks that carried no c1 at all. Only
+		// NULL (no tracking row) joins '' (an empty c1) as none, as the
+		// SELECT shows them.
+		if (in_array($gb, ['c1', 'c2', 'c3', 'c4'], true)) {
+			return "IFNULL(2t" . $gb . "." . $gb . ", '')";
+		}
 		switch ($gb) {
 			case 'ppc_network_id':
 				$gb = '2pn.' . $gb;
@@ -488,22 +497,6 @@ class ReportSummaryForm extends ReportBasicForm
 				$gb = '2c.' . $gb;
 				$groupby_null = '0';
 				break;
-			case 'c1':
-				$gb = '2tc1.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c2':
-				$gb = '2tc2.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c3':
-				$gb = '2tc3.' . $gb;
-				$groupby_null = '0';
-				break;
-			case 'c4':
-				$gb = '2tc4.' . $gb;
-				$groupby_null = '0';
-				break;
 			case 'utm_campaign_id':
 			case 'utm_content_id':
 			case 'utm_medium_id':
@@ -516,6 +509,25 @@ class ReportSummaryForm extends ReportBasicForm
 				}
 			case 'transaction_id':
 				$groupby_null = '';
+				break;
+			// A redirector, rule and redirect group by the joined row, the id
+			// the SELECT names them by. Grouped by the click's own id (the
+			// bare name resolves to 2c's column), a click naming another
+			// account's redirector, or one removed since, made a second group
+			// whose selected id was as empty as the none group's, and one of
+			// the two replaced the other in the tree: its clicks vanished from
+			// the report. Now both are the none group, counted (CLAUDE.md #27).
+			case 'rotator_id':
+				$gb = '2rt.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_id':
+				$gb = '2rr.id';
+				$groupby_null = '0';
+				break;
+			case 'rule_redirect_id':
+				$gb = '2rrr.id';
+				$groupby_null = '0';
 				break;
 			default:
 				$groupby_null = '0';
@@ -565,11 +577,9 @@ class ReportSummaryForm extends ReportBasicForm
 		$database = DB::getInstance();
 		$db = $database->getConnection();
 
-		if (isset($_SESSION['publisher']) && $_SESSION['publisher'] == false) { //user is able to see all camapigns
-			$user_id_query = " != '0' ";
-		} else {
-			$user_id_query = " = '" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-		}
+		// Whose clicks: the rule every report page reads (DataScope).
+		$dataUserId = \Prosper202\DataEngine\DataScope::userId();
+		$user_id_query = $dataUserId === null ? " != '0' " : " = '" . $dataUserId . "' ";
 
 		$info_sql = '';
 		//select regular setup
@@ -744,14 +754,14 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C3)) {
 			$info_sql .= "
-            2c.c3_id,
-			IF(c3 is null or c3 = '0', '', c3) AS c3,
+			IF(2tc3.c3 is null, '', 2tc3.c3) AS c3,
+			IF(2c.c3_id is null or 2c.c3_id= '0', '', 2c.c3_id) AS c3_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_C4)) {
 			$info_sql .= "
-			2c.c4_id,
-			IF(c4 is null or c4 = '0', '', c4) AS c4,
+			IF(2tc4.c4 is null, '', 2tc4.c4) AS c4,
+			IF(2c.c4_id is null or 2c.c4_id= '0', '', 2c.c4_id) AS c4_id,
 			";
 		}
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
@@ -804,7 +814,6 @@ class ReportSummaryForm extends ReportBasicForm
 				SUM(IF($whole, 2c.clicks, 0)) AS clicks,
 				SUM(IF($whole, 2c.click_out, 0)) AS click_out,
 				SUM(IF($whole, 2c.leads, 0)) AS leads,
-				2ac.aff_campaign_payout AS payout,
 				SUM(IF(lcp.conv_id IS NULL, 2c.income, lcp.amount)) AS income,
 				SUM(IF($whole, 2c.cost, 0)) AS cost
 			";
@@ -813,7 +822,6 @@ class ReportSummaryForm extends ReportBasicForm
 				SUM(2c.clicks) AS clicks,
 				SUM(2c.click_out) AS click_out,
 				SUM(2c.leads) AS leads,
-				2ac.aff_campaign_payout AS payout,
 				SUM(2c.income) AS income,
 				SUM(2c.cost) AS cost
 			";
@@ -823,44 +831,43 @@ class ReportSummaryForm extends ReportBasicForm
 			FROM
 				202_dataengine AS 2c";
 
+		// Every account-owned record is named only within the click's own
+		// account (CLAUDE.md #27): a click naming another account's campaign,
+		// source, landing page, text ad or redirector is still counted, in the
+		// unnamed group, as ReportsController::dimensionJoin() reads it. A rule
+		// and its redirect have no user_id; they are the account's through
+		// their redirector.
 		$info_sql .= "
-			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id)
+			LEFT OUTER JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)
 		";
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_ACCOUNT) || $user_row['user_pref_ppc_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)";
 
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_PPC_NETWORK) || $user_row['user_pref_ppc_network_id']) {
-				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id)";
+				$info_sql .= "LEFT OUTER JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id)";
 			}
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_AFFILIATE_NETWORK) || $user_row['user_pref_aff_network_id']) {
-			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id AND 2an.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_LANDING_PAGE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2c.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2c.user_id)";
 		}
 
-		if ($user_row['user_pref_keyword']) {
-			$mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-			$info_sql .= "INNER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id AND 2k.keyword LIKE '%" . $mysql['user_pref_keyword'] . "%')";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
+		// The keyword, referer and IP filters are WHERE terms (TextFilterSql,
+		// below), not joins.
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_KEYWORD)) {
 			$info_sql .= "LEFT OUTER JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_TEXT_AD)) {
-			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id)";
+			$info_sql .= "LEFT OUTER JOIN 202_text_ads AS 2ta ON (2c.text_ad_id = 2ta.text_ad_id AND 2ta.user_id = 2c.user_id)";
 		}
 
-		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT) || $user_row['user_pref_referer']) {
-			if ($user_row['user_pref_referer']) {
-				$mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2ru ON (2ru.site_url_address = '" . $mysql['user_pref_referer'] . "')";
-				$info_sql .= "INNER JOIN 202_clicks_site AS 2cs ON (2cs.click_referer_site_url_id = 2ru.site_url_id AND 2c.click_referer_site_url_id = 2cs.click_referer_site_url_id)";
-			}
-
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER) || $this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REDIRECT)) {
 			if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_REFERER)) {
 				$info_sql .= "LEFT OUTER JOIN 202_site_urls AS 2suf ON (2c.click_referer_site_url_id = 2suf.site_url_id)";
 			}
@@ -901,15 +908,7 @@ class ReportSummaryForm extends ReportBasicForm
 			$info_sql .= "LEFT OUTER JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id)";
 		}
 
-		if ($user_row['user_pref_ip']) {
-			$mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-
-			$ip_address = (ipAddress($mysql['user_pref_ip']));
-			$mysql['ip_id'] = $db->real_escape_string(INDEXES::get_ip_id($ip_address));
-
-			$info_sql .= "INNER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id AND 2c.ip_id ='" . $mysql['ip_id'] . "')";
-			$info_sql .= "INNER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
-		} else if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
+		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "LEFT OUTER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)";
 			$info_sql .= "LEFT OUTER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
 		}
@@ -951,15 +950,15 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotators AS 2rt ON (2c.rotator_id = 2rt.id AND 2rt.user_id = 2c.user_id)";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules AS 2rr ON (2c.rule_id = 2rr.id AND 2rr.rotator_id IN (SELECT own_ro.id FROM 202_rotators AS own_ro WHERE own_ro.user_id = 2c.user_id))";
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_ROTATOR_RULE_REDIRECT)) {
-			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id)";
+			$info_sql .= "LEFT OUTER JOIN 202_rotator_rules_redirects AS 2rrr ON (2c.rule_redirect_id = 2rrr.id AND 2rrr.rule_id IN (SELECT own_rr.id FROM 202_rotator_rules AS own_rr INNER JOIN 202_rotators AS own_rro ON (own_rro.id = own_rr.rotator_id) WHERE own_rro.user_id = 2c.user_id))";
 		}
 
 		if ($ledgerLevel) {
@@ -989,6 +988,17 @@ class ReportSummaryForm extends ReportBasicForm
 		}
 
 		$info_sql .= \Prosper202\DataEngine\UserPrefFilters::showFilter((string)($user_row['user_pref_show'] ?? ''), '2c.');
+		// Referer, keyword and IP, as every report and the API read them.
+		// This report matched the keyword as a LIKE pattern, the referer only
+		// when it was the whole URL and through a join that paired each click
+		// with every click sharing its referer, and the address through its
+		// first 202_ips row and an inner join to 202_ips_v6 that no IPv4
+		// address has: an IPv4 filter showed nothing.
+		$info_sql .= \Prosper202\DataEngine\TextFilterSql::where(
+			$user_row,
+			'2c',
+			static fn (string $text): string => $db->real_escape_string($text)
+		);
 		if ($user_row['user_pref_country_id']) {
 			$mysql['user_pref_country_id'] = $db->real_escape_string($user_row['user_pref_country_id']);
 			$info_sql .= "
@@ -1071,7 +1081,7 @@ class ReportSummaryForm extends ReportBasicForm
 				AND 2c.ppc_account_id='" . $mysql['user_pref_ppc_account_id'] . "'
 			";
 		} else if ($user_row['user_pref_ppc_network_id'] == '16777215') {
-			$info_sql .= " AND 2c.ppc_network_id IS NULL ";
+			$info_sql .= ' AND ' . \Prosper202\DataEngine\NoTrafficSource::condition('2c.ppc_network_id') . ' ';
 		} else if ($user_row['user_pref_ppc_network_id'] != '0' && !empty($user_row['user_pref_ppc_network_id'])) {
 			$info_sql .= " AND 2pn.ppc_network_id=" . $user_row['user_pref_ppc_network_id'] . " ";
 			$info_sql .= " AND 2pn.ppc_network_deleted = 0 ";
@@ -3723,15 +3733,20 @@ class ReportSummaryTotalForm
 	}
 
 	/**
-	 * Returns the payout
-	 * @return integer
+	 * The payout: income per lead, from this group's own sums, as the Analyze
+	 * reports compute it. The query selected one campaign's payout outside
+	 * its GROUP BY, which is whichever row the server read first, and a
+	 * parent group kept whatever its last child row set.
+	 *
+	 * @return float|int
 	 */
 	function getPayout()
 	{
-		if (is_null($this->payout)) {
-			$this->payout = 0;
+		$leads = (float) $this->getLeads();
+		if ($leads != 0) {
+			return (float) $this->getIncome() / $leads;
 		}
-		return $this->payout;
+		return 0;
 	}
 
 	/**
@@ -4801,6 +4816,46 @@ class ReportSummaryTotalForm
 	function setC2($arg0)
 	{
 		$this->c2 = htmlspecialchars((string) $arg0, ENT_QUOTES);
+	}
+
+	/**
+	 * Returns the c3_id
+	 * @return integer
+	 */
+	function getC3Id()
+	{
+		if (is_null($this->c3_id) || $this->c3_id == '') {
+			$this->c3_id = 0;
+		}
+		return $this->c3_id;
+	}
+
+	/**
+	 * Sets the c3_id
+	 */
+	function setC3Id($arg0)
+	{
+		$this->c3_id = $arg0;
+	}
+
+	/**
+	 * Returns the c4_id
+	 * @return integer
+	 */
+	function getC4Id()
+	{
+		if (is_null($this->c4_id) || $this->c4_id == '') {
+			$this->c4_id = 0;
+		}
+		return $this->c4_id;
+	}
+
+	/**
+	 * Sets the c4_id
+	 */
+	function setC4Id($arg0)
+	{
+		$this->c4_id = $arg0;
 	}
 
 	/**

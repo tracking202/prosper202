@@ -56,10 +56,7 @@ final class EventsController
     /** @param array<string, mixed> $payload */
     public function create(array $payload): array
     {
-        $unknown = array_diff(array_map('strval', array_keys($payload)), ['click_id', 'events']);
-        if ($unknown !== []) {
-            throw new ValidationException('Unknown field', array_fill_keys(array_values($unknown), 'is not accepted here (accepted: click_id, events)'));
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['click_id', 'events'], 'an events body');
         $clickId = self::clickId($payload['click_id'] ?? null);
         $raw = $payload['events'] ?? null;
         if (!is_array($raw) || !array_is_list($raw) || $raw === [] || count($raw) > self::MAX_EVENTS) {
@@ -74,7 +71,7 @@ final class EventsController
         $events = [];
         $errors = [];
         foreach ($raw as $i => $e) {
-            $path = 'events[' . $i . ']';
+            $path = 'events.' . $i;
             if (!is_array($e) || ($e !== [] && array_is_list($e))) {
                 $errors[$path] = 'must be an object';
                 continue;

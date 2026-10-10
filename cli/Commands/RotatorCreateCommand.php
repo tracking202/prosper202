@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\OptionName;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -19,9 +20,9 @@ class RotatorCreateCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Create a new rotator')
             ->addOption('name', null, InputOption::VALUE_REQUIRED, 'Rotator name (required)')
-            ->addOption('default_url', null, InputOption::VALUE_REQUIRED, 'Default redirect URL')
-            ->addOption('default_campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
-            ->addOption('default_lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
+            ->addOption('default-url', null, InputOption::VALUE_REQUIRED, 'Default redirect URL')
+            ->addOption('default-campaign', null, InputOption::VALUE_REQUIRED, 'Default campaign ID')
+            ->addOption('default-lp', null, InputOption::VALUE_REQUIRED, 'Default landing page ID');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
@@ -34,7 +35,7 @@ class RotatorCreateCommand extends BaseCommand
 
         $body = ['name' => $name];
         foreach (['default_url', 'default_campaign', 'default_lp'] as $f) {
-            $val = $input->getOption($f);
+            $val = $input->getOption(OptionName::of($f));
             if ($val !== null) {
                 $body[$f] = $val;
             }

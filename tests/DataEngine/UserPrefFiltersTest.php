@@ -37,7 +37,7 @@ final class UserPrefFiltersTest extends TestCase
 
     public function testDefaultPrefsProduceEmptyFilterAndFirstPage(): void
     {
-        $result = UserPrefFilters::build($this->prefs(), 0, false);
+        $result = UserPrefFilters::build($this->prefs(), 0, false, self::escape(...));
 
         self::assertSame('', $result['join']);
         self::assertSame('', $result['filter']);
@@ -46,21 +46,21 @@ final class UserPrefFiltersTest extends TestCase
 
     public function testDownloadsAreNotPaginated(): void
     {
-        $result = UserPrefFilters::build($this->prefs(), 3, true);
+        $result = UserPrefFilters::build($this->prefs(), 3, true, self::escape(...));
 
         self::assertSame('', $result['limit']);
     }
 
     public function testOffsetIsMultipliedByPageSize(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_limit' => '25']), 2, false);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_limit' => '25']), 2, false, self::escape(...));
 
         self::assertSame(' Limit 50,25', $result['limit']);
     }
 
     public function testShowRealClicksFilter(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_show' => 'real']), 0, false);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_show' => 'real']), 0, false, self::escape(...));
 
         self::assertSame(" AND click_filtered='0' ", $result['filter']);
     }
@@ -72,7 +72,8 @@ final class UserPrefFiltersTest extends TestCase
         $result = UserPrefFilters::build(
             $this->prefs(['user_pref_show' => 'leads', 'user_pref_subid' => '777']),
             0,
-            false
+            false,
+            self::escape(...)
         );
 
         self::assertSame(" AND click_lead!='0' ", $result['filter']);
@@ -80,7 +81,7 @@ final class UserPrefFiltersTest extends TestCase
 
     public function testSubidFilterSurvivesShowAll(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_subid' => '777']), 0, false);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_subid' => '777']), 0, false, self::escape(...));
 
         self::assertSame(' AND 2st.click_id=777', $result['filter']);
     }
@@ -94,7 +95,8 @@ final class UserPrefFiltersTest extends TestCase
                 'user_pref_aff_campaign_id' => '9',
             ]),
             0,
-            false
+            false,
+            self::escape(...)
         );
 
         self::assertStringContainsString(' AND 2st.browser_id=4', $result['filter']);
@@ -104,7 +106,7 @@ final class UserPrefFiltersTest extends TestCase
 
     public function testDeviceFilterUsesDeviceTypeSubquery(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_device_id' => '2']), 0, false);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_device_id' => '2']), 0, false, self::escape(...));
 
         self::assertSame(
             ' AND 2st.device_id in (select device_id from 202_device_models where device_type=2)',
@@ -114,54 +116,67 @@ final class UserPrefFiltersTest extends TestCase
 
     public function testNoTrafficSourceSentinelFiltersForNull(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_ppc_network_id' => '16777215']), 0, false);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_ppc_network_id' => '16777215']), 0, false, self::escape(...));
 
-        self::assertSame(' AND 2st.ppc_network_id IS NULL', $result['filter']);
+        self::assertSame(' AND (2st.ppc_network_id IS NULL OR 2st.ppc_network_id = 0)', $result['filter']);
     }
 
     public function testMethodOfPromotionFilters(): void
     {
-        $directLink = UserPrefFilters::build($this->prefs(['user_pref_method_of_promotion' => 'directlink']), 0, false);
-        $landingPage = UserPrefFilters::build($this->prefs(['user_pref_method_of_promotion' => 'landingpage']), 0, false);
+        $directLink = UserPrefFilters::build($this->prefs(['user_pref_method_of_promotion' => 'directlink']), 0, false, self::escape(...));
+        $landingPage = UserPrefFilters::build($this->prefs(['user_pref_method_of_promotion' => 'landingpage']), 0, false, self::escape(...));
 
         self::assertSame(' AND 2st.landing_page_id = 0', $directLink['filter']);
         self::assertSame(' AND 2st.landing_page_id != 0', $landingPage['filter']);
     }
 
-    public function testKeywordPreferenceAddsJoinAndLikeFilter(): void
+    /** A stand-in for the connection's real_escape_string: quotes and backslashes. */
+    private static function escape(string $text): string
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_keyword' => 'shoes']), 0, false);
-
-        self::assertSame(' LEFT OUTER JOIN 202_keywords AS 2k ON (2k.keyword_id=2st.keyword_id) ', $result['join']);
-        self::assertSame(" AND 2k.keyword like '%shoes%'", $result['filter']);
+        return addcslashes($text, "\\'\"\0");
     }
 
-    public function testResolvedIpFilter(): void
+    public function testKeywordIsASubqueryWithItsLikeMetacharactersEscaped(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => '1.2.3.4']), 0, false, '42');
+        $result = UserPrefFilters::build($this->prefs(['user_pref_keyword' => "50% o'ff_"]), 0, false, self::escape(...));
 
-        self::assertSame(' AND 2st.ip_id=42', $result['filter']);
+        self::assertSame('', $result['join'], 'no join: the keyword report owns the 2k alias');
+        self::assertSame(
+            " AND (2st.keyword_id IN (SELECT k.keyword_id FROM 202_keywords k WHERE k.keyword LIKE '%50!% o\\'ff!_%' ESCAPE '!'))",
+            $result['filter']
+        );
     }
 
-    public function testUnresolvedIpFilterForcesEmptyResultSet(): void
+    public function testIpIsEveryStoredRowForTheAddress(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => '1.2.3.4']), 0, false, null);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => ' 1.2.3.4 ']), 0, false, self::escape(...));
 
-        self::assertSame(" AND 0=1", $result['filter']);
+        self::assertSame(" AND (2st.ip_id IN (SELECT i.ip_id FROM 202_ips i WHERE i.ip_address = '1.2.3.4'))", $result['filter']);
     }
 
-    public function testResolvedRefererFilterUsesInList(): void
+    public function testAnIpv6AddressIsComparedPacked(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_referer' => 'example.com']), 0, false, null, '5,9');
+        $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => '2001:DB8::7']), 0, false, self::escape(...));
 
-        self::assertSame(' AND 2st.click_referer_site_url_id in (5,9)', $result['filter']);
+        self::assertStringContainsString("WHERE i6.ip_address = X'20010db8000000000000000000000007')", $result['filter']);
     }
 
-    public function testUnresolvedRefererFilterForcesEmptyResultSet(): void
+    public function testAnIpThatIsNotOneMatchesNothing(): void
     {
-        $result = UserPrefFilters::build($this->prefs(['user_pref_referer' => 'example.com']), 0, false, null, null);
+        $result = UserPrefFilters::build($this->prefs(['user_pref_ip' => '10.0.0']), 0, false, self::escape(...));
 
-        self::assertSame(" AND 0=1", $result['filter']);
+        self::assertSame(' AND 0=1', $result['filter']);
+    }
+
+    public function testRefererIsASubqueryOverTheWholeUrl(): void
+    {
+        $result = UserPrefFilters::build($this->prefs(['user_pref_referer' => 'deals_2026']), 0, false, self::escape(...));
+
+        self::assertSame(
+            " AND (2st.click_referer_site_url_id IN (SELECT su.site_url_id FROM 202_site_urls su WHERE su.site_url_address LIKE '%deals!_2026%' ESCAPE '!'))",
+            $result['filter']
+        );
+        self::assertStringNotContainsStringIgnoringCase('group_concat', $result['filter']);
     }
 
     public function testShowFilterMapping(): void

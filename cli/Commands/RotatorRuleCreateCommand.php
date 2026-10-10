@@ -20,17 +20,17 @@ class RotatorRuleCreateCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Add a rule to a rotator')
             ->addArgument('rotator_id', InputArgument::REQUIRED, 'Rotator ID')
-            ->addOption('rule_name', null, InputOption::VALUE_REQUIRED, 'Rule name (required)')
+            ->addOption('rule-name', null, InputOption::VALUE_REQUIRED, 'Rule name (required)')
             ->addOption('splittest', null, InputOption::VALUE_REQUIRED, 'Enable split test (0|1)', '0')
-            ->addOption('criteria_json', null, InputOption::VALUE_REQUIRED, 'Criteria as JSON array: [{"type":"country","statement":"is","value":"US"}]')
-            ->addOption('redirects_json', null, InputOption::VALUE_REQUIRED, 'Redirects as JSON array: [{"redirect_url":"...","weight":"50","name":"Variant A"}]');
+            ->addOption('criteria-json', null, InputOption::VALUE_REQUIRED, 'Criteria as JSON array: [{"type":"country","statement":"is","value":"US"}]')
+            ->addOption('redirects-json', null, InputOption::VALUE_REQUIRED, 'Redirects as JSON array: [{"redirect_url":"...","weight":"50","name":"Variant A"}]');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $ruleName = $input->getOption('rule_name');
+        $ruleName = $input->getOption('rule-name');
         if (!$ruleName) {
-            $output->writeln('<error>--rule_name is required</error>');
+            $output->writeln('<error>--rule-name is required</error>');
             return Command::FAILURE;
         }
 
@@ -40,13 +40,13 @@ class RotatorRuleCreateCommand extends BaseCommand
         ];
 
         // decodeJsonOption rejects malformed JSON AND scalar values — a scalar
-        // like --criteria_json='"country is US"' would previously be sent to
+        // like --criteria-json='"country is US"' would previously be sent to
         // the server, silently dropped, and the rule created with no criteria.
-        $criteria = $this->decodeJsonOption($input, 'criteria_json');
+        $criteria = $this->decodeJsonOption($input, 'criteria-json');
         if ($criteria !== null) {
             $body['criteria'] = $criteria;
         }
-        $redirects = $this->decodeJsonOption($input, 'redirects_json');
+        $redirects = $this->decodeJsonOption($input, 'redirects-json');
         if ($redirects !== null) {
             $body['redirects'] = $redirects;
         }

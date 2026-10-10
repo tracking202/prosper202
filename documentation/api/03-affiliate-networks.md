@@ -17,7 +17,7 @@ Manage networks.
 
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
-| `aff_network_name` | string | Yes | Network name (max 255) |
+| `aff_network_name` | string | Yes | Network name (max 50) |
 | `dni_network_id` | integer | No | Direct Network Integration ID |
 
 Auto-generated on create: `aff_network_time` (unix timestamp).

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -230,7 +229,7 @@ func TestRecoverCommandContextDetectsAgent(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"campaign", "get", "--table"},
-		{"campaign", "get", "--raw_headers"},
+		{"campaign", "get", "--raw-headers"},
 		{"campaign", "get", "--fields=aff_campaign_id"},
 	} {
 		activeCommandPath, jsonOutput, ndjsonOutput = "", false, false
@@ -426,7 +425,7 @@ func TestAgentMarkersAreDocumented(t *testing.T) {
 			t.Errorf("p202 --help does not mention %s", name)
 		}
 	}
-	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "cli-agent.md"))
+	doc, err := os.ReadFile(repoPath("docs", "cli-agent.md"))
 	if err != nil {
 		t.Fatalf("reading docs/cli-agent.md: %v", err)
 	}

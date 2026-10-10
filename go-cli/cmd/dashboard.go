@@ -51,14 +51,9 @@ var dashboardCmd = &cobra.Command{
 func init() {
 	dashboardCmd.Flags().StringP("period", "p", "", "Period (default today)")
 	enumFlag(dashboardCmd, "period", newEnum(reportPeriods))
-	dashboardCmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	dashboardCmd.Flags().String("time_to", "", "End timestamp (unix)")
-	dashboardCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
-	dashboardCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
-	dashboardCmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
-	dashboardCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
-	dashboardCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
-	dashboardCmd.Flags().String("country_id", "", "Filter by country ID")
+	dashboardCmd.Flags().String("time_from", "", timeFromHelp)
+	dashboardCmd.Flags().String("time_to", "", timeToHelp)
+	addReportFilterFlags(dashboardCmd)
 	addMultiProfileFlags(dashboardCmd)
 
 	rootCmd.AddCommand(dashboardCmd)

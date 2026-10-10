@@ -34,6 +34,7 @@ type convImportFake struct {
 	ledgerHidden  map[int64]bool  // GET shows no conversions for the click
 	getStatus     map[int64]int   // GET answers this status
 	noLedgerRoute bool            // GET /clicks/{id}/conversions is not a route (older server)
+	stringAmounts bool            // amounts are numeric strings, as servers before 1.9.76's numbers sent them
 	// unflagged answers a duplicate as though it were new, and a repeat of a deleted
 	// conversion with the 500 that hid it (servers before the duplicate flag).
 	unflagged bool
@@ -50,12 +51,20 @@ type fakeImportConv struct {
 	reverses int64
 	deleted  bool
 	amount   string
+	convTime int64
 }
 
 type convImportPost struct {
 	Key    string
 	Staged bool
 	Body   map[string]interface{}
+}
+
+// sameFakeAmount compares a posted payout with a stored amount as Amount::toUnits does.
+func sameFakeAmount(posted interface{}, stored string) bool {
+	a, _, okA := parseImportAmount(fmt.Sprint(posted))
+	b, _, okB := parseImportAmount(stored)
+	return okA && okB && a == b
 }
 
 func newConvImportFake(clicks ...int64) *convImportFake {
@@ -66,6 +75,15 @@ func newConvImportFake(clicks ...int64) *convImportFake {
 		f.clicks[c] = &fakeImportClick{}
 	}
 	return f
+}
+
+// money is an amount as the server sends it: a JSON number (ConversionsController::present(),
+// ClicksController::conversions()), or with stringAmounts the numeric string older servers sent.
+func (f *convImportFake) money(amount string) interface{} {
+	if _, err := strconv.ParseFloat(amount, 64); err != nil || f.stringAmounts {
+		return amount
+	}
+	return json.Number(amount)
 }
 
 func (f *convImportFake) conversions() int {
@@ -113,12 +131,15 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 					if amount == "" {
 						amount = "5.00000"
 					}
-					row := map[string]interface{}{"conv_id": cv.id, "click_id": id, "amount": amount, "deleted": cv.deleted, "transaction_id": nil, "reverses_conv_id": nil}
+					row := map[string]interface{}{"conv_id": cv.id, "click_id": id, "amount": f.money(amount), "deleted": cv.deleted, "transaction_id": nil, "reverses_conv_id": nil}
 					if cv.txid != "" {
 						row["transaction_id"] = cv.txid
 					}
 					if cv.reverses != 0 {
 						row["reverses_conv_id"] = cv.reverses
+					}
+					if cv.convTime != 0 {
+						row["conv_time"] = cv.convTime
 					}
 					rows = append(rows, row)
 				}
@@ -171,7 +192,7 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				payout = p
 			}
 			answer := func(id int64, duplicate bool) {
-				resp := map[string]interface{}{"data": map[string]interface{}{"conv_id": id, "click_id": click, "click_payout": payout, "transaction_id": txid, "source": "api"}}
+				resp := map[string]interface{}{"data": map[string]interface{}{"conv_id": id, "click_id": click, "click_payout": f.money(payout), "transaction_id": txid, "source": "api"}}
 				if duplicate && !f.unflagged {
 					resp["duplicate"] = true
 				}
@@ -207,6 +228,12 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 						w.WriteHeader(409)
 						fmt.Fprintf(w, `{"error":true,"message":"Conversion %d on click %d had transaction id \"%s\" and was deleted.","status":409,"details":{"conv_id":%d,"click_id":%d,"deleted":true}}`,
 							cv.id, click, txid, cv.id, click)
+					case cv.amount != "" && body["payout"] != nil && !sameFakeAmount(body["payout"], cv.amount):
+						// ConversionsController::refuseADifferentSale(): the transaction id located
+						// the conversion, and the request states another payout.
+						w.WriteHeader(422)
+						fmt.Fprintf(w, `{"error":true,"message":"The sale with transaction_id \"%s\" on click %d is already recorded as conversion %d, and this request states a different sale (payout recorded %s, sent %v). Nothing was recorded.","status":422,"field_errors":{"transaction_id":"Already recorded as conversion %d with a different payout; a different sale needs its own transaction_id"}}`,
+							txid, click, cv.id, cv.amount, body["payout"], cv.id)
 					default:
 						answer(cv.id, true)
 					}
@@ -365,13 +392,22 @@ func TestConversionImportReadsJSONArrays(t *testing.T) {
 
 func TestConversionImportSniffsSemicolonDelimiter(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	file := writeImportFile(t, "export.csv", "subid;payout\n12345;4,50\n")
+	file := writeImportFile(t, "export.csv", "subid;payout\n12345;4.50\n12346;4,50\n")
 	stdout, _, err := executeCommand("conversion", "import", file, "--dry-run", "--json")
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
-	// A comma is a thousands separator to the server's amount parser, so "4,50" is 450.
-	if r := decodeImport(t, stdout).Data[0]; r.ClickID != 12345 || r.Payout != "450.00" {
+	rows := decodeImport(t, stdout).Data
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r := rows[0]; r.ClickID != 12345 || r.Payout != "4.50" {
+		t.Errorf("row = %+v", r)
+	}
+	// A semicolon file is often a decimal-comma one. This test read "4,50" as 450, as the server's
+	// parser then did; a comma is a thousands separator only between groups of three digits, so
+	// the row is refused rather than sent at a hundred times its payout.
+	if r := rows[1]; r.ClickID != 12346 || r.Status != importInvalid || r.Reason != `payout "4,50" is not a number` {
 		t.Errorf("row = %+v", r)
 	}
 }
@@ -473,7 +509,7 @@ func TestConversionImportDryRunSendsNothing(t *testing.T) {
 
 func TestConversionImportDryRunCheckClicksReadsOnly(t *testing.T) {
 	f := newConvImportFake(100, 101)
-	f.clicks[101].convs = []fakeImportConv{{id: 55, txid: "T9"}}
+	f.clicks[101].convs = []fakeImportConv{{id: 55, txid: "T9", amount: "10.00000"}}
 	f.clicks[101].lead = true
 	setupConvImportFake(t, f)
 	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n101,10,T9\n404,10,T2\n100,1,T3\n")
@@ -561,13 +597,13 @@ func TestConversionImportKeysAreStableAndPerRow(t *testing.T) {
 
 func TestConversionImportMapsEveryOutcome(t *testing.T) {
 	f := newConvImportFake(100, 101, 102, 103, 104, 105, 106, 107)
-	f.clicks[101].convs = []fakeImportConv{{id: 55, txid: "T2"}}
+	f.clicks[101].convs = []fakeImportConv{{id: 55, txid: "T2", amount: "10.00000"}}
 	f.clicks[102].lead = true
 	f.postNotFound[103] = true
 	f.failPost[104] = true
 	f.clicks[105].convs = []fakeImportConv{{id: 77, txid: "OTHER"}}
 	f.postReturns[105] = 77
-	f.clicks[106].convs = []fakeImportConv{{id: 60, txid: "T6"}, {id: 61, txid: "T6", reverses: 60}}
+	f.clicks[106].convs = []fakeImportConv{{id: 60, txid: "T6", amount: "10.00000"}, {id: 61, txid: "T6", reverses: 60, amount: "-10.00000"}}
 	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", deleted: true}}
 	setupConvImportFake(t, f)
 	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n"+
@@ -643,7 +679,7 @@ func TestConversionImportMapsEveryOutcome(t *testing.T) {
 // conversion recorded between the read and the write, or one the read missed.
 func TestConversionImportTrustsTheServersDuplicateFlag(t *testing.T) {
 	f := newConvImportFake(100, 101, 102)
-	f.clicks[100].convs = []fakeImportConv{{id: 55, txid: "T1"}}
+	f.clicks[100].convs = []fakeImportConv{{id: 55, txid: "T1", amount: "10.00000"}}
 	f.clicks[101].convs = []fakeImportConv{{id: 56, txid: "T2", deleted: true}}
 	f.ledgerHidden[100], f.ledgerHidden[101] = true, true
 	setupConvImportFake(t, f)
@@ -669,6 +705,58 @@ func TestConversionImportTrustsTheServersDuplicateFlag(t *testing.T) {
 	}
 	if s := res.Meta.Summary; s["created"] != float64(1) || s["duplicate"] != float64(2) || s["payout_imported"] != "3.00" {
 		t.Errorf("summary = %v, want only T3's 3.00 imported", s)
+	}
+}
+
+// A transaction id the click already has is that sale again only when the row states what was
+// recorded. A corrected payout or time under it was reported duplicate and dropped; it is a
+// conflict, never sent, and the import exits 5 naming what to do. A row the read could not see
+// is refused by the server and lands as a conflict too.
+func TestConversionImportReportsADifferentSaleAsAConflict(t *testing.T) {
+	f := newConvImportFake(100, 101, 102, 103)
+	f.clicks[100].convs = []fakeImportConv{{id: 55, txid: "T1", amount: "10.00000"}}
+	f.clicks[101].convs = []fakeImportConv{{id: 56, txid: "T2", amount: "10.00000", convTime: 1770127500}}
+	f.clicks[102].convs = []fakeImportConv{{id: 57, txid: "T3", amount: "10.00000"}}
+	f.clicks[103].convs = []fakeImportConv{{id: 58, txid: "T4", amount: "10.00000"}}
+	f.ledgerHidden[103] = true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id,date\n"+
+		"100,12.50,T1,\n"+ // 2 conflict: another payout
+		"101,10,T2,1770131100\n"+ // 3 conflict: another time
+		"102,10.00,T3,\n"+ // 4 duplicate: the payout recorded, written another way
+		"103,11,T4,\n") // 5 conflict: the server's refusal
+
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err == nil {
+		t.Fatal("a conflict must fail the command: the file states money that was not recorded")
+	}
+	if code := exitCodeForError(err); code != ExitPartialFailure {
+		t.Errorf("exit code = %d, want %d", code, ExitPartialFailure)
+	}
+	if h := hintFor(err); !strings.Contains(h, "--status reversed") || !strings.Contains(h, "p202 click conversions") {
+		t.Errorf("hint = %q", h)
+	}
+	rows := importByRow(decodeImport(t, stdout))
+	want := map[int]struct {
+		status, reason string
+		conv           int64
+	}{
+		2: {importConflict, "payout recorded 10.00, this row 12.50", 55},
+		3: {importConflict, "conv_time recorded 1770127500, this row 1770131100", 56},
+		4: {importDuplicate, "same transaction id", 57},
+		5: {importConflict, "Already recorded as conversion 58", 0},
+	}
+	for n, w := range want {
+		r := rows[n]
+		if r.Status != w.status || !strings.Contains(r.Reason, w.reason) || r.ConvID != w.conv {
+			t.Errorf("row %d = %+v, want %s (%q, conv %d)", n, r, w.status, w.reason, w.conv)
+		}
+	}
+	if len(f.posts) != 1 || f.posts[0].Body["click_id"] != float64(103) {
+		t.Errorf("POSTs = %+v, want only the row the read could not see", f.posts)
+	}
+	if f.conversions() != 4 {
+		t.Errorf("conversions = %d, want the 4 seeded and nothing recorded", f.conversions())
 	}
 }
 
@@ -701,7 +789,7 @@ func TestConversionCreateOfADeletedTransactionIDIsExplained(t *testing.T) {
 	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", deleted: true}}
 	setupConvImportFake(t, f)
 
-	_, _, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T7")
+	_, _, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T7")
 	if err == nil {
 		t.Fatal("a deleted conversion's transaction id must be refused")
 	}
@@ -713,6 +801,28 @@ func TestConversionCreateOfADeletedTransactionIDIsExplained(t *testing.T) {
 	}
 	if h := hintFor(err); !strings.Contains(h, "never recorded again") || !strings.Contains(h, "p202 click conversions") || strings.Contains(h, "instead of creating") {
 		t.Errorf("hint = %q", h)
+	}
+}
+
+// `conversion create` of a transaction id the click has with another payout is refused (422
+// naming transaction_id), and the hint says what a re-send and a different sale each need.
+func TestConversionCreateOfADifferentSaleIsExplained(t *testing.T) {
+	f := newConvImportFake(107)
+	f.clicks[107].convs = []fakeImportConv{{id: 62, txid: "T7", amount: "10.00000"}}
+	setupConvImportFake(t, f)
+
+	_, _, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T7", "--payout", "20")
+	if err == nil {
+		t.Fatal("a different sale under a recorded transaction id must be refused")
+	}
+	if code := exitCodeForError(err); code != ExitValidation {
+		t.Errorf("exit code = %d, want %d", code, ExitValidation)
+	}
+	if h := hintFor(err); !strings.Contains(h, "p202 click conversions") || !strings.Contains(h, "--status reversed") {
+		t.Errorf("hint = %q", h)
+	}
+	if f.conversions() != 1 {
+		t.Errorf("conversions = %d, want 1", f.conversions())
 	}
 }
 
@@ -799,6 +909,47 @@ func TestConversionImportSendsSalesBeforeTheirReversals(t *testing.T) {
 		if r.Status != importDuplicate {
 			t.Errorf("re-run row %+v, want duplicate", r)
 		}
+	}
+}
+
+// Servers before amounts were numbers sent them as numeric strings; the ledger read takes
+// both, so a re-run against one still finds the negative row it would otherwise send again.
+func TestConversionImportReadsAnOlderServersStringAmounts(t *testing.T) {
+	f := newConvImportFake(100, 200)
+	f.stringAmounts = true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n100,-10,T1\n200,-4,T2\n")
+	if _, _, err := executeCommand("conversion", "import", file, "--force", "--json"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	posts := len(f.posts)
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if len(f.posts) != posts {
+		t.Errorf("the re-run sent %d request(s)", len(f.posts)-posts)
+	}
+	for _, r := range decodeImport(t, stdout).Data {
+		if r.Status != importDuplicate {
+			t.Errorf("re-run row %+v, want duplicate", r)
+		}
+	}
+}
+
+// The server's click_payout is a JSON number; read as a float64 a $1,000,000 payout prints as
+// 1e+06, which the amount parser refuses, and the row lost its recorded_payout.
+func TestConversionImportReportsALargePayoutAsRecorded(t *testing.T) {
+	f := newConvImportFake(100, 200)
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout\n100,1000000\n200,0.00001\n")
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rows := importByRow(decodeImport(t, stdout))
+	if rows[2].RecordedPayout != "1000000.00" || rows[3].RecordedPayout != "0.00001" {
+		t.Errorf("recorded_payout = %q and %q, want 1000000.00 and 0.00001", rows[2].RecordedPayout, rows[3].RecordedPayout)
 	}
 }
 
@@ -1025,13 +1176,18 @@ func TestParseImportAmountMatchesTheServer(t *testing.T) {
 		"-0.000005":    "-0.00001",
 		"1\u00a0000.1": "1000.10",
 		"007.25":       "7.25",
+		"1,000,000":    "1000000.00",
+		"-1,234.50":    "-1234.50",
 	} {
 		_, got, ok := parseImportAmount(raw)
 		if !ok || got != want {
 			t.Errorf("parseImportAmount(%q) = %q, %v; want %q", raw, got, ok, want)
 		}
 	}
-	for _, raw := range []string{"", "ten", "1e3", "1.", ".5", "--1", "12345678901234", "€5"} {
+	// A comma is a thousands separator only between groups of three digits: a decimal comma was
+	// read as one, so "12,50" was sent as 1250.00 and "1.234,56" as 1.23456.
+	for _, raw := range []string{"", "ten", "1e3", "1.", ".5", "--1", "12345678901234", "€5",
+		"12,50", "12,5", "1.234,56", "1,23", "1,2345", "1234,567", ",123", "123,", "1,,234", "0,125", "01,234"} {
 		if _, got, ok := parseImportAmount(raw); ok {
 			t.Errorf("parseImportAmount(%q) = %q, want refused", raw, got)
 		}
@@ -1055,7 +1211,7 @@ func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing
 	f := newConvImportFake(107)
 	setupConvImportFake(t, f)
 
-	_, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	_, stderr, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T9")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -1063,7 +1219,7 @@ func TestConversionCreateSaysWhenTheServerMatchedAnExistingConversion(t *testing
 		t.Errorf("a new conversion carries no note, got %q", stderr)
 	}
 
-	stdout, stderr, err := executeCommand("conversion", "create", "--click_id", "107", "--transaction_id", "T9")
+	stdout, stderr, err := executeCommand("conversion", "create", "--click-id", "107", "--transaction-id", "T9")
 	if err != nil {
 		t.Fatalf("second create: %v", err)
 	}

@@ -114,6 +114,12 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 				ch <- multiProfileFetch{profile: profile, err: err}
 				return
 			}
+			// A masked profile's totals are hidden, not zero: it is a failed
+			// profile, named, not a quiet hole in the sum.
+			if maskedFigures(data) {
+				ch <- multiProfileFetch{profile: profile, err: errMaskedFigures("Summing across profiles")}
+				return
+			}
 			obj, err := parseDataObject(data)
 			if err != nil {
 				ch <- multiProfileFetch{profile: profile, err: err}

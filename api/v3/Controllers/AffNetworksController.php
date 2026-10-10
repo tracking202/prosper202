@@ -15,8 +15,8 @@ class AffNetworksController extends Controller
     protected function fields(): array
     {
         return [
-            'aff_network_name' => ['type' => 's', 'required' => true, 'max_length' => 255],
-            'dni_network_id'   => ['type' => 'i'],
+            'aff_network_name' => ['type' => 's', 'required' => true, 'max_length' => 50],
+            'dni_network_id'   => ['type' => 'i', 'nullable' => true, 'range' => self::MEDIUMINT],
         ];
     }
 

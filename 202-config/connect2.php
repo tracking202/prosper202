@@ -131,25 +131,6 @@ if (!isset($db)) {
     }
 }
 
-//determine privacy mode
-if ($memcacheWorking) {
-    // Try to determine tracker/user ID from various possible sources
-    $tid = '';
-    if (isset($_GET['t202id'])) {
-        $tid = $_GET['t202id'];
-    } elseif (isset($_GET['pci'])) {
-        $tid = $_GET['pci'];
-    } elseif (isset($_GET['lpip'])) {
-        $tid = $_GET['lpip'];
-    } elseif (isset($_SESSION['user_id'])) {
-        $tid = $_SESSION['user_id'];
-    } else {
-        // Default to user 1 if no ID is found
-        $tid = '1';
-    }
-    $_SESSION['privacy'] = getCache(md5('user_pref_privacy_' . $tid . systemHash()));
-}
-
 //set sql mode - only if db connection is available
 if ($db) {
     // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
@@ -167,6 +148,22 @@ if ($db) {
 }
 
 
+// The privacy mode: the install's setting, user 1's row, read through
+// memcache_mysql_fetch_assoc(), which caches it for three minutes when
+// memcache works. Every account has a setting of its own on Personal
+// settings too, and the click's account is known only after this runs, in
+// each endpoint: there, p202ApplyOwnerPrivacy() puts the stricter of the
+// two in force, and until an endpoint has, trackingEnabled() holds back.
+// The app intakes apply the same stricter of the two (PrivacySetting).
+//
+// With memcache working this used to read account.php's per-account key,
+// user_pref_privacy_<id>, under the request's t202id, pci or lpip instead —
+// ids account.php never writes a key under. The miss came back false, false
+// counted as set, and the database was never asked: every visitor of a
+// tracking link was tracked in full, cookies and unmasked address, whatever
+// the owner had chosen (executed against the old block with a Memcached
+// stand-in; PrivacyBootstrapTest). A pixel's request, which fell back to
+// user 1's key, read a value the API's preference update never refreshes.
 if (!isset($_SESSION['privacy'])) {
 
     $user_sql = "	SELECT 	user_pref_privacy
@@ -174,40 +171,240 @@ if (!isset($_SESSION['privacy'])) {
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
     $privacy = memcache_mysql_fetch_assoc($user_sql);
-    if (isset($privacy['user_pref_privacy'])) {
-        $_SESSION['privacy'] = $privacy['user_pref_privacy'];
+    if ($privacy === false) {
+        // The read failed (memcache_mysql_fetch_assoc() answers false for a
+        // failed query, null for no row): hold back rather than track in
+        // full, as the app intakes do (PrivacySetting). It answered
+        // 'disabled' here — the most permissive setting standing in for one
+        // nobody could read (CLAUDE.md #11).
+        error_log('p202 privacy: user 1\'s user_pref_privacy could not be read; holding back for this request');
+        $_SESSION['privacy'] = 'all';
+    } elseif (isset($privacy['user_pref_privacy'])) {
+        // A stored value that is not a setting holds back rather than
+        // tracking in full (CLAUDE.md #11), as the app intakes read it
+        // (PrivacySetting).
+        $_SESSION['privacy'] = in_array($privacy['user_pref_privacy'], \Prosper202\Http\PrivacySetting::SETTINGS, true)
+            ? $privacy['user_pref_privacy']
+            : 'all';
     } else {
-        $_SESSION['privacy'] = 'disabled'; //default to disabled
+        // No preferences row: nothing was set, the column's own default.
+        $_SESSION['privacy'] = 'disabled';
     }
 }
 
 
-// get the real ip
-$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
-    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
-    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
-    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
-    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    // SERVER_ADDR is absent under some SAPIs (php -S): an undefined-key
-    // warning on every forwarded request, and no address to compare with.
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
-    default => $_SERVER['REMOTE_ADDR'],
-};
+// The visitor's address: one rule for every click endpoint, read through
+// VisitorIp, never from a forwarding header directly (the bootstrap used to
+// rewrite $_SERVER['HTTP_X_FORWARDED_FOR'] in place for the endpoints to
+// read back, each with its own fallback and none validating it). Masked
+// under the install's own setting, not the request's: what reads this
+// global is the data engine's by-address fallback (setDirtyHour() with no
+// click id), which looks among the first account's clicks, and those are
+// stored under the install's setting; and the bot ranges, which a /24 mask
+// does not move across.
+$ip_address = ipAddress(
+    \Prosper202\Http\VisitorIp::fromServer($_SERVER),
+    !\Prosper202\Http\PrivacyMode::tracksInFull($_SESSION['privacy'], p202VisitorMayBeInEu(...))
+);
 
-$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
-$_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-$ip_address = ipAddress($_SERVER['HTTP_X_FORWARDED_FOR']);
-
-function trackingEnabled(): bool
+/**
+ * The visitor's address as every click-path row stores it (StoredVisitorIp):
+ * masked when trackingEnabled() is false. The pixels' "this address's last
+ * click" lookups take it too, so they compare like with like.
+ */
+function p202StoredVisitorIp(): string
 {
-    $trackingEnabled = true;
+    return \Prosper202\Http\StoredVisitorIp::fromServer($_SERVER, !trackingEnabled());
+}
 
-    if ($_SESSION['privacy'] === 'all' || ($_SESSION['privacy'] === 'eu' && $_SESSION['is_european_union'])) {
-        $trackingEnabled = false;
+/**
+ * Puts in force, for the rest of this request, the privacy setting that
+ * governs the visitor of $ownerId's link: the strictest of the install's
+ * (the bootstrap's $_SESSION['privacy']) and the account's own
+ * (PrivacySetting::forAccount(), which reads both again, uncached, and holds
+ * back for a read that fails or a stored value that is not a setting).
+ *
+ * Every click endpoint calls it as soon as it knows whose click it is —
+ * the tracker's, the landing page's, the click's or the campaign's account —
+ * and before it stores the visitor's address or sets a cookie
+ * (OwnerPrivacyAppliedFirstTest). It read the install's setting alone: an
+ * account set to 'all' under an install set to 'disabled' had its visitors
+ * stored unmasked and given every click cookie (measured live).
+ *
+ * A lookup among the first account's clicks (the pixels' and off.php's
+ * by-address fallbacks, which only ever look there) applies user 1's, which
+ * is the install's: those clicks were stored under it. A later call for
+ * another owner replaces the setting in force; the install's is always part
+ * of it.
+ *
+ * An owner that is not a positive integer — a row that names no account —
+ * holds back: nothing says which setting governs (CLAUDE.md #11).
+ */
+function p202ApplyOwnerPrivacy(mixed $ownerId, ?\Prosper202\Database\Connection $conn = null): void
+{
+    $owner = is_int($ownerId) ? $ownerId : (is_string($ownerId) && ctype_digit($ownerId) ? (int) $ownerId : 0);
+    if ($owner <= 0) {
+        error_log('p202 privacy: the click names no account (' . var_export($ownerId, true) . '); holding back');
+        $GLOBALS['p202PrivacyInForce'] = 'all';
+
+        return;
+    }
+    if ($conn === null) {
+        $db = $GLOBALS['db'] ?? null;
+        if (!$db instanceof \mysqli) {
+            error_log('p202 privacy: no database to read user ' . $owner . '\'s setting from; holding back');
+            $GLOBALS['p202PrivacyInForce'] = 'all';
+
+            return;
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+    }
+    $GLOBALS['p202PrivacyInForce'] = \Prosper202\Http\PrivacySetting::strictest(
+        $_SESSION['privacy'] ?? 'all',
+        \Prosper202\Http\PrivacySetting::forAccount($conn, $owner)
+    );
+}
+
+/**
+ * The privacy setting in force for this request's visitor: what
+ * p202ApplyOwnerPrivacy() put in force, or 'all' before any endpoint has
+ * said whose click this is. Nothing should ask before then — an error logged
+ * that early (record_mysql_error()) is the one place that may — so the first
+ * such question is logged with the script that asked: an endpoint that
+ * stores an address or sets a cookie without naming the owner first masks
+ * the address and sets nothing, rather than tracking in full under a
+ * setting that may not be the owner's.
+ */
+function p202PrivacyInForce(): string
+{
+    $inForce = $GLOBALS['p202PrivacyInForce'] ?? null;
+    if (is_string($inForce)) {
+        return $inForce;
+    }
+    static $logged = false;
+    if (!$logged) {
+        $logged = true;
+        error_log('p202 privacy: asked before the request named whose click this is ('
+            . (is_string($_SERVER['SCRIPT_NAME'] ?? null) ? $_SERVER['SCRIPT_NAME'] : '?') . '); holding back');
     }
 
-    return $trackingEnabled;
+    return 'all';
+}
+
+/**
+ * Whether this visitor may be tracked in full: cookies set, the address
+ * stored as it arrived. False under the privacy setting in force
+ * (p202PrivacyInForce(): the stricter of the install's and the link owner's)
+ * — 'all', or 'eu' for a visitor who may be in the European Union
+ * (p202VisitorMayBeInEu()).
+ */
+function trackingEnabled(): bool
+{
+    return \Prosper202\Http\PrivacyMode::tracksInFull(p202PrivacyInForce(), p202VisitorMayBeInEu(...));
+}
+
+/**
+ * The account and campaign of a stored click, for an endpoint that is
+ * handed a click id and must apply its owner's privacy setting (go.php's
+ * 202v link). Null when there is no such click — and when it cannot be read,
+ * logged: the one caller sets no cookie for either, the conservative answer,
+ * so the two need not be told apart there.
+ *
+ * @return array{user_id: int, aff_campaign_id: int}|null
+ */
+function p202ClickOwner(int $clickId): ?array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if ($clickId <= 0 || !$db instanceof \mysqli) {
+        return null;
+    }
+    try {
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareRead('SELECT user_id, aff_campaign_id FROM 202_clicks WHERE click_id = ?');
+        $conn->bind($stmt, 'i', [$clickId]);
+        $row = $conn->fetchOne($stmt);
+    } catch (\Throwable $e) {
+        error_log('p202ClickOwner: click ' . $clickId . ' could not be read: ' . $e->getMessage());
+
+        return null;
+    }
+
+    if ($row === null) {
+        return null;
+    }
+
+    return ['user_id' => (int) $row['user_id'], 'aff_campaign_id' => (int) $row['aff_campaign_id']];
+}
+
+/**
+ * The identity signals a click request carries (ClickIdentity::fromRequest())
+ * under the privacy setting in force: a visitor held back has no p202vid
+ * read, minted or sent, as they are set no click cookie. It was set under
+ * every setting.
+ *
+ * @param array<string, mixed> $get
+ */
+function p202ClickIdentity(array $get, bool $campaignAllows, bool $mayMint = true): \Prosper202\Identity\ClickIdentity
+{
+    $inFull = trackingEnabled();
+
+    return \Prosper202\Identity\ClickIdentity::fromRequest(
+        $get,
+        $inFull ? $_COOKIE : [],
+        $campaignAllows,
+        $mayMint && $inFull
+    );
+}
+
+/**
+ * The script statements that set click cookies on the landing page's own
+ * site — record_simple.php and record_adv.php answer the page's script with
+ * them, through landing.php's createCookie() — or none when the visitor is
+ * held back, as setClickIdCookie() sets none on the tracker's. They were
+ * written into the response under every setting.
+ *
+ * @param array<string, string> $cookies name => value
+ */
+function p202ClickCookieJs(array $cookies): string
+{
+    if (!trackingEnabled()) {
+        return '';
+    }
+    $js = '';
+    foreach ($cookies as $name => $value) {
+        $arguments = json_encode([(string) $name, (string) $value]);
+        if ($arguments === false) {
+            error_log('p202 click cookies: ' . $name . ' could not be written into the script; not set');
+            continue;
+        }
+        $js .= 'createCookie(' . substr($arguments, 1, -1) . ',0);' . "\n";
+    }
+
+    return $js;
+}
+
+/**
+ * Whether privacy 'eu' applies to this visitor: unless the GeoIP lookup of
+ * their address places them outside Europe and outside the European Union,
+ * it does (EuropeanVisitor, which the app intakes ask too).
+ *
+ * The check used to read $_SESSION['is_european_union'], which nothing ever
+ * set: every request under 'eu' raised an undefined-key warning and tracked
+ * EU visitors in full — cookies set, the address stored — which is what the
+ * setting promises not to do. Only a positive "outside Europe, not in the
+ * EU" lifts privacy: an address GeoIP cannot place, one in a European
+ * country outside the EU, and everyone when the GeoIP library or database
+ * is missing are held back (PrivacyMode::mayBeEuropean() says why). Asked
+ * once per request.
+ */
+function p202VisitorMayBeInEu(): bool
+{
+    static $mayBe = null;
+    if ($mayBe === null) {
+        $mayBe = \Prosper202\Http\EuropeanVisitor::mayBe(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+    }
+
+    return $mayBe;
 }
 
 function _mysqli_query($dbOrSql, $sql = null)
@@ -266,19 +463,32 @@ function delay_sql($db, $delayed_sql): void
 class FILTER
 {
 
-    public static function startFilter($db, $click_id, $ip_id, $ip_address, $user_id)
+    /**
+     * Whether to record this click as filtered (1) or not (0).
+     *
+     * The sign-in and netrange checks compare the address the click arrived
+     * from (VisitorIp), read here rather than handed in: a caller that
+     * passed the address the click path stores — masked under privacy —
+     * would match no sign-in and no netrange. Every caller passed one
+     * argument more before; StoredVisitorIpSourceTest holds them to four.
+     *
+     * @param int|string $ip_id the click's stored address row (masked under
+     *        privacy): what the duplicate check keeps, the only one it may
+     */
+    public static function startFilter($db, $click_id, $ip_id, $user_id)
     {
+        $arrived = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
         // we only do the other checks, if the first ones have failed.
         // we will return the variable filter, if the $filter returns TRUE, when the click is inserted and recorded we will insert the new click already inserted,
         // what was lagign this query is before it would insert a click, then scan it and then update the click, the updating later on was lagging, now we will just insert and it will not stop the clicks from being redirected becuase of a slow update.
 
         // check the user
-        $filter = FILTER::checkUserIP($db, $click_id, $ip_id, $user_id);
+        $filter = FILTER::checkUserIP($db, $arrived);
         if ($filter == false) {
 
             // check the netrange
-            $filter = FILTER::checkNetrange($click_id, $ip_address);
+            $filter = FILTER::checkNetrange($click_id, $arrived);
             if ($filter == false) {
 
                 $filter = FILTER::checkLastIps($db, $user_id, $ip_id);
@@ -292,24 +502,22 @@ class FILTER
         }
     }
 
-    public static function checkUserIP($db, $click_id, $ip_id, $user_id)
+    /**
+     * Whether a user last signed in from the address this click arrived from
+     * (SignedInFromAddress): the owner's own clicks are filtered.
+     *
+     * It compares the address as it arrived, not the click's stored ip_id.
+     * The sign-in address is stored unmasked under every privacy setting, the
+     * click's masked under privacy, so the ip_id comparison this replaced
+     * never matched there and the owner's clicks were counted.
+     *
+     * @param string|object $arrived VisitorIp's address (or ipAddress()'s object of it)
+     */
+    public static function checkUserIP($db, $arrived)
     {
-        // $user_id no longer needed
+        $address = is_object($arrived) ? (string) ($arrived->address ?? '') : (string) $arrived;
 
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-
-        $count_sql = "SELECT    user_id
-					  FROM      202_users 
-					  WHERE     user_last_login_ip_id='" . $mysql['ip_id'] . "'";
-        $count_result = _mysqli_query($db, $count_sql); // ($count_sql);
-
-        // if the click_id's ip address, is the same ip adddress of the click_id's owner's last logged in ip, filter this. 
-        if ($count_result->num_rows > 0) {
-
-            return true;
-        }
-        return false;
+        return \Prosper202\Click\SignedInFromAddress::any(new \Prosper202\Database\Connection($db), $address);
     }
 
     public static function checkNetrange($click_id, $ip)
@@ -382,6 +590,16 @@ class FILTER
     }
 
     // this will filter out a click if it the IP WAS RECORDED, for a particular user within the last 24 hours, if it existed before, filter out this click.
+    //
+    // It keys on the click's stored ip_id, both when it looks and when it
+    // records (202_last_ips keeps it for a day), so under privacy both sides
+    // are the masked address and every visitor in one /24 (/48) is one
+    // visitor: the second of two neighbours within the day is filtered.
+    // Measured live. That is the price of the setting rather than a mismatch
+    // — this check needs a memory of earlier visitors, and the masked address
+    // is the only one privacy lets it keep. Unlike checkUserIP, whose other
+    // side is an operator's unmasked record, there is nothing unmasked here
+    // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
 
@@ -689,17 +907,17 @@ function setClickIdCookie($click_id, $campaign_id = 0)
         $expire = time() + (60 *  60 * 24 * 30);
         $expire_header = 60 *  60 * 24 * 30;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie()/readCookie() must access these cookies
 
         //legacy cookies
 
-        setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
-        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202subid-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
+        setcookie('tracking202subid_a_' . $campaign_id . '-legacy', (string) $click_id, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-        setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202subid', (string) $click_id,  ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202subid_a_' . $campaign_id, (string) $click_id,   ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
 
         // The install-token proof (InstallTokenGrant): set only by the
         // request that allocated the click, so a later lp.php can sign the
@@ -716,8 +934,8 @@ function setClickIdCookie($click_id, $campaign_id = 0)
             if (is_string($installKey) && strlen($installKey) === 32) {
                 $proof = \Api\V3\Apps\Android\InstallToken::forClick((int) $click_id, $installKey);
                 $proofCookie = \Api\V3\Apps\Android\InstallTokenGrant::PROOF_COOKIE;
-                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
-                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie, $proof, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
+                setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
             }
         }
     }
@@ -730,15 +948,15 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
         $expire = time() + (60 *  60 * 24 * 30);
         $expire_header = 60 *  60 * 24 * 30;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = TRUE;
 
 
         //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -787,11 +1005,7 @@ class PLATFORMS
 
         // Ensure ip_address is available for botCheck
         if (!isset($ip_address)) {
-            $ip_address_string = $_SERVER['REMOTE_ADDR'] ?? '';
-            if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-                $ip_address_string = $_SERVER['HTTP_X_FORWARDED_FOR'];
-            }
-            $ip_address = $ip_address_string;
+            $ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
         }
 
         $parser = Parser::create();
@@ -2318,7 +2532,10 @@ function getGeoData($ip)
             'city' => '',
             'region' => '',
             'region_code' => '',
-            'postal' => ''
+            // The key every other answer carries (landing.php reads it): this
+            // one said 'postal', so without the GeoIP library every landing
+            // page script warned "Undefined array key".
+            'postal_code' => ''
         ];
     }
 
@@ -2449,14 +2666,14 @@ function setPCIdCookie($click_id_public)
         $expire = 0;
         $expire_header = 0;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie() sets this cookie in record_adv.php
 
         //legacy cookies
-        setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202pci-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202pci', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2467,14 +2684,14 @@ function setOutboundCookie($outbound_site_url)
         $expire = 0;
         $expire_header = 0;
         $path = '/';
-        $domain = $_SERVER['HTTP_HOST'];
+        // Domain: the request host without its port, none for an IP (CookieDomain).
         $secure = TRUE;
         $httponly = FALSE; // JS createCookie() sets this cookie in record_simple.php
 
         //legacy cookies
-        setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => (string) $domain]);
+        setcookie('tracking202outbound-legacy', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
 
-        setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => $domain, 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
+        setcookie('tracking202outbound', (string) $outbound_site_url, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -2563,7 +2780,7 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 
 function record_mysql_error($dbOrSql, $sql = null): never
 {
-    global $server_row, $ip_address; // Add global $ip_address
+    global $server_row;
 
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -2591,11 +2808,10 @@ function record_mysql_error($dbOrSql, $sql = null): never
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
-    $ipForError = $ip_address ?? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? ''));
-    $ip_id = INDEXES::get_ip_id($ipForError);
+    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
-    $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
@@ -2648,27 +2864,37 @@ function record_mysql_error($dbOrSql, $sql = null): never
     die();
 }
 
+/**
+ * The key of the entry that takes this visit, each entry's chance its
+ * 'weight' over the sum of the weights: the one chooser for a rotator rule's
+ * redirects (rtr.php and offrtr.php).
+ *
+ * A weight that is not a positive number takes no share, as a 0 does — a
+ * blank one threw a TypeError from the sum. When no entry has a share, the
+ * first entry takes the visit; that was the intent all along, but the zeroes
+ * had already been unset, so it returned null and the visitor got a blank
+ * page.
+ */
 function getSplitTestValue(array $values)
 {
-    $sum = 0;
+    $weights = [];
 
     foreach ($values as $key => $value) {
-        if ($value['weight'] == 0) {
-            unset($values[$key]);
-        } else {
-            $sum += $value['weight'];
+        $weight = is_numeric($value['weight'] ?? null) ? (int) $value['weight'] : 0;
+        if ($weight > 0) {
+            $weights[$key] = $weight;
         }
     }
 
-    if ($sum < 1) {
+    if ($weights === []) {
         // No positively-weighted entries; nothing eligible to split-test.
         return array_key_first($values);
     }
 
-    $rand = mt_rand(1, (int) $sum);
+    $rand = mt_rand(1, array_sum($weights));
 
-    foreach ($values as $key => $value) {
-        $rand -= $value['weight'];
+    foreach ($weights as $key => $weight) {
+        $rand -= $weight;
         if ($rand <= 0) {
             return $key;
         }
@@ -2678,6 +2904,21 @@ function getSplitTestValue(array $values)
 function get_absolute_url(): string
 {
     return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
+}
+
+/**
+ * A path on this install for a URL in the requester's own response (a form
+ * action, a redirect to the 404 page): the install's directory under the
+ * document root (TrackingBaseUrl::installPath()), then $relative. The
+ * cloaked redirects' forms posted to a root-absolute
+ * '/tracking202/redirect/cl2.php', which on an install in a subdirectory is
+ * a 404 (measured: served from /agent-…/, off.php's form named
+ * /tracking202/redirect/cl2.php). ClickPathUrlsTest refuses a root-absolute
+ * path of this install in the click endpoints.
+ */
+function p202InstallPath(string $relative): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::installPath($_SERVER, ROOT_PATH) . ltrim($relative, '/');
 }
 
 /**
@@ -2751,8 +2992,17 @@ function p202LogRedirectHit(string $endpoint, string $decision): void
         'ep=' . $endpoint,
         'decision=' . $decision,
         'method=' . $h('REQUEST_METHOD'),
-        'ip=' . $h('REMOTE_ADDR'),
-        'xff=' . $h('HTTP_X_FORWARDED_FOR'),
+        // Every address masked to its /24 (/48), whatever the privacy
+        // setting: this is a diagnostic log in the temp directory, which
+        // tells two hits of one click apart by their headers, and wrote each
+        // visitor's address in full while it was on. The forwarded chain is
+        // masked element by element; what is not an address shows as '?'.
+        'ip=' . \Prosper202\Http\StoredVisitorIp::mask(trim($h('REMOTE_ADDR'))),
+        'xff=' . implode(',', array_map(
+            static fn (string $hop): string => \Prosper202\Http\StoredVisitorIp::mask(trim($hop)) ?: '?',
+            array_filter(explode(',', \Prosper202\Http\VisitorIp::forwardedForAsSent($_SERVER)), static fn (string $hop): bool => trim($hop) !== '')
+        )),
+        'visitor_ip=' . \Prosper202\Http\StoredVisitorIp::mask(\Prosper202\Http\VisitorIp::fromServer($_SERVER)),
         'sec_purpose=' . $h('HTTP_SEC_PURPOSE'),
         'purpose=' . $h('HTTP_PURPOSE'),
         'x_purpose=' . $h('HTTP_X_PURPOSE'),
@@ -2812,19 +3062,15 @@ function p202DeclineSpeculativeRequest(): never
     die();
 }
 
+/**
+ * The tracking domain (`host[:port]`) of a URL handed back to the requester:
+ * user 1's stored one, or the host this request arrived at
+ * (TrackingBaseUrl::domainForResponse()). The functions-tracking202.php
+ * copy's twin; its callers are listed in RequestHostSourceTest.
+ */
 function getTrackingDomain(): string
 {
     global $db;
-
-    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
-    // Sanitize to prevent host header injection — allow only valid hostname characters
-    $tracking_domain = preg_replace('/[^a-zA-Z0-9.\-:]/', '', $raw_server_name);
-
-    // Add port if non-standard (not 80/443)
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
-    if ($port != 80 && $port != 443) {
-        $tracking_domain .= ':' . $port;
-    }
 
     $tracking_domain_sql = "
 		SELECT
@@ -2834,14 +3080,18 @@ function getTrackingDomain(): string
 		WHERE
 			`user_id`='1'
 	";
-    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql); //($user_sql);
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    if (isset($tracking_domain_row['user_tracking_domain']) && strlen((string) $tracking_domain_row['user_tracking_domain']) > 0) {
-        // host[:port] only: a stored full URL doubled the scheme in every
-        // link built from it (see TrackingDomain).
-        $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
+    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql);
+    if (!$tracking_domain_result instanceof \mysqli_result) {
+        // Read as "none stored", every URL would name the request's host
+        // instead of the domain the account configured.
+        throw new \RuntimeException('Unable to read the tracking domain');
     }
-    return $tracking_domain;
+    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
+    $stored = is_array($tracking_domain_row) ? (string) ($tracking_domain_row['user_tracking_domain'] ?? '') : '';
+
+    // host[:port] only: a stored full URL doubled the scheme in every link
+    // built from it (see TrackingDomain).
+    return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
 }
 
 function updateLpClickDataForRotator($redirect_id, $click_id, $rotator_id, $rule_id)
@@ -2993,7 +3243,10 @@ function getTokens($mysql)
     return $tokens;
 }
 
-function ipAddress($ip_address)
+/**
+ * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
+ */
+function ipAddress($ip_address, ?bool $masked = null)
 {
 
     $ip = new stdClass;
@@ -3010,7 +3263,7 @@ function ipAddress($ip_address)
         $ip->address = '0.0.0.0';
     }
 
-    if (!trackingEnabled()) {
+    if ($masked ?? !trackingEnabled()) {
         $ip = maskIpAddress($ip);
     }
 
@@ -3023,16 +3276,10 @@ function ipAddress($ip_address)
 
 function maskIpAddress($ip)
 {
-
-    if ($ip->type == 'ipv4') {
-        $bits = explode('.', (string) $ip->address);
-        $masked = implode(".", array_slice($bits, 0, 3)) . ".0";
-    } else if ($ip->type == 'ipv6') {
-        $bits = explode(':', (string) $ip->address);
-        $masked = implode(":", array_slice($bits, 0, 3)) . ":0000:0000:0000:0000:0000";
-    }
-    if (isset($masked)) {
-        $ip->address = $masked;
+    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
+    // so the $ip_address global and every stored address agree.
+    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
+        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
     }
 
     return $ip;
@@ -3086,7 +3333,7 @@ function getTrackerDetail(&$mysql)
                 LEFT JOIN 202_users USING (user_id)
     			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
@@ -3157,7 +3404,7 @@ function getTrackerDetailPT(&$mysql)
     			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
 				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
                 LEFT JOIN 202_landing_pages USING (landing_page_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 
 
@@ -3735,42 +3982,6 @@ function getUTMParams(&$mysql)
     $mysql['utm_content'] = $db->real_escape_string($utm_content);
 }
 
-/**
- * Link the visitor's impression row to a freshly-recorded click. Single source for
- * what was previously copy-pasted across record_simple.php, record_adv.php and
- * dl.php (each with slightly different error handling). If a p202_ipx cookie is
- * present, link that exact impression; otherwise fall back to the latest unlinked
- * impression for the landing page (when one is supplied — dl.php has none, so it
- * no-ops without a cookie, preserving its prior behavior).
- *
- * 202_clicks_impressions is created by no installer today, so a missing table is
- * logged, never fatal — click recording must not die on the optional impression
- * link. The query is wrapped in try/catch because that non-fatal guarantee depends
- * on the mysqli_report() mode: under MYSQLI_REPORT_STRICT alone (what connect2.php
- * sets) a missing table makes query() return false, but under STRICT|ERROR (the
- * PHP 8.1 default) it throws mysqli_sql_exception — handle both.
- */
-function p202LinkImpressionToClick(mysqli $db, $clickId, $landingPageId = null, string $context = 'record')
-{
-    $clickId = $db->real_escape_string((string) $clickId);
-    if (isset($_COOKIE['p202_ipx'])) {
-        $ipx = $db->real_escape_string((string) $_COOKIE['p202_ipx']);
-        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE impression_id = '" . $ipx . "'";
-    } elseif ($landingPageId !== null && $landingPageId !== '') {
-        $lp = $db->real_escape_string((string) $landingPageId);
-        $sql = "UPDATE 202_clicks_impressions SET click_id = '" . $clickId . "' WHERE click_id IS NULL AND landing_page_id = '" . $lp . "' ORDER BY impression_id DESC LIMIT 1";
-    } else {
-        return; // no cookie and no landing page to fall back to (e.g. dl.php)
-    }
-    try {
-        if (!$db->query($sql)) {
-            error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $db->error);
-        }
-    } catch (\mysqli_sql_exception $e) {
-        error_log($context . ': impression link skipped (202_clicks_impressions unavailable): ' . $e->getMessage());
-    }
-}
-
 function getCVars(&$mysql)
 {
 
@@ -3792,86 +4003,6 @@ function getCVars(&$mysql)
             $mysql[$custom . '_id'] = '0';
         }
     }
-}
-
-function getKeyword(&$mysql)
-{
-    global $db;
-    $keyword = '';
-    /* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
-    //so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
-    $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
-    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
-
-    $referer_query = []; // Initialize $referer_query as an empty array
-    @parse_str($referer_url_query, $referer_query);
-
-    switch ($mysql['user_keyword_searched_or_bidded']) {
-
-        case "bidded":
-            #try to get the bidded keyword first
-            if ($_GET['OVKEY']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string($_GET['OVKEY']);
-            } elseif ($_GET['t202kw']) {
-                $keyword = $db->real_escape_string($_GET['t202kw']);
-            } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string($_GET['target_passthrough']);
-            } else { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string($_GET['keyword']);
-            }
-            break;
-        case "searched":
-            #try to get the searched keyword
-            if ($referer_query['q']) {
-                $keyword = $db->real_escape_string($referer_query['q']);
-            } elseif ($_GET['OVRAW']) { //if this is a Y! keyword
-                $keyword = $db->real_escape_string($_GET['OVRAW']);
-            } elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
-                $keyword = $db->real_escape_string($_GET['target_passthrough']);
-            } elseif ($_GET['keyword']) { //if this is a zango, or more keyword
-                $keyword = $db->real_escape_string($_GET['keyword']);
-            } elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
-                $keyword = $db->real_escape_string($_GET['search_word']);
-            } elseif ($_GET['query']) { //if this is a naver, or more keyword
-                $keyword = $db->real_escape_string($_GET['query']);
-            } elseif ($_GET['encquery']) { //if this is a aol, or more keyword
-                $keyword = $db->real_escape_string($_GET['encquery']);
-            } elseif ($_GET['terms']) { //if this is a about.com, or more keyword
-                $keyword = $db->real_escape_string($_GET['terms']);
-            } elseif ($_GET['rdata']) { //if this is a viola, or more keyword
-                $keyword = $db->real_escape_string($_GET['rdata']);
-            } elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
-                $keyword = $db->real_escape_string($_GET['qs']);
-            } elseif ($_GET['wd']) { //if this is a baidu, or more keyword
-                $keyword = $db->real_escape_string($_GET['wd']);
-            } elseif ($_GET['text']) { //if this is a yandex, or more keyword
-                $keyword = $db->real_escape_string($_GET['text']);
-            } elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
-                $keyword = $db->real_escape_string($_GET['szukaj']);
-            } elseif ($_GET['qt']) { //if this is a O*net, or more keyword
-                $keyword = $db->real_escape_string($_GET['qt']);
-            } elseif ($_GET['k']) { //if this is a yam, or more keyword
-                $keyword = $db->real_escape_string($_GET['k']);
-            } elseif ($_GET['words']) { //if this is a Rambler, or more keyword
-                $keyword = $db->real_escape_string($_GET['words']);
-            } else {
-                $keyword = $db->real_escape_string($_GET['t202kw']);
-            }
-            break;
-    }
-
-    if (str_starts_with((string) $keyword, 't202var_')) {
-        $t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
-
-        if (isset($_GET[$t202var])) {
-            $keyword = $_GET[$t202var];
-        }
-    }
-
-    $keyword = str_replace('%20', ' ', $keyword);
-    $keyword_id = INDEXES::get_keyword_id($keyword);
-    $mysql['keyword_id'] = $db->real_escape_string($keyword_id);
-    $mysql['keyword'] = $db->real_escape_string($keyword);
 }
 
 function getReferer(&$mysql)
@@ -4001,18 +4132,8 @@ function getUrlVars202(): array
     return $urlvarslist;
 }
 
+/** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */
 function getCookie202($cookieName)
 {
-    $cookieValue = null;
-    $legacyCookie = $cookieName . '-legacy';
-    // check new format
-    if (isset($_COOKIE[$cookieName])) {
-        $cookieValue = $_COOKIE[$cookieName];
-    } // if not found check legacy
-    else {
-        if (isset($_COOKIE[$legacyCookie])) {
-            $cookieValue = $_COOKIE[$legacyCookie];
-        }
-    }
-    return $cookieValue;
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
 }

@@ -3,49 +3,60 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
-	"sort"
 	"strings"
 	"unicode"
 
 	"github.com/spf13/cobra"
 )
 
-// `p202 search <words>` ranks commands by how well the words match their
-// name, aliases, descriptions, examples, flags and allowed flag values: an
-// offline index over the same records `p202 commands --json` prints.
+// `p202 search <words>` finds the command for a task: an offline index over
+// the same records `p202 commands --json` prints, ranked by search_rank.go.
+// Like Cloudflare's `cf cli search` it hands back candidates, best first,
+// for the caller to check with --help or --dry-run; unlike it, each carries
+// how much of the query it matched, and good_match says whether the first
+// is a confident answer.
 
-// Field weights: what a word matching there says about the command.
 const (
-	weightName    = 10.0 // the command's own name ("breakdown")
-	weightAlias   = 8.0
-	weightShort   = 6.0
-	weightValue   = 6.0 // a value a flag accepts ("browser")
-	weightFlag    = 5.0 // a flag's name
-	weightParent  = 3.0 // a parent command's name ("report")
-	weightUsage   = 2.0 // a flag's help text
-	weightLong    = 1.5
-	weightExample = 1.0
-
-	synonymFactor   = 0.8 // a match through searchSynonyms
-	maxBreadthBonus = 1.5 // most a word's other matches in one command add
-	prefixFactor    = 0.5 // the word is a prefix of the indexed one
-
-	// A result is a good match (searchResult.good) when it scores at least
-	// this; otherwise search says so and shows the closest.
-	goodMatchScore    = 6.0
-	goodMatchCoverage = 0.5
-	closestShown      = 3
+	// confidentCoverage is the share of the query's words the first result
+	// must match to be a confident answer. On 137 development queries (the
+	// UI's page names, ways of asking for Spy, the agent-eval asks, phrasings
+	// written before tuning, typos, the queries search_test pins) 90 first
+	// results reach it and 84 of those are right; 30 right answers fall below
+	// it, which is why it is a flag and not a refusal. Sets sealed until
+	// measured hold it less well: 13 right of 19 on 30 phrasings, 24 of 30 on
+	// 36 tasks an agent phrased, where 2 of the 4 tasks the CLI cannot do
+	// also reached it. The
+	// score says little: fusion scores by rank, and the median right and
+	// wrong first results score 0.0328 and 0.0325. Requiring the first to
+	// beat the runner-up's coverage kept 35 of the 92: many right answers tie
+	// with a neighbour that also matches every word.
+	confidentCoverage  = 0.75
+	defaultSearchLimit = 5
 )
 
-// searchStopwords carry no meaning for finding a command.
-var searchStopwords = map[string]bool{
-	"a": true, "an": true, "the": true, "by": true, "per": true, "of": true, "for": true, "to": true,
-	"in": true, "on": true, "at": true, "with": true, "from": true, "my": true, "me": true, "i": true,
-	"how": true, "do": true, "can": true, "what": true, "which": true, "is": true, "are": true,
-	"and": true, "or": true, "all": true, "each": true, "every": true, "want": true, "need": true,
-	"it": true, "that": true, "this": true, "into": true, "p202": true,
+// weakMatchHint is what a search with no confident answer says to do next.
+const weakMatchHint = "None of these? `p202 commands --brief` lists every command with the web UI page it does."
+
+// searchStopwords carry no meaning for finding a command. They are held
+// stemmed (searchStopwordSet), since a query word is stemmed before it is
+// compared: "this" is "thi" by then, and was kept as a search term.
+var searchStopwords = []string{
+	"a", "an", "the", "by", "per", "of", "for", "to", "in", "on", "at", "with", "from", "into", "as", "about",
+	"my", "me", "i", "we", "our", "us", "you", "your", "it", "its", "they", "them", "their", "there",
+	"how", "do", "does", "did", "done", "can", "what", "which", "is", "are", "was", "were", "be", "been",
+	"has", "have", "had", "will", "would", "should", "could", "please", "just", "so", "if", "then",
+	"and", "or", "all", "each", "every", "any", "some", "want", "need", "that", "this", "p202",
 }
+
+var searchStopwordSet = func() map[string]bool {
+	out := map[string]bool{}
+	for _, w := range searchStopwords {
+		out[stemWord(w)] = true
+	}
+	return out
+}()
 
 // searchSynonymGroups are words an operator uses for the same thing. Each
 // word in a group also finds the others.
@@ -62,10 +73,16 @@ var searchSynonymGroups = [][]string{
 	{"cost", "spend"},
 	{"delete", "remove"},
 	{"create", "add", "new"},
+	// "change my timezone", "edit a campaign": the words people use for an
+	// update. "change" is also the staged-changes command's name, which a
+	// direct match still ranks above a synonym.
+	{"update", "edit", "modify", "change", "set"},
+	{"server", "instance", "install"},
 	{"breakdown", "group", "dimension"},
 	{"geo", "country"},
 	{"lp", "landing"},
 	{"source", "ppc"},
+	{"login", "signin"},
 }
 
 var searchSynonyms = func() map[string][]string {
@@ -82,95 +99,82 @@ var searchSynonyms = func() map[string][]string {
 	return out
 }()
 
+// searchCompounds join two words people write apart, or with a hyphen,
+// into one: "real time", "real-time" and "realtime" are one word, where
+// "time" alone matched every command with a --time-from flag. The pair is
+// read after stemming ("sub ids" is "subid"), in the query and in every
+// indexed text alike.
+var searchCompounds = map[[2]string]string{
+	{"real", "time"}: "realtime",
+	{"sign", "in"}:   "signin",
+	{"log", "in"}:    "login",
+	{"sub", "id"}:    "subid",
+	{"e", "mail"}:    "email",
+	{"web", "hook"}:  "webhook",
+	{"post", "back"}: "postback",
+}
+
 // stemWord folds the plural forms a query and a description may disagree
-// on: links -> link, entries -> entry.
+// on: links -> link, entries -> entry, ips -> ip. Three letters is long
+// enough: "IPs" and "ads" are plurals, and a short word that is not one
+// ("ios", "sms") folds the same way on both sides, so it still matches
+// itself.
 func stemWord(w string) string {
 	switch {
 	case len(w) > 4 && strings.HasSuffix(w, "ies"):
 		return w[:len(w)-3] + "y"
-	case len(w) > 3 && strings.HasSuffix(w, "s") && !strings.HasSuffix(w, "ss"):
+	case len(w) >= 3 && strings.HasSuffix(w, "s") && !strings.HasSuffix(w, "ss"):
 		return w[:len(w)-1]
 	}
 	return w
 }
 
-// searchTokens splits text into lower-case, stemmed words.
+// searchTokens splits text into lower-case, stemmed words, with compounds
+// joined.
 func searchTokens(text string) []string {
 	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		out = append(out, stemWord(f))
+	stems := make([]string, len(fields))
+	for i, f := range fields {
+		stems[i] = stemWord(f)
+	}
+	out := make([]string, 0, len(stems))
+	for i := 0; i < len(stems); i++ {
+		if i+1 < len(stems) {
+			if joined, ok := searchCompounds[[2]string{stems[i], stems[i+1]}]; ok {
+				out = append(out, joined)
+				i++
+				continue
+			}
+		}
+		out = append(out, stems[i])
 	}
 	return out
 }
 
-// searchField is one indexed piece of a command.
-type searchField struct {
-	weight float64
-	tokens map[string]bool
-	label  string // how a match here is reported
-	flag   string // the flag a value field belongs to
-	value  string // the value (or value alias) itself
-	// structural: a name, alias, flag or flag value rather than prose.
-	structural bool
-}
-
-type searchDoc struct {
-	cmd    commandInfo
-	fields []searchField
-}
-
-func tokenSet(text string) map[string]bool {
-	set := map[string]bool{}
+// meaningfulTokens are the words of text a query would search for: no
+// stopwords, no single letters (the "s" of "what's"), no repeats.
+func meaningfulTokens(text string) []string {
+	var out []string
+	seen := map[string]bool{}
 	for _, t := range searchTokens(text) {
-		set[t] = true
-	}
-	return set
-}
-
-func buildSearchIndex(tree commandTree) []searchDoc {
-	docs := make([]searchDoc, 0, len(tree.Commands))
-	for _, c := range tree.Commands {
-		// search itself is left out: its help quotes the synonyms, so it
-		// would match every query that uses one.
-		segments := strings.Fields(c.Path)[1:]
-		if !c.Runnable || (len(segments) == 1 && segments[0] == "search") {
+		if len(t) < 2 || searchStopwordSet[t] || seen[t] {
 			continue
 		}
-		name := segments[len(segments)-1]
-		d := searchDoc{cmd: c}
-		add := func(weight float64, text, label string, structural bool) {
-			if text != "" {
-				d.fields = append(d.fields, searchField{weight: weight, tokens: tokenSet(text), label: label, structural: structural})
-			}
-		}
-		add(weightName, name, fmt.Sprintf("command name %q", name), true)
-		for _, parent := range segments[:len(segments)-1] {
-			add(weightParent, parent, fmt.Sprintf("under %q", parent), true)
-		}
-		for _, alias := range c.Aliases {
-			add(weightAlias, alias, fmt.Sprintf("alias %q", alias), true)
-		}
-		add(weightShort, c.Short, "description", false)
-		add(weightLong, c.Long, "long description", false)
-		add(weightExample, c.Example, "example", false)
-		for _, f := range c.Flags {
-			add(weightFlag, f.Name, "flag --"+f.Name, true)
-			add(weightUsage, f.Usage, "--"+f.Name+" help", false)
-			for _, v := range f.AllowedValues {
-				d.fields = append(d.fields, searchField{weight: weightValue, tokens: tokenSet(v), structural: true,
-					label: fmt.Sprintf("--%s accepts %s", f.Name, v), flag: f.Name, value: v})
-			}
-			for _, alias := range sortedKeys(f.ValueAliases) {
-				d.fields = append(d.fields, searchField{weight: weightValue, tokens: tokenSet(alias), structural: true,
-					label: fmt.Sprintf("--%s accepts %s (= %s)", f.Name, alias, f.ValueAliases[alias]), flag: f.Name, value: alias})
-			}
-		}
-		docs = append(docs, d)
+		seen[t] = true
+		out = append(out, t)
 	}
-	return docs
+	return out
+}
+
+// splitPage separates a page under a section ("Analyze › Text Ads") into
+// its section and label; a top-level page has no section.
+func splitPage(page string) (section, label string) {
+	if i := strings.Index(page, "›"); i >= 0 {
+		return strings.TrimSpace(page[:i]), strings.TrimSpace(page[i+len("›"):])
+	}
+	return "", page
 }
 
 // searchQueryTerms turns the query into the words searched for.
@@ -188,190 +192,187 @@ const groupingTerm = "breakdown"
 // parseSearchQuery returns the words searched for and whether the query
 // asked for a grouping.
 func parseSearchQuery(words []string) ([]string, bool) {
-	var terms []string
+	query := strings.Join(words, " ")
 	grouping := false
-	seen := map[string]bool{}
-	for _, t := range searchTokens(strings.Join(words, " ")) {
+	for _, t := range searchTokens(query) {
 		if groupingCues[t] {
 			grouping = true
 		}
-		if searchStopwords[t] || seen[t] {
-			continue
-		}
-		seen[t] = true
-		terms = append(terms, t)
 	}
-	return terms, grouping && !seen[groupingTerm]
+	terms := meaningfulTokens(query)
+	return terms, grouping && !containsString(terms, groupingTerm)
 }
 
 type searchResult struct {
-	Command string   `json:"command"`
-	Short   string   `json:"short"`
-	Score   float64  `json:"score"`
-	Matched []string `json:"matched"`
-	Try     string   `json:"try,omitempty"`
-
-	coverage   float64
-	structural bool // a word matched a name, alias, flag or flag value, not only prose
+	Command string  `json:"command"`
+	Short   string  `json:"short"`
+	Score   float64 `json:"score"`
+	// Coverage is the share of the query's words the command matched.
+	Coverage float64  `json:"coverage"`
+	Matched  []string `json:"matched"`
+	Try      string   `json:"try,omitempty"`
 }
 
-// good reports whether r is a match worth acting on: a high enough score
-// over at least half the words, found in the command's structure or in
-// more than one word of its prose.
-func (r searchResult) good() bool {
-	return r.Score >= goodMatchScore && r.coverage >= goodMatchCoverage && (r.structural || len(r.Matched) > 1)
-}
-
+// searchAnswer is what a search prints: candidates, best first, and whether
+// the first is a confident answer.
 type searchAnswer struct {
-	Query     string         `json:"query"`
-	Terms     []string       `json:"terms"`
-	GoodMatch bool           `json:"good_match"`
-	Note      string         `json:"note,omitempty"`
-	Results   []searchResult `json:"results"`
-}
+	Query string   `json:"query"`
+	Terms []string `json:"terms"`
+	// UnknownTerms are the query's words no command's text has, as written,
+	// as a synonym or as the start of a word: the commands lack the thing or
+	// call it something else ("approve" where they say apply), or, from a
+	// person, it is a typo. Not a verdict: on 40 tasks an agent phrased, it
+	// named a word in 6 the CLI does under another name and in none of the 4
+	// it does not do.
+	UnknownTerms []string `json:"unknown_terms"`
+	GoodMatch    bool     `json:"good_match"`
+	// Hint is the next step when the first result is not a confident answer.
+	// A table prints it below the list; an agent gets JSON, so it is here too,
+	// or an agent holding weak candidates is never pointed at the catalog.
+	Hint    string         `json:"hint,omitempty"`
+	Results []searchResult `json:"results"`
 
-// fieldMatch is how strongly term matches a field: 1 for the word itself,
-// less through a synonym or as a prefix, 0 for no match; and the word
-// that matched.
-func fieldMatch(f searchField, term string) (float64, string) {
-	if f.tokens[term] {
-		return 1, term
-	}
-	for _, syn := range searchSynonyms[term] {
-		if f.tokens[syn] {
-			return synonymFactor, syn
-		}
-	}
-	if len(term) >= 4 {
-		for tok := range f.tokens {
-			if strings.HasPrefix(tok, term) {
-				return prefixFactor, tok
-			}
-		}
-	}
-	return 0, ""
-}
-
-// termMatch finds the field term matches best in d, and the field's
-// total matches in d (breadth).
-func termMatch(d searchDoc, term string) (best float64, breadth float64, field searchField, word string) {
-	for _, f := range d.fields {
-		factor, w := fieldMatch(f, term)
-		if factor == 0 {
-			continue
-		}
-		s := f.weight * factor
-		breadth += s
-		// On a tie a flag value wins: it is what the caller can pass.
-		if s > best || (s == best && f.flag != "" && field.flag == "") {
-			best, field, word = s, f, w
-		}
-	}
-	return best, breadth, field, word
-}
-
-// scoreDoc scores d for the terms: per term, the best field's weight plus a
-// little for the other fields it matches, times the squared share of terms
-// matched. A grouping cue adds half of groupingTerm's match without
-// counting toward the share.
-func scoreDoc(d searchDoc, terms []string, grouping bool) (searchResult, bool) {
-	res := searchResult{Command: d.cmd.Path, Short: d.cmd.Short}
-	matched := 0
-	var tryFlags []string
-	tryValues := map[string]string{}
-	note := func(term string, field searchField, word string) {
-		reason := field.label
-		if !field.structural {
-			reason = fmt.Sprintf("%s mentions %q", field.label, word)
-		}
-		if word != term {
-			reason += fmt.Sprintf(" (for %q)", term)
-		}
-		if !containsString(res.Matched, reason) {
-			res.Matched = append(res.Matched, reason)
-		}
-		if field.structural {
-			res.structural = true
-		}
-	}
-	for _, term := range terms {
-		best, breadth, field, word := termMatch(d, term)
-		if best == 0 {
-			continue
-		}
-		matched++
-		res.Score += best + min(0.1*(breadth-best), maxBreadthBonus)
-		note(term, field, word)
-		if field.flag != "" {
-			if _, dup := tryValues[field.flag]; !dup {
-				tryFlags = append(tryFlags, field.flag)
-				tryValues[field.flag] = field.value
-			}
-		}
-	}
-	if matched == 0 {
-		return res, false
-	}
-	res.coverage = float64(matched) / float64(len(terms))
-	res.Score *= res.coverage * res.coverage
-	if grouping {
-		if best, _, field, word := termMatch(d, groupingTerm); best > 0 {
-			res.Score += 0.5 * best
-			note("per/by", field, word)
-		}
-	}
-	res.Score = float64(int(res.Score*100+0.5)) / 100
-	if len(tryFlags) > 0 {
-		try := d.cmd.Path
-		for _, f := range tryFlags {
-			try += " --" + f + " " + tryValues[f]
-		}
-		res.Try = try
-	}
-	return res, true
+	// notInCLI is the UI page (or task) no command does, when the query
+	// names it.
+	notInCLI *taskInfo
 }
 
 func runSearch(tree commandTree, words []string, limit int) searchAnswer {
 	terms, grouping := parseSearchQuery(words)
-	answer := searchAnswer{Query: strings.Join(words, " "), Terms: terms, Results: []searchResult{}}
-	var results []searchResult
-	for _, d := range buildSearchIndex(tree) {
-		if r, ok := scoreDoc(d, terms, grouping); ok {
-			results = append(results, r)
-		}
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		return results[i].Command < results[j].Command
-	})
-	switch {
-	case len(results) == 0:
-		answer.Note = fmt.Sprintf("No command matches %q. `p202 commands` lists every command.", answer.Query)
+	answer := searchAnswer{Query: strings.Join(words, " "), Terms: terms, UnknownTerms: []string{}, Results: []searchResult{}}
+	if len(terms) == 0 {
 		return answer
-	case !results[0].good():
-		answer.Note = fmt.Sprintf("No command matches %q well; these are the closest. `p202 commands` lists every command.", answer.Query)
-		limit = min(limit, closestShown)
-	default:
-		answer.GoodMatch = true
 	}
-	if len(results) > limit {
-		results = results[:limit]
+	summed, bm25f := buildSummedCorpus(tree), buildBM25FCorpus(tree)
+	terms, answer.UnknownTerms = foldTerms(bm25f, terms)
+	answer.Terms = terms
+	fused := fuseRankings(rankSummed(summed, terms, grouping), rankBM25F(bm25f, terms, grouping), terms)
+	docs := map[string]*rankDoc{}
+	for i := range bm25f.docs {
+		docs[bm25f.docs[i].key] = &bm25f.docs[i]
 	}
-	answer.Results = results
+	// "No command does this" is a refusal, so it answers only a query that
+	// names the page or phrase in full: "is the server up" reached the
+	// upgrade entry through a synonym (server → install upgrade) and a prefix
+	// (up → upgrade), and was told the CLI cannot do what `system health`
+	// does.
+	if len(fused) > 0 && fused[0].notInCLI != nil && namesAGroup(docs[fused[0].key], termSetOf(terms)) {
+		answer.notInCLI = fused[0].notInCLI
+		return answer
+	}
+	for _, f := range fused {
+		if f.notInCLI != nil || f.cmd == nil {
+			continue // a page with no command is an answer only when it is the best one
+		}
+		answer.Results = append(answer.Results, searchResult{
+			Command:  f.key,
+			Short:    f.cmd.Short,
+			Score:    math.Round(f.fused*1e4) / 1e4,
+			Coverage: math.Round(f.coverage*100) / 100,
+			Matched:  matchedReasons(bm25f, docs[f.key], terms),
+			Try:      f.try,
+		})
+		if len(answer.Results) == limit {
+			break
+		}
+	}
+	answer.GoodMatch = len(answer.Results) > 0 && answer.Results[0].Coverage >= confidentCoverage
+	if !answer.GoodMatch {
+		answer.Hint = weakMatchHint
+	}
 	return answer
+}
+
+// foldTerms puts an inflected word the index does not know into the form it
+// does ("imported" → import), drops a repeat that makes, and lists the words
+// that still match nothing. Both corpora index the same text, so either one's
+// vocabulary answers.
+func foldTerms(c *rankCorpus, terms []string) (folded, unknown []string) {
+	unknown = []string{}
+	seen := map[string]bool{}
+	for _, t := range terms {
+		if !c.known(t) {
+			if l := c.lemmaOf(t); l != "" {
+				t = l
+			} else {
+				unknown = append(unknown, t)
+			}
+		}
+		if !seen[t] {
+			seen[t] = true
+			folded = append(folded, t)
+		}
+	}
+	return folded, unknown
+}
+
+// namesAGroup reports whether the query names one of d's pages or phrases in
+// full.
+func namesAGroup(d *rankDoc, terms map[string]bool) bool {
+	if d == nil {
+		return false
+	}
+	for _, g := range d.groups {
+		if coveredBy(g.tokens, terms) {
+			return true
+		}
+	}
+	return false
+}
+
+// searchError is the failure for a search that has no answer to hand back:
+// nothing matched, or the query names a page no command does.
+func searchError(a searchAnswer) error {
+	if t := a.notInCLI; t != nil {
+		if len(t.UIPages) > 0 {
+			return validationError("No p202 command does what the web UI's %q page does: %s.", t.UIPages[0], t.Instead).WithHint("%s", t.Hint)
+		}
+		return validationError("No p202 command for %q: %s.", a.Query, t.Instead).WithHint("%s", t.Hint)
+	}
+	if len(a.UnknownTerms) > 0 {
+		return validationError("No command matches %q: no command mentions %s.", a.Query, strings.Join(a.UnknownTerms, ", ")).
+			WithHint("Read `p202 commands --brief` (every command on one line, with the web UI page it does) and choose, or describe the task in other words.")
+	}
+	return validationError("No command matches %q.", a.Query).
+		WithHint("Read `p202 commands --brief` (every command on one line, with the web UI page it does) and choose, or describe the task in other words.")
+}
+
+// quietWeakError is --quiet's answer when the first result is not a
+// confident one: --quiet prints command paths alone, so a script that takes
+// its first line would run a guess.
+func quietWeakError(a searchAnswer) error {
+	var names []string
+	for _, r := range a.Results {
+		names = append(names, fmt.Sprintf("`%s` (%s)", r.Command, r.Short))
+	}
+	return validationError("No confident match for %q; --quiet prints a command only for one.", a.Query).
+		WithHint("The candidates: %s. Run it without --quiet (or with --json) to see what each matched, or read `p202 commands --brief` and choose.", strings.Join(names, "; "))
 }
 
 var searchCmd = &cobra.Command{
 	Use:   "search <what you want to do>",
-	Short: "Find the command for a task: ranks commands, flags and flag values by your words (offline)",
-	Long: "Searches every command's name, aliases, description, examples, flags and the values\n" +
-		"its flags accept, and lists the best matches with why each matched and, when a flag\n" +
-		"value matched, a command line to try. Plural forms and common synonyms match\n" +
-		"(referrer/referer, offer/campaign, dead/broken, undo/revert, link/url). When nothing\n" +
-		"matches well it says so and shows the closest few. No server is contacted.",
-	Example: "  p202 search breakdown by browser\n  p202 search dead links --json\n  p202 search undo url change",
+	Short: "Find the command for a task: ranks commands, flags, flag values and UI pages by your words (offline)",
+	Long: "Searches every command's name, aliases, description, examples, flags, the values\n" +
+		"its flags accept, and the tasks it runs: the web UI page that does the same (\"Spy\",\n" +
+		"\"Update CPC\") and the words people use for it (\"realtime traffic\"). Lists the best\n" +
+		"matches (5 by default), best first, each with why it matched, the share of your\n" +
+		"words it matched (coverage) and a command line to try. Plural forms, common\n" +
+		"synonyms (referrer/referer, offer/campaign, dead/broken, undo/revert, link/url),\n" +
+		"inflected forms (imported, charged) and split words (real time, real-time) match.\n" +
+		"Misspellings are not corrected: a word no command mentions is listed above the\n" +
+		"results (unknown_terms in JSON); the commands lack it or call it something else.\n" +
+		"No server is contacted.\n\n" +
+		"good_match says whether the first is a confident answer (it matched at least three\n" +
+		"quarters of your words); a table says so above the list when it is not, and\n" +
+		"--quiet prints that first command alone, and only for a confident answer, so a\n" +
+		"script never runs a guess. It fails (exit 1) only when nothing matches, or when\n" +
+		"the words name a web UI page no command does, and then it says where that is\n" +
+		"done instead.\n\n" +
+		"Search matches words, not meaning: on 36 tasks as an agent phrased them, written\n" +
+		"before this version was measured, the first result was right for 27 and the first\n" +
+		"five held the right command for 34. A model reading `p202 commands --brief` chose\n" +
+		"right first for 34: an agent choosing a command does better reading the catalog.",
+	Example: "  p202 search breakdown by browser\n  p202 search realtime traffic\n  p202 search dead links --json\n  p202 search undo url change",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(searchQueryTerms(args)) == 0 {
 			return validationError("search needs words that describe the task").
@@ -382,12 +383,18 @@ var searchCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit < 1 {
-			return validationError("--limit must be at least 1, got %d", limit).WithHint("The default is 10.")
+			return validationError("--limit must be at least 1, got %d", limit).WithHint("The default is %d.", defaultSearchLimit)
 		}
 		if csvOutput {
 			return validationError("p202 search has no CSV form").WithHint("Use --json, or --quiet for command paths only.")
 		}
 		answer := runSearch(buildCommandTree(cmd.Root()), args, limit)
+		if answer.notInCLI != nil || len(answer.Results) == 0 {
+			return searchError(answer)
+		}
+		if quietOutput && !jsonOutput && !ndjsonOutput && !answer.GoodMatch {
+			return quietWeakError(answer)
+		}
 		return writeSearchAnswer(os.Stdout, answer)
 	},
 }
@@ -397,16 +404,21 @@ func writeSearchAnswer(w io.Writer, a searchAnswer) error {
 	case jsonOutput || ndjsonOutput:
 		return writeJSONNoEscape(w, a)
 	case quietOutput:
-		for _, r := range a.Results {
-			fmt.Fprintln(w, r.Command)
+		// good_match vouches for the first result only. --quiet printed
+		// every candidate, so a confident answer came with four guesses
+		// under it, one path a line, as alike as the answer to a script
+		// reading the lines; the rest are what --json and the table list.
+		if len(a.Results) > 0 {
+			fmt.Fprintln(w, a.Results[0].Command)
 		}
 		return nil
 	}
-	if a.Note != "" {
-		fmt.Fprintln(w, a.Note)
-		if len(a.Results) > 0 {
-			fmt.Fprintln(w)
-		}
+	if len(a.UnknownTerms) > 0 {
+		fmt.Fprintf(w, "No command mentions: %s.\n", strings.Join(a.UnknownTerms, ", "))
+	}
+	if !a.GoodMatch {
+		fmt.Fprintf(w, "No confident match for %q (the first matches %.0f%% of its words); the closest:\n\n", a.Query, a.Results[0].Coverage*100)
+		defer fmt.Fprintln(w, "\n"+a.Hint)
 	}
 	for _, r := range a.Results {
 		fmt.Fprintf(w, "%s — %s\n", r.Command, r.Short)
@@ -419,6 +431,6 @@ func writeSearchAnswer(w io.Writer, a searchAnswer) error {
 }
 
 func init() {
-	searchCmd.Flags().Int("limit", 10, "Most results to show")
+	searchCmd.Flags().Int("limit", defaultSearchLimit, "Most results to show")
 	rootCmd.AddCommand(searchCmd)
 }

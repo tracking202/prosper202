@@ -64,34 +64,6 @@ if (!function_exists('get_keyword_id')) {
     }
 }
 
-if (!function_exists('get_c1_id')) {
-    function get_c1_id($c1)
-    {
-        return INDEXES::get_c1_id($c1);
-    }
-}
-
-if (!function_exists('get_c2_id')) {
-    function get_c2_id($c2)
-    {
-        return INDEXES::get_c2_id($c2);
-    }
-}
-
-if (!function_exists('get_c3_id')) {
-    function get_c3_id($c3)
-    {
-        return INDEXES::get_c3_id($c3);
-    }
-}
-
-if (!function_exists('get_c4_id')) {
-    function get_c4_id($c4)
-    {
-        return INDEXES::get_c4_id($c4);
-    }
-}
-
 if (!function_exists('get_browser_id')) {
     function get_browser_id($browser_name)
     {

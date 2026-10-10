@@ -129,8 +129,7 @@ class AUTH
        // die('prepared statement...');
         self::bind($stmt, 's', $username);
         self::execute($stmt, 'Unable to execute login query');
-        $result = $stmt->get_result();
-        $user_row = $result ? $result->fetch_assoc() : null;
+        $user_row = self::resultOf($stmt, 'Unable to read the login query')->fetch_assoc();
         $stmt->close();
        // die('done fetching user row...');
         if (!$user_row) {
@@ -194,6 +193,19 @@ class AUTH
         self::$passwordColumnChecked = true;
     }
 
+    /**
+     * The account whose Prosper202 license key this user's session is held
+     * to (require_valid_api_key()): the user's own when it has a key or no
+     * install, else the install's first active user that has one.
+     *
+     * A lookup that fails throws, naming the user. A failed prepare answered
+     * the user's own id -- the same value as "no user of this install has a
+     * key" -- and begin_user_session() keeps the answer for the whole
+     * session: one transient database error at sign-in held a sub-user's
+     * every page to its own, empty key, and every page sent the session to
+     * api-key-required.php for a license key the install already has
+     * (CLAUDE.md #11: a lookup that cannot answer must not answer).
+     */
     private static function determineAccountOwnerId(array $user_row): int
     {
         $userId = (int) ($user_row['user_id'] ?? 0);
@@ -204,18 +216,23 @@ class AUTH
             return $userId;
         }
 
+        $failed = 'Unable to read whose license key user ' . $userId . "'s session is held to";
         $database = DB::getInstance();
         $db = $database->getConnection();
-        $stmt = $db->prepare('SELECT user_id FROM 202_users WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1 AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != "" ORDER BY user_id ASC LIMIT 1');
-        if (!$stmt) {
-            return $userId;
-        }
+        try {
+            $stmt = $db->prepare('SELECT user_id FROM 202_users WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1 AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != "" ORDER BY user_id ASC LIMIT 1');
+            if ($stmt === false) {
+                throw new \RuntimeException($failed . ': ' . $db->error);
+            }
 
-        self::bind($stmt, 's', $installHash);
-        self::execute($stmt, 'Unable to execute API owner lookup query');
-        $result = $stmt->get_result();
-        $ownerRow = $result ? $result->fetch_assoc() : null;
-        $stmt->close();
+            self::bind($stmt, 's', $installHash);
+            self::execute($stmt, $failed);
+            $ownerRow = self::resultOf($stmt, $failed)->fetch_assoc();
+            $stmt->close();
+        } catch (\mysqli_sql_exception $e) {
+            // Strict reporting throws MySQL's sentence; name whose read it was.
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
+        }
 
         if ($ownerRow && isset($ownerRow['user_id'])) {
             return (int) $ownerRow['user_id'];
@@ -224,25 +241,38 @@ class AUTH
         return $userId;
     }
 
+    /**
+     * A user's Prosper202 license key, '' when it has none. A read that
+     * fails throws: '' sent the session to api-key-required.php as though
+     * the install had no key (CLAUDE.md #11).
+     */
     private static function lookupApiKeyForUser(int $userId): string
     {
         if ($userId <= 0) {
             return '';
         }
 
+        $failed = 'Unable to read the license key of user ' . $userId;
         $user_sql = "SELECT user_pref_ad_settings, p202_customer_api_key FROM 202_users_pref LEFT JOIN 202_users ON (202_users_pref.user_id = 202_users.user_id) WHERE 202_users_pref.user_id='" . $userId . "'";
-        $user_result = _mysqli_query($user_sql);
-        if ($user_result) {
-            $user_row = $user_result->fetch_assoc();
-            return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
+        try {
+            $user_result = _mysqli_query($user_sql);
+        } catch (\mysqli_sql_exception $e) {
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
         }
+        if (!$user_result instanceof \mysqli_result) {
+            throw new \RuntimeException($failed);
+        }
+        $user_row = $user_result->fetch_assoc();
 
-        return '';
+        return trim((string) ($user_row['p202_customer_api_key'] ?? ''));
     }
 
     public static function begin_user_session(array $user_row): void
     {
-        $writer = static function () use ($user_row): void {
+        // Read before the session is written: a lookup that throws leaves
+        // the request signed out, rather than signed in without an owner.
+        $accountOwnerId = self::determineAccountOwnerId($user_row);
+        $writer = static function () use ($user_row, $accountOwnerId): void {
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_regenerate_id(true);
             }
@@ -256,7 +286,7 @@ class AUTH
             $_SESSION['user_stats202_app_key'] = $user_row['user_stats202_app_key'] ?? null;
             $_SESSION['user_timezone'] = $user_row['user_timezone'] ?? 'UTC';
             $_SESSION['user_mods_lb'] = $user_row['user_mods_lb'] ?? 0;
-            $_SESSION['account_owner_id'] = self::determineAccountOwnerId($user_row);
+            $_SESSION['account_owner_id'] = $accountOwnerId;
         };
 
         if (function_exists('withWritableSession')) {
@@ -296,6 +326,25 @@ class AUTH
         AUTH::set_timezone($_SESSION['user_timezone']);
         if ($requireLicense) {
             AUTH::require_valid_api_key();
+        }
+    }
+
+    /**
+     * Refuse the request unless the signed-in user's role has every one of
+     * $permissions: 403 naming the first one missing. For the endpoints a
+     * page posts to: the page gates its form (access_to_setup_section, a
+     * remove_* button), and an endpoint that asks for nothing answers any
+     * signed-in role that posts to it directly (CLAUDE.md #5).
+     * SetupAjaxRequiresPermissionTest holds the Setup pages' endpoints to it.
+     */
+    public static function require_permissions(string ...$permissions): void
+    {
+        global $userObj;
+        foreach ($permissions as $permission) {
+            if (!$userObj instanceof \User || !$userObj->hasPermission($permission)) {
+                http_response_code(403);
+                die("This account's role does not have the '" . htmlspecialchars($permission, ENT_QUOTES, 'UTF-8') . "' permission.");
+            }
         }
     }
 
@@ -358,13 +407,94 @@ class AUTH
     }
 
 
+    /** @var array<int, string> the account zone read this request, by user id */
+    private static array $accountTimezones = [];
+
+    /**
+     * Set the request's zone: the signed-in user's, read from their account
+     * (202_users.user_timezone), else $user_timezone.
+     *
+     * The session keeps the zone it had at sign-in, and every report page
+     * counts its days from this: when the account's zone changed elsewhere
+     * (Personal Settings in another session, `p202 user update`, a
+     * colleague's User Management), "today" on every page stayed the old
+     * zone's today until the user signed in again, while GET /reports/*
+     * (api/v3 AccountTimezone) used the new one. The account's row is read
+     * once a request and the session's copy refreshed with it; a zone that
+     * is empty or that is not a zone is UTC, as the API reads it. A read
+     * that fails throws (accountTimezone()): kept, the session's zone was a
+     * guess every report page counted its days in with nothing to say so.
+     *
+     * Whatever is set is held to the one rule (Prosper202\Report\AccountZone):
+     * the redirects and pixels pass the zone of a row they read, and an
+     * offset such as +05:30 there was refused by date_default_timezone_set()
+     * with a notice, leaving the server's own zone in force.
+     */
     public static function set_timezone($user_timezone)
     {
         if (isset($_SESSION['user_timezone'])) {
             $user_timezone = $_SESSION['user_timezone'];
+            $userId = (int) ($_SESSION['user_id'] ?? 0);
+            $accountZone = $userId > 0 ? self::accountTimezone($userId) : null;
+            if ($accountZone !== null) {
+                $user_timezone = $accountZone;
+                $_SESSION['user_timezone'] = $accountZone;
+            }
         }
 
-        date_default_timezone_set($user_timezone);
+        $zone = \Prosper202\Report\AccountZone::normalize(is_string($user_timezone) ? $user_timezone : null);
+        date_default_timezone_set($zone);
+    }
+
+    /**
+     * The account's zone: UTC when it is unset or not a zone PHP knows, null
+     * when there is no account row (the session outlived its user, and keeps
+     * its own zone) or no database in this process at all.
+     *
+     * A read that fails throws, naming the account. It answered null, which
+     * set_timezone() reads as "keep the session's zone", for a failed
+     * prepare, execute or get_result() and for any exception at all: one
+     * transient database error made a report page count "today" in the zone
+     * captured at sign-in, which may no longer be the account's, with
+     * nothing in a log (CLAUDE.md #1, #11). The API's AccountTimezone
+     * refuses the same failure; a page whose days cannot be placed now
+     * fails the same way.
+     */
+    private static function accountTimezone(int $userId): ?string
+    {
+        if (isset(self::$accountTimezones[$userId])) {
+            return self::$accountTimezones[$userId];
+        }
+        if (!class_exists('DB', false)) {
+            return null;
+        }
+        $failed = 'Unable to read the time zone of account ' . $userId;
+        $db = DB::getInstance()->getConnection();
+        if (!$db instanceof \mysqli) {
+            throw new \RuntimeException($failed . ': no database connection');
+        }
+        try {
+            $stmt = $db->prepare('SELECT user_timezone FROM 202_users WHERE user_id = ? LIMIT 1');
+            if ($stmt === false) {
+                throw new \RuntimeException($failed . ': ' . $db->error);
+            }
+            self::bind($stmt, 'i', $userId);
+            self::execute($stmt, $failed);
+            $row = self::resultOf($stmt, $failed)->fetch_assoc();
+            $stmt->close();
+        } catch (\mysqli_sql_exception $e) {
+            // Strict reporting throws MySQL's sentence; name whose read it was.
+            throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
+        }
+        if ($row === null) {
+            return null;
+        }
+        // The one rule, the API's too: a zone PHP lists, by that exact name;
+        // an offset or anything else is UTC.
+        $stored = $row['user_timezone'] ?? null;
+        $zone = \Prosper202\Report\AccountZone::normalize(is_string($stored) ? $stored : null);
+
+        return self::$accountTimezones[$userId] = $zone;
     }
 
     public static function remember_me_on_logged_out()
@@ -501,16 +631,16 @@ class AUTH
         ]);
     }
 
+    /**
+     * The remember_me cookie's Domain: the one rule every cookie with a
+     * Domain follows (CookieDomain — the request host without its port, none
+     * for an IP literal, localhost or anything that is not a host name). The
+     * copy that lived here stripped a port with /:\d+$/, so `[::1]:8080`
+     * became the Domain `[::1]`.
+     */
     public static function cookie_domain(): string
     {
-        $host = $_SERVER['HTTP_HOST'] ?? '';
-        // Strip port number if present (e.g. "example.com:8080" → "example.com")
-        $domain = strtolower((string) preg_replace('/:\d+$/', '', (string) $host));
-        // Don't set a cookie domain for localhost or IP addresses — browsers reject it
-        if ($domain === 'localhost' || filter_var($domain, FILTER_VALIDATE_IP)) {
-            return '';
-        }
-        return $domain;
+        return \Prosper202\Http\CookieDomain::fromServer($_SERVER);
     }
 
     public static function delete_old_auth_hash()
@@ -556,22 +686,18 @@ class AUTH
     }
 
     /**
-     * Return the trust-aware client IP, validated. connect.php normalizes the
-     * real client address into HTTP_X_FORWARDED_FOR (CF-Connecting-IP, X-Real-IP,
-     * …) but on a direct request — or a proxy that doesn't strip client-supplied
-     * forwarding headers — that value can be attacker-controlled garbage or
-     * longer than the 255-char log column. Validate it as an IP and fall back to
-     * REMOTE_ADDR, so the throttle key and audit log only ever see a real IP.
+     * The visitor's address, validated (VisitorIp: the forwarding headers
+     * the click path reads, the leftmost hop, REMOTE_ADDR when that is not an
+     * address), or '0.0.0.0' when the request carries none — so the throttle
+     * key and the audit log only ever see a real IP that fits their column.
+     * It is the address the client claims; see VisitorIp for what that may
+     * and may not decide.
      */
     public static function client_ip(): string
     {
-        foreach ([$_SERVER['HTTP_X_FORWARDED_FOR'] ?? '', $_SERVER['REMOTE_ADDR'] ?? ''] as $candidate) {
-            $candidate = trim((string) $candidate);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                return $candidate;
-            }
-        }
-        return '0.0.0.0';
+        $ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+
+        return $ip !== '' ? $ip : '0.0.0.0';
     }
 
     /**
@@ -581,16 +707,47 @@ class AUTH
      */
     public static function check_csrf_token(): bool
     {
-        $sessionToken = (string) ($_SESSION['token'] ?? '');
-        $postedToken = (string) ($_POST['token'] ?? '');
-        // Fail closed when either side is empty. Otherwise hash_equals('', '')
-        // would return true and let a request through if the session token was
-        // never seeded (session start/write failure, or a legacy entry point
-        // that bypasses connect.php).
-        if ($sessionToken === '' || $postedToken === '') {
+        return self::csrf_token_matches($_POST['token'] ?? null);
+    }
+
+    /**
+     * Whether $submitted is this session's anti-CSRF token: the app's one
+     * comparison, for a token that arrives other than as $_POST['token'] (a
+     * Setup delete link's `?token=`, a form whose field is named otherwise).
+     *
+     * Fails closed. hash_equals('', '') is true, so the inline copies this
+     * replaced — `hash_equals((string) ($_SESSION['token'] ?? ''), (string)
+     * ($_POST['token'] ?? ''))` — let a token-less request through whenever
+     * the session held an empty token: connect.php then reseeded only a
+     * token that was not set, not one that was set to ''. Measured live: with
+     * the stored token blanked, a Setup add, a Setup delete link,
+     * set_user_prefs, charts and the redirector's rule save all wrote on a
+     * request that carried no token. A token that is not usable on either
+     * side (csrf_token_usable()) — never seeded, blanked, an array posted as
+     * token[] — matches nothing.
+     */
+    public static function csrf_token_matches(mixed $submitted): bool
+    {
+        $sessionToken = $_SESSION['token'] ?? null;
+        if (!self::csrf_token_usable($sessionToken) || !self::csrf_token_usable($submitted)) {
             return false;
         }
-        return hash_equals($sessionToken, $postedToken);
+        return hash_equals($sessionToken, $submitted);
+    }
+
+    /**
+     * Whether a value can be an anti-CSRF token: a non-empty string. The one
+     * test of it: csrf_token_matches() refuses a token that fails it on
+     * either side, and connect.php seeds a new session token in place of one
+     * that fails it, so what the guard refuses and what the seed replaces
+     * cannot drift apart (a session the guard refuses and the seed keeps is
+     * refused on every form until sign-out).
+     *
+     * @phpstan-assert-if-true non-empty-string $token
+     */
+    public static function csrf_token_usable(mixed $token): bool
+    {
+        return is_string($token) && $token !== '';
     }
 
     /**
@@ -629,8 +786,10 @@ class AUTH
         }
         self::bind($stmt, 'si', $value, $since);
         self::execute($stmt, 'Unable to execute login throttle query');
-        $result = $stmt->get_result();
-        $row = $result ? $result->fetch_assoc() : null;
+        // A failed read is not "no failures": it throws, and the login page
+        // logs it ("Rate limit check failed") before going on, as it does for
+        // a query that fails to prepare or run.
+        $row = self::resultOf($stmt, 'Unable to read the login throttle query')->fetch_assoc();
         $stmt->close();
 
         return $row ? (int) $row['failures'] : 0;
@@ -665,6 +824,22 @@ class AUTH
         if (!$stmt->bind_param($types, ...$values)) {
             throw new \RuntimeException('Unable to bind statement parameters');
         }
+    }
+
+    /**
+     * The statement's result set. A false get_result() is a failed read, and
+     * read as an empty result it was "no such user" at sign-in, "no failed
+     * attempts" to the login throttle, and "no owner" to the API key lookup.
+     */
+    private static function resultOf(\mysqli_stmt $stmt, string $message): \mysqli_result
+    {
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new \RuntimeException($message);
+        }
+
+        return $result;
     }
 
     private static function execute(\mysqli_stmt $stmt, string $message): void

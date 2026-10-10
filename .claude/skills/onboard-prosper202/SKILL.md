@@ -52,9 +52,9 @@ otherwise ask):
 
 ```bash
 $P202 user prefs update <user_id> \
-  --user_tracking_domain="<domain>" \
-  --user_account_currency="<USD|EUR|...>" \
-  --user_daily_email="<on|off>"
+  --user-tracking-domain="<domain>" \
+  --user-account-currency="<USD|EUR|...>" \
+  --user-daily-email="<00-23, the hour to send it, or never>"
 ```
 
 ## 3. First working tracker
@@ -63,13 +63,13 @@ Create the entities in order, parsing the `--json` output to capture each new ID
 for the next call. See `cli-guide.md` in this skill for the full flag reference.
 
 ```bash
-$P202 ppc-network  create --ppc_network_name="Google Ads" --json
-$P202 ppc-account  create --ppc_account_name="<acct>" --ppc_network_id=<id> --json
-$P202 aff-network  create --aff_network_name="<network>" --json
-$P202 campaign     create --aff_campaign_name="<offer>" --aff_campaign_url="<offer url>" --aff_network_id=<id> --json
+$P202 ppc-network  create --ppc-network-name="Google Ads" --json
+$P202 ppc-account  create --ppc-account-name="<acct>" --ppc-network-id=<id> --json
+$P202 aff-network  create --aff-network-name="<network>" --json
+$P202 campaign     create --aff-campaign-name="<offer>" --aff-campaign-url="<offer url>" --aff-network-id=<id> --json
 # optional pre-sell page:
-$P202 landing-page create --landing_page_url="<lp url>" --aff_campaign_id=<id> --json
-$P202 tracker      create --aff_campaign_id=<id> --ppc_account_id=<id> [--landing_page_id=<id>] --json
+$P202 landing-page create --landing-page-url="<lp url>" --aff-campaign-id=<id> --json
+$P202 tracker      create --aff-campaign-id=<id> --ppc-account-id=<id> [--landing-page-id=<id>] --json
 $P202 tracker      get-url <tracker_id>
 ```
 

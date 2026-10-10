@@ -36,11 +36,13 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
 		t.Errorf("breakdown by browser: %+v", a.Results)
 	}
-	if r := rankOf(a, "p202 analytics"); r == 0 || r > 3 || a.Results[r-1].Try != "p202 analytics --group-by browser" {
-		t.Errorf("breakdown by browser: analytics at %d in %+v", r, a.Results)
-	}
 	if a.Results[0].Try != "p202 report breakdown --breakdown browser" {
 		t.Errorf("breakdown by browser: try = %q", a.Results[0].Try)
+	}
+	// report groups (the Group Overview) also groups by browser, and offers
+	// its own flag for it.
+	if r := rankOf(a, "p202 report groups"); r != 0 && a.Results[r-1].Try != "p202 report groups --by browser" {
+		t.Errorf("breakdown by browser: report groups offered without a runnable try: %+v", a.Results[r-1])
 	}
 
 	a = searchJSON(t, "dead links")
@@ -54,9 +56,10 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	}
 
 	// --split-at's only description was its own flag help, so this found
-	// forecast-event create (--lead-days "before", --lag-days "after").
+	// forecast-event create (--lead-days "before", --lag-days "after"); and
+	// "before" is a word of `system retention delete-before`'s name.
 	a = searchJSON(t, "compare", "before", "and", "after", "a", "date")
-	if !a.GoodMatch || rankOf(a, "p202 analytics") != 1 {
+	if rankOf(a, "p202 analytics") != 1 {
 		t.Errorf("compare before and after a date: %+v", a.Results)
 	}
 
@@ -64,46 +67,118 @@ func TestSearchFindsTheCommandForEachTask(t *testing.T) {
 	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
 		t.Errorf("clicks per campaign: %+v", a.Results)
 	}
-	if r := rankOf(a, "p202 analytics"); r == 0 || r > 5 {
-		t.Errorf("clicks per campaign: analytics at %d", r)
-	}
 	if !strings.Contains(a.Results[0].Try, "--breakdown campaign") {
 		t.Errorf("clicks per campaign: try = %q", a.Results[0].Try)
 	}
+
+	// --group-by is report breakdown's alias for --breakdown: a flag taking
+	// the same values as one already set is not offered as well.
+	a = searchJSON(t, "Which IP addresses clicked on my keyword 'cheap flights'?")
+	if rankOf(a, "p202 report breakdown") != 1 || !strings.HasPrefix(a.Results[0].Try, "p202 report breakdown --breakdown ip") || strings.Contains(a.Results[0].Try, "--group-by") {
+		t.Errorf("IPs on a keyword: %+v", a.Results)
+	}
 }
 
-// No report has a referrer dimension. Search must say so rather than dress
-// up the nearest text match as the answer.
-func TestSearchDoesNotPretendAReferrerDimensionExists(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	for _, q := range []string{"referrer", "breakdown by referrer"} {
-		a := searchJSON(t, q)
-		if q == "referrer" && (a.GoodMatch || !strings.HasPrefix(a.Note, `No command matches "referrer" well`) || len(a.Results) > closestShown) {
-			t.Errorf("%s: good=%v note=%q results=%d", q, a.GoodMatch, a.Note, len(a.Results))
+// searchFails runs a search that must have no answer: it fails with exit 1
+// and prints nothing on stdout, in every output mode.
+func searchFails(t *testing.T, words ...string) (message, hint string) {
+	t.Helper()
+	for _, mode := range [][]string{nil, {"--json"}, {"--quiet"}} {
+		args := append(append([]string{"search"}, words...), mode...)
+		stdout, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != ExitValidation || stdout != "" {
+			t.Fatalf("%v: want exit 1 with nothing on stdout, got err=%v stdout=%q", args, err, stdout)
 		}
+		message, hint = err.Error(), hintFor(err)
+	}
+	return message, hint
+}
+
+// No report has a currency dimension. Search hands back what matches —
+// `user prefs update` sets the account's currency — and never a breakdown by
+// currency, which would be a guess dressed as an answer. (This case was
+// "referrer" until reports gained a referer dimension; see the test below.)
+func TestSearchDoesNotPretendACurrencyDimensionExists(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for _, q := range []string{"currency", "breakdown by currency"} {
+		a := searchJSON(t, strings.Fields(q)...)
 		for _, r := range a.Results {
 			for _, m := range r.Matched {
-				if strings.Contains(m, "accepts refer") {
+				if strings.Contains(m, "accepts currency") {
 					t.Errorf("%s: %s claims %q", q, r.Command, m)
 				}
 			}
-			if strings.Contains(r.Try, "refer") {
-				t.Errorf("%s: %s suggests %q", q, r.Command, r.Try)
+			for _, flag := range []string{"--breakdown currency", "--group-by currency", "--by currency", "--cols currency", "--rows currency"} {
+				if strings.Contains(r.Try, flag) {
+					t.Errorf("%s: %s suggests %q", q, r.Command, r.Try)
+				}
 			}
 		}
+		if q == "breakdown by currency" && a.GoodMatch {
+			t.Errorf("%s: a confident answer for half the question: %+v", q, a.Results)
+		}
 	}
-
-	stdout, _, err := executeCommand("search", "referrer")
-	if err != nil || !strings.HasPrefix(stdout, `No command matches "referrer" well`) {
+	stdout, _, err := executeCommand("search", "breakdown", "by", "currency")
+	if err != nil || !strings.HasPrefix(stdout, `No confident match for "breakdown by currency"`) || !strings.Contains(stdout, "`p202 commands --brief`") {
 		t.Errorf("human form: %v\n%s", err, stdout)
+	}
+}
+
+// A search hands back candidates whether or not the first is a confident
+// answer, as `cf cli search` does: of the 25 benchmark queries the previous
+// scorer refused outright, 20 have the right command in the top five now (5
+// of the 7 among the phrasings sealed before tuning). Only --quiet, which
+// prints a command path alone, withholds a guess -- and good_match vouches
+// for the first result only, so a confident --quiet prints that one path:
+// it printed all five, the four candidates under the answer one per line
+// like it.
+func TestSearchQuietPrintsOnlyAConfidentAnswer(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	stdout, _, err := executeCommand("search", "realtime", "traffic", "--quiet")
+	if err != nil || stdout != "p202 click list\n" {
+		t.Errorf("realtime traffic --quiet: want the confident first path alone, got %v %q", err, stdout)
+	}
+	if a := searchJSON(t, "realtime", "traffic"); !a.GoodMatch || len(a.Results) < 2 || a.Results[0].Command != "p202 click list" {
+		t.Errorf("realtime traffic --json: want a confident first result and the candidates under it, got %+v", a)
+	}
+	stdout, _, err = executeCommand("search", "breakdown", "by", "currency", "--quiet")
+	if err == nil || exitCodeForError(err) != ExitValidation || stdout != "" || !strings.Contains(hintFor(err), "The candidates") || !strings.Contains(hintFor(err), "p202 commands --brief") {
+		t.Errorf("weak --quiet: want exit 1, nothing on stdout and the candidates in the hint; got %v %q / %q", err, stdout, hintFor(err))
+	}
+	a := searchJSON(t, "breakdown", "by", "currency")
+	if a.GoodMatch || len(a.Results) == 0 {
+		t.Errorf("weak --json: want candidates and good_match false, got %+v", a)
+	}
+	// An agent gets JSON, not the table's footer: the next step is in it.
+	if !strings.Contains(a.Hint, "p202 commands --brief") {
+		t.Errorf("weak --json: hint %q should point at the catalog", a.Hint)
+	}
+	if a = searchJSON(t, "spy"); !a.GoodMatch || a.Hint != "" {
+		t.Errorf("confident --json: good_match %v, hint %q", a.GoodMatch, a.Hint)
+	}
+}
+
+// Reports break down by referer now (the Analyze › Referers page's dimension),
+// and "referrer", the dictionary spelling, is an alias for it.
+func TestSearchFindsTheRefererBreakdown(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	a := searchJSON(t, "breakdown", "by", "referrer")
+	if !a.GoodMatch || rankOf(a, "p202 report breakdown") != 1 {
+		t.Fatalf("breakdown by referrer: %+v", a.Results)
+	}
+	if !strings.Contains(a.Results[0].Try, "--breakdown referrer") {
+		t.Errorf("breakdown by referrer: try = %q", a.Results[0].Try)
+	}
+	if got := resolveDimension("referrer"); got != "referer" {
+		t.Errorf("resolveDimension(referrer) = %q, want referer", got)
 	}
 }
 
 func TestSearchWithNothingToSearchFor(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	a := searchJSON(t, "xyzzy", "plugh")
-	if a.GoodMatch || len(a.Results) != 0 || !strings.Contains(a.Note, "p202 commands") {
-		t.Errorf("no match: %+v", a)
+	message, hint := searchFails(t, "xyzzy", "plugh")
+	if message != `No command matches "xyzzy plugh": no command mentions xyzzy, plugh.` || !strings.Contains(hint, "p202 commands --brief") {
+		t.Errorf("no match: %q / %q", message, hint)
 	}
 	for _, args := range [][]string{{"search"}, {"search", "the", "by"}} {
 		_, _, err := executeCommand(args...)
@@ -115,6 +190,10 @@ func TestSearchWithNothingToSearchFor(t *testing.T) {
 	if err == nil || exitCodeForError(err) != ExitValidation {
 		t.Errorf("--limit 0: %v", err)
 	}
+	a := searchJSON(t, "clicks")
+	if len(a.Results) > defaultSearchLimit {
+		t.Errorf("default limit: %d results", len(a.Results))
+	}
 }
 
 func TestSearchNormalisesPluralsAndSynonyms(t *testing.T) {
@@ -123,5 +202,167 @@ func TestSearchNormalisesPluralsAndSynonyms(t *testing.T) {
 	}
 	if !containsString(searchSynonyms["referrer"], "referer") || !containsString(searchSynonyms["undo"], "revert") || !containsString(searchSynonyms["link"], "url") {
 		t.Error("synonym groups are not symmetric")
+	}
+}
+
+// The words people use for an update find the update, not the staged-change
+// commands (named "change") or the create; and the commands named "change"
+// still win when they are what was asked for. Two of these are ambiguous in
+// the words themselves and are held to the top three: a campaign's payout is
+// also changed per goal (`goal campaign set` "changes its payout"), and "the
+// server url" is also the server-to-server postback URL.
+func TestSearchReadsEditVerbsAsUpdate(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for _, c := range []struct {
+		query  string
+		want   string
+		within int
+	}{
+		{"change my timezone", "p202 user update", 1},
+		{"rename a user", "p202 user update", 1},
+		{"edit campaign payout", "p202 campaign update", 3},
+		{"modify a tracker", "p202 tracker update", 1},
+		{"set default url on rotator", "p202 rotator update", 1},
+		{"set the api url", "p202 config set-url", 1},
+		{"set the server url", "p202 config set-url", 3},
+		{"list staged changes", "p202 change list", 1},
+		{"apply a change", "p202 change apply", 1},
+	} {
+		a := searchJSON(t, strings.Fields(c.query)...)
+		if r := rankOf(a, c.want); r == 0 || r > c.within {
+			var got []string
+			for _, r := range a.Results {
+				got = append(got, r.Command)
+			}
+			t.Errorf("%q: want %s within the first %d, got %v", c.query, c.want, c.within, got)
+		}
+	}
+}
+
+// tryLine sets one flag per query word. A flag sharing a value list with one
+// already set is the same choice (report breakdown's --group-by is
+// --breakdown), and a word the task's line already spent is not spent again
+// on another flag that happens to take it. No command in the tree has that
+// second shape today, so it is pinned here on a made-up one.
+func TestSearchTryLineSetsOneFlagPerWord(t *testing.T) {
+	values := []flagValue{{"breakdown", "campaign"}, {"group-by", "campaign"}, {"sort", "campaign"}, {"sort", "clicks"}}
+	slots := map[string]string{"breakdown": "campaign,country", "group-by": "campaign,country", "sort": "campaign,clicks"}
+	terms := []string{"campaign"} // as parseSearchQuery hands them over: stemmed
+	got := tryLine("p202 r", "p202 r --breakdown campaign", values, slots, terms, termSetOf(terms))
+	if got != "p202 r --breakdown campaign" {
+		t.Errorf("task line: %q", got)
+	}
+	terms = []string{"campaign", "click"}
+	got = tryLine("p202 r", "", values, slots, terms, termSetOf(terms))
+	if got != "p202 r --breakdown campaign --sort clicks" {
+		t.Errorf("no task line: %q", got)
+	}
+	values = append(values, flagValue{"breakdown", "country"}, flagValue{"group-by", "country"})
+	terms = []string{"campaign", "country"}
+	got = tryLine("p202 r", "p202 r --breakdown campaign", values, slots, terms, termSetOf(terms))
+	if got != "p202 r --breakdown campaign" {
+		t.Errorf("a second value for the slot the task line set: %q", got)
+	}
+}
+
+// Two commands each ranked first by one ranker and second by the other tie
+// in the fusion. The one that matched more of the query goes first; at equal
+// coverage, the BM25F ranker's first (it weighs a page or phrase named in
+// full); never the one whose name sorts first.
+func TestSearchFusionSettlesATieByCoverageThenBM25F(t *testing.T) {
+	terms := []string{"live", "click"}
+	both := map[string]bool{"live": true, "click": true}
+	one := map[string]bool{"click": true}
+	order := func(summed, bm25f []rankedCommand) []string {
+		var keys []string
+		for _, f := range fuseRankings(summed, bm25f, terms) {
+			keys = append(keys, f.key)
+		}
+		return keys
+	}
+	a := rankedCommand{key: "p202 a", terms: one}
+	b := rankedCommand{key: "p202 b", terms: both}
+	if got := order([]rankedCommand{a, b}, []rankedCommand{b, a}); !reflect.DeepEqual(got, []string{"p202 b", "p202 a"}) {
+		t.Errorf("more coverage should win the tie: %v", got)
+	}
+	if got := order([]rankedCommand{b, a}, []rankedCommand{a, b}); !reflect.DeepEqual(got, []string{"p202 b", "p202 a"}) {
+		t.Errorf("more coverage should win the tie whichever ranker put it first: %v", got)
+	}
+	a.terms = both
+	if got := order([]rankedCommand{a, b}, []rankedCommand{b, a}); !reflect.DeepEqual(got, []string{"p202 b", "p202 a"}) {
+		t.Errorf("at equal coverage BM25F's first should win: %v", got)
+	}
+	if got := order([]rankedCommand{b, a}, []rankedCommand{a, b}); !reflect.DeepEqual(got, []string{"p202 a", "p202 b"}) {
+		t.Errorf("at equal coverage BM25F's first should win, not the name sorting first: %v", got)
+	}
+}
+
+// Search has no fuzzy matching: the askers are mostly agents, which spell,
+// and on their asks edit distance only ever turned a real word into another
+// one ("came" into name, "tmp" into tcp, "404" into 405) and counted it as
+// matched. A word no command knows is reported instead: the commands lack it
+// or call it something else, or (from a person) it is a typo.
+func TestSearchReportsWordsNoCommandKnowsInsteadOfGuessing(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	a := searchJSON(t, "clicks", "by", "language")
+	if !reflect.DeepEqual(a.UnknownTerms, []string{"language"}) || a.GoodMatch {
+		t.Errorf("clicks by language: unknown %v, good_match %v", a.UnknownTerms, a.GoodMatch)
+	}
+	a = searchJSON(t, "watch", "our", "traffic", "live", "and", "tell", "me", "what", "came", "in")
+	if !containsString(a.UnknownTerms, "came") {
+		t.Errorf("came: unknown %v", a.UnknownTerms)
+	}
+	for _, r := range a.Results {
+		for _, m := range r.Matched {
+			if strings.Contains(m, `(for "came")`) {
+				t.Errorf("%s matched %q for a word no command has", r.Command, m)
+			}
+		}
+	}
+	a = searchJSON(t, "campain", "list")
+	if !containsString(a.UnknownTerms, "campain") {
+		t.Errorf("a typo is reported, not corrected: unknown %v", a.UnknownTerms)
+	}
+	if a = searchJSON(t, "campaign", "list"); len(a.UnknownTerms) != 0 {
+		t.Errorf("every word known: unknown %v", a.UnknownTerms)
+	}
+
+	stdout, _, err := executeCommand("search", "clicks", "by", "language")
+	if err != nil || !strings.HasPrefix(stdout, "No command mentions: language.\n") {
+		t.Errorf("human form: %v\n%s", err, stdout)
+	}
+	message, _ := searchFails(t, "xyzzy", "plugh")
+	if message != `No command matches "xyzzy plugh": no command mentions xyzzy, plugh.` {
+		t.Errorf("nothing known: %q", message)
+	}
+}
+
+// An inflected word the index does not know is read as the word it does:
+// agents write grammatical English ("imported", "charged") where the commands
+// say import and charge. Only a word the index has is an answer, so a rule
+// never invents a match, and an irregular form stays unknown.
+func TestSearchFoldsInflectionsTheIndexKnows(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	c := buildBM25FCorpus(buildCommandTree(rootCmd))
+	for word, want := range map[string]string{
+		"imported": "import", // -ed
+		"charged":  "charge", // -d
+		"updating": "update", // -ing, e restored
+		"stopped":  "stop",   // doubled consonant
+		"copied":   "copy",   // -ied
+		"matche":   "match",  // the plural fold of "matches"
+		"came":     "",       // irregular
+		"xyzzyed":  "",       // no base the index has
+	} {
+		if !c.has(want) && want != "" {
+			t.Fatalf("the index has no %q any more; pick another example", want)
+		}
+		if got := c.lemmaOf(word); got != want {
+			t.Errorf("lemmaOf(%q) = %q, want %q", word, got, want)
+		}
+	}
+	a := searchJSON(t, "imported", "conversions", "import")
+	if !reflect.DeepEqual(a.Terms, []string{"import", "conversion"}) || len(a.UnknownTerms) != 0 {
+		t.Errorf("imported conversions import: terms %v, unknown %v", a.Terms, a.UnknownTerms)
 	}
 }

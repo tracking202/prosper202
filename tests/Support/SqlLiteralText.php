@@ -79,7 +79,7 @@ final class SqlLiteralText
     {
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+                \Tests\Support\SourceScan::tree($root),
                 static function (\SplFileInfo $file) use ($root, $skipTopLevel): bool {
                     if ($file->isDir()) {
                         return !in_array($file->getFilename(), $skipTopLevel, true)

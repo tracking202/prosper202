@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Api\V3\Exception\ConflictException;
+use Api\V3\HttpException;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Database\Connection;
+use Prosper202\Report\AccountZone;
+use Prosper202\User\CurrencyChange;
+use Prosper202\User\ExchangeRates;
+use Prosper202\User\PreferenceRules;
 
 class UsersController
 {
@@ -95,7 +101,7 @@ class UsersController
             FROM 202_users WHERE user_deleted = 0 ORDER BY user_id ASC'
         );
         $this->execute($stmt, 'List query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'List query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -112,7 +118,7 @@ class UsersController
         );
         $this->bind($stmt, 'i', $id);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -123,7 +129,7 @@ class UsersController
         $this->bind($stmt, 'i', $id);
         $this->execute($stmt, 'Roles query failed');
         $roles = [];
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Roles query failed');
         while ($r = $result->fetch_assoc()) {
             $roles[] = $r;
         }
@@ -133,38 +139,43 @@ class UsersController
         return ['data' => $row];
     }
 
+    /** The profile fields a create or an update writes (profileFields()). */
+    private const PROFILE_FIELDS = ['user_name', 'user_email', 'user_fname', 'user_lname', 'user_timezone', 'user_active'];
+
+    /** What GET /users/{id} answers that no write here sets. */
+    private const READ_ONLY = ['user_id', 'user_deleted', 'user_time_register', 'roles'];
+
     public function create(array $payload): array
     {
-        $username = trim((string)($payload['user_name'] ?? ''));
-        $email = trim((string)($payload['user_email'] ?? ''));
-        $password = (string)($payload['user_pass'] ?? '');
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::PROFILE_FIELDS, 'user_pass'], 'a user');
+        $password = $payload['user_pass'] ?? '';
 
         $errors = [];
-        if ($username === '') { $errors['user_name'] = 'Required'; }
-        if ($email === '') { $errors['user_email'] = 'Required'; }
-        if ($password === '') { $errors['user_pass'] = 'Required'; }
-        if (strlen($password) > 0 && strlen($password) < 8) { $errors['user_pass'] = 'Must be at least 8 characters'; }
-        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) { $errors['user_email'] = 'Invalid email format'; }
+        foreach (['user_name', 'user_email'] as $required) {
+            if (!isset($payload[$required]) || (is_string($payload[$required]) && trim($payload[$required]) === '')) {
+                $errors[$required] = 'Required';
+            }
+        }
+        if (!is_string($password) || $password === '') {
+            $errors['user_pass'] = 'Required';
+        } elseif (strlen($password) < self::PASSWORD_MIN || strlen($password) > self::PASSWORD_MAX) {
+            $errors['user_pass'] = 'Must be between ' . self::PASSWORD_MIN . ' and ' . self::PASSWORD_MAX . ' characters';
+        }
         if ($errors) {
             throw new ValidationException('Validation failed', $errors);
         }
-
-        $stmt = $this->prepare('SELECT user_id FROM 202_users WHERE user_name = ? LIMIT 1');
-        $this->bind($stmt, 's', $username);
-        $this->execute($stmt, 'Query failed');
-        if ($stmt->get_result()->num_rows > 0) {
-            $stmt->close();
-            throw new ConflictException('Username already exists');
-        }
-        $stmt->close();
+        // The same rules as an update; the name and email are no account's yet.
+        $fields = $this->profileFields(array_intersect_key($payload, array_flip(self::PROFILE_FIELDS)), null);
 
         $hashedPass = \hash_user_pass($password);
 
-        $fname = trim((string)($payload['user_fname'] ?? ''));
-        $lname = trim((string)($payload['user_lname'] ?? ''));
-        $tz = trim((string)($payload['user_timezone'] ?? 'UTC'));
+        $username = (string) $fields['user_name'][1];
+        $email = (string) $fields['user_email'][1];
+        $fname = (string) ($fields['user_fname'][1] ?? '');
+        $lname = (string) ($fields['user_lname'][1] ?? '');
+        $tz = (string) ($fields['user_timezone'][1] ?? 'UTC');
         $now = time();
-        $active = (int)($payload['user_active'] ?? 1);
+        $active = (int) ($fields['user_active'][1] ?? 1);
 
         // user_dash_email, install_hash and user_hash are NOT NULL with no default; the
         // V3 connection runs under MySQL strict mode, so they must be supplied explicitly.
@@ -172,7 +183,7 @@ class UsersController
         $installHash = '';
         $hashStmt = $this->prepare('SELECT install_hash FROM 202_users WHERE user_id = 1 LIMIT 1');
         $this->execute($hashStmt, 'Lookup failed');
-        $hashRow = $hashStmt->get_result()->fetch_assoc();
+        $hashRow = $this->resultOf($hashStmt, 'Lookup failed')->fetch_assoc();
         $hashStmt->close();
         if ($hashRow && isset($hashRow['install_hash'])) {
             $installHash = (string) $hashRow['install_hash'];
@@ -209,32 +220,50 @@ class UsersController
         }
     }
 
-    public function update(int $id, array $payload): array
+    /** bcrypt reads only the first 72 bytes; a longer password would accept any tail. */
+    private const PASSWORD_MIN = 8;
+    private const PASSWORD_MAX = 72;
+
+    /**
+     * $actorUserId is who is asking. Changing your own password needs
+     * `current_password`, as Personal settings asks for it
+     * (202-account/account.php): an API key, or a session, that is not the
+     * password must not be enough to take over the sign-in. Setting another
+     * user's password is the admin's reset (user-management.php), which the
+     * route has already authorized, and asks for no current password.
+     */
+    public function update(int $id, array $payload, ?int $actorUserId = null): array
     {
-        $this->get($id);
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, [...self::PROFILE_FIELDS, 'user_pass', 'current_password', ...self::READ_ONLY], 'a user');
+        // A GET body sent back carries these; with the account's own values
+        // they change nothing, with any other they were ignored as though
+        // written.
+        $readOnly = \Api\V3\Support\PayloadKeys::changedReadOnly($payload, self::READ_ONLY, $this->get($id)['data']);
+        if ($readOnly !== []) {
+            throw new ValidationException('Read-only field', $readOnly);
+        }
 
         $sets = [];
         $binds = [];
         $types = '';
 
-        foreach (['user_fname' => 's', 'user_lname' => 's', 'user_email' => 's', 'user_timezone' => 's', 'user_active' => 'i'] as $f => $t) {
-            if (array_key_exists($f, $payload)) {
-                $sets[] = "$f = ?";
-                $binds[] = $payload[$f];
-                $types .= $t;
-            }
-        }
-
-        if (array_key_exists('user_email', $payload) && !filter_var($payload['user_email'], FILTER_VALIDATE_EMAIL)) {
-            throw new ValidationException('Invalid email', ['user_email' => 'Invalid email format']);
+        foreach ($this->profileFields($payload, $id) as $f => [$t, $value]) {
+            $sets[] = "$f = ?";
+            $binds[] = $value;
+            $types .= $t;
         }
 
         if (array_key_exists('user_pass', $payload) && $payload['user_pass'] !== '') {
-            if (strlen((string) $payload['user_pass']) < 8) {
-                throw new ValidationException('Password too short', ['user_pass' => 'Must be at least 8 characters']);
+            $password = $payload['user_pass'];
+            if (!is_string($password)) {
+                throw new ValidationException('Invalid password', ['user_pass' => 'Must be a string']);
+            }
+            self::checkPasswordLength($password);
+            if ($actorUserId === $id) {
+                $this->requireCurrentPassword($id, $payload['current_password'] ?? null);
             }
             $sets[] = 'user_pass = ?';
-            $binds[] = \hash_user_pass((string) $payload['user_pass']);
+            $binds[] = \hash_user_pass($password);
             $types .= 's';
         }
 
@@ -251,6 +280,155 @@ class UsersController
         $stmt->close();
 
         return $this->get($id);
+    }
+
+    /**
+     * The profile fields a create or an update carries, held to the rules of
+     * the pages that write them (user-management.php, account.php), read
+     * from the request as sent:
+     *
+     * - user_name: 1-50 characters, no other account's (the UNIQUE key would
+     *   otherwise answer a rename with a database error);
+     * - user_email: a valid address of at most 100 characters, no other
+     *   account's;
+     * - user_fname, user_lname: text of at most 50 characters;
+     * - user_timezone: a zone the reports read as one (AccountZone::isZone():
+     *   PHP's list with its backward-compatible names, as Personal settings
+     *   takes them; any other string was stored, and every report then fell
+     *   back to UTC without a word). A renamed zone an account already holds
+     *   (Europe/Kiev, Europe/Kyiv since 2022) is one, so a GET body sent back
+     *   is not refused for it;
+     * - user_active: 0 or 1 ("abc" was bound as an integer, 0, and
+     *   deactivated the account).
+     *
+     * Only the fields present are returned. $selfId is the account being
+     * updated, whose own name and email are not "another account's".
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, array{0: string, 1: string|int}>
+     */
+    private function profileFields(array $payload, ?int $selfId): array
+    {
+        $out = [];
+        $errors = [];
+        $text = static function (string $field, int $max) use ($payload, &$errors): ?string {
+            $value = $payload[$field];
+            if (!is_string($value)) {
+                $errors[$field] = 'Must be text';
+                return null;
+            }
+            $value = trim($value);
+            if (mb_strlen($value) > $max) {
+                $errors[$field] = "At most $max characters";
+                return null;
+            }
+
+            return $value;
+        };
+        foreach (['user_fname' => 50, 'user_lname' => 50] as $field => $max) {
+            if (array_key_exists($field, $payload) && ($v = $text($field, $max)) !== null) {
+                $out[$field] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_name', $payload) && ($v = $text('user_name', 50)) !== null) {
+            if ($v === '') {
+                $errors['user_name'] = 'Required';
+            } elseif ($this->takenByAnother('user_name', $v, $selfId)) {
+                throw new ConflictException('Username already exists');
+            } else {
+                $out['user_name'] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_email', $payload) && ($v = $text('user_email', 100)) !== null) {
+            if (!filter_var($v, FILTER_VALIDATE_EMAIL)) {
+                $errors['user_email'] = 'Invalid email format';
+            } elseif ($this->takenByAnother('user_email', $v, $selfId)) {
+                $errors['user_email'] = 'Another account has this email';
+            } else {
+                $out['user_email'] = ['s', $v];
+            }
+        }
+        if (array_key_exists('user_timezone', $payload)) {
+            $tz = $payload['user_timezone'];
+            if (!is_string($tz) || !AccountZone::isZone($tz)) {
+                $errors['user_timezone'] = 'A time zone such as America/New_York (PHP\'s list, as Personal settings offers it)';
+            } else {
+                $out['user_timezone'] = ['s', $tz];
+            }
+        }
+        if (array_key_exists('user_active', $payload)) {
+            $active = $payload['user_active'];
+            if (!in_array($active, [0, 1, '0', '1'], true)) {
+                $errors['user_active'] = 'Must be 1 (can sign in) or 0 (cannot)';
+            } else {
+                $out['user_active'] = ['i', (int) $active];
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Validation failed', $errors);
+        }
+
+        return $out;
+    }
+
+    /** Whether an account other than $selfId holds $value in $column (user_name or user_email). */
+    private function takenByAnother(string $column, string $value, ?int $selfId): bool
+    {
+        $stmt = $this->prepare("SELECT user_id FROM 202_users WHERE $column = ? AND user_id <> ? LIMIT 1");
+        $self = $selfId ?? 0;
+        $this->bind($stmt, 'si', $value, $self);
+        $this->execute($stmt, 'Lookup failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            // "Free" would let the write reach the UNIQUE key, or a second
+            // account take the email.
+            $stmt->close();
+            throw new DatabaseException('Lookup failed');
+        }
+        $taken = $result->fetch_row() !== null;
+        $stmt->close();
+
+        return $taken;
+    }
+
+    private static function checkPasswordLength(string $password): void
+    {
+        $length = strlen($password);
+        if ($length < self::PASSWORD_MIN || $length > self::PASSWORD_MAX) {
+            throw new ValidationException(
+                'Invalid password',
+                ['user_pass' => 'Must be between ' . self::PASSWORD_MIN . ' and ' . self::PASSWORD_MAX . ' characters']
+            );
+        }
+    }
+
+    /**
+     * The password check Personal settings makes before a change: a 422
+     * naming current_password when it is missing or wrong. A stored hash
+     * that cannot be read is a 500, never "wrong password" (error pattern
+     * #11).
+     */
+    private function requireCurrentPassword(int $userId, mixed $current): void
+    {
+        if (!is_string($current) || $current === '') {
+            throw new ValidationException(
+                'Changing your own password needs your current password',
+                ['current_password' => 'Required when you change your own password']
+            );
+        }
+        $stmt = $this->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Password check failed');
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new DatabaseException('Password check failed');
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        if (!$row || !\verify_user_pass($current, (string) ($row['user_pass'] ?? ''))['valid']) {
+            throw new ValidationException('Current password is incorrect', ['current_password' => 'Does not match']);
+        }
     }
 
     /**
@@ -300,12 +478,28 @@ class UsersController
         return ['data' => $rows];
     }
 
+    /**
+     * The role a POST /users/{id}/roles grants, read one way for both the
+     * authorization check (Auth::requireMayChangeRoles) and the write. A
+     * lenient cast here would let the two disagree: (int) reads "1.0",
+     * "1abc" and true all as 1, the Super user role the check refuses.
+     */
+    public static function roleIdFrom(array $payload): int
+    {
+        $raw = $payload['role_id'] ?? null;
+        if (is_int($raw) && $raw > 0) {
+            return $raw;
+        }
+        if (is_string($raw) && preg_match('/^[1-9][0-9]{0,9}$/', $raw) === 1) {
+            return (int) $raw;
+        }
+        throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive whole number']);
+    }
+
     public function assignRole(int $userId, array $payload): array
     {
-        $roleId = (int)($payload['role_id'] ?? 0);
-        if ($roleId <= 0) {
-            throw new ValidationException('role_id is required', ['role_id' => 'Must be a positive integer']);
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['role_id'], 'a role assignment');
+        $roleId = self::roleIdFrom($payload);
 
         // Validate BEFORE mutating: 202_user_role has no foreign keys, so an
         // insert for a nonexistent user/role would persist an orphan grant
@@ -314,7 +508,7 @@ class UsersController
         $stmt = $this->prepare('SELECT role_id FROM 202_roles WHERE role_id = ? LIMIT 1');
         $this->bind($stmt, 'i', $roleId);
         $this->execute($stmt, 'Role lookup failed');
-        $role = $stmt->get_result()->fetch_assoc();
+        $role = $this->resultOf($stmt, 'Role lookup failed')->fetch_assoc();
         $stmt->close();
         if (!$role) {
             throw new ValidationException('Unknown role_id', ['role_id' => 'Role does not exist']);
@@ -352,7 +546,7 @@ class UsersController
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');
-        $result = $stmt->get_result();
+        $result = $this->resultOf($stmt, 'Query failed');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             // Mask key: show first 8 chars only
@@ -423,6 +617,7 @@ class UsersController
 
     public function createApiKey(int $userId, array $payload = [], ?\Api\V3\Auth $auth = null): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, ['scope'], 'an API key');
         $scopeTokens = $this->normalizeRequestedScope($payload['scope'] ?? null);
 
         foreach ($scopeTokens ?? [] as $token) {
@@ -564,7 +759,7 @@ class UsersController
         $stmt = $this->prepare('SELECT user_id, api_key, created_at FROM 202_api_keys WHERE user_id = ? AND api_key = ? LIMIT 1');
         $this->bind($stmt, 'is', $userId, $apiKey);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -596,7 +791,7 @@ class UsersController
         );
         $this->bind($stmt, 'ii', $userId, $roleId);
         $this->execute($stmt, 'Query failed');
-        $row = $stmt->get_result()->fetch_assoc();
+        $row = $this->resultOf($stmt, 'Query failed')->fetch_assoc();
         $stmt->close();
 
         if (!$row) {
@@ -636,6 +831,24 @@ class UsersController
         if (!$row) {
             throw new NotFoundException('User preferences not found');
         }
+
+        // chart_time_range is the Overview chart's, read from 202_charts
+        // where the chart reads it; the 202_users_pref column of that name
+        // is read by nothing (see updatePreferences()).
+        $stmt = $this->prepare('SELECT chart_time_range FROM 202_charts WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $userId);
+        $this->execute($stmt, 'Query failed');
+        $chart = $stmt->get_result();
+        if ($chart === false) {
+            $stmt->close();
+            throw new DatabaseException('Query failed');
+        }
+        $chartRow = $chart->fetch_assoc();
+        $stmt->close();
+        if ($chartRow) {
+            $row['chart_time_range'] = $chartRow['chart_time_range'];
+        }
+
         return ['data' => $row];
     }
 
@@ -683,60 +896,104 @@ class UsersController
         return in_array($currency, self::SUPPORTED_CURRENCIES, true) ? $currency : self::DEFAULT_CURRENCY;
     }
 
-    public function updatePreferences(int $userId, array $payload): array
+    /**
+     * Write preferences, each held to the rule of the page that owns it
+     * (Prosper202\User\PreferenceRules). A key that is not a preference this
+     * endpoint writes is refused by name rather than dropped.
+     *
+     * Side effects the pages have, kept here:
+     * - `user_account_currency` re-prices the account's campaigns into the
+     *   new currency (Personal settings does; the API used to relabel them);
+     *   the rates are fetched first, and the currency, the payouts and every
+     *   other preference in the request land in one transaction;
+     * - changing `cb_key` resets `cb_verified`, as Integrations does;
+     * - `chart_time_range` is the Overview chart's resolution, which lives in
+     *   202_charts — the column of that name in 202_users_pref is read by
+     *   nothing, so writing it changed nothing.
+     *
+     * Not repeated: account.php also writes several of these to memcache
+     * keys under the user id, which no request reads back (connect2.php
+     * reads the privacy setting from its row, which this writes).
+     *
+     * @param (callable(string, string, string): mixed)|null $rate
+     *   (account currency, campaign currency, payout) => the exchange
+     *   service's answer; null asks the live service
+     */
+    public function updatePreferences(int $userId, array $payload, ?callable $rate = null): array
     {
-        $this->getPreferences($userId);
-
-        $allowedFields = [
-            'user_pref_limit' => 'i', 'user_pref_time_predefined' => 's',
-            'user_tracking_domain' => 's', 'user_cpc_or_cpv' => 's',
-            'user_account_currency' => 's', 'user_slack_incoming_webhook' => 's',
-            'user_pref_cloak_referer' => 's', 'user_daily_email' => 's',
-            'ipqs_api_key' => 's', 'chart_time_range' => 's',
-        ];
-
-        // Refused here, not normalised on the way out. The read path resolves
-        // an unrenderable code to USD so no page prints "XYZ10.00", but that
-        // is a repair for rows already stored — applying it to a write would
-        // answer 200 and quietly keep a currency the caller did not choose
-        // (error pattern #4). The check belongs at the layer that accepts the
-        // value (#12), and it names what it will take.
-        if (array_key_exists('user_account_currency', $payload)) {
-            $raw = $payload['user_account_currency'];
-            $currency = is_scalar($raw) ? strtoupper(trim((string)$raw)) : '';
-            if (!in_array($currency, self::SUPPORTED_CURRENCIES, true)) {
-                throw new ValidationException('Validation failed', [
-                    'user_account_currency' => 'Must be one of: '
-                        . implode(', ', self::SUPPORTED_CURRENCIES),
-                ]);
-            }
-            $payload['user_account_currency'] = $currency;
-        }
-
-        $sets = [];
-        $binds = [];
-        $types = '';
-
-        foreach ($allowedFields as $f => $t) {
-            if (array_key_exists($f, $payload)) {
-                $sets[] = "$f = ?";
-                $binds[] = $payload[$f];
-                $types .= $t;
-            }
-        }
-
-        if (empty($sets)) {
+        // PreferenceRules::validate() refuses them too; refused here first,
+        // before anything is read, like every other body.
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, PreferenceRules::columns(), 'the preferences this endpoint writes');
+        $current = $this->getPreferences($userId)['data'];
+        if ($payload === []) {
             throw new ValidationException('No valid fields to update');
         }
+        [$clean, $errors] = PreferenceRules::validate($payload, self::SUPPORTED_CURRENCIES);
+        if ($errors !== []) {
+            throw new ValidationException('Validation failed', $errors);
+        }
 
-        $binds[] = $userId;
-        $types .= 'i';
+        $conn = new Connection($this->db);
+        $chartRange = $clean['chart_time_range'] ?? null;
+        unset($clean['chart_time_range']);
 
-        $stmt = $this->prepare('UPDATE 202_users_pref SET ' . implode(', ', $sets) . ' WHERE user_id = ?');
-        $this->bind($stmt, $types, ...$binds);
-        $this->execute($stmt, 'Preferences update failed');
-        $stmt->close();
+        $currencyUpdates = [];
+        if (isset($clean['user_account_currency'])) {
+            $currency = (string) $clean['user_account_currency'];
+            $rate ??= ExchangeRates::foreignPayout(...);
+            try {
+                $currencyUpdates = CurrencyChange::plan(
+                    $conn,
+                    $userId,
+                    $currency,
+                    (string) ($current['user_account_currency'] ?? ''),
+                    static fn (string $campaignCurrency, string $payout): mixed => $rate($currency, $campaignCurrency, $payout)
+                );
+            } catch (\RuntimeException $e) {
+                throw new HttpException(
+                    'The currency was not changed: re-pricing the campaigns needs the exchange rate service, and ' . $e->getMessage(),
+                    502,
+                    $e
+                );
+            }
+        }
+        if (array_key_exists('cb_key', $clean) && $clean['cb_key'] !== (string) ($current['cb_key'] ?? '')) {
+            $clean['cb_verified'] = 0;
+        }
 
-        return $this->getPreferences($userId);
+        $conn->transaction(function () use ($conn, $userId, $clean, $chartRange, $currencyUpdates): void {
+            if ($clean !== []) {
+                $sets = [];
+                $types = '';
+                foreach ($clean as $column => $value) {
+                    $sets[] = '`' . $column . '` = ?';
+                    $types .= is_int($value) ? 'i' : 's';
+                }
+                $stmt = $conn->prepareWrite('UPDATE `202_users_pref` SET ' . implode(', ', $sets) . ' WHERE `user_id` = ?');
+                $conn->bind($stmt, $types . 'i', [...array_values($clean), $userId]);
+                $conn->executeUpdate($stmt);
+            }
+            CurrencyChange::apply($conn, $currencyUpdates);
+            if ($chartRange !== null) {
+                $this->saveChartRange($conn, $userId, (string) $chartRange);
+            }
+        });
+
+        try {
+            return $this->getPreferences($userId);
+        } catch (\Throwable $e) {
+            throw new WriteCommittedException('preferences', $e);
+        }
+    }
+
+    /**
+     * The Overview chart's resolution, where the chart reads it. An account
+     * without a chart row (one the API created) gets the installer's
+     * default chart with it, so the setting is not a write to nothing
+     * (OverviewChart, which the Overview's own chart writes go through).
+     */
+    private function saveChartRange(Connection $conn, int $userId, string $range): void
+    {
+        \Prosper202\Report\OverviewChart::saveRange($conn, $userId, $range);
     }
 }

@@ -367,6 +367,41 @@ final class ConversionLedgerIntegrationTest extends TestCase
     }
 
     /**
+     * A report written with a decimal comma: every comma was deleted, so
+     * "12,50" was recorded as 1250.00000 and "1.234,56" as 1.23456, each
+     * line marked recorded. They are skipped as not numbers and write no
+     * row; a comma between groups of three digits still reads as the
+     * thousands separator it is.
+     */
+    public function testADecimalCommaIsSkippedNotReadAsAThousandsSeparator(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7, '0.00');
+        $this->click(101, 7, '0.00');
+
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+        $h = fopen('php://memory', 'r+');
+        fwrite($h, "subid,amount\n100,\"12,50\"\n100,\"1.234,56\"\n100,\"1,23\"\n101,\"\$1,234.50\"\n");
+        rewind($h);
+        $result = $importer->import(1, 'eu.csv', $h, 0, 1);
+
+        self::assertSame(1, $result['recorded']);
+        self::assertSame(3, $result['skipped']);
+        $skipped = array_filter($result['lines'], static fn ($l) => $l['status'] === 'skipped');
+        $nan = 'the commission is not a number';
+        self::assertSame([2 => $nan, 3 => $nan, 4 => $nan], array_column($skipped, 'reason', 'line'));
+        self::assertSame(
+            [2 => '12,50', 3 => '1.234,56', 4 => '1,23'],
+            array_column($skipped, 'amount', 'line'),
+            'each listed as the cell it was'
+        );
+        self::assertSame(['101' => '1234.50000'], array_map('strval', $result['totals']));
+        self::assertSame([], $this->rows(100), 'no row for a commission that could not be read');
+        self::assertSame('0.00000', $this->clickState(100)['payout']);
+        self::assertSame('1234.50000', $this->clickState(101)['payout']);
+    }
+
+    /**
      * The legacy endpoints' id-less rule (gpb.php, upx.php, gpx.php and the
      * per-campaign pixel and postback, through p202RecordConversion): a
      * retry cannot be told from a repeat, so the click converts once. In a
@@ -396,6 +431,83 @@ final class ConversionLedgerIntegrationTest extends TestCase
         self::assertTrue($again['duplicate'], 'and happens once');
         self::assertSame(['tx:A1', 'conversion'], array_column($this->rows(200), 'dedupe_key'));
         self::assertSame('9.00000', $this->clickState(200)['payout']);
+    }
+
+    public function testAReportListsItsFirstUnrecordedLinesAndCountsEveryOne(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $listed = RevenueUploadImporter::LISTED_LINES;
+        $text = "subid,amount\n100,1.50\n";
+        for ($i = 0; $i < $listed + 5; $i++) {
+            $text .= (900000 + $i) . ",1\n"; // no click of the account
+        }
+        $text .= "101,oops\nxyz,2\n101,2.25\n100,1\n";
+        $stream = static function (string $text) {
+            $h = fopen('php://temp', 'r+');
+            fwrite($h, $text);
+            rewind($h);
+            return $h;
+        };
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+
+        $preview = $importer->preview(1, $stream($text), 0, 1);
+        $import = $importer->import(1, 'big.csv', $stream($text), 0, 1);
+
+        foreach (['preview' => $preview, 'import' => $import] as $what => $r) {
+            self::assertSame($listed + 7, $r['skipped'], $what);
+            self::assertCount($listed, $r['lines'], "$what lists at most LISTED_LINES lines");
+            self::assertSame(['line' => 1, 'status' => 'header'], ['line' => $r['lines'][0]['line'], 'status' => $r['lines'][0]['status']], "$what lists the header first");
+            self::assertSame(3, $r['lines'][1]['line'], "$what lists the lines not recorded, in file order");
+            self::assertSame(8, $r['unlisted'], "$what: header + $listed + 7 skipped, $listed listed");
+            self::assertSame([
+                'no click with this subid in your account' => $listed + 5,
+                'the commission is not a number' => 1,
+                'not a subid (a click id is a whole number)' => 1,
+            ], $r['reasons'], "$what counts every skipped line by reason, listed or not");
+            self::assertSame(['100' => '2.50000', '101' => '2.25000'], array_map('strval', $r['totals']), $what);
+            self::assertSame('4.75000', $r['total'], $what);
+        }
+        self::assertSame(3, $preview['would_record']);
+        self::assertSame(3, $import['recorded']);
+        self::assertSame('2.50000', $this->clickState(100)['payout']);
+    }
+
+    /** fgetcsv() with a length split a longer record into two lines. */
+    public function testALongRecordIsReadAsOneLine(): void
+    {
+        $this->campaign(7);
+        $this->click(100, 7);
+        $this->click(101, 7);
+        $text = "note,subid,amount\n" . str_repeat('x', 150000) . ",100,2.50\nshort,101,1\n";
+        $stream = static function (string $text) {
+            $h = fopen('php://temp', 'r+');
+            fwrite($h, $text);
+            rewind($h);
+            return $h;
+        };
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+
+        foreach (['preview' => $importer->preview(1, $stream($text), 1, 2), 'import' => $importer->import(1, 'long.csv', $stream($text), 1, 2)] as $what => $r) {
+            self::assertSame(0, $r['skipped'], $what);
+            self::assertSame(['100' => '2.50000', '101' => '1.00000'], array_map('strval', $r['totals']), "$what records the long line and the one after it");
+            self::assertSame([1], array_column($r['lines'], 'line'), "$what lists only the header");
+        }
+    }
+
+    public function testAPreviewRefusesAStreamItCannotReadTwice(): void
+    {
+        $importer = new RevenueUploadImporter(new Connection(self::$db), $this->repo);
+        $pipe = popen('true', 'r');
+        self::assertIsResource($pipe);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('preview() needs a seekable stream');
+        try {
+            $importer->preview(1, $pipe, 0, 1);
+        } finally {
+            pclose($pipe);
+        }
     }
 
     public function testAHeaderlessFileStillListsItsFirstLine(): void

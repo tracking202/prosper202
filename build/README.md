@@ -106,9 +106,9 @@ services:
     command:
       - --innodb-buffer-pool-size=192M
       - --innodb-log-buffer-size=16M
-      - --max_connections=50
-      - --table_open_cache=192
-      - --performance_schema=OFF
+      - --max-connections=50
+      - --table-open-cache=192
+      - --performance-schema=OFF
     ports:
       - "13308:3306"
     environment:
@@ -148,9 +148,9 @@ services:
     command:
       - --innodb-buffer-pool-size=192M
       - --innodb-log-buffer-size=16M
-      - --max_connections=50
-      - --table_open_cache=192
-      - --performance_schema=OFF
+      - --max-connections=50
+      - --table-open-cache=192
+      - --performance-schema=OFF
     ports:
       - "13307:3306"
     environment:

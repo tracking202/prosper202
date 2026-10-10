@@ -163,6 +163,45 @@ func TestPutSendsJSONBody(t *testing.T) {
 	}
 }
 
+// PATCH is a write like PUT: it carries the JSON body, and --staged stamps it
+// (after confirming the server stages writes) rather than letting it run.
+func TestPatchSendsJSONBodyAndIsStampedLikeAnyWrite(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/capabilities") {
+			w.Write([]byte(`{"data":{"features":{"staged_writes":true}}}`))
+			return
+		}
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		body, _ := io.ReadAll(r.Body)
+		gotBody = nil
+		json.Unmarshal(body, &gotBody)
+		w.Write([]byte(`{"data":{"customer_id":42}}`))
+	}))
+	defer srv.Close()
+	defer SetStagedMode(false)
+
+	c := newTestClient(srv.URL)
+	if _, err := c.Patch("ltv/customers/42", map[string]string{"phone": ""}); err != nil {
+		t.Fatalf("Patch() error: %v", err)
+	}
+	if gotMethod != "PATCH" || !strings.HasSuffix(gotPath, "/ltv/customers/42") || gotQuery != "" {
+		t.Errorf("request = %s %s?%s", gotMethod, gotPath, gotQuery)
+	}
+	if v, ok := gotBody["phone"]; !ok || v != "" {
+		t.Errorf("body = %v, want the empty phone sent as a clear", gotBody)
+	}
+
+	SetStagedMode(true)
+	if _, err := c.Patch("ltv/customers/42", map[string]string{"phone": "1"}); err != nil {
+		t.Fatalf("staged Patch() error: %v", err)
+	}
+	if gotMethod != "PATCH" || gotQuery != "staged=1" {
+		t.Errorf("staged request = %s ?%s, want staged=1", gotMethod, gotQuery)
+	}
+}
+
 func TestDeleteSendsDeleteMethod(t *testing.T) {
 	var gotMethod, gotPath string
 
@@ -475,8 +514,66 @@ func TestHintFor(t *testing.T) {
 	if h := HintFor(&APIError{Status: 200}); h != "" {
 		t.Error("200 should produce no hint")
 	}
+	// A deactivated user's key is the right key: the generic "verify your
+	// key" would send an agent to replace a key that is not the problem.
+	deactivated := HintFor(&APIError{Status: 401, Message: "The account this API key belongs to is deactivated; an Admin can turn it back on in Account › Users."})
+	if !strings.Contains(deactivated, "switched off") || !strings.Contains(deactivated, "`p202 user update <user_id> --user-active 1`") || strings.Contains(deactivated, "set-key") {
+		t.Errorf("a deactivated account's 401 hint = %q", deactivated)
+	}
 	if h := HintFor(nil); h != "" {
 		t.Error("nil should produce no hint")
+	}
+}
+
+// A field the server does not write, or a read-only one that differs, is
+// refused by name (Controller::validatePayload, PayloadKeys): the hint says
+// nothing was written and how to drop it, rather than "fix the field".
+func TestHintForAFieldTheServerRefuses(t *testing.T) {
+	for _, msg := range []string{
+		"is not a field of campaigns (accepted: aff_campaign_name)",
+		"is set by the server: omit it when creating",
+		"is read-only: send it only with the value the record holds (as GET returns it), or omit it",
+	} {
+		h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"x": msg}})
+		if !strings.Contains(h, "Nothing was written") || !strings.Contains(h, "p202 system version") {
+			t.Errorf("field error %q: hint = %q", msg, h)
+		}
+	}
+	if h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"x": "must be a whole number"}}); h != "Fix the field(s) listed above and retry." {
+		t.Errorf("an ordinary field error kept its own hint, got %q", h)
+	}
+}
+
+// A key that recorded a different request, and a transaction id that is a
+// different sale, are refused for good: "fix the fields and retry" would
+// repeat the refusal, so the hint says what a retry must send and what a
+// different event needs.
+func TestHintForAKeyThatRecordedADifferentRequest(t *testing.T) {
+	for _, msg := range []string{
+		"Already used for revenue event 7 with a different amount; send a new key for a different event",
+		"Already used for event 7 with a different amount; send a new idempotency_key for a different one",
+		"Already used for a different request",
+	} {
+		h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{"idempotency_key": msg}})
+		if !strings.Contains(h, "Nothing was written") || !strings.Contains(h, "exactly what the first request sent") || !strings.Contains(h, "--idempotency-key") {
+			t.Errorf("field error %q: hint = %q", msg, h)
+		}
+	}
+	h := HintFor(&APIError{Status: 422, Message: "Validation failed", FieldErrors: map[string]string{
+		"transaction_id": "Already recorded as conversion 9 with a different payout; a different sale needs its own transaction_id",
+	}})
+	if !strings.Contains(h, "p202 click conversions") || !strings.Contains(h, "--status reversed") || !strings.Contains(h, "--transaction-id") {
+		t.Errorf("a different sale: hint = %q", h)
+	}
+}
+
+// A body (or If-Match) read from an older version of the record is a 409
+// that says so; the generic 409 hint ("a matching record already exists,
+// update it") is wrong advice for it.
+func TestHintForAStaleVersion(t *testing.T) {
+	h := HintFor(&APIError{Status: 409, Message: "Version mismatch"})
+	if !strings.Contains(h, "changed since it was read") {
+		t.Errorf("hint = %q", h)
 	}
 }
 

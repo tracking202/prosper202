@@ -28,23 +28,31 @@ if (!class_exists('DataEngine')) {
                 self::$db = null;
             }
 
-            // Make MySQL use the timezone chosen by the user.
-            $timezone = new DateTimeZone(date_default_timezone_get());
-            $offsetHours = round($timezone->getOffset(new DateTime()) / 3600);
-
-            if ($offsetHours != 0 && self::$db !== null) {
-                self::$db->query("SET time_zone = '" . $offsetHours . ":00'");
-            }
+            // The connection's zone is left alone. This used to SET it to the
+            // signed-in user's offset today, rounded to whole hours, for the
+            // rest of the request — and without the sign for a zone east of
+            // UTC, which MariaDB refuses ("Unknown or incorrect time zone:
+            // '5:00'"), so it held for zones west of UTC only. The rollup it
+            // runs reads no clock.
         }
 
         /**
          * Roll a single click up into 202_dataengine so reports reflect it.
-         * When no click id is given, the most recent click from the current
-         * visitor IP (last 24h) is used.
+         *
+         * A request that names no click re-rolls none. It used to take "the
+         * visitor's latest click": user 1's newest click in the last 24 hours from
+         * the address in $ip_address. Measured, a cookie-less lpc.php request
+         * from an address re-rolled user 1's click from it. Nothing leaked — the
+         * answer is a bool, and a re-roll writes what the click's own rows say —
+         * but it was a lookup and a rollup for a request that changed no click,
+         * and it read the wrong things: only user 1's clicks, any visitor behind
+         * the same address, and the $ip_address global where the click path's
+         * own address lookups read the address as stored (StoredVisitorIp,
+         * LastClickFromAddress).
          */
         public function setDirtyHour($click_id)
         {
-            global $ip_address, $db, $inet6_ntoa, $inet6_aton;
+            global $db, $inet6_ntoa, $inet6_aton;
 
             // connect2.php does not initialize these globals; later code in
             // the same request may rely on this side effect.
@@ -54,47 +62,12 @@ if (!class_exists('DataEngine')) {
             }
 
             if (!isset($click_id) || $click_id == '') {
-                // No native IPv6 support: compare against the PHP-encoded value.
-                if ($inet6_ntoa == '' && isset($ip_address) && $ip_address->type == 'ipv6') {
-                    $escapedIp = inet6_aton($db->real_escape_string($ip_address->address));
-                } else {
-                    $escapedIp = $db->real_escape_string($ip_address->address);
-                }
-
-                $daysago = time() - 86400; // 24 hours
-
-                // Start from the IP table for better index usage.
-                $click_sql1 = 'SELECT c.click_id
-                           FROM            202_ips i
-                           INNER JOIN      202_clicks_advance ca ON (ca.ip_id = i.ip_id)
-                           INNER JOIN      202_clicks c ON (c.click_id = ca.click_id)
-                           WHERE           i.ip_address = "' . $escapedIp . '"
-                           AND             c.user_id = "1"
-                           AND             c.click_time >= "' . $daysago . '"
-                           ORDER BY        c.click_id DESC
-                           LIMIT           1';
-
-                $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
-                $click_row1 = $click_result1->fetch_assoc();
-
-                if ($click_row1 && isset($click_row1['click_id'])) {
-                    $click_id = $db->real_escape_string((string) $click_row1['click_id']);
-                } else {
-                    $click_id = '';
-                }
-            }
-
-            if (!isset($click_id) || $click_id == '') {
                 return false;
             }
 
             // click_id can originate from a caller-supplied cookie/request
             // value; cast to int so it cannot break out of the WHERE clause.
-            $dsql = ClickRollupSql::insertSelect(
-                '202_dataengine',
-                '2c.click_id=' . (int) $click_id,
-                updateLandingPageId: true
-            );
+            $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
 
             if (!$db->query($dsql)) {
                 error_log('DataEngine (slim) setDirtyHour rollup failed: ' . $db->error);

@@ -15,18 +15,18 @@ class CampaignsController extends Controller
     protected function fields(): array
     {
         return [
-            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 255],
+            'aff_campaign_name'            => ['type' => 's', 'required' => true, 'max_length' => 50],
             'aff_campaign_url'             => ['type' => 's', 'required' => true, 'max_length' => 2048],
-            'aff_campaign_url_2'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_3'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_4'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_url_5'           => ['type' => 's', 'max_length' => 2048],
-            'aff_campaign_payout'          => ['type' => 'd', 'required' => true],
+            'aff_campaign_url_2'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_3'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_4'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_url_5'           => ['type' => 's', 'nullable' => true, 'max_length' => 2048],
+            'aff_campaign_payout'          => ['type' => 'd', 'required' => true, 'range' => [-999999.99, 999999.99]],
             'aff_campaign_currency'        => ['type' => 's', 'max_length' => 3],
-            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0],
-            'aff_network_id'               => ['type' => 'i', 'required' => true],
-            'aff_campaign_cloaking'        => ['type' => 'i'],
-            'aff_campaign_rotate'          => ['type' => 'i'],
+            'aff_campaign_foreign_payout'  => ['type' => 'd', 'default' => 0, 'range' => [-999999.99, 999999.99]],
+            'aff_network_id'               => ['type' => 'i', 'required' => true, 'range' => self::MEDIUMINT_UNSIGNED],
+            'aff_campaign_cloaking'        => ['type' => 'i', 'range' => self::TINYINT],
+            'aff_campaign_rotate'          => ['type' => 'i', 'range' => self::TINYINT],
             // How a click's conversions roll up into its value: the latest
             // one's payout (replace) or their sum (accumulate).
             'payout_mode'                  => ['type' => 's', 'allowed' => ['replace', 'accumulate']],
@@ -40,23 +40,62 @@ class CampaignsController extends Controller
             // foreign_click. Written only through create()/update() below,
             // which read the raw value; null or 0 unlinks.
             'app_registration_id'          => ['type' => 'i', 'readonly' => true],
+            // The campaign's attribution model, overriding the account's
+            // default (Setup > Campaigns > Attribution model): one of the
+            // caller's own models, or null/0 for the default. Written, like
+            // the app link, only through create()/update() below.
+            'attribution_model_id'         => ['type' => 'i', 'readonly' => true],
+            // The id advanced landing-page code and go.php carry (acip=…),
+            // set by afterCreate() the way the setup page sets it.
+            'aff_campaign_id_public'       => ['type' => 'i', 'readonly' => true],
         ];
     }
 
-    /** The validated link a create or an update is carrying to beforeCreate()/beforeUpdate(), when it sent one. */
-    private ?array $pendingRegistrationLink = null;
+    #[\Override]
+    protected function handledKeys(): array
+    {
+        return ['app_registration_id', 'attribution_model_id'];
+    }
+
+    /**
+     * The validated links a create or an update is carrying to
+     * beforeCreate()/beforeUpdate(): column => id, or null to unlink.
+     *
+     * @var array<string, ?int>
+     */
+    private array $pendingLinks = [];
+
+    /**
+     * The links in a payload, each read from its raw value and checked.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, ?int>
+     */
+    private function linksIn(array $payload): array
+    {
+        $links = [];
+        if (array_key_exists('app_registration_id', $payload)) {
+            $links['app_registration_id'] = $this->registrationLink($payload['app_registration_id']);
+        }
+        if (array_key_exists('attribution_model_id', $payload)) {
+            $links['attribution_model_id'] = $this->attributionModelLink($payload['attribution_model_id']);
+        }
+
+        return $links;
+    }
 
     #[\Override]
     public function create(array $payload): array
     {
-        $this->pendingRegistrationLink = null;
-        if (array_key_exists('app_registration_id', $payload)) {
-            $this->pendingRegistrationLink = ['value' => $this->registrationLink($payload['app_registration_id'])];
-        }
+        $this->pendingLinks = $this->linksIn($payload);
         try {
-            return parent::create($payload);
+            // The links are read here and written through beforeCreate();
+            // the base sees only the fields it writes, so it refuses any other
+            // key (a read-only one included) rather than this controller
+            // having to.
+            return parent::create(array_diff_key($payload, $this->pendingLinks));
         } finally {
-            $this->pendingRegistrationLink = null;
+            $this->pendingLinks = [];
         }
     }
 
@@ -65,50 +104,119 @@ class CampaignsController extends Controller
     {
         $extras = [
             'aff_campaign_time'      => ['type' => 'i', 'value' => time()],
-            'aff_campaign_id_public' => ['type' => 'i', 'value' => random_int(1_000_000, 99_999_999)],
         ];
-        if ($this->pendingRegistrationLink !== null) {
-            $extras['app_registration_id'] = ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']];
+        foreach ($this->pendingLinks as $column => $value) {
+            $extras[$column] = ['type' => 'i', 'value' => $value];
         }
 
         return $extras;
     }
 
+    /**
+     * The public id: the setup page's rand-id-rand, unique by construction.
+     * It was a random 8-digit number, which go.php resolves across every
+     * account, so two campaigns could share one.
+     */
+    #[\Override]
+    protected function afterCreate(int $insertId, array $payload): void
+    {
+        $this->assignPublicId('aff_campaign_id_public', $insertId);
+    }
+
+    /** A list repairs the account's id-less rows once its request has been checked. */
+    #[\Override]
+    protected function beforeListRead(): void
+    {
+        $this->repairMissingPublicIds();
+    }
+
+    #[\Override]
+    public function get(int|string $id): array
+    {
+        $this->repairMissingPublicIds();
+        return parent::get($id);
+    }
+
+    /**
+     * A campaign with no public id cannot be tracked: go.php and the
+     * advanced landing-page code carry acip=<public id>, and the offer
+     * redirects resolve the campaign by it. The setup page gives a new
+     * campaign one with an UPDATE after its INSERT (aff_campaigns.php), so a
+     * campaign whose UPDATE failed, or one from before the column was
+     * filled, has none — NULL, or 0, which is no id either: 0 is not a
+     * rand-id-rand, and every campaign holding it would answer acip=0.
+     *
+     * The landing-page code endpoint gave such a campaign one when it named
+     * it (SetupCodeController), and the API's own reads did not, so the
+     * campaign the API listed had no id to put in a link. Like
+     * LandingPagesController::repairMissingPublicIds(), every read here gives
+     * this account's id-less campaigns the setup page's form first (a random
+     * digit, the row id, a random digit — unique by construction — with a
+     * leading digit that keeps it inside INT UNSIGNED): one indexed UPDATE, a
+     * no-op once every campaign has one. A campaign that has an id is never
+     * touched.
+     *
+     * Public for the landing-page code (SetupCodeController), which writes
+     * the campaign's public id into every outbound link it builds.
+     */
+    public function repairMissingPublicIds(): void
+    {
+        $stmt = $this->prepare(
+            'UPDATE 202_aff_campaigns
+             SET aff_campaign_id_public = CAST(CONCAT(
+                 FLOOR(1 + RAND() * IF(aff_campaign_id >= 10000000, 4, 9)), aff_campaign_id, FLOOR(1 + RAND() * 9)
+             ) AS UNSIGNED)
+             WHERE user_id = ? AND (aff_campaign_id_public IS NULL OR aff_campaign_id_public = 0)'
+        );
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Campaign public id repair failed');
+        $stmt->close();
+    }
+
     #[\Override]
     public function update(int|string $id, array $payload): array
     {
-        if (!array_key_exists('app_registration_id', $payload)) {
-            return parent::update($id, $payload);
+        $before = $this->categoryOf($this->get($id));
+        $links = $this->linksIn($payload);
+        if ($links === []) {
+            return $this->queueRollupIfMoved($id, $before, parent::update($id, $payload));
         }
-        $link = ['value' => $this->registrationLink($payload['app_registration_id'])];
-        unset($payload['app_registration_id']);
+        foreach (array_keys($links) as $column) {
+            unset($payload[$column]);
+        }
 
         if ($payload !== []) {
-            // One UPDATE: the other fields and the link together, through
+            // One UPDATE: the other fields and the links together, through
             // beforeUpdate(). The base records the change after it, so the
-            // change feed's record carries the link as written — a separate
+            // change feed's record carries the links as written — a separate
             // link UPDATE after parent::update() left the feed holding the
             // old link for good. A payload the base refuses changes nothing.
-            $this->pendingRegistrationLink = $link;
+            $this->pendingLinks = $links;
             try {
-                return parent::update($id, $payload);
+                return $this->queueRollupIfMoved($id, $before, parent::update($id, $payload));
+            } catch (\Api\V3\Exception\NothingToUpdateException) {
+                // The rest of the body is read-only values the campaign
+                // already holds (a GET body sent back with a new link), which
+                // the base checked: the links are the whole write.
             } finally {
-                $this->pendingRegistrationLink = null;
+                $this->pendingLinks = [];
             }
         }
 
-        // The link alone: the base refuses a payload with no writable field,
-        // so the link is its own UPDATE — with the base's preconditions
+        // The links alone: the base refuses a payload with no writable field,
+        // so they are their own UPDATE — with the base's preconditions
         // (ownership, If-Match) and its change record. No transaction of its
         // own: bulk-upsert already wraps this call in one, and mysqli's
         // begin_transaction() inside it would commit the outer (CLAUDE.md
         // #13).
         $current = $this->get($id);
         $this->assertIfMatchSatisfied((array)$current['data']);
-        $stmt = $this->prepare('UPDATE 202_aff_campaigns SET app_registration_id = ? WHERE aff_campaign_id = ? AND user_id = ?');
+        // The column names come from linksIn(), never from the request.
+        $sets = implode(', ', array_map(static fn (string $column): string => "$column = ?", array_keys($links)));
+        $stmt = $this->prepare("UPDATE 202_aff_campaigns SET $sets WHERE aff_campaign_id = ? AND user_id = ?");
         $campaignId = (int)$id;
-        $this->bind($stmt, 'iii', $link['value'], $campaignId, $this->userId);
-        $this->execute($stmt, 'Campaign app link failed');
+        $this->bind($stmt, str_repeat('i', count($links)) . 'ii', ...[...array_values($links), $campaignId, $this->userId]);
+        $this->execute($stmt, 'Campaign link failed');
         $stmt->close();
 
         // As in the base update(): the write has landed, so a later failure
@@ -120,17 +228,49 @@ class CampaignsController extends Controller
             throw new \Api\V3\Exception\WriteCommittedException('campaign', $e);
         }
 
+        return $this->queueRollupIfMoved($id, $before, $updated);
+    }
+
+    /** @param array<string, mixed> $record a get() answer */
+    private function categoryOf(array $record): int
+    {
+        return (int) (((array) $record['data'])['aff_network_id'] ?? 0);
+    }
+
+    /**
+     * A campaign moved to another category queues its clicks' report rows
+     * for the cron job to roll up again: the rows keep the category they
+     * were rolled up under, and the readers filter and group by it
+     * (Prosper202\DataEngine\RollupRefresh). The update has landed, so a
+     * queue that fails is reported as landed (CLAUDE.md #13).
+     *
+     * @param array<string, mixed> $updated
+     * @return array<string, mixed>
+     */
+    private function queueRollupIfMoved(int|string $id, int $before, array $updated): array
+    {
+        if ($this->categoryOf($updated) === $before) {
+            return $updated;
+        }
+        try {
+            $conn = new \Prosper202\Database\Connection($this->db);
+            \Prosper202\DataEngine\RollupRefresh::campaign($conn, $this->userId, (int) $id, time());
+        } catch (\Throwable $e) {
+            throw new \Api\V3\Exception\WriteCommittedException('campaign', $e);
+        }
+
         return $updated;
     }
 
     #[\Override]
     protected function beforeUpdate(int|string $id, array $payload): array
     {
-        if ($this->pendingRegistrationLink === null) {
-            return [];
+        $extras = [];
+        foreach ($this->pendingLinks as $column => $value) {
+            $extras[$column] = ['type' => 'i', 'value' => $value];
         }
 
-        return ['app_registration_id' => ['type' => 'i', 'value' => $this->pendingRegistrationLink['value']]];
+        return $extras;
     }
 
     /**
@@ -153,6 +293,35 @@ class CampaignsController extends Controller
             }
             $this->recordChange('update', $record);
         }
+    }
+
+    /**
+     * The attribution model a campaign may name, read from the RAW value as
+     * the setup page reads it: null, 0 or '' is the account's default model;
+     * otherwise a canonical positive id naming one of the caller's own
+     * models (ModelRepository::row, which the page uses). Anything else is a
+     * 422, never a cast to some other id.
+     */
+    private function attributionModelLink(mixed $raw): ?int
+    {
+        if ($raw === null || $raw === 0 || $raw === '0' || $raw === '') {
+            return null;
+        }
+        $text = is_int($raw) ? (string)$raw : (is_string($raw) ? $raw : null);
+        if ($text === null || preg_match('/^[1-9][0-9]{0,9}$/D', $text) !== 1 || (int)$text > 2147483647) {
+            throw new \Api\V3\Exception\ValidationException('Invalid attribution_model_id', [
+                'attribution_model_id' => 'must be one of your attribution model ids (GET /attribution/models), or null for the account default',
+            ]);
+        }
+        $modelId = (int)$text;
+        $model = (new \Prosper202\Attribution\ModelRepository(new \Prosper202\Database\Connection($this->db)))->row($this->userId, $modelId);
+        if ($model === null) {
+            throw new \Api\V3\Exception\ValidationException('Unknown attribution model', [
+                'attribution_model_id' => 'model ' . $modelId . ' is not one of yours (GET /attribution/models lists them)',
+            ]);
+        }
+
+        return $modelId;
     }
 
     /**

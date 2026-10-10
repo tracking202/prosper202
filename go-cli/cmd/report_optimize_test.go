@@ -165,7 +165,7 @@ func losersServer(t *testing.T, models string, attr func(q url.Values) (int, str
 		case strings.HasSuffix(r.URL.Path, "/attribution/models"):
 			w.WriteHeader(200)
 			w.Write([]byte(models))
-		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff_campaign_id is set
+		case strings.Contains(r.URL.Path, "/campaigns/"): // the payout `losers` reads when --aff-campaign-id is set
 			w.WriteHeader(200)
 			w.Write([]byte(`{"data":{"aff_campaign_payout":"0"}}`))
 		case strings.HasSuffix(r.URL.Path, "/attribution/models/4"):
@@ -391,8 +391,14 @@ func TestLosersNotesAndFallbacks(t *testing.T) {
 		{"dimension without an attribution equivalent", firstTouchModels, onePage, []string{"--breakdown", "browser"}, "no browser breakdown", 0, false, "CUT"},
 		{"turned off", firstTouchModels, onePage, []string{"--breakdown", "source", "--no-attribution-check"}, "", 0, false, "CUT"},
 		{"no range given", firstTouchModels, onePage, []string{"--breakdown", "source"}, "", 1, true, "TEST"},
-		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff_campaign_id", "7"}, "can't be filtered by --aff_campaign_id", 0, false, "CUT"},
-		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc_account_id", "7"}, "", 1, true, "TEST"},
+		{"a filter the attribution report can't mirror", firstTouchModels, onePage, []string{"--breakdown", "source", "--aff-campaign-id", "7"}, "can't be filtered by --aff-campaign-id", 0, false, "CUT"},
+		{"a filter on the breakdown itself", firstTouchModels, onePage, []string{"--breakdown", "source", "--ppc-account-id", "7"}, "", 1, true, "TEST"},
+		// Every report filter narrows the classic rows only, so each turns the check off — a filter the loop did not
+		// list would compare keyword-filtered rows with account-wide credit.
+		{"a keyword filter", firstTouchModels, onePage, []string{"--breakdown", "source", "--keyword", "shoes"}, "can't be filtered by --keyword", 0, false, "CUT"},
+		{"real clicks only", firstTouchModels, onePage, []string{"--breakdown", "source", "--show", "real"}, "can't be filtered by --show", 0, false, "CUT"},
+		{"a device type", firstTouchModels, onePage, []string{"--breakdown", "source", "--device-type", "2"}, "can't be filtered by --device-type", 0, false, "CUT"},
+		{"show all filters nothing", firstTouchModels, onePage, []string{"--breakdown", "source", "--show", "all"}, "", 1, true, "TEST"},
 		{"backfill running", firstTouchModels, func(url.Values) (int, string) {
 			return 200, `{"data":[{"key":"7","roi":46.58,"assisted_conversions":15}],"meta":{"groups":1,"backfill":{"done":10,"total":100}}}`
 		}, []string{"--breakdown", "source", "--period", "last7"}, "backfilled", 1, true, "TEST"},
@@ -555,7 +561,7 @@ func TestLosersReviewRoundTwo(t *testing.T) {
 		chatgpt      string
 	}{
 		// The classic report applies both; the attribution report takes one range, so don't compare different ranges.
-		{"mixed period and time range", firstTouchModels, []string{"--period", "last30", "--time_from", "1790000000"}, "--period and --time_from/--time_to are both set", 0, false, "CUT"},
+		{"mixed period and time range", firstTouchModels, []string{"--period", "last30", "--time-from", "1790000000"}, "--period and --time-from/--time-to are both set", 0, false, "CUT"},
 		// A model still being recomputed has absent or stale credits: no ROI, assists only.
 		{"auto-selected model still recomputing", pendingModels, nil, "still being recomputed", 1, false, "TEST"},
 		{"override still recomputing", firstTouchModels, []string{"--first-touch-model", "6"}, "still being recomputed", 1, false, "TEST"},
@@ -624,7 +630,7 @@ func TestTriageRefusesAMalformedFirstTouchModelBeforeAnyRequest(t *testing.T) {
 }
 
 // The attribution request must cover the classic report's window: all time when no range is given (the classic
-// report has no lower bound; the attribution report would default to 30 days), and all time up to --time_to.
+// report has no lower bound; the attribution report would default to 30 days), and all time up to --time-to.
 func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
 	cases := []struct {
 		name string
@@ -636,9 +642,9 @@ func TestAttributionCheckUsesTheClassicReportsWindow(t *testing.T) {
 		// reads the click cohort, the classic report's population.
 		{"no range: all time", nil, map[string]string{"time_from": "0"}, []string{"period", "time_to", "cohort"}},
 		{"period", []string{"--period", "last7"}, map[string]string{"period": "last7", "cohort": "click"}, []string{"time_from", "time_to"}},
-		{"time_from only", []string{"--time_from", "1790000000"}, map[string]string{"time_from": "1790000000", "cohort": "click"}, []string{"period", "time_to"}},
-		{"time_to only: from the start", []string{"--time_to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
-		{"both bounds", []string{"--time_from", "1790000000", "--time_to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
+		{"time_from only", []string{"--time-from", "1790000000"}, map[string]string{"time_from": "1790000000", "cohort": "click"}, []string{"period", "time_to"}},
+		{"time_to only: from the start", []string{"--time-to", "1791000000"}, map[string]string{"time_from": "0", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
+		{"both bounds", []string{"--time-from", "1790000000", "--time-to", "1791000000"}, map[string]string{"time_from": "1790000000", "time_to": "1791000000", "cohort": "click"}, []string{"period"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -878,16 +884,16 @@ func TestAttributionBreakdownNamesEveryRefusedFlag(t *testing.T) {
 	}
 }
 
-// The classic report treats a bound of "0" as unset, so the attribution request must too: --time_to 0 is no upper bound
-// (not an empty [0, 0] window), and --period with --time_from 0 is not a mixed range.
+// The classic report treats a bound of "0" as unset, so the attribution request must too: --time-to 0 is no upper bound
+// (not an empty [0, 0] window), and --period with --time-from 0 is not a mixed range.
 func TestZeroBoundsMeanUnsetAsInTheClassicReport(t *testing.T) {
-	_, _, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--time_to", "0")
+	_, _, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--time-to", "0")
 	if len(calls) != 1 || calls[0].Has("time_to") || calls[0].Get("time_from") != "0" {
-		t.Errorf("--time_to 0 should send all time (time_from 0, no time_to), got %v", calls)
+		t.Errorf("--time-to 0 should send all time (time_from 0, no time_to), got %v", calls)
 	}
-	_, stderr, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30", "--time_from", "0")
+	_, stderr, calls := runLosers(t, firstTouchModels, onePage, "--breakdown", "source", "--period", "last30", "--time-from", "0")
 	if len(calls) != 1 || calls[0].Get("period") != "last30" || strings.Contains(stderr, "both set") {
-		t.Errorf("--period with --time_from 0 is just the period: calls %v, stderr %q", calls, stderr)
+		t.Errorf("--period with --time-from 0 is just the period: calls %v, stderr %q", calls, stderr)
 	}
 }
 
@@ -908,7 +914,7 @@ func TestBadOverrideIsRefusedBeforeTheClassicReport(t *testing.T) {
 	tmp := t.TempDir()
 	setTestHome(t, tmp)
 	writeTestConfig(t, tmp, srv.URL, "test-key")
-	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--aff_campaign_id", "7", "--first-touch-model", "1")
+	_, _, err := executeCommand("report", "losers", "--json", "--breakdown", "source", "--aff-campaign-id", "7", "--first-touch-model", "1")
 	if err == nil || !strings.Contains(err.Error(), "last_touch model") {
 		t.Fatalf("a last-touch override must be refused, got %v", err)
 	}
@@ -1261,5 +1267,41 @@ func TestClassifyPrefersMaxCPCOverPayout(t *testing.T) {
 	}
 	if b, _ := classify(1124, 12, 3171.62, -1244.62, 2.82, 160, 0); b != "CUT" {
 		t.Errorf("CPC $2.82 is over the $1.71 payout break-even, so it is CUT; got %s", b)
+	}
+}
+
+// A --having the filter cannot read was dropped (every row, exit 0), and one
+// on a field no breakdown row has read that field as 0 ({"data": []}, exit
+// 0). Each is refused, before a client is built: with no configuration here,
+// a refusal that came after the client would be the config error instead.
+func TestBreakdownRefusesAHavingItCannotRead(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	for having, want := range map[string]string{
+		"roi<abc":        "is not FIELD OP NUMBER",
+		"total_leads==0": "is not FIELD OP NUMBER",
+		"roi<NaN":        "is not FIELD OP NUMBER",
+		"roi":            "is not FIELD OP NUMBER",
+		"<0":             "is not FIELD OP NUMBER",
+		"rio<0":          `names "rio", which no breakdown row has`,
+		"Revenue>0x":     "is not FIELD OP NUMBER",
+	} {
+		_, _, err := executeCommand("report", "breakdown", "--breakdown", "campaign", "--having", having)
+		if err == nil || exitCodeForError(err) != ExitValidation || !strings.Contains(err.Error(), want) {
+			t.Errorf("--having %q: want a validation error containing %q, got %v (exit %d)", having, want, err, exitCodeForError(err))
+			continue
+		}
+		if !strings.Contains(hintFor(err), "--having 'roi<0'") {
+			t.Errorf("--having %q: the hint shows no filter to write: %q", having, hintFor(err))
+		}
+	}
+	// Control: a filter it can read, in the same empty HOME, reaches the client.
+	if _, _, err := executeCommand("report", "breakdown", "--breakdown", "campaign", "--having", "roi<0"); err == nil || !strings.Contains(err.Error(), "no URL configured") {
+		t.Errorf("--having roi<0 without config: want the config error, got %v", err)
+	}
+	// What it accepts: a field or its alias, any of the operators.
+	for _, having := range []string{"roi<0", "Revenue >= 10", "conversions=0", "total_click_throughs!=3"} {
+		if _, _, _, ok, err := havingFilter(having); err != nil || !ok {
+			t.Errorf("--having %q was refused: %v", having, err)
+		}
 	}
 }

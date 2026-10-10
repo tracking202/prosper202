@@ -19,8 +19,9 @@ $reportView = p202_report_view_begin();
 	header("Expires: 0");  
 		
 	
-//get stuff
-	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
+//get stuff: the Visitors list, as click_history.php reads it (a name only
+//when it is the click's own account's, CLAUDE.md #27)
+	$command = "SELECT 2c.click_id, 2c.click_time, 2c.click_alp, text_ad_name, aff_campaign_name, aff_campaign_id_public, landing_page_nickname, ppc_network_name, ppc_account_name, " . \Prosper202\DataEngine\IpAddressSql::address('2i', '2i6') . " AS ip_address, keyword, 2c.click_out, click_lead, click_filtered, click_id_public, click_cloaking, 2c.click_referer_site_url_id, click_landing_site_url_id, click_outbound_site_url_id, click_cloaking_site_url_id, click_redirect_site_url_id,	2b.browser_name, 2p.platform_name, 2d.device_name, 202_device_types.type_name, 2cy.country_name, 2cy.country_code, 2rg.region_name, 202_locations_city.city_name, 2is.isp_name, 
 2su.site_url_address AS referer,2sd.site_domain_host AS referer_host,
 2cl.site_url_address AS landing,2cld.site_domain_host AS landing_host,
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
@@ -31,12 +32,13 @@ gclid,
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id) 
 LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) 
-LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) 
-LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id)
-LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) 
-LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id) 
-LEFT JOIN 202_text_ads ON (202_text_ads.text_ad_id = 2c.text_ad_id) 
+LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id) 
+LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id)
+LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id) 
+LEFT JOIN 202_landing_pages ON (202_landing_pages.landing_page_id = 2c.landing_page_id AND 202_landing_pages.user_id = 2c.user_id) 
+LEFT JOIN 202_text_ads ON (202_text_ads.text_ad_id = 2c.text_ad_id AND 202_text_ads.user_id = 2c.user_id) 
 LEFT JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id) 
+" . \Prosper202\DataEngine\IpAddressSql::join('2i', '2i6') . "
 LEFT JOIN 202_keywords AS 2k ON (2c.keyword_id = 2k.keyword_id) 
 LEFT JOIN 202_browsers AS 2b ON (2c.browser_id = 2b.browser_id) 
 LEFT JOIN 202_platforms AS 2p ON (2c.platform_id = 2p.platform_id) 
@@ -133,12 +135,12 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
 			
 			//if not a landing page
 			if (!$click_row['click_alp']) { 
-				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
+				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
 			} else { 
 				//advanced lander
-				$html['cloaking'] = htmlentities( 'http://' .$_SERVER['SERVER_NAME'] . get_absolute_url().'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
-				$html['cloaking_host'] = htmlentities( (string) $_SERVER['SERVER_NAME'] );   
+				$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/off.php?acip='. $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public'] );
+				$html['cloaking_host'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER));   
 			}
 		} else {
 			$html['cloaking'] = '';

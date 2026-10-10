@@ -146,6 +146,8 @@ function RunDailyCronjob()
 
             /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
             //this function runs everyday at midnight to clear out the temp clicks_memory table
+            //Every account's rows, on purpose: the install's own housekeeping,
+            //by age alone, and nothing is read on any account's behalf.
             $from = $now - 86400;
 
             //this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
@@ -568,154 +570,86 @@ function RunSecondsCronjob()
     }
 }
 
+/**
+ * Automatic deletion of click data older than user 1's
+ * user_auto_database_optimization_days (0 keeps everything). The deleting is
+ * Prosper202\Click\ClickRetention's, shared with ClearOldClicks(): every
+ * click whose rows are all older than the cutoff, from every click table,
+ * with the attribution rollup's hours marked in the same transactions. A
+ * backlog drains over the following runs.
+ */
 function AutoOptimizeDatabase()
 {
     try {
-        try {
-            $db = getDatabaseConnection();
-        } catch (Exception $e) {
-            error_log("AutoOptimizeDatabase: Database connection failed - " . $e->getMessage());
-            return;
+        $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection(getDatabaseConnection()));
+        $report = $retention->runAutomatic(time() + \Prosper202\Click\ClickRetention::RUN_SECONDS);
+        if ($report['days'] > 0 && $report['batches'] > 0) {
+            echo ' Auto DB Delete: ' . (int) $report['clicks'] . ' click(s) older than ' . date('Y-m-d', (int) $report['cutoff']) . ' deleted'
+                . ($report['complete'] ? '' : ', more next run') . '<br>';
+            flushOutput();
         }
-
-        $sql = "SELECT user_auto_database_optimization_days FROM 202_users_pref where user_id = 1";
-        $result = $db->query($sql);
-
-        if (!$result) {
-            echo "Error querying user preferences for auto optimization<br>";
-            try {
-                error_log("AutoOptimizeDatabase: Query failed - " . $db->error);
-            } catch (\Error $e) {
-                error_log("AutoOptimizeDatabase: Query failed (error inaccessible)");
-            }
-            return;
-        }
-
-        $row = $result->fetch_assoc();
-
-        if (!empty($row['user_auto_database_optimization_days'])) {
-            $date_to = date('Y-m-d', strtotime('-1 days', strtotime(date("Y-m-d"))));
-            $date_to .= ' 23:59:59';
-
-            $date_from = date('Y-m-d', strtotime('-' . $row['user_auto_database_optimization_days'] . ' days', strtotime($date_to)));
-            $date_from .= ' 23:59:59';
-            $to = strtotime($date_from);
-
-            echo " Processing Auto DB Delete -";
-            flush();
-            ob_flush();
-
-            // Get the oldest click_id based on the date range
-            $click_sql = "SELECT MIN(click_id) as min_click_id FROM 202_clicks WHERE click_time < " . $to;
-            $click_result = $db->query($click_sql);
-
-            if ($click_result && $click_result->num_rows > 0) {
-                $click_row = $click_result->fetch_assoc();
-                $min_click_id = $click_row['min_click_id'];
-
-                if (!empty($min_click_id) && is_numeric($min_click_id)) {
-                    $tables = explode(',', '202_clicks,202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_dataengine,202_google,202_bing,202_clicks_variable');
-
-                    foreach ($tables as $table) {
-                        $table = trim($table);
-                        $delete_sql = "DELETE FROM `$table` WHERE click_id < " . (int)$min_click_id . " LIMIT 10000";
-                        $result = $db->query($delete_sql);
-
-                        if ($result === false) {
-                            try {
-                                error_log("AutoOptimizeDatabase: Failed to delete from $table - " . $db->error);
-                            } catch (\Error $e) {
-                                error_log("AutoOptimizeDatabase: Failed to delete from $table (error inaccessible)");
-                            }
-                        }
-                    }
-                }
-            }
-
-            echo 'Done Processing Batch<br>';
-            ob_flush();
-            flush();
-        }
-    } catch (Exception $e) {
-        error_log("AutoOptimizeDatabase Exception: " . $e->getMessage());
+    } catch (\Throwable $e) {
+        // Nothing half-done: each batch is one transaction.
+        error_log('AutoOptimizeDatabase: ' . $e->getMessage());
     }
 }
 
+/**
+ * The one-off deletion scheduled on user 1's preferences (by the page or
+ * POST /system/retention/delete-before): every click all of whose rows are
+ * older than user_delete_data_before — or, for an id an earlier version
+ * stored in user_delete_data_clickid, every click below it — through
+ * ClickRetention as above. Slack hears once, from the run that deletes the
+ * last of it.
+ */
 function ClearOldClicks()
 {
     try {
-        try {
-            $db = getDatabaseConnection();
-        } catch (Exception $e) {
-            error_log("ClearOldClicks: Database connection failed - " . $e->getMessage());
+        $db = getDatabaseConnection();
+        $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection($db));
+        $report = $retention->runScheduled(time() + \Prosper202\Click\ClickRetention::RUN_SECONDS);
+        if (($report['before'] === null && $report['marker'] === null) || $report['batches'] === 0) {
             return;
         }
-
-        // For cron job, we don't have session, so use user_id = 1 (admin)
-        $user_id = 1;
-        $mysql['user_own_id'] = $db->real_escape_string((string)$user_id);
-
-        $sql = "SELECT user_delete_data_clickid from 202_users_pref WHERE user_id = '" . $mysql['user_own_id'] . "'";
-        $result = $db->query($sql);
-
-        if (!$result) {
-            echo "Error querying user preferences<br>";
-            try {
-                error_log("ClearOldClicks: Query failed - " . $db->error);
-            } catch (\Error $e) {
-                error_log("ClearOldClicks: Query failed (error inaccessible)");
-            }
+        $what = $report['before'] !== null
+            ? 'from before ' . date('Y-m-d H:i T', (int) $report['before'])
+            : 'below click ' . (int) $report['marker'];
+        echo ' Clear Old Clicks: ' . (int) $report['clicks'] . ' click(s) ' . $what . ' deleted'
+            . ($report['complete'] ? '' : ', more next run') . '<br>';
+        flushOutput();
+        if (!$report['complete']) {
             return;
         }
+    } catch (\Throwable $e) {
+        error_log('ClearOldClicks: ' . $e->getMessage());
+        return;
+    }
 
-        $row = $result->fetch_assoc();
-
-        if ($result->num_rows > 0 && !empty($row['user_delete_data_clickid'])) {
-            echo " Processing Clear Old Clicks...";
-            $mysql['click_id'] = $db->real_escape_string((string)$row['user_delete_data_clickid']);
-
-            $tables = explode(',', '202_clicks,202_clicks_advance,202_clicks_record,202_clicks_site,202_clicks_spy,202_clicks_tracking,202_dataengine,202_google,202_bing,202_clicks_variable');
-            if (!empty($mysql['click_id']) && is_numeric($mysql['click_id'])) {
-                foreach ($tables as $table) {
-                    $table = trim($table);
-                    $click_sql = "DELETE FROM `$table` WHERE click_id < " . (int)$mysql['click_id'] . " LIMIT 5000";
-                    $result = $db->query($click_sql);
-
-                    if ($result === false) {
-                        try {
-                            error_log("ClearOldClicks: Failed to delete from $table - " . $db->error);
-                        } catch (\Error $e) {
-                            error_log("ClearOldClicks: Failed to delete from $table (error inaccessible)");
-                        }
-                    }
-                }
-            }
-
-            // Initialize Slack notification if configured
-            try {
-                $slack_sql = "SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = 1 AND user_slack_incoming_webhook != ''";
-                $slack_result = $db->query($slack_sql);
-
-                if ($slack_result && $slack_result->num_rows > 0) {
-                    $slack_row = $slack_result->fetch_assoc();
-                    if (!empty($slack_row['user_slack_incoming_webhook'])) {
-                        // Only initialize Slack if webhook is configured
-                        if (class_exists('Slack')) {
-                            $slack = new Slack($slack_row['user_slack_incoming_webhook']);
-                            $slack->push('click_data_deleted', ['user' => 'cron', 'date' => date('Y-m-d')]);
-                        }
-                    }
-                }
-            } catch (Exception $e) {
-                error_log("ClearOldClicks: Slack notification failed - " . $e->getMessage());
-            }
-
-            echo 'Done Processing Batch<br>';
-            ob_flush();
-            flush();
+    try {
+        $slack_result = $db->query("SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = 1 AND user_slack_incoming_webhook != ''");
+        if ($slack_result === false) {
+            error_log('ClearOldClicks: the Slack webhook could not be read: ' . $db->error);
+            return;
         }
-    } catch (Exception $e) {
-        error_log("ClearOldClicks Exception: " . $e->getMessage());
+        $slack_row = $slack_result->fetch_assoc();
+        if (!empty($slack_row['user_slack_incoming_webhook']) && class_exists('Slack')) {
+            if ($report['before'] !== null) {
+                $date = date('Y-m-d', (int) $report['before']);
+            } else {
+                // The day an id was scheduled from: the marker's click,
+                // which that deletion keeps.
+                $day = $db->query('SELECT click_time FROM 202_clicks WHERE click_id = ' . (int) $report['marker'] . ' LIMIT 1');
+                $dayRow = $day === false ? null : $day->fetch_assoc();
+                $date = is_array($dayRow) ? date('Y-m-d', (int) $dayRow['click_time']) : 'click ' . (int) $report['marker'];
+            }
+            $slack = new Slack($slack_row['user_slack_incoming_webhook']);
+            $slack->push('click_data_deleted', [
+                'user' => 'cron',
+                'date' => $date,
+            ]);
+        }
+    } catch (\Throwable $e) {
+        error_log('ClearOldClicks: Slack notification failed - ' . $e->getMessage());
     }
 }
 

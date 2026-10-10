@@ -99,10 +99,18 @@ go-cli/p202 eval run \
   --json
 ```
 
-The runner captures every `p202` command the agent executes (PATH shim),
-re-reads instance state, grades each case's expectations, and exits 5 when
-any case fails. Rubric lines need `--judge-cmd` to grade; without one those
-cases report `needs_judge`. `p202 eval run --help` documents the contract.
+The runner captures every `p202` command the agent executes and the status
+it exits with (PATH shim), re-reads instance state, grades each case's
+expectations, and exits 5 when any case fails. `runs_one_of` is satisfied
+only by a matching command that exited 0 — a command that ran and failed
+(a stale binary's "unknown flag", a refused key) fails the case with the
+command and its exit status named, where it used to pass the check and,
+with a rubric, read `needs_judge`. An error-path case whose point is the
+refusal pins it with `"runs_one_of_exit": 2` (`admin-003` does).
+`never_runs` counts every attempt, refused or not. Each result's
+`commands_failed` says how many captured commands did not exit 0. Rubric
+lines need `--judge-cmd` to grade; without one those cases report
+`needs_judge`. `p202 eval run --help` documents the contract.
 
 ## Continuous integration
 

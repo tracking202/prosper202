@@ -43,36 +43,13 @@ $newWebhookSecret = null;
  */
 function ltv_settings_validate_p13n_fields(string $raw): string
 {
-    $raw = trim($raw);
-    if ($raw === '') {
-        return '';
+    // The rule lives with the other preference rules, so the API's
+    // PUT /users/{id}/preferences holds the value to the same one.
+    try {
+        return \Prosper202\User\PreferenceRules::personalizationFields($raw);
+    } catch (\InvalidArgumentException $e) {
+        throw new \RuntimeException($e->getMessage(), 0, $e);
     }
-    if (strlen($raw) > 500) {
-        throw new \RuntimeException('Personalization fields list exceeds 500 characters.');
-    }
-
-    $valid = [];
-    $invalid = [];
-    foreach (explode(',', $raw) as $entry) {
-        $entry = trim($entry);
-        if ($entry === '') {
-            continue;
-        }
-        if (\Prosper202\Ltv\MysqlPersonalizationRepository::isAllowedEntry($entry)) {
-            $valid[] = $entry;
-        } else {
-            $invalid[] = $entry;
-        }
-    }
-    if ($invalid !== []) {
-        throw new \RuntimeException(
-            'Invalid personalization field(s): ' . implode(', ', $invalid)
-            . '. Allowed: ' . implode(', ', \Prosper202\Ltv\MysqlPersonalizationRepository::ALLOWED_CRM_FIELDS)
-            . ', cf:<field_key>, rec:next_offer.'
-        );
-    }
-
-    return implode(',', array_values(array_unique($valid)));
 }
 
 try {

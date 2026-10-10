@@ -48,7 +48,10 @@ if (is_installed() == true) {
 	}
 
 	// Check if partitioning is supported by querying INFORMATION_SCHEMA.PARTITIONS
-	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
+	// Whether the table can be read at all (a COUNT answers one row whatever
+	// it counts), asked of this database's tables: unscoped, MySQL lists every
+	// table's partitions on the server, seconds on a host with many databases.
+	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_SCHEMA = DATABASE()";
 	$result = $db ? $db->query($sql) : false;
 	
 	if ($result && $result->num_rows > 0) {

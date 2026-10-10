@@ -23,13 +23,20 @@ $mysql['tracker_id_public'] = $db->real_escape_string((string)($editTrackerId ??
 $showEdit = !empty($editTrackerId);
 if ($showEdit) {
 	$edit_tracker_sql = "SELECT * FROM 202_trackers AS 2tr
-						 LEFT JOIN 202_landing_pages AS 2lp ON (2tr.landing_page_id = 2lp.landing_page_id)
-						 LEFT JOIN 202_aff_campaigns AS 2ac ON (2tr.aff_campaign_id = 2ac.aff_campaign_id)
-						 LEFT JOIN 202_ppc_accounts AS 2pa ON (2tr.ppc_account_id = 2pa.ppc_account_id) 
-						 WHERE 2tr.user_id = '" . $mysql['user_id'] . "' AND (2ac.aff_campaign_deleted='0' OR 2tr.aff_campaign_id = 0) AND 2tr.tracker_id_public = '" . $mysql['tracker_id_public'] . "'";
+						 LEFT JOIN 202_landing_pages AS 2lp ON (2tr.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2tr.user_id)
+						 LEFT JOIN 202_aff_campaigns AS 2ac ON (2tr.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2tr.user_id)
+						 LEFT JOIN 202_ppc_accounts AS 2pa ON (2tr.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2tr.user_id) 
+						 WHERE 2tr.user_id = '" . $mysql['user_id'] . "' AND (2ac.aff_campaign_deleted='0' OR 2tr.aff_campaign_id = 0 OR 2ac.aff_campaign_id IS NULL) AND 2tr.tracker_id_public = '" . $mysql['tracker_id_public'] . "'";
 	// An advanced-landing-page or redirector link has no campaign, so the
 	// campaign join is empty for it; before U4 the deleted-campaign filter
 	// above excluded exactly those links, and they could not be edited.
+	// A landing page, campaign or account is read only when it is this
+	// account's (CLAUDE.md #27): a link saved before 229df10 naming another
+	// account's opens with that field empty, to be chosen again -- the
+	// form offers this account's records only, and saving one refuses
+	// anything else (generate_tracking_link.php) -- rather than not opening
+	// at all. Its row's columns are SELECT *'s, so the joined tables' NULLs
+	// stand in the tracker's own ids for those fields.
 
 	$edit_tracker_result = $db->query($edit_tracker_sql) or record_mysql_error($db, $edit_tracker_sql);
 	$edit_tracker_row = $edit_tracker_result->fetch_assoc() ?? [];
@@ -56,7 +63,7 @@ $uid = (int) $_SESSION['user_id'];
 // browser (p202-setup.js) instead of fetching a select per choice.
 $campaignOptions = p202_setup_campaign_options($db, $uid);
 $simplePageOptions = [];
-foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickname, lp.aff_campaign_id FROM 202_landing_pages AS lp INNER JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = lp.aff_campaign_id) WHERE lp.user_id = '" . $uid . "' AND lp.landing_page_type = '0' AND lp.landing_page_deleted = '0' AND ac.aff_campaign_deleted = '0' ORDER BY lp.landing_page_nickname ASC") as $page) {
+foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickname, lp.aff_campaign_id FROM 202_landing_pages AS lp INNER JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = lp.aff_campaign_id AND ac.user_id = lp.user_id) WHERE lp.user_id = '" . $uid . "' AND lp.landing_page_type = '0' AND lp.landing_page_deleted = '0' AND ac.aff_campaign_deleted = '0' ORDER BY lp.landing_page_nickname ASC") as $page) {
 	$simplePageOptions[(string) $page['landing_page_id']] = ['label' => (string) $page['landing_page_nickname'], 'data' => ['campaign' => (string) $page['aff_campaign_id']]];
 }
 $advancedPageOptions = [];
@@ -84,7 +91,7 @@ foreach (p202_setup_rows($db, "SELECT id, name FROM 202_rotators WHERE user_id =
 	$rotatorOptions[(string) $rotator['id']] = (string) $rotator['name'];
 }
 $accountOptions = [];
-foreach (p202_setup_rows($db, "SELECT pa.ppc_account_id, pa.ppc_account_name, pn.ppc_network_id, pn.ppc_network_name FROM 202_ppc_accounts AS pa INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pa.ppc_network_id) WHERE pa.user_id = '" . $uid . "' AND pa.ppc_account_deleted = '0' AND pn.ppc_network_deleted = '0' ORDER BY pn.ppc_network_name ASC, pa.ppc_account_name ASC") as $account) {
+foreach (p202_setup_rows($db, "SELECT pa.ppc_account_id, pa.ppc_account_name, pn.ppc_network_id, pn.ppc_network_name FROM 202_ppc_accounts AS pa INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pa.ppc_network_id AND pn.user_id = pa.user_id) WHERE pa.user_id = '" . $uid . "' AND pa.ppc_account_deleted = '0' AND pn.ppc_network_deleted = '0' ORDER BY pn.ppc_network_name ASC, pa.ppc_account_name ASC") as $account) {
 	$group = 's' . $account['ppc_network_id'];
 	$accountOptions[$group]['label'] = (string) $account['ppc_network_name'];
 	$accountOptions[$group]['options'][(string) $account['ppc_account_id']] = ['label' => (string) $account['ppc_account_name'], 'data' => ['source' => (string) $account['ppc_network_id']]];
@@ -103,46 +110,68 @@ $costType = $showEdit && isset($row['click_cpa']) && (float) $row['click_cpa'] >
 $cloaking = (string) ($row['click_cloaking'] ?? '-1');
 $pick = static fn (string $key): string => (string) ($row[$key] ?? '');
 
-// The tracking links already made, with the link each one answers to.
+// The tracking links already made, with the link each one answers to. A
+// landing page, campaign, redirector or traffic source (and so its
+// variables) is read only when it is this account's (CLAUDE.md #27): a link
+// saved before 229df10 can name another account's, and this list built the
+// link on that landing page's URL with that source's variables.
 $trackers_sql = "SELECT
-	tr.tracker_id, tr.tracker_id_public, tr.tracker_time, tr.rotator_id,
-	lp.landing_page_id, lp.landing_page_url, ac.aff_campaign_name, lp.landing_page_nickname, ro.name,
-	pv.parameters, pv.placeholders
+	tr.tracker_id, tr.tracker_id_public, tr.tracker_time, tr.rotator_id, tr.landing_page_id AS named_landing_page_id,
+	lp.landing_page_id, lp.landing_page_url, ac.aff_campaign_name, lp.landing_page_nickname, ro.id AS redirector_id, ro.name,
+	pn.ppc_network_id
 	FROM 202_trackers AS tr
-	LEFT JOIN 202_landing_pages AS lp ON (tr.landing_page_id = lp.landing_page_id)
-	LEFT JOIN 202_aff_campaigns AS ac ON (tr.aff_campaign_id = ac.aff_campaign_id)
-	LEFT JOIN 202_rotators AS ro ON (tr.rotator_id = ro.id)
-	LEFT JOIN 202_ppc_accounts AS ppc ON (tr.ppc_account_id = ppc.ppc_account_id)
-	LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter) AS parameters, GROUP_CONCAT(placeholder) AS placeholders FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS pv ON (ppc.ppc_network_id = pv.ppc_network_id)
+	LEFT JOIN 202_landing_pages AS lp ON (tr.landing_page_id = lp.landing_page_id AND lp.user_id = tr.user_id)
+	LEFT JOIN 202_aff_campaigns AS ac ON (tr.aff_campaign_id = ac.aff_campaign_id AND ac.user_id = tr.user_id)
+	LEFT JOIN 202_rotators AS ro ON (tr.rotator_id = ro.id AND ro.user_id = tr.user_id)
+	LEFT JOIN 202_ppc_accounts AS ppc ON (tr.ppc_account_id = ppc.ppc_account_id AND ppc.user_id = tr.user_id)
+	LEFT JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = ppc.ppc_network_id AND pn.user_id = tr.user_id)
 	WHERE tr.user_id ='" . $mysql['user_id'] . "'
 	ORDER BY tr.tracker_id DESC";
 $trackers = p202_setup_rows($db, $trackers_sql);
-$trackerLink = static function (array $tracker) use ($base): array {
-	$vars_query = '';
-	$parameters = explode(',', $tracker['parameters'] ?? '');
-	$placeholders = explode(',', $tracker['placeholders'] ?? '');
-	foreach ($parameters as $key => $value) {
-		if (isset($placeholders[$key])) {
-			$vars_query .= '&' . $value . '=' . $placeholders[$key];
-		}
+// Each traffic source's variables as a link carries them: the live ones
+// only, in the order they were added, each parameter beside its own
+// placeholder, as the link generator (generate_tracking_link.php), Setup's
+// Traffic Sources and GET /trackers/{id}/url give them. This list read
+// every variable the source ever had, through one GROUP_CONCAT of
+// parameters and another of placeholders, so a variable removed in Setup
+// stayed on every link it showed, and neither list was ordered.
+$linkVariables = [];
+foreach (p202_setup_rows($db, "SELECT pv.ppc_network_id, pv.parameter, pv.placeholder
+	FROM 202_ppc_network_variables AS pv
+	INNER JOIN 202_ppc_networks AS pn ON (pn.ppc_network_id = pv.ppc_network_id)
+	WHERE pn.user_id = '" . $mysql['user_id'] . "' AND pv.deleted = 0
+	ORDER BY pv.ppc_variable_id ASC") as $variable) {
+	$linkVariables[(int) $variable['ppc_network_id']][] = $variable;
+}
+$trackerLink = static function (array $tracker) use ($base, $linkVariables): array {
+	// The variables as the link generator and GET /trackers/{id}/url write
+	// them: the source's own, then `t202kw=`.
+	$variables = \Prosper202\Click\TrackingLinkVariables::query($linkVariables[(int) ($tracker['ppc_network_id'] ?? 0)] ?? [], []);
+	// A link whose landing page or redirector is not one of this account's
+	// (another account's, or removed since) has no link to give: the page's
+	// URL is not this account's to build on, and a direct link would send
+	// the visitor somewhere the link was never made for. It is edited to
+	// choose one again.
+	if ((int) $tracker['named_landing_page_id'] !== 0 && $tracker['landing_page_id'] === null) {
+		return ['', 'no landing page', ''];
+	}
+	if ((int) $tracker['rotator_id'] !== 0 && $tracker['redirector_id'] === null) {
+		return ['', 'no redirector', ''];
 	}
 	if ($tracker['landing_page_id']) {
-		$parsed_url = parse_url((string) $tracker['landing_page_url']);
-		$destination_url = ($parsed_url['scheme'] ?? 'http') . '://' . ($parsed_url['host'] ?? '') . ($parsed_url['path'] ?? '') . '?';
-		if (!empty($parsed_url['query'])) {
-			$destination_url .= $parsed_url['query'] . '&';
-		}
-		$destination_url .= 't202id=' . $tracker['tracker_id_public'];
-		if (!empty($parsed_url['fragment'])) {
-			$destination_url .= '#' . $parsed_url['fragment'];
-		}
-		$destination_url .= 't202kw=';
-		return [(string) $tracker['landing_page_nickname'], 'landing page', $destination_url];
+		// The landing page's own URL, built as GET /trackers/{id}/url builds
+		// it: port kept, the id and variables before any #fragment. This list
+		// wrote `t202kw=` with no `&` straight onto the id (`t202id=12t202kw=`,
+		// an id no tracker has) and after the fragment, dropped the port, and
+		// left out the source's variables. A URL with no host to build on has
+		// no link either.
+		$link = \Api\V3\Controllers\TrackersController::buildLandingPageUrl((string) $tracker['landing_page_url'], (int) $tracker['tracker_id_public'], $variables);
+		return [(string) $tracker['landing_page_nickname'], $link === '' ? 'no landing page URL' : 'landing page', $link];
 	}
 	if ($tracker['rotator_id']) {
-		return [(string) $tracker['name'], 'redirector', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/rtr.php?t202id=' . $tracker['tracker_id_public'] . '&t202kw=' . $vars_query];
+		return [(string) $tracker['name'], 'redirector', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/rtr.php?t202id=' . $tracker['tracker_id_public'] . $variables];
 	}
-	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . '&t202kw=' . $vars_query];
+	return [(string) $tracker['aff_campaign_name'], 'direct link', 'http://' . getTrackingDomain() . $base . 'tracking202/redirect/dl.php?t202id=' . $tracker['tracker_id_public'] . $variables];
 };
 
 template_top('Get Trackers'); ?>
@@ -355,9 +384,11 @@ template_top('Get Trackers'); ?>
 							$tid = (int) $tracker['tracker_id']; ?>
 							<li class="p202-list__item" data-p202-filter-text="<?php echo p202_setup_e($name); ?>" data-tracker-id="<?php echo $tid; ?>">
 								<span class="p202-list__name"><?php echo p202_setup_e($name !== '' ? $name : 'Untitled'); ?></span>
-								<span class="p202-pill"><?php echo p202_setup_e($kind); ?></span>
+								<span class="p202-pill<?php echo $link === '' ? ' p202-pill--warn' : ''; ?>"><?php echo p202_setup_e($kind); ?></span>
 								<span class="p202-list__actions">
-									<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($link); ?>">copy</button>
+									<?php if ($link !== '') { ?>
+										<button type="button" class="p202-list__action p202-copy" data-p202-copy="<?php echo p202_setup_e($link); ?>">copy</button>
+									<?php } ?>
 									<a class="p202-list__action" href="<?php echo p202_setup_e($self . '?edit_tracker_id=' . $tracker['tracker_id_public']); ?>">edit</a>
 									<?php if ($userObj->hasPermission("remove_tracker")) { ?>
 										<button type="button" class="p202-list__action p202-list__action--danger" data-delete-tracker="<?php echo $tid; ?>">remove</button>

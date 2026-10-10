@@ -133,17 +133,17 @@ if (!function_exists('install_request_base_url')) {
      * cron line and CLI connection hints. Prefers the Host header so a non-default
      * port (e.g. Docker's :8000) or vhost is preserved — SERVER_NAME drops the port,
      * and inside a container SERVER_PORT is the internal 80, not the mapped port the
-     * user sees. $server is injected so this stays testable; callers MUST escape the
-     * result before emitting it (a forged Host header is attacker-controlled).
+     * user sees. The origin is TrackingBaseUrl::requestOrigin(): the Host header only
+     * when it is a host (RequestHost), the scheme as every other self-URL takes it.
+     * $server is injected so this stays testable; callers still escape the result
+     * before emitting it.
      *
      * @param array<string,mixed> $server $_SERVER
      * @param string               $base   get_absolute_url() (the app path)
      */
     function install_request_base_url(array $server, string $base): string
     {
-        $scheme = (isset($server['HTTPS']) && strtolower((string) $server['HTTPS']) === 'on') ? 'https' : 'http';
-        $host = (string) ($server['HTTP_HOST'] ?? $server['SERVER_NAME'] ?? 'localhost');
-        return $scheme . '://' . $host . $base;
+        return \Prosper202\Click\TrackingBaseUrl::requestOrigin($server) . $base;
     }
 }
 

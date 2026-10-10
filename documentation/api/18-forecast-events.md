@@ -21,8 +21,8 @@ date using its expected impact, lead, and lag windows.
 | Field | Type | Required | Description |
 | ----- | ---- | -------- | ----------- |
 | `event_name` | string | Yes | Event label (max 255) |
-| `event_date` | string | Yes | Start date `YYYY-MM-DD` (max 10) |
-| `end_date` | string | No | End date `YYYY-MM-DD` for multi-day events (max 10) |
+| `event_date` | string | Yes | Start date `YYYY-MM-DD` |
+| `end_date` | string | No | End date `YYYY-MM-DD` for multi-day events; `null` clears it |
 | `recurrence` | string | No | One of `none`, `monthly`, `yearly`, `custom` (default `none`) |
 | `impact_type` | string | No | One of `boost`, `suppress`, `neutral` (default `neutral`) |
 | `expected_impact_pct` | number | No | Expected percentage impact on the metric (decimal) |
@@ -33,9 +33,19 @@ date using its expected impact, lead, and lag windows.
 
 Auto-generated on write: `created_at` and `updated_at` (unix timestamps).
 
+**Dates** are a day that exists, written `YYYY-MM-DD` (years 1000–9999, the
+range a `DATE` column holds): `2026-02-30`, `27/11/2026`, `2026-1-1`, a time
+(`2026-11-27 00:00:00`), a JSON number and `""` are each a `422` naming the
+field. `""` used to reach the database and answer `500` (strict SQL mode
+refuses it for a `DATE`); clear `end_date` with `null`. `p202 forecast-event
+update <id> --end-date ""` sends that `null`, and the CLI checks every date
+before it sends anything.
+
 ## Filtering
 
-List results can be filtered with `filter[field]` query parameters. The `tags`
+List results can be filtered with `filter[field]` query parameters; a date
+filter (`filter[event_date]=2026-11-27`) must be a `YYYY-MM-DD` day, and any
+other value is a `422` rather than an empty list. The `tags`
 filter matches by membership in the comma-separated list (tolerating spaces
 after commas), so `filter[tags]=us-holidays` returns every event tagged
 `us-holidays`.

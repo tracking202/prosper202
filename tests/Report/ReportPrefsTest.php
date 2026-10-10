@@ -257,6 +257,8 @@ final class ReportPrefsTest extends TestCase
             'the classic plural method of promotion' => [['method_of_promotion' => 'landingpages'], ['method_of_promotion'], 'method_of_promotion', "Method of promotion 'landingpages' is not one of directlink, landingpage."],
             'a row count nobody offers' => [['user_pref_limit' => '1000'], ['user_pref_limit'], 'user_pref_limit', "Rows '1000' is not one of 10, 25, 50, 75, 100, 150, 200."],
             'a keyword longer than its column' => [['keyword' => str_repeat('k', 101)], ['keyword'], 'keyword', 'Keyword is longer than 100 characters.'],
+            'part of an address (Visitors read it as a substring)' => [['ip' => '10.0.0'], ['ip'], 'ip', "Visitor IP '10.0.0' is not an IP address; give one whole address, IPv4 or IPv6."],
+            'an address with a wildcard' => [['ip' => '10.0.0.%'], ['ip'], 'ip', "Visitor IP '10.0.0.%' is not an IP address; give one whole address, IPv4 or IPv6."],
             'an array where a value belongs' => [['keyword' => ['a', 'b']], ['keyword'], 'keyword', 'Keyword was sent more than once.'],
             'a grouping the report does not offer' => [['group_1' => '99'], ['group_1'], 'group_1', "Group by '99' is not a grouping this report offers."],
             'none as the first grouping' => [['group_1' => '0'], ['group_1'], 'group_1', "Group by '0' is not a grouping this report offers."],

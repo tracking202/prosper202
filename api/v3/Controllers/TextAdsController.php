@@ -19,9 +19,9 @@ class TextAdsController extends Controller
             'text_ad_headline'    => ['type' => 's', 'required' => true, 'max_length' => 100],
             'text_ad_description' => ['type' => 's', 'required' => true, 'max_length' => 100],
             'text_ad_display_url' => ['type' => 's', 'required' => true, 'max_length' => 100],
-            'aff_campaign_id'     => ['type' => 'i', 'default' => 0],
-            'landing_page_id'     => ['type' => 'i', 'default' => 0],
-            'text_ad_type'        => ['type' => 'i', 'default' => 0],
+            'aff_campaign_id'     => ['type' => 'i', 'default' => 0, 'range' => self::MEDIUMINT_UNSIGNED],
+            'landing_page_id'     => ['type' => 'i', 'default' => 0, 'range' => self::MEDIUMINT_UNSIGNED],
+            'text_ad_type'        => ['type' => 'i', 'default' => 0, 'range' => self::TINYINT],
         ];
     }
 

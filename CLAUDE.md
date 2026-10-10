@@ -3,6 +3,32 @@
 ## Project
 Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
 
+## Branches: every version has its own, and master takes only finished versions
+- **All work for a new version is pull-requested into the branch named for
+  that version**, never into master. The name is the version exactly as
+  `202-config/version.php` spells it: `1.9.77`, with no `v` (the `v` is the
+  release tag's, `v1.9.77`, so a branch and its tag never share a name).
+  A feature or fix branch opens its PR against the version branch its
+  `version.php` names.
+- **When the version is done, the version branch is merged into master**, in
+  one PR from the version branch to master. The release owner then tags
+  master `v<version>` (RELEASING.md). Nothing else is merged into master.
+- **A new version starts from master after the previous one is merged and
+  tagged**: branch the version branch from master, and make its first commit
+  the `version.php` bump. A version that is already tagged is frozen (#33),
+  so work that finds `version.php` naming a tagged version belongs to the
+  next one.
+- **If the version branch does not exist on the remote yet**, it has to be
+  created from master before the first PR can target it (`git ls-remote
+  --heads origin` lists the branches). A session limited to pushing one
+  branch asks for it rather than creating it.
+- **CI runs on a PR into a version branch as on one into master**: no
+  workflow filters `pull_request` by its base branch, and `pr-checks.yml`'s
+  `branches: ["*"]` matches any name without a `/`. Keep version branch
+  names free of `/` (`release/1.9.77` would not match). Agent Evals and the
+  upgrade-equals-install check run on pushes to master only, so the PR is
+  where they run for a version branch: read them there before merging.
+
 ## Error patterns to avoid
 
 ### 1. Unchecked return values after fallible calls
@@ -17,6 +43,26 @@ whatever the statement guarded, in silence), and Go's `json.Marshal` assigned
 to `_` (renders nothing, exits 0). When a false return is
 *indistinguishable from a legitimate empty answer*, the failure is silent by
 construction — that is the tell, not the function name.
+`UncheckedGetResultTest` now holds every `get_result()`/`store_result()` in
+the tree to "tested for false in the next statement, and refused"
+(`StatementHelpers::resultOf()` in api/v3); legacy pages that predate it are
+listed and must only shrink.
+
+Testing for false is half of it; what the false *becomes* is the other.
+`AUTH::accountTimezone()` tested every step and answered `null` for a failed
+read — the same `null` as "no account row" — and its caller had a plausible
+use for `null` (keep the zone the session took at sign-in), so a database
+error had every report page count "today" in a stale zone with nothing said,
+while the test listed it as graceful. A fallback that reads like an answer is
+the silent case again; it throws now.
+
+A status line is a return value too. `dej.php` rolls up one hour for
+`process_dataengine_job.php`, which marks the hour processed when every call
+answers 200; it caught a failed rollup, printed `Error: …` into the body and
+answered 200, so the hour was marked done with nothing rolled up and never
+tried again. Whoever reads the result reads the status, not the prose: an
+endpoint another process calls answers its failure in the status
+(`DataEngineHourAnswersItsFailureTest`).
 
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
@@ -27,6 +73,122 @@ Config constants, DB connections, and other resources must be initialized before
 ### 4. Silent data loss on malformed input
 Never use `json_decode(...) ?? []` or similar fallbacks that silently discard bad input. Malformed JSON, invalid formats, and parse failures must produce explicit errors. The user needs to know their input was rejected, not silently ignored.
 
+`empty()` is the same fallback spelled as a presence test. `empty('0')` is
+true, so `if (!empty($params['period']))` read period=0 as "no period" and
+the LTV reads answered 200 over the default window as though it were the one
+asked for; the same test made `campaign_id=0` on GET /conversions no filter
+(every campaign's conversions), `cursor=0` page one, and a `customer_ref` of
+`"0"` (a real id where a system counts from 0) no customer. Presence is
+`isset()`/`array_key_exists()` plus an explicit comparison with the value
+that means "none" (`''`, `null`); whatever remains is read, or refused naming
+the parameter. `ForbidFalsyRequestParamTestRule` reports a truthiness test
+(`empty()`, `?:`, `!`, a bare condition, `&&`/`||`, `== false`) of an
+element of `$params`, `$payload` or a request superglobal in `api/`. The
+name is the whole heuristic: a value copied into another variable, put
+through `trim()` first, or read outside `api/` (a repository handed the
+payload) is not seen.
+
+That sentence used to end "a flag is not a value, so `(bool)` and
+`filter_var(…, FILTER_VALIDATE_BOOL)` are how one says so", and the advice
+was the bug. `(bool) "false"` is true, as is every
+non-empty string, so a sync job sent `"force_update": "false"` overwrote the
+target's differing records and `"skip_errors": "false"` carried on past the
+errors it was meant to stop at; `!empty($payload['is_required'])` in the
+field repository made `"false"` a required field. Saying "this is a flag"
+does not read one. `Api\V3\Support\RequestFlag::param()` takes true/false,
+1/0 and their strings and refuses the rest naming the field;
+`ForbidBoolCastOfRequestParamRule` reports `(bool)`, `boolval()` and a
+`filter_var(…, FILTER_VALIDATE_BOOL)` without `FILTER_NULL_ON_FAILURE` (which
+reads `"abc"` as false) of an element of `$params`, `$queryParams`, `$payload`
+or a request superglobal in `api/`. Outside `api/` the rule cannot see, so
+the field repository now takes `is_required` as a `bool` and throws on
+anything else, rather than reading it a second way.
+
+The quietest form is a handler that reads the keys it knows and never looks
+at the rest. The CRUD base `continue`d past any key that was not a writable
+field and past any `null`, and cast whatever `is_numeric()` let through, so a
+typo'd field, a field the resource does not write, a `null` meant to clear
+one, `"1.5"` for an id and a 60-character name for a VARCHAR(50) all
+answered 200 with less (or something else) stored, or a strict-mode 500 —
+and a dozen hand-written handlers
+did the same with their own bodies. Every handler now hands its body to
+`PayloadKeys::refuseUnknown()` before anything reads it, or to the base's
+`validatePayload()`; `PayloadHandlersRefuseUnknownKeysTest` holds every
+handler that takes `$payload` to that, and `ControllerFieldsMatchSchemaTest`
+holds each field's `nullable`, `range` and `max_length` to its column. A key
+a handler consumes itself (a campaign's links, an app's `store_link`) is
+removed before the rest reaches the base, or the base refuses it. Read-only
+keys are the one exception that is not "refuse": a body read with GET must go
+back whole, so they are accepted with the record's own value and refused with
+any other — and every client that builds a body from *another* record
+(`p202 import`, `sync`, `SyncEngine`) has to leave them out.
+
+A cast is the same fallback spelled as a conversion. `(int) "12abc"` is 12 and
+`(int) "2026-10-07"` is 2026, so `click_id: "12abc"` recorded a conversion on
+click 12, `conv_time: "2026-10-07"` dated it in 1970, `source_customer_id:
+"12abc"` merged customer 12, and the lists' `max(1, min(500, (int) …))` made
+`limit=abc` one row and `limit=1000` 500 rows that read as all of them.
+`Api\V3\Support\QueryInt::param()`/`required()` read a whole number or
+answer a 422 naming it and its range; `ForbidNumericCastOfRequestParamRule`
+reports `(int)`, `(float)`, `intval()` and `floatval()` of an element of
+`$params`, `$queryParams` or a request superglobal in `api/` (35 sites before
+the sweep, 0 after). It does not look at `$payload`: the CRUD hooks receive
+the body under that name after the base class validated it, so the name
+cannot say whether a value was read — a hand-read body field is still the
+author's to read with `QueryInt` (`StrictIntegerBodyFieldsTest` holds the
+ones that exist).
+
+The same drop lived one level down. With every top-level key refused, the
+objects and lists inside a body were still read by hand, for the keys the
+reader knew, and cast: on POST /conversions a line item's `unit_pirce`
+stored the line at 0 and a unit price of `"abc"` stored 0,
+`customer_crm.frist_name` was dropped, a customer's `aliases.0.tpye` made a
+custom alias, `"events": "revenue.recorded"` (a string, not a list)
+subscribed a webhook to every event, and `"prune_denylist": "campaigns"`
+protected nothing from a sync prune — each answered 2xx. A nested value goes
+through `PayloadKeys::objectErrors()`, `listErrors()` or `valueListErrors()`
+(field keys name its place: `items.0.unit_pirce`) inside a
+`PayloadKeys::refuse()` statement before anything reads it, with its values
+held to what their columns hold (`LtvBody` for the LTV shapes).
+`NestedBodyValuesAreCheckedTest` reports a structure use of `$payload['K']`
+— an index into it, `foreach`, `?? []`, `(array)`, an array function's
+argument — with no such check first: in the function, through every caller
+of a private helper, or through the handlers registered for a repository
+that reads it. The name is the heuristic again: a value copied into another
+variable first, one passed on whole with no structure use, and a body under
+another name (`$data` in MysqlConversionRepository, `$entry` in the sync
+profile reader) are not seen, so a handler that hands a nested value on is
+still the author's to check. Free-form is a decision, not a default: an
+object keyed by the account's own names (`custom_fields`) or stored as sent
+(an integration's `config`) is registered with why, and its values are still
+read strictly.
+
+A drop can also wait for a lookup. POST /conversions read `items` strictly
+and then, inside the repository, dropped them when no customer resolved —
+documented, and still a 201 for a sale whose line items were stored nowhere.
+A check that can only be made after a lookup (does any customer resolve?)
+belongs where the lookup is, before the write: the API asks the repository to
+refuse (`ltv_requires_customer`, a 422 naming `items`), and a path with
+nobody to answer (a pixel, where refusing would lose the conversion too)
+keeps what it can and logs what it dropped. "Permissive for forward
+compatibility" is the same drop when the future already has a spelling:
+webhook event names were checked only for their form so later versions'
+events would need no edit, while `*` already subscribed to those — so
+`revenue.recoded` made a hook that received nothing, answered 201. Ask what
+the permissive check buys that the explicit escape hatch does not.
+
+A form that posts every field rewrites every field, and a select posts its
+first option when none is selected. Personal settings listed
+`DateTimeZone::listIdentifiers()`, which leaves out the backward-compatible
+name a renamed zone keeps (`Europe/Kiev`, `Europe/Kyiv` since 2022): an
+account holding one rendered with nothing selected, and saving the page to
+change an email moved it to `Africa/Abidjan` — measured live — while the
+API refused the same account's GET body back. Every select on a form that
+saves a stored value must offer that value, selected, even when it is not
+among the choices a new value may take; and the writer and the reader of one
+value accept the same set (`AccountZone::isZone()`, held by
+`AccountZoneTest`).
+
 ### 5. Inconsistent security patterns across similar operations
 If create has secure password input, update must too. If one delete command has confirmation, all must. When implementing a security measure, grep for every analogous code path and apply the same pattern. Spot-checking misses these — review exhaustively.
 
@@ -36,9 +198,37 @@ no-login-yet situation, one directory over — did not, and the repair
 RELEASING.md gives for a stranded branch deployment (wind `202_version` back,
 open that page) is exactly when the gap was open.
 `tests/Auth/PreLoginPostRequiresTokenTest` now pins all three, and
-`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number is the one
-to know: 74 files in the tree read `$_POST` and 27 check a token. That sweep
-is open; anything that adds a POST handler should be held to it.
+`tests/live/upgrade-csrf.sh` proves it over HTTP. The wider number was 74
+files reading `$_POST` and 27 checking a token. The sweep is closed: of the
+body readers that called no guard, one wrote — the update banner's snooze,
+posted by `fetch()`, which the jQuery prefilter that attaches the token never
+sees (a prefilter is a guard only for the transport it hooks).
+`PostReadersCheckTokenTest` now fails on any served file that reads `$_POST`
+or `$_REQUEST` and calls no guard, unless it is listed with the reason it
+needs none; the list only shrinks. It asks per file, so a second handler in a
+guarded file is the per-area tests' to hold.
+
+The guards themselves were the other half. Twenty-nine sites compared the
+token inline as `hash_equals((string) ($_SESSION['token'] ?? ''), (string)
+($_POST['token'] ?? ''))` (and Setup › Mobile Apps kept a second token of its
+own), and `hash_equals('', '')` is true: a session whose
+token was blanked let a token-less POST through, while the pages that called
+`AUTH::check_csrf_token()` refused it — #5 again, the sibling that did not
+get the fix. Every guard now goes through `AUTH::csrf_token_matches()`, which
+refuses an empty or non-string token on either side;
+`SessionTokenComparedOnlyByAuthTest` refuses a comparison of the session
+token anywhere else. Failing closed has a cost to pay in the same change: a
+session holding an unusable token would be refused on every form until
+sign-out, so `connect.php` seeds a new one whenever the token is not a
+non-empty string (`tests/live/session-token-reseed.sh`).
+
+Turning a user off is the same sweep. The sign-in and the remember-me
+cookie ask for `user_active = 1`; the API key lookups on v1, v2 and v3
+asked only `user_deleted = 0`, so a user switched off in Account › Users
+kept reading and writing with every key they held, under their role.
+`ApiKeyAuthPathScopeTest` now holds every authentication path to refusing a
+deactivated user (and `DeactivatedUserKeyInstanceTest` proves it over HTTP).
+When a state means "this person may not act", list every way a person acts.
 
 ### 6. Empty response rendering for void operations
 DELETE/204 responses return empty arrays. Rendering an empty array produces no output. Void operations (delete, remove, revoke) need explicit success messages, not render calls.
@@ -63,6 +253,15 @@ later reviewer, including yourself. This specific shape is now enforced by
 list, put it in `202-config/PHPStan/Rules/` and register it in
 `phpstan.neon.dist` — a rule that is not registered never runs.
 
+The write half shipped too: `$this->guard(fn () => CpcUpdate::labels(…,
+$ownership))` handed a captured copy to `labels()`'s `array &$errors`, so the
+refusal of another account's campaign id landed in the arrow function's copy
+and the request answered 200 — found by the instance test, not by reading.
+`ForbidByRefArgumentFromCaptureRule` reports a captured variable (arrow
+function, or a closure's by-value `use`) passed to a by-reference parameter
+and never read again in that body; a callee it cannot resolve is not seen,
+so a function that reports through a reference is called outside a closure.
+
 ### 9. Tests that mock the seam under test
 When the new code *is* the wiring — a dispatcher, an adapter, a callback
 that re-enters the router — a unit test that injects a fake for that wiring
@@ -72,6 +271,16 @@ method, path, and body; it always did. The defect was that the real closure
 could not deliver that body. If the thing you wrote is the seam, exercise
 the real path at least once: an integration test, or a live request against
 a running instance.
+
+A fake connection is a mock of the server, and it accepts SQL the server
+refuses. The CRUD lists probed for a time column with `SHOW COLUMNS FROM t
+LIKE ?`, which MariaDB 10.11 will not prepare (measured); the unit fake
+prepared it, so every `updated_since` and `deleted_since` on a list was a
+500 in production while its tests were green, and every server-side
+re-sync after the first failed with it. The table name was interpolated,
+so `StaticSqlSchemaTest` could not see the statement either. SQL that
+reaches a server only through a builder needs one run against a real
+server before it ships (`ListTimeFiltersIntegrationTest`).
 
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
@@ -117,6 +326,27 @@ Two amplifiers, both of which turned this from a blip into a breach:
   its failure mode. The size of a change bounds how long the review takes, not
   whether it gets one.
 
+An absent value is the same trap when nothing ever sets it. Whose clicks a
+report page reads hangs on `$_SESSION['publisher']`, which no code writes, so
+"absent" is every session there is. The engine, Analyze and the Overview read
+absence as "this account's"; the Visitors list, Spy and the click breakdown
+read it as "may see everything" (`!empty(...)`, written to silence a notice
+on what had been `!$_SESSION['publisher']`), and every signed-in user was
+shown every account's visitors and any account's conversions by id — and the
+Overview chart had no account condition at all. Measured live, then fixed:
+the rule is `DataScope::userId()`, and `PublisherSessionReadsTest` lists
+every other read of the key with what it decides. When a flag's *absence*
+is the common case, find every reader and check they agree on what absence
+means; a notice-silencing rewrite preserves whichever meaning was there.
+
+State found where this install's own state would be is the same question.
+`ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
+instance's place, on the theory that it was that instance's pre-upgrade
+state; nothing in it says whose it is, so another install's idempotency
+record replayed here and its staged DELETE was listed to apply against this
+database. Data whose owner cannot be shown resolves to "not ours": leave it,
+and say how the owner carries it over.
+
 ### 12. A guard is only as good as the layer that delivers the input
 The server rejected an explicitly empty API-key scope. It never fired, because
 the CLI dropped the field before building the request, so the server saw
@@ -148,6 +378,15 @@ performed the delete. A flag whose whole purpose is to withhold an action must
 be re-checked at every boundary that rebuilds state; grep for the reset and
 the subprocess spawn, not just the flag definition.
 
+And at every route that receives it. `?dry_run=1` was read only for a
+DELETE and by the few writes that preview; on every other POST, PUT or PATCH
+it was ignored and the write ran — `PUT /system/retention?dry_run=1`, the
+spelling the route's own error message recommended, changed the setting. A
+flag that withholds an action is refused where it cannot be honoured, never
+ignored: the dispatcher answers 422 unless the route is on the list of
+writes that preview, and `DryRunRoutesTest` holds that list to the handlers
+that read the flag.
+
 ### 15. A discriminator folded into the storage key can never be checked
 An idempotency key exists to make a retry safe. Every one of the three
 call sites hashed the request body into the *scope* — the value the record's
@@ -168,6 +407,21 @@ the lookup keys on (here the key itself, so the same key still lands in the
 same file) and bound what a shard retains, or the correctness fix ships a
 latency regression.
 
+The same failure without a hash: a key that *locates* a record nobody then
+compares the request with. `POST /ltv/revenue` found the event its
+`idempotency_key` had recorded, a subscription renewal the event under its key
+or transaction id, `POST /conversions` the row its transaction id names — and
+each answered the first record (`duplicate: true`, `changed: false`) to a
+request stating another amount, customer or line items. A second charge sent
+under the first one's key, or a corrected payout under the same transaction
+id, was dropped with a 2xx. Where the stored record holds what the request
+stated, the record is the fingerprint: compare the request with it
+(`RevenueReplay`), refuse a difference naming the key and what differs, and
+decide field by field what absence means — a fixed default (no items, a
+purchase) is compared, a moving one (now, the account's currency, the
+campaign's payout) only when sent. A client that pre-reads to skip duplicates
+(`p202 conversion import`) makes the same lookup and owes the same comparison.
+
 ### 16. On a public endpoint, identity is what the attacker cannot choose
 Every value a security decision keys on must be split into what the peer
 proved and what the request merely *claimed*. Two instances shipped in one
@@ -183,6 +437,44 @@ same review asks the report question: aggregates over rows anyone can
 insert must default to counting only rows that passed verification, with
 the unverified visible in separate columns — "stored and flagged" is not a
 trust decision, the read path makes one whether it means to or not.
+
+The Host header is the same kind of claim, and what decides whether it may
+be used is who receives the result. In the requester's own response (a
+redirect back to the host it asked for, a cookie it keeps for that host) a
+forged Host harms only the forger, so `TrackingBaseUrl::forRequest()` takes
+it, validated. In anything sent to someone else it is an attack:
+`202-lost-pass.php` built the reset link from `SERVER_NAME`, which is the
+Host header under Apache's default and under nginx's catch-all (connect.php
+maps `_` to it), so a stranger who knew a username and email could have the
+owner emailed a genuine key on a link to the stranger's host. The link is
+now the stored tracking domain (`PasswordResetLink`), with no link at all
+when none is stored. Before taking a host, a scheme or a path from the
+request, ask who will follow the URL.
+
+A fallback names an address too, and the same question decides it.
+`getTrackingDomain()` fell back to `SERVER_NAME` and `SERVER_PORT` — where the
+server listens, which behind a reverse proxy or a published container port
+nobody else reaches — so every link a page showed on an install with no
+tracking domain was dead; and the same helper built the URLs the dataengine
+cron fetches from itself, where the request's Host would have had the server
+fetch a host the caller chose. One value cannot serve both readers: a URL
+handed back to the requester takes the host the requester used
+(`TrackingBaseUrl::domainForResponse()`), a URL the server fetches or sends
+on takes the stored domain or the server's own name
+(`p202TrackingBaseUrl()`). `RequestHostSourceTest` lists every
+`getTrackingDomain()` caller with why its URL goes back to the requester.
+
+A path in a directory anyone can write is a claim of the same kind: the
+name says whose it is, and anyone could have made it. The API state store's
+default directory is a hash of the database host and name in the system temp
+dir, and it was used whoever made it — another local user who made it first
+decided what the install read (measured: a planted `Idempotency-Key` record
+replayed its response, a planted staged DELETE was listed to apply). What is
+proved is the directory's owner and mode, read with `lstat()` so a symbolic
+link is not followed into someone else's choice; `ServerStateStore` now uses
+the directory only when this process's user owns it alone.
+`TempDirPathsTest` lists every path the served tree builds in the temp dir
+with what makes it safe there.
 
 ### 17. A key derived from an identity must be injective
 When a value exists to tell two things apart, every transform between the
@@ -355,6 +647,17 @@ listed; the ones the grammar refuses (`($x) = …`, `&($x)`, `as ($x)`) are
 parse errors, and the docblock says so rather than guarding against them.
 When a classifier keys on adjacency, ask what the language lets sit
 between the variable and the thing that acts on it.
+
+The same blindness, one token wide: `RollupWritersAreMarkedTest` read each
+string literal alone, so the cron job's
+`explode(',', '202_clicks,202_clicks_advance,…')` and its
+``"DELETE FROM `$table`"`` were neither a write naming a summed table nor a
+bare table name, and the job that deleted every click table passed as
+writing none — the rollup kept sums for deleted clicks. A string is what PHP
+assembles: the scan now joins literals across `.`, reads interpolations and
+heredocs, resolves class constants through the file's imports, and reports
+a write whose table it cannot read as `unread` instead of as no write.
+Measured on 25 planted spellings: the old scan saw 8.
 
 ### 21. Naming a thing is not being guarded by it
 
@@ -626,6 +929,332 @@ When two implementations of one protection exist, a test that pins them to
 the same option set is what stops one from quietly lacking a line the other
 learned; `OutboundUrlGuardTest` does that for the two webhook senders.
 
+And a third way, by the caller. The report rebuild's call to this server was
+pinned to the listener's own address (`DataEngine\SelfCall`), and the cron
+merged its own defaults in front of the pin — `[FOLLOWLOCATION => true,
+MAXREDIRS => 5] + $pin`, where the left side of `+` wins. A pin covers one
+name and port; a redirect to any other is resolved by DNS. Measured: an
+app answering with a redirect built from the claimed Host sent the call to
+the outside listener, whose `200` marked the hour processed with nothing
+aggregated. The pin now returns every option the call is made with, and the
+test holds its caller to setting nothing but the URL. Ask of any pin what
+else is merged into its options, and in which order.
+
+Making a read fail loudly changes every caller of it, including the ones
+that run *because something already failed*. 1acfd84 made the account
+time-zone read throw instead of answering null (right: CLAUDE.md #11), and
+`record_mysql_error()` — the database error page — called it first thing, so
+a failing database turned the error page into an uncaught fatal and the
+error was never recorded. CI's fresh database found it; locally the suite
+passed because a reused database still had the table. An error path must not
+ask the failing dependency again, and its test should not depend on whether
+the dependency happens to be healthy: the runner now records every statement
+the page asks the connection, and the page may ask none.
+
+### 25. A writer's "none" must be the reader's "none"
+The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
+null`. The setup page writes NULL in the parts a redirect does not use; the
+API wrote `0`. MySQL hands the row back as strings, and in PHP 8 `'0' != null`
+is **true** (null compares as `''`), so every URL or landing-page redirect made
+through the API read as a campaign with no campaign, and each visitor its rule
+matched got `302` with an empty `Location`. Every unit test was green: the
+writer stored what it meant, and the reader read what it was written for —
+the defect was the sentinel each side assumed the other used. Two writers of
+one table is the tell. Before adding a writer, find every reader of the
+columns it leaves unused and check which value they test for "absent" (`!=
+null`, `empty()`, `> 0`, `=== ''`), and write that one; when the readers
+disagree, make the reader accept every "none" the writers produce, since rows
+already written will not change. An end-to-end request through the real
+reader (here, a click that matches the rule) is what finds it; reading either
+file alone cannot.
+
+The same split hid a whole Overview table. `DataEngine::doSummary()` writes
+`''` for a missing value (0 in an int column, under the app's empty
+`sql_mode`), but every rollup is now `INSERT … SELECT` (`ClickRollupSql`),
+which never reaches it and writes the LEFT JOIN's NULL; the Overview's
+advanced-landing-page tables asked for `aff_campaign_id IS FALSE`, which NULL
+is not, so no advanced landing page click the rollup wrote was ever listed
+there. In SQL the "none" tests that
+miss NULL are `IS FALSE`, `= 0`, `= ''` and `NOT IN (…)`; on a column a
+LEFT JOIN fills, ask for `IS NULL OR = 0`, and seed tests with the NULL the
+writer actually writes — the account-scope test seeded `0` and stayed green.
+
+Written down, it shipped again three times in one feature: the API's
+"No traffic source" filter, the pages' report filter and the summary form
+each asked `ppc_network_id IS NULL` of a rollup whose older rows hold 0.
+They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
+refuses the literal and any file handling the sentinel without it. When a
+rule is a spelling, one function should own the spelling.
+
+### 26. A boundary stands in for a predicate only where its order holds
+Automatic click deletion was to delete clicks older than N days. It took
+`MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
+below the *oldest* expired click — so it deleted almost nothing it promised,
+and, since a redirect reads `click_time` before it allocates the id and a
+rotator re-click gives an old id a new row, it could take a newer click with
+a smaller id. Measured live with a 30-day setting: the old job deleted two
+clicks recorded that day and kept all fourteen expired ones. An id range is a
+cheap stand-in for a time range only where ids are allocated in time order,
+and nothing here guarantees that: select the rows the predicate names, by an
+index on the predicate's own column, and act on their keys. The same job's
+hand-kept list of click tables had drifted five tables behind the schema;
+`ClickRetentionCoversEveryClickTableTest` now holds it to the table
+definitions. And a delete is a write the derived sums must hear about —
+`RollupDirty::clicksDeleted()` marks them in the deleting transaction.
+
+The fix moved one of the class's two deletions and left the other: the
+scheduled "delete click data from before <date>" still stored `MAX(click_id)`
+of the clicks at or before the day and deleted the ids below it, in the same
+file, under a docblock that explained why ids are not time. Measured live: a
+deletion "from before Oct 7" deleted a click re-clicked on Oct 7 and kept one
+from Oct 4. It stores the day's time now (`user_delete_data_before`), deletes
+and previews by the automatic deletion's own query, and honours an id an
+install already stored — rows already written will not change (#25). A fix
+to one consumer of a stand-in is a sweep of every consumer of it, starting
+with the ones beside it. The same form computed the day's midnight with
+`strtotime($day . ' ' . date('T'))`, today's abbreviation: "IST" is Israel's
+to PHP, so India and Ireland were cut hours off, and any day across a DST
+change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
+$day, $zone)`.
+
+### 27. A stored id is a claim about ownership that nothing re-checked
+A click names its campaign, traffic source and landing page by id; a
+conversion takes its click's campaign id; a landing page names a campaign, a
+campaign a category. Until 229df10 no write checked that the named record was
+the writer's own, and the rows those writes made are still in installs. Every
+read that joins the named table on its id alone therefore trusts a claim
+nobody verified — and the reads that did were not only name leaks
+(`report breakdown`, GET /conversions and the attribution and LTV reports
+named another account's campaign; the LTV recommender handed another account's
+offer URL to this account's customer). A conversion on such a click was
+recorded at the other account's payout, in its payout mode; an install was
+refused as `foreign_click` because the other account's campaign was linked to
+its own app, with that registration's id in the reason; a category CPC update
+or conversion reset chose which of this account's clicks to touch by the
+other account's campaign row. The scope check on the *driving* row (`WHERE
+c.user_id = ?`) was there every time, and read as if it covered the joins.
+
+The rule that holds: a row of another account named by id reads as naming
+nothing — `AND ref.user_id = row.user_id` in the ON clause, as
+`ReportsController::dimensionJoin()` does — so the row is still counted and the
+name, the payout or the setting simply is not there. `AccountScopedJoinTest`
+walks the tree's SQL for joins, comma joins and subqueries onto any table the
+schema gives a user_id, and refuses by name what it cannot read.
+
+What that floor does not see, and still needs the question asked by hand:
+a *lookup* rather than a join (`SELECT payout_mode … FROM 202_aff_campaigns
+WHERE aff_campaign_id = ?` with an id read from a click — that is how the
+payout one shipped, two calls away from any join); a table owned through its
+parent, which has no user_id to tie (traffic-source variables reached
+through an account's `ppc_network_id`, rotator rules through a rotator); and
+SQL a runtime builder assembles, which the test runs only for the builders
+it names. Whenever an id read from one row selects another row, ask whose
+the second row is, and whether anything the answer decides — a name, a
+payout, a setting, which rows a bulk write touches — would differ if it were
+someone else's.
+
+The tracking path has a fourth shape the floor does not model: a request
+that names two records *independently* — an offer and a click (`off.php`'s
+`acip` and `pci`), a rotator and a click (`offrtr.php`'s `rpi` and the
+subid cookie) — and then writes one into the other. Neither row is the
+driving row of the other; each was looked up by its own public id, so no
+join exists to tie. Measured: any account's `acip` or `rpi` moved any
+click, named by a sequential id or a public id two random digits wide,
+into that account's campaign at its payout, or its rotator. When a script
+takes two ids from one request, compare their owners before the write.
+
+Tying a join is not the end of the change: the joined row is now NULL where
+it used to be another account's, and every consumer of the joined columns
+has to be read for what NULL does there. Measured in the legacy pages'
+round: Group Overview grouped a redirector by the click's own id but keyed
+its tree by the joined row's, so the foreign group and the none group both
+arrived with an empty id and one replaced the other — the redirector level
+showed 1 of 4 clicks (it already did for a redirector removed since); the
+legacy API counted its "[no text ad]" row by `text_ad_id = 0`, so a click on
+a foreign ad, grouped there, was counted nowhere; and Get Links, finding no
+landing page for a link that names one, fell through to building a direct
+link the link was never made as. Group by the expression you select, count
+a none row by the same NULL the join produced, and give a row whose record
+is not the account's no action rather than a different one.
+
+### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
+17305ee made the API answer money as numbers rather than mysqli's decimal
+strings — right at the edge, and every PHP suite stayed green. It broke four
+readers no PHP suite runs: `p202 conversion import` decoded the click ledger's
+`amount` into a Go `string`, so every row on a click that already had a
+conversion failed with "cannot unmarshal number"; the CLI's tables rounded
+the new floats to two decimals, so a $0.00125 CPC that used to show `0.0013`
+showed `0.00`; an eval case and two instance suites compared `'0.15000'`. The
+import's own tests passed throughout, because their fake server still sent
+strings — #9, with the fake frozen at the old contract. And one of the
+instance assertions had turned vacuous rather than red:
+`assertNotSame('0.33333', $click['click_cpc'])` ("a dry run writes nothing")
+passes for every float, so it would have stayed green with the write made.
+A type change makes negative assertions against the old type pass forever;
+that is the silent direction.
+
+What found them was running the eval suite and the `@group instance` suites
+against an instance built from the branch — which only the Agent Evals
+workflow does, and only on a pull request or master, so a branch without a
+PR never runs them. Before pushing a change to what an answer *is* (a type,
+a null, a field's presence), stand up an instance and run both; then sweep
+the readers by the field name: Go structs and their test fakes, the
+reference agent and eval checks, the instance suites, `tests/live/`, and the
+display layer, where a type decides how a value renders.
+`TestStructsDecodeAPIMoneyAsJSONNumber` (go-cli/cmd) is the floor for the
+Go half: a struct field under a money name must be `json.Number`, which
+reads a number and an older server's numeric string alike. It does not see
+a non-money field, a reader that decodes into a map (those take either type
+but format differently), or any reader outside go-cli.
+
+### 29. One offset stands in for a zone's history
+The report engine put the account's zone in force with `SET time_zone` to
+its offset *today*, rounded to whole hours, and grouped by
+`FROM_UNIXTIME()`. India's +05:30 ran at +06:00 all year; every click on the
+far side of a daylight-saving change from today was an hour out; MariaDB
+refused the unsigned `'5:00'` east of UTC, so the setting held only to the
+west; and it stayed on the connection for the rest of the request, where
+the cron's attribution export grouped days in it. A zone is a list of
+offsets with the instants they start (`LocalTime::offsets()`); any
+conversion that takes one offset and applies it to a range — a session
+setting, a cached `getOffset(new DateTime())`, a fixed `+ 19800` — is wrong
+for every row outside the moment it was read. Convert each row by the
+offset in force at its own instant (`LocalTime::secondsSql()` /
+`datetimeSql()`), in the account's zone passed in, never the connection's.
+`SessionZoneSqlTest` refuses SQL that sets or reads the connection's zone;
+it cannot see PHP that does the same with one offset, which is this entry's
+job.
+
+The zone itself was read two ways. The pages took only a name PHP lists;
+the API took anything `new DateTimeZone()` accepts, so a stored `+05:30` was
+UTC on every report page and a fixed +05:30 in GET /reports/* and the LTV
+cohorts (measured live: `"timezone":"+05:30"`) -- the offset this entry
+forbids, let in by a parser. `AccountZone::normalize()` is the one rule now
+(a listed name, spelled as listed; anything else is UTC), AUTH asks it, and
+`SetTimezoneReadsTheAccountIntegrationTest` holds the pages and the API to
+one answer per stored value. A reader that parses the column itself is not
+seen: `dl.php` hands a row's zone straight to `date_default_timezone_set()`
+and the data engine the session's copy. When one stored value is parsed in
+more than one place, the parsers are one function, or they disagree on the
+inputs nobody tried.
+
+### 30. A transform applied where a value is stored moves every comparison with it
+Privacy mode stores a click's address masked (/24, /48). The click filter's
+"don't count my own clicks" check compared the click's stored address row
+with the sign-in's — and the sign-in address is an operator's record, kept
+as it arrived under every setting. Under privacy the two could never be
+equal: a click from the very address the owner had just signed in from was
+counted, measured live. Nothing failed; a comparison simply stopped matching,
+which is the silent direction. Masking the other side would have made them
+equal and wrong: a mask is many-to-one (#17), so every visitor in the
+owner's /24 — an office, a carrier's block — would have read as the owner
+and been filtered. Where the untransformed value is still in hand (the click
+path holds the arrived address in memory), compare before the transform;
+where it is not (the duplicate-click check, whose day of memory privacy
+lets keep only the masked address, so a /24 is one visitor), the comparison
+is on the transformed key, and that is a decision to write down where the
+check lives, not something to find in a report.
+
+The same change shipped the second shape of this: the mask governed the
+click path because that is where it was written, and the two app intakes,
+which store a device's address too, kept it as it arrived under every
+setting. Nothing listed where an address is written, so nothing could ask.
+`StoredAddressWritesTest` now holds every SQL write of an address column to
+the storage helper or a listed reason, and `StoredVisitorIpSourceTest` every
+call into the address index, tree-wide. Whenever a value is masked, hashed,
+case-folded, truncated or canonicalized on its way into storage, find every
+comparison against the stored value and ask which side of the transform the
+other operand is on — and every other writer of the same kind of value, and
+whether it was given the transform at all.
+
+The setting that decides the mask had the same blind spot one level up. The
+click path's bootstrap reads the privacy setting before any endpoint knows
+whose link was clicked, so it read the one row it could name — the
+install's — and every endpoint then acted under it: an account set to
+`all` under an install set to `disabled` had its visitors stored unmasked
+and given every click cookie, measured live. A value read before the
+subject it governs is known is a value about some other subject, and
+nothing about it looks wrong. The click path now holds back until an
+endpoint names the owner (`p202ApplyOwnerPrivacy()`; before that the answer
+is `all`, logged, never the install's), and `OwnerPrivacyAppliedFirstTest`
+holds every endpoint to naming it before it stores an address or sets a
+cookie. The same sweep found three cookies the setting had never governed
+at all — the `p202vid` visitor cookie, the click cookies the landing-page
+script writes on the operator's own page, and go.php's 202v cookies — each
+set under every setting, the install's included: a guard on the setters
+you know about does not reach a cookie another path writes (#5). List
+every place the guarded act happens before trusting the guard.
+
+Making the two sides comparable is not the end of it either. The pixels'
+"this visitor's last click" fallback looked an unmasked address up among
+masked rows, which under privacy never matched; fixed to compare masked
+with masked, it matched the whole /24, and since privacy sets no cookie,
+every pixel there reached it — measured live, a sale from `.40` was credited
+to the click `.30` had made. A fix that makes a dormant comparison match
+again across a many-to-one transform has to decide what several matches
+mean before it ships: `LastClickFromAddress` answers a masked address only
+when one click in the window matches it.
+
+### 31. A copied value is stale from the moment its source changes
+A click's report row (202_dataengine) copies two values from Setup, not from
+the click: its account's traffic source and its campaign's category. The
+rollup's `ON DUPLICATE KEY UPDATE` refreshed fourteen of its forty-two
+columns — `ppc_network_id` and `text_ad_id` not among them — and nothing
+re-rolled a moved account's older clicks, so after an account moved to
+another source the API's breakdown (which groups by the row's copy) put six
+of seven clicks under the old source while the Overview (which looks the
+account's source up) put all seven under the new one; and rows rolled up
+before #27's joins were tied kept another account's source for good. A
+denormalized copy needs both halves: every re-derivation writes every
+column it derives (`ClickRollupSql::refreshedColumns()`, pinned by
+`ClickRollupSqlTest`), and every writer of the source queues the copies
+for re-derivation (`RollupRefresh`, from the Setup pages and the API). When
+adding a column to a derived table, or a writer to a table one is derived
+from, find the other half. Rows already stale in an install heal only when
+they are re-rolled; nothing re-rolls them by itself.
+
+### 32. A shortcut that returns early skips the work the old path did after
+Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
+`DataEngine::doQuery()` returns at once when the query answers `true`. The
+rows were right; but `doSummary()`, the code that return skips, was also
+where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
+so the cron job's rebuild without curl took its first window, never finished
+it, and never took another — and it read `user_id = 1` while the curl path
+read every account. Nothing failed: the reports simply never got the
+rebuilt history. When a change makes a function skip code it used to run —
+an early return, a fast path, a branch on a new result type — list every
+side effect of the skipped code (flags, counters, cache writes, the "done"
+mark) and move each one to where the new path still runs it;
+`ClickUpgradeIntegrationTest` holds this one.
+
+### 33. A tagged version's upgrade step is frozen
+`upgrade_needed()` compares the stored version with the code's, and the
+ladder runs only when they differ. v1.9.76 was tagged at this branch's merge
+base; the branch kept `version.php` at 1.9.76 and put a new column into the
+1.9.75 → 1.9.76 step. An install already on the released 1.9.76 stores
+1.9.76, so nothing differs, the step never runs, and every reader of the
+column fails: measured by installing from the tag and serving the branch —
+`GET /system/retention` answered 500 and `upgrade.php` sent the operator
+to sign in. A schema change after a version is tagged takes a new version
+and a step gated on the tagged one. `UpgradeLadderTest` pins the current and
+prior versions but cannot see tags (CI's clone is shallow), and a session's
+clone often has none either — `git tag` printed nothing here while the
+remote held `v1.9.76` — so before touching the ladder ask the remote
+(`git ls-remote --tags origin 'v*'`); when `version.php`'s version is
+already there, bump it. Prove an upgrade by installing from the latest tag,
+not only from an older one.
+
+And from the oldest one, through the script CI runs. The 1.9.77 step reused
+`_upgrade_measurement_tables()`, which logged every ALTER it applied as
+`Prosper202 upgrade: reconciled …`; `tests/live/upgrade-equals-install.sh`
+reads any `Prosper202 upgrade` line in the server log as a step that did not
+converge, so the step's own work failed the check on every upgrade it ran.
+That workflow runs on a pull request and on master only, so the branch had
+never run it. The ladder's error log carries only what a step could not do
+(`ScheduledDeletionUpgradeIntegrationTest` holds the 1.9.76 rung to logging
+nothing), and a ladder change runs the script locally before it is pushed
+(see the development notes for PHP 7.4 here).
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure
@@ -660,11 +1289,52 @@ once and must know what to do next without guessing, so every error path in
    `hintFor(err)` (see `cmd/cli_errors_test.go` and the forecast hint
    tests for the pattern).
 
+Flags are written in kebab-case everywhere text shows them (help, hints,
+errors, docs, examples), in both CLIs; the snake_case spelling is accepted as
+an alias and never shown. `scripts/check-flag-spelling.py` (PR checks) holds
+tracked text to it, and `canonicalFlags()` rewrites flag names an error builds
+from API field names. In the PHP CLI an option for an API field is named and
+read through `OptionName`, `KebabCaseArgvInput` takes the alias, and
+`FlagsAreKebabCaseTest` refuses an underscore in an option name.
+
 When adding a command, run it once with a wrong flag and once against a
 dead URL under `--json` and read the envelopes as an agent would: if either
 leaves you unsure what to do next, the error needs a hint. The user-facing
 contract is documented in `documentation/cli/10-go-cli.md` under "Errors";
 keep it in sync.
+
+A command is found by reading `p202 commands --brief` — every command on one
+line with the UI page it does, about 6,000 tokens, held to a budget by
+`TestCommandsBriefIsTheCatalogAnAgentReads` — or by `p202 search`, which
+matches words: it finds a command only when the asker uses words its text
+uses. "spy" found nothing (Spy was a
+word in one flag's help), "live clicks" found goal outcomes, and "real-time
+traffic" found `click list` through `--show real` — the filter for human
+clicks — and offered that as the line to run. `searchTasks`
+(`cmd/search_tasks.go`) gives each task its exact command line, the web UI
+pages that do it and the words people use for it; a command that does what a
+page does belongs there. `TestEveryUIMenuLabelHasASearchTask` reads the
+menus and fails on a page with no entry, and
+`TestSearchFindsTheEvalAsksCommand` searches every agent-eval ask for its
+command, with `searchKnownMisses` listing the rest with why — a list that
+only shrinks. Write a phrase from the task, never from an ask: a phrase
+lifted from an ask teaches that one ask and inflates the measure. Search
+hands back candidates with `coverage` and `good_match`, as `cf cli search`
+does, and fails only when nothing matches or when the query names in full a
+page no command does: a refusal is an answer, and "is the server up" reached
+the upgrade entry through a synonym and a prefix and was told the CLI cannot
+do what `system health` does. `--quiet`, which prints a bare path a script
+will run, prints one only for a confident match. There is no fuzzy matching,
+because the askers are agents and agents spell: on the eval asks it fired on
+20 of 40 and never on a typo, turning "came" into name and "tmp" into tcp and
+counting each towards `good_match`. A word no command knows is reported
+(`unknown_terms`) rather than guessed at; it says the commands lack the word,
+which is not the same as lacking the capability (on 40 sealed agent tasks it
+named a word in 6 the CLI does under another name and in none of the 4 it
+cannot do). Inflections fold only
+onto a word the index has (`lemmaOf`). The ranking's own
+measurements, and why a model reading the catalog beats it, are in
+`cmd/search_rank.go`'s header.
 
 ## Development environment notes (sandboxed/CI sessions)
 
@@ -713,6 +1383,21 @@ Check here before burning time on tooling failures.
   on the tracked files works but prints an "ignored paths" warning (exit
   1); use `git add -f` or ignore the warning after confirming the files
   staged with `git status`.
+- **`docs/openapi.yaml` is read as YAML only by `scripts/check-openapi-yaml.py`**
+  (the ladder's `openapi` tier and the OpenAPI Spec workflow). Every PHP test
+  that pairs the spec with the router reads it line by line, so a plain-scalar
+  description containing `: ` made the file unparseable for every OpenAPI tool
+  with all of them green. Write a description that holds a colon as a `>-`
+  block or quote it.
+- **A Go test that reads a file outside `go-cli/` reads it through
+  `repoPath()`** (`go-cli/cmd/repo_paths_test.go`), and the file goes in
+  `.github/workflows/go-cli.yml`'s `paths:`, both lists. The workflow runs
+  only when a listed path changes, so a test reading an unlisted file stays
+  green while the file breaks it — until an unrelated CLI change runs it and
+  fails for a reason that change did not cause. Four test files read the
+  API's controllers, the preference rules, the link tokens and the agent
+  guide that way, unlisted; `TestRepoFilesTriggerTheGoWorkflow` now holds every
+  `repoPath()` to a trigger and refuses a hand-built `"..", ".."` path.
 - **Go commands must run from `go-cli/`** (`cd go-cli && go vet ./... && go
   test ./...`); the repo root is not a Go module. The forecast package's
   acceptance suites take ~40s; `-short` skips them.
@@ -842,6 +1527,38 @@ Check here before burning time on tooling failures.
   three times in one session, including once with the `[i]nstall` bracket
   trick, because the same command later invoked the script by name. Kill by
   port (`fuser -k 8098/tcp`) or by a pid you looked up in a separate command.
+- **A worktree whose `vendor/` is a symlink to the main checkout tests the
+  main checkout's code.** Composer's generated maps hold paths relative to
+  `vendor/`'s real location, so every `Prosper202\` and `Api\V3\` class
+  resolved to the other tree and a fix in the worktree read as not working.
+  Copy `vendor/` (`cp -a`), do not link it.
+- **This sandbox's PHP reads the system's zone database**
+  (`timezone_version_get()` is `0.system`), and Ubuntu 24.04 ships the
+  backward-compatible names (`US/Eastern`, `Europe/Kiev`) in
+  `tzdata-legacy`, which is not installed: here they are not zones at all,
+  while PHP's own builds list them under `DateTimeZone::ALL_WITH_BC`. Test zone handling with a name this
+  build has in `ALL_WITH_BC` but not in `listIdentifiers()`
+  (`America/Montreal`), and do not conclude from a refusal here what a
+  production build does.
+- **`php -S` here has no memory limit.** This sandbox's CLI `php.ini` sets
+  `memory_limit = -1`, and the built-in server reads it, so a request that
+  needs 376 MB answers 200 here and dies at the 128 MB a production PHP
+  request gets by default. POST /conversions/uploads was measured previewing
+  440,000 lines "in about 8 seconds" this way and shipped holding every line;
+  at 128 MB it answered 500 (`Allowed memory size of 134217728 bytes
+  exhausted`). Measure a size a route accepts on a server started with
+  `php -d memory_limit=128M -S …`, and size the answer too: a list the input
+  can grow is listed up to a bound, with counts for the rest.
+- **`tests/live/upgrade-equals-install.sh` runs here.** It installs 1.9.55
+  on PHP 7.4, which Ubuntu 24.04 does not carry; `ppa.launchpadcontent.net`
+  is reachable, so add `ondrej/php` for noble with its key
+  (`14AA40EC0831756756D7F66C4F4EA0AAE5267A6C`, from keyserver.ubuntu.com)
+  under `signed-by`, and `apt-get install php7.4-cli php7.4-mysql
+  php7.4-mbstring php7.4-curl php7.4-xml php7.4-json` — `php` stays 8.3. The
+  shallow clone lacks the origin commit: `git fetch --depth=1 origin
+  45897876895372162e83209167e750e078d3e3e5`. Run it as a TCP user granted on
+  `p202\_uei\_%` (`P202_DB_USER`, `P202_DB_PASS`, `P202_ORIGIN_PHP=php7.4`);
+  here the server is MariaDB 10.11 and in CI MySQL 8.0, so read CI's run too.
 
 ## Closing the loop on mistakes
 
@@ -953,6 +1670,36 @@ where a check quietly fails to check what it appears to.
   never happened and the test passed against the code it was supposed to
   fail. Print a marker (`assert old in s`, then re-grep the file) before
   believing the run.
+- **A backup is only a backup where you will read it back.** A plant harness
+  copied each file to a fixed scratch path (`plant/keep`) before planting a
+  defect, and that path
+  already existed as a directory from earlier work: `cp file keep` copied the
+  file *into* it, the restore `cp keep file` failed, and the harness printed
+  "RESTORE FAILED" and went on to the next plant — nine defects stacked in
+  four files, each later backup overwriting the earlier one with an
+  already-planted copy. Nothing was committed, and every plant had to be
+  reversed by hand. Back up to a fresh `mktemp` path, check the copy with
+  `cmp` before planting, and stop the run at the first failed restore. And
+  count a plant as caught only when a named test fails: two "caught" plants
+  were a compile error (an unused variable, a missing import), which proves
+  nothing about the test.
+- **A heuristic tuned on a set is measured on a set it never saw.** The search
+  ranker was tuned against the UI's page names, the agent-eval asks and a
+  "held-out" set that had been looked at while tuning; it scored 39 of 39,
+  28 of 40 and 14 of 20 first, and a MiniSearch prototype scored 18 of 20 on
+  that held-out set. On 30 phrasings written and hashed before tuning began
+  and opened only at the end, the same ranker put the right command first
+  for 16, the prototype for 10, and the scorer being replaced for 14; its
+  confidence flag was right 92 times in 97 on the tuned sets and 13 in 19 on
+  the sealed one. Write the evaluation set first, record its hash, do not
+  read it while tuning, and report the sealed numbers as the result. A set
+  that has been opened is a development set from then on: the next
+  measurement needs a new one. The next change was measured on a set an
+  agent wrote, labelled and hashed before any search ran on it, and it
+  refuted a sentence already in the docs: that a word no command knows
+  "usually means the capability does not exist" (it named a word in 6 tasks
+  the CLI does under another name and in none of the 4 it cannot do). Write
+  the claim after the measurement, not before.
 - **Assert that a probe perturbed the target.** To force a post-commit failure
   I created a directory where a state file goes — in the wrong one of three
   `/tmp/p202-api-v3-state-*` directories, picked with `head -1`. The request
@@ -996,6 +1743,12 @@ where a check quietly fails to check what it appears to.
   suspecting the component that differs most visibly, diff the versions of
   everything on the path (`php -v` against the workflow's `php-version`),
   and read the server log the job uploads — the 404 was on its first page.
+  The database is the same trap: this sandbox runs MariaDB and CI MySQL 8.0,
+  and `SHOW CREATE TABLE` spells an unsigned int `int(10) unsigned` on one
+  and `int unsigned` on the other (MySQL dropped display widths in 8.0.19),
+  so an upgrade test that asserted the MariaDB spelling passed here and
+  failed in CI. Assert a column's shape with a pattern that admits both, or
+  read `information_schema.COLUMNS` instead of the DDL text.
 - **A tier that reports PASS with no output did not run.** Putting the
   scratchpad's `bin/` on PATH to reach a `phpcs` shim also put a stub `php`
   there — left over from an old cron-clock experiment, and one that echoes and
@@ -1024,10 +1777,16 @@ where a check quietly fails to check what it appears to.
   (`goenv=$(go env GOENV); gopath=$(go env GOPATH); gomodcache=$(go env GOMODCACHE); gocache=$(go env GOCACHE); rc=1; if tmp=$(mktemp -d); then if HOME="$tmp" GOENV="$goenv" GOPATH="$gopath" GOMODCACHE="$gomodcache" GOCACHE="$gocache" go test ./cmd/...; then rc=0; else rc=$?; fi; rm -rf "$tmp"; fi; [ "$rc" -eq 0 ]`) before pushing anything that touches
   a command which builds a client. Flag validation belongs *before* the
   client is built anyway.
+  A reused scratch database is the same trap: `ClickFiltersIntegrationTest`
+  read the device types `ReportDepthIntegrationTest` had seeded an hour
+  earlier, passed here, and failed at setUp on CI's fresh one — the schema
+  installer creates that table empty. Run a new scratch-DB integration test
+  alone against a database created for the run before pushing it.
 
 </verify_assumptions>
 
 ## Review discipline
+- Keep comments short: add one only when it records something the code cannot say. No narrative docblocks, no history.
 - Review every file individually. Batch scanning causes context overload and misses real bugs.
 - Read the file first, then think about what each line does, especially error paths.
 - After writing code, re-read it as a skeptic looking for the failure mode, not as the author expecting it to work.

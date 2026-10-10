@@ -20,6 +20,10 @@ declare(strict_types=1);
 [$script, $file, $shape] = $argv + [null, null, 'db'];
 
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
+// The classes the bodies reach through connect.php's autoloader (VisitorIp,
+// StoredVisitorIp, TrackingBaseUrl and what it reads): the project's own
+// autoloader, rather than a list of files that goes stale with each one.
+require_once __DIR__ . '/../../../vendor/autoload.php';
 
 /** The source of `function record_mysql_error(...) { ... }` in $path. */
 function lift_record_mysql_error(string $path): string
@@ -94,6 +98,12 @@ function _mysqli_query($dbOrSql, $sql = null)
 function template_bottom(): void
 {
 }
+// connect2.php's own, which the click path's body logs the address through:
+// the address as stored, unmasked here (no privacy setting in this process).
+function p202StoredVisitorIp(): string
+{
+    return \Prosper202\Http\StoredVisitorIp::fromServer($_SERVER, false);
+}
 
 $_SERVER += [
     'HTTP_X_FORWARDED_FOR' => '203.0.113.7', 'REMOTE_ADDR' => '203.0.113.7',
@@ -104,19 +114,70 @@ $_SESSION = ['user_id' => 1, 'user_timezone' => 'UTC'];
 
 eval(lift_record_mysql_error((string) $file));
 
+/**
+ * A connection that records every statement it is asked through its own
+ * methods (a procedural mysqli_*() call bypasses these), so the test can
+ * hold the error page to asking the failed connection nothing more. A read
+ * made there throws on the same failure that brought the page up (the
+ * account's time zone was read once, through AUTH::set_timezone()) and
+ * replaces the page with a fatal, and only a database that happens to lack
+ * the table read could show that: the recording shows it on any database.
+ */
+final class RecordingMysqli extends mysqli
+{
+    /** @var list<string> */
+    public array $asked = [];
+
+    public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
+    {
+        $this->asked[] = $query;
+
+        return parent::query($query, $result_mode);
+    }
+
+    public function prepare(string $query): mysqli_stmt|false
+    {
+        $this->asked[] = $query;
+
+        return parent::prepare($query);
+    }
+
+    public function real_query(string $query): bool
+    {
+        $this->asked[] = $query;
+
+        return parent::real_query($query);
+    }
+
+    public function multi_query(string $query): bool
+    {
+        $this->asked[] = $query;
+
+        return parent::multi_query($query);
+    }
+}
+
 mysqli_report(MYSQLI_REPORT_OFF);
-$db = mysqli_connect(
+$db = new RecordingMysqli(
     (string) getenv('P202_TEST_DB_HOST'),
     (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
     (string) (getenv('P202_TEST_DB_PASS') ?: ''),
     (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
     (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
 );
-if (!$db) {
+if ($db->connect_errno !== 0) {
     fwrite(STDERR, "no database\n");
     exit(4);
 }
 $GLOBALS['db'] = $db;
+// After die() and after a fatal alike: the first statement is the failing
+// one the runner asks (printed, so a recorder that saw nothing cannot pass),
+// and every later one was asked by the page.
+register_shutdown_function(static function () use ($db): void {
+    foreach ($db->asked as $i => $query) {
+        echo ($i === 0 ? 'ASKED FIRST: ' : 'ASKED BY THE PAGE: ') . $query . "\n";
+    }
+});
 
 $sql = 'SELECT nothing FROM p202_no_such_table_for_record_mysql_error';
 echo "BEFORE\n";

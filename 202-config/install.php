@@ -374,7 +374,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($success) {
 			ob_start();
 			$base_url = install_request_base_url($_SERVER, get_absolute_url());
-			render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
+			render_install_success($html, $install_warnings, get_absolute_url(), \Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER), $base_url);
 			$panel = ob_get_clean();
 			install_json([
 				'success'  => true,
@@ -679,6 +679,6 @@ if (!$success) {
 if ($success) {
 	info_top(['title' => 'Installed - Prosper202 ClickServer', 'wide' => true]);
 	$base_url = install_request_base_url($_SERVER, get_absolute_url());
-	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
+	render_install_success($html, $install_warnings, get_absolute_url(), \Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER), $base_url);
 	info_bottom();
 }

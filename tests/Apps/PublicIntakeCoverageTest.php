@@ -37,7 +37,7 @@ final class PublicIntakeCoverageTest extends TestCase
         $root = dirname(__DIR__, 2);
         $found = [];
         $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($root . '/.well-known', \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree($root . '/.well-known')
         );
         foreach ($iterator as $file) {
             if ($file->isFile() && $file->getExtension() === 'php') {

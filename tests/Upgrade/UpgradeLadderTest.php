@@ -21,8 +21,16 @@ use Tests\TestCase;
  */
 final class UpgradeLadderTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.76';
-    private const PRIOR_VERSION = '1.9.75';
+    private const CURRENT_VERSION = '1.9.77';
+    private const PRIOR_VERSION = '1.9.76';
+
+    /**
+     * The step that creates the app-measurement tables: 1.9.75 -> 1.9.76, as
+     * v1.9.76 shipped it. It was the ladder's last until v1.9.76 was tagged
+     * and this release added 202_users_pref's column in a step of its own.
+     */
+    private const APP_TABLES_STEP = '1.9.75';
+    private const APP_TABLES_STEP_TO = '1.9.76';
 
     /** The reconcile call a step must make; also how a step is recognised. */
     private const RECONCILE_CALL = '_upgrade_measurement_tables(';
@@ -142,16 +150,34 @@ final class UpgradeLadderTest extends TestCase
 
     public function testAnUpgradeStepGatedOnThePriorVersionCreatesTheAppTables(): void
     {
-        // Brace-bounded, not "up to the next gate": the 1.9.75 step is now
-        // the ladder's last, so a strpos window found no next gate and ran to
-        // the end of the file, swallowing the downgrade guard.
-        $block = $this->blockGatedOn(self::PRIOR_VERSION);
+        // Brace-bounded, not "up to the next gate": a strpos window found no
+        // next gate when this step was the ladder's last, ran to the end of
+        // the file and swallowed the downgrade guard.
+        $block = $this->blockGatedOn(self::APP_TABLES_STEP);
 
         // The block's DDL must come from the installer definitions (never a
-        // hand-copied CREATE that can drift), and it must persist the bumped
-        // version so a 1.9.75 install converges to 1.9.76.
+        // hand-copied CREATE that can drift), and it must persist its version
+        // so a 1.9.75 install converges to 1.9.76 and goes on up the ladder.
         $this->assertStringContainsString('AppTables::getDefinitions()', $block);
-        $this->assertStringContainsString("version='" . self::CURRENT_VERSION . "'", $block);
+        $this->assertStringContainsString("version='" . self::APP_TABLES_STEP_TO . "'", $block);
+    }
+
+    /**
+     * The release adds user_delete_data_before to 202_users_pref (the
+     * scheduled click deletion's time; ClickRetention), and the step from
+     * 1.9.76 brings an upgraded table to the installer's definition. The
+     * column was first put in the 1.9.75 step, after v1.9.76 had been
+     * tagged, where an install already on 1.9.76 never looks: it had no
+     * column, and the cron job's read of it -- and the Settings page and GET
+     * /system/retention with it -- failed. ScheduledDeletionUpgradeIntegrationTest
+     * runs that reconcile on a server.
+     */
+    public function testThePriorVersionBlockReconcilesThePreferencesTable(): void
+    {
+        $this->assertStringContainsString(
+            'UserTables::usersPref()',
+            $this->blockGatedOn(self::PRIOR_VERSION)
+        );
     }
 
     public function testThePriorVersionBlockReconcilesExistingTablesAndDoesNotOnlyCreateThem(): void
@@ -181,10 +207,18 @@ final class UpgradeLadderTest extends TestCase
         foreach ($this->attributionSteps() as $step) {
             $gate = implode('/', $step['gates']);
 
-            $this->assertStringContainsString(
-                'AppTables::getDefinitions()',
+            // The installer's definitions (AppTables::getDefinitions() for the
+            // app tables, UserTables::usersPref() for the column 1.9.77 adds),
+            // never a CREATE copied into the step, which drifts from them.
+            $this->assertMatchesRegularExpression(
+                '/\\\\Prosper202\\\\Database\\\\Tables\\\\[A-Za-z]+Tables::[A-Za-z]+\(\)/',
                 $step['block'],
                 "the step gated on $gate must reconcile from the installer's definitions, not a copied CREATE"
+            );
+            $this->assertStringNotContainsStringIgnoringCase(
+                'CREATE TABLE',
+                $step['block'],
+                "the step gated on $gate copies a CREATE TABLE instead of passing the installer's definitions"
             );
             $this->assertNotSame(
                 [],

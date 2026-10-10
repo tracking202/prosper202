@@ -133,14 +133,14 @@ func fourCountries() *splitFake {
 	}
 }
 
-var splitWindowArgs = []string{"--time_from", strconv.Itoa(splitTestFrom), "--time_to", strconv.Itoa(splitTestTo)}
+var splitWindowArgs = []string{"--time-from", strconv.Itoa(splitTestFrom), "--time-to", strconv.Itoa(splitTestTo)}
 
 func TestAnalyticsSplitSendsBothWindowsAndMergesOneSidedValues(t *testing.T) {
 	pinReportClock(t, splitTestNow)
 	f := fourCountries()
 	f.setup(t)
 
-	args := append([]string{"analytics", "--group-by", "country", "--split-at", "2026-09-04", "--aff_campaign_id", "7", "--json"}, splitWindowArgs...)
+	args := append([]string{"analytics", "--group-by", "country", "--split-at", "2026-09-04", "--aff-campaign-id", "7", "--json"}, splitWindowArgs...)
 	stdout, stderr, err := executeCommand(args...)
 	if err != nil {
 		t.Fatalf("analytics --split-at: %v", err)
@@ -211,7 +211,7 @@ func TestAnalyticsSplitSendsBothWindowsAndMergesOneSidedValues(t *testing.T) {
 		"rows": 3.0, "clicks": 850.0, "clicks_per_day": 170.0, "revenue": 114.0,
 	})
 	window, _ := m["window"].(map[string]interface{})
-	if window["source"] != "--time_from/--time_to" || window["time_from"] != float64(splitTestFrom) || window["time_to"] != float64(splitTestTo) {
+	if window["source"] != "--time-from/--time-to" || window["time_from"] != float64(splitTestFrom) || window["time_to"] != float64(splitTestTo) {
 		t.Errorf("meta window = %v", window)
 	}
 	if m["sort"] != "clicks_change" || m["sort_dir"] != "DESC" || m["rows"] != 4.0 || m["returned"] != 4.0 {
@@ -306,11 +306,9 @@ func TestAnalyticsSplitWindowSources(t *testing.T) {
 		from, to int64
 		source   string
 	}{
-		{nil, splitTestNow - 90*86400, splitTestNow, "default last90"},
-		{[]string{"--period", "last30"}, splitTestNow - 30*86400, splitTestNow, "--period last30"},
-		{[]string{"--period", "last30", "--days", "7"}, splitTestNow - 30*86400, splitTestNow, "--period last30"},
+		{nil, splitTestNow - 90*86400, splitTestNow, "default --days 90"},
 		{[]string{"--days", "40"}, splitTestNow - 40*86400, splitTestNow, "--days 40"},
-		{[]string{"--time_from", strconv.Itoa(splitTestFrom)}, splitTestFrom, splitTestNow, "--time_from to now"},
+		{[]string{"--time-from", strconv.Itoa(splitTestFrom)}, splitTestFrom, splitTestNow, "--time-from to now"},
 	}
 	for _, tc := range cases {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -343,7 +341,7 @@ func TestAnalyticsSplitTableSummaryOnStderr(t *testing.T) {
 		t.Fatalf("analytics: %v", err)
 	}
 	for _, want := range []string{
-		"Split at 2026-09-04T00:00:00Z (1788480000); window: --time_from/--time_to",
+		"Split at 2026-09-04T00:00:00Z (1788480000); window: --time-from/--time-to",
 		"before 2026-08-25T00:00:00Z .. 2026-09-03T23:59:59Z  10.00 days  clicks 1080 (108/day)",
 		"after  2026-09-04T00:00:00Z .. 2026-09-08T23:59:59Z  5.00 days  clicks 850 (170/day)",
 		"4 value(s), 4 shown, ranked by |clicks_change| DESC. The sides differ in length: compare the *_per_day columns",
@@ -372,10 +370,12 @@ func TestAnalyticsSplitValidatesBeforeBuildingTheClient(t *testing.T) {
 		{[]string{"--split-at", "4th-sept"}, "invalid --split-at"},
 		{[]string{"--split-at", "1788480000000"}, "looks like milliseconds"},
 		{[]string{"--split-at", "2026-09-04", "--period", "today"}, "cannot be split"},
+		{[]string{"--split-at", "2026-09-04", "--period", "last30"}, "cannot be split"},
+		{[]string{"--split-at", "2026-09-04", "--period", "last30", "--days", "7"}, "cannot be split"},
 		{[]string{"--split-at", "2026-09-04", "--period", "last365"}, "--period must be one of"},
-		{[]string{"--split-at", "2026-09-04", "--time_to", strconv.Itoa(splitTestTo)}, "unbounded"},
-		{[]string{"--split-at", "2026-09-04", "--time_from", "2026-08-25"}, "--time_from must be unix seconds"},
-		{[]string{"--split-at", "2026-09-04", "--time_from", strconv.Itoa(splitTestTo), "--time_to", strconv.Itoa(splitTestFrom)}, "the window is empty"},
+		{[]string{"--split-at", "2026-09-04", "--time-to", strconv.Itoa(splitTestTo)}, "unbounded"},
+		{[]string{"--split-at", "2026-09-04", "--time-from", "2026-08-25"}, "--time-from must be unix seconds"},
+		{[]string{"--split-at", "2026-09-04", "--time-from", strconv.Itoa(splitTestTo), "--time-to", strconv.Itoa(splitTestFrom)}, "the window is empty"},
 		{[]string{"--split-at", "2026-09-04", "--days", "-1"}, "--days must be 0 or greater"},
 		{[]string{"--split-at", "2026-09-04", "--sort", "roi"}, "not available with --split-at"},
 		{[]string{"--sort", "clicks_per_day"}, "it needs --split-at"},

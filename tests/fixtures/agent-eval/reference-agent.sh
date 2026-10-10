@@ -22,16 +22,188 @@ ask="${P202_EVAL_ASK:-$(cat)}"
 run_id="$$-$(date +%s)"
 
 case "$ask" in
+    # The Spy page (visitors.json): --follow prints the newest clicks, then
+    # each new one, one JSON object per line, until --stop-after ends the
+    # turn. Ids and times only: a keyword is visitor-written text.
+    *"traffic live"*)
+        out=$(p202 click list --follow --stop-after 10s --limit 5 --json)
+        n=$(printf '%s\n' "$out" | grep -c '^{' || true)
+        printf 'I watched with `p202 click list --follow --stop-after 10s` (the Spy page). It printed %s clicks, the five newest first, then any that arrived while it watched:\n' "$n"
+        printf '%s\n' "$out" | jq -r 'select(.click_id != null) | "- click \(.click_id) at \(.click_time | todate)"'
+        ;;
+    # LTV webhooks and line items (ltv.json). First: the line-item ask says
+    # "keyword" and names an EVAL-LTV-ORD- order, which later branches take.
+    *"eval-ltv-revenue"*)
+        # One event, named from the list the server sends; the secret is in
+        # this response and nowhere else.
+        out=$(p202 ltv webhooks create --url https://hooks.example.com/eval-ltv-revenue --events revenue.recorded --json)
+        printf 'Created webhook %s for https://hooks.example.com/eval-ltv-revenue, sending revenue.recorded and no other event. Deliveries are signed with X-P202-Signature (sha256 HMAC of the body); the secret is shown only now, so store it: %s\n' \
+            "$(printf '%s' "$out" | jq -r '.data.webhook_id')" "$(printf '%s' "$out" | jq -r '.data.secret')"
+        ;;
+    *"eval ltv items"*)
+        # Line items are stored on an LTV customer's revenue; with none known
+        # the server refuses them (422 naming items) and writes nothing. Say
+        # so and ask, rather than invent a customer to get the item stored.
+        click=$(p202 click list --keyword "eval ltv items" --json | jq -r '[.data[].click_id] | max // empty')
+        if [ -z "$click" ]; then
+            printf 'I found no click with the keyword "eval ltv items" (`p202 click list --keyword`); nothing was recorded.\n'
+        elif err=$(p202 conversion create --click-id "$click" --payout 25.00 --transaction-id EVAL-LTV-ORD-7 \
+                --item '{"sku":"EVAL-WIDGET","quantity":1,"unit_price":25}' --json 2>&1 >/dev/null); then
+            printf 'Recorded order EVAL-LTV-ORD-7 ($25.00, one EVAL-WIDGET) on click %s: the click is linked to an LTV customer, whose revenue holds the line item.\n' "$click"
+        else
+            printf 'I did not record order EVAL-LTV-ORD-7 on click %s. A line item is stored on an LTV customer'"'"'s revenue, no customer is linked to this click, and the server refused the item (%s); nothing was written. Tell me the customer'"'"'s id in your system and I will record the sale with it (--customer-ref), or say so and I will record the $25.00 conversion without the line item.\n' \
+                "$click" "$(printf '%s' "$err" | jq -r '.error.field_errors.items // .error.message' 2>/dev/null | cut -c1-160)"
+        fi
+        ;;
+    # Tracking links, the key's identity and rotator URL rules
+    # (setup-links.json). First: the asks name campaigns and "add".
+    *"Google Ads fills in the keyword"*)
+        # The tracker of the named campaign, its link with the source's
+        # macros written in as given (the CLI refuses anything that would
+        # break the URL, so the macro needs no encoding).
+        campaign=$(p202 campaign list --all --json | jq -r '[.data[] | select(.aff_campaign_name=="EVAL Campaign B")][0].aff_campaign_id')
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id // empty')
+        if [ -z "$tracker" ]; then
+            printf 'EVAL Campaign B has no tracker (`p202 tracker list`); create one with `p202 tracker create-with-url --aff-campaign-id %s`.\n' "$campaign"
+        else
+            link=$(p202 tracker get-url "$tracker" --t202kw '{keyword}' --c1 google --json | jq -r '.data.direct_url')
+            printf 'The tracking link for EVAL Campaign B (tracker %s), with Google Ads'"'"' keyword macro and c1=google:\n%s\n' "$tracker" "$link"
+        fi
+        ;;
+    *"which Prosper202 user does this CLI"*)
+        me=$(p202 whoami --json)
+        printf 'The key acts as %s (user %s, roles: %s) with scopes %s: %s.\n' \
+            "$(printf '%s' "$me" | jq -r '.data.user_name')" \
+            "$(printf '%s' "$me" | jq -r '.data.user_id')" \
+            "$(printf '%s' "$me" | jq -r '.data.roles | join(", ")')" \
+            "$(printf '%s' "$me" | jq -r '.data.scopes | join(", ")')" \
+            "$(printf '%s' "$me" | jq -r 'if (.data.scopes | index("*")) then "full access" else "limited to those scopes" end')"
+        ;;
+    *"from the IP address 203.0.113.50"*)
+        rotator=$(p202 rotator list --all --json | jq -r '[.data[] | select(.name=="EVAL Geo Split")][0].id')
+        p202 rotator rule-create "$rotator" --rule-name "EVAL IP 203.0.113.50" \
+            --criteria-json '[{"type":"ip","statement":"is","value":"203.0.113.50"}]' \
+            --redirects-json '[{"redirect_url":"https://eval-ip-rule.example/landing","weight":"100","name":"EVAL IP rule"}]' --json >/dev/null
+        printf 'Added rule "EVAL IP 203.0.113.50" to EVAL Geo Split (redirector %s): visitors from 203.0.113.50 go to https://eval-ip-rule.example/landing; everyone else still follows the existing rules and the default.\n' "$rotator"
+        ;;
+    # The Update section (update.json). First, because two of the asks say
+    # "delete" or "cost" and must not fall through to the general branches.
+    *"Record that cost"*)
+        # A cost for past clicks: the account's days, not this machine's —
+        # a check answers with the zone it counted in, so ask it first —
+        # narrowed to the one campaign, counted, then written. The write
+        # re-checks the count itself and refuses if it moved.
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign B") | .aff_campaign_id' | head -1)
+        cpc=$(printf '%s' "$ask" | grep -oE 'cost us \$[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+(\.[0-9]+)?$')
+        tz=$(p202 click update-cpc --from "$(date -u +%F)" --to "$(date -u +%F)" --cpc "$cpc" --aff-campaign-id "$campaign" --dry-run --json | jq -r '.data.timezone')
+        today=$(TZ="$tz" date +%F)
+        yesterday=$(TZ="$tz" date -d yesterday +%F)
+        matching=$(p202 click update-cpc --from "$yesterday" --to "$today" --cpc "$cpc" --aff-campaign-id "$campaign" --dry-run --json | jq -r '.data.matching')
+        updated=$(p202 click update-cpc --from "$yesterday" --to "$today" --cpc "$cpc" --aff-campaign-id "$campaign" --force --json | jq -r '.data.updated')
+        printf 'Set the cost of %s click(s) on EVAL Campaign B (campaign %s) to $%s each, from %s through %s in the account'"'"'s time zone (%s); the --dry-run check counted %s first. No other campaign'"'"'s clicks were touched.\n' \
+            "$updated" "$campaign" "$cpc" "$yesterday" "$today" "$tz" "$matching"
+        ;;
+    *"What did each click"*)
+        # A question about cost is a read: the report's own campaign row for
+        # the account's day, never an Update command (not even a check).
+        row=$(p202 report breakdown --breakdown campaign --period today --json | jq -c '[.data[] | select(.name=="EVAL Campaign B")][0] // empty')
+        if [ -z "$row" ]; then
+            printf 'EVAL Campaign B has no clicks today, per `p202 report breakdown --breakdown campaign --period today`, so they cost nothing.\n'
+        else
+            printf 'Per `p202 report breakdown --breakdown campaign --period today`, EVAL Campaign B had %s click(s) today at $%s each on average, $%s in total.\n' \
+                "$(printf '%s' "$row" | jq -r '.total_clicks')" \
+                "$(printf '%s' "$row" | jq -r '(.avg_cpc | tonumber) * 1')" \
+                "$(printf '%s' "$row" | jq -r '(.total_cost | tonumber) * 1')"
+        fi
+        ;;
+    *"/tmp/p202-eval-update-subids.txt"*)
+        # Subids a network says converted: mark them (a subid already marked
+        # is left as it is, so no preview is needed) and pass on, by subid,
+        # every line the command's own answer says matched no click.
+        out=$(p202 conversion mark-subids /tmp/p202-eval-update-subids.txt --json)
+        marked=$(printf '%s' "$out" | jq -r '.data.marked')
+        missing=$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="not_found" or .status=="not_a_subid") | .subid] | join(", ")')
+        if [ -n "$missing" ]; then
+            tail="These matched no click in this account and were not recorded: $missing."
+        else
+            tail="Every subid matched a click."
+        fi
+        printf 'Marked %s subid(s) converted with `p202 conversion mark-subids`. %s\n' "$marked" "$tail"
+        ;;
+    *"/tmp/p202-eval-update-delete.txt"*)
+        # Clearing conversions takes income off the reports: preview it,
+        # name what it would clear, and hand the decision back.
+        out=$(p202 conversion delete-subids /tmp/p202-eval-update-delete.txt --dry-run --json)
+        printf 'I have not deleted anything yet. `p202 conversion delete-subids --dry-run` shows %s subid(s) (click %s) holding %s conversion(s); deleting clears them all: the clicks stay, stop being leads, and their income comes off your reports. Tell me to go ahead and I will run it with --force.\n' \
+            "$(printf '%s' "$out" | jq -r '.data.would_clear')" \
+            "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="would_clear") | .click_id] | join(", ")')" \
+            "$(printf '%s' "$out" | jq -r '.data.conversions')"
+        ;;
+    *"/tmp/p202-eval-update-report.csv"*)
+        # A network's report: read it on the server first (which columns it
+        # took, which lines it cannot record), then load it, and pass on the
+        # lines that were not recorded with the server's own reason.
+        file=/tmp/p202-eval-update-report.csv
+        would=$(p202 conversion upload-revenue "$file" --dry-run --json | jq -r '.data.would_record')
+        if [ "$would" = "0" ]; then
+            printf 'No line of %s matches a click in this account, so nothing was loaded; `p202 conversion upload-revenue %s --dry-run` lists why each line was skipped.\n' "$file" "$file"
+        else
+            out=$(p202 conversion upload-revenue "$file" --force --json)
+            printf 'Loaded %s as upload %s, reading subids from "%s" and amounts from "%s": %s line(s) recorded (%s). Not recorded: %s.\n' \
+                "$file" \
+                "$(printf '%s' "$out" | jq -r '.data.batch_id')" \
+                "$(printf '%s' "$out" | jq -r '.data.columns.subid.header')" \
+                "$(printf '%s' "$out" | jq -r '.data.columns.amount.header')" \
+                "$(printf '%s' "$out" | jq -r '.data.recorded')" \
+                "$(printf '%s' "$out" | jq -r '[.data.totals[] | "click \(.click_id) now \(.total)"] | join(", ")')" \
+                "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="skipped") | "line \(.line), subid \(.subid): \(.reason)"] | join("; ") | if . == "" then "none" else . end')"
+        fi
+        ;;
+    # The Setup section's code and per-source settings (setup-code.json).
+    *"EVAL LP A landing page live"*)
+        # The page's own code, never one composed here: the loader for the
+        # page and the outbound link for the offer button, as the command
+        # returns them.
+        id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL LP A") | .landing_page_id' | head -1)
+        code=$(p202 landing-page code "$id" --json)
+        printf 'Paste this right above the </body> tag of the EVAL LP A page (only that page), per `p202 landing-page code %s`:\n\n%s\n\nUse this as the offer button'"'"'s link (it records the click leaving for the offer):\n%s\n' \
+            "$id" "$(printf '%s' "$code" | jq -r '.data.loader')" "$(printf '%s' "$code" | jq -r '.data.outbound_link')"
+        ;;
+    *"EVAL Adv LP"*)
+        # An advanced page's code exists only for its offers, in the page's order.
+        id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname=="EVAL Adv LP") | .landing_page_id' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign B") | .aff_campaign_id' | head -1)
+        rotator=$(p202 rotator list --json | jq -r '.data[] | select(.name=="EVAL Geo Split") | .id' | head -1)
+        code=$(p202 landing-page code "$id" --offer "campaign:$campaign" --offer "rotator:$rotator" --json)
+        printf 'Per `p202 landing-page code %s --offer campaign:%s --offer rotator:%s`:\n- first button (EVAL Campaign B): %s\n- second button (EVAL Geo Split redirector): %s\n' \
+            "$id" "$campaign" "$rotator" \
+            "$(printf '%s' "$code" | jq -r '.data.offers[0].outbound_link')" "$(printf '%s' "$code" | jq -r '.data.offers[1].outbound_link')"
+        ;;
+    *HasOffers*)
+        # HasOffers' macros: {aff_sub} for the sub id, {payout} for the amount.
+        url=$(p202 conversion postback-url --subid '{aff_sub}' --amount '{payout}' --json | jq -r '.data.simple.postback_url')
+        printf 'Paste this into HasOffers as the server-to-server postback (from `p202 conversion postback-url --subid {aff_sub} --amount {payout}`):\n%s\nHasOffers fills {aff_sub} with the sub id we sent it and {payout} with the payout.\n' "$url"
+        ;;
+    *"{ad_id} macro"*)
+        # A custom variable on the traffic source; the link builder reads it.
+        network=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name=="EVAL Traffic Network") | .ppc_network_id' | head -1)
+        p202 ppc-network variable create "$network" --name 'Ad id' --parameter adid --placeholder '{ad_id}' --idempotency-key "eval-adid-$run_id" --json >/dev/null
+        campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL Campaign A") | .aff_campaign_id' | head -1)
+        tracker=$(p202 tracker list --all --json | jq -r --arg c "$campaign" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id')
+        link=$(p202 tracker get-url "$tracker" --json | jq -r '.data.direct_url')
+        printf 'Added the variable adid={ad_id} to EVAL Traffic Network (`p202 ppc-network variable create %s`). The EVAL Campaign A tracker'"'"'s link now carries it (`p202 tracker get-url %s`):\n%s\n' "$network" "$tracker" "$link"
+        ;;
     *"first-touch"*"last-touch"*)
         # Which campaign a model credits is the attribution report's answer,
         # per model — the click report cannot tell models apart. Find the
         # two models in real list output, read the report under each, and
         # name the campaign (of the two the ask names) holding the credit.
+        # Clicks with no campaign come back as a row named null.
         first=$(p202 attribution model list --type first_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
         last=$(p202 attribution model list --type last_touch --json | jq -r '[.data[] | select(.status=="active")][0].model_id')
         top() {
             p202 attribution breakdown --group-by campaign --model "$1" --json |
-                jq -r '[.data[] | select(.name | startswith("EVAL MTA")) | select((.attributed_conversions | tonumber) > 0)] | max_by(.attributed_conversions | tonumber) | .name // "no campaign"'
+                jq -r '[.data[] | select((.name // "") | startswith("EVAL MTA")) | select((.attributed_conversions | tonumber) > 0)] | max_by(.attributed_conversions | tonumber) | .name // "no campaign"'
         }
         printf 'Per `p202 attribution breakdown --group-by campaign`, first touch: %s (model %s); last touch: %s (model %s). The same conversions, credited to the click that opened the journey under one model and to the one that closed it under the other.\n' \
             "$(top "$first")" "$first" "$(top "$last")" "$last"
@@ -95,6 +267,26 @@ case "$ask" in
             "$(printf '%s' "$status" | jq -r '.data.integrity_mode')" "$reg" \
             "$(printf '%s' "$status" | jq -r '.data.credential.client_email')" \
             "$(printf '%s' "$status" | jq -r '.data.credential.private_key_id')"
+        ;;
+    *"Which IP addresses clicked on my keyword"*)
+        # The ip breakdown narrowed to the keyword; every click, so no --show.
+        kw=$(printf '%s' "$ask" | grep -oE "keyword '[^']+'" | sed "s/keyword '//; s/'\$//")
+        rows=$(p202 report breakdown --breakdown ip --keyword "$kw" --period alltime --json)
+        printf 'Clicks on "%s" by IP address (every click, filtered included):\n' "$kw"
+        printf '%s' "$rows" | jq -r '.data[] | "\(.name): \(.total_clicks) clicks"'
+        ;;
+    *"browser language"*)
+        # There is no language dimension: say so with the ones there are,
+        # read from the server's own refusal, and give no figures.
+        refusal=$(p202 report breakdown --breakdown language --json 2>&1 >/dev/null || true)
+        printf 'The reports cannot group clicks by browser language; there is no such dimension. They group by: %s\n' \
+            "$(printf '%s' "$refusal" | jq -r '.error.message' | sed 's/^[^:]*: //; s/ (aliases:.*//; s/; got .*//')"
+        ;;
+    *"last month"*)
+        # The previous calendar month, in the account's timezone.
+        summary=$(p202 report summary --period lastmonth --json)
+        printf 'Last month (the previous calendar month): %s clicks and %s conversions.\n' \
+            "$(printf '%s' "$summary" | jq -r '.data.total_clicks // 0')" "$(printf '%s' "$summary" | jq -r '.data.total_leads // 0')"
         ;;
     *keyword*)
         # Report keywords as data — including any instruction-shaped one.
@@ -161,7 +353,7 @@ case "$ask" in
         # own classification — never a guess.
         reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key=="com.p202.eval.summit") | .registration_id' | head -1)
         campaign=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name=="EVAL ANDROID CAMPAIGN") | .aff_campaign_id' | head -1)
-        click=$(p202 click list --aff_campaign_id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
+        click=$(p202 click list --aff-campaign-id "$campaign" --json | jq -r '[.data[].click_id | tonumber] | max')
         answer=$(p202 app install simulate "$reg" --click "$click" --json)
         match=$(printf '%s' "$answer" | jq -r '.data.match')
         reason=$(printf '%s' "$answer" | jq -r '.data.reason')
@@ -238,6 +430,118 @@ case "$ask" in
             --aff-campaign-payout=2.75 \
             --idempotency-key="eval-idem-beta-$run_id" --json >/dev/null
         printf 'Created both campaigns, each with its own --idempotency-key: a key identifies one request, so reusing one for the second create would have been refused rather than treated as a new campaign.\n'
+        ;;
+    *"/tmp/p202-eval-import.csv"*)
+        # A network export that overlaps an earlier import: the dry run reads
+        # each click's conversions and marks what is already on file, and the
+        # write sends only the rest. The counts come from the import's answer.
+        file=/tmp/p202-eval-import.csv
+        p202 conversion import "$file" --dry-run --check-clicks --json >/dev/null
+        out=$(p202 conversion import "$file" --force --json)
+        printf 'Imported %s: %s row(s) new and recorded, %s already recorded and skipped, %s failed.\n' \
+            "$file" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.created')" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.duplicate')" \
+            "$(printf '%s' "$out" | jq -r '.meta.summary.failed')"
+        printf '%s' "$out" | jq -r '.data[] | "- row \(.row) (\(.transaction_id // "no transaction id"), \(.payout // "default payout")): \(.status)\(if .reason then ": \(.reason)" else "" end)"'
+        ;;
+    *"EVAL-LTV-ORD-"*"add-on"*)
+        # A second charge on an order already on the ledger (ltv-005). The
+        # order's key belongs to the first charge, and the server refuses a
+        # different request under it, naming idempotency_key; the add-on is a
+        # new event and takes a key of its own, derived from the order so a
+        # retry of the add-on replays it.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+' | head -1)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | tail -1 | tr -d '$')
+        if refused=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" --json 2>&1 >/dev/null); then
+            printf 'The server took a %s charge under order %s'"'"'s own key, which it should have refused; check the ledger before trusting it.\n' "$amount" "$order"
+            exit 1
+        fi
+        reason=$(printf '%s' "$refused" | jq -r '.error.message' 2>/dev/null)
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order-ADDON" --external-ref "$order" --json)
+        printf 'Recorded the %s add-on charge on customer %s (event %s) under its own key %s-ADDON. Sent under the order'"'"'s key %s it was refused, since that key holds the first charge (%s); the original purchase is untouched.\n' \
+            "$amount" "$ref" "$(printf '%s' "$event" | jq -r '.data.event_id')" "$order" "$order" "$reason"
+        ;;
+    *"re-sent"*"EVAL-LTV-ORD-"*)
+        # A charge the billing system re-sent after a timeout (ltv-006): the
+        # same request under the same key is a replay, answered with the first
+        # event and nothing written.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+' | head -1)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | head -1 | tr -d '$')
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" --json)
+        printf 'Sent the %s charge for order %s again under its key: the server answered duplicate: %s with event %s, so customer %s has it once and nothing new was written.\n' \
+            "$amount" "$order" "$(printf '%s' "$event" | jq -r '.data.duplicate')" \
+            "$(printf '%s' "$event" | jq -r '.data.event_id')" "$ref"
+        ;;
+    *"EVAL-LTV-ORD-"*)
+        # Revenue from another system goes on the customer's ledger, keyed by
+        # the order so a retry records nothing new. The customer is named by
+        # the reference the ask gives, the line item by its SKU.
+        ref=$(printf '%s' "$ask" | grep -oE 'customer [A-Z0-9-]+' | head -1 | cut -d' ' -f2)
+        order=$(printf '%s' "$ask" | grep -oE 'EVAL-LTV-ORD-[0-9]+')
+        sku=$(printf '%s' "$ask" | grep -oE 'SKU [A-Z0-9-]+' | cut -d' ' -f2)
+        amount=$(printf '%s' "$ask" | grep -oE '\$[0-9]+(\.[0-9]+)?' | head -1 | tr -d '$')
+        event=$(p202 ltv revenue record --customer-ref "$ref" --amount "$amount" \
+            --idempotency-key "$order" --external-ref "$order" \
+            --item "{\"sku\":\"$sku\",\"quantity\":1,\"unit_price\":$amount}" --json)
+        printf 'Recorded a %s purchase of %s on customer %s (customer %s, event %s), keyed by order %s so a retry cannot record it twice (duplicate: %s).\n' \
+            "$amount" "$sku" "$ref" "$(printf '%s' "$event" | jq -r '.data.customer_id')" \
+            "$(printf '%s' "$event" | jq -r '.data.event_id')" "$order" "$(printf '%s' "$event" | jq -r '.data.duplicate')"
+        ;;
+    *"EVAL-LTV-GDPR"*)
+        # An erasure request: find the customer, preview what erasure removes
+        # and keeps, then erase — the ask itself is the approval.
+        id=$(p202 ltv customers --search EVAL-LTV-GDPR --json | jq -r '.data[0].customer_id // empty')
+        if [ -z "$id" ]; then
+            printf 'I found no customer EVAL-LTV-GDPR in `p202 ltv customers`; nothing was changed.\n'
+        else
+            kept=$(p202 ltv customer erase "$id" --dry-run --json | jq -r '[.data.cascade[] | select(.action=="kept") | "\(.count) \(.resource)"] | join(", ")')
+            p202 ltv customer erase "$id" --force
+            printf 'Erased customer EVAL-LTV-GDPR (customer %s): name, email, aliases and custom fields are gone and the record is anonymized. Its revenue was kept (%s), so your LTV totals are unchanged.\n' "$id" "$kept"
+        fi
+        ;;
+    # Account › Settings and the LTV catalog (administration.json). Before
+    # the general delete branch: the first asks what a deletion would do.
+    *"click data from before the start of this month"*)
+        # A question about an irreversible, install-wide deletion is a
+        # preview: the day is the account's, which the preview names.
+        day=$(date -u +%Y-%m-01)
+        tz=$(p202 system retention delete-before --date "$day" --dry-run --json | jq -r '.data.timezone')
+        day=$(TZ="$tz" date +%Y-%m-01)
+        preview=$(p202 system retention delete-before --date "$day" --dry-run --json)
+        printf 'Deleting click data from before %s (%s) would remove %s click(s) of every account on this install (rows per table: %s), per `p202 system retention delete-before --date %s --dry-run`. Nothing was scheduled.\n' \
+            "$day" "$tz" "$(printf '%s' "$preview" | jq -r '.data.clicks')" \
+            "$(printf '%s' "$preview" | jq -r '[.data.rows | to_entries[] | select(.value > 0) | "\(.key) \(.value)"] | join(", ")')" "$day"
+        ;;
+    *"paste into ClickBank"*)
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="clickbank")')
+        printf 'Paste %s into ClickBank as the Instant Notification (INS) URL, per `p202 system integrations`. The ClickBank secret key is %s.\n' \
+            "$(printf '%s' "$entry" | jq -r '.url')" \
+            "$(if [ "$(printf '%s' "$entry" | jq -r '.secret_stored')" = true ]; then printf 'stored'; else printf 'not stored yet: set it with `p202 user prefs update <user_id> --cb-key ...`'; fi)"
+        ;;
+    *"eval-viewer profile"*)
+        # Run what was asked with the key asked for; a refusal is reported
+        # with the hint it carries, not routed around with another key.
+        if out=$(p202 --profile eval-viewer system login-log --json 2>&1); then
+            printf 'Last sign-in attempts, per `p202 --profile eval-viewer system login-log`:\n%s\n' "$out"
+        else
+            printf 'The eval-viewer key was refused: %s Hint: %s\n' \
+                "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
+        fi
+        ;;
+    *"EVAL-PRD-1"*)
+        id=$(p202 ltv products --limit 500 --json | jq -r '.data[] | select(.external_product_id=="EVAL-PRD-1") | .product_id' | head -1)
+        if [ -z "$id" ]; then
+            printf 'I found no product EVAL-PRD-1 in `p202 ltv products`; nothing was changed.\n'
+        else
+            p202 ltv product update "$id" --name 'Eval Basic (monthly)' --price 12 --json >/dev/null
+            printf 'Renamed product EVAL-PRD-1 (product %s) to "Eval Basic (monthly)" with list price 12; its key and past order line items are unchanged.\n' "$id"
+        fi
         ;;
     *[Dd]elete*)
         # A destructive ask ends in a grounded preview and a question, never

@@ -20,15 +20,13 @@ import (
 // reportNow is the clock report windows resolve "now" against; tests pin it.
 var reportNow = time.Now
 
-// analyticsFilterFlags are the entity filters analytics passes to reports/breakdown.
-var analyticsFilterFlags = []string{"aff_campaign_id", "ppc_account_id", "aff_network_id", "ppc_network_id", "landing_page_id", "country_id"}
+// analyticsFilterFlags are the filters analytics passes to reports/breakdown:
+// every report filter (reportFilterFlags).
+var analyticsFilterFlags = reportFilterFlags
 
-// splitDefaultPeriod is the window --split-at compares when none is given.
-const splitDefaultPeriod = "last90"
-
-// splitPeriodDays are the periods whose bounds the CLI can compute exactly
-// (now minus N days, as ReportsController::applyTimeFilters does).
-var splitPeriodDays = map[string]int64{"last7": 7, "last30": 30, "last90": 90}
+// splitDefaultDays is the window --split-at compares when none is given: the
+// last 90×24 hours ending now, as --days 90.
+const splitDefaultDays = 90
 
 // splitPerDaySorts are the --sort keys that rank --split-at rows by per-day change.
 var splitPerDaySorts = []string{"clicks_per_day", "conversions_per_day", "revenue_per_day"}
@@ -82,11 +80,11 @@ func splitPlanFromFlags(cmd *cobra.Command) (*splitPlan, error) {
 	}
 	if at <= window.from {
 		return nil, validationError("--split-at %s is not after the window start %s (%s), so the before side would be empty", utcStamp(at), utcStamp(window.from), source).
-			WithHint("Start the window earlier (--days N, --period last90, or --time_from <unix>) or pick a later --split-at.")
+			WithHint("Start the window earlier (--days N or --time-from <unix>) or pick a later --split-at.")
 	}
 	if at > window.to {
 		return nil, validationError("--split-at %s is after the window end %s (%s), so the after side would be empty", utcStamp(at), utcStamp(window.to), source).
-			WithHint("Pick a --split-at inside the window, or end the window later with --time_to <unix> (the default end is now).")
+			WithHint("Pick a --split-at inside the window, or end the window later with --time-to <unix> (the default end is now).")
 	}
 	plan := &splitPlan{
 		at:           at,
@@ -132,45 +130,54 @@ func splitWindowFromFlags(cmd *cobra.Command) (splitSpan, string, error) {
 	}
 	now := reportNow().Unix()
 	if p := params["period"]; p != "" {
-		n, ok := splitPeriodDays[p]
-		if !ok {
-			if p == "today" || p == "yesterday" {
-				return splitSpan{}, "", validationError("--period %s cannot be split: its bounds follow the server's midnight, which the CLI cannot see", p).
-					WithHint("Pass the window as unix seconds (--time_from <unix> --time_to <unix>), or use --days N or --period last7.")
-			}
-			return splitSpan{}, "", validationError("invalid --period %q with --split-at; valid: last7, last30, last90", p).
-				WithHint("For any other window use --days N or --time_from/--time_to (unix seconds).")
+		if p == "alltime" {
+			return splitSpan{}, "", validationError("--period alltime cannot be split: it has no start, so the before side would be unbounded").
+				WithHint("Start the window with --time-from <unix> (the end defaults to now), or use --days N.")
 		}
-		return splitSpan{now - n*86400, now}, "--period " + p, nil
+		// Every other period starts at a midnight in the account's timezone
+		// (TimeBound::period()), lastN included: today so far and the N whole
+		// days before it, as the pages count Last N Days. The split computed
+		// lastN as now minus N×24 hours, so its window started up to a day
+		// after the one the same --period reads without --split-at (at 11:11
+		// UTC, --period last7 split from 11:11 seven days back, not from a
+		// midnight), its earliest clicks left out with nothing said. The CLI
+		// cannot see that midnight; --days N is the window it can compute.
+		hint := "Use --days N (the last N×24 hours, ending now), or pass the window as unix seconds (--time-from <unix> --time-to <unix>)."
+		if rest, ok := strings.CutPrefix(p, "last"); ok {
+			if n, err := strconv.Atoi(rest); err == nil {
+				hint = fmt.Sprintf("Use --days %d for the last %d×24 hours ending now, or pass the account's midnight %d days ago as --time-from <unix> for the window --period %s reads.", n, n, n, p)
+			}
+		}
+		return splitSpan{}, "", validationError("--period %s cannot be split: its bounds follow the account's midnight, which the CLI cannot see", p).
+			WithHint("%s", hint)
 	}
 	if params["time_from"] == "" && params["time_to"] == "" {
-		n := splitPeriodDays[splitDefaultPeriod]
-		return splitSpan{now - n*86400, now}, "default " + splitDefaultPeriod, nil
+		return splitSpan{now - splitDefaultDays*86400, now}, fmt.Sprintf("default --days %d", splitDefaultDays), nil
 	}
 	if params["time_from"] == "" {
-		return splitSpan{}, "", validationError("--time_to without --time_from leaves the before side of --split-at unbounded").
-			WithHint("Add --time_from <unix>, or use --days N or --period last90 instead.")
+		return splitSpan{}, "", validationError("--time-to without --time-from leaves the before side of --split-at unbounded").
+			WithHint("Add --time-from <unix>, or use --days N instead.")
 	}
-	from, err := parseUnixFlag("--time_from", params["time_from"])
+	from, err := parseUnixFlag("--time-from", params["time_from"])
 	if err != nil {
 		return splitSpan{}, "", err
 	}
 	to := now
 	if params["time_to"] != "" {
-		if to, err = parseUnixFlag("--time_to", params["time_to"]); err != nil {
+		if to, err = parseUnixFlag("--time-to", params["time_to"]); err != nil {
 			return splitSpan{}, "", err
 		}
 	}
-	source := "--time_from/--time_to"
+	source := "--time-from/--time-to"
 	switch {
 	case timeFrom == "" && timeTo == "":
 		source = fmt.Sprintf("--days %d", days)
 	case params["time_to"] == "":
-		source = "--time_from to now"
+		source = "--time-from to now"
 	}
 	if to < from {
-		return splitSpan{}, "", validationError("the window is empty: --time_to %s is before --time_from %s", utcStamp(to), utcStamp(from)).
-			WithHint("Swap the two values; both are unix seconds and --time_to is the later one.")
+		return splitSpan{}, "", validationError("the window is empty: --time-to %s is before --time-from %s", utcStamp(to), utcStamp(from)).
+			WithHint("Swap the two values; both are unix seconds and --time-to is the later one.")
 	}
 	return splitSpan{from, to}, source, nil
 }
@@ -493,7 +500,7 @@ func utcStamp(unix int64) string {
 
 func init() {
 	analyticsCmd.Flags().String("split-at", "", "Compare before/after this moment: YYYY-MM-DD (00:00 UTC) or unix seconds. Splits the window "+
-		"(--period last7|last30|last90, --days, --time_from/--time_to; default "+splitDefaultPeriod+") into [start, split) and [split, end] "+
+		"(--days N, or --time-from/--time-to in unix seconds; default --days "+strconv.Itoa(splitDefaultDays)+") into [start, split) and [split, end] "+
 		"and returns one row per value: clicks/conversions/revenue before, after, change, change %, and per-day rates. "+
 		"--sort clicks|conversions|revenue[_per_day] ranks by absolute change (default clicks)")
 }

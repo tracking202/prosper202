@@ -3,6 +3,11 @@
 declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
+// Held until the end, so a notice printed before a failure cannot send the
+// headers: under CGI or FPM with output_buffering off, the first output
+// fixes the status at 200 and the catch's 500 is dropped (measured with
+// php-cgi).
+ob_start();
 try {
     require_once __DIR__ . '/../202-config/connect.php';
     require_once __DIR__ . '/../202-config/class-dataengine.php';
@@ -15,7 +20,13 @@ try {
 
     $de = new DataEngine();
     $de->getSummary($start, $start + 3599, $snippet, 1, true);
-} catch (Exception $e) {
+} catch (\Throwable $e) {
+    // process_dataengine_job.php marks the hour processed when every call
+    // answers 200, so a rollup that failed answered 200 here and its hour
+    // was never rolled up again (measured with the write refused: 200,
+    // "Error: dataengine query failed"). A failure is a 500, and the job
+    // leaves the hour for its next run.
+    http_response_code(500);
     echo "Error: " . $e->getMessage();
     error_log("DEJ Error: " . $e->getMessage());
 }

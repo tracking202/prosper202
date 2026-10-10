@@ -17,7 +17,7 @@ if (p202IsSpeculativeRequest()) {
 // Validate landing page id
 $landingId = RedirectHelper::getIntParam('lpip');
 if ($landingId === null) {
-    RedirectHelper::redirect('/202-404.php');
+    RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
 
 $mysql['landing_page_id_public'] = $db->real_escape_string((string)$landingId);
@@ -40,13 +40,15 @@ $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) { die(); }
 //DONT ESCAPE THE DESITNATIONL URL IT TOTALLY SCREWS UP
-$html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8'); 
+$html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+// The second cloaked hop, under this install's directory (p202InstallPath()).
+$html['cloaked_hop'] = htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php'), ENT_QUOTES, 'UTF-8');
 
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
 // get the click id
-$mysql['click_id']=$db->real_escape_string((string)($_COOKIE['tracking202subid'] ?? ''));
+$mysql['click_id']=$db->real_escape_string((string)(getCookie202('tracking202subid') ?? ''));
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
@@ -69,7 +71,7 @@ if(isset($mysql['202vars'])){
 	</head>
 	<body>
 	
-		<form name="form1" id="form1" method="get" action="/tracking202/redirect/cl2.php">
+		<form name="form1" id="form1" method="get" action="<?php echo $html['cloaked_hop']; ?>">
 			<input type="hidden" name="q" value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>"/>
 		</form>
 		<script type="text/javascript">

@@ -140,7 +140,7 @@ final class SessionCookieSecureTest extends TestCase
     private static function sourceFiles(): iterable
     {
         $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator(self::root(), \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree(self::root())
         );
         foreach ($files as $file) {
             $relative = substr($file->getPathname(), strlen(self::root()) + 1);

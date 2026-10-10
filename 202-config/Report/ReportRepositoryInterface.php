@@ -28,13 +28,15 @@ interface ReportRepositoryInterface
     ): array;
 
     /**
-     * Time series aggregation grouped by hour/day/week/month.
+     * Time series aggregation grouped by hour/day/week/month of $timezone's
+     * clock (the account's).
      *
      * @return list<array<string, mixed>> Rows with period and metric columns
      */
     public function timeseries(
         ReportQuery $query,
         string $interval = 'day',
+        string $timezone = 'UTC',
     ): array;
 
     /**

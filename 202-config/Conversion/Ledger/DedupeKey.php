@@ -23,8 +23,12 @@ final class DedupeKey
     /** Column width; every key built here fits. */
     public const MAX_LENGTH = 320;
 
-    /** Free-text components (transaction ids, event ids) are capped here. */
-    private const MAX_TEXT = 255;
+    /**
+     * Free-text components (transaction ids, event ids) are capped here, in
+     * bytes. Public so a write boundary can refuse a longer id by name
+     * instead of letting text() throw from inside the write.
+     */
+    public const MAX_TEXT = 255;
 
     private function __construct()
     {

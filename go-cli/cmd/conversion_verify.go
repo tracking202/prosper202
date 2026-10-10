@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -26,28 +25,13 @@ func trackingBaseURL() (string, error) {
 		return "", err
 	}
 	if prof.URL == "" {
-		return "", validationError("no URL configured. Run: p202 config set-url <url>")
+		return "", fmt.Errorf("%w. Run: p202 config set-url <url>", config.ErrNoURL)
 	}
 	return strings.TrimRight(prof.URL, "/"), nil
 }
 
-var conversionPostbackURLCmd = &cobra.Command{
-	Use:   "postback-url",
-	Short: "Print the server-to-server postback URL to give your affiliate network",
-	Long:  "Outputs the gpb.php postback template. The network calls it with the conversion payout and the click subid.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		base, err := trackingBaseURL()
-		if err != nil {
-			return err
-		}
-		url := base + "/tracking202/static/gpb.php?amount={payout}&subid={subid}"
-		fmt.Fprintln(os.Stderr, "Server-to-server postback URL (give this to your network):")
-		fmt.Fprintln(os.Stderr, "  Replace {payout} with the conversion amount macro and {subid} with the network's subid macro")
-		fmt.Fprintln(os.Stderr, "  (use ?sid= instead of ?subid= if the network only supports sid).")
-		fmt.Println(url)
-		return nil
-	},
-}
+// conversionPostbackURLCmd is in setup_code.go: it prints what the API's
+// GET /conversions/postback-code builds, on the install's tracking domain.
 
 var conversionSimulateCmd = &cobra.Command{
 	Use:   "simulate",
@@ -92,11 +76,7 @@ var conversionSimulateCmd = &cobra.Command{
 		}
 
 		// 2. Fire a click and capture the subid from the redirect.
-		sep := "?"
-		if strings.Contains(link, "?") {
-			sep = "&"
-		}
-		clickRes, err := probeClient().Get(link + sep + "t202kw=simulate")
+		clickRes, err := probeClient().Get(withLinkParam(link, "t202kw", "simulate"))
 		if err != nil {
 			return withHint(fmt.Errorf("click request failed: %w", err), "The tracking link itself could not be fetched; check that the configured URL is reachable from here and that the tracker is active.")
 		}

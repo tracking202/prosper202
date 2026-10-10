@@ -10,7 +10,7 @@ import (
 
 // countryNames maps ISO 3166-1 alpha-2 codes to the country name. The rotator
 // criteria value format is "Name(CC)", so --country US builds "United States(US)".
-// Covers the common affiliate geos; use raw --criteria_json for anything absent.
+// Covers the common affiliate geos; use raw --criteria-json for anything absent.
 var countryNames = map[string]string{
 	"US": "United States", "CA": "Canada", "GB": "United Kingdom", "AU": "Australia",
 	"NZ": "New Zealand", "IE": "Ireland", "NL": "Netherlands", "DE": "Germany",

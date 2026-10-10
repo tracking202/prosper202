@@ -14,9 +14,14 @@ By default, when you click on your Prosper202 CS link, the first screen you see 
 
 Next we have the breakdown overview section which gives you a overall daily breakdown of your campaigns' performance. You have some filtering capabilities here but this is a good way to see a quick day to day breakdown.
 ![Screen Shot 2015-12-03 at 10.33.12 AM.png](../images/reporting-2.png)
+
+Each row is one hour, day, month or year of the calendar: 7 September and 7 October are two rows, and so is 3 pm on two different days. (A row used to be the 7th of every month in the window, or 3 pm of every day.)
+
 ## Day Parting and Week Parting
 
 The next two sections allow you to see hourly performance (day parting) or which day of the week your campaign is performing best (week parting). This is useful for a granular level look at how your campaign is performing and great if you want further control over time on the specifics of when you want your campaign to run efficiently.
+
+Hours, weekdays and days on every report page are your account's: the time zone in Personal Settings, on each side of a daylight-saving change, and to the minute in a zone such as India's (+05:30). Day Parting and Week Parting show the same figures as `GET /reports/daypart` and `/reports/weekpart` (and `p202 report daypart`/`weekpart`) for the same window. They used to use your zone's offset on the day you looked, rounded to a whole hour, for the whole window.
 
 **Group Overview**
 

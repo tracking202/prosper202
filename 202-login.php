@@ -149,8 +149,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (empty($error) && $user_row) {
 		AUTH::delete_old_auth_hash();
 
-		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '0.0.0.0';
-		$ip_id = (int) INDEXES::get_ip_id($ip);
+		// The throttle's address; FILTER::checkUserIP compares clicks with it.
+		$ip_id = (int) INDEXES::get_ip_id($login_ip);
 		$survey_data = getSurveyData($user_row['install_hash']);
 		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
 		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;

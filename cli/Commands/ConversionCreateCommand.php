@@ -18,16 +18,16 @@ class ConversionCreateCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Manually log a conversion')
-            ->addOption('click_id', null, InputOption::VALUE_REQUIRED, 'Click ID (required)')
+            ->addOption('click-id', null, InputOption::VALUE_REQUIRED, 'Click ID (required)')
             ->addOption('payout', null, InputOption::VALUE_REQUIRED, 'Payout amount (overrides campaign default)')
-            ->addOption('transaction_id', null, InputOption::VALUE_REQUIRED, 'Transaction ID for dedup');
+            ->addOption('transaction-id', null, InputOption::VALUE_REQUIRED, 'Transaction ID for dedup');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $clickId = $input->getOption('click_id');
+        $clickId = $input->getOption('click-id');
         if (!$clickId) {
-            $output->writeln('<error>--click_id is required</error>');
+            $output->writeln('<error>--click-id is required</error>');
             return Command::FAILURE;
         }
 
@@ -35,8 +35,8 @@ class ConversionCreateCommand extends BaseCommand
         if ($input->getOption('payout') !== null) {
             $body['payout'] = (float)$input->getOption('payout');
         }
-        if ($input->getOption('transaction_id') !== null) {
-            $body['transaction_id'] = $input->getOption('transaction_id');
+        if ($input->getOption('transaction-id') !== null) {
+            $body['transaction_id'] = $input->getOption('transaction-id');
         }
 
         $result = $this->client()->post('conversions', $body);

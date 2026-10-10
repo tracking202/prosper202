@@ -30,7 +30,7 @@ final class DocumentationLinksTest extends TestCase
     private static function pages(): array
     {
         $pages = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root() . '/documentation', \FilesystemIterator::SKIP_DOTS));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::root() . '/documentation'));
         foreach ($files as $file) {
             /** @var \SplFileInfo $file */
             if (strtolower($file->getExtension()) === 'md') {

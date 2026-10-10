@@ -25,7 +25,7 @@ var configCmd = &cobra.Command{
 
 var configSetURLCmd = &cobra.Command{
 	Use:   "set-url <url>",
-	Short: "Set the Prosper202 instance URL",
+	Short: "Set the Prosper202 instance URL the API is reached at (the install's address)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -151,7 +151,10 @@ var configShowCmd = &cobra.Command{
 
 var configTestCmd = &cobra.Command{
 	Use:   "test",
-	Short: "Test connection to the Prosper202 instance",
+	Short: "Test the connection to the Prosper202 instance and that the API key works",
+	Long: "Checks that the instance answers (GET /system/health) and then that it accepts the\n" +
+		"configured key, and says which user the key acts as (`p202 whoami` shows more).\n" +
+		"The health check alone is answered before authentication, so it passed with any key.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -161,10 +164,35 @@ var configTestCmd = &cobra.Command{
 		if err != nil {
 			return withHint(fmt.Errorf("connection failed: %w", err), "Check `p202 config show` (URL and key), that the instance is reachable, and that the key is valid in the Prosper202 UI under API keys.")
 		}
-		if !jsonOutput {
-			fmt.Println("Connection successful!")
+		p, err := fetchPrincipal(c)
+		if err != nil && !errors.Is(err, errNoPrincipal) {
+			return withHint(fmt.Errorf("the instance answers, but the key was not accepted: %w", err),
+				"Set a valid key with `p202 config set-key` (Account > API keys in the UI, or `p202 user apikey create` from a working key).")
 		}
-		render(data)
+		var health map[string]interface{}
+		if json.Unmarshal(data, &health) != nil {
+			health = map[string]interface{}{}
+		}
+		if d, ok := health["data"].(map[string]interface{}); ok {
+			health = d
+		}
+		if p.UserID > 0 {
+			health["user_id"] = p.UserID
+			health["roles"] = p.Roles
+			health["scopes"] = p.Scopes
+		}
+		encoded, err := json.Marshal(map[string]interface{}{"data": health})
+		if err != nil {
+			return fmt.Errorf("encoding the result: %w", err)
+		}
+		if !jsonOutput {
+			if p.UserID > 0 {
+				fmt.Printf("Connection successful: the key acts as user %d.\n", p.UserID)
+			} else {
+				fmt.Println("Connection successful: the key is accepted (this server does not say which user it belongs to).")
+			}
+		}
+		render(encoded)
 		return nil
 	},
 }

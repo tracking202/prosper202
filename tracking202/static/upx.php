@@ -29,25 +29,23 @@ if ($requestedClick['malformed'] !== null) {
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
 } else { // nothing named a click: fall back to this address's last click
-            // ok grab the last click from this ip_id
-            $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
+            // The visitor's last click by the address the click path stored
+            // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR: among the
+            // first account's clicks, stored under its setting, which is the
+            // install's (p202ApplyOwnerPrivacy()).
+            p202ApplyOwnerPrivacy($mysql['user_id']);
             $daysago = time() - 2592000; // 30 days ago
-            $click_sql1 = "	SELECT 	202_clicks.click_id
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id) 
-					WHERE 	202_ips.ip_address='" . $mysql['ip_address'] . "'
-					AND		202_clicks.user_id='" . $mysql['user_id'] . "'  
-					AND		202_clicks.click_time >= '" . $daysago . "'
-					ORDER BY 	202_clicks.click_id DESC 
-					LIMIT 		1";
-            
-            $click_result1 = $db->query($click_sql1) or record_mysql_error($db, $click_sql1);
-            $click_row1 = $click_result1->fetch_assoc();
+            $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+                new \Prosper202\Database\Connection($db),
+                p202StoredVisitorIp(),
+                (int) $mysql['user_id'],
+                $daysago,
+                !trackingEnabled()
+            );
 
-            if ($click_row1) {
-                $mysql['click_id'] = $db->real_escape_string($click_row1['click_id']);
-                $mysql['ppc_account_id'] = $db->real_escape_string($click_row1['ppc_account_id'] ?? '');
+            if ($click_row1 !== null) {
+                $mysql['click_id'] = (string) $click_row1['click_id'];
+                $mysql['ppc_account_id'] = (string) $click_row1['ppc_account_id'];
             }
 }
 
@@ -108,6 +106,10 @@ $cvar_sql_row = $cvar_sql_result ? $cvar_sql_result->fetch_assoc() : null;
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the conversion stores the address.
+p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string) ($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string) ($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string) ($cvar_sql_row['c2'] ?? ''));
@@ -212,7 +214,7 @@ if (is_numeric($mysql['click_id'])) {
 			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
 			'time_difference' => $time_difference,
-			'ip'              => p202ClientIp($_SERVER),
+			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => $click_payout_for_log,

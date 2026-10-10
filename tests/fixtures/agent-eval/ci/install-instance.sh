@@ -65,7 +65,11 @@ log "Serving on $BASE_URL (log: $RUNTIME_DIR/php-server.log)"
 # SKAN receiver, is a 404 without help. router.php (next to this script)
 # fills that gap and passes every other request through untouched.
 ROUTER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/router.php"
-php -S "$HTTP_HOST:$HTTP_PORT" "$ROUTER" >"$RUNTIME_DIR/php-server.log" 2>&1 &
+# More than one worker: the cron's report rebuild calls this server back
+# (202-cronjobs/process_dataengine_job.php fetches dej.php), and a single
+# worker busy with the cron request can never answer it.
+PHP_CLI_SERVER_WORKERS=${PHP_CLI_SERVER_WORKERS:-4} \
+    php -S "$HTTP_HOST:$HTTP_PORT" "$ROUTER" >"$RUNTIME_DIR/php-server.log" 2>&1 &
 echo $! > "$RUNTIME_DIR/php-server.pid"
 
 for i in $(seq 1 30); do

@@ -6,6 +6,7 @@ namespace Tests\Analyze;
 
 use PHPUnit\Framework\TestCase;
 use Tracking202\Analyze\MobileAppsReportController;
+use Tracking202\Report\ReportWindow;
 
 /**
  * What Analyze › Mobile Apps derives from a query string before it asks the
@@ -76,7 +77,7 @@ final class MobileAppsReportTest extends TestCase
             'last14'    => ['last14', 'last14 2026-02-15 00:00:00 .. 2026-03-01 23:59:59'],
             'last30'    => ['last30', 'last30 2026-01-30 00:00:00 .. 2026-03-01 23:59:59'],
             'last90'    => ['last90', 'last90 2025-12-01 00:00:00 .. 2026-03-01 23:59:59'],
-            'thismonth' => ['thismonth', 'thismonth 2026-03-01 00:00:00 .. 2026-03-31 23:59:59'],
+            'thismonth' => ['thismonth', 'thismonth 2026-03-01 00:00:00 .. 2026-03-01 23:59:59'], // the 1st through today, as the click calendar's
             'lastmonth' => ['lastmonth', 'lastmonth 2026-02-01 00:00:00 .. 2026-02-28 23:59:59'],
         ];
     }
@@ -248,10 +249,10 @@ final class MobileAppsReportTest extends TestCase
     }
 
     /**
-     * Presets grab_timeframe() has no counterpart for, so there is nothing to
-     * compare them against. Last 90 Days is this report's own: a conversion
-     * window runs to 35 days and postbacks trickle in behind it, which is a
-     * question the click reports are never asked.
+     * Presets the click calendar has no counterpart for, so there is nothing
+     * to compare them against. Last 90 Days is this report's own: a
+     * conversion window runs to 35 days and postbacks trickle in behind it,
+     * which is a question the click reports are never asked.
      *
      * testTheOnlyPresetsExemptFromTheCalendarAreOnesItDoesNotHave keeps this
      * honest — an entry added here to silence a real divergence fails there.
@@ -280,75 +281,56 @@ final class MobileAppsReportTest extends TestCase
     }
 
     /**
-     * grab_timeframe() answers an unknown preset with *today* rather than
-     * failing, so an exemption is indistinguishable from a preset it simply
-     * disagrees about — which makes the exemption list a place a real
-     * divergence could be parked. Each entry has to earn its place by
-     * actually being unknown over there.
+     * The click calendar is ReportWindow: grab_timeframe(), which every
+     * click report reads its window from, resolves each named range with
+     * it. It refuses a name it does not offer, so each exemption has to earn
+     * its place by being refused there.
      */
     public function testTheOnlyPresetsExemptFromTheCalendarAreOnesItDoesNotHave(): void
     {
-        require_once dirname(__DIR__, 2) . '/202-config/functions-timeframe.php';
-        $previous = date_default_timezone_get();
-        date_default_timezone_set('UTC');
-        try {
-            foreach (self::PRESETS_THE_CLICK_CALENDAR_LACKS as $range) {
-                self::assertArrayHasKey(
-                    $range,
-                    MobileAppsReportController::RANGES,
-                    "'$range' is exempted from a comparison for a preset this report does not offer"
-                );
-                do {
-                    $day = gmdate('Y-m-d');
-                    $window = grab_timeframe($range);
-                    $today = grab_timeframe('today');
-                } while ($day !== gmdate('Y-m-d'));
-                self::assertSame(
-                    [$today['from'], $today['to']],
-                    [$window['from'], $window['to']],
-                    "grab_timeframe() knows '$range' after all, so it must be compared rather than exempted"
-                );
+        foreach (self::PRESETS_THE_CLICK_CALENDAR_LACKS as $range) {
+            self::assertArrayHasKey(
+                $range,
+                MobileAppsReportController::RANGES,
+                "'$range' is exempted from a comparison for a preset this report does not offer"
+            );
+            try {
+                ReportWindow::preset($range, 'UTC', self::NOW);
+                self::fail("the click calendar knows '$range' after all, so it must be compared rather than exempted");
+            } catch (\InvalidArgumentException) {
+                // Not one of the calendar's.
             }
-        } finally {
-            date_default_timezone_set($previous);
         }
     }
 
     /**
+     * Executed against the click calendar, not reasoned about from the
+     * labels. They were named identically and resolved differently — 'Last 7
+     * Days' was 7 days here and 8 on every click report — so one label meant
+     * two windows and a reconciliation looked like missing postbacks. Both
+     * are UTC here, which is the one difference the page states outright.
+     *
+     * Compared to the second, ends included. This compared only up to the
+     * instant, because This Month ran to the last day of the month here and
+     * to the end of today on the calendar; the date inputs then showed a
+     * window ending weeks ahead under a comment saying the calendar's did
+     * too (a second grab_timeframe(), in a file no page loaded, had). This
+     * Month is the calendar's window now.
+     *
      * @dataProvider calendarPresets
      */
     public function testEachPresetIsTheSameWindowTheClickCalendarMeans(string $range): void
     {
-        // Executed against the other implementation, not reasoned about from
-        // the labels. They were named identically and resolved differently —
-        // 'Last 7 Days' was 7 days here and 8 on every click report, and
-        // 'This Month' stopped at today instead of the end of the month — so
-        // one label meant two windows and a reconciliation looked like
-        // missing postbacks. Both are UTC here, which is the one difference
-        // the page states outright.
-        require_once dirname(__DIR__, 2) . '/202-config/functions-timeframe.php';
-        $previous = date_default_timezone_get();
-        date_default_timezone_set('UTC');
-        try {
-            // One clock for both. grab_timeframe() reads the real one and
-            // takes no argument, so this case is the one that cannot use the
-            // fixed instant the rest of the file does; the day is re-read
-            // afterwards so a run that straddles midnight retries rather than
-            // reporting a difference that is only the calendar turning over.
-            do {
-                $day = gmdate('Y-m-d');
-                $now = time();
-                $calendar = grab_timeframe($range);
-                $mine = MobileAppsReportController::resolveWindow($range, '', '', $now);
-            } while ($day !== gmdate('Y-m-d'));
-        } finally {
-            date_default_timezone_set($previous);
+        // The awkward instant, and one in the middle of a month.
+        foreach ([self::NOW, self::NOW + 16 * self::DAY + 15 * 3600] as $now) {
+            $held = static fn (array $w): string => gmdate('Y-m-d H:i:s', (int) $w['from'])
+                . ' .. ' . gmdate('Y-m-d H:i:s', (int) $w['to']);
+            self::assertSame(
+                $held(ReportWindow::preset($range, 'UTC', $now)),
+                $held(MobileAppsReportController::resolveWindow($range, '', '', $now)),
+                "the click calendar and this report must mean the same thing by '$range' at " . gmdate('Y-m-d H:i', $now)
+            );
         }
-        self::assertSame(
-            gmdate('Y-m-d H:i:s', $calendar['from']) . ' .. ' . gmdate('Y-m-d H:i:s', $calendar['to']),
-            gmdate('Y-m-d H:i:s', $mine['from']) . ' .. ' . gmdate('Y-m-d H:i:s', $mine['to']),
-            "the click calendar and this report must mean the same thing by '$range'"
-        );
     }
 
     public function testNoTwoPresetsResolveToTheSameWindow(): void
@@ -360,10 +342,14 @@ final class MobileAppsReportTest extends TestCase
         // default arm is gone — such a name now raises UnhandledMatchError on
         // the first page load — and this is the assertion that would have
         // caught the old behaviour: two labels, one window.
+        //
+        // In the middle of a month: on the 1st, This Month IS today, on the
+        // click calendar and here alike.
+        $now = self::NOW + 16 * self::DAY + 15 * 3600;
         $seen = [];
         self::assertNotSame([], MobileAppsReportController::RANGES, 'there are presets to check');
         foreach (array_keys(MobileAppsReportController::RANGES) as $range) {
-            $window = MobileAppsReportController::resolveWindow($range, '', '', self::NOW);
+            $window = MobileAppsReportController::resolveWindow($range, '', '', $now);
             $key = $window['from'] . '..' . $window['to'];
             // The message is built from $seen only when there IS a clash;
             // PHPUnit evaluates it either way, and reading a key that is

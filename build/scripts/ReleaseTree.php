@@ -372,7 +372,10 @@ final class ReleaseTree
      */
     private static function verifyPermissions(string $stage): array
     {
-        $problems = [];
+        // Collected, then sorted: the walk is in the filesystem's directory
+        // order, which differs between filesystems, so the same tree would
+        // otherwise list its problems (and pick its first 20) differently.
+        $writable = [];
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($stage, \FilesystemIterator::SKIP_DOTS),
             \RecursiveIteratorIterator::SELF_FIRST
@@ -383,16 +386,18 @@ final class ReleaseTree
                 continue;
             }
             if (($file->getPerms() & 0o022) !== 0) {
-                $problems[] = sprintf(
-                    "'%s' is group- or world-writable (%o); shared hosts running suPHP answer 500 for it",
-                    substr($file->getPathname(), strlen($stage) + 1),
-                    $file->getPerms() & 0o777
-                );
-                if (count($problems) >= 20) {
-                    $problems[] = '... further permission problems not listed';
-                    break;
-                }
+                $writable[substr($file->getPathname(), strlen($stage) + 1)] = $file->getPerms() & 0o777;
             }
+        }
+        ksort($writable, SORT_STRING);
+
+        $problems = [];
+        foreach ($writable as $path => $perms) {
+            if (count($problems) >= 20) {
+                $problems[] = '... further permission problems not listed';
+                break;
+            }
+            $problems[] = sprintf("'%s' is group- or world-writable (%o); shared hosts running suPHP answer 500 for it", $path, $perms);
         }
 
         return $problems;

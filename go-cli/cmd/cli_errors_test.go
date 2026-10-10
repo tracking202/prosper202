@@ -223,3 +223,42 @@ func TestConflictHintsAreSpecificPerCause(t *testing.T) {
 		})
 	}
 }
+
+// A class-wide hint names the failing command's own list/update sibling
+// where the tree has one, and keeps its generic words where it does not.
+func TestHintForNamesTheSiblingCommand(t *testing.T) {
+	old := activeCommandPath
+	defer func() { activeCommandPath = old }()
+
+	activeCommandPath = "p202 campaign get"
+	if got := hintFor(&api.APIError{Status: 404}); !strings.Contains(got, "Run `p202 campaign list`") || strings.Contains(got, "...") {
+		t.Errorf("404 from campaign get: hint = %q", got)
+	}
+	activeCommandPath = "p202 tracker create"
+	if got := hintFor(&api.APIError{Status: 409}); !strings.Contains(got, "`p202 tracker list`") || !strings.Contains(got, "`p202 tracker update`") {
+		t.Errorf("409 from tracker create: hint = %q", got)
+	}
+	// `ltv customer` has no list (it is `ltv customers`): no invented command.
+	activeCommandPath = "p202 ltv customer update"
+	if got := hintFor(&api.APIError{Status: 404}); strings.Contains(got, "p202 ltv customer list") || !strings.Contains(got, "`... list`") {
+		t.Errorf("404 from ltv customer update: hint = %q", got)
+	}
+}
+
+func TestCanonicalFlagsSpellsKnownFlagsAsHelpDoes(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"--aff_campaign_id is required", "--aff-campaign-id is required"},
+		{"window --time_from/--time_to", "window --time-from/--time-to"},
+		{"use `--user_active 1`", "use `--user-active 1`"},
+		{"--not_a_flag stays as typed", "--not_a_flag stays as typed"},
+		{"value \"x--aff_campaign_id\" is quoted text", "value \"x--aff_campaign_id\" is quoted text"},
+	} {
+		if got := canonicalFlags(tc.in); got != tc.want {
+			t.Errorf("canonicalFlags(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	err := validationError("--%s is required", "aff_campaign_id").WithHint("Pass --%s.", "aff_campaign_id")
+	if err.Error() != "--aff-campaign-id is required" || hintFor(err) != "Pass --aff-campaign-id." {
+		t.Errorf("error %q / hint %q, want both in kebab-case", err.Error(), hintFor(err))
+	}
+}

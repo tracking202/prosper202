@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "id": "setup-code-001-the-landing-page-code-is-the-pages",
+      "priority": "high",
+      "state": "seeded fixture: EVAL LP A is a simple landing page of EVAL Campaign A",
+      "ask": "I'm putting the EVAL LP A landing page live. Give me the code to paste into it and the link to use for the offer button.",
+      "expected": {
+        "runs_one_of": [
+          "landing-page code"
+        ],
+        "state_unchanged": [
+          "p202 landing-page list --all --json",
+          "p202 tracker list --all --json"
+        ],
+        "reply_includes": [
+          "landing.php?lpip=",
+          "go.php?lpip="
+        ],
+        "checks": [
+          {
+            "run": "id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname==\"EVAL LP A\") | .landing_page_id' | head -1); p202 landing-page code \"$id\" --json | jq -r '.data.outbound_link'",
+            "includes": [
+              "/tracking202/redirect/go.php?lpip="
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent fetched the code with `p202 landing-page code` (or GET /landing-pages/{id}/code) and hands over the loader script, said to go above </body> of the landing page, and the outbound go.php?lpip= link for the offer, as the command returned them. FAIL if it composes the snippet or the link itself, points the offer button at the campaign URL (the click would never be tracked out), or creates or changes records to answer."
+      },
+      "notes": "Setup > Get LP Code (tracking202/ajax/get_landing_code.php), now GET /landing-pages/{id}/code. The snippet carries the page's public id (lpip=), which differs per instance, so the reply is graded on the parts every install shares and the check reads the real link from the command itself. A read: nothing may be written."
+    },
+    {
+      "id": "setup-code-002-an-advanced-page-names-its-offers",
+      "priority": "medium",
+      "state": "seeded fixture plus an advanced landing page 'EVAL Adv LP' (landing_page_type 1) of EVAL Campaign A, created in setup",
+      "setup": [
+        "a=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign A\") | .aff_campaign_id' | head -1) && p202 landing-page list --all --json | jq -e '.data[] | select(.landing_page_nickname==\"EVAL Adv LP\")' >/dev/null || p202 landing-page create --landing-page-url https://example.com/adv-lp --aff-campaign-id \"$a\" --landing-page-nickname 'EVAL Adv LP' --landing-page-type 1 --json >/dev/null"
+      ],
+      "ask": "The EVAL Adv LP page shows two offers: EVAL Campaign B first, then the EVAL Geo Split redirector. Give me the link for each of the two buttons.",
+      "expected": {
+        "runs_one_of": [
+          "landing-page code"
+        ],
+        "state_unchanged": [
+          "p202 tracker list --all --json"
+        ],
+        "reply_includes": [
+          "go.php?acip=",
+          "go.php?rpi="
+        ],
+        "rubric": "PASS if the agent ran `p202 landing-page code` for EVAL Adv LP with --offer campaign:<EVAL Campaign B's id> then --offer rotator:<EVAL Geo Split's id> (ids looked up with `campaign list` and `rotator list`), and gives the go.php?acip= link for the first button and the go.php?rpi= link for the second. FAIL if the order is swapped, an id is guessed, or the links are composed by hand."
+      },
+      "cleanup": [
+        "id=$(p202 landing-page list --all --json | jq -r '.data[] | select(.landing_page_nickname==\"EVAL Adv LP\") | .landing_page_id' | head -1); [ -z \"$id\" ] || p202 landing-page delete \"$id\" --force --json >/dev/null"
+      ],
+      "notes": "Setup > Get LP Code > Advanced page. An advanced page has no code without its offers: asked without --offer, the API refuses with the page's sentence and the CLI's hint names --offer and the two list commands, which is the recovery an agent should follow."
+    },
+    {
+      "id": "setup-code-003-the-postback-carries-the-networks-macros",
+      "priority": "high",
+      "state": "seeded fixture",
+      "ask": "Our affiliate network uses HasOffers. Give me the server-to-server postback URL to paste into it, so it sends us the sub id and the payout.",
+      "expected": {
+        "runs_one_of": [
+          "conversion postback-url",
+          "conversion pixel"
+        ],
+        "never_runs": [
+          "conversion create",
+          "conversion import",
+          "mark-subids"
+        ],
+        "state_unchanged": [
+          "p202 conversion list --all --json"
+        ],
+        "reply_includes": [
+          "gpb.php?amount=",
+          "subid={aff_sub}"
+        ],
+        "rubric": "PASS if the reply gives the gpb.php postback URL from `p202 conversion postback-url` (or GET /conversions/postback-code) with HasOffers' sub id macro {aff_sub} after subid= and a payout macro (or an explained empty amount) after amount=. FAIL if it invents the host or path, leaves subid= empty without saying what goes there, or records a conversion to 'test' it."
+      },
+      "notes": "Setup > Postback / Pixel. The URL is built on the install's tracking domain, which an agent cannot know from the API URL alone; the command answers it. HasOffers' macros are {aff_sub} for the sub id and {payout} for the amount."
+    },
+    {
+      "id": "setup-code-004-a-traffic-source-variable-reaches-the-link",
+      "priority": "high",
+      "state": "seeded fixture; EVAL Traffic Network has no variable with parameter adid (setup removes one)",
+      "setup": [
+        "n=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"EVAL Traffic Network\") | .ppc_network_id' | head -1) && for v in $(p202 ppc-network variable list \"$n\" --json | jq -r '.data[] | select(.parameter==\"adid\") | .ppc_variable_id'); do p202 ppc-network variable delete \"$n\" \"$v\" --force --json >/dev/null; done"
+      ],
+      "ask": "EVAL Traffic Network can fill in the ad id with its {ad_id} macro. Make our tracking links for that traffic source pass it along as adid, and show me the updated link for the EVAL Campaign A tracker.",
+      "expected": {
+        "runs_one_of": [
+          "ppc-network variable create"
+        ],
+        "reply_includes": [
+          "adid={ad_id}"
+        ],
+        "checks": [
+          {
+            "run": "n=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"EVAL Traffic Network\") | .ppc_network_id' | head -1); p202 ppc-network variable list \"$n\" --json | jq -c '[.data[] | select(.parameter==\"adid\") | .placeholder]'",
+            "includes": [
+              "[\"{ad_id}\"]"
+            ]
+          }
+        ],
+        "rubric": "PASS if the agent added one variable (parameter adid, placeholder {ad_id}) to EVAL Traffic Network with `p202 ppc-network variable create`, then read the tracker's link with `p202 tracker get-url` and shows it carrying adid={ad_id}. FAIL if it edits the link by hand, creates the variable twice, or adds it to another traffic source."
+      },
+      "cleanup": [
+        "n=$(p202 ppc-network list --all --json | jq -r '.data[] | select(.ppc_network_name==\"EVAL Traffic Network\") | .ppc_network_id' | head -1) && for v in $(p202 ppc-network variable list \"$n\" --json | jq -r '.data[] | select(.parameter==\"adid\") | .ppc_variable_id'); do p202 ppc-network variable delete \"$n\" \"$v\" --force --json >/dev/null; done"
+      ],
+      "notes": "Setup > Traffic Sources > variables, now /ppc-networks/{id}/variables. The link builder (GET /trackers/{id}/url) reads the live variables of the tracker's account's source, so the change is visible through the link with no other step."
+    }
+  ]
+}

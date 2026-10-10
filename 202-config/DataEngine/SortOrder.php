@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prosper202\DataEngine;
 
+use Prosper202\Report\LocalTime;
+
 /**
  * Maps report sort keys to ORDER BY clauses.
  *
@@ -17,16 +19,21 @@ namespace Prosper202\DataEngine;
  *
  * Every clause carries a leading space so it can be concatenated directly
  * after "GROUP BY <column>".
+ *
+ * The time keys order groups by their first click, and the hour keys by the
+ * hour of the day on the account's clock ({local}: LocalTime in the zone
+ * passed in). The hour was FROM_UNIXTIME() in the connection's zone, which
+ * the engine used to set to the account's offset rounded to whole hours.
  */
 final class SortOrder
 {
     public const DEFAULT_ORDER = ' ORDER BY leads DESC';
 
     private const ORDER_MAP = [
-        'sort_breakdown_time_order asc' => ' ORDER BY click_time ASC',
-        'sort_breakdown_time_order desc' => ' ORDER BY click_time DESC',
-        'breakdown asc' => ' ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) ASC',
-        'breakdown desc' => ' ORDER BY cast(DATE_FORMAT(FROM_UNIXTIME(click_time),"%k") as UNSIGNED) DESC',
+        'sort_breakdown_time_order asc' => ' ORDER BY MIN(click_time) ASC',
+        'sort_breakdown_time_order desc' => ' ORDER BY MIN(click_time) DESC',
+        'breakdown asc' => ' ORDER BY HOUR({local}) ASC',
+        'breakdown desc' => ' ORDER BY HOUR({local}) DESC',
         'sort_breakdown_clicks asc' => ' ORDER BY `clicks` ASC',
         'sort_breakdown_clicks desc' => ' ORDER BY `clicks` DESC',
         'sort_breakdown_click_throughs asc' => ' ORDER BY `click_out` ASC',
@@ -53,9 +60,14 @@ final class SortOrder
         'sort_breakdown_roi desc' => ' ORDER BY `roi` DESC',
     ];
 
-    public static function orderByClause(string $sortKey): string
+    /** @param string $timezone the account's zone, whose clock the hour keys read */
+    public static function orderByClause(string $sortKey, string $timezone): string
     {
-        return self::ORDER_MAP[$sortKey] ?? self::DEFAULT_ORDER;
+        $clause = self::ORDER_MAP[$sortKey] ?? self::DEFAULT_ORDER;
+
+        return str_contains($clause, '{local}')
+            ? str_replace('{local}', LocalTime::datetimeSql('click_time', $timezone), $clause)
+            : $clause;
     }
 
     /**

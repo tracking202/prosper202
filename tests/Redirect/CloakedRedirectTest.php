@@ -77,24 +77,38 @@ final class CloakedRedirectTest extends TestCase
 
     // --- Tracker not found behavior ---
 
+    /**
+     * cl.php's paths start with the install's directory under the document
+     * root (p202InstallPath(); ClickPathUrlsTest holds the page to it): here,
+     * an install one directory down.
+     */
+    private static function installPath(): string
+    {
+        $root = dirname(__DIR__, 2);
+
+        return \Prosper202\Click\TrackingBaseUrl::installPath(['DOCUMENT_ROOT' => dirname($root)], $root);
+    }
+
     public function testTrackerNotFoundRedirectsTo404(): void
     {
         $trackerRow = false;
+        $base = self::installPath();
 
         if (!$trackerRow) {
-            $actionUrl = '/202-404.php';
-            $redirectUrl = '/202-404.php';
+            $actionUrl = $base . '202-404.php';
+            $redirectUrl = $base . '202-404.php';
             $referrer = '';
             $campaignName = '';
         } else {
-            $actionUrl = '/tracking202/redirect/cl2.php';
+            $actionUrl = $base . 'tracking202/redirect/cl2.php';
             $redirectUrl = $trackerRow['site_url_address'];
             $referrer = $trackerRow['user_pref_cloak_referer'] ?? '';
             $campaignName = $trackerRow['aff_campaign_name'] ?? '';
         }
 
-        self::assertSame('/202-404.php', $actionUrl);
-        self::assertSame('/202-404.php', $redirectUrl);
+        $expected = '/' . basename(dirname(__DIR__, 2)) . '/202-404.php';
+        self::assertSame($expected, $actionUrl);
+        self::assertSame($expected, $redirectUrl);
         self::assertSame('', $referrer);
         self::assertSame('', $campaignName);
     }
@@ -107,12 +121,12 @@ final class CloakedRedirectTest extends TestCase
             'aff_campaign_name' => 'Test Campaign',
         ];
 
-        $actionUrl = '/tracking202/redirect/cl2.php';
+        $actionUrl = self::installPath() . 'tracking202/redirect/cl2.php';
         $redirectUrl = $trackerRow['site_url_address'];
         $referrer = $trackerRow['user_pref_cloak_referer'] ?? '';
         $campaignName = $trackerRow['aff_campaign_name'] ?? '';
 
-        self::assertSame('/tracking202/redirect/cl2.php', $actionUrl);
+        self::assertSame('/' . basename(dirname(__DIR__, 2)) . '/tracking202/redirect/cl2.php', $actionUrl);
         self::assertSame('https://affiliate.com/offer?id=99', $redirectUrl);
         self::assertSame('no-referrer', $referrer);
         self::assertSame('Test Campaign', $campaignName);

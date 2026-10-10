@@ -25,7 +25,7 @@ final class OutboxResolverWiringTest extends TestCase
     {
         $root = dirname(__DIR__, 3);
         $found = 0;
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($iterator as $file) {
             $path = substr($file->getPathname(), strlen($root) + 1);
             if ($file->getExtension() !== 'php' || preg_match('~^(tests|vendor|node_modules|\.git|\.claude)/~', $path) === 1) {

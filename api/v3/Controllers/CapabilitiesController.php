@@ -69,6 +69,32 @@ class CapabilitiesController
                     // current state and the applier's credentials. The
                     // `stage` scope action mints propose-only keys.
                     'staged_writes' => true,
+                    // The UI's Update section as REST, behind the same
+                    // role permissions (access_to_update_section, and
+                    // delete_individual_subids to delete subids):
+                    // POST /clicks/cpc, /conversions/subids,
+                    // /conversions/subids/delete, /conversions/subids/reset
+                    // and /conversions/uploads, each with ?dry_run=1. Not
+                    // stageable.
+                    'update_section' => true,
+                    // The UI's Setup section's code and per-source settings
+                    // as REST, behind its role permissions
+                    // (access_to_setup_section; for the variables,
+                    // remove_traffic_source too): GET /landing-pages/{id}/code
+                    // (Get LP Code), GET /conversions/postback-code
+                    // (Postback / Pixel), and a traffic source's custom
+                    // variables and an account's pixels under
+                    // /ppc-networks/{id}/variables and /ppc-accounts/{id}/pixels.
+                    'setup_section' => true,
+                    // Account › Settings and the API integrations page's
+                    // URLs for this install, behind Admin and the pages'
+                    // permissions (access_to_settings,
+                    // access_to_api_integrations): GET /system/info,
+                    // /system/login-log, /system/retention (+ PUT, and
+                    // POST /system/retention/delete-before with ?dry_run=1),
+                    // /system/isp-lookup (+ PUT), /system/integrations.
+                    // Not stageable.
+                    'administration' => true,
                     // App measurement. `app_platforms` is what the registry
                     // (/apps) accepts a registration for. `app_postbacks` is
                     // one entry per platform-signed postback protocol the
@@ -209,27 +235,24 @@ class CapabilitiesController
         return (string)($row['version'] ?? 'unknown');
     }
 
+    /**
+     * `named-timezone`: every report reads hours, days, weeks and months in
+     * the account's own named zone (user_timezone), daylight saving and
+     * half-hour offsets included, on every server. The reports, the report
+     * pages and the attribution day buckets convert with
+     * Prosper202\Report\LocalTime, from PHP's zone database, so nothing
+     * depends on MySQL's time-zone tables or the connection's zone any more.
+     *
+     * This used to probe CONVERT_TZ() to a named zone and answer
+     * `fallback-only` when MySQL had no zone tables — true of the reports
+     * then (they fell back to UTC hours), and a falsehood once they stopped
+     * asking MySQL: a server without zone tables (Debian's MariaDB among
+     * them) told an agent its reports could not read a named zone while
+     * they did. The answer is a fact about this code, so it is not probed.
+     */
     private function timezoneSupport(): string
     {
-        $stmt = $this->db->prepare("SELECT CONVERT_TZ('2000-01-01 00:00:00', '+00:00', 'UTC') AS tz");
-        if (!$stmt) {
-            return 'unknown';
-        }
-
-        // @phpstan-ignore-next-line capability probe; execute is return-checked with graceful 'unknown' fallback, no Connection in scope
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $result = $stmt->get_result();
-        if ($result === false) {
-            $stmt->close();
-            return 'unknown';
-        }
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        return ($row['tz'] ?? null) === null ? 'fallback-only' : 'named-timezone';
+        return 'named-timezone';
     }
 
     private function maxBulkRows(): int

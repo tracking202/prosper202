@@ -24,7 +24,7 @@ function p202_setup_landing_code_page(mysqli $db, string $mode, string $title, s
 
     $campaignOptions = p202_setup_campaign_options($db, $uid);
     $simplePageOptions = [];
-    foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickname, lp.aff_campaign_id FROM 202_landing_pages AS lp INNER JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = lp.aff_campaign_id) WHERE lp.user_id = '" . $uid . "' AND lp.landing_page_type = '0' AND lp.landing_page_deleted = '0' AND ac.aff_campaign_deleted = '0' ORDER BY lp.landing_page_nickname ASC") as $page) {
+    foreach (p202_setup_rows($db, "SELECT lp.landing_page_id, lp.landing_page_nickname, lp.aff_campaign_id FROM 202_landing_pages AS lp INNER JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = lp.aff_campaign_id AND ac.user_id = lp.user_id) WHERE lp.user_id = '" . $uid . "' AND lp.landing_page_type = '0' AND lp.landing_page_deleted = '0' AND ac.aff_campaign_deleted = '0' ORDER BY lp.landing_page_nickname ASC") as $page) {
         $simplePageOptions[(string) $page['landing_page_id']] = ['label' => (string) $page['landing_page_nickname'], 'data' => ['campaign' => (string) $page['aff_campaign_id']]];
     }
     $advancedPageOptions = [];

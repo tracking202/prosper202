@@ -42,11 +42,13 @@ interface LtvRepositoryInterface
 
     /**
      * LTV maturation by acquisition cohort: customers grouped by first-seen
-     * month with revenue bucketed by months since acquisition.
+     * month with revenue bucketed by months since acquisition, both counted
+     * in $timezone's calendar.
      *
+     * @param string $timezone the account's zone (a name PHP knows)
      * @return list<array<string, mixed>>
      */
-    public function cohorts(int $userId, int $months = 6, ?int $now = null): array;
+    public function cohorts(int $userId, int $months = 6, ?int $now = null, string $timezone = 'UTC'): array;
 
     /**
      * Subscription economics: active MRR/ARR, status counts, and the

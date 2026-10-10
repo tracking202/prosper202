@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// An explicitly empty string flag (`--click_id ""`, `--source "$UNSET"`) is
+// An explicitly empty string flag (`--click-id ""`, `--source "$UNSET"`) is
 // refused by name, for every command, before the command runs.
 //
 // Nearly every command reads its optional string flags as `if v != ""`,

@@ -3,9 +3,14 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"p202/internal/api"
+	configpkg "p202/internal/config"
 )
 
 // Exit codes for automation compatibility.
@@ -58,7 +63,7 @@ func (e *CLIError) HintText() string {
 //
 //	return validationError("--tracker is required").WithHint("run `p202 tracker list` to find ids")
 func (e *CLIError) WithHint(format string, args ...interface{}) *CLIError {
-	e.Hint = fmt.Sprintf(format, args...)
+	e.Hint = canonicalFlags(fmt.Sprintf(format, args...))
 	return e
 }
 
@@ -79,14 +84,14 @@ func withHint(err error, format string, args ...interface{}) error {
 	if err == nil {
 		return nil
 	}
-	return &hintedError{err: err, hint: fmt.Sprintf(format, args...)}
+	return &hintedError{err: err, hint: canonicalFlags(fmt.Sprintf(format, args...))}
 }
 
 // validationError creates a CLI validation error (bad input, missing flags, etc.).
 func validationError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "validation",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitValidation,
 	}
 }
@@ -95,7 +100,7 @@ func validationError(format string, args ...interface{}) *CLIError {
 func partialFailureError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "partial_failure",
-		Message:  fmt.Sprintf(format, args...),
+		Message:  canonicalFlags(fmt.Sprintf(format, args...)),
 		ExitCode: ExitPartialFailure,
 	}
 }
@@ -145,7 +150,7 @@ var activeCommandPath string
 // without parsing prose.
 func errorEnvelope(err error) map[string]interface{} {
 	env := map[string]interface{}{
-		"message":   err.Error(),
+		"message":   canonicalFlags(err.Error()),
 		"exit_code": exitCodeForError(err),
 	}
 	if category := api.ErrorCategory(err); category != "" {
@@ -191,14 +196,98 @@ func unknownInputHint(err error) string {
 // by the command or the API layer, else a generic pointer to --help for
 // validation errors from a known command.
 func hintFor(err error) string {
+	return canonicalFlags(rawHintFor(err))
+}
+
+// snakeFlagToken matches a flag spelled in snake_case; Go's regexp has no
+// lookbehind, so the character before it is captured.
+var snakeFlagToken = regexp.MustCompile(`(^|[^A-Za-z0-9_-])--([a-z0-9]+(?:_[a-z0-9]+)+)`)
+
+// canonicalFlags spells each flag of this CLI written in snake_case as --help does.
+func canonicalFlags(s string) string {
+	if !strings.Contains(s, "_") {
+		return s
+	}
+	known := knownFlagNames()
+	return snakeFlagToken.ReplaceAllStringFunc(s, func(m string) string {
+		i := strings.Index(m, "--")
+		name := strings.ReplaceAll(m[i+2:], "_", "-")
+		if !known[name] {
+			return m
+		}
+		return m[:i+2] + name
+	})
+}
+
+// flagRoot is rootCmd, set in init: naming rootCmd here would be an
+// initialization cycle.
+var flagRoot *cobra.Command
+
+func knownFlagNames() map[string]bool {
+	known := map[string]bool{}
+	if flagRoot == nil {
+		return known
+	}
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		add := func(f *pflag.Flag) { known[f.Name] = true }
+		c.Flags().VisitAll(add)
+		c.PersistentFlags().VisitAll(add)
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(flagRoot)
+	return known
+}
+
+func rawHintFor(err error) string {
 	if hint := api.HintFor(err); hint != "" {
-		return hint
+		return siblingCommandHint(hint)
 	}
 	if hint := unknownInputHint(err); hint != "" {
 		return hint
+	}
+	// An unconfigured CLI fails before any flag matters, so pointing at the
+	// command's --help sends an agent the wrong way: name the setup.
+	if errors.Is(err, configpkg.ErrNoURL) {
+		return "Point the CLI at your install: `p202 config set-url https://tracker.example.com`, then `p202 config set-key <key>` with a REST API key (made on the UI's Personal Settings page). `p202 config test` checks both."
+	}
+	if errors.Is(err, configpkg.ErrNoAPIKey) {
+		return "Set a REST API key: `p202 config set-key <key>` (made on the UI's Personal Settings page; omit <key> to be prompted without echo). `p202 config test` checks it."
 	}
 	if activeCommandPath != "" && exitCodeForError(err) == ExitValidation && api.ErrorCategory(err) != "auth" {
 		return fmt.Sprintf("Run `%s --help` for the flags this command accepts.", strings.TrimSpace(activeCommandPath))
 	}
 	return ""
+}
+
+// siblingCommandHint names the command a class-wide hint leaves as "the
+// matching `... list`" (or `... update`): the failing command's sibling, when
+// the tree has one under that name. `p202 campaign get 9` that answers 404
+// says `p202 campaign list`; a command whose group has no such sibling keeps
+// the generic words rather than naming a command that does not exist.
+func siblingCommandHint(hint string) string {
+	if activeCommandPath == "" || !strings.Contains(hint, "`... ") {
+		return hint
+	}
+	parts := strings.Fields(activeCommandPath)
+	if len(parts) < 3 {
+		return hint
+	}
+	group, rest, err := rootCmd.Find(parts[1 : len(parts)-1])
+	if err != nil || group == nil || len(rest) != 0 {
+		return hint
+	}
+	for _, verb := range []string{"list", "update"} {
+		for _, sub := range group.Commands() {
+			if sub.Name() == verb {
+				named := "`" + sub.CommandPath() + "`"
+				hint = strings.ReplaceAll(hint, "the matching `... "+verb+"`", named)
+				hint = strings.ReplaceAll(hint, "`... "+verb+"`", named)
+				break
+			}
+		}
+	}
+	return hint
 }

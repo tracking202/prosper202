@@ -294,18 +294,26 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
      * or anything fails — the beacon response must never break.
      *
      * @param array<string,mixed> $get The beacon's $_GET (carries c1-c4/cust).
+     * @param bool $cookiesAllowed false for a visitor the privacy setting
+     *        holds back (trackingEnabled()): the engagement is still stamped,
+     *        and no token is minted, since no cookie may carry it. It was
+     *        minted and set under every setting.
      */
-    function p202MintPersonalizationCookieJs(mysqli $db, int $userId, array $get, int $clickId): string
-    {
+    function p202MintPersonalizationCookieJs(
+        mysqli $db,
+        int $userId,
+        array $get,
+        int $clickId,
+        bool $cookiesAllowed = true
+    ): string {
         try {
             $conn = new \Prosper202\Database\Connection($db);
             $repo = new \Prosper202\Ltv\MysqlPersonalizationRepository($conn);
 
             // The beacon request hits the tracking domain, so the request
             // cookies are the tracker's own: the prior click's subid.
-            $cookieClickId = isset($_COOKIE['tracking202subid']) && is_numeric($_COOKIE['tracking202subid'])
-                ? (int) $_COOKIE['tracking202subid']
-                : 0;
+            $cookieSubid = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
+            $cookieClickId = is_numeric($cookieSubid) ? (int) $cookieSubid : 0;
 
             // Engagement (ABM): whenever the visitor resolves to a known
             // customer — through any explicit signal — stamp this pageview's
@@ -327,7 +335,9 @@ if (!function_exists('p202MintPersonalizationCookieJs')) {
 
             // An empty allowlist only turns PERSONALIZATION off — the ABM
             // stamping above must still run, so this gate sits between them.
-            if ($repo->allowedFields($userId) === []) {
+            // So does privacy: a visitor held back gets no cookie to carry a
+            // token in.
+            if (!$cookiesAllowed || $repo->allowedFields($userId) === []) {
                 return '';
             }
 
@@ -537,6 +547,22 @@ if (!function_exists('p202RecordConversion')) {
         // record() after its commit, for this path and every other writer
         // alike, as the conversion.recorded bridge event is.
 
+        // A pixel's product (sku=, product_id=, …) is stored on the
+        // customer's revenue event, and a hit that links to no customer (no
+        // cust=, a click linked to none, no customer c-param) has none. The
+        // API refuses such a body; a pixel has nobody to answer and refusing
+        // would lose the conversion too, so the conversion stands and the
+        // log says what was not stored, findable by click and field.
+        if (!empty($result['ltvDropped'])) {
+            error_log(sprintf(
+                'p202 conversion %d on click %d: %s not stored, no LTV customer is linked to the click'
+                . ' (send cust= on the pixel or postback, or set the account\'s customer c-param)',
+                (int) $result['convId'],
+                $clickId,
+                implode(' and ', $result['ltvDropped'])
+            ));
+        }
+
         return [
             'conv_id' => $result['convId'],
             'duplicate' => $result['duplicate'],
@@ -591,37 +617,6 @@ if (!function_exists('p202LinkConversionIdentity')) {
     }
 }
 
-if (!function_exists('p202ClientIp')) {
-    /**
-     * The client address to store on a conversion row: one valid IP, or ''.
-     *
-     * X-Forwarded-For is a comma-separated chain behind more than one proxy,
-     * and with IPv6 hops it runs well past the 45 characters
-     * 202_conversion_logs.ip holds. Passed through as it was, the INSERT
-     * failed under strict sql_mode and rolled the conversion back — a 500
-     * from pb.php on every retry, silence from px.php. The leftmost hop is
-     * the client the first proxy saw; it is taken only when it parses as an
-     * address, otherwise REMOTE_ADDR is, otherwise nothing. The header is
-     * attacker-supplied, so the value is for display only and never a
-     * security decision (CLAUDE.md error pattern #16).
-     *
-     * @param array<string,mixed> $server $_SERVER, or a stand-in in tests.
-     */
-    function p202ClientIp(array $server): string
-    {
-        $forwarded = (string) ($server['HTTP_X_FORWARDED_FOR'] ?? '');
-        $first = trim(explode(',', $forwarded, 2)[0]);
-        if ($first !== '' && filter_var($first, FILTER_VALIDATE_IP) !== false) {
-            return $first;
-        }
-        $remote = trim((string) ($server['REMOTE_ADDR'] ?? ''));
-        if ($remote !== '' && filter_var($remote, FILTER_VALIDATE_IP) !== false) {
-            return $remote;
-        }
-        return '';
-    }
-}
-
 if (!function_exists('p202ClickIdFromRequest')) {
     /**
      * Which click a pixel request names, from the places gpx.php and upx.php
@@ -651,9 +646,10 @@ if (!function_exists('p202ClickIdFromRequest')) {
             ['sid', $get['sid'] ?? null],
         ];
         if ($campaignId > 0) {
-            $places[] = ['tracking202subid_a_' . $campaignId, $cookies['tracking202subid_a_' . $campaignId] ?? null];
+            $campaignCookie = 'tracking202subid_a_' . $campaignId;
+            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie)];
         }
-        $places[] = ['tracking202subid', $cookies['tracking202subid'] ?? null];
+        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid')];
 
         foreach ($places as [$name, $value]) {
             if ($value === null || $value === '') {

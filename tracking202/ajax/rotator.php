@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 $slack = false;
 
@@ -34,7 +35,7 @@ if (isset($_GET['autocomplete']) && isset($_GET['type']) && isset($_GET['query']
 if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST['data'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		die("ERROR");
 	}
 
@@ -82,8 +83,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 	// another account would be re-parented or repointed (#164, #173).
 	// Checked for the whole payload before anything is written.
 	$rotatorOwnsRule = [];
-	$refuse = static function (): never {
-		die("ERROR");
+	$refuse = static function (?string $reason = null): never {
+		header('Content-Type: text/plain; charset=utf-8'); // a reason repeats what was typed
+		die($reason === null ? "ERROR" : 'ERROR: ' . $reason);
 	};
 	$destinationOwned = static function (string $type, $value) use ($db, $mysql, $refuse): void {
 		if ($type !== 'campaign' && $type !== 'lp') {
@@ -126,9 +128,38 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$refuse();
 				}
 			}
+			if (($criteria['type'] ?? '') === 'ip' && ($reason = \Prosper202\Rotator\IpCriterion::refusal((string) ($criteria['value'] ?? ''))) !== null) {
+				$refuse($reason);
+			}
 		}
 	}
 
+	// Saving the set removes every saved rule it leaves out (the DELETE
+	// below), and the page offers a rule's remove button only to a role
+	// with remove_rotator_rule (setup/rotator.php): a save that would remove
+	// one needs that permission too, checked before anything is written.
+	if (!$userObj->hasPermission('remove_rotator_rule')) {
+		$keptRules = [];
+		foreach ($_POST['data'] as $rule) {
+			if ((string) ($rule['rule_id'] ?? '') !== 'none') {
+				$keptRules[] = (int) $rule['rule_id'];
+			}
+		}
+		$removedSql = 'SELECT 1 FROM 202_rotator_rules WHERE rotator_id = ?'
+			. ($keptRules === [] ? '' : ' AND id NOT IN (' . implode(', ', array_fill(0, count($keptRules), '?')) . ')')
+			. ' LIMIT 1';
+		if (p202_rotator_row_exists($db, $removedSql, array_merge([(int) $rotator_id], $keptRules))) {
+			http_response_code(403);
+			die("This account's role does not have the 'remove_rotator_rule' permission.");
+		}
+	}
+
+	// The redirector and the names of its default campaign and landing page,
+	// for the Slack notices: a default that is not this account's own is
+	// named as none (CLAUDE.md #27). The landing page's deleted test is part
+	// of its join: in the WHERE it dropped the redirector itself whenever its
+	// default was not a live landing page, and every notice below went out
+	// with no redirector name, or not at all.
 	$rotator_sql = "SELECT 
 					2ro.name,
 					2ro.default_campaign,
@@ -138,9 +169,9 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					2ac.aff_campaign_name,
 					2lp.landing_page_nickname
 					FROM 202_rotators AS 2ro 
-					LEFT JOIN 202_aff_campaigns AS 2ac ON (2ro.default_campaign = 2ac.aff_campaign_id)
-					LEFT JOIN 202_landing_pages AS 2lp ON (2ro.default_lp = 2lp.landing_page_id)
-					WHERE 2ro.id = '".$rotator_id."' AND 2ro.user_id = '".$mysql['user_id']."' AND 2lp.landing_page_deleted='0'";
+					LEFT JOIN 202_aff_campaigns AS 2ac ON (2ro.default_campaign = 2ac.aff_campaign_id AND 2ac.user_id = 2ro.user_id)
+					LEFT JOIN 202_landing_pages AS 2lp ON (2ro.default_lp = 2lp.landing_page_id AND 2lp.user_id = 2ro.user_id AND 2lp.landing_page_deleted='0')
+					WHERE 2ro.id = '".$rotator_id."' AND 2ro.user_id = '".$mysql['user_id']."'";
 	$rotator_result = $db->query($rotator_sql);
 	$rotator_row = $rotator_result->fetch_assoc();
 	$rotator_name = $rotator_row['name'] ?? '';
@@ -184,7 +215,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 			
 			if ($canSlack) {
 				$default_campaign_id = $db->real_escape_string($defaults);
-				$default_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$default_campaign_id."'";
+				$default_campaign_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$default_campaign_id."' AND user_id = '".$mysql['user_id']."'";
 				$default_campaign_result = $db->query($default_campaign_sql);
 				$default_campaign_row = $default_campaign_result->fetch_assoc();
 
@@ -223,7 +254,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 
 			if ($canSlack) {
 				$default_lp_id = $db->real_escape_string($defaults);
-				$default_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$default_lp_id."' AND landing_page_deleted='0'";
+				$default_lp_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$default_lp_id."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 				$default_lp_result = $db->query($default_lp_sql);
 				$default_lp_row = $default_lp_result->fetch_assoc();
 
@@ -374,7 +405,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					$redirect_value = $db->real_escape_string($redirect['value']);
 					switch ($redirect['type']) {
 						case 'campaign':
-						$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."'";
+						$redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '".$redirect_value."' AND user_id = '".$mysql['user_id']."'";
 						$redirect_type_result = $db->query($redirect_type_sql);
 						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
 						$redirect_campaign_name = $redirect_type_row['aff_campaign_name'] ?? 'Unknown Campaign';
@@ -388,7 +419,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							break;
 
 						case 'lp':
-						$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
+						$redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 						$redirect_type_result = $db->query($redirect_type_sql);
 						$redirect_type_row = $redirect_type_result ? $redirect_type_result->fetch_assoc() : null;
 						$redirect_lp_name = $redirect_type_row['landing_page_nickname'] ?? 'Unknown Landing Page';
@@ -458,7 +489,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 							break;
 
 						case 'lp':
-						    $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0'";
+						    $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$redirect_value."' AND landing_page_deleted='0' AND user_id = '".$mysql['user_id']."'";
 						    $redirect_type_result = $db->query($redirect_type_sql);
 						    $redirect_type_row = $redirect_type_result->fetch_assoc();
 						    $redirect_name = "Landing page: ".$redirect_type_row['landing_page_nickname'];
@@ -490,7 +521,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 				foreach ($rule['criteria'] as $criteria) {
 					$type = $db->real_escape_string($criteria['type']);
 					$statement = $db->real_escape_string($criteria['statement']);
-					$value = $db->real_escape_string($criteria['value']);
+					$value = $db->real_escape_string($criteria['type'] === 'ip' ? \Prosper202\Rotator\IpCriterion::normalize((string) $criteria['value'])['value'] : $criteria['value']);
 
 					if ($criteria['criteria_id'] != 'none') {
 						$criteria_sql = "UPDATE 202_rotator_rules_criteria SET rotator_id='".$rotator_id."', rule_id='".$rule_id."', type='".$type."', statement='".$statement."', value='".$value."' WHERE id='".(int)$criteria['criteria_id']."'";

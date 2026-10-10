@@ -20,10 +20,14 @@ var analyticsSortAliases = map[string]string{
 	"cost":        "total_cost",
 }
 
-// reportPeriods are the windows ReportsController::applyTimeFilters knows; it reads any other value as all time.
-var reportPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
+// reportPeriods are the named windows the server knows (TimeBound::PERIODS),
+// in the report pages' order; it refuses any other value with a 422. The
+// calendar ones (today, yesterday, this/last month, this/last year) start at a
+// midnight in the account's timezone, and so do lastN's: today and the N
+// whole days before it, as the report pages count them.
+var reportPeriods = []string{"today", "yesterday", "last7", "last14", "last30", "last90", "thismonth", "lastmonth", "thisyear", "lastyear", "alltime"}
 
-// applyReportWindow maps --period, --days and --time_from/--time_to onto report
+// applyReportWindow maps --period, --days and --time-from/--time-to onto report
 // params: --period wins, and --days applies only without an explicit range.
 func applyReportWindow(params map[string]string, period string, days int, timeFrom, timeTo string) error {
 	if days < 0 {
@@ -139,11 +143,11 @@ var analyticsCmd = &cobra.Command{
 func init() {
 	analyticsCmd.Flags().String("group-by", "", "Breakdown dimension")
 	enumFlag(analyticsCmd, "group-by", dimensionEnum(breakdownDimensions))
-	analyticsCmd.Flags().Int("days", 0, "Relative window in days (ignored when --period is provided)")
+	analyticsCmd.Flags().Int("days", 0, "Relative window: the last N×24 hours, ending now (ignored when --period is provided; --period lastN counts whole days from a midnight)")
 	analyticsCmd.Flags().String("period", "", "Period")
 	enumFlag(analyticsCmd, "period", newEnum(reportPeriods))
-	analyticsCmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	analyticsCmd.Flags().String("time_to", "", "End timestamp (unix)")
+	analyticsCmd.Flags().String("time_from", "", timeFromHelp)
+	analyticsCmd.Flags().String("time_to", "", timeToHelp)
 	analyticsCmd.Flags().String("sort", "", "Sort by")
 	// The *_per_day keys rank --split-at output only; plain analytics refuses them in RunE.
 	enumFlag(analyticsCmd, "sort", newEnum(append(append([]string{}, breakdownSorts...), splitPerDaySorts...), enumAliases(analyticsSortAliases), enumFoldCase()))
@@ -151,12 +155,7 @@ func init() {
 	enumFlag(analyticsCmd, "sort-dir", sortDirEnum())
 	analyticsCmd.Flags().StringP("limit", "l", "", "Max results")
 	analyticsCmd.Flags().StringP("offset", "o", "", "Pagination offset")
-	analyticsCmd.Flags().String("aff_campaign_id", "", "Filter by INTERNAL campaign id (from `campaign list`), not the public id in tracking URLs")
-	analyticsCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
-	analyticsCmd.Flags().String("aff_network_id", "", "Filter by affiliate network ID")
-	analyticsCmd.Flags().String("ppc_network_id", "", "Filter by PPC network ID")
-	analyticsCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
-	analyticsCmd.Flags().String("country_id", "", "Filter by country ID")
+	addReportFilterFlags(analyticsCmd)
 
 	rootCmd.AddCommand(analyticsCmd)
 }

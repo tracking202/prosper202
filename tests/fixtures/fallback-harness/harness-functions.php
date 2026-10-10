@@ -64,3 +64,30 @@ function setPrePopVars($vars, $url, $encode)
 function p202NoStore(): void
 {
 }
+
+// dl.php and off.php put the link owner's privacy setting in force before
+// they store an address or set a cookie; nothing here does either.
+function p202ApplyOwnerPrivacy($ownerId): void
+{
+}
+
+// The address off.php looks a cookie-less visitor's last click up by. Empty:
+// LastClickFromAddress then answers "no click" without a query, which is what
+// this harness's reads answer anyway (its mysqli never connects).
+function p202StoredVisitorIp(): string
+{
+    return '';
+}
+
+// Whether the address above is stored masked, which LastClickFromAddress is
+// told; the address is empty, so the answer changes nothing here.
+function trackingEnabled(): bool
+{
+    return true;
+}
+
+// connect2.php's click-cookie reader, as it is: the cookie or its -legacy twin.
+function getCookie202($cookieName)
+{
+    return \Prosper202\Http\ClickCookie::value($_COOKIE, (string) $cookieName);
+}

@@ -39,7 +39,7 @@ final class InstallTokenMintSitesTest extends TestCase
     private static function sources(): iterable
     {
         $root = dirname(__DIR__, 3);
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($it as $file) {
             $path = substr((string) $file->getPathname(), strlen($root) + 1);
             if (!str_ends_with($path, '.php') || preg_match('#^(vendor|tests|node_modules|\.git|\.claude|sdk|go-cli)/#', $path) === 1) {

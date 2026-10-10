@@ -157,6 +157,19 @@ type Hinted interface {
 // nothing useful to add. It augments — never replaces — the error message.
 // An explicit hint attached to the error wins; otherwise the HTTP status or
 // request failure kind selects a generic one.
+// fieldErrorsSay reports whether any of the error's field messages contains
+// one of the phrases.
+func fieldErrorsSay(apiErr *APIError, phrases ...string) bool {
+	for _, msg := range apiErr.FieldErrors {
+		for _, phrase := range phrases {
+			if strings.Contains(msg, phrase) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func HintFor(err error) string {
 	if err == nil {
 		return ""
@@ -172,6 +185,19 @@ func HintFor(err error) string {
 		switch {
 		case apiErr.Status == 403 && strings.Contains(strings.ToLower(apiErr.Message), "scope"):
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
+		case apiErr.Status == 403 && strings.Contains(apiErr.Message, "' permission"):
+			// Auth::requirePermission(): the key is fine; its user's role
+			// lacks a permission the pages ask for too.
+			return "The key is valid, but its user's role lacks the permission named above (the UI's pages ask for the same one). An admin can grant a role that has it: `p202 user role list` shows the roles, `p202 user role assign <user_id> <role_id>` grants one; or use the key of a user whose role has it."
+		case apiErr.Status == 403 && strings.Contains(apiErr.Message, "Admin access required"):
+			// Auth::requireAdmin(): the key is fine; its user is not an
+			// Admin or the Super user, which the route asks for.
+			return "The key is valid, but its user holds neither the Admin nor the Super user role, which this needs. `p202 whoami` shows the key's user and roles; use an admin's key, or have an admin grant the Admin role: `p202 user role assign <user_id> 2`."
+		case apiErr.Status == 401 && strings.Contains(strings.ToLower(apiErr.Message), "deactivated"):
+			// Auth::fromRequest(): the key is right, but its user is
+			// switched off (not Active in Account › Users); another key
+			// of the same user would be refused the same way.
+			return "The key is valid, but its user is switched off. An admin can switch the user back on: `p202 user update <user_id> --user-active 1`; or use the key of an active user."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 404:
@@ -183,7 +209,7 @@ func HintFor(err error) string {
 		// instead of creating" is wrong advice for all but the last. Match
 		// the specific causes first; the duplicate stays the fallback.
 		case apiErr.Status == 409 && DeletedConversionID(err) > 0:
-			return "The click's ledger keeps a deleted conversion's key, so the same conversion is never recorded again; nothing was written. `p202 click conversions <click_id>` shows the deleted row. A different sale needs its own --transaction_id."
+			return "The click's ledger keeps a deleted conversion's key, so the same conversion is never recorded again; nothing was written. `p202 click conversions <click_id>` shows the deleted row. A different sale needs its own --transaction-id."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "still in flight"):
 			return "The first request carrying this Idempotency-Key is still running. Wait, then retry the same command to receive its recorded response."
 		case apiErr.Status == 409 && strings.Contains(strings.ToLower(apiErr.Message), "idempotency-key"):
@@ -192,10 +218,35 @@ func HintFor(err error) string {
 			return "The write may or may not have landed. Run the matching `... list` to check, then stage it again if it did not; this change id can no longer be applied or discarded."
 		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "chg_"):
 			return "Only a staged change can be applied or discarded. Run `p202 change show <change_id>` for its current status."
+		// An If-Match header, or a body carrying the version/etag of an
+		// older read, names a version the record no longer has: it changed
+		// since it was read, so a whole-record write would undo that.
+		case apiErr.Status == 409 && strings.Contains(apiErr.Message, "Version mismatch"):
+			return "The record changed since it was read. Read it again (`... get <id>`) and make the change on that, or send only the fields to change, without version or etag."
 		case apiErr.Status == 409:
 			return "A matching record already exists. Run the matching `... list` to find it, then `... update` it instead of creating."
 		case (apiErr.Status == 400 || apiErr.Status == 422) && strings.Contains(strings.ToLower(apiErr.Message), "staged is not supported"):
 			return "This endpoint cannot be staged; drop --staged to run the command directly (capabilities lists features.staged_writes)."
+		// The server refuses a field it does not write, and a read-only one
+		// (an id, a public id, version) that differs from the record's,
+		// rather than dropping it: nothing was written.
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "is not a field of", "is set by the server", "is read-only"):
+			return "Nothing was written. Remove the field(s) named above: the message lists the fields this endpoint accepts, " +
+				"and a read-only one may only be sent with the value the record already has (for `p202 import`, remove them " +
+				"from the file's records). If a p202 command sent them by itself, the CLI and the server differ in version: " +
+				"compare `p202 --version` with `p202 system version`."
+		// A key that already recorded a request answers a retry of that request; a
+		// different body under it is refused (an Idempotency-Key, an LTV event's
+		// idempotency_key, a subscription event's transaction id). Retrying the
+		// same command repeats the refusal.
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "Already used for"):
+			return "Nothing was written: that key already recorded a different request (the message says what differs). " +
+				"A retry must send exactly what the first request sent; a different event needs its own --idempotency-key " +
+				"(a subscription renewal or refund without one, its own --transaction-id)."
+		case apiErr.Status == 422 && fieldErrorsSay(apiErr, "Already recorded as conversion"):
+			return "Nothing was written: the click already has a conversion under that transaction id, and this request states a different sale. " +
+				"A re-send must state what was recorded (`p202 click conversions <click_id>` shows it); a different sale needs its own " +
+				"--transaction-id; `p202 conversion create --click-id <id> --status reversed --transaction-id <id>` takes the recorded one back."
 		case apiErr.Status == 422 && len(apiErr.FieldErrors) > 0:
 			return "Fix the field(s) listed above and retry."
 		case apiErr.Status == 400 || apiErr.Status == 422:
@@ -252,7 +303,7 @@ func NewURLOnly() (*Client, error) {
 		return nil, err
 	}
 	if profile.URL == "" {
-		return nil, fmt.Errorf("no URL configured. Run: p202 config set-url <url>")
+		return nil, fmt.Errorf("%w. Run: p202 config set-url <url>", config.ErrNoURL)
 	}
 	return newClient(profile.URL, profile.APIKey), nil // API key may be empty for URL-only endpoints.
 }
@@ -461,8 +512,35 @@ func (c *Client) PostIdempotent(path string, body interface{}, idempotencyKey st
 	return c.doWithHeaders("POST", path, nil, body, map[string]string{"Idempotency-Key": key})
 }
 
+// UpdateWriteTimeout is how long PostUpdate waits for an answer. The Update
+// endpoints write one transaction per subid or report line, so a long list
+// or a large report takes longer than the 30 seconds every other request
+// gets — and a client that gives up while the server is still writing tells
+// the caller "failed" about a write that is landing.
+const UpdateWriteTimeout = 15 * time.Minute
+
+// PostUpdate sends one of the Update endpoints' requests (POST /clicks/cpc,
+// /conversions/subids, …/delete, …/reset, /conversions/uploads): a POST
+// whose preview is `?dry_run=1` on the write's own route, so it takes query
+// parameters. It waits up to UpdateWriteTimeout, and reads an answer of up to
+// maxDownloadSize, refusing a larger one rather than truncating it (a revenue
+// report's answer lists every line it did not record). A dry run is a read,
+// so --staged never stamps it; the commands refuse --staged for the writes.
+func (c *Client) PostUpdate(path string, params map[string]string, body interface{}) ([]byte, error) {
+	slow := &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport}
+	return c.doWith(slow, "POST", path, params, body, nil, maxDownloadSize, true)
+}
+
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
+}
+
+// Patch sends a partial update: the server changes only the fields the body
+// names (the /ltv customer, company and field updates). It goes through the
+// same request path as Put, so --staged stamps it the same way and a server
+// that cannot stage it refuses rather than performing it.
+func (c *Client) Patch(path string, body interface{}) ([]byte, error) {
+	return c.do("PATCH", path, nil, body)
 }
 
 func (c *Client) Delete(path string) error {
@@ -543,6 +621,11 @@ func (c *Client) doWithHeaders(method, path string, params map[string]string, bo
 }
 
 func (c *Client) doLimited(method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
+	return c.doWith(c.http, method, path, params, body, headers, limit, strict)
+}
+
+// doWith is doLimited through a given HTTP client (PostUpdate's waits longer).
+func (c *Client) doWith(httpClient *http.Client, method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()
@@ -613,7 +696,7 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 		req.Header.Set(name, value)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, &RequestError{Kind: "network", Op: "send_request", Err: err}
 	}

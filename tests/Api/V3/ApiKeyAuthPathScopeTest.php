@@ -115,6 +115,27 @@ final class ApiKeyAuthPathScopeTest extends TestCase
         );
     }
 
+    /**
+     * The same paths each refuse a deactivated user's key, as the sign-in
+     * does: all three asked for `user_deleted = 0` alone, so a user switched
+     * off in Account › Users kept every key. A floor (it reads that the
+     * column is selected and compared); DeactivatedUserKeyInstanceTest
+     * proves the refusal over HTTP on every version.
+     */
+    public function testEveryAuthenticationPathRefusesADeactivatedUser(): void
+    {
+        $files = $this->authenticatingFiles();
+        $this->assertCount(3, $files, 'the three key lookups were found');
+        foreach ($files as $path => $source) {
+            $this->assertMatchesRegularExpression('/\bu\.`?user_active`?\b/', $source, "$path selects the key's user's user_active");
+            $this->assertMatchesRegularExpression(
+                "/\\(string\\)\\s*\\(\\\$(row|key_row)\\['user_active'\\]\\s*\\?\\?\\s*''\\)\\s*!==\\s*'1'/",
+                $source,
+                "$path refuses anything but an active (1) user"
+            );
+        }
+    }
+
     public function testEveryAuthenticationPathAccountsForKeyScope(): void
     {
         $unguarded = [];

@@ -90,7 +90,14 @@ table() { python3 "$HERE/html-table.py" "$1" "$2"; }
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 NOW=$(date +%s)
+# Ten minutes ago, or just after the account's newest click if that is
+# later: the click history shows the newest 50, and an instance other passes
+# clicked through in the last ten minutes pushed these off its first page
+# (offer-rotator-routing alone makes dozens).
+NEWEST=$(Q "SELECT COALESCE(MAX(click_time), 0) FROM 202_clicks WHERE user_id = $OWNER")
 T=$((NOW - 600))
+[ "$NEWEST" -ge "$T" ] && T=$((NEWEST + 1))
+[ "$T" -gt "$NOW" ] && T=$NOW
 R=950001; A=950002; N=950003
 CLICKS="$R,$A,$N"
 ACIP_R=950100; ACIP_A=950101
@@ -169,7 +176,7 @@ cp "$OUT/body" "$OUT/bd-a.json"
 eq "$(field "len(d['data'])")" "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id=$A")" "every ledger row of the click is listed"
 eq "$(field "[r['conv_id'] for r in d['data']]")" "$(Q "SELECT CONCAT('[', GROUP_CONCAT(conv_id ORDER BY conv_id SEPARATOR ', '), ']') FROM 202_conversion_logs WHERE click_id=$A")" "oldest first, by conversion id"
 eq "$(field "[(r['source'], r['amount'], r['counted'], r['not_counted_reason']) for r in d['data']]")" \
-   '[["goal", "1.00000", true, null], ["goal", "0.00000", false, "unpaid"], ["goal", "4.00000", true, null], ["postback", "5.00000", true, null], ["postback", "2.00000", true, null], ["api", "-5.00000", true, null]]' \
+   '[["goal", 1, true, null], ["goal", 0, false, "unpaid"], ["goal", 4, true, null], ["postback", 5, true, null], ["postback", 2, true, null], ["api", -5, true, null]]' \
    "goals, the unpaid one left out, both sales and the reversal netting A-1"
 eq "$(field "[r['linked_to']['label'] for r in d['data'] if r['source'] == 'goal']")" '["Goal \"Install\" v1", "Goal \"Tutorial\" v1", "Goal \"Level 3\" v1"]' "each goal row is named with its version"
 eq "$(field "[r['event_name'] for r in d['data'] if r['source'] == 'goal']")" '["first_open", "tutorial_complete", "level_reached"]' "with the event that reached it"
@@ -177,7 +184,7 @@ eq "$(field "d['data'][5]['linked_to']['label']")" "Reverses conversion $(Q "SEL
 eq "$(field "d['data'][5]['transaction_id']")" "A-1" "and carries its transaction id"
 eq "$(field "d['data'][1]['explanation']")" "Tracked, not paid: an outcome the campaign does not pay for, or an event recorded for visibility." "the unpaid row says why in a sentence"
 eq "$(field "[d['click']['payout_mode'], d['click']['click_payout'], d['click']['ledger_value'], d['click']['matches_click'], d['click']['counted_rows'], d['click']['rows']]")" \
-   '["accumulate", "7.00000", "7.00000", true, 5, 6]' "the click's value is what its counted rows add up to"
+   '["accumulate", 7, 7, true, 5, 6]' "the click's value is what its counted rows add up to"
 eq "$(field "str(sum(round(float(r['amount'])*100000) for r in d['data'] if r['counted']))")" \
    "$(Q "SELECT CAST(ROUND(click_payout*100000) AS SIGNED) FROM 202_clicks WHERE click_id=$A")" "summed here, the counted amounts are the click's value to the last digit"
 
@@ -226,19 +233,21 @@ say "p202 click conversions and p202 conversion list (Go CLI)"
 CLIHOME="$OUT/clihome"; mkdir -p "$CLIHOME"
 p202() { HOME="$CLIHOME" "$P202_BIN" "$@"; }
 p202 config set-url "$BASE" >/dev/null && p202 config set-key "$P202_API_KEY" >/dev/null
-p202 click conversions $A > "$OUT/go-a.txt" 2> "$OUT/go-a.err"
+# --table: under an AI agent (AI_AGENT, CLAUDECODE, ...) the CLI prints JSON
+# unless a format is asked for, and these lines read the table.
+p202 --table click conversions $A > "$OUT/go-a.txt" 2> "$OUT/go-a.err"
 eq "$?" 0 "p202 click conversions exits 0"
 has "$OUT/go-a.txt" "unpaid" "the table names the unpaid row's reason"
 has "$OUT/go-a.txt" 'Goal "Level 3" v1' "and the goal it came from"
-has "$OUT/go-a.txt" "Click $A: 7.00000 (accumulate mode), 5 of 6 conversions counted." "and ends with the click's value"
-p202 click conversions $R > "$OUT/go-r.txt" 2>&1
+has "$OUT/go-a.txt" "Click $A: 7 (accumulate mode), 5 of 6 conversions counted." "and ends with the click's value"
+p202 --table click conversions $R > "$OUT/go-r.txt" 2>&1
 has "$OUT/go-r.txt" "superseded (replace)" "the superseded row says how"
 has "$OUT/go-r.txt" "deleted" "the deleted row says so"
 p202 --json click conversions $A > "$OUT/go-a.json" 2>/dev/null
 eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])))" "$OUT/go-a.json" "$OUT/bd-a.json")" True \
    "--json is the API's answer unchanged"
-p202 --json conversion list --click_id $A --source goal > "$OUT/go-list.json" 2>/dev/null
-eq "$(pyf "$OUT/go-list.json" "len(d['data'])")" 3 "conversion list --click_id --source sends both filters"
+p202 --json conversion list --click-id $A --source goal > "$OUT/go-list.json" 2>/dev/null
+eq "$(pyf "$OUT/go-list.json" "len(d['data'])")" 3 "conversion list --click-id --source sends both filters"
 p202 --json click conversions 12x > /dev/null 2> "$OUT/go-bad.err"
 eq "$?" 1 "a bad click id exits 1 (validation)"
 eq "$(pyf "$OUT/go-bad.err" "[d['error']['category'], 'p202 click list' in d['error']['hint']]")" '["validation", true]' "with a validation envelope and a hint naming click list"
@@ -254,12 +263,12 @@ else
   pcli config:set-url "$BASE" >/dev/null && pcli config:set-key "$P202_API_KEY" >/dev/null
   pcli click:conversions $A > "$OUT/php-a.txt" 2>&1
   eq "$?" 0 "click:conversions exits 0"
-  has "$OUT/php-a.txt" "Click $A: 7.00000 (accumulate mode), 5 of 6 conversions counted." "and ends with the same line as the Go CLI"
+  has "$OUT/php-a.txt" "Click $A: 7 (accumulate mode), 5 of 6 conversions counted." "and ends with the same line as the Go CLI"
   has "$OUT/php-a.txt" "unpaid" "with the same reasons"
   pcli click:conversions $A --json > "$OUT/php-a.json" 2>&1
   eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])) == json.load(open(sys.argv[2])))" "$OUT/php-a.json" "$OUT/bd-a.json")" True "--json is the API's answer unchanged"
-  pcli conversion:list --click_id=$A --source=goal --json > "$OUT/php-list.json" 2>&1
-  eq "$(pyf "$OUT/php-list.json" "len(d['data'])")" 3 "conversion:list --click_id --source sends both filters"
+  pcli conversion:list --click-id=$A --source=goal --json > "$OUT/php-list.json" 2>&1
+  eq "$(pyf "$OUT/php-list.json" "len(d['data'])")" 3 "conversion:list --click-id --source sends both filters"
   pcli conversion:list --source=webhook > "$OUT/php-bad.txt" 2>&1
   eq "$?" 1 "an unknown source is refused before any request"
   has "$OUT/php-bad.txt" "--source must be one of pixel, postback" "naming what is accepted"
@@ -297,7 +306,7 @@ eq "$(get "${BD_URL#/}" "$OUT/ui-a.html")" 200 "the breakdown fragment answers"
 table "$OUT/ui-a.html" click-conversions-table > "$OUT/ui-a.tsv"
 eq "$(grep -c '^0	#' "$OUT/ui-a.tsv")" 6 "it lists all six conversions"
 eq "$(awk -F'\t' '$2 ~ /^#/ {print $4 "|" substr($5,1,index($5" "," ")-1)}' "$OUT/ui-a.tsv" | tr '\n' ' ')" \
-   '$1.00|counted $0.00|unpaid $4.00|counted $5.00|counted $2.00|counted ($-5.00)|counted ' "with the API's amounts and verdicts, in order"
+   '$1.00|counted $0.00|unpaid $4.00|counted $5.00|counted $2.00|counted ($5.00)|counted ' "with the API's amounts and verdicts, in order"
 eq "$(awk -F'\t' '$2 == "Counted toward the click" {print $4}' "$OUT/ui-a.tsv")" '$7.00' "and adds up to the click's value"
 has "$OUT/ui-a.html" 'Goal &quot;Level 3&quot; v1' "each goal is named"
 get "tracking202/ajax/click_conversions.php?click_id=$R" "$OUT/ui-r.html" > /dev/null
@@ -331,7 +340,7 @@ group_rows() {
 CAMPAIGN=4; LANDINGPAGE=5; TRANSACTION=35; GOALSOURCE=37
 # The accumulate click four levels deep: campaign, landing page, transaction,
 # then what produced each transaction's rows.
-FOUR_ACCUMULATE='breakdown accumulate|1|1|$7.00|$0.25 [No Landing Page]|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 A-1|0|0|$0.00|$0.00 API|0|0|($-5.00)|$0.00 Postback|0|0|$5.00|$0.00 A-2|1|1|$2.00|$0.25 Postback|1|1|$2.00|$0.25 '
+FOUR_ACCUMULATE='breakdown accumulate|1|1|$7.00|$0.25 [No Landing Page]|1|1|$7.00|$0.25 [No transaction ID]|0|0|$5.00|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 A-1|0|0|$0.00|$0.00 API|0|0|($5.00)|$0.00 Postback|0|0|$5.00|$0.00 A-2|1|1|$2.00|$0.25 Postback|1|1|$2.00|$0.25 '
 FOUR_DOWNLOAD='A-1|API A-1|Postback A-2|Postback [No transaction ID]|Goal: Install [No transaction ID]|Goal: Level 3'
 
 say "Group Overview's Transaction ID level sums the rows"
@@ -356,7 +365,7 @@ hasnt "$OUT/go-plain.html" "data-p202-ledger-note" "and says nothing when none i
 say "Group Overview's Goal / source level"
 overview "group_1=$CAMPAIGN&group_2=$GOALSOURCE&group_3=0&group_4=0&range=last7&user_pref_show=all" "$OUT/go-src"
 eq "$(group_rows 'breakdown accumulate' "$OUT/go-src.tsv" | tr '\n' ' ')" \
-   'breakdown accumulate|1|1|$7.00|$0.25 API|0|0|($-5.00)|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 Postback|1|1|$7.00|$0.25 ' \
+   'breakdown accumulate|1|1|$7.00|$0.25 API|0|0|($5.00)|$0.00 Goal: Install|0|0|$1.00|$0.00 Goal: Level 3|0|0|$4.00|$0.00 Postback|1|1|$7.00|$0.25 ' \
    "each paid goal on its own row, the unpaid Tutorial nowhere, the postbacks \$7 and the API reversal -\$5"
 eq "$(group_rows 'breakdown replace' "$OUT/go-src.tsv" | tr '\n' ' ')" \
    'breakdown replace|2|1|$6.00|$0.50 [Not converted]|1|0|$0.00|$0.25 Postback|1|1|$6.00|$0.25 ' \

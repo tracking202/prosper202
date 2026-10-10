@@ -1,6 +1,5 @@
 <?php
 include_once(str_repeat("../", 1) . '202-config/connect.php');
-include_once(str_repeat("../", 1) . '202-config/functions-timeframe.php');
 include_once(str_repeat("../", 1) . '202-config/functions-db.php');
 include_once(str_repeat("../", 1) . '202-config/functions-indexes.php');
 include_once(str_repeat("../", 1) . '202-config/functions-icons.php');
@@ -22,6 +21,12 @@ AUTH::require_user();
  * it before writing and says so when it refuses. The AutoCron and MaxMind
  * switches were AJAX posts from the classic shell's scripts; they are plain
  * forms now, posting the same fields (`autocron` 1/0, `maxmind` true/false).
+ *
+ * Click-data retention (the automatic deletion days and the one-off deletion
+ * marker) is the install's, kept on user 1's preferences because that is the
+ * only row the cron job reads; any admin's save lands there, as through
+ * /api/v3/system/retention. AutoCron and ISP lookup stay on the signed-in
+ * user's row, which is the one the redirects read for that user's trackers.
  */
 
 if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
@@ -77,7 +82,17 @@ if (isset($_POST['autocron'])) {
 		p202_account_redirect('202-account/administration.php#autocron');
 	}
 
-	$cron = callAutoCron($endpoint);
+	// Registering needs this install's address, and a read of it that fails
+	// throws rather than register the server's own name
+	// (p202StoredTrackingDomain()): said here, the setting left as it was,
+	// as Personal Settings says it for the daily email.
+	try {
+		$cron = callAutoCron($endpoint);
+	} catch (Throwable $e) {
+		error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
+		p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
+		p202_account_redirect('202-account/administration.php#autocron');
+	}
 
 	if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
 		$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron'] == true ? '1' : '0');
@@ -131,44 +146,83 @@ if (isset($_POST['maxmind'])) {
 }
 
 if (isset($_POST['database_management'])) {
-	// The date comes from a native date input (YYYY-MM-DD); the classic
-	// datepicker posted DD-MM-YYYY, which is still read. An empty or
-	// unreadable date is refused: strtotime() of the classic concatenation
-	// with no date in it resolved to today, so a blank submit (the classic
-	// label said "leave blank to reset") queued every click before today for
-	// deletion.
-	$postedDate = trim((string) $_POST['database_management']);
-	$eraseDate = DateTime::createFromFormat('!Y-m-d', $postedDate) ?: DateTime::createFromFormat('!d-m-Y', $postedDate);
-	if ($postedDate === '' || $eraseDate === false) {
-		$fieldErrors['database_management'] = 'Pick the date: click data from before it is deleted.';
-	} else {
-		$click_timestamp = strtotime($eraseDate->format('Y-m-d') . ' 00:00:00 ' . date('T'));
-		$clickid_sql = "SELECT click_id AS click_id FROM 202_clicks WHERE click_time <=" . (int) $click_timestamp . " ORDER BY click_id DESC LIMIT 1";
-
-		$clickid_result = _mysqli_query($clickid_sql);
-		if ($clickid_result === false) {
-			$fieldErrors['database_management'] = 'The clicks could not be read just now, so nothing is scheduled for deletion. Try again.';
-		} else {
-			$clickid_row = $clickid_result->fetch_assoc();
-
-			// Make sure we have a valid click_id before continuing
-			if (isset($clickid_row['click_id'])) {
-				$mysql['user_delete_data_clickid'] = $db->real_escape_string((string) $clickid_row['click_id']);
-
-				$sql = "UPDATE 202_users_pref SET user_delete_data_clickid = '" . $mysql['user_delete_data_clickid'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
-				if ($db->query($sql)) {
-					if ($slack)
-						$slack->push('click_data_deleted', ['user' => $username, 'date' => $postedDate]);
-					p202_account_flash('ok', 'Click data from before ' . $eraseDate->format('M j, Y') . ' is scheduled for deletion. The cron job removes it in batches.');
-				} else {
-					p202_account_flash('bad', 'The deletion could not be scheduled; nothing will be removed. Try again.');
-				}
-			} else {
-				p202_account_flash('info', 'There are no clicks from before ' . $eraseDate->format('M j, Y') . ', so nothing is deleted.');
-			}
-			p202_account_redirect('202-account/administration.php#database');
-		}
-	}
+    // The date comes from a native date input (YYYY-MM-DD); the classic
+    // datepicker posted DD-MM-YYYY, which is still read. An empty or
+    // unreadable date is refused: strtotime() of the classic concatenation
+    // with no date in it resolved to today, so a blank submit (the classic
+    // label said "leave blank to reset") queued every click before today for
+    // deletion.
+    $postedDate = trim((string) $_POST['database_management']);
+    // Midnight that begins the day in the account's zone (AUTH::require_user()
+    // put it in force), as POST /system/retention/delete-before reads it.
+    // strtotime() of the day with date('T') appended read today's
+    // abbreviation as the day's offset: "IST" is Israel's to PHP, so India
+    // and Ireland were cut hours off, and a day across a daylight-saving
+    // change from today an hour off (CLAUDE.md #29).
+    $zone = new DateTimeZone(date_default_timezone_get());
+    // A day as written, never rolled over, and not after today, as
+    // POST /system/retention/delete-before reads it: createFromFormat()
+    // read 2026-02-31 as March 3 and 2026-13-01 as 2027-01-01, a day after
+    // every click there is, which deletes all of them in every account. The
+    // input's max stops a browser from picking a later day; this stops a
+    // request that did not come from it.
+    $eraseDate = false;
+    foreach (['Y-m-d', 'd-m-Y'] as $format) {
+        $parsed = DateTimeImmutable::createFromFormat('!' . $format, $postedDate, $zone);
+        if ($parsed !== false && $parsed->format($format) === $postedDate) {
+            $eraseDate = $parsed;
+            break;
+        }
+    }
+    $today = (new DateTimeImmutable('now', $zone))->format('Y-m-d');
+    if ($postedDate === '' || $eraseDate === false) {
+        $fieldErrors['database_management'] = 'Pick the date: click data from before it is deleted.';
+    } elseif ($eraseDate->format('Y-m-d') > $today) {
+        $fieldErrors['database_management'] = 'Pick today or an earlier day: every click recorded so far is from before a later one.';
+    } else {
+        $cutoff = $eraseDate->getTimestamp();
+        $day = $eraseDate->format('M j, Y');
+        // Every account's clicks, on purpose: this is the install's data
+        // retention, set by a role with access_to_settings, and the cron
+        // deletes every click whose rows are all older than the time, in
+        // every account (ClickRetention, the rule the API previews by).
+        try {
+            $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection($db));
+            $anything = $retention->anyOlderThan($cutoff);
+        } catch (\Throwable $e) {
+            error_log('administration.php: the clicks before ' . $cutoff . ' could not be read: ' . $e->getMessage());
+            $anything = null;
+        }
+        if ($anything === null) {
+            $fieldErrors['database_management'] = 'The clicks could not be read just now, so nothing is scheduled '
+                . 'for deletion. Try again.';
+        } else {
+            if ($anything) {
+                // On user 1's row: the cron job reads it there only
+                // (ClearOldClicks()); on another admin's row it deleted
+                // nothing. The id an earlier version stored is cleared in the
+                // same statement: this schedule replaces it.
+                $sql = "UPDATE 202_users_pref SET user_delete_data_before = '" . (int) $cutoff . "',"
+                    . " user_delete_data_clickid = NULL WHERE user_id = '1'";
+                if ($db->query($sql)) {
+                    if ($slack) {
+                        $slack->push('click_data_deleted', [
+                            'user' => $username,
+                            'date' => $eraseDate->format('Y-m-d'),
+                        ]);
+                    }
+                    p202_account_flash('ok', 'Click data from before ' . $day . ' is scheduled for deletion. '
+                        . 'The cron job removes it in batches.');
+                } else {
+                    p202_account_flash('bad', 'The deletion could not be scheduled; nothing will be removed. '
+                        . 'Try again.');
+                }
+            } else {
+                p202_account_flash('info', 'There are no clicks from before ' . $day . ', so nothing is deleted.');
+            }
+            p202_account_redirect('202-account/administration.php#database');
+        }
+    }
 }
 
 if (isset($_POST['auto_database_management'])) {
@@ -180,7 +234,9 @@ if (isset($_POST['auto_database_management'])) {
 		$fieldErrors['auto_database_management'] = 'Enter a whole number of days, or 0 to keep all click data.';
 	} else {
 		$mysql['auto_database_management'] = $db->real_escape_string((string) (int) $postedDays);
-		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '" . $mysql['user_own_id'] . "'";
+		// User 1's row, where AutoOptimizeDatabase() reads it (as
+		// PUT /api/v3/system/retention writes it).
+		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '1'";
 		if ($db->query($sql)) {
 			p202_account_flash('ok', (int) $postedDays === 0
 				? 'Automatic deletion is off; click data is kept.'
@@ -232,16 +288,61 @@ if (!is_array($pref_row)) {
 	$pref_row = [];
 }
 
-/** When the pending deletion marker points, as a date; null when none is set. */
-function p202_admin_erase_date(): ?string
+/** What a deletion by date keeps, said under the form (ClickRetention's rule). */
+const P202_ADMIN_RECLICK_KEPT = 'A click visited again on or after the day is kept whole.';
+
+/**
+ * The scheduled one-off deletion, on user 1's row, which the cron job reads:
+ * ['day' => Y-m-d for the date input, 'text' => what the form says], or null
+ * when none is scheduled. A time is shown as its day in the viewer's zone,
+ * with the hour when it is not that day's midnight (another admin scheduled
+ * it in another zone); an id an earlier version stored, as the day of the
+ * click it names. A row that cannot be read says so rather than reading as
+ * "nothing is scheduled".
+ *
+ * @return array{day: string, text: string}|null
+ */
+function p202_admin_scheduled_deletion(): ?array
 {
-	global $db, $mysql;
+    global $db;
 
-	$sql = "SELECT click_time FROM `202_clicks` WHERE click_id <= (SELECT user_delete_data_clickid FROM `202_users_pref` WHERE user_id='" . $mysql['user_own_id'] . "') ORDER BY click_id DESC LIMIT 1";
+    $result = $db->query(
+        "SELECT user_delete_data_before, user_delete_data_clickid FROM 202_users_pref WHERE user_id = '1'"
+    );
+    $row = $result instanceof mysqli_result ? $result->fetch_assoc() : false;
+    try {
+        if ($row === false) {
+            throw new \RuntimeException('the row could not be read: ' . $db->error);
+        }
+        ['before' => $cutoff, 'marker' => $marker] = \Prosper202\Click\ClickRetention::scheduled($row ?? []);
+    } catch (\Throwable $e) {
+        error_log('administration.php: the scheduled deletion could not be read: ' . $e->getMessage());
+        return ['day' => '', 'text' => 'The scheduled deletion could not be read just now; the server log says why.'];
+    }
+    if ($cutoff !== null) {
+        $at = (new DateTimeImmutable('@' . $cutoff))->setTimezone(new DateTimeZone(date_default_timezone_get()));
+        $label = $at->format('H:i:s') === '00:00:00' ? $at->format('M j, Y') : $at->format('M j, Y H:i T');
+        return [
+            'day' => $at->format('Y-m-d'),
+            'text' => 'Currently set: clicks from before ' . $label . ' are deleted. ' . P202_ADMIN_RECLICK_KEPT,
+        ];
+    }
+    if ($marker !== null) {
+        $result = $db->query(
+            'SELECT click_time FROM `202_clicks` WHERE click_id <= ' . (int) $marker . ' ORDER BY click_id DESC LIMIT 1'
+        );
+        $click = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
+        if (!is_array($click)) {
+            return ['day' => '', 'text' => 'Currently set: clicks below click ' . (int) $marker . ' are deleted.'];
+        }
+        return [
+            'day' => date('Y-m-d', (int) $click['click_time']),
+            'text' => 'Currently set: clicks from before ' . date('M j, Y', (int) $click['click_time'])
+                . ' are deleted (by click id, as an earlier version scheduled it).',
+        ];
+    }
 
-	$result = $db->query($sql);
-	$row = $result ? $result->fetch_array(MYSQLI_ASSOC) : null;
-	return $row ? date('Y-m-d', (int) $row['click_time']) : null;
+    return null;
 }
 
 function database_size()
@@ -302,8 +403,8 @@ function CronJobLastExecution($datetime, $full = false)
 
 $e = static fn (mixed $v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $self = get_absolute_url() . '202-account/administration.php';
-$eraseDate = p202_admin_erase_date();
-$autoDays = (string) ($_POST['auto_database_management'] ?? ($pref_row['user_auto_database_optimization_days'] ?? '0'));
+$scheduledDeletion = p202_admin_scheduled_deletion();
+$autoDays = (string) ($_POST['auto_database_management'] ?? ($user_row['user_auto_database_optimization_days'] ?? '0'));
 $autoCronOn = !empty($pref_row['auto_cron']);
 $maxmindOn = !empty($pref_row['maxmind_isp']);
 $geoDirShown = getenv('P202_GEO_DIR') ?: getTrackingDomain() . get_absolute_url() . '202-config/geo/';
@@ -402,10 +503,10 @@ echo p202_account_render_flashes($extra);
 							<?php echo p202_account_token_field(); ?>
 							<label class="form-label" for="erase_clicks_date">Delete click data from before</label>
 							<div class="input-group">
-								<input type="date" class="form-control<?php echo p202_account_invalid($fieldErrors, 'database_management'); ?>" id="erase_clicks_date" name="database_management" required max="<?php echo $e(date('Y-m-d')); ?>" value="<?php echo $e($eraseDate ?? ''); ?>">
+								<input type="date" class="form-control<?php echo p202_account_invalid($fieldErrors, 'database_management'); ?>" id="erase_clicks_date" name="database_management" required max="<?php echo $e(date('Y-m-d')); ?>" value="<?php echo $e($scheduledDeletion['day'] ?? ''); ?>">
 								<button class="btn btn-outline-danger" type="submit">Delete data…</button>
 							</div>
-							<div class="form-text"><?php echo $eraseDate === null ? 'Nothing is scheduled for deletion.' : 'Currently set: clicks from before ' . $e(date('M j, Y', (int) strtotime($eraseDate))) . ' are deleted.'; ?></div>
+							<div class="form-text"><?php echo $e($scheduledDeletion === null ? 'Nothing is scheduled for deletion. ' . P202_ADMIN_RECLICK_KEPT : $scheduledDeletion['text']); ?></div>
 							<?php echo p202_account_field_error($fieldErrors, 'database_management'); ?>
 						</form>
 					</div>
