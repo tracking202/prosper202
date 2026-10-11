@@ -963,6 +963,13 @@ function setClickIdCookieForLp($click_id_public, $lp_public_id)
 class PLATFORMS
 {
 
+    /**
+     * The device for this click: the user agent's parse, cached per agent,
+     * then this request's address verdict. botCheck() judges the address, so
+     * its answer must stay out of an entry keyed by the agent, or the first
+     * click from a listed range marks every later visitor with that agent as
+     * a bot for as long as the entry lives.
+     */
     public static function get_device_info($db, $detect, $ua_string = '')
     {
         global $memcacheWorking, $memcache;
@@ -975,39 +982,54 @@ class PLATFORMS
         }
         $ua = $detect->getUserAgent();
 
-        // If Cache working
         if ($memcacheWorking) {
+            $key = md5("user-agent" . $ua . systemHash());
+            $device_info = $memcache->get($key);
 
-            $device_info = $memcache->get(md5("user-agent" . $ua . systemHash()));
-
-            // An entry cached before ua_device_family existed is a miss, so
-            // ClickBotDetector never has to parse the agent a second time.
-            if (! is_array($device_info) || ! array_key_exists('ua_device_family', $device_info)) {
-
-                $parse_info = PLATFORMS::parseUserAgentInfo($db, $detect);
-                setCache(md5("user-agent" . $ua . systemHash()), $parse_info);
-                return $parse_info;
-            } else {
-                return $device_info;
+            // A miss as well: an entry from before ua_device_family existed
+            // (ClickBotDetector would parse the agent again), and one from
+            // before the address verdict left the parse (no ua_only), which
+            // may hold another visitor's type 4.
+            if (! is_array($device_info)
+                || ! array_key_exists('ua_device_family', $device_info)
+                || ! array_key_exists('ua_only', $device_info)
+            ) {
+                $device_info = PLATFORMS::parseUserAgentInfo($db, $detect);
+                setCache($key, $device_info);
             }
+        } else {
+            $device_info = PLATFORMS::parseUserAgentInfo($db, $detect);
         }
 
-        // If Cache is not working
-        else {
-
-            return PLATFORMS::parseUserAgentInfo($db, $detect);
-        }
+        return PLATFORMS::applyAddressVerdict($db, $device_info);
     }
 
-    public static function parseUserAgentInfo($db, $detect)
+    /**
+     * Type 4 and the "Bot" device model when this request's address is in a
+     * range botCheck() lists; the user agent's parse unchanged otherwise.
+     */
+    public static function applyAddressVerdict($db, array $device_info): array
     {
         global $ip_address;
 
-        // Ensure ip_address is available for botCheck
         if (!isset($ip_address)) {
             $ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
         }
+        if (!$ip_address || !PLATFORMS::botCheck($ip_address)) {
+            return $device_info;
+        }
 
+        [$device_info['device'], $device_info['type']] = PLATFORMS::deviceModel($db, 'Bot', '4');
+
+        return $device_info;
+    }
+
+    /**
+     * What the user agent alone says, as get_device_info() caches it per
+     * agent: nothing here may depend on the request's address.
+     */
+    public static function parseUserAgentInfo($db, $detect)
+    {
         $parser = Parser::create();
         $userAgent = $detect->getUserAgent() ?: '';
         $result = $parser->parse($userAgent);
@@ -1047,16 +1069,9 @@ class PLATFORMS
             }
         }
 
-        if ($ip_address && PLATFORMS::botCheck($ip_address)) {
-            $type = "4";
-            $result->device->family = "Bot";
-        }
-
         // Select from DB and return ID's
         $mysql['browser'] = $db->real_escape_string((string)$result->ua->family);
         $mysql['platform'] = $db->real_escape_string((string)$result->os->family);
-        $mysql['device'] = $db->real_escape_string((string)$result->device->family);
-        $mysql['device_type'] = $db->real_escape_string((string)$type);
 
 
 
@@ -1084,19 +1099,7 @@ class PLATFORMS
             $platform_id = $db->insert_id;
         }
 
-        // Get device model ID
-        $device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='" . $mysql['device'] . "'";
-        $device_result = _mysqli_query($db, $device_sql);
-        $device_row = $device_result->fetch_assoc();
-        if ($device_row) {
-            $device_id = $device_row['device_id'];
-            $device_type = $device_row['device_type'];
-        } else {
-            $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device'] . "', device_type='" . $mysql['device_type'] . "'";
-            $device_result = _mysqli_query($db, $device_sql);
-            $device_id = $db->insert_id;
-            $device_type = $type;
-        }
+        [$device_id, $device_type] = PLATFORMS::deviceModel($db, (string) $result->device->family, (string) $type);
 
         $data = [
             'browser' => $browser_id,
@@ -1104,9 +1107,36 @@ class PLATFORMS
             'device' => $device_id,
             'type' => $device_type,
             'ua_device_family' => $uaDeviceFamily,
+            // Marks an entry with no address verdict in it; get_device_info()
+            // treats a cached entry without it as a miss.
+            'ua_only' => true,
         ];
 
         return $data;
+    }
+
+    /**
+     * The 202_device_models id and device_type for $name, inserted with $type
+     * when the model is new.
+     *
+     * @return array{0: mixed, 1: mixed}
+     */
+    private static function deviceModel($db, string $name, string $type): array
+    {
+        $mysql['device'] = $db->real_escape_string($name);
+        $mysql['device_type'] = $db->real_escape_string($type);
+
+        $device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='" . $mysql['device'] . "'";
+        $device_result = _mysqli_query($db, $device_sql);
+        $device_row = $device_result->fetch_assoc();
+        if ($device_row) {
+            return [$device_row['device_id'], $device_row['device_type']];
+        }
+
+        $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device'] . "', device_type='" . $mysql['device_type'] . "'";
+        _mysqli_query($db, $device_sql);
+
+        return [$db->insert_id, $type];
     }
 
     public static function botCheck($ip)
