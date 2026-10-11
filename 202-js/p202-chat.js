@@ -30,7 +30,6 @@
     var BASE = cfg.base;
     var TOKEN = typeof cfg.token === 'string' ? cfg.token : '';
     var USER = String(cfg.user || '');
-    var STORE_KEY = 'p202.chat.pass';
     var TYPING_SHOW_MS = 6000;
     var TYPING_SEND_MS = 3000;
     var PING_MS = 30000;
@@ -106,7 +105,10 @@
         }, wait * 1000 + 500);
     }
 
-    var visibilityWanted = null;
+    /* show/hide/toggle asked for before the box exists, replayed in order once
+       it does: a show or hide replaces what came before it, and two toggles
+       cancel out, so this never holds more than two commands. */
+    var visibilityQueue = [];
 
     function dispatch(command, a, b) {
         switch (command) {
@@ -125,8 +127,12 @@
             case 'toggle':
                 if (ui) {
                     setOpen(command === 'toggle' ? !state.open : command === 'show');
+                } else if (command !== 'toggle') {
+                    visibilityQueue = [command];
+                } else if (visibilityQueue[visibilityQueue.length - 1] === 'toggle') {
+                    visibilityQueue.pop();
                 } else {
-                    visibilityWanted = command;
+                    visibilityQueue.push('toggle');
                 }
                 break;
             default:
@@ -190,21 +196,6 @@
             && typeof pass.expires_at_s === 'number' && pass.expires_at_s - 3600 > nowSeconds();
     }
 
-    function storedPass() {
-        try {
-            var pass = JSON.parse(window.sessionStorage.getItem(STORE_KEY) || 'null');
-            return usable(pass) ? pass : null;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function dropStoredPass() {
-        try {
-            window.sessionStorage.removeItem(STORE_KEY);
-        } catch (e) { /* storage unavailable: nothing was kept */ }
-    }
-
     /* Rejects with 'hidden' (no API key: the box stays hidden), 'signed_out',
        or 'unavailable'. */
     function fetchPass(refresh) {
@@ -219,9 +210,6 @@
                     expires_at_s: body.expires_at_s,
                     name: body.user && typeof body.user.name === 'string' ? body.user.name : ''
                 };
-                try {
-                    window.sessionStorage.setItem(STORE_KEY, JSON.stringify(pass));
-                } catch (e) { /* kept for this page only */ }
                 return pass;
             }
             if (res.status === 409) {
@@ -234,18 +222,20 @@
         });
     }
 
+    /* Each page asks chat-pass.php once rather than keeping the pass in browser
+       storage: the install's session already caches it against everything it
+       was issued for (API key, install, user, email, name), so a changed key or
+       another install on the same origin gets a new pass, never the last one. */
     function currentPass() {
         if (usable(state.pass)) {
             return Promise.resolve(state.pass);
         }
-        var stored = storedPass();
-        return stored ? Promise.resolve(stored) : fetchPass(false);
+        return fetchPass(false);
     }
 
     /* The chat service refused the pass (HTTP 401, close 4001): drop it and
        ask for a new one, once until a request is accepted again. */
     function renewPass() {
-        dropStoredPass();
         if (state.renewed) {
             return Promise.resolve(false);
         }
@@ -818,10 +808,11 @@
             input.style.height = Math.min(input.scrollHeight, 120) + 'px';
         }
 
-        if (visibilityWanted) {
-            dispatch(visibilityWanted);
-            visibilityWanted = null;
-        }
+        var asked = visibilityQueue;
+        visibilityQueue = [];
+        asked.forEach(function (command) {
+            dispatch(command);
+        });
     }
 
     function showComposerError(text) {
