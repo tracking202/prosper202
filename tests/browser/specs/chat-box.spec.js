@@ -33,9 +33,9 @@ function aPass(route) {
 }
 
 // The chat service aPass names, stood in for: answers its HTTP calls (CORS
-// preflight included) with what `answer` returns for each GET.
+// preflight included) with what `answer` returns (or resolves to) for each.
 async function standInService(page, answer) {
-  await page.route('http://127.0.0.1:9/**', (route) => {
+  await page.route('http://127.0.0.1:9/**', async (route) => {
     const cors = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
@@ -44,12 +44,24 @@ async function standInService(page, answer) {
     if (route.request().method() === 'OPTIONS') {
       return route.fulfill({ status: 204, headers: cors });
     }
-    const [status, body] = answer(route.request());
+    const [status, body] = await answer(route.request());
+    if (status === 204) {
+      return route.fulfill({ status, headers: cors });
+    }
     return route.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify(body) });
   });
 }
 
 const EMPTY_STATE = { conversations: [], messages: [], seq: 0 };
+
+function chatConv(over) {
+  const now = Date.now();
+  return { id: 7, type: 'chat', subject: null, status: 'open', created_at: now - 60000, last_message_at: now, team_read_upto: 0, unread: 1, rev: 1, ...over };
+}
+
+function teamMessage(seq, body) {
+  return { kind: 'message', seq, conv: 7, author: 'team', name: 'Sam', body, at: Date.now() };
+}
 
 // What show/hide/toggle called before the box exists must leave it as, in order.
 const SEQUENCES = [
@@ -172,6 +184,44 @@ module.exports = {
           await ui.until(async () => answers >= 3, { describe: 'the second refusal', timeout: 20000 });
           await ui.until(async () => refreshes === 2, { describe: 'the second refusal to be renewed', timeout: 3000 });
           expect.eq(refreshes, 2, 'a refusal right after a renewal that worked gets its own renewal');
+        });
+      },
+    },
+    {
+      // Codex on #207: a read receipt answered after a newer team message
+      // arrived cleared the count for both, and the badge went dark.
+      name: 'A team message newer than a read receipt keeps the badge',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          let readAsked = false;
+          let readAnswered = false;
+          let server = null;
+          await page.route(PASS_URL, aPass);
+          await standInService(page, async (request) => {
+            if (request.method() === 'POST' && request.url().includes('/v1/customer/read')) {
+              readAsked = true;
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              readAnswered = true;
+              return [204, null];
+            }
+            return [200, { conversations: [chatConv()], messages: [teamMessage(1, 'Hi Dana')], seq: 1 }];
+          });
+          await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+            server = ws;
+            setTimeout(() => ws.send(JSON.stringify({ t: 'ready', seq: 1 })), 50);
+          });
+          await app.goto('/202-account/');
+          await ui.until(async () => ui.exists('.p202-chat__launcher'), { describe: 'the chat box to be built' });
+          await page.click('.p202-chat__launcher');
+          await ui.until(async () => ui.exists('.p202-chat__row'), { describe: 'the conversation to be listed' });
+          await page.click('.p202-chat__row');
+          await ui.until(async () => readAsked, { describe: 'opening the thread to post a read receipt' });
+          await page.click('.p202-chat__launcher'); // closed: the next message is not seen
+          await ui.until(async () => server !== null, { describe: 'the socket' });
+          server.send(JSON.stringify({ t: 'message', message: teamMessage(2, 'One more thing'), conversation: chatConv({ unread: 1, rev: 2 }) }));
+          await ui.until(async () => readAnswered, { describe: 'the receipt to be answered' });
+          await page.waitForTimeout(300);
+          expect.ok(await ui.exists('.p202-chat__launcher--unread'), 'the newer message still shows on the launcher');
         });
       },
     },

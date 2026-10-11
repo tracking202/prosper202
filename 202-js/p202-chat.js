@@ -634,18 +634,22 @@
         return state.open && state.view === 'thread' && state.thread > 0 && document.visibilityState === 'visible';
     }
 
+    function latestTeamSeq(convId) {
+        var upto = 0;
+        (state.messages[convId] || []).forEach(function (m) {
+            if (m.author !== 'customer' && m.seq > upto) {
+                upto = m.seq;
+            }
+        });
+        return upto;
+    }
+
     function markRead() {
         if (!threadVisible()) {
             return;
         }
         var conv = state.convs[state.thread];
-        var list = state.messages[state.thread] || [];
-        var upto = 0;
-        list.forEach(function (m) {
-            if (m.author !== 'customer' && m.seq > upto) {
-                upto = m.seq;
-            }
-        });
+        var upto = latestTeamSeq(state.thread);
         if (!conv || !(conv.unread > 0) || upto === 0 || (state.readPosted[state.thread] || 0) >= upto) {
             return;
         }
@@ -653,7 +657,9 @@
         state.readPosted[id] = upto;
         authed('POST', '/v1/customer/read', { conv: id, upto: upto }).then(function (res) {
             if (res.status === 204 || res.status === 200) {
-                if (state.convs[id]) {
+                // A team message newer than this receipt keeps its count; the
+                // service's conversation frame or the next poll carries it.
+                if (state.convs[id] && latestTeamSeq(id) <= upto) {
                     state.convs[id].unread = 0;
                 }
                 renderBadge();
