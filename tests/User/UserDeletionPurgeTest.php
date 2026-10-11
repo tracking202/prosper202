@@ -231,7 +231,6 @@ final class UserDeletionPurgeTest extends TestCase
         '202_user_role' => 'kept with the soft-deleted user row',
         '202_mysql_errors' => 'the operator\'s database error log, not the user\'s data',
         'user_data_feedback' => 'the vendor feedback cache, not tracking data',
-        '202_messaging_conversations' => 'the vendor messaging cache, not tracking data',
         '202_messaging_sync' => 'the vendor messaging cache, not tracking data',
         '202_messaging_events' => 'the vendor messaging cache, not tracking data',
         '202_messaging_attributes' => 'the vendor messaging cache, not tracking data',

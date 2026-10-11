@@ -183,7 +183,7 @@ final class ComponentClassIsConsumedTest extends TestCase
                 }
             }
         }
-        self::assertGreaterThanOrEqual(4, count($sheets), 'the shell loads the chrome, theme, component and messenger sheets');
+        self::assertGreaterThanOrEqual(4, count($sheets), 'the shell loads the chrome, theme, component and chat sheets');
         return array_keys($sheets);
     }
 

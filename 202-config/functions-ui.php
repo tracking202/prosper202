@@ -124,8 +124,10 @@ function p202_shell_assets(array $context = []): array
         ['path' => '202-css/p202-theme.css'],
         ['path' => '202-css/p202-components.css'],
     ];
+    // The chat box and the analytics command queue: signed-in pages only, so
+    // a signed-out page loads and runs nothing of it.
     if ($loggedIn) {
-        $css[] = ['path' => '202-css/messenger.css'];
+        $css[] = ['path' => '202-css/p202-chat.css'];
     }
     $jsHead = [
         ['asset' => 'jquery.js'],
@@ -141,6 +143,9 @@ function p202_shell_assets(array $context = []): array
     $jsPage[] = ['asset' => 'tablesort.js'];
     $jsPage[] = ['path' => '202-js/p202-ui.js'];
     $jsPage[] = ['path' => '202-js/p202-chrome.js'];
+    if ($loggedIn) {
+        $jsPage[] = ['path' => '202-js/p202-chat.js'];
+    }
     return ['css' => $css, 'js_head' => $jsHead, 'js_page' => $jsPage];
 }
 

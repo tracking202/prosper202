@@ -1,20 +1,29 @@
-# Prosper202 Messaging — Central Server API Contract
+# Prosper202 product analytics — portal API contract
 
-This document defines the HTTP API that the **central server** (`my.tracking202.com`)
-must implement so that self-hosted Prosper202 installs (the *client*) can deliver an
-Intercom-style messenger to their users.
+This document defines the HTTP endpoint the **portal** (`my.tracking202.com`)
+implements so that self-hosted Prosper202 installs can deliver product
+analytics: custom attributes and behavioural events, used to segment
+announcements and onboarding.
+
+Chat is not part of this contract. Installs from 1.9.77 on do not store or
+sync chat messages: `202-account/ajax/chat-pass.php` asks the portal for a
+chat pass (`POST /api/v3/chat/pass`, `CHAT_PASS_URL` in `connect.php`) and
+the chat box (`202-js/p202-chat.js`) talks to the chat service with it. That
+contract is the chat service's `docs/PROTOCOL.md` (tracking202/chat). The
+`/pull`, `/send` and `/read` endpoints an older install calls are described
+there too (section 11), for the installs still on 1.9.76.
 
 The client side (this repository) is implemented in:
 
 - `202-config/Messaging/MessagingClient.class.php` — HTTP transport
-- `202-config/Messaging/MessagingService.class.php` — local cache + sync orchestration
-- `202-account/ajax/messaging/*.php` — browser endpoints
-- `202-js/messenger.js`, `202-css/messenger.css` — the floating widget
-- `202-cronjobs/sync-messaging.php` — proactive background delivery
+- `202-config/Messaging/MessagingService.class.php` — the local queue and delivery
+- `202-account/ajax/messaging/track.php` — the browser endpoint
+- `202-js/p202-chat.js` — the `Prosper202Messenger` command queue
+- `202-cronjobs/sync-messaging.php` — background delivery for every active user
 
-Because each Prosper202 install is self-hosted and can only make **outbound** HTTPS
-requests, all communication is **client-initiated (pull)**. The central server never
-connects to an install. The client polls; the central server queues.
+Each install is self-hosted and can only make **outbound** HTTPS requests, so
+all communication is client-initiated. The portal never connects to an
+install.
 
 ---
 
@@ -24,33 +33,34 @@ connects to an install. The client polls; the central server queues.
 https://my.tracking202.com/api/v3/messaging
 ```
 
-Configured client-side as `MESSAGING_API_URL` in `202-config/connect.php`.
+Configured client-side as `MESSAGING_API_URL` in `202-config/connect.php`
+(environment override; `http://` only on loopback).
 
 ## Transport
 
-- All requests are `POST` with a JSON body and `Content-Type: application/json`.
-- All responses are JSON with `Content-Type: application/json` and HTTP `200` on success.
-- Non-`200` responses are treated as failures; the client keeps its local cache and retries later.
-- TLS certificate verification is enforced (`CURLOPT_SSL_VERIFYPEER`/`VERIFYHOST`). Use a valid certificate.
+- `POST` with a JSON body and `Content-Type: application/json`.
+- Responses are JSON with HTTP `200` on success.
+- Non-`200` responses (and `{"ok": false}`) are failures; the client keeps the
+  rows queued and retries on a later delivery.
+- TLS certificate verification is enforced. Use a valid certificate.
 
 ## Authentication & identity
 
-Every request body includes an `identity` object. The central server authenticates the
-install with `api_key` + `install_hash` and uses the remaining fields for **targeting**
-(broadcasts to a customer/cohort) and **routing** (which user a conversation belongs to).
+Every request body includes an `identity` object. The portal authenticates the
+install with `api_key` + `install_hash` and uses the remaining fields for
+targeting.
 
 ```json
 {
   "identity": {
-    "install_hash":  "32-char install identifier",
+    "install_hash":  "install identifier",
     "api_key":       "p202_customer_api_key for this install",
     "user_id":       123,
     "user_email":    "user@example.com",
-    "registered_at": "2024-01-02 03:04:05",
+    "registered_at": 1700000000,
     "attributes": {
       "plan": "pro",
-      "monthly_clicks": 18204,
-      "trackers_created": 12
+      "monthly_clicks": 18204
     }
   }
 }
@@ -59,163 +69,23 @@ install with `api_key` + `install_hash` and uses the remaining fields for **targ
 | Field          | Source (client)                          | Purpose                              |
 |----------------|------------------------------------------|--------------------------------------|
 | `install_hash` | `202_users.install_hash`                 | Identifies the installation          |
-| `api_key`      | `202_users.p202_customer_api_key`        | Authenticates the customer account   |
-| `user_id`      | local `202_users.user_id`                | Routes conversations to a user       |
-| `user_email`   | `202_users.user_email`                   | Targeting / display on central side  |
-| `registered_at`| `202_users.user_time_register`           | Cohort targeting (e.g. "new users")  |
+| `api_key`      | `202_users.p202_customer_api_key`, or the install owner's for a sub-user without one | Authenticates the customer account |
+| `user_id`      | local `202_users.user_id`                | Identifies the user within the install |
+| `user_email`   | `202_users.user_email`                   | Targeting                            |
+| `registered_at`| `202_users.user_time_register` (unix seconds) | Cohort targeting (e.g. "new users") |
 | `attributes`   | `202_messaging_attributes` snapshot      | **Custom attributes for segmentation** |
 
-`attributes` is the latest snapshot of custom attributes set by page JavaScript via
-`Prosper202Messenger('update', {...})` (see *Client JavaScript API* below). It is sent
-on **every** request so the central server always has fresh data to segment audiences on.
-Values are scalars (string/number/bool); nested objects are not guaranteed.
-
-If `api_key`/`install_hash` do not validate, respond `401`. The client degrades
-gracefully (shows cached data, no error to the user).
+Only an active, undeleted user has an identity
+(`MessagingService::identityFor()`, which the chat pass request is built from
+too). If `api_key`/`install_hash` do not validate, respond `401`.
 
 ---
 
-## Targeting model (server-side)
+## `POST /track`
 
-Targeting is entirely the central server's responsibility. Both modes Intercom offers
-are supported by the same `pull` response:
-
-- **Broadcast / one-way** — the server creates a `type: "broadcast"` conversation for
-  every user matching an audience (all users, a plan, a signup cohort, a specific
-  `user_id`, etc.). The user may reply, which upgrades it into a two-way thread.
-- **Two-way conversation** — the server creates/continues a `type: "conversation"`
-  thread for a specific user, and support agents reply into it.
-
-The client does not filter or target; it simply renders whatever `pull` returns for the
-identified user.
-
----
-
-## Endpoints
-
-### `POST /pull`
-
-Returns all conversations and messages visible to the identified user. The client
-upserts the result into its local cache keyed by `external_id`, so the endpoint may
-return either full state or only changes since `cursor`.
-
-**Request**
-
-```json
-{
-  "identity": { ... },
-  "cursor": "opaque string from previous pull, or null on first sync"
-}
-```
-
-**Response**
-
-```json
-{
-  "ok": true,
-  "server_time": "2026-06-16 07:00:00",
-  "cursor": "opaque-cursor-to-send-next-time",
-  "conversations": [
-    {
-      "external_id": "conv_abc123",
-      "type": "conversation",          // "conversation" | "broadcast"
-      "subject": "Welcome to Prosper202",
-      "status": "open",                 // "open" | "closed"
-      "last_message_at": "2026-06-16 06:59:00",
-      "messages": [
-        {
-          "external_id": "msg_001",
-          "direction": "inbound",       // "inbound" (team→user) | "outbound" (user→team)
-          "author": "team",             // "team" | "system" | "user"
-          "body": "Hi! Need a hand getting set up?",
-          "created_at": "2026-06-16 06:59:00"
-        }
-      ]
-    }
-  ],
-  "deleted_conversation_ids": ["conv_retracted1"]
-}
-```
-
-Notes:
-- `deleted_conversation_ids` (optional) is an array of conversation `external_id`s the
-  server has retracted/removed; the client deletes those conversations and their messages
-  from its local cache. Omit it (or send `[]`) when there is nothing to delete.
-- `direction` is from the **user's** perspective: `inbound` = received, `outbound` = sent.
-- `body` is plain text. The client HTML-escapes it before rendering. Do not send HTML.
-- `cursor` is opaque to the client and echoed back on the next `pull`. Use it to return
-  only deltas; returning full state every time is also valid (the client upserts).
-- Messages the user already sent (echoed back with a real `external_id`) let the client
-  reconcile its locally-queued copies via `client_token` (see `send`).
-
-### `POST /send`
-
-Delivers a message the user composed in the widget.
-
-**Request**
-
-```json
-{
-  "identity": { ... },
-  "conversation_external_id": "conv_abc123 or null to start a new thread",
-  "body": "plain text the user typed",
-  "client_token": "uuid generated by the client for idempotency"
-}
-```
-
-**Response**
-
-```json
-{
-  "ok": true,
-  "conversation": {
-    "external_id": "conv_abc123",
-    "type": "conversation",
-    "subject": "Welcome to Prosper202",
-    "status": "open"
-  },
-  "message": {
-    "external_id": "msg_042",
-    "client_token": "the uuid from the request",
-    "direction": "outbound",
-    "author": "user",
-    "body": "plain text the user typed",
-    "created_at": "2026-06-16 07:01:00"
-  }
-}
-```
-
-- `client_token` **must** be echoed back so the client can match the server's canonical
-  message to the optimistic local copy and avoid duplicates. Treat repeated
-  `client_token`s as idempotent (return the same message).
-- If `conversation_external_id` is null, create a new `conversation` thread and return it.
-
-### `POST /read`
-
-Reports which inbound messages the user has read (for agent-side read receipts).
-
-**Request**
-
-```json
-{
-  "identity": { ... },
-  "message_external_ids": ["msg_001", "msg_002"]
-}
-```
-
-**Response**
-
-```json
-{ "ok": true }
-```
-
-This is advisory; the client also tracks read state locally for its unread badge.
-
-### `POST /track`
-
-Delivers custom attributes and behavioural events for **segmentation**. The client
-batches these (queued locally, flushed on sync) so a flush may carry the latest attribute
-snapshot plus several events at once.
+Delivers custom attributes and behavioural events. The client queues them
+locally and delivers in batches, so one call may carry the latest attribute
+snapshot plus several events.
 
 **Request**
 
@@ -243,21 +113,22 @@ snapshot plus several events at once.
 { "ok": true }
 ```
 
-- `attributes` mirrors what is sent inside `identity.attributes`; it is included here too
-  so a dedicated flush can update the central profile even when no message is pulled.
-- Each event has a `client_token`; treat repeated tokens as idempotent so retries do not
-  double-count.
-- The central server stores attributes on the user profile and records events on a
-  timeline, both usable to define audiences for broadcasts.
+- `attributes` mirrors `identity.attributes`.
+- Each event has a `client_token`; treat a repeated token as idempotent so a
+  retry does not double-count.
+- The client calls `/track` only when an event is pending or the attribute
+  snapshot changed since the last delivery, at most once per
+  `MESSAGING_SYNC_THROTTLE` seconds (default 20) per user from a page, and
+  once per run from the cron job.
 
 ---
 
 ## Client JavaScript API
 
-Page code on a Prosper202 install can feed the messenger exactly the way Intercom's
-JavaScript API works — a command queue on a single global function. The widget
-(`202-js/messenger.js`) installs this before it finishes loading, so calls made early
-are buffered and replayed.
+Page code on a Prosper202 install feeds this through a command queue on a
+single global function, which `template_bottom()` defines on every signed-in
+page and `202-js/p202-chat.js` replaces when it loads, replaying anything
+queued.
 
 ```js
 // Set/merge custom attributes on the current user (for segmentation):
@@ -266,81 +137,38 @@ Prosper202Messenger('update', { plan: 'pro', monthly_clicks: 18204 });
 // Record a behavioural event (optionally with metadata):
 Prosper202Messenger('trackEvent', 'created_tracker', { tracker_id: 42 });
 
-// Control the widget:
-Prosper202Messenger('show');     // open the panel
-Prosper202Messenger('hide');     // close the panel
-Prosper202Messenger('toggle');   // toggle the panel
+// The chat box:
+Prosper202Messenger('show');     // open it
+Prosper202Messenger('hide');     // close it
+Prosper202Messenger('toggle');   // toggle it
 ```
 
-`update` and `trackEvent` POST to `202-account/ajax/messaging/track.php`, which persists
-the data locally (`202_messaging_attributes`, `202_messaging_events`) and forwards it to
-`POST /track` on the next sync. Attribute values should be scalars.
+`update` and `trackEvent` POST to `202-account/ajax/messaging/track.php`, which
+records the data (`202_messaging_attributes`, `202_messaging_events`) and then
+delivers whatever is pending to `POST /track`, throttled per user. Its answer
+says what happened (`delivery`: `sent`, `idle`, `throttled` or `failed`); when
+the delivery was held back it carries `retry_after_s`, and the page posts
+`flush=1` after that long so a held-back event does not wait for the next one.
+Attribute values should be scalars.
 
 ---
 
 ## Error handling
 
-| Situation                         | Server response | Client behavior                         |
-|-----------------------------------|-----------------|-----------------------------------------|
-| Bad/missing auth                  | `401`           | Silent; keep cache; retry next cycle    |
-| Malformed request                 | `400`           | Logged; retried with backoff            |
-| Transient server error            | `5xx`           | Retried with exponential backoff        |
-| Success                           | `200` + `ok:true`| Cache updated                           |
+| Situation                         | Portal response  | Client behaviour                        |
+|-----------------------------------|------------------|-----------------------------------------|
+| Bad/missing auth                  | `401`            | Logged; rows stay queued                |
+| Malformed request                 | `400`            | Logged; an event is retried up to five times, then marked failed |
+| Transient server error            | `5xx`            | Retried once at once, then on the next delivery |
+| Success                           | `200` + `ok:true`| Rows marked sent, snapshot marked clean |
 
-The client never surfaces raw transport errors to end users; the widget simply shows the
-last successfully cached state.
+The client never shows transport errors to users.
 
 ---
 
-## Known limitations & operational notes
-
-These are scale/architecture concerns, not bugs. For a typical self-hosted install (one
-operator or a small team, with a responsive central server) neither is noticeable. They
-matter for large multi-user installs or when the central server is slow/unreachable, and
-each needs an infrastructure or contract change to resolve — deliberately out of scope for
-the client-side implementation.
-
-### 1. The inbox poll syncs synchronously
-
-`202-account/ajax/messaging/inbox.php` calls `MessagingService::sync()` on every poll
-(~every 25s per open widget), which makes the outbound HTTPS calls to this API. It is
-throttled by `MESSAGING_SYNC_THROTTLE` (default 20s), and a failed sync still stamps
-`last_sync` so a down server is not re-hit within the window. But because the poll interval
-is longer than the throttle, most polls do reach the network, and PHP holds a web worker
-for the duration of that call. If this API is slow or down, each poll blocks up to
-~21s (10s timeout × 2 attempts + 1s pause); the browser degrades gracefully (it shows
-cached state), but enough concurrent users polling into a slow upstream can exhaust the
-front-end worker pool.
-
-- **Mitigations in place:** throttle + capped retries (2 attempts, 1s backoff); the widget
-  never blocks the page and always renders the last cached state.
-- **Proper fix (ops/infra):** make `inbox.php` read the local cache only, and move *all*
-  network sync into the `202-cronjobs/sync-messaging.php` cron (run it frequently and
-  monitor it). PHP has no built-in async, so a non-blocking request path requires either a
-  job runner/queue that owns the outbound calls, or `fastcgi_finish_request()` to flush the
-  response before syncing (still occupies a worker). This is a deployment decision, so it
-  belongs in the install runbook rather than the client code.
-
-### 2. The cron syncs users sequentially (no batch pull)
+## Operational note: the cron delivers users one by one
 
 `202-cronjobs/sync-messaging.php` iterates active users and calls
-`MessagingService::forUser($id)->sync(true)` one at a time. Each `sync()` is several HTTP
-round-trips (flush events, push pending messages, report receipts, pull), so total runtime
-is `N users × (several sequential calls)`. At hundreds/thousands of users the cron runtime
-balloons, one slow/timing-out user stalls the rest, and delivery latency grows.
-
-- **Proper fix (requires a central-API change):** add a **batched pull** so the cron can
-  fetch many users in one request, e.g.
-
-  ```
-  POST /pull/batch
-  { "install_hash": "...", "api_key": "...",
-    "users": [ { "user_id": 1, "cursor": "..." }, { "user_id": 2, "cursor": "..." } ] }
-  -> { "ok": true, "results": [ { "user_id": 1, "cursor": "...", "conversations": [...] }, ... ] }
-  ```
-
-  The cron would then page through users (e.g. 100 per request) instead of one request per
-  user. Client-only alternatives (`curl_multi` parallelism, sharding users across cron
-  workers) add complexity and still issue N requests at this server, so the real win is
-  server-side batch support. **This endpoint is not yet implemented** — until it exists, the
-  cron uses the per-user `POST /pull` above.
+`MessagingService::forUser($id)->sync(true)` for each; a user with nothing
+pending costs no request. An install with many active users makes one
+`/track` call per user with something to deliver.

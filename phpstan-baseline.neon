@@ -3,18 +3,6 @@ parameters:
 		-
 			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
 			identifier: prosper202.directStmtCall
-			count: 37
-			path: '202-config/Messaging/MessagingService.class.php'
-
-		-
-			message: '#^Direct \$stmt\-\>execute\(\) bypasses Connection\:\:execute\(\) checked execution\. Use \$this\-\>conn\-\>execute\(\$stmt\) instead\. \(CLAUDE\.md \#1\)$#'
-			identifier: prosper202.directStmtCall
-			count: 37
-			path: '202-config/Messaging/MessagingService.class.php'
-
-		-
-			message: '#^Direct \$stmt\-\>bind_param\(\) bypasses Connection\:\:bind\(\) ref safety\. Use \$this\-\>conn\-\>bind\(\$stmt, \$types, \$values\) instead\. \(CLAUDE\.md \#7\)$#'
-			identifier: prosper202.directStmtCall
 			count: 7
 			path: '202-config/install.php'
 

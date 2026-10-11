@@ -103,16 +103,20 @@ if (!function_exists('withWritableSession')) {
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
-// Messaging API configuration (Intercom-style messenger).
-// Central server contract: 202-config/Messaging/CENTRAL-API.md
-// Both values are overridable via environment variables so a developer can point
-// the app at the local mock server (202-config/Messaging/mock-server.php) without
-// editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+// The portal: product analytics (POST <MESSAGING_API_URL>/track, contract in
+// 202-config/Messaging/CENTRAL-API.md) and the chat pass the chat box takes to
+// the chat service (CHAT_PASS_URL, 202-account/ajax/chat-pass.php). Each is
+// overridable from the environment so a developer can point the app at a
+// local stub without editing tracked config, e.g.
+// CHAT_PASS_URL=http://127.0.0.1:8787/api/v3/chat/pass (http only on loopback).
 if (!defined('MESSAGING_API_URL')) {
     DEFINE('MESSAGING_API_URL', getenv('MESSAGING_API_URL') ?: 'https://my.tracking202.com/api/v3/messaging');
 }
+if (!defined('CHAT_PASS_URL')) {
+    DEFINE('CHAT_PASS_URL', getenv('CHAT_PASS_URL') ?: 'https://my.tracking202.com/api/v3/chat/pass');
+}
 if (!defined('MESSAGING_SYNC_THROTTLE')) {
-    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
+    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user analytics deliveries
 }
 
 //fix for nginx with no server name set. SERVER_NAME does not exist under CLI

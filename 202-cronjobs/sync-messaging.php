@@ -1,14 +1,14 @@
 <?php
 
 /**
- * Messaging Sync Cron Job
+ * Analytics Delivery Cron Job
  *
- * Proactively syncs the Intercom-style messenger for active users so that
- * broadcasts and support replies arrive (and queued outbound messages/events are
- * delivered) even when a user does not currently have the dashboard open.
- *
- * The widget itself also syncs on every poll (throttled), so this cron is a
- * booster rather than the primary path.
+ * Delivers every active user's pending product-analytics events and changed
+ * attributes (202_messaging_events, 202_messaging_attributes) to the portal's
+ * POST /track, so what a page recorded reaches it even when nobody opens a
+ * page afterwards. track.php delivers on every call (throttled), so this is
+ * a booster rather than the primary path. Chat does not pass through the
+ * install, so there is nothing else to sync.
  *
  * Run every few minutes via cron (every 5 minutes is a good cadence):
  *   /usr/bin/php /path/to/prosper202/202-cronjobs/sync-messaging.php
@@ -37,7 +37,7 @@ register_shutdown_function(static function () use ($lockFile): void {
 });
 
 try {
-    echo 'Starting messaging sync at ' . date('Y-m-d H:i:s') . "\n";
+    echo 'Starting analytics delivery at ' . date('Y-m-d H:i:s') . "\n";
 
     $database = DB::getInstance();
     $db = $database->getConnection();
@@ -49,29 +49,37 @@ try {
         throw new RuntimeException('failed to list users');
     }
 
-    $synced = 0;
-    $failed = 0;
+    $counts = [
+        MessagingService::SYNC_SENT => 0,
+        MessagingService::SYNC_IDLE => 0,
+        MessagingService::SYNC_FAILED => 0,
+    ];
     while ($row = $result->fetch_assoc()) {
-        $userId  = (int) $row['user_id'];
-        $service = MessagingService::forUser($userId);
+        $userId = (int) $row['user_id'];
+        try {
+            $service = MessagingService::forUser($userId);
+        } catch (Throwable $e) {
+            // One unreadable user is that user's failure, not the run's.
+            error_log('Analytics delivery: user ' . $userId . ' could not be read: ' . $e->getMessage());
+            $counts[MessagingService::SYNC_FAILED]++;
+            continue;
+        }
         if ($service === null) {
             continue;
         }
 
         // Force past the per-request throttle; the cron cadence is the throttle here.
-        if ($service->sync(true)) {
-            $synced++;
-        } else {
-            $failed++;
-        }
+        $outcome = $service->sync(true);
+        $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
     }
 
-    echo "Messaging sync completed at " . date('Y-m-d H:i:s') . "\n";
-    echo "Results: {$synced} synced, {$failed} with no successful pull\n";
-    error_log("Messaging sync completed: {$synced} synced, {$failed} no-pull");
-    exit(0);
+    $summary = "{$counts[MessagingService::SYNC_SENT]} delivered, {$counts[MessagingService::SYNC_IDLE]} with nothing pending, {$counts[MessagingService::SYNC_FAILED]} failed";
+    echo 'Analytics delivery completed at ' . date('Y-m-d H:i:s') . "\n";
+    echo "Results: {$summary}\n";
+    error_log("Analytics delivery completed: {$summary}");
+    exit($counts[MessagingService::SYNC_FAILED] > 0 ? 1 : 0);
 } catch (Throwable $e) {
-    $msg = 'Messaging sync failed: ' . $e->getMessage();
+    $msg = 'Analytics delivery failed: ' . $e->getMessage();
     echo $msg . "\n";
     error_log($msg);
     exit(1);

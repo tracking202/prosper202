@@ -37,7 +37,7 @@ listed under either `ship` or `exclude`, and an unlisted one stops the build.
 format `p202 eval run` names), and two fixtures under `tests/` (the SDK
 contract vectors and the eval cases the bundled SDKs and CLI point at) ship.
 `exclude_nested` removes dev files inside shipped directories, such as
-`202-config/PHPStan` and the messaging mock server.
+`202-config/PHPStan` and the portal's analytics contract.
 
 `build/scripts/release-tree.php` enforces it at three points:
 
