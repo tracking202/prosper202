@@ -123,6 +123,87 @@ jobs:
           echo "MySQL did not become ready in time" >&2
           exit 1
 
+      # The install calls my.tracking202.com (licence check on every signed-in
+      # page, plus a few feeds). Production rejects unknown licence keys (since
+      # 2026-10-09) and CI's key is made up, so for this job only, resolve
+      # my.tracking202.com to a local HTTPS stub whose throwaway certificate is
+      # trusted by the runner's CA store: TLS verification stays fully on, no
+      # product code knows about it (.github/ is not in release zips), and CI
+      # stops sending traffic to production.
+      - name: Stub my.tracking202.com (CI only, verified TLS)
+        run: |
+          STUB="${{ runner.temp }}/p202-stub"
+          mkdir -p "$STUB"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=my.tracking202.com" \
+            -addext "subjectAltName=DNS:my.tracking202.com" \
+            -keyout "$STUB/key.pem" -out "$STUB/cert.pem" 2>/dev/null
+          sudo cp "$STUB/cert.pem" /usr/local/share/ca-certificates/p202-ci-stub.crt
+          sudo update-ca-certificates > /dev/null
+          echo "127.0.0.1 my.tracking202.com" | sudo tee -a /etc/hosts > /dev/null
+          cat > "$STUB/stub.py" <<'PY'
+          import http.server, json, ssl, sys, urllib.parse
+
+          class Stub(http.server.BaseHTTPRequestHandler):
+              def send_json(self, status, payload):
+                  body = json.dumps(payload).encode()
+                  self.send_response(status)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_POST(self):
+                  length = int(self.headers.get("Content-Length") or 0)
+                  form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+                  if self.path.rstrip("/") == "/api/v2/validate-customers-key":
+                      if not form.get("key", [""])[0].strip():
+                          return self.send_json(404, {"code": 404, "msg": "Key not found"})
+                      return self.send_json(200, {"code": 200, "msg": "Key valid", "paid": True})
+                  self.send_json(200, {})
+
+              def do_GET(self):
+                  self.send_json(200, {})
+
+              def log_message(self, fmt, *args):
+                  sys.stderr.write("%s %s\n" % (self.command, self.path))
+
+          ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          ctx.load_cert_chain(sys.argv[1], sys.argv[2])
+          server = http.server.ThreadingHTTPServer(("127.0.0.1", 443), Stub)
+          server.socket = ctx.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+          # Port 443 needs root; the log redirect runs inside the root shell too.
+          sudo sh -c 'exec python3 "$1" "$2" "$3" > "$4" 2>&1' _ \
+            "$STUB/stub.py" "$STUB/cert.pem" "$STUB/key.pem" "$STUB/requests.log" &
+          URL=https://my.tracking202.com/api/v2/validate-customers-key
+          for _ in $(seq 1 20); do
+            curl -sf -X POST -d key=probe "$URL" | grep -q 'Key valid' && break
+            sleep 0.5
+          done
+          curl -sf -X POST -d key=probe "$URL" | grep -q 'Key valid'
+          # PHP's curl must verify the stub's certificate exactly as it would prod's.
+          cat > "$STUB/verify.php" <<'PHP'
+          <?php
+          $c = curl_init(getenv('URL'));
+          curl_setopt_array($c, [
+              CURLOPT_POST => true,
+              CURLOPT_POSTFIELDS => 'key=probe',
+              CURLOPT_RETURNTRANSFER => true,
+              CURLOPT_SSL_VERIFYPEER => true,
+              CURLOPT_SSL_VERIFYHOST => 2,
+          ]);
+          $r = curl_exec($c);
+          if (strpos((string)$r, 'Key valid') === false) {
+              fwrite(STDERR, 'PHP curl to the stub failed: ' . curl_error($c) . "\n");
+              exit(1);
+          }
+          echo "PHP curl verified the stub over TLS\n";
+          PHP
+          php "$STUB/verify.php"
+        env:
+          URL: https://my.tracking202.com/api/v2/validate-customers-key
+
       - name: Install a throwaway instance (headless web installer)
         id: install
         env:
@@ -240,3 +321,10 @@ jobs:
             eval-results.json
             ${{ runner.temp }}/p202-eval/php-server.log
           if-no-files-found: ignore
+
+      - name: Stop the my.tracking202.com stub
+        if: always()
+        run: |
+          STUB="${{ runner.temp }}/p202-stub"
+          sudo pkill -f "$STUB/stub.py" || true
+          if [ -f "$STUB/requests.log" ]; then echo "Requests the install sent to my.tracking202.com:"; sort "$STUB/requests.log" | uniq -c; fi
