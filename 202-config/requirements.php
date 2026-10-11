@@ -14,24 +14,14 @@ if (is_installed() == true) {
 			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first. <a href='/202-login.php'>Login Now</a></small>");
 }
 
-    // Get Database version
-		$mysqlversion = $db ? $db->server_info : '';
-	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
-	    // Support For MariaDB
-	    $mysqlversion = $match[1];
-	    $dbwording="MariaDB >= 10.6";
-	    if ((version_compare($mysqlversion, '10.6') < 0)) {
-	        $version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.6, or newer.';
-	    }
+    // Database floors: database_version_check() in version.php
+	$dbCheck = database_version_check($db ? (string) $db->server_info : '');
+	$mysqlversion = $dbCheck['version'];
+	$dbwording = $dbCheck['product'] . ' >= ' . $dbCheck['floor'];
+	if ($dbCheck['error'] !== null) {
+	    $version_error['mysqlversion'] = $dbCheck['error'];
 	}
-	else{
-	    $dbwording="MySQL >= 8.0";
-	    if ((version_compare($mysqlversion, '8.0') < 0)) {
-	        $version_error['mysqlversion'] = 'Prosper202 requires MySQL 8.0, or newer.';
-	    }
-	     
-	}
-	
+
 	$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
 
         if (!php_version_supported()) {
