@@ -120,6 +120,19 @@ final class DeviceInfoAddressVerdictTest extends TestCase
         self::assertSame('1', (string) self::click(self::HUMAN)['type']);
     }
 
+    /**
+     * rtr.php keeps the address as the plain string VisitorIp::fromServer()
+     * returns, not ipAddress()'s object, and botCheck() read only the object.
+     */
+    public function testAnAddressHeldAsAPlainStringIsJudgedToo(): void
+    {
+        $GLOBALS['ip_address'] = self::LISTED;
+        self::assertSame('4', (string) \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME)['type']);
+
+        $GLOBALS['ip_address'] = self::HUMAN;
+        self::assertSame('1', (string) \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME)['type']);
+    }
+
     /** @return array<string, mixed> */
     private static function click(string $address): array
     {

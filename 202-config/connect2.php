@@ -1139,9 +1139,21 @@ class PLATFORMS
         return [$db->insert_id, $type];
     }
 
+    /**
+     * Whether the address is in a listed bot range. Takes the address as
+     * ipAddress() returns it (an object with ->address) or as the plain string
+     * VisitorIp::fromServer() returns, which rtr.php keeps in $ip_address: read
+     * only as an object, a string answered "not a bot" on every rotator click.
+     */
     public static function botCheck($ip)
     {
         global $memcacheWorking, $memcache;
+
+        if (is_string($ip)) {
+            $address = $ip;
+            $ip = new stdClass();
+            $ip->address = $address;
+        }
 
         if ($memcacheWorking && $ip && isset($ip->address)) {
             $getFromCache = $memcache->get(md5("ip-bot" . $ip->address . systemHash()));
