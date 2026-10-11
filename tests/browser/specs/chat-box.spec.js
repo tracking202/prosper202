@@ -32,6 +32,25 @@ function aPass(route) {
   });
 }
 
+// The chat service aPass names, stood in for: answers its HTTP calls (CORS
+// preflight included) with what `answer` returns for each GET.
+async function standInService(page, answer) {
+  await page.route('http://127.0.0.1:9/**', (route) => {
+    const cors = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    };
+    if (route.request().method() === 'OPTIONS') {
+      return route.fulfill({ status: 204, headers: cors });
+    }
+    const [status, body] = answer(route.request());
+    return route.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+}
+
+const EMPTY_STATE = { conversations: [], messages: [], seq: 0 };
+
 // What show/hide/toggle called before the box exists must leave it as, in order.
 const SEQUENCES = [
   [['show'], true],
@@ -93,6 +112,67 @@ module.exports = {
         } finally {
           await page.unroute(PASS_URL);
         }
+      },
+    },
+    {
+      // The service opens every socket and closes one whose pass it refuses
+      // with 4001. Counting the open as success reset the one-renewal guard
+      // and the backoff each time: measured against the real service with a
+      // mismatched secret, one tab opened 32 sockets and asked for 33 passes
+      // in 20 s, and would have gone on.
+      name: 'A socket refused for its pass is renewed once, then left to polling',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, expect }) => {
+          let refreshes = 0;
+          let sockets = 0;
+          await page.route(PASS_URL, (route) => {
+            if ((route.request().postData() || '').includes('refresh=1')) {
+              refreshes += 1;
+            }
+            return aPass(route);
+          });
+          await standInService(page, () => [200, EMPTY_STATE]);
+          await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+            sockets += 1;
+            // Open first, as the service does, then refuse.
+            setTimeout(() => ws.close({ code: 4001, reason: 'Pass invalid.' }), 100);
+          });
+          await app.goto('/202-account/');
+          await page.waitForTimeout(12000);
+          expect.ok(sockets >= 1 && sockets <= 3, 'the box tried the socket, then stopped', sockets + ' sockets in 12 s');
+          expect.ok(refreshes >= 1 && refreshes <= 2, 'and asked for a new pass once, not on every refusal', refreshes + ' refreshes in 12 s');
+        });
+      },
+    },
+    {
+      // Codex on #207: a retry that succeeded after a renewal did not clear
+      // the guard, so a refusal of the very next request could not renew.
+      // The stand-in answers 401, 200 (the retry), 401, then 200s.
+      name: 'Polling renews a refused pass again after a renewal that worked',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          let refreshes = 0;
+          let answers = 0;
+          await page.addInitScript(() => {
+            delete window.WebSocket; // the polling fallback
+          });
+          await page.route(PASS_URL, (route) => {
+            if ((route.request().postData() || '').includes('refresh=1')) {
+              refreshes += 1;
+            }
+            return aPass(route);
+          });
+          await standInService(page, () => {
+            answers += 1;
+            return answers === 1 || answers === 3
+              ? [401, { error: { code: 'unauthorized', message: 'Pass invalid.' } }]
+              : [200, EMPTY_STATE];
+          });
+          await app.goto('/202-account/');
+          await ui.until(async () => answers >= 3, { describe: 'the second refusal', timeout: 20000 });
+          await ui.until(async () => refreshes === 2, { describe: 'the second refusal to be renewed', timeout: 3000 });
+          expect.eq(refreshes, 2, 'a refusal right after a renewal that worked gets its own renewal');
+        });
       },
     },
   ],

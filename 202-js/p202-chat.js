@@ -297,7 +297,15 @@
                 return res;
             }
             return renewPass().then(function (renewed) {
-                return renewed ? call(method, path, payload) : res;
+                if (!renewed) {
+                    return res;
+                }
+                return call(method, path, payload).then(function (retried) {
+                    if (retried.status >= 200 && retried.status < 300) {
+                        state.renewed = false;
+                    }
+                    return retried;
+                });
             });
         });
     }
@@ -428,7 +436,7 @@
     }
 
     function open(pass) {
-        var opened = false;
+        var ready = false;
         var ws;
         try {
             ws = new window.WebSocket(pass.chat_url.replace(/^http/, 'ws') + '/v1/customer/socket', ['p202chat.v1', pass.pass]);
@@ -438,22 +446,28 @@
         }
         socket = ws;
         ws.onopen = function () {
-            opened = true;
-            socketFailures = 0;
-            reconnectAttempt = 0;
-            state.renewed = false;
-            stopPolling();
             clearTimer('ping');
             timers.ping = window.setInterval(function () {
                 if (ws.readyState === 1) {
                     ws.send('ping');
                 }
             }, PING_MS);
+        };
+        /* The service opens every socket and then closes one it refuses (4001
+           for the pass, 1011 when it is not configured), so only its ready
+           frame says the pass works. Resetting the backoff and the renewal
+           guard any earlier lets a refused pass reconnect in a tight loop. */
+        function accepted() {
+            ready = true;
+            socketFailures = 0;
+            reconnectAttempt = 0;
+            state.renewed = false;
+            stopPolling();
             // What arrived while there was no socket.
             var from = gapFrom === null ? state.seq : gapFrom;
             gapFrom = null;
             loadState(from).catch(function () { /* the socket carries on; the next drop fills again */ });
-        };
+        }
         ws.onmessage = function (event) {
             if (typeof event.data !== 'string' || event.data === 'pong') {
                 return;
@@ -463,6 +477,9 @@
                 frame = JSON.parse(event.data);
             } catch (e) {
                 return;
+            }
+            if (!ready && frame && frame.t === 'ready') {
+                accepted();
             }
             handleFrame(frame);
         };
@@ -493,7 +510,7 @@
                 });
                 return;
             }
-            socketFailed(opened);
+            socketFailed(ready);
         };
     }
 
