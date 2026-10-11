@@ -8,10 +8,10 @@ announcements and onboarding.
 Chat is not part of this contract. Installs from 1.9.77 on do not store or
 sync chat messages: `202-account/ajax/chat-pass.php` asks the portal for a
 chat pass (`POST /api/v3/chat/pass`, `CHAT_PASS_URL` in `connect.php`) and
-the chat box (`202-js/p202-chat.js`) talks to the chat service with it. That
-contract is the chat service's `docs/PROTOCOL.md` (tracking202/chat). The
-`/pull`, `/send` and `/read` endpoints an older install calls are described
-there too (section 11), for the installs still on 1.9.76.
+the chat box (`202-js/p202-chat.js`) talks to the chat service with it.
+Installs still on 1.9.76 keep calling `/pull`, `/send` and `/read`: pull
+answers with announcements only, and send answers 410 "Chat has moved.
+Update Prosper202 to chat with support."
 
 The client side (this repository) is implemented in:
 

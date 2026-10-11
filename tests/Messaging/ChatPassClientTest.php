@@ -7,7 +7,7 @@ namespace Tests\Messaging;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What the install takes from the portal's pass answer (chat PROTOCOL 12.1)
+ * What the install takes from the portal's pass answer
  * and hands the browser: a cht1 pass, a chat service origin the browser may be
  * sent to, an expiry in the future. Anything else is refused by name, so
  * chat-pass.php answers 502 instead of handing the chat box a value it would

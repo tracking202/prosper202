@@ -5,7 +5,7 @@ declare(strict_types=1);
 include_once(__DIR__ . '/MessagingClient.class.php');
 
 /**
- * Asks the portal for a chat pass (POST CHAT_PASS_URL, PROTOCOL 12.1): the
+ * Asks the portal for a chat pass (POST CHAT_PASS_URL): the
  * signed `cht1.` token the browser presents to the chat service, which the
  * install never reads or verifies. The install's identity — the customer API
  * key and the install hash among it — goes to the portal and nowhere else;

@@ -12,10 +12,10 @@
  * Analytics post to this install (202-account/ajax/messaging/track.php), which
  * records them and delivers them to the portal. Chat does not pass through
  * the install at all: 202-account/ajax/chat-pass.php hands this script a pass,
- * and the box talks to the chat service with it (chat PROTOCOL sections 5.1,
- * 6 and 6.1): GET /v1/customer/state for what is there, a WebSocket for what
- * arrives (subprotocols ["p202chat.v1", pass]), polling when the socket
- * cannot be had. Message text only ever reaches the page through textContent.
+ * and the box talks to the chat service with it: GET /v1/customer/state for
+ * what is there, a WebSocket for what arrives (subprotocols ["p202chat.v1",
+ * pass]), polling when the socket cannot be had. Message text only ever
+ * reaches the page through textContent.
  */
 (function () {
     'use strict';

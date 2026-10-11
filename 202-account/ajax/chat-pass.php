@@ -6,7 +6,7 @@ include_once(str_repeat('../', 2) . '202-config/connect.php');
 include_once(CONFIG_PATH . '/Messaging/ChatPassClient.class.php');
 
 /**
- * The chat box's pass (chat PROTOCOL section 13). POST only, signed in, with
+ * The chat box's pass. POST only, signed in, with
  * the session token; the identity comes from the session and the database,
  * never from the request.
  *

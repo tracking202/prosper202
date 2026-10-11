@@ -205,7 +205,7 @@ final class MessagingTransportAllowlistTest extends TestCase
             self::assertSame(
                 ['identity' => $identity, 'install_url' => 'https://track.acme.test/'],
                 json_decode($portal->requests()[1]['body'], true),
-                'the pass request carries the identity block and the install URL (chat PROTOCOL 12.1)'
+                'the pass request carries the identity block and the install URL'
             );
         } finally {
             $proxy->stop();
