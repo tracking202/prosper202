@@ -387,7 +387,8 @@ class MessagingService
             return $e;
         }, $events);
 
-        $response = $this->client()->track($this->identity, $this->getAttributes(), $payloadEvents);
+        [$attributes, $attributesVersion] = $this->attributeSnapshot();
+        $response = $this->client()->track($this->identity, $attributes, $payloadEvents);
 
         if ($response === null) {
             // Bump attempts so poison events eventually stop being retried.
@@ -401,7 +402,7 @@ class MessagingService
             $this->markEventSent($e['_local_id']);
         }
         if ($attributesDirty) {
-            $this->clearAttributesDirty();
+            $this->clearAttributesDirty($attributesVersion);
         }
 
         return true;
@@ -432,22 +433,35 @@ class MessagingService
      */
     private function getAttributes(): array
     {
-        $stmt = $this->conn->prepareRead('SELECT data FROM 202_messaging_attributes WHERE user_id = ?');
+        return $this->attributeSnapshot()[0];
+    }
+
+    /**
+     * The stored attributes and the server's MD5 of them, which names the
+     * version a delivery sent (null when nothing is stored).
+     *
+     * @return array{0: array<string,mixed>, 1: string|null}
+     * @throws \Prosper202\Database\Exceptions\QueryException
+     */
+    private function attributeSnapshot(): array
+    {
+        $stmt = $this->conn->prepareRead('SELECT data, MD5(data) AS version FROM 202_messaging_attributes WHERE user_id = ?');
         $this->conn->bind($stmt, 'i', [$this->userId]);
         $row = $this->conn->fetchOne($stmt);
 
         if ($row === null || $row['data'] === null) {
-            return [];
+            return [[], null];
         }
+        $version = (string) $row['version'];
 
         $decoded = json_decode((string) $row['data'], true);
         if (!is_array($decoded)) {
             // Our own snapshot should always decode; log corruption rather than
             // silently dropping it.
             error_log('MessagingService: stored attributes for user ' . $this->userId . ' are corrupt');
-            return [];
+            return [[], $version];
         }
-        return $decoded;
+        return [$decoded, $version];
     }
 
     private function areAttributesDirty(): bool
@@ -459,10 +473,14 @@ class MessagingService
         return $row !== null && (int) $row['dirty'] === 1;
     }
 
-    private function clearAttributesDirty(): void
+    /**
+     * Only the version that was sent: attributes another request saved while
+     * the delivery was in flight stay pending for the next sync.
+     */
+    private function clearAttributesDirty(?string $sentVersion): void
     {
-        $stmt = $this->conn->prepareWrite('UPDATE 202_messaging_attributes SET dirty = 0 WHERE user_id = ?');
-        $this->conn->bind($stmt, 'i', [$this->userId]);
+        $stmt = $this->conn->prepareWrite('UPDATE 202_messaging_attributes SET dirty = 0 WHERE user_id = ? AND MD5(data) <=> ?');
+        $this->conn->bind($stmt, 'is', [$this->userId, $sentVersion]);
         $this->conn->executeUpdate($stmt);
     }
 

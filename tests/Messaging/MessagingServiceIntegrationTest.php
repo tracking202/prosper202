@@ -137,6 +137,54 @@ final class MessagingServiceIntegrationTest extends TestCase
     }
 
     /**
+     * Attributes saved by another request while a delivery is in flight are
+     * still pending afterwards: the delivery clears only the version it sent.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testAttributesSavedDuringADeliveryAreSentNextTime(): void
+    {
+        define('MESSAGING_API_URL', 'http://127.0.0.1:9/api/v3/messaging');
+        $db = $this->connect();
+        $this->seedUsers($db);
+        $identity = (array) \MessagingService::identityFor($db, 1);
+        $service = new \MessagingService($db, 1, $identity);
+
+        $sent = [];
+        $portal = new class (static function (array $attributes) use (&$sent, $db, $identity): void {
+            $sent[] = $attributes;
+            if (count($sent) === 1) {
+                (new \MessagingService($db, 1, $identity))->updateAttributes(['plan' => 'enterprise']);
+            }
+        }) extends \MessagingClient {
+            public function __construct(private \Closure $onTrack)
+            {
+            }
+
+            public function track(array $identity, array $attributes, array $events): ?array
+            {
+                ($this->onTrack)($attributes);
+                return ['ok' => true];
+            }
+        };
+        (new \ReflectionProperty(\MessagingService::class, 'client'))->setValue($service, $portal);
+
+        $service->updateAttributes(['plan' => 'pro']);
+        $this->assertSame(\MessagingService::SYNC_SENT, $service->sync());
+        $this->assertSame([['plan' => 'pro']], $sent);
+        $this->assertSame(
+            [['1']],
+            $db->query('SELECT dirty FROM 202_messaging_attributes WHERE user_id = 1')->fetch_all(),
+            'the newer attributes are still pending'
+        );
+
+        $this->assertSame(\MessagingService::SYNC_SENT, $service->sync(true));
+        $this->assertSame(['plan' => 'enterprise'], $sent[1] ?? null);
+        $this->assertSame([['0']], $db->query('SELECT dirty FROM 202_messaging_attributes WHERE user_id = 1')->fetch_all());
+    }
+
+    /**
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
