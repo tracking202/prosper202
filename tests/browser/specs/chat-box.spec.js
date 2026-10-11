@@ -225,5 +225,38 @@ module.exports = {
         });
       },
     },
+    {
+      // Codex on #207: the gap fill a socket starts with can answer after a
+      // newer conversation frame, and replaced it with the older snapshot.
+      name: 'An older snapshot never replaces a newer one',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          let stateCalls = 0;
+          let staleAnswered = false;
+          await page.route(PASS_URL, aPass);
+          await standInService(page, async (request) => {
+            if (request.method() === 'GET' && request.url().includes('/v1/customer/state')) {
+              stateCalls += 1;
+              if (stateCalls === 2) {
+                // The socket's gap fill: held back, then answered with rev 1.
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                staleAnswered = true;
+              }
+              return [200, { conversations: [chatConv({ unread: 1, rev: 1 })], messages: [teamMessage(1, 'Hi Dana')], seq: 1 }];
+            }
+            return [204, null];
+          });
+          await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+            setTimeout(() => ws.send(JSON.stringify({ t: 'ready', seq: 1 })), 50);
+            // Read in another tab meanwhile: rev 2, nothing unread.
+            setTimeout(() => ws.send(JSON.stringify({ t: 'conversation', conversation: chatConv({ unread: 0, team_read_upto: 0, rev: 2 }) })), 300);
+          });
+          await app.goto('/202-account/');
+          await ui.until(async () => staleAnswered, { describe: 'the gap fill to be answered', timeout: 20000 });
+          await page.waitForTimeout(300);
+          expect.ok(!(await ui.exists('.p202-chat__launcher--unread')), 'the launcher keeps the newer count (nothing unread)');
+        });
+      },
+    },
   ],
 };

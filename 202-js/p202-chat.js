@@ -345,6 +345,12 @@
         if (!conv || typeof conv.id !== 'number') {
             return;
         }
+        // An HTTP answer can cross a newer socket frame; an older snapshot
+        // would put back a stale unread count or read marker.
+        var held = state.convs[conv.id];
+        if (held && typeof held.rev === 'number' && typeof conv.rev === 'number' && conv.rev < held.rev) {
+            return;
+        }
         state.convs[conv.id] = conv;
     }
 
