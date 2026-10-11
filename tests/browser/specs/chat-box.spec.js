@@ -318,5 +318,33 @@ module.exports = {
         });
       },
     },
+    {
+      // track.php sends one batch a request: "throttled" held the rows back
+      // and "more" left some pending, and the page asks again for both. A
+      // page closed first leaves them to the hourly cron.
+      name: 'Analytics held back or left pending are asked for again',
+      async run(ctx) {
+        for (const [delivery, again] of [['throttled', true], ['more', true], ['sent', false]]) {
+          await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+            const posts = [];
+            await page.route(PASS_URL, unavailable);
+            await page.route('**/202-account/ajax/messaging/track.php', (route) => {
+              posts.push(route.request().postData() || '');
+              const answer = posts.length === 1 ? { ok: true, delivery, retry_after_s: 1 } : { ok: true, delivery: 'sent' };
+              return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+            });
+            await app.goto('/202-account/');
+            await ui.until(async () => ui.exists('.p202-chat__panel'), { describe: 'the chat box to be built' });
+            await page.evaluate(() => window.Prosper202Messenger('trackEvent', 'spec_event'));
+            await ui.until(async () => posts.length >= 1, { describe: 'the event to be posted' });
+            await page.waitForTimeout(3000);
+            expect.eq(posts.length, again ? 2 : 1, '"' + delivery + '" ' + (again ? 'asks once more' : 'asks nothing more'));
+            if (again) {
+              expect.ok(/(^|&)flush=1(&|$)/.test(posts[1]), 'the second request asks for the delivery alone', posts[1]);
+            }
+          });
+        }
+      },
+    },
   ],
 };

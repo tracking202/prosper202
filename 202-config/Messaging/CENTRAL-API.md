@@ -19,7 +19,9 @@ The client side (this repository) is implemented in:
 - `202-config/Messaging/MessagingService.class.php` — the local queue and delivery
 - `202-account/ajax/messaging/track.php` — the browser endpoint
 - `202-js/p202-chat.js` — the `Prosper202Messenger` command queue
-- `202-cronjobs/sync-messaging.php` — background delivery for every active user
+- `MessagingService::deliverPending()` — background delivery, run hourly by
+  `202-cronjobs/index.php` on every default deployment and by
+  `202-cronjobs/sync-messaging.php` on its own
 
 Each install is self-hosted and can only make **outbound** HTTPS requests, so
 all communication is client-initiated. The portal never connects to an
@@ -168,7 +170,19 @@ The client never shows transport errors to users.
 
 ## Operational note: the cron delivers users one by one
 
-`202-cronjobs/sync-messaging.php` iterates active users and calls
-`MessagingService::forUser($id)->sync(true)` for each; a user with nothing
-pending costs no request. An install with many active users makes one
-`/track` call per user with something to deliver.
+`MessagingService::deliverPending()` lists the active users with an event
+still pending or a changed attribute snapshot, and delivers each one's rows in
+batches of 100 events, one `/track` call per batch, up to 10 batches a user a
+run. Users with nothing pending are not visited. After three failed
+deliveries in a row the run stops and the rest wait for the next run: the
+portal is most likely down, and each failed delivery spends one of an event's
+five attempts.
+
+`202-cronjobs/index.php` runs it hourly, so a portal outage of a few hours
+does not use up those attempts. `202-cronjobs/sync-messaging.php` is the same
+run on its own, for an operator who wants a tighter cadence; not more often
+than every 5 minutes.
+
+The page's own delivery (`track.php`) sends one batch a request. It answers
+`delivery: "more"` with `retry_after_s` when rows are left, as it does for
+`"throttled"`, and the page asks again then.

@@ -12,8 +12,10 @@ include_once(__DIR__ . '/MessagingClient.class.php');
  * Product analytics for one user of a self-hosted install: custom attributes
  * and behavioural events are recorded locally (202_messaging_attributes,
  * 202_messaging_events) and delivered to the portal's POST /track by sync(),
- * which 202-account/ajax/messaging/track.php runs after every record and
- * 202-cronjobs/sync-messaging.php runs for every active user.
+ * which 202-account/ajax/messaging/track.php runs after every record, and
+ * deliverPending() runs for every user with something pending from the
+ * hourly tier of 202-cronjobs/index.php (and 202-cronjobs/sync-messaging.php,
+ * for an operator who wants a tighter cadence).
  *
  * Chat is not here. The install no longer stores or syncs messages: the
  * browser talks to the chat service directly with a pass that
@@ -25,7 +27,13 @@ include_once(__DIR__ . '/MessagingClient.class.php');
  *    database transaction.
  *  - sync() is throttled (MESSAGING_SYNC_THROTTLE) per user, so a burst of
  *    events is one /track call; what the throttle holds back is delivered by
- *    the next sync, and track.php tells the page when that is due.
+ *    the next sync, and track.php tells the page when that is due. A sync
+ *    sends at most $maxBatches batches of BATCH_SIZE events; SYNC_MORE says
+ *    rows are still pending, and the page asks again like for a throttle.
+ *  - The cron runs hourly, not every minute: each failed delivery counts an
+ *    attempt on the events it carried, and MAX_PUSH_ATTEMPTS failures drop
+ *    them, so a minutely retry would lose everything a five-minute portal
+ *    outage caught.
  *  - Every statement goes through Prosper202\Database\Connection, which
  *    throws on a failed prepare, execute or result read (CLAUDE.md #1).
  */
@@ -35,7 +43,11 @@ class MessagingService
     public const SYNC_IDLE = 'idle';           // nothing was pending
     public const SYNC_THROTTLED = 'throttled'; // something is pending; the last sync was too recent
     public const SYNC_SENT = 'sent';           // the pending rows were delivered
+    public const SYNC_MORE = 'more';           // batches were delivered and rows are still pending
     public const SYNC_FAILED = 'failed';       // delivery (or reading what to deliver) failed
+
+    /** Events per /track call. */
+    public const BATCH_SIZE = 100;
 
     private const MAX_PUSH_ATTEMPTS = 5;
 
@@ -61,16 +73,17 @@ class MessagingService
      * A service for a local user, with the identity /track authenticates
      * with and the stored attribute snapshot.
      *
+     * @param mysqli|null $db The connection to use; null for the application's
      * @return self|null Null when no active user has this id.
      * @throws \Prosper202\Database\Exceptions\QueryException when the user cannot be read
      */
-    public static function forUser(int $userId): ?self
+    public static function forUser(int $userId, ?mysqli $db = null): ?self
     {
         if ($userId <= 0) {
             return null;
         }
 
-        $db = DB::getInstance()->getConnection();
+        $db ??= DB::getInstance()->getConnection();
         $identity = self::identityFor($db, $userId);
         if ($identity === null) {
             return null;
@@ -210,31 +223,124 @@ class MessagingService
      * the network call, so a portal that is down is not asked again within
      * the window. A database failure is SYNC_FAILED, logged, never "idle".
      *
+     * One call sends up to $maxBatches batches of BATCH_SIZE events, one
+     * /track call each, and stops at the first failure. When the last batch
+     * went out and rows are still pending, the answer is SYNC_MORE rather
+     * than SYNC_SENT: a backlog left after an outage is not reported as
+     * delivered, and the caller asks again (the page after the throttle, the
+     * cron on its next run).
+     *
+     * @param int $maxBatches Batches this call may send (at least 1)
      * @return self::SYNC_* the outcome
      */
-    public function sync(bool $force = false): string
+    public function sync(bool $force = false, int $maxBatches = 1): string
     {
+        $maxBatches = max(1, $maxBatches);
         try {
-            $events = $this->pendingEvents();
-            $attributesDirty = $this->areAttributesDirty();
-            if ($events === [] && !$attributesDirty) {
-                return self::SYNC_IDLE;
-            }
-            if (!$force && $this->secondsUntilSyncDue() > 0) {
-                return self::SYNC_THROTTLED;
+            $sent = false;
+            for ($batch = 0; $batch < $maxBatches; $batch++) {
+                $events = $this->pendingEvents();
+                $attributesDirty = $this->areAttributesDirty();
+                if ($events === [] && !$attributesDirty) {
+                    return $sent ? self::SYNC_SENT : self::SYNC_IDLE;
+                }
+                if (!$sent && !$force && $this->secondsUntilSyncDue() > 0) {
+                    return self::SYNC_THROTTLED;
+                }
+
+                $this->markSyncStart();
+                if (!$this->flushEvents($events, $attributesDirty)) {
+                    $this->recordSyncError('track failed');
+                    return self::SYNC_FAILED;
+                }
+                $this->recordSyncSuccess();
+                $sent = true;
             }
 
-            $this->markSyncStart();
-            if ($this->flushEvents($events, $attributesDirty)) {
-                $this->recordSyncSuccess();
-                return self::SYNC_SENT;
-            }
-            $this->recordSyncError('track failed');
+            return $this->pendingEvents() === [] && !$this->areAttributesDirty() ? self::SYNC_SENT : self::SYNC_MORE;
         } catch (Throwable $e) {
             error_log('MessagingService: sync for user ' . $this->userId . ' failed: ' . $e->getMessage());
         }
 
         return self::SYNC_FAILED;
+    }
+
+    /**
+     * The active users with something to deliver: an event still pending
+     * (and not out of attempts) or a changed attribute snapshot.
+     *
+     * @return list<int> user ids, ascending
+     * @throws \Prosper202\Database\Exceptions\QueryException
+     */
+    public static function usersWithPendingDelivery(mysqli $db): array
+    {
+        $conn = new Connection($db);
+        $stmt = $conn->prepareRead(
+            "SELECT u.user_id
+               FROM 202_users u
+              WHERE u.user_active = 1 AND u.user_deleted = 0
+                AND (EXISTS (SELECT 1 FROM 202_messaging_events e
+                              WHERE e.user_id = u.user_id AND e.delivery_status = 'pending'
+                                AND e.sync_attempts < ?)
+                  OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
+                              WHERE a.user_id = u.user_id AND a.dirty = 1))
+              ORDER BY u.user_id ASC"
+        );
+        $conn->bind($stmt, 'i', [self::MAX_PUSH_ATTEMPTS]);
+
+        return array_map(static fn (array $row): int => (int) $row['user_id'], $conn->fetchAll($stmt));
+    }
+
+    /**
+     * The cron's delivery: every user usersWithPendingDelivery() names, up
+     * to $maxBatchesPerUser batches each, past the per-request throttle (the
+     * cron's cadence is the throttle). 202-cronjobs/index.php runs it hourly
+     * on every default deployment; 202-cronjobs/sync-messaging.php is the
+     * same run on its own.
+     *
+     * A user who cannot be read is that user's failure, not the run's. After
+     * $maxConsecutiveFailures failed deliveries in a row the run stops: the
+     * portal is most likely down, every further user would wait out the
+     * client's timeouts and spend one of their events' attempts, and what
+     * is left is delivered next run ('stopped' counts the users not tried).
+     *
+     * @return array{sent: int, more: int, idle: int, failed: int, stopped: int}
+     * @throws \Prosper202\Database\Exceptions\QueryException when the users cannot be listed
+     */
+    public static function deliverPending(mysqli $db, int $maxBatchesPerUser = 10, int $maxConsecutiveFailures = 3): array
+    {
+        $counts = ['sent' => 0, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0];
+        $users = self::usersWithPendingDelivery($db);
+        $failedInARow = 0;
+        foreach ($users as $i => $userId) {
+            if ($failedInARow >= max(1, $maxConsecutiveFailures)) {
+                $counts['stopped'] = count($users) - $i;
+                error_log('Analytics delivery: ' . $failedInARow . ' deliveries failed in a row; '
+                    . $counts['stopped'] . ' user(s) wait for the next run');
+                break;
+            }
+            try {
+                $service = self::forUser($userId, $db);
+            } catch (Throwable $e) {
+                error_log('Analytics delivery: user ' . $userId . ' could not be read: ' . $e->getMessage());
+                $counts['failed']++;
+                continue;
+            }
+            if ($service === null) {
+                continue;
+            }
+
+            $outcome = $service->sync(true, $maxBatchesPerUser);
+            if ($outcome === self::SYNC_FAILED) {
+                $counts['failed']++;
+                $failedInARow++;
+                continue;
+            }
+            $failedInARow = 0;
+            $counts[$outcome === self::SYNC_THROTTLED ? 'idle' : $outcome]++;
+        }
+
+        return $counts;
     }
 
     /**
@@ -336,7 +442,7 @@ class MessagingService
     }
 
     /**
-     * The events waiting for delivery, oldest first, at most 100 a call.
+     * The events waiting for delivery, oldest first, at most BATCH_SIZE a call.
      *
      * @return list<array{_local_id: int, name: string, metadata: mixed, occurred_at: string, client_token: string}>
      * @throws \Prosper202\Database\Exceptions\QueryException
@@ -349,9 +455,9 @@ class MessagingService
               WHERE user_id = ? AND delivery_status = 'pending'
                 AND sync_attempts < ?
               ORDER BY id ASC
-              LIMIT 100"
+              LIMIT ?"
         );
-        $this->conn->bind($stmt, 'ii', [$this->userId, self::MAX_PUSH_ATTEMPTS]);
+        $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
 
         $events = [];
         foreach ($this->conn->fetchAll($stmt) as $row) {

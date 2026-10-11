@@ -14,8 +14,10 @@ require __DIR__ . '/_auth.php';
  * MessagingService::sync(), throttled per user. Nothing else runs that sync
  * on a page (the chat box no longer polls this install), so a request with
  * flush=1 and nothing to record asks for the delivery alone: the answer's
- * delivery says what happened, and when it is "throttled", retry_after_s
- * says when the page may ask again.
+ * delivery says what happened, and when it is "throttled" or "more" (one
+ * batch went out, more is pending), retry_after_s says when the page may ask
+ * again. The hourly cron (MessagingService::deliverPending()) delivers what
+ * a page closed before then leaves behind.
  */
 
 header('Content-Type: application/json');
@@ -104,7 +106,7 @@ try {
 // the next sync, so it does not change the status.
 $delivery = $service->sync();
 $answer = ['ok' => true, 'delivery' => $delivery];
-if ($delivery === MessagingService::SYNC_THROTTLED) {
+if ($delivery === MessagingService::SYNC_THROTTLED || $delivery === MessagingService::SYNC_MORE) {
     try {
         $answer['retry_after_s'] = max(1, $service->secondsUntilSyncDue());
     } catch (\Throwable $e) {

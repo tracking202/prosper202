@@ -71,6 +71,11 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'attribution-exports.php' => [
             ['new', 'Prosper202\Attribution\ExportRunner', 'run'],
         ],
+        // Hourly in index.php: a page closed inside the throttle, or a backlog
+        // left by a portal outage, is delivered by nothing else.
+        'sync-messaging.php' => [
+            ['static', 'MessagingService', 'deliverPending'],
+        ],
     ];
 
     /**
@@ -83,7 +88,6 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'lpo_dimensions.php' => 'LPO nightly full sync; index.php pushes dirty users hourly, this is the backstop',
         'ltv_maintenance.php' => 'LTV rollup reconciliation; opt-in, predates the measurement rewrite',
         'ltv_webhooks.php' => 'LTV webhook dispatcher; opt-in, predates the measurement rewrite',
-        'sync-messaging.php' => 'analytics delivery booster; track.php delivers on every call it records',
         'sync-worker.php' => 'sync job worker; predates the measurement rewrite',
         'daily-email.php' => 'fetched by the hosted mail service with the install hash, not by cron',
         'dni.php' => 'DNI callback fetched by the hosted service with the install hash',

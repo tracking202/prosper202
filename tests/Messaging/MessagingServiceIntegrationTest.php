@@ -22,7 +22,9 @@ use Prosper202\Database\Tables\UserTables;
  * sync() is idle with nothing pending (and leaves the throttle alone),
  * delivers what is pending, holds back within MESSAGING_SYNC_THROTTLE and says
  * for how long, and reports a portal it cannot reach as failed, with the
- * event kept for the next try.
+ * event kept for the next try. A backlog goes out in batches, and "more" says
+ * rows are still pending. deliverPending(), the hourly cron's run, visits
+ * only active users with something pending and stops after failures in a row.
  *
  * Each test runs in its own process: MESSAGING_API_URL is a constant.
  *
@@ -171,7 +173,7 @@ final class MessagingServiceIntegrationTest extends TestCase
         (new \ReflectionProperty(\MessagingService::class, 'client'))->setValue($service, $portal);
 
         $service->updateAttributes(['plan' => 'pro']);
-        $this->assertSame(\MessagingService::SYNC_SENT, $service->sync());
+        $this->assertSame(\MessagingService::SYNC_MORE, $service->sync(), 'delivered, and newer attributes are waiting');
         $this->assertSame([['plan' => 'pro']], $sent);
         $this->assertSame(
             [['1']],
@@ -214,6 +216,110 @@ final class MessagingServiceIntegrationTest extends TestCase
             $db->query('SELECT error_count, last_error FROM 202_messaging_sync WHERE user_id = 1')->fetch_all()
         );
         $this->assertStringContainsString('failed to reach track', (string) file_get_contents($log));
+        unlink($log);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testABacklogGoesOutInBatchesAndMoreSaysSomethingIsLeft(): void
+    {
+        $portal = LocalHttpRecorder::start();
+        try {
+            define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            $db = $this->connect();
+            $this->seedUsers($db);
+            $service = new \MessagingService($db, 1, (array) \MessagingService::identityFor($db, 1));
+            for ($i = 1; $i <= 250; $i++) {
+                $service->recordEvent('event_' . $i);
+            }
+            $pending = static fn (): int => (int) $db->query("SELECT COUNT(*) FROM 202_messaging_events WHERE delivery_status = 'pending'")->fetch_row()[0];
+
+            $this->assertSame(\MessagingService::SYNC_MORE, $service->sync(true), 'one batch went out and 150 are left');
+            $this->assertSame(150, $pending());
+            $this->assertSame(\MessagingService::SYNC_MORE, $service->sync(true, 1), 'still more after the second batch');
+            $this->assertSame(\MessagingService::SYNC_SENT, $service->sync(true, 10), 'the last 50 go out and nothing is left');
+            $this->assertSame(0, $pending());
+            $this->assertSame(\MessagingService::SYNC_IDLE, $service->sync(true, 10));
+
+            $batches = array_map(static fn (array $r): array => array_column(json_decode($r['body'], true)['events'] ?? [], 'name'), $portal->requests());
+            $this->assertSame([100, 100, 50], array_map('count', $batches), 'one /track call per batch');
+            $this->assertSame('event_1', $batches[0][0], 'oldest first');
+            $this->assertSame('event_250', $batches[2][49]);
+            $this->assertCount(250, array_unique(array_merge(...$batches)), 'nothing sent twice');
+        } finally {
+            $portal->stop();
+        }
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheCronVisitsOnlyActiveUsersWithSomethingPending(): void
+    {
+        $portal = LocalHttpRecorder::start();
+        try {
+            define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
+            $db = $this->connect();
+            $this->seedUsers($db);
+            (new \MessagingService($db, 1, []))->recordEvent('created_tracker');
+            (new \MessagingService($db, 6, []))->updateAttributes(['plan' => 'pro']);
+            (new \MessagingService($db, 3, []))->recordEvent('deactivated_user_event');
+            (new \MessagingService($db, 4, []))->recordEvent('deleted_user_event');
+            // User 2 has only a delivered event; user 8 one out of attempts.
+            $this->assertTrue($db->query("INSERT INTO 202_messaging_events (user_id, event_name, client_token, delivery_status) VALUES (2, 'old', 't2', 'sent')"));
+            $this->assertTrue($db->query("INSERT INTO 202_messaging_events (user_id, event_name, client_token, delivery_status, sync_attempts) VALUES (8, 'poison', 't8', 'pending', 5)"));
+
+            $this->assertSame([1, 6], \MessagingService::usersWithPendingDelivery($db));
+            $this->assertSame(
+                ['sent' => 2, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0],
+                \MessagingService::deliverPending($db)
+            );
+            $who = array_map(static fn (array $r): int => (int) (json_decode($r['body'], true)['identity']['user_id'] ?? 0), $portal->requests());
+            $this->assertSame([1, 6], $who);
+            $this->assertSame([], \MessagingService::usersWithPendingDelivery($db), 'nothing deliverable is left');
+            $this->assertSame(
+                [['3', 'pending'], ['4', 'pending']],
+                $db->query("SELECT user_id, delivery_status FROM 202_messaging_events WHERE user_id IN (3, 4) ORDER BY user_id")->fetch_all(),
+                'a deactivated or deleted user\'s rows are not sent'
+            );
+        } finally {
+            $portal->stop();
+        }
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheCronStopsAfterFailuresInARow(): void
+    {
+        $probe = stream_socket_server('tcp://127.0.0.1:0');
+        $this->assertNotFalse($probe);
+        $closed = (string) stream_socket_get_name($probe, false);
+        fclose($probe);
+        define('MESSAGING_API_URL', 'http://' . $closed . '/api/v3/messaging');
+        $log = tempnam(sys_get_temp_dir(), 'p202-messaging-cron-');
+        $this->assertIsString($log);
+        ini_set('error_log', $log);
+        $db = $this->connect();
+        $this->seedUsers($db);
+        foreach ([1, 2, 5, 6, 8] as $userId) {
+            (new \MessagingService($db, $userId, []))->recordEvent('waiting');
+        }
+
+        $this->assertSame(
+            ['sent' => 0, 'more' => 0, 'idle' => 0, 'failed' => 3, 'stopped' => 2],
+            \MessagingService::deliverPending($db, 10, 3)
+        );
+        $this->assertSame(
+            [['1', '1'], ['2', '1'], ['5', '1'], ['6', '0'], ['8', '0']],
+            $db->query('SELECT user_id, sync_attempts FROM 202_messaging_events ORDER BY user_id')->fetch_all(),
+            'the users not tried keep every attempt'
+        );
+        $this->assertStringContainsString('3 deliveries failed in a row; 2 user(s) wait for the next run', (string) file_get_contents($log));
         unlink($log);
     }
 
