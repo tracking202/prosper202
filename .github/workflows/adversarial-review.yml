@@ -44,8 +44,9 @@ on:
       - 'tracking202/**'
       - 'tests/fixtures/agent-eval/**'
       - 'phpstan.neon.dist'
-      # Itself: a change to how the verdict is reached or published runs it.
-      - '.github/workflows/adversarial-review.yml'
+      # Not this workflow file: the Claude app refuses its token to a workflow
+      # that differs from master's copy, so a PR changing it is never reviewed
+      # by it (and would only ever show the "did not run" failure below).
 
 concurrency:
   group: adversarial-review-${{ github.event.pull_request.number }}
@@ -157,11 +158,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ steps.review.outputs.structured_output }}
+          # Set only when Claude actually ran: empty when the action skipped,
+          # as it does with success on a PR that changes this workflow file.
+          CONCLUSION: ${{ steps.review.outputs.conclusion }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [ -z "$CONCLUSION" ]; then
+            echo "::error::the adversarial review did not run, so this PR was not reviewed (see the 'Adversarial review' step log; on a PR that changes this workflow file the Claude app refuses to run it)"
+            exit 1
+          fi
           verdict=$(jq -r '.verdict // empty' <<<"$RESULT")
           case "$verdict" in
             BLOCKING|NON-BLOCKING|CLEAN) ;;

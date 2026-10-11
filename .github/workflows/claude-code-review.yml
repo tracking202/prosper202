@@ -50,5 +50,16 @@ jobs:
           # inline-comment server only when it is named here.
           claude_args: >-
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+
+      # The action reports success when it skips without running Claude (it
+      # does on a PR that changes this workflow file: the Claude app refuses
+      # its token to a workflow that differs from master's copy). Its
+      # conclusion output is set only when Claude ran, so empty means this PR
+      # was not reviewed, and the check says so instead of passing.
+      - name: Fail when the review did not run
+        if: steps.claude-review.outputs.conclusion == ''
+        run: |
+          echo "::error::the code review did not run, so this PR was not reviewed (see the 'Run Claude Code Review' step log)"
+          exit 1
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
