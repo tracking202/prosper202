@@ -258,5 +258,65 @@ module.exports = {
         });
       },
     },
+    {
+      // Codex on #207: a socket a proxy upgrades and then starves never gets
+      // a ready frame; the box waited on it for good, with nothing polling.
+      name: 'A socket that never says ready is given up and tried again',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, expect }) => {
+          let sockets = 0;
+          await page.route(PASS_URL, aPass);
+          await standInService(page, () => [200, EMPTY_STATE]);
+          await page.routeWebSocket('ws://127.0.0.1:9/**', () => {
+            sockets += 1; // open, and silent
+          });
+          await app.goto('/202-account/');
+          await page.waitForTimeout(15000);
+          expect.ok(sockets >= 2, 'the silent socket was given up and a new one opened', sockets + ' sockets in 15 s');
+        });
+      },
+    },
+    {
+      // Codex on #207: two requests refused at once (a pass expiring under
+      // both an HTTP call and the socket) each asked for the one renewal; the
+      // second was told no, and a socket told no fell back to polling for
+      // good.
+      name: 'Requests refused together share one renewal, and the socket comes back',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          let sockets = 0;
+          let refreshes = 0;
+          let gets = 0;
+          await page.route(PASS_URL, async (route) => {
+            if ((route.request().postData() || '').includes('refresh=1')) {
+              refreshes += 1;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+            return aPass(route);
+          });
+          await standInService(page, (request) => {
+            if (request.method() === 'GET') {
+              gets += 1;
+              // The socket's gap fill (the second GET) is refused.
+              return gets === 2 ? [401, { error: { code: 'unauthorized', message: 'Pass expired.' } }] : [200, EMPTY_STATE];
+            }
+            return [204, null];
+          });
+          await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+            sockets += 1;
+            setTimeout(() => ws.send(JSON.stringify({ t: 'ready', seq: 0 })), 50);
+            if (sockets === 1) {
+              // Refused too, while the gap fill's renewal is in flight.
+              setTimeout(() => ws.close({ code: 4001, reason: 'Pass expired.' }), 300);
+            }
+          });
+          await app.goto('/202-account/');
+          await ui.until(async () => sockets >= 2, { describe: 'the socket to reconnect after the shared renewal', timeout: 15000 });
+          await page.waitForTimeout(500);
+          expect.eq(refreshes, 1, 'one renewal served both refusals');
+          expect.ok(gets >= 3, 'the refused gap fill was retried with the new pass', gets + ' GETs');
+        });
+      },
+    },
   ],
 };

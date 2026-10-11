@@ -33,6 +33,7 @@
     var TYPING_SHOW_MS = 6000;
     var TYPING_SEND_MS = 3000;
     var PING_MS = 30000;
+    var READY_TIMEOUT_MS = 10000;
     var POLL_VISIBLE_MS = 5000;
     var POLL_HIDDEN_MS = 60000;
     var SOCKET_RETRY_MS = 300000;
@@ -235,18 +236,28 @@
 
     /* The chat service refused the pass (HTTP 401, close 4001): drop it and
        ask for a new one, once until a request is accepted again. */
+    var renewing = null;
+
     function renewPass() {
+        if (renewing) {
+            // One refresh answers every request refused while it runs.
+            return renewing;
+        }
         if (state.renewed) {
             return Promise.resolve(false);
         }
         state.renewed = true;
-        return fetchPass(true).then(function (pass) {
+        renewing = fetchPass(true).then(function (pass) {
             state.pass = pass;
             return true;
         }, function (error) {
             passFailed(error);
             return false;
         });
+        renewing.then(function () {
+            renewing = null;
+        });
+        return renewing;
     }
 
     function passFailed(error) {
@@ -443,6 +454,7 @@
 
     function open(pass) {
         var ready = false;
+        var heard = 0;
         var ws;
         try {
             ws = new window.WebSocket(pass.chat_url.replace(/^http/, 'ws') + '/v1/customer/socket', ['p202chat.v1', pass.pass]);
@@ -451,10 +463,32 @@
             return;
         }
         socket = ws;
+        /* A socket can look open and carry nothing: a proxy that completes the
+           upgrade and drops frames, or a link that died without a close. No
+           ready frame within READY_TIMEOUT_MS, or nothing heard (not even a
+           pong) for two pings, and it is given up as failed without waiting
+           for a close event that may never come. */
+        function giveUp() {
+            ws.onclose = null;
+            ws.onmessage = null;
+            try {
+                ws.close();
+            } catch (e) { /* already closing */ }
+            closed(1006);
+        }
         ws.onopen = function () {
+            heard = Date.now();
+            clearTimer('ready');
+            timers.ready = window.setTimeout(function () {
+                if (!ready) {
+                    giveUp();
+                }
+            }, READY_TIMEOUT_MS);
             clearTimer('ping');
             timers.ping = window.setInterval(function () {
-                if (ws.readyState === 1) {
+                if (Date.now() - heard > PING_MS * 2) {
+                    giveUp();
+                } else if (ws.readyState === 1) {
                     ws.send('ping');
                 }
             }, PING_MS);
@@ -465,6 +499,7 @@
            guard any earlier lets a refused pass reconnect in a tight loop. */
         function accepted() {
             ready = true;
+            clearTimer('ready');
             socketFailures = 0;
             reconnectAttempt = 0;
             state.renewed = false;
@@ -475,6 +510,7 @@
             loadState(from).catch(function () { /* the socket carries on; the next drop fills again */ });
         }
         ws.onmessage = function (event) {
+            heard = Date.now();
             if (typeof event.data !== 'string' || event.data === 'pong') {
                 return;
             }
@@ -489,35 +525,45 @@
             }
             handleFrame(frame);
         };
-        ws.onclose = function (event) {
+        function closed(code) {
             if (socket === ws) {
                 socket = null;
             }
             clearTimer('ping');
+            clearTimer('ready');
             if (gapFrom === null) {
                 gapFrom = state.seq;
             }
             if (state.status === 'off') {
                 return;
             }
-            if (event.code === 4003 || event.code === 4004) {
+            if (code === 4003 || code === 4004) {
                 // Refused for good: reconnecting cannot help, polling says why.
                 socketFailures = 3;
                 socketFailed(false);
                 return;
             }
-            if (event.code === 4001) {
+            if (code === 4001) {
                 renewPass().then(function (renewed) {
                     if (renewed) {
                         connect();
                     } else {
                         startPolling();
+                        retrySocketLater();
                     }
                 });
                 return;
             }
             socketFailed(ready);
+        }
+        ws.onclose = function (event) {
+            closed(event.code);
         };
+    }
+
+    function retrySocketLater() {
+        clearTimer('socketRetry');
+        timers.socketRetry = window.setTimeout(connect, SOCKET_RETRY_MS);
     }
 
     function socketFailed(hadOpened) {
@@ -526,8 +572,7 @@
         }
         if (socketFailures >= 3) {
             startPolling();
-            clearTimer('socketRetry');
-            timers.socketRetry = window.setTimeout(connect, SOCKET_RETRY_MS);
+            retrySocketLater();
             return;
         }
         scheduleReconnect();
