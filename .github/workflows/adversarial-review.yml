@@ -44,6 +44,8 @@ on:
       - 'tracking202/**'
       - 'tests/fixtures/agent-eval/**'
       - 'phpstan.neon.dist'
+      # Itself: a change to how the verdict is reached or published runs it.
+      - '.github/workflows/adversarial-review.yml'
 
 concurrency:
   group: adversarial-review-${{ github.event.pull_request.number }}
@@ -55,7 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # The publish step comments with this token. The model is given no tool
+      # that writes: it returns a verdict and a report, and a plain step posts
+      # them, so a diff that talks to it cannot make it write anything else.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -66,6 +71,7 @@ jobs:
           fetch-depth: 1
 
       - name: Adversarial review
+        id: review
         uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -75,7 +81,13 @@ jobs:
           # omitted entirely when the variable is unset: `--model` with an
           # empty value is a hard CLI error ("option '--model <model>'
           # argument missing"), not a fallback to the default.
-          claude_args: "${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}"
+          #
+          # --json-schema makes the verdict data rather than prose: the action
+          # fails the step when the run ends without it, so a review that
+          # produced nothing is red, not a green tick nobody can read behind.
+          claude_args: >-
+            ${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","NON-BLOCKING","CLEAN"]},"report":{"type":"string","minLength":1}},"required":["verdict","report"],"additionalProperties":false}'
           prompt: |
             You are the second reviewer on ${{ github.repository }} PR
             ${{ github.event.pull_request.number }}. A general review already
@@ -129,6 +141,56 @@ jobs:
             each one give the failure mode, not a style note. If you cannot
             find anything under a heading, say so rather than padding.
 
-            End with a short verdict: BLOCKING, NON-BLOCKING, or CLEAN, and one
-            sentence saying which of the ten questions you could not evaluate
-            from the diff alone.
+            Return the result as structured output, not as a comment: you
+            cannot post to GitHub, and the workflow publishes what you return.
+            `verdict` is BLOCKING, NON-BLOCKING, or CLEAN. `report` is the
+            whole review in Markdown: your answer to each of the ten
+            questions, every finding with its file and line and failure mode,
+            and one sentence saying which of the ten questions you could not
+            evaluate from the diff alone.
+
+      # One comment per PR, rewritten on each push, so the latest verdict is
+      # the one on the page; the same text goes to the job summary. BLOCKING
+      # fails the check. No status check is required on master, so a red one
+      # flags the PR without stopping a merge.
+      - name: Publish the verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ steps.review.outputs.structured_output }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          verdict=$(jq -r '.verdict // empty' <<<"$RESULT")
+          case "$verdict" in
+            BLOCKING|NON-BLOCKING|CLEAN) ;;
+            *) echo "::error::the review returned no usable verdict (got '${verdict}')"; exit 1 ;;
+          esac
+
+          marker='<!-- adversarial-review -->'
+          body=$(mktemp)
+          {
+            echo "$marker"
+            echo "## Adversarial review: ${verdict}"
+            echo
+            echo "For ${HEAD_SHA}. Rewritten on every push; the check fails on BLOCKING."
+            echo
+            jq -r '.report' <<<"$RESULT"
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          # Only this workflow's own comment is rewritten: a comment anyone
+          # else starts with the marker is not ours to edit.
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"$body" > /dev/null
+          else
+            gh pr comment "$PR" -R "$REPO" --body-file "$body"
+          fi
+
+          if [ "$verdict" = BLOCKING ]; then
+            echo "::error::adversarial review: BLOCKING (see the PR comment)"
+            exit 1
+          fi
