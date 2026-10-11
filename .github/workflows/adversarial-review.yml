@@ -59,8 +59,8 @@ jobs:
     permissions:
       contents: read
       # The publish step comments with this token. The model is given no tool
-      # that writes: it returns a verdict and a report, and a plain step posts
-      # them, so a diff that talks to it cannot make it write anything else.
+      # that writes (see claude_args below): it returns a verdict and a
+      # report, and a plain step posts them.
       pull-requests: write
       issues: read
       id-token: write
@@ -86,13 +86,28 @@ jobs:
           # --json-schema makes the verdict data rather than prose: the action
           # fails the step when the run ends without it, so a review that
           # produced nothing is red, not a green tick nobody can read behind.
+          #
+          # The model reads code it must not trust, and the action hands its
+          # shell a token that can write to the repository. So the tools are
+          # an allowlist: --setting-sources user keeps settings committed in
+          # the PR's tree (a .claude/settings.json granting Bash) from loading;
+          # the only commands allowed are the two read-only gh calls that show
+          # the PR, and anything else asking for permission is refused in a
+          # headless run. The deny list names the GitHub write tools anyway, so
+          # no settings source can grant them back.
           claude_args: >-
             ${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}
+            --setting-sources user
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","NON-BLOCKING","CLEAN"]},"report":{"type":"string","minLength":1}},"required":["verdict","report"],"additionalProperties":false}'
           prompt: |
             You are the second reviewer on ${{ github.repository }} PR
             ${{ github.event.pull_request.number }}. A general review already
             ran. Do not repeat it. Your job is to try to break this diff.
+
+            You can read files and run `gh pr diff` and `gh pr view` for this
+            PR; nothing else that runs commands or writes is available.
 
             Read CLAUDE.md first, in full. Its "Error patterns to avoid"
             section is a list of defects that actually shipped in this
