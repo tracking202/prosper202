@@ -215,24 +215,6 @@ try {
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
 
-    // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
-    // key to belong to an active Prosper202 ClickServer subscription (trials
-    // count). /capabilities and the API root stay open so the CLI can explain
-    // the refusal. Fails open when my.tracking202.com can't be reached (see
-    // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
-    if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
-        && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
-        && !str_starts_with($path, '/system')   // diagnostics stay usable
-        && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
-        Bootstrap::errorResponse(
-            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. '
-            . 'Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support',
-            402,
-            ['category' => 'licence']
-        );
-        exit;
-    }
-
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();
     $bucketKey = 'user:' . $userId;
@@ -260,6 +242,28 @@ try {
             );
             exit;
         }
+    }
+
+    // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
+    // key to belong to an active Prosper202 ClickServer subscription (trials
+    // count). /capabilities and the API root stay open so the CLI can explain
+    // the refusal. Fails open when my.tracking202.com can't be reached (see
+    // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
+    // The check keys on the User-Agent the Go CLI sends — a licensing prompt,
+    // not an access control (see isGoCliUserAgent) — and runs after the rate
+    // limiter above, so a burst that is refused there never reaches
+    // my.tracking202.com on a cold cache.
+    if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
+        && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
+        && !str_starts_with($path, '/system')   // diagnostics stay usable
+        && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
+        Bootstrap::errorResponse(
+            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. '
+            . 'Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support',
+            402,
+            ['category' => 'licence']
+        );
+        exit;
     }
 
     // ── CRUD resources ───────────────────────────────────────────────

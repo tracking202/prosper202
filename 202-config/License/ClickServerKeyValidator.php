@@ -54,7 +54,8 @@ class ClickServerKeyValidator
         $response = curl_exec($ch);
         $failed = curl_errno($ch) || $response === false;
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
+        // No curl_close(): a no-op since PHP 8.0 and deprecated in 8.5, where
+        // its notice lands in whatever response this runs inside of.
 
         if ($failed) {
             return null;
@@ -66,28 +67,47 @@ class ClickServerKeyValidator
     /**
      * Turn the endpoint's HTTP answer into a verdict.
      *
-     * Only a well-formed, authoritative answer decides: 200 + JSON msg
-     * (valid only when msg is 'Key valid'), or 404 + JSON (the endpoint's
-     * "invalid key" answer). Anything else (5xx, a redirect, an HTML error
-     * page, malformed JSON) is an outage and returns null, so callers fail
-     * open instead of caching a denial.
+     * The service answers in one envelope, {"code": int, "msg": string}
+     * plus an optional boolean "paid", and only these four answers exist:
+     *
+     *   200 {"code":200,"msg":"Key valid","paid":true|false}  the key and its licence
+     *   200 {"code":200,"msg":"Key valid"}                    the key; licence unknown
+     *       (the service's own answer while its database is down, and the
+     *       edge fallback's while the service is unreachable)
+     *   404 {"code":404,"msg":"Key not found"}                no such key
+     *   404 {"code":403,"msg":"API key requires ..."}         the key is refused
+     *
+     * Only those decide. Everything else is an outage or somebody else's
+     * answer and returns null: a 5xx, a redirect, an HTML error page,
+     * malformed JSON, JSON without the envelope (a gateway's own 404 body),
+     * a 200 whose message the service never sends. A 'paid' that is not a
+     * boolean is unknown too ('paid' => null) rather than "not paid": a
+     * malformed value must never resolve to the answer that happens to be a
+     * denial (CLAUDE.md #11). Callers then fall back or fail open, and
+     * nothing is cached from it.
      *
      * @return array{valid: bool, paid: ?bool}|null
      */
     public static function interpret(int $status, string $body): ?array
     {
         $data = json_decode($body, true);
-        if (!is_array($data) || !isset($data['msg']) || !is_string($data['msg'])) {
+        if (
+            !is_array($data)
+            || !isset($data['msg']) || !is_string($data['msg'])
+            || !isset($data['code']) || !is_int($data['code'])
+        ) {
             return null;
         }
         if ($status === 200) {
-            $valid = $data['msg'] === 'Key valid';
-        } elseif ($status === 404) {
-            $valid = false;
-        } else {
-            return null;
+            if ($data['code'] !== 200 || $data['msg'] !== 'Key valid') {
+                return null;
+            }
+            $paid = $data['paid'] ?? null;
+            return ['valid' => true, 'paid' => is_bool($paid) ? $paid : null];
         }
-        $paid = array_key_exists('paid', $data) ? ($data['paid'] === true) : null;
-        return ['valid' => $valid, 'paid' => $valid ? $paid : false];
+        if ($status === 404 && in_array($data['code'], [403, 404], true)) {
+            return ['valid' => false, 'paid' => false];
+        }
+        return null;
     }
 }

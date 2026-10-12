@@ -28,6 +28,12 @@ class CapabilitiesController
      * Whether a request comes from the Go CLI, the only client the Pro gate
      * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
      * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
+     *
+     * The User-Agent is the client's own claim, so this is a licensing
+     * prompt for the product, not an access control: the same API key keeps
+     * answering curl, the PHP CLI and the web app whatever the licence says,
+     * and a Go CLI build that sent another User-Agent would too. Nothing
+     * that must stay closed may rely on it (CLAUDE.md #16).
      */
     public static function isGoCliUserAgent(string $userAgent): bool
     {
@@ -301,11 +307,17 @@ class CapabilitiesController
      * Whether the Go CLI may run against this install: the ClickServer key's
      * account has an active Prosper202 ClickServer subscription (trials count).
      *
-     * Cached per key (CliAccessCache, 1 h). Fails OPEN when the answer is
-     * unknown (my.tracking202.com unreachable, or an answer without a 'paid'
-     * field) and no earlier result exists, so a backend outage never locks a
-     * paying customer out of the CLI. Falls back to the install owner's key
-     * when the API user has none, so sub-users of a paid install are covered.
+     * Cached per key (CliAccessCache, 1 h). Only an authoritative answer is
+     * cached, a denial included: "valid, not paid" and "no such key" are the
+     * service's own words, and they hold for the TTL (so does an allow, which
+     * outlives a lapsed subscription by up to an hour). Fails OPEN when the
+     * answer is unknown (my.tracking202.com unreachable, an error page, an
+     * answer without a boolean 'paid') and no earlier result exists, so a
+     * backend outage never locks a paying customer out of the CLI; an
+     * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
+     * of CLI requests during an outage pays the connect timeout once. Falls
+     * back to the install owner's key when the API user has none, so
+     * sub-users of a paid install are covered.
      */
     public function cliAccess(): bool
     {
@@ -339,11 +351,14 @@ class CapabilitiesController
         if ($cached !== null) {
             return $cached;
         }
+        if (CliAccessCache::recentlyUnknown($customerKey)) {
+            return CliAccessCache::readStale($customerKey) ?? true;
+        }
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
-            $stale = CliAccessCache::readStale($customerKey);
-            return $stale ?? true;
+            CliAccessCache::markUnknown($customerKey);
+            return CliAccessCache::readStale($customerKey) ?? true;
         }
         return $result['paid'];
     }
@@ -356,18 +371,27 @@ class CapabilitiesController
     private function loadOwnerClickServerKey(): string
     {
         // Connection::bind (CLAUDE.md #7), not a direct $stmt->bind_param().
+        // One string literal, single-quoted SQL strings: StaticSqlSchemaTest
+        // prepares it against the installed schema, and '' is a string under
+        // every sql_mode where "" is an identifier under ANSI_QUOTES.
         $conn = new Connection($this->db);
         try {
             $stmt = $conn->prepareRead(
-                'SELECT o.p202_customer_api_key FROM 202_users u '
-            . 'JOIN 202_users o ON o.install_hash = u.install_hash '
-            . 'WHERE u.user_id = ? AND u.install_hash IS NOT NULL AND u.install_hash != "" '
-            . 'AND o.user_deleted != 1 AND o.user_active = 1 '
-            . 'AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != "" '
-            . 'ORDER BY o.user_id ASC LIMIT 1'
+                "SELECT o.p202_customer_api_key FROM 202_users u
+                 JOIN 202_users o ON o.install_hash = u.install_hash
+                 WHERE u.user_id = ? AND u.install_hash != ''
+                 AND o.user_deleted != 1 AND o.user_active = 1
+                 AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != ''
+                 ORDER BY o.user_id ASC LIMIT 1"
             );
+        } catch (QueryException) {
+            $this->keyLookupFailed = true;
+            return '';
+        }
+        try {
             $conn->bind($stmt, 'i', [$this->userId]);
         } catch (QueryException) {
+            $stmt->close();
             $this->keyLookupFailed = true;
             return '';
         }

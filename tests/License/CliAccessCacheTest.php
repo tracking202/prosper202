@@ -99,4 +99,47 @@ final class CliAccessCacheTest extends TestCase
         self::assertDirectoryExists($dir);
         self::assertSame(0700, fileperms($dir) & 0777);
     }
+
+    /**
+     * An unanswered check is remembered for UNKNOWN_TTL_SECONDS so a burst of
+     * requests during an outage asks ClickServer once, and it is never a
+     * verdict: read() and readStale() still say unknown, and the last real
+     * verdict is what readStale() keeps returning.
+     */
+    public function testAnUnansweredCheckHoldsOffTheNextWithoutBecomingAVerdict(): void
+    {
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key));
+        CliAccessCache::markUnknown($this->key);
+        self::assertTrue(CliAccessCache::recentlyUnknown($this->key));
+        self::assertNull(CliAccessCache::read($this->key));
+        self::assertNull(CliAccessCache::readStale($this->key));
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key, 0 - 1), 'an expired marker is not recent');
+        // The marker is the CLI cache's own: the shell cache knows nothing of it.
+        self::assertFalse(ShellAccessCache::recentlyUnknown($this->key));
+    }
+
+    public function testTheStaleVerdictSurvivesAnUnansweredCheck(): void
+    {
+        CliAccessCache::write($this->key, true);
+        CliAccessCache::markUnknown($this->key);
+        self::assertTrue(CliAccessCache::recentlyUnknown($this->key));
+        self::assertTrue(CliAccessCache::readStale($this->key));
+        self::assertTrue(CliAccessCache::read($this->key), 'a fresh verdict is still a verdict');
+    }
+
+    public function testAVerdictEndsTheHoldOff(): void
+    {
+        CliAccessCache::markUnknown($this->key);
+        CliAccessCache::write($this->key, false);
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key));
+        self::assertFalse(CliAccessCache::read($this->key));
+    }
+
+    public function testInvalidateDropsTheHoldOffToo(): void
+    {
+        CliAccessCache::markUnknown($this->key);
+        CliAccessCache::invalidate($this->key);
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key));
+        self::assertSame([], glob(sys_get_temp_dir() . '/p202-cli-access/*.tmp') ?: []);
+    }
 }

@@ -65,6 +65,8 @@ API version and feature detection.
         "bulk_upsert_per_minute": 60
       }
     },
+    "shell": true,
+    "cli": true,
     "server": {
       "build": "1.9.58",
       "commit": "abc1234",
@@ -95,6 +97,8 @@ API version and feature detection.
 | `limits.max_job_events_page` | integer | Maximum job events returned per page. |
 | `limits.rate_limits.sync_per_minute` | integer | Allowed sync requests per minute. |
 | `limits.rate_limits.bulk_upsert_per_minute` | integer | Allowed bulk-upsert requests per minute. |
+| `shell` | boolean | The install's ClickServer API key (the account owner's, `202_users.p202_customer_api_key`) is valid, as my.tracking202.com last answered: what `p202 shell` needs. Cached per key for an hour; when my.tracking202.com cannot answer, the last known result is used, and with none this is `false`. A user with no key reads `false`. |
+| `cli` | boolean | Whether this install serves the Go CLI (`p202`): the key's account has an active Prosper202 ClickServer Pro subscription (a trial counts). While it is `false`, every Go CLI request other than the API root, `/capabilities` and `/system/*` is answered **402** with `category: licence` (exit code 6 in the CLI; the message links the 7-day trial). The server tells the Go CLI apart by the User-Agent it sends, so this is a licensing prompt rather than an access control: the same API key keeps answering curl, the PHP CLI and the web app whatever the value. It **fails open**: only my.tracking202.com's own answer decides (valid and paid, valid and unpaid, or no such key), cached per key for an hour, an unpaid or unknown-key answer included; an unreachable server, an error page, malformed JSON or a `paid` that is not a boolean is "unknown", in which case the last known verdict is used and, with none, the CLI is allowed. An unanswered check is not asked again for 60 seconds. A sub-user with no key of their own is judged by the account owner's key (same `install_hash`, active, not deleted). A failed key lookup or any error in the check also reads `true`, so a broken install never locks its CLI. |
 | `server.build` | string | Server build/version string. |
 | `server.commit` | string | Git commit the server was built from. |
 | `server.environment` | string | Deployment environment (e.g. `production`). |

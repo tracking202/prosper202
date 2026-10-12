@@ -20,6 +20,13 @@ class ShellAccessCache
     /** Entries older than this require revalidation against ClickServer. */
     public const int TTL_SECONDS = 3600;
 
+    /**
+     * How long a check that got no usable answer holds off the next one.
+     * An outage is not a verdict and is never written as one; this keeps
+     * every request made during one from paying the connect timeout again.
+     */
+    public const int UNKNOWN_TTL_SECONDS = 60;
+
     public static function read(string $key, int $maxAgeSeconds = self::TTL_SECONDS): ?bool
     {
         $path = static::path($key);
@@ -61,18 +68,37 @@ class ShellAccessCache
         if ($path === null) {
             return;
         }
-        // Write a private temp file and rename it into place, so a reader
-        // never sees a half-written entry.
-        $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-        if (@file_put_contents($tmp, $valid ? '1' : '0') === false
-            || !@chmod($tmp, 0600)
-            || !@rename($tmp, $path)) {
-            @unlink($tmp);
-            // Not fatal (the next request just revalidates), but worth a trace
-            // so repeated external validation calls can be diagnosed.
-            error_log('ShellAccessCache: failed to write ' . $path);
-            return;
+        // A verdict ends the hold-off an unanswered check may have left.
+        @unlink(self::unknownMarker($path));
+        self::put($path, $valid ? '1' : '0');
+    }
+
+    /**
+     * Record that the last check of this key got no usable answer, so the
+     * next UNKNOWN_TTL_SECONDS of requests use the last verdict (readStale)
+     * instead of each asking ClickServer again. No verdict is written.
+     */
+    public static function markUnknown(string $key): void
+    {
+        $path = static::path($key);
+        if ($path !== null) {
+            self::put(self::unknownMarker($path), '?');
         }
+    }
+
+    /** Whether a check of this key went unanswered less than $maxAgeSeconds ago. */
+    public static function recentlyUnknown(string $key, int $maxAgeSeconds = self::UNKNOWN_TTL_SECONDS): bool
+    {
+        $path = static::path($key);
+        if ($path === null) {
+            return false;
+        }
+        $marker = self::unknownMarker($path);
+        if (!is_file($marker) || is_link($marker) || fileowner($marker) !== static::processUserId()) {
+            return false;
+        }
+        $mtime = filemtime($marker);
+        return $mtime !== false && (time() - $mtime) <= $maxAgeSeconds;
     }
 
     public static function invalidate(string $key): void
@@ -80,6 +106,29 @@ class ShellAccessCache
         $path = static::path($key);
         if ($path !== null) {
             @unlink($path);
+            @unlink(self::unknownMarker($path));
+        }
+    }
+
+    private static function unknownMarker(string $path): string
+    {
+        return $path . '.unknown';
+    }
+
+    /**
+     * Write a private temp file and rename it into place, so a reader never
+     * sees a half-written entry.
+     */
+    private static function put(string $path, string $content): void
+    {
+        $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+        if (@file_put_contents($tmp, $content) === false
+            || !@chmod($tmp, 0600)
+            || !@rename($tmp, $path)) {
+            @unlink($tmp);
+            // Not fatal (the next request just revalidates), but worth a trace
+            // so repeated external validation calls can be diagnosed.
+            error_log('ShellAccessCache: failed to write ' . $path);
         }
     }
 

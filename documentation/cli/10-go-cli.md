@@ -411,7 +411,7 @@ wrong state points at `p202 change show`; and only an actual duplicate gets
 | 3 | Network error (connection timeout, DNS failure) |
 | 4 | Server error (5xx response) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
-| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the 7-day trial |
+| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the 7-day trial. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install asks my.tracking202.com at most once an hour per key and allows the CLI when it cannot get an answer (`GET /capabilities` reports the verdict as `cli`) |
 
 ## Telemetry
 

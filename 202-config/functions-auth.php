@@ -331,11 +331,18 @@ class AUTH
             return true;
         }
 
-        $keyIsValid = \Prosper202\License\ClickServerKeyValidator::validate($user_api_key);
+        $licence = \Prosper202\License\ClickServerKeyValidator::check($user_api_key);
 
         // On network failure, don't punish the user — assume valid until next check
-        if ($keyIsValid === null) {
+        if ($licence === null) {
             return true;
+        }
+        $keyIsValid = $licence['valid'];
+        // The same answer carries the CLI licence; record it so a verdict the
+        // web app has already heard is not asked for again by the Go CLI gate,
+        // and a key found invalid here stops a cached CLI allow at once.
+        if ($licence['paid'] !== null) {
+            \Prosper202\License\CliAccessCache::write($user_api_key, $licence['paid']);
         }
 
         if ($keyIsValid) {

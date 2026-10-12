@@ -41,8 +41,17 @@ final class GoCliUserAgentTest extends TestCase
         $go = (string)file_get_contents($root . '/go-cli/internal/api/client.go');
         self::assertMatchesRegularExpression('/User-Agent: (p202-cli\/[^\'"]+)/', $php);
         preg_match('/User-Agent: (p202-cli\/[^\'"]+)/', $php, $p);
-        preg_match('/"User-Agent", "(p202-cli\/[^"]+)"/', $go, $g);
         self::assertFalse(CapabilitiesController::isGoCliUserAgent($p[1] ?? ''), 'the PHP CLI must stay ungated');
-        self::assertTrue(CapabilitiesController::isGoCliUserAgent($g[1] ?? ''), 'the Go CLI must be gated');
+        // Every request path in the Go client sets its own header; one that
+        // sent another string would walk around the gate, so each is read.
+        preg_match_all('/\.Header\.Set\("User-Agent", "([^"]+)"\)/', $go, $g);
+        self::assertGreaterThanOrEqual(
+            3,
+            count($g[1]),
+            'expected the Go client to set User-Agent on every request path'
+        );
+        foreach ($g[1] as $agent) {
+            self::assertTrue(CapabilitiesController::isGoCliUserAgent($agent), "the Go CLI must be gated: $agent");
+        }
     }
 }
