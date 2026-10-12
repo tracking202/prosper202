@@ -16,10 +16,12 @@ use Tests\TestCase;
  * script spells each modifier out (AUTHOR_CLASS, SEND_CLASS) so none is
  * assembled where this cannot read it.
  *
- * And message text — the chat service's bodies, names and subjects, which
- * come from people — reaches the page through textContent only: the script
+ * And message text (the chat service's bodies, names and subjects, which
+ * come from people) reaches the page as text only: textContent, text
+ * nodes, and an http(s) address in a body as a link's href. The script
  * writes no markup at all (no innerHTML, outerHTML, insertAdjacentHTML or
- * document.write), so no value it shows can become one.
+ * document.write), so no value it shows can become one. Which addresses
+ * become links is checked in a browser, in tests/browser/specs/chat-box.spec.js.
  */
 final class ChatBoxClassesAreStyledTest extends TestCase
 {
