@@ -789,7 +789,7 @@ paths:
                               type: string
                             secret_stored:
                               type: boolean
-                              nullable: true
+                              description: Whether the caller has saved the secret the URL's notifications are checked with
                             verified:
                               type: boolean
                               description: ClickBank only
@@ -11411,7 +11411,7 @@ components:
     ConversionSource:
       type: string
       description: What produced a ledger row.
-      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, app_install, goal, legacy_baseline]
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, app_install, goal, legacy_baseline, jvzoo, zaxaa, paykickstart]
 
     ClickConversion:
       type: object
@@ -12884,6 +12884,11 @@ components:
         cb_key: {type: string, maxLength: 250, description: ClickBank secret key; changing it resets cb_verified.}
         zaxaa_api_signature: {type: string, maxLength: 250}
         jvzoo_ipn_secret_key: {type: string, maxLength: 250}
+        paykickstart_ipn_secret:
+          type: string
+          maxLength: 1000
+          description: PayKickstart IPN secret keys (one per PayKickstart campaign), separated by spaces or commas.
+        user_slack_signing_secret: {type: string, maxLength: 250, description: The Slack app's signing secret; it checks the slash commands slack.php receives.}
         user_ltv_customer_cparam: {type: integer, enum: [0, 1, 2, 3, 4], description: "c1-c4 carries a customer id; 0 off."}
         user_ltv_personalization_fields: {type: string, maxLength: 500, description: "Comma list of first_name, last_name, company, city, country, cf:<field_key>, rec:next_offer."}
         user_ltv_score_weights: {type: string, description: "volume:N,time:N,scroll:N,video:N,recency:N summing to 100; \"\" the defaults."}

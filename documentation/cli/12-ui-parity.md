@@ -92,7 +92,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Settings: click-data retention, delete before a date | `/system/retention`, `/system/retention/delete-before` | `p202 system retention show/set/delete-before` | ✅ |
 | Settings: ISP lookup | `/system/isp-lookup` | `p202 system isp-lookup show/enable/disable` | ✅ |
 | Settings: AutoCron, "update available" | — | — | — hosted service |
-| 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, Slack) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
+| 3rd Party API Integrations: secrets (IPQS, ClickBank, JVZoo, Zaxaa, PayKickstart, Slack webhook and signing secret) | `/users/{id}/preferences` | `p202 user prefs update` | ✅ |
 | 3rd Party API Integrations: the URLs to paste into each network | `/system/integrations` | `p202 system integrations` | ✅ |
 | 3rd Party API Integrations: DNI networks | — | — | — hosted service |
 | Attribution: models, reports, journeys, exports | `/attribution/…` | `p202 attribution …` | ✅ |

@@ -52,6 +52,10 @@ final class StoredVisitorIpSourceTest extends TestCase
                 . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
                 . ' has no privacy state',
         ],
+        '202-config/Integration/SaleNotification.php' => [
+            "''" => 'a payment platform\'s server-to-server notification (JVZoo, Zaxaa, PayKickstart): no'
+                . ' visitor\'s address arrives with it, so none is stored',
+        ],
         '202-login.php' => [
             '$login_ip' => 'the signed-in user\'s own address, an operator\'s record kept as it arrived:'
                 . ' the click filter compares a click\'s arrived address with it (FILTER::checkUserIP)',

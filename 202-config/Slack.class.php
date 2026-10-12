@@ -133,6 +133,8 @@ class Slack {
       'user_slack_incoming_webhook_updated' => '#[user] entered a new Slack Incoming Webhook URL',
       'zaxaa_api_signature_updated' => '#[user] entered a new Zaxaa API Signature',
 	  'jvzoo_secret_key_updated' => '#[user] entered a new JVZoo Secret Key',
+        'paykickstart_ipn_secret_updated' => '#[user] entered new PayKickstart Secret Keys',
+        'user_slack_signing_secret_updated' => '#[user] entered a new Slack Signing Secret',
 	  'ipqs_api_key_updated' => '#[user] entered a new IPQualityScore API Key',
 
       //User Management

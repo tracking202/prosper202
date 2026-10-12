@@ -393,7 +393,11 @@ final class AccountAdministrationIntegrationTest extends TestCase
     public function testIntegrationsServeTheirUrlsOnTheTrackingBaseAndNeverTheSecrets(): void
     {
         self::q("UPDATE 202_users_pref SET user_tracking_domain = 'track.example.com' WHERE user_id = 1");
-        self::q("UPDATE 202_users_pref SET cb_key = 'cb-secret-xyz', cb_verified = 1, jvzoo_ipn_secret_key = '', zaxaa_api_signature = NULL WHERE user_id = " . self::ADMIN);
+        self::q("UPDATE 202_users_pref SET cb_key = 'cb-secret-xyz', cb_verified = 1, jvzoo_ipn_secret_key = '',"
+            . " zaxaa_api_signature = NULL, paykickstart_ipn_secret = 'pk-secret-1 pk-secret-2',"
+            . " user_slack_signing_secret = NULL,"
+            . " user_slack_incoming_webhook = 'https://hooks.slack.com/services/T0/B0/x'"
+            . ' WHERE user_id = ' . self::ADMIN);
         $answer = $this->admin()->integrations(['HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443, 'DOCUMENT_ROOT' => dirname(__DIR__, 3)])['data'];
         self::assertSame('https://track.example.com/', $answer['base_url']);
         $byKey = array_column($answer['integrations'], null, 'integration');
@@ -407,9 +411,13 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::assertTrue($byKey['clickbank']['verified']);
         self::assertFalse($byKey['jvzoo']['secret_stored']);
         self::assertFalse($byKey['zaxaa']['secret_stored']);
-        self::assertNull($byKey['paykickstart']['secret_stored'], 'PayKickstart needs no secret');
-        self::assertStringNotContainsString('cb-secret-xyz', (string) json_encode($answer));
-        self::q("UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0 WHERE user_id = " . self::ADMIN);
+        self::assertTrue($byKey['paykickstart']['secret_stored']);
+        self::assertFalse($byKey['slack']['secret_stored'], 'slack.php is checked with the signing secret');
+        foreach (['cb-secret-xyz', 'pk-secret-1', 'hooks.slack.com'] as $secret) {
+            self::assertStringNotContainsString($secret, (string) json_encode($answer));
+        }
+        self::q("UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0, paykickstart_ipn_secret = NULL,"
+            . " user_slack_incoming_webhook = NULL WHERE user_id = " . self::ADMIN);
 
         // With no domain stored, the URLs go back to the caller to paste, as
         // the Integrations page shows them: on the host the request used, not

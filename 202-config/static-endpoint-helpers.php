@@ -12,6 +12,25 @@ if (!function_exists('p202RespondJsonError')) {
     }
 }
 
+if (!function_exists('p202RespondJson')) {
+    /** A JSON answer, for a server-to-server notification that was handled. */
+    function p202RespondJson(array $body, int $code = 200): never
+    {
+        http_response_code($code);
+        header('Content-Type: application/json');
+        echo json_encode($body, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        die();
+    }
+}
+
+if (!function_exists('p202RespondNotRecorded')) {
+    /** A payment notification this install has nothing to record for, and says why (200: retrying would not change it). */
+    function p202RespondNotRecorded(string $reason): never
+    {
+        p202RespondJson(['ok' => true, 'recorded' => false, 'duplicate' => false, 'conv_id' => 0, 'reason' => $reason]);
+    }
+}
+
 const P202_POSTBACK_USER_AGENT = \Prosper202\Conversion\TrafficSourcePixels::POSTBACK_USER_AGENT;
 
 if (!function_exists('p202ApplyConversionClickSide')) {
@@ -407,7 +426,7 @@ if (!function_exists('p202RecordConversion')) {
      *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
      *        time_difference, ip, pixel_type, user_agent, and once_per_click
      *        (bool). Optional: source (a ConversionSource value; defaults
-     *        from pixel_type), reversal and reversal_ref (see
+     *        from pixel_type), source_ref, reversal and reversal_ref (see
      *        p202ExtractReversal). click_payout is read only when
      *        $usePixelPayout: without an explicit amount the writer applies
      *        the campaign's default.
@@ -489,6 +508,9 @@ if (!function_exists('p202RecordConversion')) {
         }
         if (isset($log['reversal_ref']) && (string) $log['reversal_ref'] !== '') {
             $data['reversal_ref'] = (string) $log['reversal_ref'];
+        }
+        if (isset($log['source_ref']) && (string) $log['source_ref'] !== '') {
+            $data['source_ref'] = (string) $log['source_ref'];
         }
         if (!empty($log['notify_traffic_source'])) {
             // Queue the click's traffic-source server postbacks with the row
@@ -724,10 +746,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
      *     use_pixel_payout?: bool, payout?: string, ip?: string, user_agent?: string,
-     *     source?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null
+     *     source?: string, source_ref?: string, reversal?: bool, reversal_ref?: string, event_name?: string|null
      * } $opts source is the ledger source the row is recorded under
-     *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
-     *     a campaign-without-goals hit's `event=`, kept on the row.
+     *     (legacy_pixel for px and pb, clickbank for cb202, a payment
+     *     platform's for its notification); source_ref what in that source
+     *     the row came from; event_name is a campaign-without-goals hit's
+     *     `event=`, kept on the row.
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
@@ -795,6 +819,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'click_payout'    => $payout,
                 'once_per_click'  => $transactionId === '' && empty($opts['reversal']),
                 'source'          => (string) ($opts['source'] ?? \Prosper202\Conversion\Ledger\ConversionSource::LEGACY_PIXEL->value),
+                'source_ref'      => (string) ($opts['source_ref'] ?? ''),
                 'reversal'        => !empty($opts['reversal']),
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),

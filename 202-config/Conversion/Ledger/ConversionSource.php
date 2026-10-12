@@ -21,6 +21,9 @@ enum ConversionSource: string
     case APP_INSTALL = 'app_install';
     case GOAL = 'goal';
     case LEGACY_BASELINE = 'legacy_baseline';
+    case JVZOO = 'jvzoo';
+    case ZAXAA = 'zaxaa';
+    case PAYKICKSTART = 'paykickstart';
 
     /**
      * The source a pre-ledger row is backfilled with on upgrade, from the two
@@ -53,6 +56,9 @@ enum ConversionSource: string
             self::APP_INSTALL => 'App install',
             self::GOAL => 'Goal',
             self::LEGACY_BASELINE => 'Value before the ledger',
+            self::JVZOO => 'JVZoo',
+            self::ZAXAA => 'Zaxaa',
+            self::PAYKICKSTART => 'PayKickstart',
         };
     }
 }

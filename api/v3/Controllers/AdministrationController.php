@@ -74,15 +74,14 @@ final class AdministrationController
     /**
      * The integrations that receive a notification at a URL of this
      * install, as the Integrations page lists them: key => [name, what the
-     * page calls the URL, the script, the preference holding its secret
-     * (null: it needs none)].
+     * page calls the URL, the script, the preference holding its secret].
      */
     private const INTEGRATIONS = [
         'clickbank' => ['ClickBank', 'INS URL', 'tracking202/static/cb202.php', 'cb_key'],
         'jvzoo' => ['JVZoo', 'IPN URL', 'tracking202/static/jvzoo.php', 'jvzoo_ipn_secret_key'],
         'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
-        'slack' => ['Slack', 'Prosper202 webhook', 'tracking202/static/slack.php', 'user_slack_incoming_webhook'],
-        'paykickstart' => ['PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', null],
+        'slack' => ['Slack', 'Request URL', 'tracking202/static/slack.php', 'user_slack_signing_secret'],
+        'paykickstart' => ['PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret'],
     ];
 
     private readonly Connection $conn;
@@ -633,7 +632,8 @@ final class AdministrationController
             $domain = $this->one('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [self::INSTALL_OWNER]);
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
-                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook
+                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_signing_secret,
+                        paykickstart_ipn_secret
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
@@ -646,7 +646,7 @@ final class AdministrationController
                     'name' => $name,
                     'label' => $label,
                     'url' => $base . $script,
-                    'secret_stored' => $secret === null ? null : trim((string) ($prefs[$secret] ?? '')) !== '',
+                    'secret_stored' => trim((string) ($prefs[$secret] ?? '')) !== '',
                 ];
                 if ($key === 'clickbank') {
                     $entry['verified'] = (int) ($prefs['cb_verified'] ?? 0) === 1;

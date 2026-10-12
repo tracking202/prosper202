@@ -43,6 +43,11 @@ final class FieldErrorPathsAreDottedTest extends TestCase
             'offers[<n>]: an offer by its place in the comma-separated `offers` query value, numbered from 1 as'
             . ' the Setup page numbers them; a query value, not a body list',
         ],
+        '202-config/Integration/ZaxaaZpn.php' => [
+            3,
+            'products[<i>], products[<i>][amount]: Zaxaa\'s own posted field names, as its notification spells'
+            . ' them; the message answers Zaxaa\'s server, not an API client',
+        ],
         '202-config/Report/OverviewChart.php' => [
             2,
             'levels[<i>][id], types[<i>][type]: the Overview chart builder\'s own form field names, as'

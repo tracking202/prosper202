@@ -265,8 +265,8 @@ minutes.
       { "integration": "clickbank", "name": "ClickBank", "label": "INS URL", "url": "https://track.example.com/tracking202/static/cb202.php", "secret_stored": true, "verified": false },
       { "integration": "jvzoo", "name": "JVZoo", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php", "secret_stored": false },
       { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
-      { "integration": "slack", "name": "Slack", "label": "Prosper202 webhook", "url": "https://track.example.com/tracking202/static/slack.php", "secret_stored": false },
-      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": null }
+      { "integration": "slack", "name": "Slack", "label": "Request URL", "url": "https://track.example.com/tracking202/static/slack.php", "secret_stored": false },
+      { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": false }
     ]
   }
 }
@@ -274,5 +274,28 @@ minutes.
 
 The base is the one tracker links use: user 1's tracking domain (or this
 server's name) and the install's path. `secret_stored` says whether the
-caller has stored the key each notification is checked with (null: it needs
-none); the secrets are never served — `PUT /users/{id}/preferences` sets them.
+caller has stored the key each notification is checked with (`cb_key`,
+`jvzoo_ipn_secret_key`, `zaxaa_api_signature`, `user_slack_signing_secret`,
+`paykickstart_ipn_secret`); the secrets are never served —
+`PUT /users/{id}/preferences` sets them.
+
+Each URL checks a notification against every active account that has saved
+its secret, and records it on the account whose secret matches and whose
+click it names:
+
+| URL | Checked with | The click id arrives as | Records |
+|---|---|---|---|
+| `jvzoo.php` | JVZIPN v1 `cverify` (v2 is refused: it does not sign the amount or the tracking id) | `caffitid`, from `?tid=` on the JVZoo link | `SALE`, `BILL`; `RFND`, `CGBK`, `INSF` reverse the sale (`ctransreceipt`) |
+| `zpn.php` | `hash_key`, which covers only the seller, the receipt and the amount | each product's `custom`, from `?custom=` on the order link | `SALE`, `FIRST_BILL`, `REBILL` per product; `REFUND` reverses it; test mode records nothing |
+| `paykickstart.php` | `hash` (HMAC-SHA1 with a campaign's secret key) | `custom_subid`, from `?subid=` on the checkout link | `sales`; `refund` reverses the sale; test mode records nothing |
+| `slack.php` | the Slack app's signing secret | — | answers `/p202 stats [today\|yesterday\|7d\|30d]` and `help`, for the account that saved the secret |
+
+A payment URL answers 200 with `recorded`, `duplicate`, `conv_id` and a
+`reason` when nothing was recorded (`unknown_click`, `foreign_click`,
+`no_click_id`, `not_a_click_id`, `not_a_payment`, `test_mode`,
+`nothing_to_reverse`, `already_reversed`), so a platform does not retry what
+a retry would not change; 403 for a signature that matches no saved secret,
+400 for a malformed notification, and 500 only when the database failed.
+JVZoo documents `ctransamount` in pennies and shows dollars in its own
+sample: a whole number is read as pennies, a number with a decimal point
+as dollars. Zaxaa's `trans_currency` must be the account currency.

@@ -57,8 +57,14 @@ final class PostReadersCheckTokenTest extends TestCase
         'tracking202/ajax/sort_ltv.php' => 'a read: the LTV report, sorted and paged',
         'tracking202/analyze/AnalyzeReportController.php' => 'a report read: it sets $_POST\'s offset and order for DataEngine, and writes nothing',
         'tracking202/analyze/MobileAppsReportController.php' => 'a read: the Verify tab checks a pasted postback\'s signature and stores nothing',
+        'tracking202/static/jvzoo.php' => 'JVZoo\'s server-to-server notification, checked with a secret key'
+            . ' over every posted value (cverify); no session to forge a request from',
         'tracking202/static/p13n.php' => 'a public endpoint authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
         'tracking202/static/p13n_event.php' => 'a public beacon authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
+        'tracking202/static/paykickstart.php' => 'PayKickstart\'s server-to-server notification, checked with a'
+            . ' campaign secret key over every posted value (hash); no session to forge a request from',
+        'tracking202/static/zpn.php' => 'Zaxaa\'s server-to-server notification, checked with the API'
+            . ' signature (hash_key); no session to forge a request from',
     ];
 
     private const AUTH_GUARDS = ['check_csrf_token', 'csrf_token_matches'];

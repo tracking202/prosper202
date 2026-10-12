@@ -103,7 +103,8 @@ row.
 | `user_cpc_or_cpv` | `cpc`, `cpv` | report pages |
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
 | `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
-| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key`, `user_slack_signing_secret` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `paykickstart_ipn_secret` | up to 1000 characters, or `""`: one PayKickstart IPN secret key per PayKickstart campaign, separated by spaces or commas | Integrations |
 | `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |

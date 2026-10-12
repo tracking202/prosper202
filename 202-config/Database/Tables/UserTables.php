@@ -141,6 +141,8 @@ final class UserTables
                 `lpo_bridge_config` text DEFAULT NULL,
                 `lpo_ctx_kw` tinyint(1) NOT NULL DEFAULT '1',
                 `user_delete_data_before` int(10) unsigned DEFAULT NULL,
+                `paykickstart_ipn_secret` varchar(1000) DEFAULT NULL,
+                `user_slack_signing_secret` varchar(250) DEFAULT NULL,
                 PRIMARY KEY (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

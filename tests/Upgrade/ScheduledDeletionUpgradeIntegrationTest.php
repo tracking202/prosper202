@@ -58,9 +58,14 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
         // do not (int), which is what CI's MySQL 8.0 prints.
         $this->assertMatchesRegularExpression('/`user_delete_data_before` int(?:\(10\))? unsigned DEFAULT NULL,/', $fresh);
 
-        // The 1.9.75 shape: the column is not there yet, and the install
+        $this->assertStringContainsString('`paykickstart_ipn_secret` varchar(1000) DEFAULT NULL,', $fresh);
+        $this->assertStringContainsString('`user_slack_signing_secret` varchar(250) DEFAULT NULL,', $fresh);
+
+        // The 1.9.75 shape: the columns are not there yet (nor the
+        // notification secrets 1.9.77 adds beside them), and the install
         // scheduled a deletion by id.
-        $this->assertTrue($db->query('ALTER TABLE 202_users_pref DROP COLUMN user_delete_data_before'));
+        $this->assertTrue($db->query('ALTER TABLE 202_users_pref DROP COLUMN user_delete_data_before,'
+            . ' DROP COLUMN paykickstart_ipn_secret, DROP COLUMN user_slack_signing_secret'));
         $this->assertTrue($db->query('INSERT INTO 202_users_pref SET user_id = 1, user_delete_data_clickid = 4242'));
 
         $this->assertTrue(_upgrade_measurement_tables([UserTables::usersPref()]));

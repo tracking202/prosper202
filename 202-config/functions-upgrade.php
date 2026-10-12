@@ -4312,7 +4312,10 @@ class UPGRADE
             // column, and the cron job's click deletions, the Settings page's
             // retention form and GET /system/retention all failed on it. The
             // reconciler adds it where the installer declares it, and does
-            // nothing where it is already there.
+            // nothing where it is already there. The same reconcile adds
+            // paykickstart_ipn_secret and user_slack_signing_secret, which
+            // tracking202/static/paykickstart.php and slack.php check
+            // notifications with.
             //
             // The in-app chat's message cache goes with it: the install no
             // longer stores or syncs chat (the browser talks to the chat

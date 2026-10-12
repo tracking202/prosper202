@@ -72,6 +72,8 @@ final class PreferenceRules
         'cb_key' => 250,
         'zaxaa_api_signature' => 250,
         'jvzoo_ipn_secret_key' => 250,
+        'paykickstart_ipn_secret' => 1000,
+        'user_slack_signing_secret' => 250,
     ];
 
     /** Everything else this class knows, handled by name in check(). */

@@ -32,6 +32,8 @@ $change_cb_key = false;
 $change_jvzoo_secret_key = false;
 $change_zaxaa_api_signature = false;
 $change_user_slack_incoming_webhook = false;
+$change_user_slack_signing_secret = false;
+$change_paykickstart_ipn_secret = false;
 $change_ipqs_api_key = false;
 
 /**
@@ -268,6 +270,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (processApiKeyUpdate($config, $error, $change_jvzoo_secret_key, $user_row, $slack, $username, $db)) {
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
+		}
+	}
+
+	// Slack Signing Secret Update
+	if (isset($_POST['change_user_slack_signing_secret']) && $_POST['change_user_slack_signing_secret'] == '1') {
+		$config = [
+			'post_key' => 'user_slack_signing_secret',
+			'field_name' => 'user_slack_signing_secret',
+			'error_key' => 'user_slack_signing_secret_error',
+			'error_message' => 'Slack signing secret can\'t be empty!',
+			'slack_event' => 'user_slack_signing_secret_updated'
+		];
+		if (processApiKeyUpdate($config, $error, $change_user_slack_signing_secret, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your Slack signing secret was saved.');
+			p202_account_redirect('202-account/api-integrations.php#slack-commands');
+		}
+	}
+
+	// PayKickstart Secret Keys Update
+	if (isset($_POST['change_paykickstart_ipn_secret']) && $_POST['change_paykickstart_ipn_secret'] == '1') {
+		$config = [
+			'post_key' => 'paykickstart_ipn_secret',
+			'field_name' => 'paykickstart_ipn_secret',
+			'error_key' => 'paykickstart_ipn_secret_error',
+			'error_message' => 'PayKickstart secret key can\'t be empty!',
+			'slack_event' => 'paykickstart_ipn_secret_updated'
+		];
+		if (processApiKeyUpdate($config, $error, $change_paykickstart_ipn_secret, $user_row, $slack, $username, $db)) {
+			p202_account_flash('ok', 'Your PayKickstart secret keys were saved.');
+			p202_account_redirect('202-account/api-integrations.php#paykickstart');
 		}
 	}
 
@@ -639,24 +671,47 @@ $keyIntegrations = [
 	],
 	'jvzoo' => [
 		'title' => 'JVZoo', 'icon' => 'jvzoo.png', 'help' => 'jvzoo',
-		'desc' => 'Update conversions from JVZoo’s Instant Payment Notification (JVZIPN).',
+		'desc' => 'Update conversions from JVZoo’s Instant Payment Notification (JVZIPN, v1): add ?tid=[[subid]] '
+			. 'to the JVZoo link your campaign sends visitors to, and paste this URL as the JVZIPN URL.',
 		'extra' => '',
 		'flag' => 'change_jvzoo_secret_key', 'field' => 'jvzoo_ipn_secret_key', 'label' => 'JVZoo secret key', 'error' => 'jvzoo_secret_key_error',
 		'endpoint' => ['IPN URL', $trackingBase . 'tracking202/static/jvzoo.php'],
 	],
 	'zaxaa' => [
 		'title' => 'Zaxaa', 'icon' => 'zaxaa.png', 'help' => 'zaxaa',
-		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN).',
+		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN) for products you sell: add '
+			. '?custom=[[subid]] to the order link your campaign sends visitors to, and paste this URL as the '
+			. 'Notification Handler URL.',
 		'extra' => '',
 		'flag' => 'change_zaxaa_api_signature', 'field' => 'zaxaa_api_signature', 'label' => 'Zaxaa API signature', 'error' => 'zaxaa_api_signature_error',
 		'endpoint' => ['ZPN URL', $trackingBase . 'tracking202/static/zpn.php'],
 	],
 	'slack' => [
 		'title' => 'Slack', 'icon' => 'slack.png', 'help' => 'slack',
-		'desc' => 'Send Prosper202 notifications into a Slack channel, and receive Slack commands at the webhook below.',
+		'desc' => 'Send Prosper202 notifications into a Slack channel.',
 		'extra' => '',
 		'flag' => 'change_user_slack_incoming_webhook', 'field' => 'user_slack_incoming_webhook', 'label' => 'Slack incoming webhook URL', 'error' => 'user_slack_incoming_webhook',
-		'endpoint' => ['Prosper202 webhook', $trackingBase . 'tracking202/static/slack.php'],
+		'endpoint' => null,
+	],
+	'slack-commands' => [
+		'title' => 'Slack commands', 'icon' => 'slack.png', 'help' => 'slack',
+		'desc' => 'Ask for your stats from Slack: give a Slack app a slash command such as /p202 with this Request '
+			. 'URL, and paste the app’s signing secret. /p202 stats answers with today’s clicks, conversions, '
+			. 'revenue, cost and profit.',
+		'extra' => '',
+		'flag' => 'change_user_slack_signing_secret', 'field' => 'user_slack_signing_secret', 'label' => 'Slack signing secret',
+		'error' => 'user_slack_signing_secret_error',
+		'endpoint' => ['Request URL', $trackingBase . 'tracking202/static/slack.php'],
+	],
+	'paykickstart' => [
+		'title' => 'PayKickstart', 'icon' => 'paykickstart.png', 'help' => '',
+		'desc' => 'Update conversions from PayKickstart’s IPN for products you sell: add ?subid=[[subid]] to the '
+			. 'checkout link your campaign sends visitors to, and paste this URL as the campaign’s IPN URL. '
+			. 'Each PayKickstart campaign has its own secret key; separate several with spaces.',
+		'extra' => '',
+		'flag' => 'change_paykickstart_ipn_secret', 'field' => 'paykickstart_ipn_secret', 'label' => 'PayKickstart secret keys',
+		'error' => 'paykickstart_ipn_secret_error',
+		'endpoint' => ['IPN URL', $trackingBase . 'tracking202/static/paykickstart.php'],
 	],
 ];
 $cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
@@ -938,19 +993,6 @@ template_top('API Integrations');
 		</div>
 	<?php } ?>
 
-	<div class="col-12 col-lg-6">
-		<section class="p202-panel h-100" id="paykickstart">
-			<div class="p202-panel__head">
-				<img src="<?php echo $e($base . '202-img/icons/integrations/paykickstart.png'); ?>" width="22" height="22" alt="" class="rounded-1">
-				<h2 class="p202-panel__title">PayKickstart</h2>
-				<span class="p202-pill">No setup needed</span>
-			</div>
-			<div class="p202-panel__body">
-				<p class="text-secondary">Update conversions from PayKickstart’s Affiliate IPN: paste this URL as your IPN URL in PayKickstart.</p>
-				<?php echo $endpoint('IPN URL', $trackingBase . 'tracking202/static/paykickstart.php'); ?>
-			</div>
-		</section>
-	</div>
 </div>
 
 <script>

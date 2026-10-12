@@ -729,7 +729,7 @@ p202 conversion list --all
 | `--time-from`   |         | Start: unix seconds, a date (`2026-10-01`, account timezone) or a time with offset |
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
-| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
+| `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline`, `jvzoo`, `zaxaa`, `paykickstart` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
 
@@ -1504,7 +1504,7 @@ request. A free-text flag given `""` clears it.
 | `--user-account-currency` | 3-letter code; re-prices every campaign's payout into it |
 | `--user-keyword-searched-or-bidded`, `--user-pref-referer-data`, `--user-pref-dynamic-bid`, `--user-pref-privacy`, `--user-pref-cloak-referer`, `--user-pref-ad-settings` | Personal settings' choices |
 | `--user-pref-time-predefined`, `--user-pref-limit`, `--user-cpc-or-cpv`, `--chart-time-range` | report and chart defaults |
-| `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
+| `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key`, `--paykickstart-ipn-secret`, `--user-slack-signing-secret` | Integrations (a value here stays in shell history) |
 | `--user-ltv-customer-cparam`, `--user-ltv-personalization-fields`, `--user-ltv-score-weights`, `--user-ltv-rec-fatigue` | LTV › Settings |
 
 ## Export and import
