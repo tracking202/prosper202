@@ -121,28 +121,26 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check only for API key setup
-	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
-		return false;
-	}
-
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed
+	// Installed means an account exists in 202_users. Only a missing table (1146)
+	// answers "not installed"; any other failure is treated as installed.
 	try {
-		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
-		$user_result = $db->query($user_sql);
-		if ($user_result) {
-			$row = $user_result->fetch_assoc();
-			$user_result->free();
-			return ((int) $row['cnt']) > 0;
-		}
-	} catch (mysqli_sql_exception) {
-		// Table doesn't exist yet, return false
-		return false;
+		$user_result = $db->query("SELECT COUNT(*) AS cnt FROM 202_users");
+	} catch (mysqli_sql_exception $e) {
+		// 1146 = table does not exist.
+		return $e->getCode() !== 1146;
 	}
-	return false;
+	if ($user_result === false) {
+		return $db->errno !== 1146;
+	}
+	$row = $user_result->fetch_assoc();
+	$user_result->free();
+	if (!is_array($row) || !isset($row['cnt'])) {
+		return true;
+	}
+	return ((int) $row['cnt']) > 0;
 }
 
 function upgrade_needed(): bool
