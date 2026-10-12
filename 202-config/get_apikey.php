@@ -39,29 +39,22 @@ if ($html['user_api'] == '') {
 	</form>
 <?php echo p202_standalone_card_end(); ?>
 <script>
-	// The key is checked by the license service before the installer is
-	// opened; the installer reads it from the user_api cookie.
+	// Save carries the key to the installer in the user_api cookie; the
+	// installer checks it with the license service when the account form is
+	// submitted.
 	document.addEventListener('DOMContentLoaded', function () {
 		var form = document.getElementById('getapikey');
 		if (!form) { return; }
 		form.addEventListener('submit', function (event) {
 			event.preventDefault();
 			var key = document.getElementById('user_api').value;
-			$.post(<?php echo json_encode(get_absolute_url() . '202-account/ajax/validate-apikey.php'); ?>, { apikey: key }).done(function (response) {
-				var json = {};
-				try { json = JSON.parse(response); } catch (e) { json = {}; }
-				if (json.msg === 'Key valid') {
-					// Secure whenever the page is on HTTPS (as the browser sees it, so
-					// behind a TLS-terminating proxy too): the key is a credential.
-					document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
-					document.location.href = 'install.php';
-				} else {
-					document.getElementById('getapikey-error').textContent = 'This API key is not valid. Fetch it again from my.tracking202.com.';
-					if (confirm('Your Api Key Is Invalid. Would You Like Help Finding Your Key?')) {
-						document.location.href = 'https://my.tracking202.com/api/customers/login?redirect=get-api';
-					}
-				}
-			});
+			// Carry the key to the installer, which validates it with the
+			// license service server-side on submit. (This page can't: the
+			// validation endpoint needs a signed-in user, and on a fresh
+			// install nobody is yet.) Secure whenever the page is on HTTPS
+			// (as the browser sees it, proxy included): the key is a credential.
+			document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
+			document.location.href = 'install.php';
 		});
 	});
 </script>
