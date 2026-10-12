@@ -75,6 +75,15 @@ function customerMessage(seq, body) {
 const T = (text) => ({ text });
 const U = (url) => ({ url });
 const LONGEST = 'https://x.test/' + 'a'.repeat(2000 - 'https://x.test/'.length);
+// Characters that are invisible or turn the text's direction, by code point
+// (U+00AD, U+061C, U+200B-U+200F, U+202A-U+202E, U+2060-U+2064,
+// U+2066-U+2069, U+FEFF): an address stops at each, as at whitespace.
+const INVISIBLE = [
+  0x00ad, 0x061c, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d,
+  0x202e, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff,
+];
+const codePoint = (cp) => 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
+const RLO = String.fromCharCode(0x202e);
 const FORBIDDEN = [' ', '\t', '\n', '\u00a0', '"', '\'', '<', '>', '\\', '^', '`', '{', '|', '}'];
 const LINK_CASES = [
   ['plain text', 'No address here, just words.', [T('No address here, just words.')]],
@@ -100,6 +109,12 @@ const LINK_CASES = [
   ...FORBIDDEN.map((c) => [
     'stops at ' + (c === '\u00a0' ? 'a no-break space' : JSON.stringify(c)), 'https://x.test/a' + c + 'b', [U('https://x.test/a'), T(c + 'b')],
   ]),
+  ...INVISIBLE.map((cp) => [
+    'stops at ' + codePoint(cp), 'https://x.test/a' + String.fromCharCode(cp) + 'b',
+    [U('https://x.test/a'), T(String.fromCharCode(cp) + 'b')],
+  ]),
+  ['a right-to-left override cannot disguise the address', 'https://bank.com/' + RLO + 'txt.exe',
+    [U('https://bank.com/'), T(RLO + 'txt.exe')]],
   ['javascript: is not linked', 'javascript:alert(1)', [T('javascript:alert(1)')]],
   ['data: is not linked', 'data:text/html,<b>x</b>', [T('data:text/html,<b>x</b>')]],
   ['mailto: is not linked', 'mailto:help@x.test', [T('mailto:help@x.test')]],
@@ -108,7 +123,7 @@ const LINK_CASES = [
   ['a scheme with nothing after it', 'https:// and https://. and http://)', [T('https:// and https://. and http://)')]],
   ['an uppercase scheme', 'HTTPS://X.TEST/Path and Http://x.test/b', [U('HTTPS://X.TEST/Path'), T(' and '), U('Http://x.test/b')]],
   ['2000 characters', LONGEST, [U(LONGEST)]],
-  ['2000 characters and a full stop', LONGEST + '.', [U(LONGEST), T('.')]],
+  ['2000 characters and a full stop (2001 matched, so all text)', LONGEST + '.', [T(LONGEST + '.')]],
   ['2001 characters', LONGEST + 'a', [T(LONGEST + 'a')]],
   ['markup stays text', '<img src=x onerror="window.__p202Xss=1">', [T('<img src=x onerror="window.__p202Xss=1">')]],
   ['markup after an address stays text', 'https://x.test/"><img src=x onerror="window.__p202Xss=1">',
@@ -116,6 +131,53 @@ const LINK_CASES = [
   ['line breaks and spaces are kept', 'one https://x.test/a\n  two\tthree\n\nhttps://x.test/b',
     [T('one '), U('https://x.test/a'), T('\n  two\tthree\n\n'), U('https://x.test/b')]],
 ];
+
+// Bodies at the chat service's cap (10,000 characters, as the composer's
+// MAX_BODY; the first is 7 over) built so a slow splitter shows: closers a
+// naive trim recounts at every step, a balanced opener ahead of them, full
+// stops alone and after an address, addresses just inside MAX_URL that each
+// have to be trimmed (the only ones the trim ever sees), a near miss of the
+// scheme at every position (the regex itself), and as many addresses as fit
+// (the loop and the DOM). Each is the only message in its conversation, and
+// opening that conversation, which builds the thread and lays it out, must
+// take under RENDER_MS every time.
+const RENDER_MS = 50;
+const RENDER_RUNS = 5;
+const HOSTILE = [
+  ['"http://" then 10,000 )', 'http://' + ')'.repeat(10000), 0],
+  ['"(http://a)" then 9,990 )', '(http://a)' + ')'.repeat(9990), 0],
+  ['10,000 full stops', '.'.repeat(10000), 0],
+  ['"http://a" then 9,992 full stops', 'http://a' + '.'.repeat(9992), 0],
+  ['five addresses, each followed by 1,991 )', ('http://a' + ')'.repeat(1991) + ' ').repeat(5), 5],
+  ['"http:/" over and over, a near miss at every h', 'http:/'.repeat(1667).slice(0, 10000), 0],
+  ['1,111 addresses', 'http://a '.repeat(1111), 1111],
+];
+
+// In the page: open the conversation titled `name` `runs` times, timing each
+// click (the box renders the thread and reads its height before the click
+// returns), and report what the last one showed.
+function timeOpening({ name, runs }) {
+  const times = [];
+  let shown = null;
+  for (let i = 0; i < runs; i++) {
+    const row = Array.from(document.querySelectorAll('.p202-chat__row'))
+      .find((r) => r.querySelector('.p202-chat__row-title').textContent === name);
+    if (!row) {
+      return { error: 'no conversation titled ' + name };
+    }
+    const started = performance.now();
+    row.click();
+    times.push(performance.now() - started);
+    const bubbles = document.querySelectorAll('.p202-chat__bubble');
+    shown = {
+      bubbles: bubbles.length,
+      text: bubbles[0] ? bubbles[0].textContent : null,
+      links: bubbles[0] ? bubbles[0].querySelectorAll('a').length : -1,
+    };
+    document.querySelector('.p202-chat__back').click();
+  }
+  return { times, shown };
+}
 
 // In the page: each bubble as the parts it was built from, its text, and
 // its text as rendered (innerText follows white-space, textContent does not).
@@ -454,6 +516,7 @@ module.exports = {
           await openThreadOf(page, app, ui, LINK_CASES.map(([, body], i) => teamMessage(i + 1, body)));
           const bubbles = await page.$$eval('.p202-chat__bubble', readBubbles);
           expect.eq(bubbles.length, LINK_CASES.length, 'one bubble a message');
+          expect.eq(new Set(INVISIBLE).size, 22, 'all 22 invisible and direction characters are cases');
           LINK_CASES.forEach(([name, body, want], i) => {
             const got = bubbles[i] || { parts: [], text: '' };
             const same = JSON.stringify(got.parts) === JSON.stringify(want);
@@ -502,7 +565,7 @@ module.exports = {
       },
     },
     {
-      name: 'A link reads on the customer’s bubble and the team’s, light and dark',
+      name: 'A link reads on the customer bubble and the team bubble, light and dark',
       async run(ctx) {
         for (const scheme of ['light', 'dark']) {
           await ctx.withSession({ colorScheme: scheme }, async ({ page, app, ui, expect }) => {
@@ -521,6 +584,39 @@ module.exports = {
             }
           });
         }
+      },
+    },
+    {
+      name: 'A hostile message at the length cap renders in under 50 ms',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          await page.route(PASS_URL, aPass);
+          const answer = {
+            conversations: HOSTILE.map(([name], i) => chatConv({ id: 100 + i, type: 'broadcast', subject: name, unread: 0 })),
+            messages: HOSTILE.map(([, body], i) => ({ ...teamMessage(i + 1, body), conv: 100 + i })),
+            seq: HOSTILE.length,
+          };
+          await standInService(page, () => [200, answer]);
+          await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+            setTimeout(() => ws.send(JSON.stringify({ t: 'ready', seq: HOSTILE.length })), 50);
+          });
+          await app.goto('/202-account/');
+          await ui.until(async () => ui.exists('.p202-chat__launcher'), { describe: 'the chat box to be built' });
+          await page.click('.p202-chat__launcher');
+          await ui.until(async () => (await page.$$('.p202-chat__row')).length === HOSTILE.length, { describe: 'every conversation to be listed' });
+          for (const [name, body, links] of HOSTILE) {
+            const got = await page.evaluate(timeOpening, { name, runs: RENDER_RUNS });
+            if (got.error) {
+              expect.fail(name, got.error);
+              continue;
+            }
+            const times = got.times.map((t) => t.toFixed(1)).join(', ') + ' ms';
+            expect.note(name + ' (' + body.length + ' characters): ' + times);
+            expect.ok(Math.max(...got.times) < RENDER_MS, name + ': every render under ' + RENDER_MS + ' ms', times);
+            expect.ok(got.shown.bubbles === 1 && got.shown.text === body, name + ': shown whole, as written');
+            expect.eq(got.shown.links, links, name + ': ' + links + ' links');
+          }
+        });
       },
     },
     {
