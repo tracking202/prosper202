@@ -275,8 +275,9 @@ class CapabilitiesController
      * Results are cached per-key (ShellAccessCache: an allow for TTL_SECONDS,
      * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
      * on every capabilities request. If ClickServer
-     * is unreachable the last known result is used regardless of age, and
-     * access is denied when no prior result exists (fail-closed); the
+     * is unreachable the last known result is used, up to
+     * STALE_TTL_SECONDS old, and access is denied when no prior result
+     * exists (fail-closed); the
      * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
      */
     private function shellAccess(): bool

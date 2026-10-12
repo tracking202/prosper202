@@ -28,6 +28,12 @@ class ShellAccessCache
     public const int DENIAL_TTL_SECONDS = 300;
 
     /**
+     * How long a result is kept for readStale(), the shell's fallback while
+     * ClickServer is unreachable; prune() drops anything older.
+     */
+    public const int STALE_TTL_SECONDS = 30 * 86400;
+
+    /**
      * How long a check that got no usable answer holds off the next one.
      * An outage is not a verdict and is never written as one; this keeps
      * every request made during one from paying the connect timeout again.
@@ -77,12 +83,12 @@ class ShellAccessCache
     }
 
     /**
-     * Last known result regardless of age, for fallback when revalidation
-     * is impossible (ClickServer unreachable).
+     * Last known result within STALE_TTL_SECONDS, for fallback when
+     * revalidation is impossible (ClickServer unreachable).
      */
     public static function readStale(string $key): ?bool
     {
-        return self::read($key, PHP_INT_MAX);
+        return self::read($key, self::STALE_TTL_SECONDS);
     }
 
     public static function write(string $key, bool $valid): void
@@ -95,7 +101,7 @@ class ShellAccessCache
         @unlink(self::unknownMarker($path));
         self::put($path, $valid ? '1' : '0');
         // One write in fifty sweeps the directory, so it stays bounded by the
-        // keys seen in the last hour rather than by every key ever submitted.
+        // keys seen in the stale window rather than by every key ever submitted.
         if (random_int(1, 50) === 1) {
             static::prune();
         }
@@ -132,10 +138,13 @@ class ShellAccessCache
     /**
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
-     * removes one, so write() calls this now and then; an entry past
-     * TTL_SECONDS is unreadable anyway. Returns how many files went.
+     * removes one, so write() calls this now and then. The default is the
+     * stale window, not the fresh one: readStale() serves an entry up to
+     * STALE_TTL_SECONDS old while ClickServer is unreachable, and a sweep
+     * that took those would refuse a licensed shell during the outage it
+     * exists for. Returns how many files went.
      */
-    public static function prune(int $olderThanSeconds = self::TTL_SECONDS): int
+    public static function prune(int $olderThanSeconds = self::STALE_TTL_SECONDS): int
     {
         $dir = static::dir();
         if ($dir === null) {
@@ -143,7 +152,10 @@ class ShellAccessCache
         }
         $removed = 0;
         $cutoff = time() - $olderThanSeconds;
-        foreach (glob($dir . '/*.{cache,unknown}', GLOB_BRACE) ?: [] as $file) {
+        // Two globs, not GLOB_BRACE: the flag is undefined on some libcs
+        // (Alpine's musl), and this runs inside write().
+        $files = array_merge(glob($dir . '/*.cache') ?: [], glob($dir . '/*.unknown') ?: []);
+        foreach ($files as $file) {
             if (is_link($file)) {
                 continue;
             }

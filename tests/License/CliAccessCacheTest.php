@@ -165,21 +165,42 @@ final class CliAccessCacheTest extends TestCase
         self::assertFalse(CliAccessCache::recentlyUnknown($this->key), 'a future-dated hold-off is no hold-off');
     }
 
-    public function testPruneDropsOnlyWhatIsPastTheTtl(): void
+    /**
+     * prune() keeps what readStale() may still serve (STALE_TTL_SECONDS) and
+     * drops what is older. Every write() here happens before the ageing:
+     * write() itself sweeps one time in fifty, and a sweep between the ageing
+     * and the explicit prune() would make the count below a coin toss.
+     */
+    public function testPruneDropsOnlyWhatIsPastTheStaleWindow(): void
     {
         $old = 'test-key-old-' . bin2hex(random_bytes(6));
-        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $old);
-        CliAccessCache::write($old, true);
-        CliAccessCache::markUnknown($old);
-        touch($path, time() - CliAccessCache::TTL_SECONDS - 60);
-        touch($path . '.unknown', time() - CliAccessCache::TTL_SECONDS - 60);
+        $stale = 'test-key-stale-' . bin2hex(random_bytes(6));
+        $paths = [];
+        foreach ([$old, $stale] as $k) {
+            $paths[$k] = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $k);
+            CliAccessCache::write($k, true);
+            CliAccessCache::markUnknown($k);
+        }
         CliAccessCache::write($this->key, false); // fresh: must survive
-        $removed = CliAccessCache::prune();
-        self::assertGreaterThanOrEqual(2, $removed, 'the old entry and its marker go');
-        self::assertFileDoesNotExist($path);
-        self::assertFileDoesNotExist($path . '.unknown');
-        self::assertFalse(CliAccessCache::read($this->key), 'the fresh entry stays');
-        self::assertSame(0, CliAccessCache::prune(), 'nothing else is old enough');
+        try {
+            touch($paths[$old], time() - CliAccessCache::STALE_TTL_SECONDS - 60);
+            touch($paths[$old] . '.unknown', time() - CliAccessCache::STALE_TTL_SECONDS - 60);
+            touch($paths[$stale], time() - CliAccessCache::TTL_SECONDS - 60); // expired, still stale-readable
+            $removed = CliAccessCache::prune();
+            self::assertGreaterThanOrEqual(2, $removed, 'the entry and marker past the stale window go');
+            self::assertFileDoesNotExist($paths[$old]);
+            self::assertFileDoesNotExist($paths[$old] . '.unknown');
+            self::assertFileExists($paths[$stale], 'an entry readStale() still serves is kept');
+            self::assertNull(CliAccessCache::read($stale));
+            self::assertTrue(CliAccessCache::readStale($stale));
+            self::assertFalse(CliAccessCache::read($this->key), 'the fresh entry stays');
+            self::assertSame(0, CliAccessCache::prune(), 'nothing else is old enough');
+            touch($paths[$stale], time() - CliAccessCache::STALE_TTL_SECONDS - 60);
+            self::assertNull(CliAccessCache::readStale($stale), 'past the stale window readStale() is unknown too');
+        } finally {
+            CliAccessCache::invalidate($old);
+            CliAccessCache::invalidate($stale);
+        }
     }
 
     public function testInvalidateDropsTheHoldOffToo(): void
