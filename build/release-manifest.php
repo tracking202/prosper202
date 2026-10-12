@@ -135,9 +135,7 @@ return [
     // Developer-only paths inside shipped directories.
     'exclude_nested' => [
         '202-config/PHPStan',                     // PHPStan rules; need phpstan/phpstan, a dev dependency
-        '202-config/Messaging/mock-server.php',   // local stand-in for the central messaging API
-        '202-config/Messaging/MOCK-SERVER.md',
-        '202-config/Messaging/CENTRAL-API.md',    // contract for the central server, not the install
+        '202-config/Messaging/CENTRAL-API.md',    // contract for the portal's analytics endpoint, not the install
         'tests/fixtures/agent-eval/ci',           // CI's headless installer and php -S router (agent-evals.yml)
     ],
 

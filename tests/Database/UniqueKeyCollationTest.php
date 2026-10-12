@@ -59,8 +59,6 @@ final class UniqueKeyCollationTest extends TestCase
         // Random or service-issued ids where a case twin is not a real
         // input: folding loses entropy a brute force could not use.
         '202_sessions.session_id' => 'a random PHP session id',
-        '202_messaging_conversations.external_id' => 'issued by the messaging service',
-        '202_messaging_messages.external_id' => 'issued by the messaging service',
         // Legacy tracking tables keyed per click or per label.
         '202_google.gclid' => 'per click, legacy',
         '202_bing.msclkid' => 'per click, legacy',

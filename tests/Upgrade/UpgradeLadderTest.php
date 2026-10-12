@@ -180,6 +180,66 @@ final class UpgradeLadderTest extends TestCase
         );
     }
 
+    /**
+     * 1.9.77 takes the in-app chat's message cache out of the install (the
+     * chat box talks to the chat service with a pass), so the step from
+     * 1.9.76 drops 202_messaging_conversations and 202_messaging_messages and
+     * the installer no longer declares them; otherwise every upgraded
+     * database keeps two tables a fresh install does not have, which is what
+     * tests/live/upgrade-equals-install.sh compares. The reconciler never
+     * drops, so the DROP is written out, and it is an argument of the step's
+     * reconcile call -- not merely somewhere in the step (CLAUDE.md #21) --
+     * because only that call's result decides whether the version is
+     * persisted: a failed drop keeps the install at 1.9.76 and the next run
+     * drops what is left. RetiredTablesUpgradeIntegrationTest runs the drop on
+     * a server.
+     */
+    public function testThePriorVersionBlockRemovesTheChatTablesItsReconcileReportsOn(): void
+    {
+        $tokens = token_get_all('<?php ' . $this->blockGatedOn(self::PRIOR_VERSION));
+        $call = null;
+        foreach ($tokens as $i => $token) {
+            if (is_array($token) && $token[0] === T_STRING && $token[1] === rtrim(self::RECONCILE_CALL, '(')) {
+                $call = $i;
+                break;
+            }
+        }
+        $this->assertNotNull($call, 'the step gated on ' . self::PRIOR_VERSION . ' reconciles');
+
+        // The call's arguments at its own depth, as literals.
+        $depth = 0;
+        $literalsAtArgumentDepth = [];
+        for ($i = $call + 1, $n = count($tokens); $i < $n; $i++) {
+            $text = is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
+            if ($text === '(' || $text === '[') {
+                $depth++;
+            } elseif ($text === ')' || $text === ']') {
+                $depth--;
+                if ($depth === 0) {
+                    break;
+                }
+            } elseif (is_array($tokens[$i]) && $tokens[$i][0] === T_CONSTANT_ENCAPSED_STRING && $depth === 2) {
+                $literalsAtArgumentDepth[] = $tokens[$i][1];
+            }
+        }
+        $this->assertSame(
+            ["'DROP TABLE IF EXISTS `202_messaging_messages`, `202_messaging_conversations`'"],
+            $literalsAtArgumentDepth,
+            'the step from ' . self::PRIOR_VERSION . ' hands its reconcile call the drop of the two chat tables, so a failed drop keeps the version'
+        );
+
+        $declared = array_map(
+            static fn ($definition): string => $definition->tableName,
+            \Prosper202\Database\Tables\CoreTables::getDefinitions()
+        );
+        foreach (['202_messaging_conversations', '202_messaging_messages'] as $retired) {
+            $this->assertNotContains($retired, $declared, "$retired is dropped by the ladder, so the installer must not create it");
+        }
+        foreach (['202_messaging_sync', '202_messaging_events', '202_messaging_attributes'] as $kept) {
+            $this->assertContains($kept, $declared, "$kept holds the product analytics, which stay");
+        }
+    }
+
     public function testThePriorVersionBlockReconcilesExistingTablesAndDoesNotOnlyCreateThem(): void
     {
         // CREATE TABLE IF NOT EXISTS converges nothing: against a table that

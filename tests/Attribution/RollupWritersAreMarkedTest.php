@@ -112,7 +112,6 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Repository/Mysql/MysqlTrackingRepository.php' => 'unread: inserts a c1-c4 or UTM value, when it is absent, into the dictionary table its kind names (202_tracking_c*, 202_utm_*); names are looked up when a report runs, never summed',
         '202-config/DataEngine/ClickRollupSql.php' => 'unread: builds the dataengine\'s insert into the table its caller names (202_dataengine or its _new copy), reading the clicks',
         '202-config/class-dataengine.php' => 'unread: writes 202_dataengine or its _new copy, the Overview\'s aggregate',
-        '202-config/Messaging/MessagingService.class.php' => 'unread: deletes from its own messaging tables, named in the literal list the loop beside the statement walks',
         'api/v3/Apps/AppRetention.php' => 'unread: prunes the app measurement tables its retention classes name',
     ];
 

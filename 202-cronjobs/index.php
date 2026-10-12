@@ -245,6 +245,12 @@ function RunHourlyCronJob()
             // so without this nothing aged out Android install rows at all.
             PruneAppRetention();
 
+            // Product analytics a page recorded and could not deliver (held
+            // back by the throttle, then the tab closed, or a backlog left by
+            // a portal outage). Hourly, not every minute: each failed try
+            // spends one of an event's five attempts.
+            DeliverPendingAnalytics();
+
             // Log the execution
             $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
             $log_result = $db->query($log_sql);
@@ -259,6 +265,24 @@ function RunHourlyCronJob()
     } catch (Exception $e) {
         error_log("RunHourlyCronJob Exception: " . $e->getMessage());
         return false;
+    }
+}
+
+/**
+ * Hourly analytics delivery: MessagingService::deliverPending(), the run
+ * 202-cronjobs/sync-messaging.php makes on its own. Its failures are logged
+ * by the service; what it does not deliver stays pending for the next hour.
+ */
+function DeliverPendingAnalytics(): void
+{
+    try {
+        $analytics = MessagingService::deliverPending(getDatabaseConnection());
+        if ($analytics['sent'] + $analytics['more'] + $analytics['failed'] > 0) {
+            echo 'Analytics delivery: ' . (int) $analytics['sent'] . ' delivered, ' . (int) $analytics['more'] . ' with more pending, '
+                . (int) $analytics['failed'] . ' failed<br>';
+        }
+    } catch (\Throwable $e) {
+        error_log('Analytics delivery failed: ' . $e->getMessage());
     }
 }
 

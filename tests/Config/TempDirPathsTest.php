@@ -39,10 +39,6 @@ final class TempDirPathsTest extends TestCase
             'the shell license cache: dir() skips caching unless the directory is not a link and is owned by'
                 . " this process's user",
         ],
-        '202-config/Messaging/mock-server.php' => [
-            1,
-            'a development mock of the messaging service, run by hand, never by an install',
-        ],
         '202-config/connect2.php' => [
             1,
             'the opt-in click tracer (p202LogRedirectHit(), on only while 202-config/.click-debug exists):'

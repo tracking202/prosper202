@@ -38,8 +38,9 @@ final class ShellIsolationTest extends TestCase
         '202-css/p202-chrome.css',
         '202-css/p202-theme.css',
         '202-css/p202-components.css',
-        '202-css/messenger.css',
+        '202-css/p202-chat.css',
         '202-js/p202-chrome.js',
+        '202-js/p202-chat.js',
         '202-js/p202-ui.js',
         '202-js/chart.theme.js',
     ];
