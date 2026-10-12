@@ -458,11 +458,16 @@ class CapabilitiesController
             $this->keyLookupFailed = true;
             return '';
         }
-        // bind_param() binds by reference; a readonly property can't be passed
-        // by reference (PHP 8: "Cannot indirectly modify readonly property"),
-        // so copy it to a local first.
-        $userId = $this->userId;
-        $stmt->bind_param('i', $userId);
+        // Connection::bind checks the bind (CLAUDE.md #7): unchecked, a failed
+        // bind would run the query with no user and read as "this user has no
+        // key", sending them to the owner's licence in silence.
+        try {
+            (new Connection($this->db))->bind($stmt, 'i', [$this->userId]);
+        } catch (QueryException) {
+            $stmt->close();
+            $this->keyLookupFailed = true;
+            return '';
+        }
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
             $this->keyLookupFailed = true;
