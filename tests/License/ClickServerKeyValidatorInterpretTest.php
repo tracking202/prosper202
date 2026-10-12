@@ -54,6 +54,12 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
             '404 with the envelope but a gateway\'s message' => [404, '{"code":404,"msg":"Not Found"}', null],
             '404 with the envelope and a router\'s message' => [404, '{"code":404,"msg":"Route not found"}', null],
             '404 with code 403 but not the refusal text' => [404, '{"code":403,"msg":"Forbidden"}', null],
+            '404 with code 403 and only the refusal\'s prefix' => [
+                404, '{"code":403,"msg":"API key requires a header"}', null,
+            ],
+            '404 with code 403 and the refusal text plus a suffix' => [
+                404, '{"code":403,"msg":"API key requires an active CPM* Newsletter subscription. Renew at ..."}', null,
+            ],
             '404 with the refusal text under the wrong code' => [
                 404, '{"code":404,"msg":"API key requires an active CPM* Newsletter subscription."}', null,
             ],

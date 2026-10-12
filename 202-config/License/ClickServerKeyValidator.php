@@ -156,7 +156,7 @@ class ClickServerKeyValidator
      *       (the service's own answer while its database is down, and the
      *       edge fallback's while the service is unreachable)
      *   404 {"code":404,"msg":"Key not found"}                no such key
-     *   404 {"code":403,"msg":"API key requires ..."}         the key is refused
+     *   404 {"code":403,"msg":"API key requires an active CPM* Newsletter subscription."}
      *
      * Only those decide, message included: a 404 is a refusal only with the
      * service's own words, since {"code":404,"msg":"Not Found"} is what a
@@ -199,6 +199,6 @@ class ClickServerKeyValidator
     public static function isRefusal(int $code, string $msg): bool
     {
         return ($code === 404 && $msg === 'Key not found')
-            || ($code === 403 && str_starts_with($msg, 'API key requires'));
+            || ($code === 403 && $msg === 'API key requires an active CPM* Newsletter subscription.');
     }
 }

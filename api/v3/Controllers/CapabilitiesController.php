@@ -21,9 +21,6 @@ class CapabilitiesController
      */
     private array $licenceChecks = [];
 
-    /** Set when reading a ClickServer key from the DB failed (vs "no key"). */
-    private bool $keyLookupFailed = false;
-
     /**
      * Whether a request comes from the Go CLI, the only client the Pro gate
      * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
@@ -288,8 +285,8 @@ class CapabilitiesController
         }
 
         $customerKey = $this->loadClickServerKey();
-        if ($customerKey === '') {
-            return false;
+        if ($customerKey === null || $customerKey === '') {
+            return false; // no key, or a lookup that failed: the shell is fail-closed
         }
 
         $cached = ShellAccessCache::read($customerKey);
@@ -351,18 +348,19 @@ class CapabilitiesController
         }
 
         $customerKey = $this->loadClickServerKey();
-        if ($customerKey === '' && $this->keyLookupFailed) {
+        if ($customerKey === null) {
             // Whether this user has a key of their own is unknown; judging
             // them by the owner's would be a guess in either direction.
             return true;
         }
         if ($customerKey === '') {
             $customerKey = $this->loadOwnerClickServerKey();
+            if ($customerKey === null) {
+                return true; // the owner lookup failed: unknown, open
+            }
         }
         if ($customerKey === '') {
-            // No key on the install is a real "not licensed"; a failed lookup
-            // is unknown, which fails open.
-            return $this->keyLookupFailed;
+            return false; // no key on the install is a real "not licensed"
         }
 
         $cached = CliAccessCache::read($customerKey);
@@ -382,11 +380,17 @@ class CapabilitiesController
     }
 
     /**
-     * The account owner's ClickServer key for the requesting user's install:
-     * same rule as AUTH::determineAccountOwnerId (same install_hash, active,
-     * not deleted, lowest user_id with a key). No install_hash, no fallback.
+     * The account owner's ClickServer key for the requesting user's install.
+     * The owner is the lowest user_id on the same install_hash that is active,
+     * not deleted and holds a key, which is exactly how the web app resolves
+     * the account owner (AUTH::determineAccountOwnerId uses the same WHERE
+     * and ORDER BY), so the CLI and the dashboard agree on whose key counts.
+     * No install_hash, no fallback.
+     *
+     * @return string|null the key, '' when there is none, null when the lookup
+     *         failed (the caller treats that as unknown, never as "no key")
      */
-    private function loadOwnerClickServerKey(): string
+    private function loadOwnerClickServerKey(): ?string
     {
         // Connection::bind (CLAUDE.md #7), not a direct $stmt->bind_param().
         // One string literal, single-quoted SQL strings: StaticSqlSchemaTest
@@ -403,26 +407,24 @@ class CapabilitiesController
                  ORDER BY o.user_id ASC LIMIT 1"
             );
         } catch (QueryException) {
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         try {
             $conn->bind($stmt, 'i', [$this->userId]);
         } catch (QueryException) {
             $stmt->close();
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         $result = $stmt->get_result();
         if ($result === false) {
-            $this->keyLookupFailed = true;
+            $stmt->close();
+            return null;
         }
-        $row = $result === false ? null : $result->fetch_assoc();
+        $row = $result->fetch_assoc();
         $stmt->close();
         return trim((string)($row['p202_customer_api_key'] ?? ''));
     }
@@ -449,14 +451,22 @@ class CapabilitiesController
         return $this->licenceChecks[$customerKey] = $result;
     }
 
-    private function loadClickServerKey(): string
+    /**
+     * The requesting user's own ClickServer key.
+     *
+     * @return string|null the key, '' when they have none, null when the
+     *         lookup failed (unknown: never read as "no key"). A value, not a
+     *         flag on the controller: /capabilities runs the shell check and
+     *         the CLI check on one instance, and a flag set by the first
+     *         lookup would have coloured the second.
+     */
+    private function loadClickServerKey(): ?string
     {
         $stmt = $this->db->prepare(
             'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
         );
         if (!$stmt) {
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         // Connection::bind checks the bind (CLAUDE.md #7): unchecked, a failed
         // bind would run the query with no user and read as "this user has no
@@ -465,19 +475,16 @@ class CapabilitiesController
             (new Connection($this->db))->bind($stmt, 'i', [$this->userId]);
         } catch (QueryException) {
             $stmt->close();
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
-            $this->keyLookupFailed = true;
-            return '';
+            return null;
         }
         $row = $result->fetch_assoc();
         $stmt->close();
