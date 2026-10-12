@@ -312,17 +312,18 @@ class CapabilitiesController
      * Whether the Go CLI may run against this install: the ClickServer key's
      * account has an active Prosper202 ClickServer subscription (trials count).
      *
-     * Cached per key (CliAccessCache, 1 h). Only an authoritative answer is
-     * cached, a denial included: "valid, not paid" and "no such key" are the
-     * service's own words, and they hold for the TTL (so does an allow, which
-     * outlives a lapsed subscription by up to an hour). Fails OPEN when the
-     * answer is unknown (my.tracking202.com unreachable, an error page, an
-     * answer without a boolean 'paid') and no earlier result exists, so a
-     * backend outage never locks a paying customer out of the CLI; an
+     * Cached per key (CliAccessCache). Only an authoritative answer is
+     * cached, a refusal included: "valid, not paid" and "no such key" are the
+     * service's own words. An allow holds for TTL_SECONDS (an hour, which a
+     * lapsed subscription outlives), a refusal for DENIAL_TTL_SECONDS (five
+     * minutes, which is how long a customer who starts the trial waits).
+     * Fails OPEN whenever the answer is unknown (my.tracking202.com
+     * unreachable, an error page, an answer without a boolean 'paid'),
+     * whatever an earlier answer was: an outage never refuses anyone, and the
      * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
-     * of CLI requests during an outage pays the connect timeout once. Falls
-     * back to the install owner's key when the API user has none, so
-     * sub-users of a paid install are covered. Known residual: a cache
+     * of CLI requests during one pays the connect timeout once. Falls back
+     * to the install owner's key when the API user has none, so sub-users of
+     * a paid install are covered. Known residual: a cache
      * directory another local user pre-created is refused (ShellAccessCache::dir,
      * which logs it), and without it nothing is cached, hold-off included.
      */
@@ -363,18 +364,18 @@ class CapabilitiesController
             return false; // no key on the install is a real "not licensed"
         }
 
-        $cached = CliAccessCache::read($customerKey);
+        $cached = CliAccessCache::readVerdict($customerKey);
         if ($cached !== null) {
             return $cached;
         }
         if (CliAccessCache::recentlyUnknown($customerKey)) {
-            return CliAccessCache::readStale($customerKey) ?? true;
+            return true;
         }
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
             CliAccessCache::markUnknown($customerKey);
-            return CliAccessCache::readStale($customerKey) ?? true;
+            return true;
         }
         return $result['paid'];
     }
@@ -385,10 +386,10 @@ class CapabilitiesController
      * not deleted and holds a key, which is exactly how the web app resolves
      * the account owner (AUTH::determineAccountOwnerId uses the same WHERE
      * and ORDER BY), so the CLI and the dashboard agree on whose key counts.
-     * No install_hash, no fallback.
      *
-     * @return string|null the key, '' when there is none, null when the lookup
-     *         failed (the caller treats that as unknown, never as "no key")
+     * @return string|null the owner's key; '' when nobody on the install holds
+     *         one (not licensed); null when the lookup failed or the user has
+     *         no install_hash to find an owner by (unknown, never "no key")
      */
     private function loadOwnerClickServerKey(): ?string
     {
@@ -399,12 +400,13 @@ class CapabilitiesController
         $conn = new Connection($this->db);
         try {
             $stmt = $conn->prepareRead(
-                "SELECT o.p202_customer_api_key FROM 202_users u
-                 JOIN 202_users o ON o.install_hash = u.install_hash
-                 WHERE u.user_id = ? AND u.install_hash != ''
-                 AND o.user_deleted != 1 AND o.user_active = 1
-                 AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != ''
-                 ORDER BY o.user_id ASC LIMIT 1"
+                "SELECT u.install_hash,
+                        (SELECT o.p202_customer_api_key FROM 202_users o
+                          WHERE o.install_hash = u.install_hash
+                          AND o.user_deleted != 1 AND o.user_active = 1
+                          AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != ''
+                          ORDER BY o.user_id ASC LIMIT 1) AS owner_key
+                 FROM 202_users u WHERE u.user_id = ? LIMIT 1"
             );
         } catch (QueryException) {
             return null;
@@ -426,7 +428,10 @@ class CapabilitiesController
         }
         $row = $result->fetch_assoc();
         $stmt->close();
-        return trim((string)($row['p202_customer_api_key'] ?? ''));
+        if (!is_array($row) || trim((string)($row['install_hash'] ?? '')) === '') {
+            return null; // no such user, or no install to find an owner on: unknown
+        }
+        return trim((string)($row['owner_key'] ?? ''));
     }
 
     /**

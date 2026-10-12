@@ -21,6 +21,13 @@ class ShellAccessCache
     public const int TTL_SECONDS = 3600;
 
     /**
+     * How long a refusal is believed. Shorter than an allow: a customer who
+     * starts the trial after a "not paid" is served within this, not after
+     * TTL_SECONDS, and nothing else invalidates the entry when they pay.
+     */
+    public const int DENIAL_TTL_SECONDS = 300;
+
+    /**
      * How long a check that got no usable answer holds off the next one.
      * An outage is not a verdict and is never written as one; this keeps
      * every request made during one from paying the connect timeout again.
@@ -51,6 +58,19 @@ class ShellAccessCache
             return false;
         }
         return null;
+    }
+
+    /**
+     * The verdict with a refusal expiring after DENIAL_TTL_SECONDS and an
+     * allow after TTL_SECONDS; null once the one that applies has passed.
+     */
+    public static function readVerdict(string $key): ?bool
+    {
+        $verdict = static::read($key);
+        if ($verdict === false && static::read($key, self::DENIAL_TTL_SECONDS) === null) {
+            return null;
+        }
+        return $verdict;
     }
 
     /**

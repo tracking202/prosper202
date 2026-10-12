@@ -135,6 +135,23 @@ final class CliAccessCacheTest extends TestCase
         self::assertFalse(CliAccessCache::read($this->key));
     }
 
+    public function testARefusalExpiresSoonerThanAnAllow(): void
+    {
+        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $this->key);
+        CliAccessCache::write($this->key, false);
+        self::assertFalse(CliAccessCache::readVerdict($this->key), 'a fresh refusal is a refusal');
+        touch($path, time() - CliAccessCache::DENIAL_TTL_SECONDS + 60);
+        self::assertFalse(CliAccessCache::readVerdict($this->key), 'and still one shortly before its TTL');
+        touch($path, time() - CliAccessCache::DENIAL_TTL_SECONDS - 60);
+        self::assertNull(CliAccessCache::readVerdict($this->key), 'past DENIAL_TTL_SECONDS a refusal is unknown');
+        self::assertFalse(CliAccessCache::read($this->key), 'read() alone still sees it within the long TTL');
+        CliAccessCache::write($this->key, true);
+        touch($path, time() - CliAccessCache::DENIAL_TTL_SECONDS - 60);
+        self::assertTrue(CliAccessCache::readVerdict($this->key), 'an allow of the same age is still an allow');
+        touch($path, time() - CliAccessCache::TTL_SECONDS - 60);
+        self::assertNull(CliAccessCache::readVerdict($this->key), 'until TTL_SECONDS');
+    }
+
     public function testInvalidateDropsTheHoldOffToo(): void
     {
         CliAccessCache::markUnknown($this->key);

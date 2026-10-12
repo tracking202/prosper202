@@ -53,5 +53,24 @@ final class GoCliUserAgentTest extends TestCase
         foreach ($g[1] as $agent) {
             self::assertTrue(CapabilitiesController::isGoCliUserAgent($agent), "the Go CLI must be gated: $agent");
         }
+        // A request that set no User-Agent would go out as Go's default agent,
+        // ungated, and one that passed a variable would not be read above; so
+        // every request the client package builds must set it, as a literal.
+        $requests = preg_match_all('/http\.NewRequest(?:WithContext)?\(/', $go);
+        self::assertSame(
+            $requests,
+            count($g[1]),
+            'every http.NewRequest in go-cli/internal/api/client.go must set User-Agent with a string literal'
+        );
+        foreach (glob($root . '/go-cli/internal/api/*.go') ?: [] as $file) {
+            if (str_ends_with($file, '_test.go') || str_ends_with($file, '/client.go')) {
+                continue;
+            }
+            self::assertSame(
+                0,
+                preg_match_all('/http\.NewRequest(?:WithContext)?\(/', (string)file_get_contents($file)),
+                basename($file) . ' builds requests outside client.go, where the User-Agent is set'
+            );
+        }
     }
 }

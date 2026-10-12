@@ -183,7 +183,7 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
-| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli` | Start the 7-day trial at the link in the hint, then retry (the install re-checks within an hour); do not change the key or the URL |
+| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli` | Start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes); do not change the key or the URL |
 
 Decision procedure for an agent:
 

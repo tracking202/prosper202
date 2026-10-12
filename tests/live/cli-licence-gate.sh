@@ -14,9 +14,9 @@
 #      paid", 200 on a cached "paid"; the PHP CLI's User-Agent and curl's are
 #      answered 200 either way; /capabilities reports the verdict as cli and
 #      stays open to the Go CLI, as does /system/health
-#   2. with the cache holding only "the last check went unanswered": the Go
-#      CLI is allowed when there is no older verdict, and the older verdict
-#      is used when there is one, without my.tracking202.com being asked
+#   2. with the cache holding "the last check went unanswered": the Go CLI
+#      is allowed whatever older verdict sits beside it, and nothing is
+#      asked; a refusal expires after five minutes, an allow after an hour
 #   3. the built Go CLI itself (P202_BIN), when given: exit 6, the licence
 #      category on stderr, nothing on stdout, then exit 0 once allowed
 #   3b. a sub-user created through the API with a key of their own and no
@@ -254,7 +254,7 @@ else
     ko "/capabilities should report shell: true once a verdict is written" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
 fi
 
-echo "# 2. an unanswered check: the last verdict, or allowed, and no new call"
+echo "# 2. an unanswered check allows, whatever was known before, and asks nothing new"
 cache invalidate "$K1"
 cache mark-unknown "$K1"
 request "$GO_UA" /campaigns; expect_allowed "hold-off with no older verdict: allowed"
@@ -266,11 +266,23 @@ fi
 cache write "$K1" 0
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_refused "hold-off with an expired 'not paid': the stale verdict holds"
+request "$GO_UA" /campaigns; expect_allowed "hold-off beside an expired 'not paid': an outage never refuses"
 cache write "$K1" 1
 cache age "$K1" 7200
 cache mark-unknown "$K1"
-request "$GO_UA" /campaigns; expect_allowed "hold-off with an expired 'paid': the stale verdict holds"
+request "$GO_UA" /campaigns; expect_allowed "hold-off beside an expired 'paid': allowed"
+
+echo "# 2b. a refusal expires sooner than an allow"
+cache write "$K1" 0
+cache age "$K1" 100
+request "$GO_UA" /campaigns; expect_refused "a 'not paid' 100 s old still refuses"
+cache write "$K1" 0
+cache age "$K1" 400
+cache mark-unknown "$K1" # the re-check this would trigger is held off, so nothing is asked
+request "$GO_UA" /campaigns; expect_allowed "a 'not paid' 400 s old has expired and is re-asked (held off here: allowed)"
+cache write "$K1" 1
+cache age "$K1" 400
+request "$GO_UA" /campaigns; expect_allowed "an allow 400 s old is still an allow"
 
 echo "# 3. the Go CLI itself"
 if [ -n "$BIN" ]; then
@@ -319,6 +331,10 @@ if [ -n "${SUB_USER:-}" ] && [ -n "${SUB_KEY:-}" ]; then
     fi
     cache write "$K1" 1
     request "$GO_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user, Go CLI, the owner's key 'paid'"
+    cache write "$K1" 0
+    mysql_q "UPDATE 202_users SET install_hash = '' WHERE user_id = $SUB_USER"
+    request "$GO_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user with no install_hash: no owner to look up, unknown, allowed"
+    mysql_q "UPDATE 202_users SET install_hash = (SELECT h FROM (SELECT install_hash AS h FROM 202_users WHERE user_id = $USER_ID) t) WHERE user_id = $SUB_USER"
 else
     ko "could not create a sub-user with an API key through the API" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
 fi
@@ -349,7 +365,7 @@ if [ "$STUB" = 1 ]; then
     stub_case paid-redirect   allowed "302 to the service itself over HTTPS: followed with the key, 'paid': allowed"
     stub_case unpaid-redirect refused "302 to the service itself over HTTPS: followed, 'not paid': refused"
     stub_case redirect-away   allowed "302 to another host: not followed, unknown, allowed"
-    stub_case redirect-loop   allowed "302 back to itself three times: given up, unknown, allowed"
+    stub_case redirect-loop   allowed "302 back to itself: one hop followed, then given up, unknown, allowed"
     if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
         ok "the outage left a hold-off, not a verdict"
     else

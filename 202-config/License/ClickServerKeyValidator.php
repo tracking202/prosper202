@@ -13,8 +13,12 @@ class ClickServerKeyValidator
 {
     private const string VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
     private const string VALIDATE_HOST = 'my.tracking202.com';
-    /** Redirect hops followed before the answer is "unknown". */
-    private const int MAX_REDIRECTS = 3;
+    /**
+     * Redirect hops followed before the answer is "unknown". One: an edge
+     * redirect is a single hop, and every hop costs a connect and a timeout
+     * on the request path (checkKey gives 2 s + 4 s each).
+     */
+    private const int MAX_REDIRECTS = 1;
 
     /**
      * @return bool|null true = valid, false = invalid, null = network failure
