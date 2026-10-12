@@ -15,7 +15,8 @@
  * and the box talks to the chat service with it: GET /v1/customer/state for
  * what is there, a WebSocket for what arrives (subprotocols ["p202chat.v1",
  * pass]), polling when the socket cannot be had. Message text only ever
- * reaches the page through textContent.
+ * reaches the page as text (textContent and text nodes), and as the href of
+ * a link to an http(s) address linkParts() found in it; never as markup.
  */
 (function () {
     'use strict';
@@ -760,6 +761,90 @@
         return i;
     }
 
+    /* The web addresses in a message's text, so the bubble can link them.
+       Returns the text in order as parts, {text: '...'} or {url: '...'},
+       which joined give back the text unchanged; it touches nothing.
+
+       Only http:// and https:// (either in any case) are read, so no other
+       scheme can become a link. An address runs from its scheme to the first
+       character it may not hold here: whitespace, a quote, < > \ ^ ` { | }.
+       Trailing . , ; : ! ? are left to the sentence, and so is a trailing
+       ) ] } the address did not open: "(see https://x.test/a)" keeps its
+       parenthesis outside the link, while https://en.wikipedia.org/wiki/Foo_(bar)
+       keeps its own. (Braces cannot be in an address at all, so } is only
+       listed so the rule holds if that ever changes.) An address with nothing
+       after the scheme, or longer than MAX_URL, stays text, whole. */
+    var MAX_URL = 2000;
+
+    function linkParts(text) {
+        var candidate = /https?:\/\/[^\s\x22\x27<>\\^`{|}]+/gi;
+        var parts = [];
+        var from = 0;
+        var match;
+        while ((match = candidate.exec(text)) !== null) {
+            var url = trimAddress(match[0]);
+            if (url.length > MAX_URL || /^https?:\/\/$/i.test(url)) {
+                continue;
+            }
+            if (match.index > from) {
+                parts.push({ text: text.slice(from, match.index) });
+            }
+            parts.push({ url: url });
+            from = match.index + url.length;
+        }
+        if (from < text.length) {
+            parts.push({ text: text.slice(from) });
+        }
+        return parts;
+    }
+
+    function trimAddress(url) {
+        var opened = [0, 0, 0];
+        var closed = [0, 0, 0];
+        for (var i = 0; i < url.length; i++) {
+            var opener = '([{'.indexOf(url.charAt(i));
+            var closer = ')]}'.indexOf(url.charAt(i));
+            if (opener !== -1) {
+                opened[opener]++;
+            } else if (closer !== -1) {
+                closed[closer]++;
+            }
+        }
+        var end = url.length;
+        while (end > 0) {
+            var last = url.charAt(end - 1);
+            var kind = ')]}'.indexOf(last);
+            if ('.,;:!?'.indexOf(last) !== -1) {
+                end--;
+            } else if (kind !== -1 && closed[kind] > opened[kind]) {
+                closed[kind]--;
+                end--;
+            } else {
+                break;
+            }
+        }
+        return url.slice(0, end);
+    }
+
+    /* A message's text in its bubble: text nodes, and an <a> for each address
+       linkParts finds, its href the address exactly as written. No markup is
+       parsed, so nothing in the text can become any. */
+    function bubble(text) {
+        var node = el('div', 'p202-chat__bubble');
+        linkParts(text).forEach(function (part) {
+            if (part.url === undefined) {
+                node.appendChild(document.createTextNode(part.text));
+                return;
+            }
+            var link = el('a', 'p202-chat__bubble-link', part.url);
+            link.setAttribute('href', part.url);
+            link.setAttribute('target', '_blank');
+            link.setAttribute('rel', 'noopener noreferrer nofollow');
+            node.appendChild(link);
+        });
+        return node;
+    }
+
     function build() {
         var root = el('div', 'p202-chat');
         var panel = el('section', 'p202-chat__panel');
@@ -1171,7 +1256,7 @@
         if (author) {
             item.appendChild(el('div', 'p202-chat__author', author));
         }
-        item.appendChild(el('div', 'p202-chat__bubble', text));
+        item.appendChild(bubble(text));
         var line = el('div', 'p202-chat__meta', meta);
         if (pending && pending.state === 'failed') {
             var retry = el('button', 'p202-chat__link', 'Retry');

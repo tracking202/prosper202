@@ -387,6 +387,31 @@
     color: var(--bs-danger-text-emphasis);
 }
 
+/* A web address in a message. Underlined, so it reads as a link without
+   relying on colour, and in the bubble's own text colour, which is already
+   readable on it: white on the customer's accent bubble (where the accent
+   would vanish), the danger text on a failed one. The team's bubble, a
+   plain surface, gives it the accent's text colour. */
+.p202-chat__bubble-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.p202-chat__msg--team .p202-chat__bubble-link {
+    color: var(--p202-accent-text);
+}
+
+.p202-chat__bubble-link:hover {
+    text-decoration-thickness: 2px;
+}
+
+.p202-chat__bubble-link:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+    border-radius: 2px;
+}
+
 .p202-chat__meta {
     margin: 2px 4px 0;
     color: var(--bs-secondary-color);

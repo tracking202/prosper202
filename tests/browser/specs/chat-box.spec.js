@@ -63,6 +63,135 @@ function teamMessage(seq, body) {
   return { kind: 'message', seq, conv: 7, author: 'team', name: 'Sam', body, at: Date.now() };
 }
 
+function customerMessage(seq, body) {
+  return { kind: 'message', seq, conv: 7, author: 'customer', name: '', body, at: Date.now() };
+}
+
+// Message text, and the parts its bubble must be built from, in order: a
+// text node ({text}) or a link whose href and label are exactly the address
+// ({url}). The cases for linkParts() in 202-js/p202-chat.js, run through the
+// bubble it builds rather than on their own: the function is private to the
+// script, and the bubble is the only thing it is for.
+const T = (text) => ({ text });
+const U = (url) => ({ url });
+const LONGEST = 'https://x.test/' + 'a'.repeat(2000 - 'https://x.test/'.length);
+const FORBIDDEN = [' ', '\t', '\n', '\u00a0', '"', '\'', '<', '>', '\\', '^', '`', '{', '|', '}'];
+const LINK_CASES = [
+  ['plain text', 'No address here, just words.', [T('No address here, just words.')]],
+  ['one address', 'The guide: https://x.test/docs/install', [T('The guide: '), U('https://x.test/docs/install')]],
+  ['several addresses', 'Try https://a.test/one or http://b.test/two, then https://c.test',
+    [T('Try '), U('https://a.test/one'), T(' or '), U('http://b.test/two'), T(', then '), U('https://c.test')]],
+  ['an address at the start', 'https://x.test/start is the place', [U('https://x.test/start'), T(' is the place')]],
+  ['an address at the end', 'It is at https://x.test/end', [T('It is at '), U('https://x.test/end')]],
+  ['only an address', 'https://x.test/', [U('https://x.test/')]],
+  ...['.', ',', ';', ':', '!', '?'].map((p) => [
+    'a trailing ' + p, 'See https://x.test/p' + p + ' next', [T('See '), U('https://x.test/p'), T(p + ' next')],
+  ]),
+  ['a run of trailing punctuation', 'https://x.test/q?a=1!?;:,.', [U('https://x.test/q?a=1'), T('!?;:,.')]],
+  ['punctuation inside an address', 'https://x.test/a.b,c;d:e!f?g=h', [U('https://x.test/a.b,c;d:e!f?g=h')]],
+  ['a balanced )', 'https://en.wikipedia.org/wiki/Foo_(bar)', [U('https://en.wikipedia.org/wiki/Foo_(bar)')]],
+  ['an unbalanced )', '(see https://x.test/a)', [T('(see '), U('https://x.test/a'), T(')')]],
+  ['a balanced ) inside an unbalanced one', '(https://en.wikipedia.org/wiki/Foo_(bar))',
+    [T('('), U('https://en.wikipedia.org/wiki/Foo_(bar)'), T(')')]],
+  ['an unbalanced ) then a full stop', '(at https://x.test/a).', [T('(at '), U('https://x.test/a'), T(').')]],
+  ['a balanced ]', 'https://x.test/list[1]', [U('https://x.test/list[1]')]],
+  ['an unbalanced ]', '[https://x.test/a]', [T('['), U('https://x.test/a'), T(']')]],
+  ['a } (never in an address)', '{https://x.test/a}', [T('{'), U('https://x.test/a'), T('}')]],
+  ...FORBIDDEN.map((c) => [
+    'stops at ' + (c === '\u00a0' ? 'a no-break space' : JSON.stringify(c)), 'https://x.test/a' + c + 'b', [U('https://x.test/a'), T(c + 'b')],
+  ]),
+  ['javascript: is not linked', 'javascript:alert(1)', [T('javascript:alert(1)')]],
+  ['data: is not linked', 'data:text/html,<b>x</b>', [T('data:text/html,<b>x</b>')]],
+  ['mailto: is not linked', 'mailto:help@x.test', [T('mailto:help@x.test')]],
+  ['a bare www. is not linked', 'www.x.test/a', [T('www.x.test/a')]],
+  ['ftp:// is not linked', 'ftp://x.test/file', [T('ftp://x.test/file')]],
+  ['a scheme with nothing after it', 'https:// and https://. and http://)', [T('https:// and https://. and http://)')]],
+  ['an uppercase scheme', 'HTTPS://X.TEST/Path and Http://x.test/b', [U('HTTPS://X.TEST/Path'), T(' and '), U('Http://x.test/b')]],
+  ['2000 characters', LONGEST, [U(LONGEST)]],
+  ['2000 characters and a full stop', LONGEST + '.', [U(LONGEST), T('.')]],
+  ['2001 characters', LONGEST + 'a', [T(LONGEST + 'a')]],
+  ['markup stays text', '<img src=x onerror="window.__p202Xss=1">', [T('<img src=x onerror="window.__p202Xss=1">')]],
+  ['markup after an address stays text', 'https://x.test/"><img src=x onerror="window.__p202Xss=1">',
+    [U('https://x.test/'), T('"><img src=x onerror="window.__p202Xss=1">')]],
+  ['line breaks and spaces are kept', 'one https://x.test/a\n  two\tthree\n\nhttps://x.test/b',
+    [T('one '), U('https://x.test/a'), T('\n  two\tthree\n\n'), U('https://x.test/b')]],
+];
+
+// In the page: each bubble as the parts it was built from, its text, and
+// its text as rendered (innerText follows white-space, textContent does not).
+function readBubbles(bubbles) {
+  return bubbles.map((bubble) => ({
+    text: bubble.textContent,
+    rendered: bubble.innerText,
+    parts: Array.from(bubble.childNodes).map((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return { text: node.nodeValue };
+      }
+      if (node.nodeName === 'A' && node.childNodes.length === 1 && node.firstChild.nodeType === Node.TEXT_NODE
+        && node.textContent === node.getAttribute('href')) {
+        return { url: node.getAttribute('href') };
+      }
+      return { other: node.nodeName + ' ' + node.textContent };
+    }),
+  }));
+}
+
+// Parts, readable in a failure: a long string shows its start and length.
+function showParts(parts) {
+  return JSON.stringify(parts.map((part) => {
+    const [kind, value] = Object.entries(part)[0];
+    return kind + ':' + (value.length > 48 ? JSON.stringify(value.slice(0, 32)) + '...(' + value.length + ')' : JSON.stringify(value));
+  }));
+}
+
+// A conversation of these messages, served by the stand-in service, opened.
+async function openThreadOf(page, app, ui, messages) {
+  await page.route(PASS_URL, aPass);
+  const answer = { conversations: [chatConv({ unread: 0 })], messages, seq: messages.length };
+  await standInService(page, () => [200, answer]);
+  await page.routeWebSocket('ws://127.0.0.1:9/**', (ws) => {
+    setTimeout(() => ws.send(JSON.stringify({ t: 'ready', seq: messages.length })), 50);
+  });
+  await app.goto('/202-account/');
+  await ui.until(async () => ui.exists('.p202-chat__launcher'), { describe: 'the chat box to be built' });
+  await page.click('.p202-chat__launcher');
+  await ui.until(async () => ui.exists('.p202-chat__row'), { describe: 'the conversation to be listed' });
+  await page.click('.p202-chat__row');
+  await ui.until(async () => (await page.$$('.p202-chat__bubble')).length === messages.length, { describe: 'every message to be shown' });
+}
+
+// WCAG contrast of a link's colour against the first opaque background under it.
+function linkContrast(links) {
+  const channels = (value) => (value.match(/[\d.]+/g) || []).map(Number);
+  const luminance = ([r, g, b]) => {
+    const lin = (c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  };
+  return links.map((link) => {
+    let under = link;
+    let background = null;
+    while (under && background === null) {
+      const c = channels(getComputedStyle(under).backgroundColor);
+      if (c.length >= 3 && (c.length < 4 || c[3] === 1)) {
+        background = c;
+      }
+      under = under.parentElement;
+    }
+    const fg = luminance(channels(getComputedStyle(link).color));
+    const bg = luminance(background || [255, 255, 255]);
+    return {
+      who: link.closest('.p202-chat__msg').className,
+      ratio: (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05),
+      underline: getComputedStyle(link).textDecorationLine,
+      color: getComputedStyle(link).color,
+      background: background ? background.join(',') : 'none',
+    };
+  });
+}
+
 // What show/hide/toggle called before the box exists must leave it as, in order.
 const SEQUENCES = [
   [['show'], true],
@@ -316,6 +445,82 @@ module.exports = {
           expect.eq(refreshes, 1, 'one renewal served both refusals');
           expect.ok(gets >= 3, 'the refused gap fill was retried with the new pass', gets + ' GETs');
         });
+      },
+    },
+    {
+      name: 'Web addresses in a message are links, and nothing else is',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          await openThreadOf(page, app, ui, LINK_CASES.map(([, body], i) => teamMessage(i + 1, body)));
+          const bubbles = await page.$$eval('.p202-chat__bubble', readBubbles);
+          expect.eq(bubbles.length, LINK_CASES.length, 'one bubble a message');
+          LINK_CASES.forEach(([name, body, want], i) => {
+            const got = bubbles[i] || { parts: [], text: '' };
+            const same = JSON.stringify(got.parts) === JSON.stringify(want);
+            expect.ok(same, name, same ? '' : 'got ' + showParts(got.parts) + ' want ' + showParts(want));
+            expect.ok(got.text === body, name + ': the text reads back unchanged');
+          });
+          const spaced = LINK_CASES.findIndex(([name]) => name === 'line breaks and spaces are kept');
+          expect.eq(JSON.stringify((bubbles[spaced] || {}).rendered), JSON.stringify(LINK_CASES[spaced][1]),
+            'line breaks, runs of spaces and tabs still render as written');
+          expect.eq(await page.$eval('.p202-chat__bubble', (b) => getComputedStyle(b).whiteSpace), 'pre-wrap', 'the bubble still keeps white space');
+          const markup = await page.evaluate(() => ({ elements: document.querySelectorAll('.p202-chat__bubble *:not(a)').length, ran: window.__p202Xss === 1 }));
+          expect.eq(markup.elements, 0, 'no bubble holds an element other than a link');
+          expect.notOk(markup.ran, 'and no markup in a message ran');
+        });
+      },
+    },
+    {
+      name: 'A link in a team reply opens in a new tab, with the text around it as text',
+      async run(ctx) {
+        await ctx.withSession({}, async ({ page, app, ui, expect }) => {
+          await openThreadOf(page, app, ui, [teamMessage(1, 'Hi Dana, the guide is at https://x.test/guide?step=2. Shout if not.')]);
+          const bubble = await page.$eval('.p202-chat__msg--team .p202-chat__bubble', (node) => Array.from(node.childNodes).map((n) => (
+            n.nodeType === Node.TEXT_NODE
+              ? { node: '#text', text: n.nodeValue }
+              : {
+                node: n.nodeName,
+                className: n.className,
+                href: n.getAttribute('href'),
+                target: n.getAttribute('target'),
+                rel: n.getAttribute('rel'),
+                label: n.textContent,
+                children: n.children.length,
+              }
+          )));
+          expect.eq(bubble.map((n) => n.node).join(' '), '#text A #text', 'text, a link, text');
+          expect.eq(bubble[0] && bubble[0].text, 'Hi Dana, the guide is at ', 'the text before the link is a text node');
+          expect.eq(bubble[2] && bubble[2].text, '. Shout if not.', 'the text after it, full stop included, is a text node');
+          const link = bubble[1] || {};
+          expect.eq(link.href, 'https://x.test/guide?step=2', 'the href is the address exactly as written');
+          expect.eq(link.label, 'https://x.test/guide?step=2', 'and so is its label');
+          expect.eq(link.children, 0, 'the label is text alone');
+          expect.eq(link.target, '_blank', 'it opens in a new tab');
+          expect.eq(link.rel, 'noopener noreferrer nofollow', 'without a handle on this page, a referrer or a vote');
+          expect.eq(link.className, 'p202-chat__bubble-link', 'styled as a bubble link');
+        });
+      },
+    },
+    {
+      name: 'A link reads on the customer’s bubble and the team’s, light and dark',
+      async run(ctx) {
+        for (const scheme of ['light', 'dark']) {
+          await ctx.withSession({ colorScheme: scheme }, async ({ page, app, ui, expect }) => {
+            await openThreadOf(page, app, ui, [
+              customerMessage(1, 'Mine: https://x.test/mine'),
+              teamMessage(2, 'Team: https://x.test/team'),
+            ]);
+            expect.eq(await page.evaluate(() => document.documentElement.getAttribute('data-bs-theme')), scheme, scheme + ': the page is in that theme');
+            const links = await page.$$eval('.p202-chat__bubble-link', linkContrast);
+            expect.eq(links.length, 2, scheme + ': both messages have a link');
+            for (const link of links) {
+              const who = /--mine/.test(link.who) ? 'customer' : 'team';
+              expect.ok(link.ratio >= 4.5, scheme + ', ' + who + ': the link has 4.5:1 contrast on its bubble',
+                link.ratio.toFixed(2) + ':1, ' + link.color + ' on rgb(' + link.background + ')');
+              expect.ok(/underline/.test(link.underline), scheme + ', ' + who + ': and is underlined', link.underline);
+            }
+          });
+        }
       },
     },
     {

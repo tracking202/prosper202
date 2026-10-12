@@ -17,9 +17,11 @@ use Tests\TestCase;
  * assembled where this cannot read it.
  *
  * And message text — the chat service's bodies, names and subjects, which
- * come from people — reaches the page through textContent only: the script
+ * come from people — reaches the page as text only (textContent and text
+ * nodes, and an http(s) address in a body as a link's href): the script
  * writes no markup at all (no innerHTML, outerHTML, insertAdjacentHTML or
- * document.write), so no value it shows can become one.
+ * document.write), so no value it shows can become one. Which addresses
+ * become links is checked in a browser, in tests/browser/specs/chat-box.spec.js.
  */
 final class ChatBoxClassesAreStyledTest extends TestCase
 {
