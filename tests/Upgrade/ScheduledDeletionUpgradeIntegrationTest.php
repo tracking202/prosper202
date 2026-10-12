@@ -55,11 +55,13 @@ final class ScheduledDeletionUpgradeIntegrationTest extends TestCase
         $this->assertTrue($db->query(UserTables::usersPref()->createStatement));
         $fresh = (string) $db->query('SHOW CREATE TABLE 202_users_pref')->fetch_row()[1];
         // MariaDB writes the display width (int(10)); MySQL 8.0.19 and later
-        // do not (int), which is what CI's MySQL 8.0 prints.
+        // do not (int), which is what CI's MySQL 8.0 prints. MySQL also names
+        // a text column's collation where its default is another.
         $this->assertMatchesRegularExpression('/`user_delete_data_before` int(?:\(10\))? unsigned DEFAULT NULL,/', $fresh);
-
-        $this->assertStringContainsString('`paykickstart_ipn_secret` varchar(1000) DEFAULT NULL,', $fresh);
-        $this->assertStringContainsString('`user_slack_signing_secret` varchar(250) DEFAULT NULL,', $fresh);
+        $secret = static fn (string $column, int $length): string
+            => "/`$column` varchar\\($length\\)(?: COLLATE utf8mb4_general_ci)? DEFAULT NULL,/";
+        $this->assertMatchesRegularExpression($secret('paykickstart_ipn_secret', 1000), $fresh);
+        $this->assertMatchesRegularExpression($secret('user_slack_signing_secret', 250), $fresh);
 
         // The 1.9.75 shape: the columns are not there yet (nor the
         // notification secrets 1.9.77 adds beside them), and the install
