@@ -11,6 +11,7 @@ List, inspect, manually create, and delete conversions.
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
+| `GET` | `/conversions/offline-export` | The CSV Google Ads or Microsoft Advertising imports as offline conversions ([below](#offline-conversion-export)) |
 
 Marking or deleting subids in bulk, resetting a campaign's subids and
 uploading a revenue report — the UI's Update section — are in the
@@ -159,6 +160,71 @@ curl -X POST https://your-domain.com/api/v3/conversions \
   -H "Content-Type: application/json" \
   -d '{ "click_id": 12345, "payout": 4.50, "transaction_id": "txn-abc-123" }'
 ```
+
+## Offline Conversion Export
+
+`GET /conversions/offline-export` answers the file Update › Export Offline
+Conversions offers: the conversions on clicks that carried a Google click id
+(gclid) or a Microsoft click id (msclkid), as the CSV that platform's offline
+conversion import takes.
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `platform` | string | (required) | `google` (gclid) or `microsoft` (msclkid) |
+| `conversion_name` | string | (required) | The conversion action's name, spelled exactly as in the ad platform: at most 100 characters on one line, not beginning with `=`, `+`, `-` or `@` (a spreadsheet reads those as a formula) |
+| `currency` | string | the account's | Three-letter code, upper case |
+| `period` | string | `last30` | A named window, as on the reports |
+| `time_from`, `time_to` | string | — | The window instead of `period`: the forms the list takes |
+
+A row is a conversion that counts toward its click (payable, live, not
+superseded), at its value net of the reversals that count against it, with
+its time in UTC under the file's `Parameters:TimeZone=+0000`. Google's file
+carries an `Order ID` (`p202-<conv_id>`), so uploading an overlapping window
+again adds nothing; Microsoft's follows its import template (UTF-8 with a byte
+order mark, the `### TEMPLATE ###` line). Left out and counted in `skipped`:
+
+| Key | Why |
+| --- | --- |
+| `reversed` | Refunded to nothing (or less) |
+| `click_too_old` | The click is more than 90 days older than the conversion; both platforms drop the click id by then |
+| `malformed_click_id` | The stored click id is not in the platform's form |
+
+```json
+{
+  "data": {
+    "platform": "google",
+    "conversion_name": "Offline purchase",
+    "currency": "USD",
+    "time_from": 1789257600,
+    "time_to": 1791849599,
+    "rows": 2,
+    "skipped": { "reversed": 0, "click_too_old": 0, "malformed_click_id": 0 },
+    "truncated": false,
+    "next_time_from": null,
+    "filename": "google-ads-offline-conversions-20260913-20261012.csv",
+    "csv": "Parameters:TimeZone=+0000\r\nGoogle Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency,Order ID\r\n…"
+  }
+}
+```
+
+A file holds at most 100,000 rows, Microsoft's limit for one upload: past it
+`truncated` is true and `next_time_from` is the conversion time the next
+export starts from. An unknown parameter, a `platform` that is not one of the
+two, a missing or unusable `conversion_name`, a `currency` that is not a
+three-letter code, and `period` given with `time_from` or `time_to` are each a
+`422` naming the field. The route asks what the page asks:
+`access_to_update_section`, and `access_to_campaign_data`, since the file is
+the conversions' values.
+
+```bash
+curl -G https://your-domain.com/api/v3/conversions/offline-export \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  --data-urlencode platform=google \
+  --data-urlencode "conversion_name=Offline purchase" \
+  | jq -r .data.csv > google.csv
+```
+
+`p202 conversion offline-export` writes the same file to stdout or `-O`.
 
 ## Delete Conversion
 

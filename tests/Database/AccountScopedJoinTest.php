@@ -160,6 +160,11 @@ final class AccountScopedJoinTest extends TestCase
             'subquery with runtime text before its WHERE | 202_conversion_logs | $goalId' => self::SAME_CLICK_CONVERSIONS,
             'condition built at runtime | 202_dataengine | {$clickScope}' => self::CALLER_SCOPE,
         ],
+        '202-config/Conversion/OfflineConversionExport.php' => [
+            'condition built at runtime | 202_conversion_logs | r.click_id = cl.click_id AND r.user_id = cl.user_id'
+                . ' AND r.reverses_conv_id = cl.conv_id AND {LedgerReportSql::countedPredicate(\'r\')}'
+                => self::SAME_CLICK_CONVERSIONS,
+        ],
         '202-config/Goals/GoalEngine.php' => [
             'no user_id tie | 202_clicks | c.click_id = i.click_id' => self::INSTALL_CLICK,
             'no user_id tie | 202_clicks | c.click_id = s.subject_id' => self::SUBJECT_CLICK,

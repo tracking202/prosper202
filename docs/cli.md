@@ -738,6 +738,31 @@ Each row carries its provenance: `source`, `source_ref`, `event_name`,
 goal row's `goal_id` and `goal_version`. A filter value that is not one of
 these is refused before any request, with the command that finds a right one.
 
+### Export offline conversions for Google Ads or Microsoft Advertising
+
+```bash
+p202 conversion offline-export --platform google --conversion-name "Offline purchase" -O google.csv
+p202 conversion offline-export --platform microsoft --conversion-name Purchase --period last7 > microsoft.csv
+```
+
+| Flag                 | Default          | Description |
+|----------------------|------------------|-------------|
+| `--platform`         | (required)       | `google` (clicks with a gclid) or `microsoft` (an msclkid) |
+| `--conversion-name`  | (required)       | The conversion action's name, spelled exactly as in the ad platform |
+| `--currency`         | account currency | Three-letter code |
+| `-p, --period`       | `last30`         | Named window, or `--time-from` / `--time-to` |
+| `-O, --output`       | stdout           | Write the CSV to this file |
+
+The file is the platform's offline conversion import: every conversion that
+counts, on a click from that platform, at its value net of refunds, with times
+in UTC (`Parameters:TimeZone=+0000`). Google's carries `Order ID` p202-<id>, so
+an overlapping window uploaded again adds nothing. What was left out (refunded
+to nothing, a click more than 90 days old, a click id the platform does not
+issue) is said on stderr; past 100,000 rows it stops and names the
+`--time-from` to continue from. Needs the role permissions the page needs,
+`access_to_update_section` and `access_to_campaign_data`. GET
+/conversions/offline-export answers the same, with the CSV in `csv`.
+
 ### Get a conversion
 
 ```bash

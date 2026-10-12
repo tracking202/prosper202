@@ -153,6 +153,39 @@
         "id=$(sed -n 2p /tmp/p202-eval-update-report.csv | cut -d, -f2); [ -n \"$id\" ] && printf '%s\\n' \"$id\" | p202 conversion delete-subids - --force --json >/dev/null; rm -f /tmp/p202-eval-update-report.csv"
       ],
       "notes": "Upload Revenue Reports (tracking202/update/upload.php, POST /conversions/uploads). The headers are not the page's defaults, so the server must read the columns itself (the answer says it guessed them); the amount carries a dollar sign, which the importer reads as the page does. The unmatched line is answered by the server as skipped with its reason, and an agent must pass that on rather than report a clean load."
+    },
+    {
+      "id": "update-006-the-google-ads-offline-file",
+      "priority": "medium",
+      "state": "a fresh click on EVAL Campaign B from a Google Ads ad (gclid Cj0KCQjwEVAL6_BwE) with a $7.50 conversion; its click id is in /tmp/p202-eval-oce-click",
+      "setup": [
+        "c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL Campaign B\") | .aff_campaign_id' | head -1) && pub=$(p202 tracker list --all --json | jq -r --arg c \"$c\" '[.data[] | select((.aff_campaign_id|tostring)==$c)][0].tracker_id_public') && url=$(p202 config show --json | jq -r '.url') && before=$(p202 click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && curl -fsS -o /dev/null -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \"$url/tracking202/redirect/dl.php?t202id=$pub&gclid=Cj0KCQjwEVAL6_BwE\" && after=$(p202 click list --aff-campaign-id \"$c\" --limit 1 --json | jq -r '.data[0].click_id') && test \"$after\" != \"$before\" && printf '%s' \"$after\" > /tmp/p202-eval-oce-click && p202 conversion create --click-id \"$after\" --payout 7.50 --transaction-id EVAL-OCE-6 --json >/dev/null"
+      ],
+      "ask": "Make the file I upload into Google Ads as offline conversions for our conversion action \"Offline purchase\", covering the last 7 days, and save it as /tmp/p202-eval-google-offline.csv.",
+      "expected": {
+        "runs_one_of": [
+          "conversion offline-export"
+        ],
+        "checks": [
+          {
+            "run": "grep -c '^Cj0KCQjwEVAL6_BwE,Offline purchase,[0-9-]* [0-9:]*,7.50,' /tmp/p202-eval-google-offline.csv",
+            "includes": [
+              "1"
+            ]
+          },
+          {
+            "run": "head -1 /tmp/p202-eval-google-offline.csv | tr -d '\\r'",
+            "includes": [
+              "Parameters:TimeZone=+0000"
+            ]
+          }
+        ],
+        "rubric": "PASS if /tmp/p202-eval-google-offline.csv is the file `p202 conversion offline-export --platform google --conversion-name \"Offline purchase\"` writes for the last 7 days (the $7.50 conversion on the gclid click is a row in it) and the reply says how many conversions it holds and what, if anything, was left out. FAIL if the file is assembled by hand from `conversion list` or `click list`, if the conversion action name is changed, or if the reply claims rows the command did not report."
+      },
+      "cleanup": [
+        "click=$(cat /tmp/p202-eval-oce-click 2>/dev/null); [ -n \"$click\" ] && for id in $(p202 conversion list --click-id \"$click\" --json | jq -r '.data[].conv_id'); do p202 conversion delete \"$id\" --force --json >/dev/null; done; rm -f /tmp/p202-eval-oce-click /tmp/p202-eval-google-offline.csv"
+      ],
+      "notes": "Update › Export Offline Conversions (tracking202/update/offline-export.php, GET /conversions/offline-export). The export is the only path that applies the rules the file needs: conversions that count, net of refunds, on clicks with a real gclid (the click path also writes empty gclid rows), times in UTC with the +0000 parameter."
     }
   ]
 }

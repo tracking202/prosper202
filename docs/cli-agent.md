@@ -857,6 +857,9 @@ p202 conversion postback-url [--type simple|advanced] [--campaign N] [--amount S
                        [--scheme http|https] [--json]                     # Postback / Pixel: the URL
 p202 conversion pixel  [--type simple|advanced|universal] [--iframe] [--campaign N]
                        [--amount S] [--subid S] [--scheme http|https] [--json]   # the pixel
+p202 conversion offline-export --platform google|microsoft --conversion-name S
+                       [--currency USD] [--period P | --time-from T --time-to T]
+                       [-O file.csv] [--json]                     # Export Offline Conversions: the CSV the ad platform imports
 ```
 
 ### Reports

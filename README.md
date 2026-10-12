@@ -20,7 +20,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - **Landing Page Personalization** — Dynamically display ISP, device, postal code, geo location, keyword, UTM variables, browser, OS, and more on your landing pages.
 - **Device Detection** — Automatically detect device types and models for full insights into mobile-targeted campaigns.
 - **Multi-Currency & Timezone** — Automatically convert payouts into your local currency and display reports in your local timezone.
-- **Google Ads Integration** — Offline conversion tracking with one-click CSV export. UTM parameters and GCLID values are automatically captured.
+- **Google Ads & Microsoft Advertising Offline Conversions** — GCLID, MSCLKID and UTM values are captured on every click, and Update › Export Offline Conversions (or `p202 conversion offline-export`) makes the CSV each platform imports as offline conversions: the conversions on its clicks, net of refunds.
 - **WordPress Integration** — Two-way communication between WordPress and Prosper202, instantly setting up posts and pages as landing pages.
 - **Deep Linking** — Boost conversion rates by deep linking directly into apps, reducing friction for users.
 - **Team Access** — Full role-based authentication with no limit on users and no per-seat costs.

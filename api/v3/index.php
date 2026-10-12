@@ -425,6 +425,18 @@ try {
         $updateSection = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_update_section');
         };
+        // The offline conversion file for Google Ads or Microsoft Advertising
+        // asks what Update › Export Offline Conversions asks: the Update
+        // section, and access_to_campaign_data because the file is every
+        // row's value, which a role whose reads mask money is refused rather
+        // than handed a file of blanks. Before /{id}, which would answer it
+        // otherwise.
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams) {
+            $cls = \Api\V3\Controllers\ConversionsController::class;
+            $r->get('/offline-export', fn() => $crud($cls)->offlineExport($queryParams));
+        }, [$updateSection, static function () use ($auth, $db): void {
+            $auth->requirePermission($db, 'access_to_campaign_data');
+        }]);
         $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));

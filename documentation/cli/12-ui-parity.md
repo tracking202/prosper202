@@ -77,6 +77,7 @@ record links only to the caller's own records
 | Reset Campaign Subids | `POST /conversions/subids/reset` | `p202 conversion reset-subids` | ✅ |
 | Delete Subids | `POST /conversions/subids/delete` | `p202 conversion delete-subids` | ✅ |
 | Upload Revenue Reports | `POST /conversions/uploads` | `p202 conversion upload-revenue` | ✅ |
+| Export Offline Conversions | `GET /conversions/offline-export` | `p202 conversion offline-export` | ✅ |
 
 Every Update write previews with `?dry_run=1` (`--dry-run`).
 

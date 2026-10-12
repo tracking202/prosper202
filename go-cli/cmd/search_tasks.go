@@ -113,6 +113,9 @@ var searchTasks = []searchTask{
 	{Run: "p202 conversion delete-subids", Pages: []string{"Update › Delete Subids"}},
 	{Run: "p202 conversion upload-revenue", Pages: []string{"Update › Upload Revenue Reports"},
 		Phrases: []string{"commission report", "network revenue csv"}},
+	{Run: "p202 conversion offline-export --platform google --conversion-name NAME",
+		Pages:   []string{"Update › Export Offline Conversions"},
+		Phrases: []string{"google ads offline conversions", "gclid conversions csv", "microsoft ads offline conversions", "msclkid"}},
 
 	// Account menu
 	{Run: "p202 user prefs update", Pages: []string{"Personal Settings"},

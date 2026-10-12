@@ -159,6 +159,17 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '[.data.lines[] | select(.status=="skipped") | "line \(.line), subid \(.subid): \(.reason)"] | join("; ") | if . == "" then "none" else . end')"
         fi
         ;;
+    *"/tmp/p202-eval-google-offline.csv"*)
+        # The export writes the file; its JSON says what went in and what
+        # was left out, so the reply passes both on rather than counting.
+        file=/tmp/p202-eval-google-offline.csv
+        out=$(p202 conversion offline-export --platform google --conversion-name "Offline purchase" --period last7 --json)
+        printf '%s' "$out" | jq -j '.data.csv' > "$file"
+        printf 'Saved %s with `p202 conversion offline-export --platform google --conversion-name "Offline purchase" --period last7`: %s conversion(s) on Google Ads clicks, at their value net of refunds, times in UTC. Left out: %s. Upload it in Google Ads under Goals > Conversions > Uploads.\n' \
+            "$file" \
+            "$(printf '%s' "$out" | jq -r '.data.rows')" \
+            "$(printf '%s' "$out" | jq -r '.data.skipped | to_entries | map(select(.value > 0) | "\(.value) \(.key)") | join(", ") | if . == "" then "none" else . end')"
+        ;;
     # The Setup section's code and per-source settings (setup-code.json).
     *"EVAL LP A landing page live"*)
         # The page's own code, never one composed here: the loader for the

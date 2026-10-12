@@ -1950,6 +1950,112 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationError"
 
+  /conversions/offline-export:
+    get:
+      tags: [Conversions]
+      summary: Export conversions for Google Ads or Microsoft Advertising offline import
+      description: |
+        The conversions on clicks that carried a Google click id (gclid) or a
+        Microsoft click id (msclkid), as the CSV that platform's offline
+        conversion import takes, in `csv`; Update > Export Offline Conversions
+        offers the same file as a download.
+
+        A row is a conversion that counts toward its click (payable, live, not
+        superseded), at its value net of the reversals that count against it,
+        in `currency`. Left out and counted in `skipped`: one netted to
+        nothing (`reversed`), one whose click is more than 90 days older than
+        it (`click_too_old`; both platforms drop the click id by then), and
+        one whose click id is not in the platform's form
+        (`malformed_click_id`). Times are UTC, with the file's TimeZone
+        parameter +0000. Google's file carries `Order ID` p202-<conv_id>, so
+        uploading an overlapping window again adds nothing; Microsoft's
+        follows its import template (UTF-8 with a byte order mark).
+
+        At most 100,000 rows (Microsoft's limit for one upload): past it
+        `truncated` is true and `next_time_from` is where the next export
+        starts. Needs what the page needs: `access_to_update_section`, and
+        `access_to_campaign_data`, since the file is the conversions' values.
+        Any other query parameter is refused.
+      operationId: exportOfflineConversions
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [google, microsoft]
+        - name: conversion_name
+          in: query
+          required: true
+          description: |
+            The conversion action's name, spelled exactly as in the ad
+            platform. At most 100 characters on one line, not beginning with
+            =, +, - or @.
+          schema:
+            type: string
+            maxLength: 100
+        - name: currency
+          in: query
+          required: false
+          description: Three-letter currency code; the account currency by default.
+          schema:
+            type: string
+            pattern: "^[A-Z]{3}$"
+        - name: period
+          in: query
+          required: false
+          description: A named window, instead of time_from and time_to; last30 when neither is given.
+          schema:
+            type: string
+            enum: [today, yesterday, last7, last14, last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime]
+        - $ref: "#/components/parameters/timeFrom"
+        - $ref: "#/components/parameters/timeTo"
+      responses:
+        "200":
+          description: The file and what it left out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      platform:
+                        type: string
+                        enum: [google, microsoft]
+                      conversion_name:
+                        type: string
+                      currency:
+                        type: string
+                      time_from:
+                        type: integer
+                      time_to:
+                        type: integer
+                      rows:
+                        type: integer
+                      skipped:
+                        type: object
+                        properties:
+                          reversed:
+                            type: integer
+                          click_too_old:
+                            type: integer
+                          malformed_click_id:
+                            type: integer
+                      truncated:
+                        type: boolean
+                      next_time_from:
+                        type: integer
+                        nullable: true
+                      filename:
+                        type: string
+                      csv:
+                        type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
   /conversions/subids:
     post:
       tags: [Update]

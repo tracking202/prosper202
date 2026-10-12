@@ -83,6 +83,7 @@ if ($p202Nav2 === 'setup') {
         $p202StripItems[] = ['Delete Subids', 'tracking202/update/delete-subids.php', ['delete-subids.php']];
     }
     $p202StripItems[] = ['Upload Revenue Reports', 'tracking202/update/upload.php', ['upload.php']];
+    $p202StripItems[] = ['Export Offline Conversions', 'tracking202/update/offline-export.php', ['offline-export.php']];
 }
 
 if ($p202StripItems !== []) { ?>

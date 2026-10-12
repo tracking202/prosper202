@@ -17,6 +17,7 @@ use Api\V3\Support\TimeBound;
 use Api\V3\Support\QueryInt;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\OfflineConversionExport;
 use Prosper202\Database\Tables\ConversionTables;
 
 class ConversionsController
@@ -182,6 +183,98 @@ class ConversionsController
             throw new NotFoundException('Conversion not found');
         }
         return ['data' => self::present($row)];
+    }
+
+    /**
+     * GET /conversions/offline-export: the conversions on clicks from Google
+     * Ads (gclid) or Microsoft Advertising (msclkid), as the CSV that
+     * platform's offline conversion import takes (OfflineConversionExport),
+     * with what was left out and why. The window is period, or time_from
+     * and time_to; the last 30 days when none is given.
+     *
+     * @param array<string, mixed> $params
+     * @return array{data: array<string, mixed>}
+     */
+    public function offlineExport(array $params): array
+    {
+        PayloadKeys::refuseUnknown(
+            $params,
+            ['platform', 'conversion_name', 'currency', 'period', 'time_from', 'time_to'],
+            'GET /conversions/offline-export'
+        );
+        $errors = [];
+        $platform = $params['platform'] ?? null;
+        if (!is_string($platform) || !in_array($platform, OfflineConversionExport::PLATFORMS, true)) {
+            $errors['platform'] = 'Must be one of: ' . implode(', ', OfflineConversionExport::PLATFORMS);
+        }
+        $name = is_string($params['conversion_name'] ?? null) ? $params['conversion_name'] : '';
+        $nameProblem = OfflineConversionExport::nameProblem($name);
+        if ($nameProblem !== null) {
+            $errors['conversion_name'] = ucfirst($nameProblem);
+        }
+        $currency = $this->accountCurrency();
+        if (array_key_exists('currency', $params)) {
+            if (!is_string($params['currency']) || preg_match('/^[A-Z]{3}$/D', $params['currency']) !== 1) {
+                $errors['currency'] = 'Must be a three-letter currency code such as USD (default: the account\'s, '
+                    . $currency . ')';
+            } else {
+                $currency = $params['currency'];
+            }
+        }
+        if ($errors !== []) {
+            throw new ValidationException('Invalid offline export: ' . implode(', ', array_keys($errors)), $errors);
+        }
+
+        $zone = fn (): string => $this->accountTimezone();
+        if (array_key_exists('period', $params)) {
+            if (array_key_exists('time_from', $params) || array_key_exists('time_to', $params)) {
+                throw new ValidationException('Invalid offline export: period', [
+                    'period' => 'Give period, or time_from and time_to, not both',
+                ]);
+            }
+            [$from, $to] = TimeBound::period($params['period'], $zone);
+        } elseif (array_key_exists('time_from', $params) || array_key_exists('time_to', $params)) {
+            [$from, $to] = TimeBound::window($params, $zone);
+        } else {
+            [$from, $to] = TimeBound::period('last30', $zone);
+        }
+        $from ??= 0;
+        $to ??= time();
+
+        $export = (new OfflineConversionExport(new \Prosper202\Database\Connection($this->db)))
+            ->export($this->userId, (string) $platform, $from, $to, $name, $currency);
+
+        return ['data' => [
+            'platform' => $platform,
+            'conversion_name' => $name,
+            'currency' => $currency,
+            'time_from' => $from,
+            'time_to' => $to,
+            'rows' => $export['rows'],
+            'skipped' => $export['skipped'],
+            'truncated' => $export['truncated'],
+            'next_time_from' => $export['next_time_from'],
+            'filename' => OfflineConversionExport::filename(
+                (string) $platform,
+                $from,
+                $to,
+                new \DateTimeZone($this->accountTimezone())
+            ),
+            'csv' => $export['csv'],
+        ]];
+    }
+
+    /** The account currency amounts are recorded in (202_users_pref.user_account_currency). */
+    private function accountCurrency(): string
+    {
+        $stmt = $this->prepare('SELECT user_account_currency FROM 202_users_pref WHERE user_id = ? LIMIT 1');
+        $this->bind($stmt, 'i', $this->userId);
+        $this->execute($stmt, 'Account currency query failed');
+        $row = $this->result($stmt)->fetch_assoc();
+        $stmt->close();
+        $currency = is_array($row) ? strtoupper((string) $row['user_account_currency']) : '';
+
+        return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : 'USD';
     }
 
     /**

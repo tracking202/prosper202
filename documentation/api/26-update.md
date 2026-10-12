@@ -16,6 +16,9 @@ the same thing.
 | `POST` | `/conversions/subids/reset` | Reset Campaign Subids | clears a category's or campaign's converted clicks |
 | `POST` | `/conversions/uploads` | Upload Revenue Reports | a `revenue_upload` conversion per CSV line, as a new batch |
 
+Export Offline Conversions, the one Update page that writes nothing, is
+`GET /conversions/offline-export` ([Conversions API](10-conversions.md#offline-conversion-export)).
+
 ## What every one of them shares
 
 - **Permission.** The role permission the pages ask for:
