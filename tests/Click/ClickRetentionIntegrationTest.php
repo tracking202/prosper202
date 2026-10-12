@@ -6,6 +6,8 @@ namespace Tests\Click;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickRetention;
+use Prosper202\Click\RetentionPacer;
+use Prosper202\Click\RetentionPressure;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
 
@@ -437,6 +439,169 @@ final class ClickRetentionIntegrationTest extends TestCase
         self::assertNull($once['before']);
         self::assertSame(0, $auto['batches'] + $once['batches']);
         self::assertEveryTableHolds([1], 'with both deletions off');
+    }
+
+    /**
+     * A pacer that reads a fixed load, takes no time and pauses for none,
+     * so a run's batch sizes are the pacer's growth rule alone.
+     */
+    /** User 1 keeps self::DAYS days of clicks. */
+    private static function keepDays(): void
+    {
+        self::q('UPDATE 202_users_pref SET user_auto_database_optimization_days = ' . self::DAYS
+            . ' WHERE user_id = 1');
+    }
+
+    private function pacer(
+        RetentionPressure $load = RetentionPressure::NONE,
+        int $start = 2,
+        int $max = 16,
+    ): RetentionPacer {
+        return new RetentionPacer(
+            static fn (): RetentionPressure => $load,
+            static fn (): float => 0.0,
+            static function (float $seconds): void {
+            },
+            RetentionPacer::BUDGET_SECONDS,
+            1,
+            $start,
+            $max,
+        );
+    }
+
+    /**
+     * The retention's clock advances a second each time the run reads it, so
+     * a deadline of NOW + n bounds a run to about n batches: a regression
+     * that stops consulting the pacer fails its assertions instead of
+     * looping until the test runner is killed.
+     */
+    private function pacedRetention(RetentionPacer $pacer): ClickRetention
+    {
+        $ticks = 0;
+
+        return new ClickRetention($this->conn, ClickRetention::BATCH, static function () use (&$ticks): int {
+            return self::NOW + $ticks++;
+        }, $pacer);
+    }
+
+    /**
+     * The cron job's paced deletion: on an idle, fast server every batch
+     * doubles the next up to the pacer's ceiling, and the run deletes
+     * exactly what the unpaced one does.
+     */
+    public function testAPacedRunGrowsItsBatchesAndDeletesExactlyTheExpiredClicks(): void
+    {
+        $cutoff = ClickRetention::cutoff(self::DAYS, self::NOW);
+        for ($id = 1; $id <= 40; $id++) {
+            self::click($id, $cutoff - 86400 + $id, 1 + $id % 2);
+        }
+        self::click(41, $cutoff + 1);
+        self::keepDays();
+
+        $pacer = $this->pacer();
+        $report = $this->pacedRetention($pacer)->runAutomatic(self::NOW + 60);
+
+        self::assertTrue($report['complete']);
+        self::assertSame(40, $report['clicks']);
+        self::assertSame(16, $pacer->batchSize(), 'batches grew to the ceiling');
+        self::assertLessThan(20, $report['batches'], 'larger batches, so fewer of them than 40 at the start size');
+        self::assertEveryTableHolds([41], 'after a paced run');
+    }
+
+    public function testSevereLoadDeletesOneSmallBatchARunAndALaterRunCatchesUp(): void
+    {
+        $cutoff = ClickRetention::cutoff(self::DAYS, self::NOW);
+        self::click(1, $cutoff - 10);
+        self::click(2, $cutoff - 20);
+        self::click(3, $cutoff - 30);
+        self::keepDays();
+
+        $pacer = $this->pacer(RetentionPressure::SEVERE);
+        $report = $this->pacedRetention($pacer)->runAutomatic(self::NOW + 60);
+        self::assertFalse($report['complete']);
+        self::assertSame(1, $report['batches']);
+        self::assertSame(1, $report['clicks']);
+        self::assertSame('server under heavy load', $pacer->stopReason());
+        self::assertEveryTableHolds([1, 2], 'one minimum batch, oldest first, while the server is saturated');
+
+        self::assertTrue($this->pacedRetention($this->pacer())->runAutomatic(self::NOW + 60)['complete']);
+        self::assertEveryTableHolds([], 'once it is not');
+    }
+
+    /**
+     * The click path holding a row the deletion needs: under the pacer the
+     * lock wait timeout rolls the batch back whole, the pacer backs off and
+     * retries, and after its third the run ends quietly instead of failing
+     * the cron job. The next run, with the lock gone, deletes the click.
+     * Unpaced, the same timeout is an error, as every failure was.
+     */
+    public function testLockContentionUnderThePacerEndsTheRunQuietlyAndTheNextRunDeletes(): void
+    {
+        $cutoff = ClickRetention::cutoff(self::DAYS, self::NOW);
+        self::click(1, $cutoff - 10);
+        self::keepDays();
+
+        $other = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::q('SET SESSION innodb_lock_wait_timeout = 1');
+        try {
+            self::assertTrue($other->begin_transaction());
+            self::assertNotFalse($other->query('SELECT click_id FROM 202_clicks_record WHERE click_id = 1 FOR UPDATE'));
+
+            // Each timed-out batch waits a second for the lock; the deadline
+            // bounds a run that never stops to ten of them.
+            $pacer = $this->pacer();
+            $report = $this->pacedRetention($pacer)->runAutomatic(self::NOW + 10);
+            self::assertFalse($report['complete']);
+            self::assertSame(0, $report['clicks']);
+            self::assertSame('lock contention', $pacer->stopReason());
+            self::assertSame(0, $report['batches'], 'a rolled-back batch is not counted');
+            self::assertEveryTableHolds([1], 'every timed-out batch rolled back whole');
+
+            try {
+                $this->retention()->runAutomatic(PHP_INT_MAX);
+                self::fail('unpaced, a lock wait timeout is an error');
+            } catch (\Throwable $e) {
+                self::assertTrue(Connection::isRetryableLockError($e), $e->getMessage());
+            }
+        } finally {
+            $other->rollback();
+            $other->close();
+            self::q('SET SESSION innodb_lock_wait_timeout = 50');
+        }
+
+        self::assertTrue($this->pacedRetention($this->pacer())->runAutomatic(self::NOW + 60)['complete']);
+        self::assertEveryTableHolds([], 'after the lock was released');
+    }
+
+    public function testThePacedScheduledDeletionBelowAMarkerDrainsToo(): void
+    {
+        for ($id = 1; $id <= 12; $id++) {
+            self::click($id, self::NOW - 86400 * 400);
+        }
+        self::q('UPDATE 202_users_pref SET user_delete_data_clickid = 9 WHERE user_id = 1');
+
+        $saturated = $this->pacer(RetentionPressure::SEVERE);
+        $report = $this->pacedRetention($saturated)->runScheduled(self::NOW + 60);
+        self::assertFalse($report['complete']);
+        self::assertSame(1, $report['clicks']);
+        self::assertSame('server under heavy load', $saturated->stopReason());
+        self::assertEveryTableHolds(range(2, 12), 'one minimum batch while the server is saturated');
+
+        $pacer = $this->pacer();
+        $report = $this->pacedRetention($pacer)->runScheduled(self::NOW + 60);
+        self::assertTrue($report['complete']);
+        self::assertSame(7, $report['clicks']);
+        // 2, then 4, then the last 1 of an 8 the pacer asked for: each
+        // selection is the pacer's size, not BATCH.
+        self::assertSame(3, $report['batches']);
+        self::assertSame(8, $pacer->batchSize(), 'batches grew, and a short last one did not grow them');
+        self::assertEveryTableHolds([9, 10, 11, 12], 'below the marker gone');
     }
 
     public function testAFailedBatchRollsBackWhole(): void

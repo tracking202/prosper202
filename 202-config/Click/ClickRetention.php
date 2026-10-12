@@ -62,6 +62,12 @@ use Prosper202\Report\RollupDirty;
  * holding row locks on its own clicks only. Every read and write goes
  * through Connection, which throws on any failure (CLAUDE.md #1): a failed
  * batch rolls back whole and the exception reaches the cron job's log.
+ *
+ * Paced (the cron job's deletions): with a RetentionPacer the batch size is
+ * the pacer's, not BATCH, and follows how fast batches finish and how busy
+ * the host and MySQL are. A lock wait timeout or deadlock with the click
+ * path rolls the batch back whole, as any failure does; the pacer backs off
+ * and the batch is selected again, rather than the run ending in an error.
  */
 final class ClickRetention
 {
@@ -126,8 +132,12 @@ final class ClickRetention
     private $clock;
 
     /** @param (callable(): int)|null $clock */
-    public function __construct(private Connection $conn, private int $batch = self::BATCH, ?callable $clock = null)
-    {
+    public function __construct(
+        private Connection $conn,
+        private int $batch = self::BATCH,
+        ?callable $clock = null,
+        private ?RetentionPacer $pacer = null,
+    ) {
         if ($batch < 1) {
             throw new \InvalidArgumentException('a retention batch holds at least one click');
         }
@@ -226,12 +236,20 @@ final class ClickRetention
                 if (($this->clock)() >= $deadline) {
                     return $report;
                 }
-                $ids = $this->expiredClicks($userId, $cutoff, $this->batch);
+                $limit = $this->nextBatch();
+                if ($limit === 0) {
+                    return $report;
+                }
+                $started = $this->pacer?->now();
+                $ids = $this->expiredClicks($userId, $cutoff, $limit);
                 if ($ids === []) {
                     unset($users[$k]);
                     continue;
                 }
-                $report = self::add($report, $this->deleteClicks($ids), count($ids));
+                $rows = $this->deleteBatch($ids, $limit, $started);
+                if ($rows !== null) {
+                    $report = self::add($report, $rows, count($ids));
+                }
             }
         }
         $report['complete'] = true;
@@ -309,18 +327,63 @@ final class ClickRetention
                 if (($this->clock)() >= $deadline) {
                     return $report;
                 }
+                $limit = $this->nextBatch();
+                if ($limit === 0) {
+                    return $report;
+                }
+                $started = $this->pacer?->now();
                 $stmt = $this->conn->prepareWrite('SELECT click_id FROM `' . $table . '` WHERE click_id < ? ORDER BY click_id LIMIT ?');
-                $this->conn->bind($stmt, 'ii', [$marker, $this->batch]);
+                $this->conn->bind($stmt, 'ii', [$marker, $limit]);
                 $ids = array_values(array_unique(array_map(static fn (array $r): int => (int) $r['click_id'], $this->conn->fetchAll($stmt))));
                 if ($ids === []) {
                     break;
                 }
-                $report = self::add($report, $this->deleteClicks($ids), $table === '202_clicks' ? count($ids) : 0);
+                $rows = $this->deleteBatch($ids, $limit, $started);
+                if ($rows !== null) {
+                    $report = self::add($report, $rows, $table === '202_clicks' ? count($ids) : 0);
+                }
             }
         }
         $report['complete'] = true;
 
         return $report;
+    }
+
+    /** The next batch's size: the pacer's when there is one (0 ends the run), else BATCH. */
+    private function nextBatch(): int
+    {
+        return $this->pacer?->nextBatch() ?? $this->batch;
+    }
+
+    /**
+     * One batch through deleteClicks(), told to the pacer when there is one:
+     * how long it took from its selection on, then the pause the pacer asks
+     * for. A lock wait timeout or deadlock under a pacer has rolled the
+     * batch back whole; the pacer backs off, and null says nothing was
+     * deleted, so the caller selects the same clicks again. Without a pacer
+     * it is an error like any other.
+     *
+     * @param list<int> $ids
+     * @return array<string, int>|null rows deleted per table
+     */
+    private function deleteBatch(array $ids, int $limit, ?float $started): ?array
+    {
+        if ($this->pacer === null) {
+            return $this->deleteClicks($ids);
+        }
+        try {
+            $rows = $this->deleteClicks($ids);
+        } catch (\Throwable $e) {
+            if (!Connection::isRetryableLockError($e)) {
+                throw $e;
+            }
+            $this->pacer->pause($this->pacer->afterContention());
+
+            return null;
+        }
+        $this->pacer->pause($this->pacer->afterBatch(count($ids), $limit, $this->pacer->now() - (float) $started));
+
+        return $rows;
     }
 
     /**

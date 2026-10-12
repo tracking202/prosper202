@@ -595,21 +595,47 @@ function RunSecondsCronjob()
 }
 
 /**
+ * How fast this run's click-data deletion goes (Prosper202\Click\RetentionPacer):
+ * batches sized to how quickly this server deletes, smaller with longer
+ * pauses while the host or MySQL is busy, none while either is saturated.
+ */
+function retentionPacer(\mysqli $db): \Prosper202\Click\RetentionPacer
+{
+    return \Prosper202\Click\RetentionPacer::forCron($db, \Prosper202\Click\ClickRetention::RUN_SECONDS);
+}
+
+/** Why the pacer ended a run early, for the cron log; '' when it did not. */
+function retentionPaused(\Prosper202\Click\RetentionPacer $pacer): string
+{
+    $reason = $pacer->stopReason();
+
+    return $reason === null || $reason === 'time budget spent' ? '' : ' (paused: ' . $reason . ')';
+}
+
+/**
  * Automatic deletion of click data older than user 1's
  * user_auto_database_optimization_days (0 keeps everything). The deleting is
  * Prosper202\Click\ClickRetention's, shared with ClearOldClicks(): every
  * click whose rows are all older than the cutoff, from every click table,
  * with the attribution rollup's hours marked in the same transactions. A
- * backlog drains over the following runs.
+ * backlog drains over the following runs, at the pace the server can take
+ * (retentionPacer()).
  */
 function AutoOptimizeDatabase()
 {
     try {
-        $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection(getDatabaseConnection()));
+        $db = getDatabaseConnection();
+        $pacer = retentionPacer($db);
+        $retention = new \Prosper202\Click\ClickRetention(
+            new \Prosper202\Database\Connection($db),
+            \Prosper202\Click\ClickRetention::BATCH,
+            null,
+            $pacer
+        );
         $report = $retention->runAutomatic(time() + \Prosper202\Click\ClickRetention::RUN_SECONDS);
         if ($report['days'] > 0 && $report['batches'] > 0) {
             echo ' Auto DB Delete: ' . (int) $report['clicks'] . ' click(s) older than ' . date('Y-m-d', (int) $report['cutoff']) . ' deleted'
-                . ($report['complete'] ? '' : ', more next run') . '<br>';
+                . ($report['complete'] ? '' : ', more next run' . retentionPaused($pacer)) . '<br>';
             flushOutput();
         }
     } catch (\Throwable $e) {
@@ -630,7 +656,13 @@ function ClearOldClicks()
 {
     try {
         $db = getDatabaseConnection();
-        $retention = new \Prosper202\Click\ClickRetention(new \Prosper202\Database\Connection($db));
+        $pacer = retentionPacer($db);
+        $retention = new \Prosper202\Click\ClickRetention(
+            new \Prosper202\Database\Connection($db),
+            \Prosper202\Click\ClickRetention::BATCH,
+            null,
+            $pacer
+        );
         $report = $retention->runScheduled(time() + \Prosper202\Click\ClickRetention::RUN_SECONDS);
         if (($report['before'] === null && $report['marker'] === null) || $report['batches'] === 0) {
             return;
@@ -639,7 +671,7 @@ function ClearOldClicks()
             ? 'from before ' . date('Y-m-d H:i T', (int) $report['before'])
             : 'below click ' . (int) $report['marker'];
         echo ' Clear Old Clicks: ' . (int) $report['clicks'] . ' click(s) ' . $what . ' deleted'
-            . ($report['complete'] ? '' : ', more next run') . '<br>';
+            . ($report['complete'] ? '' : ', more next run' . retentionPaused($pacer)) . '<br>';
         flushOutput();
         if (!$report['complete']) {
             return;
