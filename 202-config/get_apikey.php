@@ -3,7 +3,7 @@ declare(strict_types=1);
 //include mysql settings
 include_once('connect.php');
 
-//check to see if this is already installed, if so don't do anything
+// Runs only while no account exists; afterwards hand the key to sign-in.
 if (is_installed() == true) {
 	if (isset($_GET['customers_api_key']) && $_GET['customers_api_key'] != '') {
 		// encode value before placing in redirect header, then terminate
