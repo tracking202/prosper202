@@ -152,6 +152,36 @@ final class CliAccessCacheTest extends TestCase
         self::assertNull(CliAccessCache::readVerdict($this->key), 'until TTL_SECONDS');
     }
 
+    public function testAnEntryDatedInTheFutureIsUnknownNotAVerdict(): void
+    {
+        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $this->key);
+        CliAccessCache::write($this->key, false);
+        touch($path, time() + 600);
+        self::assertNull(CliAccessCache::read($this->key));
+        self::assertNull(CliAccessCache::readVerdict($this->key));
+        self::assertNull(CliAccessCache::readStale($this->key));
+        CliAccessCache::markUnknown($this->key);
+        touch($path . '.unknown', time() + 600);
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key), 'a future-dated hold-off is no hold-off');
+    }
+
+    public function testPruneDropsOnlyWhatIsPastTheTtl(): void
+    {
+        $old = 'test-key-old-' . bin2hex(random_bytes(6));
+        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $old);
+        CliAccessCache::write($old, true);
+        CliAccessCache::markUnknown($old);
+        touch($path, time() - CliAccessCache::TTL_SECONDS - 60);
+        touch($path . '.unknown', time() - CliAccessCache::TTL_SECONDS - 60);
+        CliAccessCache::write($this->key, false); // fresh: must survive
+        $removed = CliAccessCache::prune();
+        self::assertGreaterThanOrEqual(2, $removed, 'the old entry and its marker go');
+        self::assertFileDoesNotExist($path);
+        self::assertFileDoesNotExist($path . '.unknown');
+        self::assertFalse(CliAccessCache::read($this->key), 'the fresh entry stays');
+        self::assertSame(0, CliAccessCache::prune(), 'nothing else is old enough');
+    }
+
     public function testInvalidateDropsTheHoldOffToo(): void
     {
         CliAccessCache::markUnknown($this->key);

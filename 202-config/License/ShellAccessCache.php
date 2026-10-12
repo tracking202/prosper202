@@ -44,7 +44,10 @@ class ShellAccessCache
             return null;
         }
         $mtime = filemtime($path);
-        if ($mtime === false || (time() - $mtime) > $maxAgeSeconds) {
+        // A negative age (an mtime in the future, after a clock step) would
+        // never exceed any TTL; it is unknown, not a verdict that outlives
+        // the clock error.
+        if ($mtime === false || $mtime > time() || (time() - $mtime) > $maxAgeSeconds) {
             return null;
         }
         $content = @file_get_contents($path);
@@ -91,6 +94,11 @@ class ShellAccessCache
         // A verdict ends the hold-off an unanswered check may have left.
         @unlink(self::unknownMarker($path));
         self::put($path, $valid ? '1' : '0');
+        // One write in fifty sweeps the directory, so it stays bounded by the
+        // keys seen in the last hour rather than by every key ever submitted.
+        if (random_int(1, 50) === 1) {
+            static::prune();
+        }
     }
 
     /**
@@ -118,7 +126,33 @@ class ShellAccessCache
             return false;
         }
         $mtime = filemtime($marker);
-        return $mtime !== false && (time() - $mtime) <= $maxAgeSeconds;
+        return $mtime !== false && $mtime <= time() && (time() - $mtime) <= $maxAgeSeconds;
+    }
+
+    /**
+     * Drop entries and hold-off markers older than $olderThanSeconds. The web
+     * sign-in writes an entry for every key a user submits and nothing else
+     * removes one, so write() calls this now and then; an entry past
+     * TTL_SECONDS is unreadable anyway. Returns how many files went.
+     */
+    public static function prune(int $olderThanSeconds = self::TTL_SECONDS): int
+    {
+        $dir = static::dir();
+        if ($dir === null) {
+            return 0;
+        }
+        $removed = 0;
+        $cutoff = time() - $olderThanSeconds;
+        foreach (glob($dir . '/*.{cache,unknown}', GLOB_BRACE) ?: [] as $file) {
+            if (is_link($file)) {
+                continue;
+            }
+            $mtime = @filemtime($file);
+            if ($mtime !== false && $mtime < $cutoff && @unlink($file)) {
+                $removed++;
+            }
+        }
+        return $removed;
     }
 
     public static function invalidate(string $key): void
