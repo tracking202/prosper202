@@ -301,6 +301,8 @@ final class InstallHelpersTest extends TestCase
         $this->assertFalse(install_license_key_is_valid('{"code":404,"msg":"Key not found"}'));
         $this->assertFalse(install_license_key_is_valid('<!DOCTYPE html><html>Set up</html>'));
         $this->assertFalse(install_license_key_is_valid(''));
+        $this->assertFalse(install_license_key_is_valid(false));
+        $this->assertFalse(install_license_key_is_valid(true));
         $this->assertFalse(install_license_key_is_valid('{"msg":'));
         $this->assertFalse(install_license_key_is_valid('"Key valid"'));
         $this->assertFalse(install_license_key_is_valid('null'));

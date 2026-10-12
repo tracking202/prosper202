@@ -110,13 +110,16 @@ if (!function_exists('install_license_key_is_valid')) {
      * `api_key_validate()` returns the raw HTTP body, which is normally the
      * service's JSON ({"code":200,"msg":"Key valid",...}); this parses that one
      * answer and nothing else. Anything that is not an explicit "Key valid" —
-     * an invalid-key reply, an HTML error page, an empty body from an
+     * an invalid-key reply, an HTML error page, curl_exec()'s false from an
      * unreachable service, malformed JSON — is not valid, so the installer
      * fails closed exactly as the fetch-a-key page did: a license it cannot
      * confirm is not a license (CLAUDE.md #11).
      */
-    function install_license_key_is_valid(string $body): bool
+    function install_license_key_is_valid(string|bool $body): bool
     {
+        if (!is_string($body)) {
+            return false;
+        }
         $decoded = json_decode($body, true);
         return is_array($decoded) && ($decoded['msg'] ?? null) === 'Key valid';
     }
