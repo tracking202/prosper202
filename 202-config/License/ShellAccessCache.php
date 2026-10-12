@@ -34,6 +34,12 @@ class ShellAccessCache
     public const int STALE_TTL_SECONDS = 30 * 86400;
 
     /**
+     * How long a claim on asking ClickServer about a key is honoured by the
+     * other requests that want the same answer (see beginCheck).
+     */
+    public const int CHECK_LOCK_SECONDS = 15;
+
+    /**
      * How long a check that got no usable answer holds off the next one.
      * An outage is not a verdict and is never written as one; this keeps
      * every request made during one from paying the connect timeout again.
@@ -53,7 +59,11 @@ class ShellAccessCache
         // A negative age (an mtime in the future, after a clock step) would
         // never exceed any TTL; it is unknown, not a verdict that outlives
         // the clock error.
-        if ($mtime === false || $mtime > time() || (time() - $mtime) > $maxAgeSeconds) {
+        if (
+            $mtime === false
+            || $mtime > time()
+            || (time() - $mtime) > $maxAgeSeconds
+        ) {
             return null;
         }
         $content = @file_get_contents($path);
@@ -154,7 +164,11 @@ class ShellAccessCache
         $cutoff = time() - $olderThanSeconds;
         // Two globs, not GLOB_BRACE: the flag is undefined on some libcs
         // (Alpine's musl), and this runs inside write().
-        $files = array_merge(glob($dir . '/*.cache') ?: [], glob($dir . '/*.unknown') ?: []);
+        $files = array_merge(
+            glob($dir . '/*.cache') ?: [],
+            glob($dir . '/*.unknown') ?: [],
+            glob($dir . '/*.checking') ?: []
+        );
         foreach ($files as $file) {
             if (is_link($file)) {
                 continue;
@@ -173,7 +187,55 @@ class ShellAccessCache
         if ($path !== null) {
             @unlink($path);
             @unlink(self::unknownMarker($path));
+            @unlink($path . '.checking');
         }
+    }
+
+    /**
+     * Claim the right to ask ClickServer about $key. False when another
+     * process claimed it less than CHECK_LOCK_SECONDS ago: the caller treats
+     * that as unknown and the claimant's verdict lands in the cache for
+     * everyone, so a burst of cold requests asks once rather than once per
+     * worker. A claim older than that belonged to a worker that died
+     * mid-check and is taken over. True when there is no cache directory:
+     * nothing to coordinate on. endCheck() releases it.
+     */
+    public static function beginCheck(string $key): bool
+    {
+        $path = static::path($key);
+        if ($path === null) {
+            return true;
+        }
+        $lock = $path . '.checking';
+        if (self::claim($lock)) {
+            return true;
+        }
+        $mtime = @filemtime($lock);
+        if ($mtime !== false && $mtime <= time() && (time() - $mtime) < self::CHECK_LOCK_SECONDS) {
+            return false;
+        }
+        @unlink($lock);
+        return self::claim($lock);
+    }
+
+    public static function endCheck(string $key): void
+    {
+        $path = static::path($key);
+        if ($path !== null) {
+            @unlink($path . '.checking');
+        }
+    }
+
+    /** Create $lock if it does not exist, atomically (O_EXCL). */
+    private static function claim(string $lock): bool
+    {
+        $fh = @fopen($lock, 'x');
+        if ($fh === false) {
+            return false;
+        }
+        fclose($fh);
+        @chmod($lock, 0600);
+        return true;
     }
 
     private static function unknownMarker(string $path): string
@@ -188,9 +250,11 @@ class ShellAccessCache
     private static function put(string $path, string $content): void
     {
         $tmp = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-        if (@file_put_contents($tmp, $content) === false
+        if (
+            @file_put_contents($tmp, $content) === false
             || !@chmod($tmp, 0600)
-            || !@rename($tmp, $path)) {
+            || !@rename($tmp, $path)
+        ) {
             @unlink($tmp);
             // Not fatal (the next request just revalidates), but worth a trace
             // so repeated external validation calls can be diagnosed.

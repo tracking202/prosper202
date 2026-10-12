@@ -452,7 +452,18 @@ class CapabilitiesController
         if (array_key_exists($customerKey, $this->licenceChecks)) {
             return $this->licenceChecks[$customerKey];
         }
-        $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        // One asker per key across processes: a burst of cold requests would
+        // otherwise each pass the cache and the hold-off and each pay the
+        // timeouts. The others read "unknown" and the claimant's verdict
+        // lands in the cache for all of them.
+        if (!ShellAccessCache::beginCheck($customerKey)) {
+            return $this->licenceChecks[$customerKey] = null;
+        }
+        try {
+            $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        } finally {
+            ShellAccessCache::endCheck($customerKey);
+        }
         if ($result !== null) {
             ShellAccessCache::write($customerKey, $result['valid']);
             if ($result['paid'] !== null) {

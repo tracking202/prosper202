@@ -338,11 +338,14 @@ class AUTH
             return true;
         }
         $keyIsValid = $licence['valid'];
+        // The caches are keyed by the key as the API reads it from 202_users,
+        // trimmed; a caller handing in a padded key must land on the same entry.
+        $cacheKey = trim((string) $user_api_key);
         // The same answer carries the CLI licence; record it so a verdict the
         // web app has already heard is not asked for again by the Go CLI gate,
         // and a key found invalid here stops a cached CLI allow at once.
         if ($licence['paid'] !== null) {
-            \Prosper202\License\CliAccessCache::write($user_api_key, $licence['paid']);
+            \Prosper202\License\CliAccessCache::write($cacheKey, $licence['paid']);
         }
 
         if ($keyIsValid) {
@@ -355,11 +358,11 @@ class AUTH
             _mysqli_query($user_sql);
             self::writeSessionValue('valid_key', true);
             // Warm the CLI shell license cache so p202 shell works without its own round-trip.
-            \Prosper202\License\ShellAccessCache::write($user_api_key, true);
+            \Prosper202\License\ShellAccessCache::write($cacheKey, true);
             return true;
         } else {
             // Deny the CLI shell immediately when the key is no longer valid.
-            \Prosper202\License\ShellAccessCache::write($user_api_key, false);
+            \Prosper202\License\ShellAccessCache::write($cacheKey, false);
             return false;
         }
     }

@@ -203,6 +203,22 @@ final class CliAccessCacheTest extends TestCase
         }
     }
 
+    public function testOneAskerPerKeyAcrossProcesses(): void
+    {
+        self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the first claim wins');
+        self::assertFalse(ShellAccessCache::beginCheck($this->key), 'a second claim within the window is refused');
+        ShellAccessCache::endCheck($this->key);
+        self::assertTrue(ShellAccessCache::beginCheck($this->key), 'released, it can be claimed again');
+        $path = (new \ReflectionMethod(ShellAccessCache::class, 'path'))->invoke(null, $this->key);
+        touch($path . '.checking', time() - ShellAccessCache::CHECK_LOCK_SECONDS - 5);
+        self::assertTrue(
+            ShellAccessCache::beginCheck($this->key),
+            'a claim older than the window belonged to a dead worker and is taken over'
+        );
+        ShellAccessCache::endCheck($this->key);
+        self::assertFileDoesNotExist($path . '.checking');
+    }
+
     public function testInvalidateDropsTheHoldOffToo(): void
     {
         CliAccessCache::markUnknown($this->key);

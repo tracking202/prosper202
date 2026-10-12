@@ -317,6 +317,12 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 		deleted, failed := 0, 0
 		for _, id := range ids {
 			if err := c.Delete(spec.endpoint + "/" + id); err != nil {
+				if refused := licenceRefusal(err); refused != nil {
+					// Every remaining id would meet the same 402: stop, and
+					// report it as the licence refusal (exit 6, the trial hint).
+					return fmt.Errorf("deleting %s %s%s (%d of %d deleted before it; the rest not attempted): %w",
+						spec.noun, id, spec.context, deleted, len(ids), refused)
+				}
 				failed++
 				fmt.Fprintf(os.Stderr, "Failed to delete %s %s%s: %v\n", spec.noun, id, spec.context, err)
 				continue

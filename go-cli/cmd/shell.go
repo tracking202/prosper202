@@ -158,6 +158,7 @@ func runInteractive(state *shell.State) error {
 // an error if any command fails and stopOnError is true.
 func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 	anyFailed := false
+	var refused error // the install's licence refusal, if any command met it
 	activeProfile := currentProfileName()
 	for _, cmdStr := range commands {
 		cmdStr = strings.TrimSpace(cmdStr)
@@ -201,6 +202,9 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		output, err := executeShellCommand(cmdStr)
 		if err != nil {
 			anyFailed = true
+			if refused == nil {
+				refused = licenceRefusal(err)
+			}
 			if jsonOutput {
 				emitBatchResult(cmdStr, output, err)
 			} else {
@@ -222,6 +226,11 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 	}
 
 	if anyFailed {
+		if refused != nil {
+			// Every later command would meet the same 402: say so with the
+			// licence category, exit 6 and the trial hint, not a generic failure.
+			return fmt.Errorf("one or more commands failed: %w", refused)
+		}
 		return fmt.Errorf("one or more commands failed")
 	}
 	return nil

@@ -46,9 +46,23 @@ class ClickServerKeyValidator
      */
     public static function check(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
     {
+        // $timeoutSeconds bounds the whole attempt, redirect hops included:
+        // each hop gets what is left of it, so a chain of slow redirects
+        // cannot hold a request for MAX_REDIRECTS + 1 full timeouts.
+        $deadline = microtime(true) + $timeoutSeconds;
         $url = self::VALIDATE_URL;
         for ($hop = 0;; $hop++) {
-            $answer = self::post($url, $key, $connectTimeoutSeconds, $timeoutSeconds);
+            $remaining = $deadline - microtime(true);
+            if ($remaining <= 0) {
+                error_log('ClickServerKeyValidator: out of time before ' . $url . ' (hop ' . ($hop + 1) . ')');
+                return null;
+            }
+            $answer = self::post(
+                $url,
+                $key,
+                (int)ceil(min($connectTimeoutSeconds, $remaining) * 1000),
+                (int)ceil($remaining * 1000)
+            );
             if ($answer === null) {
                 return null;
             }
@@ -118,7 +132,7 @@ class ClickServerKeyValidator
      *         curl resolved from the Location header, or null]; null when no
      *         answer came back at all (logged).
      */
-    private static function post(string $url, string $key, int $connectTimeoutSeconds, int $timeoutSeconds): ?array
+    private static function post(string $url, string $key, int $connectTimeoutMs, int $timeoutMs): ?array
     {
         $ch = curl_init();
         if ($ch === false) {
@@ -130,8 +144,8 @@ class ClickServerKeyValidator
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['key' => $key]));
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeoutSeconds);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, $connectTimeoutMs);
+        curl_setopt($ch, CURLOPT_TIMEOUT_MS, $timeoutMs);
         // Verify the TLS certificate so the validation response cannot be forged
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);

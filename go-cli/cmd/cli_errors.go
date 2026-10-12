@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"p202/internal/api"
@@ -93,6 +94,27 @@ func validationError(format string, args ...interface{}) *CLIError {
 }
 
 // partialFailureError creates an error indicating a bulk operation had some failures.
+// licenceRefusal returns the first error among errs that is the install's
+// licence refusal (category licence), or nil. The commands that aggregate
+// several requests use it so a batch, a bulk delete or a multi-profile run
+// refused for a licence reports licence/exit 6 and the trial hint rather
+// than a generic failure: every member met the same 402.
+func licenceRefusal(errs ...error) error {
+	for _, err := range errs {
+		if err != nil && api.ErrorCategory(err) == "licence" {
+			return err
+		}
+	}
+	return nil
+}
+
+// licenceRefusalError is the refusal as a parent sees it from child
+// processes that all exited ExitLicence: the same category, exit code and
+// hint the children printed.
+func licenceRefusalError(message string) error {
+	return &api.APIError{Status: http.StatusPaymentRequired, Category: "licence", Message: message}
+}
+
 func partialFailureError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "partial_failure",
