@@ -93,19 +93,26 @@ func validationError(format string, args ...interface{}) *CLIError {
 	}
 }
 
-// partialFailureError creates an error indicating a bulk operation had some failures.
-// licenceRefusal returns the first error among errs that is the install's
-// licence refusal (category licence), or nil. The commands that aggregate
-// several requests use it so a batch, a bulk delete or a multi-profile run
-// refused for a licence reports licence/exit 6 and the trial hint rather
-// than a generic failure: every member met the same 402.
+// licenceRefusal returns the first of errs when every non-nil one is the
+// install's licence refusal (category licence), and nil when any other
+// failure is among them or there is none. A command that aggregates several
+// requests reports licence/exit 6 and the trial hint only when a licence is
+// what every failure needs; one refused profile beside an unreachable one is
+// not fixed by a trial, so that run keeps its generic error.
 func licenceRefusal(errs ...error) error {
+	var refused error
 	for _, err := range errs {
-		if err != nil && api.ErrorCategory(err) == "licence" {
-			return err
+		if err == nil {
+			continue
+		}
+		if api.ErrorCategory(err) != "licence" {
+			return nil
+		}
+		if refused == nil {
+			refused = err
 		}
 	}
-	return nil
+	return refused
 }
 
 // licenceRefusalError is the refusal as a parent sees it from child
@@ -115,6 +122,7 @@ func licenceRefusalError(message string) error {
 	return &api.APIError{Status: http.StatusPaymentRequired, Category: "licence", Message: message}
 }
 
+// partialFailureError creates an error indicating a bulk operation had some failures.
 func partialFailureError(format string, args ...interface{}) *CLIError {
 	return &CLIError{
 		Category: "partial_failure",

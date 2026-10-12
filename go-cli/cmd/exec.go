@@ -181,7 +181,7 @@ func execFailure(results map[string]execResult) error {
 		}
 	}
 	if failed > 0 && refused == failed {
-		return licenceRefusalError("every selected profile refused the CLI: each install's ClickServer API key needs an active Prosper202 ClickServer Pro licence")
+		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
 	}
 	return fmt.Errorf("one or more profiles failed")
 }

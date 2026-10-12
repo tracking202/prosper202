@@ -176,6 +176,10 @@ func HintFor(err error) string {
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 402 && apiErr.Category == "licence":
 			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
+		case apiErr.Status == 402:
+			// categoryForHTTPStatus files it under server (exit 4); it needs
+			// that category's next step, not silence.
+			return "This 402 is not Prosper202's licence refusal: a proxy, WAF, CDN or hosting account in front of the install answered it. Retry after a short wait; if it persists, check what serves the URL in `p202 config show`."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
 		// A 409 has several unrelated causes -- a repeat of a deleted

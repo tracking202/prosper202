@@ -756,8 +756,8 @@ func resolveImportRow(r *conversionImportRow, ans clickLedgerAnswer) {
 
 // sendConversionImport posts every ready row, sales before negative rows so a reversal finds its
 // sale whatever the file's order. It stops at an error every later row would repeat and returns
-// that row's number (0 when it did not stop).
-func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[int64]map[int64]bool) int {
+// that row's number and the error (0 and nil when it did not stop).
+func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[int64]map[int64]bool) (int, error) {
 	var order []int
 	for _, negatives := range []bool{false, true} {
 		for i, r := range rows {
@@ -803,7 +803,7 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 						rows[j].Reason = fmt.Sprintf("not sent: the import stopped at row %d (%s error)", r.Row, api.ErrorCategory(err))
 					}
 				}
-				return r.Row
+				return r.Row, err
 			}
 			continue
 		}
@@ -850,7 +850,7 @@ func sendConversionImport(c *api.Client, rows []conversionImportRow, before map[
 			before[r.ClickID][r.ConvID] = true // a later row the server matches to it is a duplicate
 		}
 	}
-	return 0
+	return 0, nil
 }
 
 func countImportStatuses(rows []conversionImportRow) map[string]int {
@@ -1033,8 +1033,9 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 	stoppedAt := 0
+	var stopErr error
 	if ready > 0 {
-		stoppedAt = sendConversionImport(c, rows, before)
+		stoppedAt, stopErr = sendConversionImport(c, rows, before)
 	}
 
 	counts = summarize()
@@ -1049,6 +1050,13 @@ func runConversionImport(cmd *cobra.Command, args []string) (retErr error) {
 	}
 	if counts[importFailed] == 0 {
 		return nil
+	}
+	if refused := licenceRefusal(stopErr); refused != nil {
+		// `p202 config test` answers "Connection successful!" on an install that
+		// refuses the CLI (/system is not gated), so this stop keeps the licence
+		// contract: exit 6 and the trial, then the same re-run.
+		return withHint(fmt.Errorf("failed to record %d of %d row(s): the import stopped at row %d: %w", counts[importFailed], len(rows), stoppedAt, refused),
+			"%s A re-run of the same command sends only the rest: rows already recorded come back as duplicate.", api.HintFor(refused))
 	}
 	retry := "Rows with status failed carry the server's error. Fix the cause and re-run the same command: rows already recorded come back as duplicate (each row keeps its Idempotency-Key and transaction id, and each click's conversions are read first), so only the failures are sent again."
 	if stoppedAt > 0 {

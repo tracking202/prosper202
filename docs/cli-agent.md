@@ -181,9 +181,9 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | 1 | validation | Bad input, missing flags, invalid arguments, or a 4xx other than auth and 402 | Lists valid values, or `Run <command> --help` |
 | 2 | auth | Authentication or authorization failure (401/403) | Check the key with `p202 config get` / `p202 config set-key` |
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
-| 4 | server | API returned a 5xx error | Retry after a wait; `p202 system health` |
+| 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
-| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli` | Start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes); do not change the key or the URL |
+| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli`. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; with any other failure among them it is a generic failure (exit 1), and each item's own error says what it needs | Start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes); do not change the key or the URL |
 
 Decision procedure for an agent:
 
@@ -812,6 +812,8 @@ p202 import <entity> <file> [--dry-run] [--skip-errors] [--json]
 ```
 
 Supported export entities: `campaigns`, `aff-networks`, `ppc-networks`, `ppc-accounts`, `rotators`, `trackers`, `landing-pages`, `text-ads`, `all`.
+
+`import` stops at the first record that fails and exits with that record's category. `--skip-errors` skips a record the server rejects and goes on, but a refused key, no connection or the licence refusal still stop it, since every later record would meet the same failure.
 
 ### Multi-server workflows
 

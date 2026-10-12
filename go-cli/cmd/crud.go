@@ -162,6 +162,12 @@ func renderDeletePreviews(c *api.Client, endpoint string, ids []string) error {
 	for _, id := range ids {
 		data, err := c.DeletePreview(endpoint + "/" + id)
 		if err != nil {
+			if refused := licenceRefusal(err); refused != nil {
+				// Every remaining id would meet the same 402: stop, and report
+				// it as the licence refusal (exit 6, the trial hint).
+				return fmt.Errorf("previewing the delete of %s/%s (%d of %d previewed before it; the rest not attempted): %w",
+					endpoint, id, len(previews), len(ids), refused)
+			}
 			failed++
 			fmt.Fprintf(os.Stderr, "Failed to preview delete for %s: %v\n", id, withDryRunHint(err))
 			continue
@@ -202,10 +208,21 @@ func stageDeletes(c *api.Client, endpoint string, ids []string) error {
 	}
 
 	changes := make([]interface{}, 0, len(ids))
+	changeIDs := make([]string, 0, len(ids)) // named in a stop, which renders no envelopes
 	failed := 0
 	for _, id := range ids {
 		data, err := c.DeleteReturning(endpoint + "/" + id)
 		if err != nil {
+			if refused := licenceRefusal(err); refused != nil {
+				// Every remaining id would meet the same 402: stop with the
+				// licence refusal, naming the proposals already staged.
+				staged := ""
+				if len(changeIDs) > 0 {
+					staged = " as " + strings.Join(changeIDs, ", ")
+				}
+				return fmt.Errorf("staging the delete of %s/%s (%d of %d staged before it%s; the rest not attempted): %w",
+					endpoint, id, len(changes), len(ids), staged, refused)
+			}
 			failed++
 			fmt.Fprintf(os.Stderr, "Failed to stage delete for %s: %v\n", id, err)
 			continue
@@ -217,6 +234,9 @@ func stageDeletes(c *api.Client, endpoint string, ids []string) error {
 			continue
 		}
 		changes = append(changes, obj)
+		if cid, _ := obj["change_id"].(string); cid != "" {
+			changeIDs = append(changeIDs, cid)
+		}
 	}
 	encoded, err := json.Marshal(map[string]interface{}{"data": changes})
 	if err != nil {

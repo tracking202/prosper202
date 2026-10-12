@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,7 +52,7 @@ func licenceServer(t *testing.T, hits *int) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/versions"):
 			w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
 		case strings.HasSuffix(r.URL.Path, "/capabilities"):
-			w.Write([]byte(`{"data":{"shell":true,"cli":false,"features":{"delete_dry_run":true}}}`))
+			w.Write([]byte(`{"data":{"shell":true,"cli":false,"features":{"delete_dry_run":true,"staged_writes":true}}}`))
 		default:
 			*hits++
 			w.WriteHeader(402)
@@ -133,6 +135,9 @@ func TestExecFailureIsTheLicenceRefusalWhenEveryChildWasRefused(t *testing.T) {
 		"dev":     {Profile: "dev", ExitCode: 0},
 	})
 	assertLicenceRefusal(t, err, "exec, every failed child refused")
+	if !strings.Contains(err.Error(), "2 of 3 selected profiles failed") {
+		t.Errorf("message %q should count the refused profiles, not call all three refused", err)
+	}
 	mixed := execFailure(map[string]execResult{
 		"prod":    {Profile: "prod", ExitCode: ExitLicence},
 		"staging": {Profile: "staging", ExitCode: 1},
@@ -163,8 +168,17 @@ func TestABare402IsNotALicenceRefusal(t *testing.T) {
 	if got := exitCodeForError(err); got != ExitServer {
 		t.Errorf("exit code = %d, want %d (ExitServer)", got, ExitServer)
 	}
-	if h := hintFor(err); strings.Contains(h, "7-day free trial") {
+	h := hintFor(err)
+	if strings.Contains(h, "7-day free trial") {
 		t.Errorf("hint %q must not send the user to the trial", h)
+	}
+	// It is still a failure with a next step: retry it as the server error it
+	// is, and look at what answers in front of the install.
+	if !strings.Contains(h, "Retry") || !strings.Contains(h, "proxy") {
+		t.Errorf("hint %q should say to retry and name what sits in front of the install", h)
+	}
+	if env, _ := errorEnvelope(err)["error"].(map[string]interface{}); env["hint"] == nil {
+		t.Errorf("the --json envelope carries no hint: %v", env)
 	}
 	if abortsImport(err) {
 		t.Error("a bare 402 is a server error and must not abort an import")
@@ -180,5 +194,241 @@ func TestALicenceRefusalAbortsAnImport(t *testing.T) {
 	}
 	if abortsImport(&api.APIError{Status: 422, Category: "validation", Message: "bad row"}) {
 		t.Fatal("a validation error is per row and must not abort the import")
+	}
+}
+
+// A run that aggregates several failures is the licence refusal only when a
+// licence is what every one of them needs: one profile refused and another
+// unreachable is not fixed by a trial.
+func TestLicenceRefusalRequiresEveryFailureToBeOne(t *testing.T) {
+	refused := &api.APIError{Status: 402, Category: "licence", Message: "requires a Pro licence"}
+	other := &api.APIError{Status: 402, Category: "licence", Message: "the second profile's refusal"}
+	unreachable := &api.RequestError{Kind: "network", Op: "request", Err: errors.New("connection refused")}
+	if got := licenceRefusal(refused, nil, other); !errors.Is(got, refused) {
+		t.Errorf("every failure refused: got %v, want the first refusal", got)
+	}
+	if got := licenceRefusal(refused, unreachable); got != nil {
+		t.Errorf("a refusal beside a network failure: got %v, want nil", got)
+	}
+	if got := licenceRefusal(unreachable, refused); got != nil {
+		t.Errorf("a network failure beside a refusal: got %v, want nil", got)
+	}
+	if got := licenceRefusal(); got != nil {
+		t.Errorf("no failures: got %v, want nil", got)
+	}
+	if got := licenceRefusal(nil, nil); got != nil {
+		t.Errorf("only nils: got %v, want nil", got)
+	}
+}
+
+// Every profile failed, but only one for the licence: the run is not the
+// licence refusal (no exit 6, no trial hint), whichever profile answers first.
+func TestMultiProfileReportIsNotALicenceRefusalWhenAnotherProfileFailedOtherwise(t *testing.T) {
+	hits := 0
+	refusing := licenceServer(t, &hits)
+	defer refusing.Close()
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfigWithProfiles(t, tmp, "prod", map[string]map[string]interface{}{
+		"prod":    {"url": refusing.URL, "api_key": "prod-key-123456"},
+		"staging": {"url": deadURL, "api_key": "staging-key-123456"},
+	})
+	_, _, err := executeCommand("report", "summary", "--all-profiles", "--json")
+	if err == nil {
+		t.Fatal("want an error when every profile failed")
+	}
+	if hits == 0 {
+		t.Fatal("the refusing profile was never asked; the test would prove nothing")
+	}
+	if got := api.ErrorCategory(err); got == "licence" {
+		t.Errorf("category = licence for a run one licence cannot fix (%v)", err)
+	}
+	if got := exitCodeForError(err); got == ExitLicence {
+		t.Errorf("exit code = %d (ExitLicence) for a run one licence cannot fix", got)
+	}
+	if h := hintFor(err); strings.Contains(h, "7-day free trial") {
+		t.Errorf("hint %q sends the user to the trial for a failure it cannot fix", h)
+	}
+}
+
+// The same rule for a shell batch: a refused command beside a command or a
+// built-in that failed for its own reason is not reported as the licence
+// refusal.
+func TestShellBatchIsNotALicenceRefusalWhenAnotherCommandFailedOtherwise(t *testing.T) {
+	for _, batch := range []string{"user list; shell", "user list; unset nosuch"} {
+		t.Run(batch, func(t *testing.T) {
+			hits := 0
+			srv := licenceServer(t, &hits)
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+			_, _, err := executeCommand("shell", "-c", batch)
+			if err == nil {
+				t.Fatal("want an error from the batch")
+			}
+			if hits == 0 {
+				t.Fatal("no command met the refusal; the test would prove nothing")
+			}
+			if got := api.ErrorCategory(err); got == "licence" || exitCodeForError(err) == ExitLicence {
+				t.Errorf("category %q / exit %d for a batch one licence cannot fix (%v)", got, exitCodeForError(err), err)
+			}
+		})
+	}
+}
+
+// p202 import <entity> sends one POST per record. Once the install refuses
+// the CLI every record meets the same 402, so the import stops at the first
+// one and reports the refusal (exit 6, the trial hint), --skip-errors or not.
+func TestEntityImportStopsOnTheLicenceRefusal(t *testing.T) {
+	file := writeImportFile(t, "campaigns.json", `[{"aff_campaign_name":"a"},{"aff_campaign_name":"b"},{"aff_campaign_name":"c"}]`)
+	for _, extra := range [][]string{nil, {"--skip-errors"}} {
+		t.Run(strings.Join(append([]string{"import"}, extra...), " "), func(t *testing.T) {
+			hits := 0
+			srv := licenceServer(t, &hits)
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+			stdout, _, err := executeCommand(append([]string{"import", "campaigns", file}, extra...)...)
+			assertLicenceRefusal(t, err, "import campaigns")
+			if hits != 1 {
+				t.Errorf("want one refused request, then a stop; got %d", hits)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("stdout must stay empty on a refusal, got %q", stdout)
+			}
+		})
+	}
+}
+
+// The entity import keeps each record's own error: a refused key stops it
+// with the auth contract (exit 2, the key hint), and a record the server
+// rejects on its own is skipped under --skip-errors while the rest go on.
+func TestEntityImportKeepsTheRecordsErrorContract(t *testing.T) {
+	file := writeImportFile(t, "campaigns.json", `[{"aff_campaign_name":"a"},{"aff_campaign_name":"b"},{"aff_campaign_name":"c"}]`)
+	t.Run("a refused key", func(t *testing.T) {
+		posts := 0
+		srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+			posts++
+			w.WriteHeader(401)
+			w.Write([]byte(`{"error":true,"status":401,"message":"Invalid API key"}`))
+		}))
+		defer srv.Close()
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+		for _, extra := range [][]string{nil, {"--skip-errors"}} {
+			posts = 0
+			_, _, err := executeCommand(append([]string{"import", "campaigns", file}, extra...)...)
+			if err == nil {
+				t.Errorf("%v: every record refused and the import succeeded (%d posts)", extra, posts)
+				continue
+			}
+			if got := exitCodeForError(err); got != ExitAuth || !strings.Contains(hintFor(err), "config set-key") {
+				t.Errorf("%v: exit %d, hint %q (%v); want %d and the key hint", extra, got, hintFor(err), err, ExitAuth)
+			}
+			if posts != 1 {
+				t.Errorf("%v: want a stop at the first refused record, got %d posts", extra, posts)
+			}
+		}
+	})
+	t.Run("a record's own rejection under --skip-errors", func(t *testing.T) {
+		posts := 0
+		srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+			posts++
+			raw, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(raw), `"b"`) {
+				w.WriteHeader(422)
+				w.Write([]byte(`{"error":true,"status":422,"message":"Validation failed","field_errors":{"aff_campaign_name":"taken"}}`))
+				return
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"data":{"aff_campaign_id":1}}`))
+		}))
+		defer srv.Close()
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+		if _, _, err := executeCommand("import", "campaigns", file, "--skip-errors"); exitCodeForError(err) == ExitLicence || exitCodeForError(err) == ExitAuth {
+			t.Errorf("a record's own rejection reported as %v (exit %d)", err, exitCodeForError(err))
+		}
+		if posts != 3 {
+			t.Errorf("want every record sent past the rejected one, got %d posts", posts)
+		}
+	})
+}
+
+// The conversion import reads every click first, so an unlicensed install
+// refuses it before any write. A refusal that starts between the read and the
+// writes (the install's allow expired) stops the writes with the licence
+// contract too, not the generic stop that points at `p202 config test`,
+// which answers "Connection successful!" on such an install (/system is not
+// gated).
+func TestConversionImportStopsOnALicenceRefusalWhileWriting(t *testing.T) {
+	f := newConvImportFake(100, 101, 102)
+	f.licencePost[101] = true
+	setupConvImportFake(t, f)
+	file := writeImportFile(t, "export.csv", "subid,payout,transaction_id\n100,10,T1\n101,10,T2\n102,10,T3\n")
+	stdout, _, err := executeCommand("conversion", "import", file, "--force", "--json")
+	assertLicenceRefusal(t, err, "conversion import, refused while writing")
+	if h := hintFor(err); strings.Contains(h, "config test") || !strings.Contains(h, "re-run") {
+		t.Errorf("hint %q should keep the re-run advice and not point at `p202 config test`", h)
+	}
+	rows := importByRow(decodeImport(t, stdout))
+	if rows[2].Status != importCreated || rows[3].Status != importFailed || rows[4].Status != importFailed ||
+		!strings.Contains(rows[4].Reason, "not sent: the import stopped at row 3 (licence error)") {
+		t.Errorf("rows = %+v", rows)
+	}
+	for _, p := range f.posts {
+		if p.Body["click_id"] == float64(102) {
+			t.Error("a row after the refusal was sent")
+		}
+	}
+}
+
+// The multi-id delete preview and staged delete are the bulk delete's
+// siblings: an unlicensed install refuses the first id, and the rest would
+// meet the same 402.
+func TestBulkDeletePreviewAndStagingStopOnTheLicenceRefusal(t *testing.T) {
+	for _, mode := range []string{"--dry-run", "--staged"} {
+		t.Run(mode, func(t *testing.T) {
+			hits := 0
+			srv := licenceServer(t, &hits)
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+			stdout, _, err := executeCommand("campaign", "delete", "--ids", "1,2,3", "--force", mode)
+			assertLicenceRefusal(t, err, "campaign delete --ids "+mode)
+			if hits != 1 {
+				t.Errorf("want one refused request, then a stop; got %d", hits)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("stdout must stay empty on a refusal, got %q", stdout)
+			}
+		})
+	}
+}
+
+// tracker check <id> reads the tracker's link from the install first; a
+// refusal there is the install's licence, not a broken tracker.
+func TestTrackerCheckIsTheLicenceRefusal(t *testing.T) {
+	hits := 0
+	srv := licenceServer(t, &hits)
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-12345678")
+	stdout, _, err := executeCommand("tracker", "check", "5")
+	assertLicenceRefusal(t, err, "tracker check 5")
+	if hits != 1 {
+		t.Errorf("want one refused request; got %d", hits)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout must stay empty on a refusal, got %q", stdout)
 	}
 }
