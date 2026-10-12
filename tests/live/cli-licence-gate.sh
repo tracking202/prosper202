@@ -19,6 +19,9 @@
 #      is used when there is one, without my.tracking202.com being asked
 #   3. the built Go CLI itself (P202_BIN), when given: exit 6, the licence
 #      category on stderr, nothing on stdout, then exit 0 once allowed
+#   3b. a sub-user created through the API with a key of their own and no
+#      ClickServer key is judged by the account owner's (the one SQL join in
+#      the feature), both ways; the sub-user is deleted again
 #   4. P202_LICENCE_STUB=1 only — my.tracking202.com is CI's stub
 #      (.github/workflows/agent-evals.yml), which answers by the key's
 #      suffix: every answer the service can give, and three it never does,
@@ -105,7 +108,8 @@ jget() {
 # cache <op> <key> [arg], through the server's own classes:
 #   write 0|1        a verdict        invalidate   drop the entry and the hold-off
 #   mark-unknown     the hold-off     age <sec>    make the entry <sec> old
-#   recently-unknown prints yes/no    shell-write 0|1 / shell-invalidate  the shell cache
+#   recently-unknown prints yes/no
+#   shell-write 0|1 / shell-invalidate / shell-mark-unknown   the shell cache
 cache() {
     # shellcheck disable=SC2016  # PHP code, not a shell expression
     php -r '
@@ -125,15 +129,17 @@ cache() {
                 break;
             case "shell-write": $shell::write($key, $arg === "1"); break;
             case "shell-invalidate": $shell::invalidate($key); break;
+            case "shell-mark-unknown": $shell::markUnknown($key); break;
             default: fwrite(STDERR, "unknown cache op $op\n"); exit(1);
         }
     ' "$ROOT" "$@"
 }
 
-# request <user-agent> <path>: sets STATUS and BODY
+# request <user-agent> <path> [api-key] [method] [json-body]: sets STATUS and BODY
 request() {
-    local out
-    out=$(curl -sS -o - -w $'\n%{http_code}' -H "Authorization: Bearer $API_KEY" -A "$1" "$BASE/api/v3$2")
+    local out args=(-sS -o - -w $'\n%{http_code}' -H "Authorization: Bearer ${3:-$API_KEY}" -A "$1" -X "${4:-GET}")
+    [ -n "${5:-}" ] && args+=(-H 'Content-Type: application/json' --data "$5")
+    out=$(curl "${args[@]}" "$BASE/api/v3$2")
     STATUS=${out##*$'\n'}
     BODY=${out%$'\n'*}
 }
@@ -153,6 +159,7 @@ if ! ORIGINAL_KEY=$(mysql_q "SELECT COALESCE(p202_customer_api_key, '') FROM 202
 fi
 
 KEYS_TOUCHED=()
+SUB_USER=''
 set_key() { # $1 = the key the install should hold; its caches start empty
     KEYS_TOUCHED+=("$1")
     cache invalidate "$1"
@@ -161,6 +168,10 @@ set_key() { # $1 = the key the install should hold; its caches start empty
 }
 restore() {
     mysql_q "UPDATE 202_users SET p202_customer_api_key = $( [ -n "$ORIGINAL_KEY" ] && printf "'%s'" "$ORIGINAL_KEY" || echo NULL ) WHERE user_id = $USER_ID" || true
+    if [ -n "$SUB_USER" ]; then
+        request "$CURL_UA" "/users/$SUB_USER" "$API_KEY" DELETE
+        [ "$STATUS" = 204 ] || echo "note: deleting the sub-user $SUB_USER answered $STATUS" >&2
+    fi
     for k in "${KEYS_TOUCHED[@]}"; do
         cache invalidate "$k"
         cache shell-invalidate "$k"
@@ -197,6 +208,18 @@ request "$GO_UA" /campaigns;  expect_refused "Go CLI on a cached 'not paid'"
 request "$PHP_UA" /campaigns; expect_allowed "PHP CLI on the same key"
 request "$CURL_UA" /campaigns; expect_allowed "curl on the same key"
 request "$GO_UA" /system/health; expect_allowed "Go CLI, /system/health stays open"
+request "$GO_UA" /system
+if [ "$STATUS" != 402 ]; then
+    ok "Go CLI, /system itself is not gated (answered $STATUS by the router, not 402)"
+else
+    ko "/system itself should not be gated" "got $STATUS: $BODY"
+fi
+request "$GO_UA" /systematic
+if [ "$STATUS" = 402 ]; then
+    ok "Go CLI, a path that merely starts with /system is gated (402 before any 404)"
+else
+    ko "a path that merely starts with /system should be gated" "got $STATUS: $BODY"
+fi
 request "$GO_UA" /capabilities
 if [ "$STATUS" = 200 ] && [ "$(printf '%s' "$BODY" | jget data.cli)" = false ]; then
     ok "Go CLI, /capabilities stays open and reports cli: false"
@@ -210,6 +233,23 @@ if [ "$(printf '%s' "$BODY" | jget data.cli)" = true ]; then
     ok "/capabilities reports cli: true"
 else
     ko "/capabilities should report cli: true" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
+fi
+
+echo "# 1b. the shell verdict has the same hold-off"
+cache shell-invalidate "$K1"
+cache shell-mark-unknown "$K1"
+request "$GO_UA" /capabilities
+if [ "$STATUS" = 200 ] && [ "$(printf '%s' "$BODY" | jget data.shell)" = false ]; then
+    ok "shell hold-off with no older verdict: /capabilities reports shell: false without asking"
+else
+    ko "/capabilities should report shell: false from the hold-off alone" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
+fi
+cache shell-write "$K1" 1
+request "$GO_UA" /capabilities
+if [ "$(printf '%s' "$BODY" | jget data.shell)" = true ]; then
+    ok "a shell verdict ends its hold-off"
+else
+    ko "/capabilities should report shell: true once a verdict is written" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
 fi
 
 echo "# 2. an unanswered check: the last verdict, or allowed, and no new call"
@@ -248,6 +288,37 @@ if [ -n "$BIN" ]; then
     fi
 else
     echo "skip - P202_BIN not set: the built CLI was not run"
+fi
+
+echo "# 3b. a sub-user with no ClickServer key is judged by the account owner's"
+RUN_ID=$(php -r 'echo bin2hex(random_bytes(4));')
+request "$CURL_UA" /users "$API_KEY" POST "{\"user_name\":\"licgate$RUN_ID\",\"user_email\":\"licgate$RUN_ID@example.test\",\"user_pass\":\"licgate-pass-$RUN_ID\"}"
+if [ "$STATUS" = 201 ]; then
+    SUB_USER=$(printf '%s' "$BODY" | jget data.user_id)
+    request "$CURL_UA" "/users/$SUB_USER/api-keys" "$API_KEY" POST '{}'
+    SUB_KEY=$(printf '%s' "$BODY" | jget data.api_key)
+fi
+if [ -n "${SUB_USER:-}" ] && [ -n "${SUB_KEY:-}" ]; then
+    ok "a sub-user $SUB_USER with an API key of their own was created through the API"
+    sub_has_key=$(mysql_q "SELECT COALESCE(p202_customer_api_key, '') FROM 202_users WHERE user_id = $SUB_USER")
+    if [ -z "$sub_has_key" ]; then
+        ok "the sub-user holds no ClickServer key"
+    else
+        ko "the sub-user should hold no ClickServer key" "has '$sub_has_key'"
+    fi
+    cache write "$K1" 0
+    request "$GO_UA" /campaigns "$SUB_KEY"; expect_refused "sub-user, Go CLI, the owner's key 'not paid'"
+    request "$PHP_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user, PHP CLI, same key"
+    request "$GO_UA" /capabilities "$SUB_KEY"
+    if [ "$STATUS" = 200 ] && [ "$(printf '%s' "$BODY" | jget data.cli)" = false ]; then
+        ok "sub-user, /capabilities reports cli: false from the owner's verdict"
+    else
+        ko "sub-user, /capabilities should report cli: false" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
+    fi
+    cache write "$K1" 1
+    request "$GO_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user, Go CLI, the owner's key 'paid'"
+else
+    ko "could not create a sub-user with an API key through the API" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
 fi
 
 echo "# 4. real answers from my.tracking202.com (the CI stub)"

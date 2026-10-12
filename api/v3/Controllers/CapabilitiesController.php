@@ -278,7 +278,8 @@ class CapabilitiesController
      * Results are cached per-key (ShellAccessCache::TTL_SECONDS) to avoid
      * hitting my.tracking202.com on every capabilities request. If ClickServer
      * is unreachable the last known result is used regardless of age, and
-     * access is denied when no prior result exists (fail-closed).
+     * access is denied when no prior result exists (fail-closed); the
+     * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
      */
     private function shellAccess(): bool
     {
@@ -295,9 +296,16 @@ class CapabilitiesController
         if ($cached !== null) {
             return $cached;
         }
+        // An unanswered check holds off the next for UNKNOWN_TTL_SECONDS, as
+        // for the CLI: /capabilities is what the Go CLI opens with, and
+        // during an outage every call would otherwise pay the timeouts.
+        if (ShellAccessCache::recentlyUnknown($customerKey)) {
+            return ShellAccessCache::readStale($customerKey) === true;
+        }
 
         $result = $this->checkKey($customerKey);
         if ($result === null) {
+            ShellAccessCache::markUnknown($customerKey);
             return ShellAccessCache::readStale($customerKey) === true;
         }
         return $result['valid'];
@@ -338,6 +346,11 @@ class CapabilitiesController
         }
 
         $customerKey = $this->loadClickServerKey();
+        if ($customerKey === '' && $this->keyLookupFailed) {
+            // Whether this user has a key of their own is unknown; judging
+            // them by the owner's would be a guess in either direction.
+            return true;
+        }
         if ($customerKey === '') {
             $customerKey = $this->loadOwnerClickServerKey();
         }

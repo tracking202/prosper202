@@ -50,6 +50,14 @@ class ClickServerKeyValidator
         // Verify the TLS certificate so the validation response cannot be forged
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        // Follow a redirect, keeping the POST body, as the two older callers
+        // of this endpoint do (functions-tracking202.php): an edge redirect
+        // would otherwise make every answer "unknown", and the gate and the
+        // web check would silently stop deciding. The host is pinned by the
+        // URL above and the certificate check applies to every hop.
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
 
         $response = curl_exec($ch);
         $failed = curl_errno($ch) || $response === false;
@@ -58,10 +66,22 @@ class ClickServerKeyValidator
         // its notice lands in whatever response this runs inside of.
 
         if ($failed) {
+            error_log('ClickServerKeyValidator: no answer from ' . self::VALIDATE_URL . ': ' . curl_error($ch));
             return null;
         }
 
-        return self::interpret($status, (string)$response);
+        $verdict = self::interpret($status, (string)$response);
+        if ($verdict === null) {
+            // The gate and the web check fail open on this, so without a
+            // line here nobody would know they had stopped deciding.
+            error_log(sprintf(
+                'ClickServerKeyValidator: unusable answer from %s: HTTP %d, body %s',
+                self::VALIDATE_URL,
+                $status,
+                json_encode(substr((string)$response, 0, 200))
+            ));
+        }
+        return $verdict;
     }
 
     /**

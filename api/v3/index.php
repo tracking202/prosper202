@@ -255,11 +255,13 @@ try {
     // my.tracking202.com on a cold cache.
     if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
         && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
-        && !str_starts_with($path, '/system')   // diagnostics stay usable
+        && $path !== '/system' && !str_starts_with($path, '/system/')   // diagnostics stay usable
         && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
         Bootstrap::errorResponse(
-            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. '
-            . 'Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support',
+            'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
+            . 'ClickServer API key. Start a 7-day free trial at '
+            . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
+            . 'ClickServer API key yet enters one on its api-key-required.php page first.',
             402,
             ['category' => 'licence']
         );
