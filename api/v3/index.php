@@ -259,7 +259,7 @@ try {
         && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
         Bootstrap::errorResponse(
             'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
-            . 'ClickServer API key. Start a 7-day free trial at '
+            . 'ClickServer API key. Start a Pro trial or subscription at '
             . 'https://my.tracking202.com/api/customers/subscriptions/support; an install with no '
             . 'ClickServer API key yet enters one on its api-key-required.php page first.',
             402,

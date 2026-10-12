@@ -197,8 +197,10 @@ class ShellAccessCache
      * that as unknown and the claimant's verdict lands in the cache for
      * everyone, so a burst of cold requests asks once rather than once per
      * worker. A claim older than that belonged to a worker that died
-     * mid-check and is taken over. True when there is no cache directory:
-     * nothing to coordinate on. endCheck() releases it.
+     * mid-check and is taken over. True when there is no cache directory, or
+     * when the claim cannot be created (disk full, read-only temp): nothing to
+     * coordinate on, so the caller asks rather than reads unknown. endCheck()
+     * releases it.
      */
     public static function beginCheck(string $key): bool
     {
@@ -210,12 +212,20 @@ class ShellAccessCache
         if (self::claim($lock)) {
             return true;
         }
+        clearstatcache(true, $lock);
         $mtime = @filemtime($lock);
-        if ($mtime !== false && $mtime <= time() && (time() - $mtime) < self::CHECK_LOCK_SECONDS) {
+        if ($mtime === false) {
+            return true;
+        }
+        if ($mtime <= time() && (time() - $mtime) < self::CHECK_LOCK_SECONDS) {
             return false;
         }
         @unlink($lock);
-        return self::claim($lock);
+        if (self::claim($lock)) {
+            return true;
+        }
+        clearstatcache(true, $lock);
+        return !file_exists($lock);
     }
 
     public static function endCheck(string $key): void

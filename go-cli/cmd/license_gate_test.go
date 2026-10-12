@@ -20,7 +20,7 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 			t.Errorf("request without the p202-cli User-Agent the install gates on: %q", r.Header.Get("User-Agent"))
 		}
 		w.WriteHeader(402)
-		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support"}`))
+		w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"}`))
 	}))
 	defer srv.Close()
 	tmp := t.TempDir()
@@ -30,7 +30,7 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Pro licence") {
 		t.Fatalf("want the Pro licence refusal, got %v", err)
 	}
-	if h := hintFor(err); !strings.Contains(h, "7-day free trial") || strings.Contains(h, "Verify your API key") {
+	if h := hintFor(err); !strings.Contains(h, "Pro trial or subscription") || strings.Contains(h, "Verify your API key") {
 		t.Errorf("hint %q should point at the trial, not the key", h)
 	}
 	// A stable contract for agents: its own category and exit code, not
@@ -56,7 +56,7 @@ func licenceServer(t *testing.T, hits *int) *httptest.Server {
 		default:
 			*hits++
 			w.WriteHeader(402)
-			w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install's ClickServer API key. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support"}`))
+			w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install's ClickServer API key. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"}`))
 		}
 	}))
 }
@@ -72,7 +72,7 @@ func assertLicenceRefusal(t *testing.T, err error, what string) {
 	if got := exitCodeForError(err); got != ExitLicence {
 		t.Errorf("%s: exit code = %d, want %d", what, got, ExitLicence)
 	}
-	if h := hintFor(err); !strings.Contains(h, "7-day free trial") {
+	if h := hintFor(err); !strings.Contains(h, "Pro trial or subscription") {
 		t.Errorf("%s: hint %q should point at the trial", what, h)
 	}
 }
@@ -169,7 +169,7 @@ func TestABare402IsNotALicenceRefusal(t *testing.T) {
 		t.Errorf("exit code = %d, want %d (ExitServer)", got, ExitServer)
 	}
 	h := hintFor(err)
-	if strings.Contains(h, "7-day free trial") {
+	if strings.Contains(h, "Pro trial or subscription") {
 		t.Errorf("hint %q must not send the user to the trial", h)
 	}
 	// It is still a failure with a next step: retry it as the server error it
@@ -182,6 +182,42 @@ func TestABare402IsNotALicenceRefusal(t *testing.T) {
 	}
 	if abortsImport(err) {
 		t.Error("a bare 402 is a server error and must not abort an import")
+	}
+}
+
+// A JSON 402 is a licence refusal only when it names the licence category
+// exactly; a WAF's or a suspended host's JSON 402 stays a server error.
+func TestAJSON402WithoutTheLicenceCategoryIsNotARefusal(t *testing.T) {
+	for _, body := range []string{
+		`{"error":true,"status":402,"message":"Payment Required"}`,
+		`{"error":true,"status":402,"category":"server","message":"Payment Required"}`,
+		`{"error":true,"status":402,"category":"Licence","message":"wrong case"}`,
+		`{"message":"account suspended"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(402)
+				w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			tmp := t.TempDir()
+			setTestHome(t, tmp)
+			writeTestConfig(t, tmp, srv.URL, "test-key")
+			_, _, err := executeCommand("user", "list")
+			if err == nil {
+				t.Fatal("want an error from the 402")
+			}
+			if got := api.ErrorCategory(err); got != "server" {
+				t.Errorf("category = %q, want server", got)
+			}
+			if got := exitCodeForError(err); got != ExitServer {
+				t.Errorf("exit code = %d, want %d (ExitServer)", got, ExitServer)
+			}
+			if abortsImport(err) {
+				t.Error("a 402 that is not the licence refusal must not abort an import")
+			}
+		})
 	}
 }
 
@@ -249,7 +285,7 @@ func TestMultiProfileReportIsNotALicenceRefusalWhenAnotherProfileFailedOtherwise
 	if got := exitCodeForError(err); got == ExitLicence {
 		t.Errorf("exit code = %d (ExitLicence) for a run one licence cannot fix", got)
 	}
-	if h := hintFor(err); strings.Contains(h, "7-day free trial") {
+	if h := hintFor(err); strings.Contains(h, "Pro trial or subscription") {
 		t.Errorf("hint %q sends the user to the trial for a failure it cannot fix", h)
 	}
 }

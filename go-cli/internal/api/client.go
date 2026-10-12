@@ -175,7 +175,7 @@ func HintFor(err error) string {
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
 		case apiErr.Status == 402 && apiErr.Category == "licence":
-			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
+			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
 		case apiErr.Status == 402:
 			// categoryForHTTPStatus files it under server (exit 4); it needs
 			// that category's next step, not silence.

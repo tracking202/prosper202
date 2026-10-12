@@ -219,6 +219,20 @@ final class CliAccessCacheTest extends TestCase
         self::assertFileDoesNotExist($path . '.checking');
     }
 
+    public function testAClaimThatCannotBeCreatedStillAsks(): void
+    {
+        $unwritable = new class () extends ShellAccessCache {
+            protected static function path(string $key): ?string
+            {
+                return sys_get_temp_dir() . '/p202-no-such-dir-' . bin2hex(random_bytes(6)) . '/entry.cache';
+            }
+        };
+        self::assertTrue(
+            $unwritable::beginCheck($this->key),
+            'a lock that cannot be created is nothing to coordinate on, not another worker\'s claim'
+        );
+    }
+
     public function testInvalidateDropsTheHoldOffToo(): void
     {
         CliAccessCache::markUnknown($this->key);
