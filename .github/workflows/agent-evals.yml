@@ -155,8 +155,10 @@ jobs:
                   self.send_raw(status, "application/json", json.dumps(payload).encode())
 
               # Every answer the real service gives, plus three it never does,
-              # chosen by the key's suffix. tests/live/cli-licence-gate.sh sets
-              # the install's key to each; keep the two lists in step.
+              # chosen by the key's suffix; "-redirect", "-redirect-away" and
+              # "-redirect-loop" (in do_POST) exercise the validator's own
+              # redirect handling. tests/live/cli-licence-gate.sh sets the
+              # install's key to each; keep the two lists in step.
               ANSWERS = {
                   "-unpaid":   (200, {"code": 200, "msg": "Key valid", "paid": False}),
                   "-no-paid":  (200, {"code": 200, "msg": "Key valid"}),
@@ -167,15 +169,33 @@ jobs:
                   "-gateway":  (404, {"message": "Not Found"}),
               }
 
+              def redirect(self, location):
+                  self.send_response(302)
+                  self.send_header("Location", location)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+
               def do_POST(self):
                   length = int(self.headers.get("Content-Length") or 0)
                   form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
-                  if self.path.rstrip("/") == "/api/v2/validate-customers-key":
+                  path = self.path.rstrip("/")
+                  if path == "/api/v2/validate-customers-key/moved":
+                      # Where "-redirect" keys are sent: the validator followed a
+                      # same-host HTTPS redirect with the POST body intact.
+                      key = form.get("key", [""])[0].strip()
+                      return self.send_json(200, {"code": 200, "msg": "Key valid", "paid": not key.endswith("-unpaid-redirect")})
+                  if path == "/api/v2/validate-customers-key":
                       key = form.get("key", [""])[0].strip()
                       if not key:
                           return self.send_json(404, {"code": 404, "msg": "Key not found"})
                       if key.endswith("-outage"):
                           return self.send_raw(503, "text/html", b"<html><body>Service Unavailable</body></html>")
+                      if key.endswith("-redirect"):
+                          return self.redirect("https://my.tracking202.com/api/v2/validate-customers-key/moved")
+                      if key.endswith("-redirect-away"):
+                          return self.redirect("https://evil.example/api/v2/validate-customers-key")
+                      if key.endswith("-redirect-loop"):
+                          return self.redirect("https://my.tracking202.com/api/v2/validate-customers-key")
                       for suffix, (status, payload) in self.ANSWERS.items():
                           if key.endswith(suffix):
                               return self.send_json(status, payload)

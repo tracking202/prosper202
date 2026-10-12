@@ -325,7 +325,9 @@ class CapabilitiesController
      * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
      * of CLI requests during an outage pays the connect timeout once. Falls
      * back to the install owner's key when the API user has none, so
-     * sub-users of a paid install are covered.
+     * sub-users of a paid install are covered. Known residual: a cache
+     * directory another local user pre-created is refused (ShellAccessCache::dir,
+     * which logs it), and without it nothing is cached, hold-off included.
      */
     public function cliAccess(): bool
     {
@@ -342,7 +344,10 @@ class CapabilitiesController
     private function cliAccessVerdict(): bool
     {
         if ($this->userId === null) {
-            return false;
+            // Unreachable from the API (Auth::userId() is an int, and the
+            // user-less controller only serves /versions); kept open like
+            // every other unknown here rather than as the one silent denial.
+            return true;
         }
 
         $customerKey = $this->loadClickServerKey();

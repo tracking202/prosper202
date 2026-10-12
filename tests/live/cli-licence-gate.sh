@@ -29,7 +29,9 @@
 #      "valid, not paid", "no such key" and "key refused"; allowed on
 #      "paid", on "valid, licence unknown", and on an outage, a gateway's
 #      own 404 body, a message the service never sends and a 'paid' that is
-#      not a boolean — the answers that must never read as a denial
+#      not a boolean — the answers that must never read as a denial; a
+#      redirect to the service itself is followed with the key (both
+#      verdicts), one to another host or a redirect loop is unknown
 #
 # Steps 1-3 never make the server call my.tracking202.com: every key they set
 # is a fresh random string with its verdicts (or its hold-off) written to both
@@ -344,6 +346,10 @@ if [ "$STUB" = 1 ]; then
     stub_case stranger allowed "200 with a message the service never sends: unknown, allowed"
     stub_case gateway  allowed "404 without the service's envelope: unknown, allowed"
     stub_case outage   allowed "503 error page: unknown, allowed"
+    stub_case paid-redirect   allowed "302 to the service itself over HTTPS: followed with the key, 'paid': allowed"
+    stub_case unpaid-redirect refused "302 to the service itself over HTTPS: followed, 'not paid': refused"
+    stub_case redirect-away   allowed "302 to another host: not followed, unknown, allowed"
+    stub_case redirect-loop   allowed "302 back to itself three times: given up, unknown, allowed"
     if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
         ok "the outage left a hold-off, not a verdict"
     else

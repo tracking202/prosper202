@@ -654,10 +654,11 @@ func isClickNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Status == 404 && strings.HasPrefix(strings.ToLower(apiErr.Message), "click not found")
 }
 
-// abortsImport reports errors that every later request would repeat (a refused key, no connection).
+// abortsImport reports errors that every later request would repeat (a refused key, no connection,
+// an install that refuses the CLI without a Pro licence).
 func abortsImport(err error) bool {
 	cat := api.ErrorCategory(err)
-	return cat == "auth" || cat == "network"
+	return cat == "auth" || cat == "network" || cat == "licence"
 }
 
 // oneLine flattens an error for a table cell.

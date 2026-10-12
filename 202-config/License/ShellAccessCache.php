@@ -159,9 +159,13 @@ class ShellAccessCache
     {
         $dir = sys_get_temp_dir() . '/' . static::cacheDirName();
         if (!is_dir($dir) && !@mkdir($dir, 0700) && !is_dir($dir)) {
+            error_log(static::class . ': cannot create ' . $dir . '; nothing is cached');
             return null;
         }
         if (is_link($dir) || fileowner($dir) !== static::processUserId()) {
+            // Refused rather than trusted, and said: without a cache every
+            // request revalidates, the outage hold-off included.
+            error_log(static::class . ': ' . $dir . ' is a symlink or owned by another user; nothing is cached');
             return null;
         }
         return $dir;

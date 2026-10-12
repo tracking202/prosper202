@@ -40,3 +40,15 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 		t.Errorf("exit code = %d, want %d (ExitLicence)", got, ExitLicence)
 	}
 }
+
+// Every row of an import would meet the same 402, so the import stops at the
+// first one (exit 6) instead of reporting each row as a partial failure.
+func TestALicenceRefusalAbortsAnImport(t *testing.T) {
+	refused := &api.APIError{Status: 402, Category: "licence", Message: "The Prosper202 CLI requires a Prosper202 ClickServer Pro licence."}
+	if !abortsImport(refused) {
+		t.Fatal("a licence refusal should abort the import like a refused key does")
+	}
+	if abortsImport(&api.APIError{Status: 422, Category: "validation", Message: "bad row"}) {
+		t.Fatal("a validation error is per row and must not abort the import")
+	}
+}

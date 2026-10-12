@@ -20,8 +20,12 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
     {
         return [
             // The service's answers.
-            'valid + paid' => [200, '{"code":200,"msg":"Key valid","paid":true}', ['valid' => true, 'paid' => true]],
-            'valid + unpaid' => [200, '{"code":200,"msg":"Key valid","paid":false}', ['valid' => true, 'paid' => false]],
+            'valid + paid' => [
+                200, '{"code":200,"msg":"Key valid","paid":true}', ['valid' => true, 'paid' => true],
+            ],
+            'valid + unpaid' => [
+                200, '{"code":200,"msg":"Key valid","paid":false}', ['valid' => true, 'paid' => false],
+            ],
             'valid, no paid field (service DB down / edge fallback)' => [
                 200, '{"code":200,"msg":"Key valid"}', ['valid' => true, 'paid' => null],
             ],
@@ -47,6 +51,12 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
             '200 with "Key expired"' => [200, '{"code":200,"msg":"Key expired","paid":false}', null],
             '200 whose envelope code is not 200' => [200, '{"code":503,"msg":"Key valid","paid":true}', null],
             '404 without the envelope (a gateway\'s own body)' => [404, '{"message":"Not Found"}', null],
+            '404 with the envelope but a gateway\'s message' => [404, '{"code":404,"msg":"Not Found"}', null],
+            '404 with the envelope and a router\'s message' => [404, '{"code":404,"msg":"Route not found"}', null],
+            '404 with code 403 but not the refusal text' => [404, '{"code":403,"msg":"Forbidden"}', null],
+            '404 with the refusal text under the wrong code' => [
+                404, '{"code":404,"msg":"API key requires an active CPM* Newsletter subscription."}', null,
+            ],
             '404 with msg but no code' => [404, '{"msg":"Key not found"}', null],
             '404 with a string code' => [404, '{"code":"404","msg":"Key not found"}', null],
             '404 whose envelope code is not a refusal' => [404, '{"code":200,"msg":"Key valid","paid":false}', null],
@@ -87,10 +97,46 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
                 continue;
             }
             $decided++;
-            $theServices = ($status === 200 && str_contains($body, '"Key valid"'))
-                || ($status === 404 && preg_match('/"code":40[34]/', $body) === 1);
+            $data = json_decode($body, true);
+            $theServices = ($status === 200 && $data['code'] === 200 && $data['msg'] === 'Key valid')
+                || ($status === 404 && (
+                    ($data['code'] === 404 && $data['msg'] === 'Key not found')
+                    || ($data['code'] === 403
+                        && $data['msg'] === 'API key requires an active CPM* Newsletter subscription.')
+                ));
             self::assertTrue($theServices, "$name decided without being one of the service's answers");
         }
         self::assertSame(9, $decided);
+    }
+
+    /** @return array<string, array{?string, ?string}> */
+    public static function redirects(): array
+    {
+        $same = 'https://my.tracking202.com/api/v2/validate-customers-key/';
+        return [
+            'same host, https' => [$same, $same],
+            'same host, another path' => [
+                'https://my.tracking202.com/v3/validate', 'https://my.tracking202.com/v3/validate',
+            ],
+            'host in capitals' => ['https://MY.TRACKING202.COM/x', 'https://MY.TRACKING202.COM/x'],
+            'same host over http' => ['http://my.tracking202.com/api/v2/validate-customers-key', null],
+            'another host' => ['https://evil.example/api/v2/validate-customers-key', null],
+            'a look-alike host' => ['https://my.tracking202.com.evil.example/', null],
+            'a subdomain' => ['https://api.my.tracking202.com/', null],
+            'a port' => ['https://my.tracking202.com:8443/', null],
+            'credentials in the URL' => ['https://user:pw@my.tracking202.com/', null],
+            'relative (curl always resolves; refused if it did not)' => ['/api/v2/validate-customers-key', null],
+            'garbage' => ['https://', null],
+            'empty' => ['', null],
+            'none' => [null, null],
+        ];
+    }
+
+    /**
+     * @dataProvider redirects
+     */
+    public function testARedirectIsFollowedOnlyToTheServiceItselfOverHttps(?string $location, ?string $expected): void
+    {
+        self::assertSame($expected, ClickServerKeyValidator::redirectTarget($location));
     }
 }
