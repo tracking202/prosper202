@@ -174,7 +174,7 @@ func HintFor(err error) string {
 			return "This key's scope does not cover the operation. Use a key with the needed scope, or mint one: `p202 user apikey create <user_id> --scope write` (scopes: *, read, write, <area>:read, <area>:write)."
 		case apiErr.Status == 401 || apiErr.Status == 403:
 			return "Verify your API key: run `p202 config show`, then `p202 config set-key <key>` if it's wrong."
-		case apiErr.Status == 402:
+		case apiErr.Status == 402 && apiErr.Category == "licence":
 			return "This install's ClickServer API key has no active Prosper202 ClickServer Pro subscription. Start a 7-day free trial at https://my.tracking202.com/api/customers/subscriptions/support, then run the command again (the install re-checks a refusal within five minutes)."
 		case apiErr.Status == 404:
 			return "Not found. Run the matching `... list` to find valid ids (ids are internal — not the public ones in tracking links; some commands accept --public)."
@@ -656,6 +656,12 @@ func parseAPIError(status int, body []byte) *APIError {
 		if msg, ok := data["message"].(string); ok {
 			ae.Message = msg
 		}
+		// A 402 is the install's licence refusal only when its envelope says
+		// so; a 402 from a proxy or WAF in front of it is a server problem,
+		// not a reason to send the user to a trial or to stop an import.
+		if cat, ok := data["category"].(string); ok && status == http.StatusPaymentRequired && cat == "licence" {
+			ae.Category = "licence"
+		}
 		if fe, ok := data["field_errors"].(map[string]interface{}); ok {
 			ae.FieldErrors = make(map[string]string, len(fe))
 			for k, v := range fe {
@@ -672,9 +678,10 @@ func categoryForHTTPStatus(status int) string {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return "auth"
 	case status == http.StatusPaymentRequired:
-		// The install refuses p202-cli without a Pro licence (402): an
-		// entitlement problem, not bad input and not a bad key.
-		return "licence"
+		// The install refuses p202-cli without a Pro licence with a 402 whose
+		// envelope carries category "licence" (parseAPIError reads it); a bare
+		// 402 is something in front of the install, retried like a 5xx.
+		return "server"
 	case status >= 500:
 		return "server"
 	case status >= 400:

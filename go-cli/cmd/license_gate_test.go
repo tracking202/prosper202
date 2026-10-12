@@ -41,6 +41,35 @@ func TestCliExplainsProLicenceRefusal(t *testing.T) {
 	}
 }
 
+// A 402 is the licence refusal only with the install's own envelope: a bare
+// 402 from a proxy is a server error (exit 4, retry), not a trip to the trial.
+func TestABare402IsNotALicenceRefusal(t *testing.T) {
+	srv := httptest.NewServer(withCapabilities(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(402)
+		w.Write([]byte(`<html><body>Payment Required</body></html>`))
+	}))
+	defer srv.Close()
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key")
+	_, _, err := executeCommand("user", "list")
+	if err == nil {
+		t.Fatal("want an error from the 402")
+	}
+	if got := api.ErrorCategory(err); got != "server" {
+		t.Errorf("category = %q, want server", got)
+	}
+	if got := exitCodeForError(err); got != ExitServer {
+		t.Errorf("exit code = %d, want %d (ExitServer)", got, ExitServer)
+	}
+	if h := hintFor(err); strings.Contains(h, "7-day free trial") {
+		t.Errorf("hint %q must not send the user to the trial", h)
+	}
+	if abortsImport(err) {
+		t.Error("a bare 402 is a server error and must not abort an import")
+	}
+}
+
 // Every row of an import would meet the same 402, so the import stops at the
 // first one (exit 6) instead of reporting each row as a partial failure.
 func TestALicenceRefusalAbortsAnImport(t *testing.T) {

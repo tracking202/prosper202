@@ -14,11 +14,14 @@ class ClickServerKeyValidator
     private const string VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
     private const string VALIDATE_HOST = 'my.tracking202.com';
     /**
-     * Redirect hops followed before the answer is "unknown". One: an edge
-     * redirect is a single hop, and every hop costs a connect and a timeout
-     * on the request path (checkKey gives 2 s + 4 s each).
+     * Redirect hops followed before the answer is "unknown": the same three
+     * the endpoint's two older callers allow (CURLOPT_MAXREDIRS in
+     * functions-tracking202.php; ClickServerKeyValidatorInterpretTest pins
+     * the parity), so an edge that answers with two hops does not turn this
+     * reader, alone, into a gate that never decides. Each hop costs a connect
+     * and a timeout on the request path; the hold-off marker bounds how often.
      */
-    private const int MAX_REDIRECTS = 1;
+    public const int MAX_REDIRECTS = 3;
 
     /**
      * @return bool|null true = valid, false = invalid, null = network failure

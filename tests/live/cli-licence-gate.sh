@@ -365,7 +365,7 @@ if [ "$STUB" = 1 ]; then
     stub_case paid-redirect   allowed "302 to the service itself over HTTPS: followed with the key, 'paid': allowed"
     stub_case unpaid-redirect refused "302 to the service itself over HTTPS: followed, 'not paid': refused"
     stub_case redirect-away   allowed "302 to another host: not followed, unknown, allowed"
-    stub_case redirect-loop   allowed "302 back to itself: one hop followed, then given up, unknown, allowed"
+    stub_case redirect-loop   allowed "302 back to itself: three hops followed, then given up, unknown, allowed"
     if [ "$(cache recently-unknown live-pass-stub-outage)" = yes ]; then
         ok "the outage left a hold-off, not a verdict"
     else

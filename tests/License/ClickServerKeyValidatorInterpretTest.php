@@ -139,6 +139,21 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
     }
 
     /**
+     * The three readers of the endpoint follow the same number of hops: a
+     * budget smaller here than in the two older callers would let an edge
+     * change make this one alone stop deciding, in silence apart from a log.
+     */
+    public function testTheRedirectBudgetMatchesTheOlderCallers(): void
+    {
+        $legacy = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-tracking202.php');
+        $found = preg_match_all('/curl_setopt\(\$ch, CURLOPT_MAXREDIRS, (\d+)\);/', $legacy, $m);
+        self::assertSame(2, $found, 'expected the two older validate-customers-key callers to set CURLOPT_MAXREDIRS');
+        foreach ($m[1] as $limit) {
+            self::assertSame(ClickServerKeyValidator::MAX_REDIRECTS, (int)$limit);
+        }
+    }
+
+    /**
      * @dataProvider redirects
      */
     public function testARedirectIsFollowedOnlyToTheServiceItselfOverHttps(?string $location, ?string $expected): void

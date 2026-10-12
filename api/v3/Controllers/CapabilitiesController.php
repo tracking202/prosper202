@@ -272,8 +272,9 @@ class CapabilitiesController
      * against my.tracking202.com. Returns false if the user has no key or
      * the key is invalid.
      *
-     * Results are cached per-key (ShellAccessCache::TTL_SECONDS) to avoid
-     * hitting my.tracking202.com on every capabilities request. If ClickServer
+     * Results are cached per-key (ShellAccessCache: an allow for TTL_SECONDS,
+     * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
+     * on every capabilities request. If ClickServer
      * is unreachable the last known result is used regardless of age, and
      * access is denied when no prior result exists (fail-closed); the
      * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
@@ -289,7 +290,11 @@ class CapabilitiesController
             return false; // no key, or a lookup that failed: the shell is fail-closed
         }
 
-        $cached = ShellAccessCache::read($customerKey);
+        // A refusal is believed for DENIAL_TTL_SECONDS, an allow for
+        // TTL_SECONDS, as for the CLI: nothing else refreshes the entry when
+        // the key becomes valid, and the two verdicts on /capabilities should
+        // not disagree about it for an hour.
+        $cached = ShellAccessCache::readVerdict($customerKey);
         if ($cached !== null) {
             return $cached;
         }
