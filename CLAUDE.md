@@ -333,7 +333,13 @@ Two amplifiers, both of which turned this from a blip into a breach:
   ask what the cached value costs if it is *wrong*, not just what it saves
   when right. (Cache on the object, not `spl_object_id()`: ids are reused
   after free, so a reconnect can inherit a freed connection's answer. A
-  `WeakMap` keyed by the connection cannot.)
+  `WeakMap` keyed by the connection cannot.) A cache is outside the
+  transaction too: moving `rtr.php`'s click writes into one put the site URL
+  lookup inside it, and that lookup caches the id of a row it inserts at
+  once, so a rollback left memcached naming a row that no longer existed and
+  every later click to the URL stored the dangling id for 7 days (found by
+  the adversarial review, reproduced live). Writes made inside a transaction
+  wait for its commit (`p202HoldCacheWrites()`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
