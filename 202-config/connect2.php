@@ -2886,7 +2886,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     // Rolled back first, and never a fatal in place of the page; see
     // p202RecordMysqlErrorRow().
-    p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
         $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
         $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -2917,7 +2917,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     // report error to user and end page
 ?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php

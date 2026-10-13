@@ -985,7 +985,10 @@ the error page recursed through itself until memory ran out, writing tens
 of thousands of log lines in one request. An error path ends the caller's transaction before it
 writes anything of its own, and anything it calls that can fail lands back
 in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
-`autocommit_off`, `gone` and `lookup_fails` scenarios).
+`autocommit_off`, `gone` and `lookup_fails` scenarios). The fix first kept
+the page's "it has been recorded" for the case where recording failed
+(found by review): the page's sentence is a status line too, and it
+follows what the recorder answers.
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=

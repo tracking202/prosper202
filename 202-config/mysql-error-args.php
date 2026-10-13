@@ -46,15 +46,17 @@ if (!function_exists('p202RecordMysqlErrorRow')) {
      * rolled back and autocommit put back on first: a row written inside it
      * is discarded with it when the request ends.
      *
-     * A failure while recording is logged, never thrown. On a lost
-     * connection the lookups fail too: an uncaught Error on the admin pages,
-     * and on the click path a second record_mysql_error() from its own
-     * _mysqli_query(), which recursed until memory ran out. A call made while
-     * a row is being recorded throws back to here instead.
+     * A failure while recording is logged, never thrown, and answered false
+     * so the page does not say the error was recorded. On a lost connection
+     * the lookups fail too: an uncaught Error on the admin pages, and on the
+     * click path a second record_mysql_error() from its own _mysqli_query(),
+     * which recursed until memory ran out. A call made while a row is being
+     * recorded throws back to here instead.
      *
      * @param callable(): void $write throws when the row is not written
+     * @return bool whether the row was written
      */
-    function p202RecordMysqlErrorRow(\mysqli $db, callable $write): void
+    function p202RecordMysqlErrorRow(\mysqli $db, callable $write): bool
     {
         // Never reset: record_mysql_error() ends the request, and a call from
         // the page it goes on to draw throws rather than draw a second one.
@@ -71,7 +73,11 @@ if (!function_exists('p202RecordMysqlErrorRow')) {
             $write();
         } catch (\Throwable $e) {
             error_log('MySQL error not recorded in 202_mysql_errors: ' . $e->getMessage());
+
+            return false;
         }
+
+        return true;
     }
 }
 

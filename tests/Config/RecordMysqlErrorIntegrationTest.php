@@ -64,7 +64,7 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             $all,
             "a fatal instead of the error page:\n$all"
         );
-        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
         // The database's own words, not a blank: proves the connection that
         // failed is the one read.
         self::assertMatchesRegularExpression(
@@ -118,7 +118,7 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         $marker = random_int(1_000_000, 16_000_000);
         [$stdout, , $all] = self::runScenario($file, 'db_sql', $scenario, $marker);
 
-        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
         self::assertStringNotContainsString('RECORD FAILED', $stdout, $all);
         self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, $all);
 
@@ -154,8 +154,8 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
 
     /**
      * The error row cannot be written — the connection is gone, or the
-     * record's own lookup fails — and the page is still shown, with the
-     * failure logged once and no second record_mysql_error() pass.
+     * record's own lookup fails — and the page is still shown, saying so,
+     * with the failure logged once and no second record_mysql_error() pass.
      *
      * @dataProvider definitionsAndFailedRecords
      */
@@ -164,7 +164,7 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         [$stdout, $logged, $all] = self::runScenario($file, 'db_sql', $scenario, random_int(1_000_000, 16_000_000));
 
         self::assertStringNotContainsString('Fatal error', $all);
-        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, false);
         self::assertStringContainsString('MySQL error not recorded in 202_mysql_errors: ', $logged, $all);
         // The error itself, and on the click path the lookup's own: never
         // the tens of thousands a recursion writes.
@@ -205,16 +205,18 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         return [$stdout, $logged, $all];
     }
 
-    private static function assertTheErrorPageEndedTheRequest(string $stdout, string $all): void
+    private static function assertTheErrorPageEndedTheRequest(string $stdout, string $all, bool $recorded): void
     {
         self::assertStringContainsString('BEFORE', $stdout, "the runner did not reach the call:\n$all");
         self::assertStringNotContainsString('UNREACHED', $stdout, 'record_mysql_error() must end the request');
         // The page as U8 renders it in both definitions: the danger flash,
-        // its sentence inside the flash's own body, not merely somewhere.
+        // its sentence inside the flash's own body, not merely somewhere;
+        // and it says the error was recorded only when it was.
+        $said = $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it';
         self::assertMatchesRegularExpression(
             '~<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
                 . '<div class="p202-flash__body">'
-                . '<strong>A database error has occurred, and it has been recorded\.</strong>~',
+                . '<strong>A database error has occurred, and it ' . preg_quote($said, '~') . '\.</strong>~',
             $stdout,
             "the error page is shown:\n$all"
         );

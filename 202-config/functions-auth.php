@@ -598,7 +598,7 @@ class AUTH
         // A failed read is not "no key": minting one then replaced the
         // stored key and signed every remember-me cookie of the account out.
         if (!$user_result instanceof mysqli_result) {
-            throw new \RuntimeException('Reading the remember-me key of user ' . (int) $user_id . ' failed: ' . $db->error);
+            throw new \RuntimeException('Reading the remember-me key of user ' . (int) $user_id . ' failed (logged by _mysqli_query())');
         }
         $user_row = $user_result->fetch_assoc();
         if (empty($user_row['secret_key'])) {
@@ -613,7 +613,7 @@ class AUTH
 			';
             // A key that was not stored signs a cookie nothing can verify.
             if (_mysqli_query($sql) === false) {
-                throw new \RuntimeException('Storing the remember-me key of user ' . (int) $user_id . ' failed: ' . $db->error);
+                throw new \RuntimeException('Storing the remember-me key of user ' . (int) $user_id . ' failed (logged by _mysqli_query())');
             }
             return $mysql['secret_key'];
         } else {

@@ -129,6 +129,9 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         $out = self::runScenario('read_fails');
 
         self::assertStringStartsWith('THREW Reading the remember-me key of user ' . self::USER . ' failed', $out);
+        // Logged by the caller as it stands: MySQL's words, unredacted, are
+        // for _mysqli_query()'s own line to carry.
+        self::assertStringNotContainsString('p202_no_such_table_for_remember_me', $out);
         self::assertSame(self::STORED, self::storedKey(), 'a failed read replaced the stored key');
     }
 
@@ -139,6 +142,7 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         $out = self::runScenario('write_fails');
 
         self::assertStringStartsWith('THREW Storing the remember-me key of user ' . self::USER . ' failed', $out);
+        self::assertStringNotContainsString('p202_no_such_table_for_remember_me', $out);
         self::assertNull(self::storedKey());
     }
 
