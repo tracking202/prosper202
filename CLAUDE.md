@@ -353,7 +353,12 @@ Two amplifiers, both of which turned this from a blip into a breach:
   once, so a rollback left memcached naming a row that no longer existed and
   every later click to the URL stored the dangling id for 7 days (found by
   the adversarial review, reproduced live). Writes made inside a transaction
-  wait for its commit (`p202WithHeldCacheWrites()`).
+  wait for its commit (`p202WithHeldCacheWrites()`). The same lookup is a
+  SELECT and then an INSERT with no unique key behind it (the install
+  partitions `202_site_urls` by its id, and a partitioned table's unique keys
+  must include that id), so concurrent first clicks on one new URL can store
+  it twice; each click names a valid row. That is left as it is, and written
+  at both lookups.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not

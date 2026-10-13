@@ -1620,7 +1620,12 @@ class INDEXES
         }
     }
 
-    // this returns the site_url_id, when a site_url_address is given
+    // this returns the site_url_id, when a site_url_address is given.
+    // A lookup, then an insert, with no unique key on the address behind them:
+    // the install partitions the table by site_url_id, and MySQL requires every
+    // unique key of a partitioned table to include that column. So two first
+    // clicks on one new URL can each insert a row; each click names a valid
+    // one, and a report grouped by URL row lists that URL twice.
     public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
     {
         global $memcacheWorking, $memcache;
