@@ -13,11 +13,13 @@ use Tests\Support\SourceScan;
  * Get Links rolled back before five of its calls, and two were fixed before
  * the other three were found. A call reached after a rollback (in its own
  * block or one around it, before it) names the failure it caught, as its
- * third argument.
+ * third argument; so does a call in a catch block, whatever its try did,
+ * because a rollback made inside a call (Connection::transaction() rolls
+ * back before it rethrows) names nothing a scan can see.
  */
 final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
 {
-    /** @return list<string> file:line of each call that names no failure after a rollback */
+    /** @return list<string> file:line of each call that names no failure after a rollback or in a catch */
     private static function unnamed(string $path, string $source): array
     {
         $tokens = array_values(array_filter(
@@ -33,7 +35,7 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
             if (!$isCall) {
                 continue;
             }
-            if (self::argumentCount($tokens, $i + 1) < 3 && self::rolledBackBefore($tokens, $i)) {
+            if (self::argumentCount($tokens, $i + 1) < 3 && self::errorMayBeCleared($tokens, $i)) {
                 $found[] = "$path:{$token->line}";
             }
         }
@@ -64,13 +66,13 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
     }
 
     /**
-     * A rollback before the call in its block or a block around it, up to
-     * the function it is in; one inside a block that closed before it is
-     * another path.
+     * A rollback before the call in its block or a block around it, or a
+     * catch block around it, up to the function it is in; a rollback inside
+     * a block that closed before it is another path.
      *
      * @param list<\PhpToken> $tokens
      */
-    private static function rolledBackBefore(array $tokens, int $call): bool
+    private static function errorMayBeCleared(array $tokens, int $call): bool
     {
         $depth = 0;
         for ($k = $call - 1; $k >= 0; $k--) {
@@ -78,6 +80,9 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
             if ($token->text === '}') {
                 $depth++;
             } elseif ($token->text === '{' || $token->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
+                if ($depth === 0 && self::opensACatch($tokens, $k)) {
+                    return true;
+                }
                 $depth = max(0, $depth - 1);
             } elseif ($depth === 0 && $token->is([T_FUNCTION, T_FN])) {
                 return false;
@@ -93,22 +98,43 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
         return false;
     }
 
+    /** @param list<\PhpToken> $tokens */
+    private static function opensACatch(array $tokens, int $brace): bool
+    {
+        if (($tokens[$brace - 1]->text ?? '') !== ')') {
+            return false;
+        }
+        $depth = 0;
+        for ($k = $brace - 1; $k >= 0; $k--) {
+            $depth += match ($tokens[$k]->text) {
+                ')' => 1,
+                '(' => -1,
+                default => 0,
+            };
+            if ($depth === 0) {
+                return ($tokens[$k - 1] ?? null)?->is(T_CATCH) ?? false;
+            }
+        }
+
+        return false;
+    }
+
     public function testEveryCallAfterARollbackNamesTheFailure(): void
     {
         $found = [];
         $calls = 0;
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (!str_contains($source, 'record_mysql_error') || !str_contains(strtolower($source), 'rollback')) {
+            if (!str_contains(strtolower($source), 'record_mysql_error')) {
                 continue;
             }
             $calls += substr_count($source, 'record_mysql_error(');
             array_push($found, ...self::unnamed($path, $source));
         }
 
-        self::assertGreaterThan(5, $calls, 'the scan read the files that roll back and record');
-        self::assertSame([], $found, "These record_mysql_error() calls follow a rollback, which cleared the error"
-            . " they would record. Keep \$db->error before the rollback and pass it as the third argument:\n"
-            . implode("\n", $found));
+        self::assertGreaterThan(5, $calls, 'the scan read the files that record');
+        self::assertSame([], $found, "These record_mysql_error() calls follow a rollback or sit in a catch block,"
+            . " where the error they would record may be cleared. Pass the failure (\$db->error kept before the"
+            . " rollback, or the exception's message) as the third argument:\n" . implode("\n", $found));
     }
 
     /** @return array<string, array{string, list<int>}> */
@@ -132,6 +158,23 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
                 [],
             ],
             'no rollback' => ["<?php\n\$db->query(\$sql) or record_mysql_error(\$db, \$sql);\n", []],
+            'in a catch' => [
+                "<?php\ntry {\n\$c->transaction(\$f);\n} catch (\\Throwable \$e) {\nrecord_mysql_error(\$db);\n}\n",
+                [5],
+            ],
+            'in an if in a catch' => [
+                "<?php\ntry {\nf();\n} catch (E \$e) {\nif (\$x) {\nrecord_mysql_error(\$db, \$s);\n}\n}\n",
+                [6],
+            ],
+            'in a catch, named' => [
+                "<?php\ntry {\nf();\n} catch (E \$e) {\nrecord_mysql_error(\$db, \$s, \$e->getMessage());\n}\n",
+                [],
+            ],
+            'after a catch that closed' => [
+                "<?php\ntry {\nf();\n} catch (E \$e) {\nlog(\$e);\n}\n"
+                    . "\$db->query(\$s) or record_mysql_error(\$db, \$s);\n",
+                [],
+            ],
         ];
     }
 

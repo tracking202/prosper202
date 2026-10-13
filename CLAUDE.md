@@ -1017,7 +1017,11 @@ statement column (Get Links and the redirector breakdown did the same). A
 caller that caught the failure names it (`record_mysql_error()`'s third
 argument). Two of Get Links' five calls were fixed and three found a round
 later; `ErrorPageAfterRollbackNamesTheFailureTest` now holds every call made
-after a rollback to naming the failure.
+after a rollback, or in a catch block (a rollback made inside a call, as
+`Connection::transaction()` makes one, is not there to scan), to naming the
+failure. Its first draft read only the files that say "rollback", so the
+redirector breakdown, which only catches, passed a planted two-argument
+call: a scan's file filter is a claim about where the construct can be.
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
