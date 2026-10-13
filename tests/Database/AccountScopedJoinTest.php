@@ -104,6 +104,7 @@ final class AccountScopedJoinTest extends TestCase
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
     private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
+    private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
 
     // Why a site is in KNOWN_UNSCOPED (it can show or use another
@@ -256,6 +257,9 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'api/v3/Apps/Android/PendingClickSettler.php' => [
             'no user_id tie | 202_app_registrations | r.registration_id = i.registration_id' => self::INSTALL_REGISTRATION,
+        ],
+        'api/v3/Controllers/CapabilitiesController.php' => [
+            'no user_id tie | 202_users | o.install_hash = u.install_hash AND o.user_deleted != 1 AND o.user_active = 1 AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != \'\'' => self::INSTALL_LICENCE_KEY,
         ],
         'api/v3/Controllers/AppNotificationsController.php' => [
             'no user_id tie | 202_goal_outcomes | o.outcome_id = ac.outcome_id' => self::OUTCOME_BY_ID,

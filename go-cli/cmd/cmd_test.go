@@ -3615,7 +3615,7 @@ func TestImportKeepsTheRecordsAPIError(t *testing.T) {
 			if h := hintFor(err); !strings.Contains(h, tc.hint) {
 				t.Errorf("hint %q, want the API error's class hint naming %q", h, tc.hint)
 			}
-			if !strings.Contains(err.Error(), "record 2 of 3 (1 imported and 0 staged before it)") {
+			if !strings.Contains(err.Error(), "record 2 of 3 (1 imported and 0 staged before it, the rest not attempted)") {
 				t.Errorf("the message must name the record and what was sent before it: %v", err)
 			}
 			if posts != 2 {
