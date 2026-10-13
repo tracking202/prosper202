@@ -21,8 +21,14 @@ use Tests\TestCase;
  */
 final class UpgradeLadderTest extends TestCase
 {
-    private const CURRENT_VERSION = '1.9.77';
-    private const PRIOR_VERSION = '1.9.76';
+    private const CURRENT_VERSION = '1.9.78';
+    private const PRIOR_VERSION = '1.9.77';
+
+    /**
+     * The step that reconciles 202_users_pref and drops the chat cache:
+     * 1.9.76 -> 1.9.77, as v1.9.77 shipped it.
+     */
+    private const USERS_PREF_STEP = '1.9.76';
 
     /**
      * The step that creates the app-measurement tables: 1.9.75 -> 1.9.76, as
@@ -172,11 +178,11 @@ final class UpgradeLadderTest extends TestCase
      * /system/retention with it -- failed. ScheduledDeletionUpgradeIntegrationTest
      * runs that reconcile on a server.
      */
-    public function testThePriorVersionBlockReconcilesThePreferencesTable(): void
+    public function testTheUsersPrefStepReconcilesThePreferencesTable(): void
     {
         $this->assertStringContainsString(
             'UserTables::usersPref()',
-            $this->blockGatedOn(self::PRIOR_VERSION)
+            $this->blockGatedOn(self::USERS_PREF_STEP)
         );
     }
 
@@ -194,9 +200,9 @@ final class UpgradeLadderTest extends TestCase
      * drops what is left. RetiredTablesUpgradeIntegrationTest runs the drop on
      * a server.
      */
-    public function testThePriorVersionBlockRemovesTheChatTablesItsReconcileReportsOn(): void
+    public function testTheUsersPrefStepRemovesTheChatTablesItsReconcileReportsOn(): void
     {
-        $tokens = token_get_all('<?php ' . $this->blockGatedOn(self::PRIOR_VERSION));
+        $tokens = token_get_all('<?php ' . $this->blockGatedOn(self::USERS_PREF_STEP));
         $call = null;
         foreach ($tokens as $i => $token) {
             if (is_array($token) && $token[0] === T_STRING && $token[1] === rtrim(self::RECONCILE_CALL, '(')) {
@@ -204,7 +210,7 @@ final class UpgradeLadderTest extends TestCase
                 break;
             }
         }
-        $this->assertNotNull($call, 'the step gated on ' . self::PRIOR_VERSION . ' reconciles');
+        $this->assertNotNull($call, 'the step gated on ' . self::USERS_PREF_STEP . ' reconciles');
 
         // The call's arguments at its own depth, as literals.
         $depth = 0;
@@ -225,7 +231,7 @@ final class UpgradeLadderTest extends TestCase
         $this->assertSame(
             ["'DROP TABLE IF EXISTS `202_messaging_messages`, `202_messaging_conversations`'"],
             $literalsAtArgumentDepth,
-            'the step from ' . self::PRIOR_VERSION . ' hands its reconcile call the drop of the two chat tables, so a failed drop keeps the version'
+            'the step from ' . self::USERS_PREF_STEP . ' hands its reconcile call the drop of the two chat tables, so a failed drop keeps the version'
         );
 
         $declared = array_map(
@@ -240,7 +246,7 @@ final class UpgradeLadderTest extends TestCase
         }
     }
 
-    public function testThePriorVersionBlockReconcilesExistingTablesAndDoesNotOnlyCreateThem(): void
+    public function testTheUsersPrefStepReconcilesExistingTablesAndDoesNotOnlyCreateThem(): void
     {
         // CREATE TABLE IF NOT EXISTS converges nothing: against a table that
         // already exists in an older shape it is a no-op, and the block used
@@ -249,7 +255,7 @@ final class UpgradeLadderTest extends TestCase
         // columns the running code selects.
         $this->assertStringContainsString(
             self::RECONCILE_CALL,
-            $this->blockGatedOn(self::PRIOR_VERSION)
+            $this->blockGatedOn(self::USERS_PREF_STEP)
         );
         $this->assertStringContainsString('SchemaReconciler', $this->upgradeCode());
     }
