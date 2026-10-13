@@ -74,18 +74,16 @@ var dataImportCmd = &cobra.Command{
 
 			created, err := c.Post(endpoint, body)
 			if err != nil {
-				failed++
-				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
-				// --skip-errors goes past a record's own failure, never past
-				// the key's: a 401 or 403 fails every later record the same way.
-				if !skipErrors || api.ErrorCategory(err) == "auth" {
-					// %w: flattened with %s, a 401 exited 1 as a validation
-					// error with the --help hint, and the class hint for a
-					// read-only or unknown field (remove it from the file's
-					// records) never reached the user.
-					return fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it): %w",
+				// A refused key, no connection or the install's licence
+				// refusal would meet every later record too, so they stop
+				// --skip-errors as well. %w keeps the record's own category,
+				// exit code and hint (auth 2, network 3, licence 6, ...).
+				if !skipErrors || abortsImport(err) {
+					return fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it, the rest not attempted): %w",
 						i+1, len(records), imported, staged, err)
 				}
+				failed++
+				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
 				continue
 			}
 			// Under --staged the server records a proposal instead of the

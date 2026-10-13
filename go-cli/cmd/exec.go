@@ -135,7 +135,7 @@ var execCmd = &cobra.Command{
 			render(data)
 
 			if anyFailed {
-				return fmt.Errorf("one or more profiles failed")
+				return execFailure(resultMap)
 			}
 			return nil
 		}
@@ -159,10 +159,31 @@ var execCmd = &cobra.Command{
 		}
 
 		if anyFailed {
-			return fmt.Errorf("one or more profiles failed")
+			return execFailure(resultMap)
 		}
 		return nil
 	},
+}
+
+// execFailure is the parent's error for a run with failed children: the
+// licence refusal (category licence, exit 6, the trial hint) when every
+// failed child exited for it, so the contract the children honoured survives
+// the process boundary; the generic failure otherwise.
+func execFailure(results map[string]execResult) error {
+	failed, refused := 0, 0
+	for _, r := range results {
+		if r.Err == nil && r.ExitCode == 0 {
+			continue
+		}
+		failed++
+		if r.ExitCode == ExitLicence {
+			refused++
+		}
+	}
+	if failed > 0 && refused == failed {
+		return licenceRefusalError(fmt.Sprintf("%d of %d selected profiles failed, each refused the CLI: its install's ClickServer API key needs an active Prosper202 ClickServer Pro licence", failed, len(results)))
+	}
+	return fmt.Errorf("one or more profiles failed")
 }
 
 // execChildArgs builds the argv for one profile's child process. Split out

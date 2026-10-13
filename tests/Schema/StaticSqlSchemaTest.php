@@ -105,7 +105,7 @@ final class StaticSqlSchemaTest extends TestCase
                 continue;
             }
             $source = (string) file_get_contents($file->getPathname());
-            if (preg_match_all('/->(?:prepare|query)\(\s*(.{0,800}?)\)\s*;/s', $source, $matches, PREG_OFFSET_CAPTURE) < 1) {
+            if (preg_match_all('/->(?:prepare|prepareRead|prepareWrite|query)\(\s*(.{0,800}?)\)\s*;/s', $source, $matches, PREG_OFFSET_CAPTURE) < 1) {
                 continue;
             }
             foreach ($matches[1] as $index => [$argument, $offset]) {

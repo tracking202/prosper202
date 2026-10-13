@@ -157,7 +157,7 @@ func runInteractive(state *shell.State) error {
 // If jsonOutput is set, emits JSONL (one JSON object per command). Returns
 // an error if any command fails and stopOnError is true.
 func runBatch(commands []string, state *shell.State, stopOnError bool) error {
-	anyFailed := false
+	var failures []error // every failed command's error, built-ins included
 	activeProfile := currentProfileName()
 	for _, cmdStr := range commands {
 		cmdStr = strings.TrimSpace(cmdStr)
@@ -181,7 +181,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		}
 		if handled {
 			if builtinErr != nil {
-				anyFailed = true
+				failures = append(failures, builtinErr)
 				if !jsonOutput {
 					fmt.Fprintf(os.Stderr, "Error [%s]: %v\n", cmdStr, builtinErr)
 				}
@@ -200,7 +200,7 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 
 		output, err := executeShellCommand(cmdStr)
 		if err != nil {
-			anyFailed = true
+			failures = append(failures, err)
 			if jsonOutput {
 				emitBatchResult(cmdStr, output, err)
 			} else {
@@ -221,7 +221,12 @@ func runBatch(commands []string, state *shell.State, stopOnError bool) error {
 		storeResult(state, output)
 	}
 
-	if anyFailed {
+	if len(failures) > 0 {
+		if refused := licenceRefusal(failures...); refused != nil {
+			// Every failed command met the install's 402: say so with the
+			// licence category, exit 6 and the trial hint, not a generic failure.
+			return fmt.Errorf("one or more commands failed: %w", refused)
+		}
 		return fmt.Errorf("one or more commands failed")
 	}
 	return nil

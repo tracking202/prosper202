@@ -95,6 +95,7 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 func fetchMultiProfileObjects(endpoint string, params map[string]string, profiles []string) (map[string]map[string]interface{}, []string, error) {
 	results := map[string]map[string]interface{}{}
 	errorsOut := make([]string, 0)
+	rawErrors := make([]error, 0)
 	ch := make(chan multiProfileFetch, len(profiles))
 	var wg sync.WaitGroup
 
@@ -135,6 +136,7 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 	for result := range ch {
 		if result.err != nil {
 			errorsOut = append(errorsOut, fmt.Sprintf("%s: %v", result.profile, result.err))
+			rawErrors = append(rawErrors, result.err)
 			continue
 		}
 		results[result.profile] = result.data
@@ -142,6 +144,11 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 
 	sort.Strings(errorsOut)
 	if len(results) == 0 && len(errorsOut) > 0 {
+		if refused := licenceRefusal(rawErrors...); refused != nil {
+			// Keep the licence category (exit 6, the trial hint) when every
+			// profile was refused for it, instead of a generic failure.
+			return nil, errorsOut, fmt.Errorf("all profile requests failed: %w", refused)
+		}
 		return nil, errorsOut, fmt.Errorf("all profile requests failed")
 	}
 	return results, errorsOut, nil
