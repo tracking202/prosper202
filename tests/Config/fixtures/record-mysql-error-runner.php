@@ -13,8 +13,9 @@ declare(strict_types=1);
  * by its tokens and evaluated beside stand-ins for what it calls. The body
  * that runs is the shipped body, byte for byte.
  *
- * argv: <defining file> <call shape: db | db_sql | sql | caught> [<scenario>]
+ * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank> [<scenario>]
  *   caught: ($db, what was being done, the failure the caller caught)
+ *   caught_blank: the same with an empty failure
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it)
  *
@@ -89,16 +90,15 @@ class DB
         return $GLOBALS['db'] ?? null;
     }
 }
-if ($scenario === 'gone' || $scenario === 'lookup_fails') {
-    // The defining file's own _mysqli_query(): connect2.php's calls
-    // record_mysql_error() when a statement fails, functions.php's (the
-    // admin pages', beside functions-tracking202.php) answers false.
-    if (basename((string) $file) === 'connect2.php') {
-        eval(lift_function((string) $file, '_mysqli_query'));
-    } else {
-        foreach (['_mysqli_query', 'p202LogFailedQuery', 'p202FailedQueryMessage'] as $query) {
-            eval(lift_function(dirname((string) $file) . '/functions.php', $query));
-        }
+if (basename((string) $file) === 'connect2.php') {
+    // connect2.php's own, in every scenario: it calls record_mysql_error()
+    // when a statement fails, which a stand-in answering false would hide.
+    eval(lift_function((string) $file, '_mysqli_query'));
+} elseif ($scenario === 'gone' || $scenario === 'lookup_fails') {
+    // The admin pages' own (functions.php, beside functions-tracking202.php),
+    // which answers false.
+    foreach (['_mysqli_query', 'p202LogFailedQuery', 'p202FailedQueryMessage'] as $query) {
+        eval(lift_function(dirname((string) $file) . '/functions.php', $query));
     }
 } else {
     function _mysqli_query($dbOrSql, $sql = null)
@@ -177,6 +177,20 @@ final class RecordingMysqli extends mysqli
 
     public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
     {
+        // The error row is the page's own write, not a read of the failed
+        // connection: answered as the _mysqli_query() stand-in answers it.
+        if (str_contains($query, '202_mysql_errors')) {
+            $scenario = $GLOBALS['scenario'] ?? 'page';
+            if ($scenario === 'page') {
+                return true;
+            }
+            if ($scenario === 'insert_fails') {
+                $refused = 'p202_no_such_table_for_the_error_row';
+                $query = (string) preg_replace('/\b202_mysql_errors\b/', $refused, $query);
+            }
+
+            return parent::query($query, $result_mode);
+        }
         $this->asked[] = $query;
 
         return parent::query($query, $result_mode);
@@ -292,6 +306,8 @@ if ($shape === 'db') {
     $db->query($sql) or record_mysql_error($db, $sql);
 } elseif ($shape === 'caught') {
     $db->query($sql) or record_mysql_error($db, 'recording the probe', 'the failure the caller caught');
+} elseif ($shape === 'caught_blank') {
+    $db->query($sql) or record_mysql_error($db, 'recording the probe', '');
 } else {
     $db->query($sql) or record_mysql_error($sql);
 }

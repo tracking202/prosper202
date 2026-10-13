@@ -26,7 +26,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
     global $server_row;
 
     // record the mysql error
-    $clean['mysql_error_text'] = $error ?? mysqli_error($db);
+    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);

@@ -301,6 +301,14 @@ so `StaticSqlSchemaTest` could not see the statement either. SQL that
 reaches a server only through a builder needs one run against a real
 server before it ships (`ListTimeFiltersIntegrationTest`).
 
+A stand-in for a function with two copies has to answer as the copy it
+stands in for. The error page's runner gave both `record_mysql_error()`s a
+`_mysqli_query()` that answered false, which connect2.php's never does (it
+calls the error page again): the test held a "the server refused the row"
+branch that cannot run on the click path, where a refused row re-entered
+the page and logged the server's words about it. The runner now gives each
+definition its own file's `_mysqli_query()` wherever the answer matters.
+
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
 PHP, Go, and eval suites were all green while nothing exercised staged

@@ -169,6 +169,29 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         $db->close();
     }
 
+    /**
+     * An empty caught failure names nothing: the connection's own error is
+     * recorded, as when no failure is given.
+     *
+     * @dataProvider definitions
+     */
+    public function testAnEmptyCaughtFailureFallsBackToTheConnectionsError(string $file): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, , $all] = self::runScenario($file, 'caught_blank', 'txn', $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        $db = self::database();
+        $row = $db->query('SELECT mysql_error_text FROM 202_mysql_errors WHERE user_id = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
+        self::assertMatchesRegularExpression(
+            "/p202_no_such_table_for_record_mysql_error.*doesn't exist/",
+            (string) ($row->fetch_row()[0] ?? ''),
+            $all
+        );
+        $db->close();
+    }
+
     /** @return array<string, array{string, string}> */
     public static function definitionsAndFailedRecords(): array
     {

@@ -2888,7 +2888,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
     }
 
     // record the mysql error
-    $clean['mysql_error_text'] = $error ?? mysqli_error($db);
+    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
@@ -2920,10 +2920,11 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-        // The statement it failed on carries what it records: the server's
-        // words are left to _mysqli_query()'s own line, if it logs one.
-        if (_mysqli_query($db, $report_sql) === false) {
-            throw new \RuntimeException('the server refused the row');
+        // Not through _mysqli_query(), which on this path calls this page
+        // again instead of answering false. The server's words about the
+        // statement would repeat what it records: its errno says enough.
+        if ($db->query($report_sql) === false) {
+            throw new \RuntimeException('the server refused the row [errno ' . $db->errno . ']');
         }
     });
 
