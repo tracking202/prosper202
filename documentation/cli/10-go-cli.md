@@ -214,6 +214,11 @@ p202 import campaigns /tmp/campaigns.json --dry-run
 p202 import campaigns /tmp/campaigns.json --skip-errors
 ```
 
+`import` stops at the first record that fails and exits with that record's
+category. `--skip-errors` skips a record the server rejects and goes on; a
+refused key, no connection or the licence refusal still stop it, since every
+later record would meet the same failure.
+
 ## Analytics Shorthand
 
 ```bash
@@ -329,7 +334,7 @@ envelope, so an agent reads structured fields instead of parsing prose:
 
 | Field | Always | Meaning |
 | --- | --- | --- |
-| `category` | yes | `validation`, `auth`, `network`, `server`, or `partial_failure` |
+| `category` | yes | `validation`, `auth`, `network`, `server`, `partial_failure`, or `licence` |
 | `message` | yes | What failed |
 | `exit_code` | yes | The process exit code (table below) |
 | `command` | yes | The command that ran, e.g. `p202 rotator create` |
@@ -357,7 +362,8 @@ which flag to change when the requested metric is missing, or the dependency
 order to sync first when a foreign key cannot be resolved); a generic hint
 for the failure class (401/403 key check — or, when the 403 names a required
 scope, minting a key with `--scope`; 404 use `list` for ids; 429 back off;
-5xx retry then `p202 system health`; network check the URL and `p202 config
+5xx retry then `p202 system health`; a 402 that is not the licence refusal,
+retry then check what serves the URL; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.
 
@@ -409,8 +415,9 @@ wrong state points at `p202 change show`; and only an actual duplicate gets
 | 1 | Validation error (bad input, missing flags) |
 | 2 | Authentication/authorization failure |
 | 3 | Network error (connection timeout, DNS failure) |
-| 4 | Server error (5xx response) |
+| 4 | Server error (5xx response, or a 402 that is not the install's licence refusal: a proxy, WAF or host in front of the install answered it) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
+| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the Pro trial or subscription page. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install remembers an allow for an hour and a refusal for five minutes, and allows the CLI when it cannot get an answer (`GET /capabilities` reports the verdict as `cli`). A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; otherwise it is a generic failure (exit 1) and each item's own error says what it needs |
 
 ## Telemetry
 

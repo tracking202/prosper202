@@ -491,11 +491,12 @@ func asSlice(v interface{}) []interface{} {
 }
 
 // resolveTrackerLink fetches and follows a tracker's link, returning status and
-// destination (used by tracker test and tracker check).
-func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest string) {
+// destination (used by tracker check), and the API's error when the link
+// itself could not be fetched.
+func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest string, apiErr error) {
 	urlData, err := c.Get("trackers/"+id+"/url", nil)
 	if err != nil {
-		return "ERR", err.Error()
+		return "ERR", err.Error(), err
 	}
 	var resp struct {
 		Data struct {
@@ -503,7 +504,7 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 		} `json:"data"`
 	}
 	if json.Unmarshal(urlData, &resp) != nil || resp.Data.DirectURL == "" {
-		return "ERR", "no link"
+		return "ERR", "no link", nil
 	}
 	link := resp.Data.DirectURL
 	if !strings.HasPrefix(link, "http") {
@@ -516,7 +517,7 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 	client := probeClient()
 	req, reqErr := http.NewRequest("GET", appendTrackingKW(link), nil)
 	if reqErr != nil {
-		return "ERR", reqErr.Error()
+		return "ERR", reqErr.Error(), nil
 	}
 	if ip, ok := geoIPs[strings.ToUpper(geo)]; ok {
 		req.Header.Set("X-Forwarded-For", ip)
@@ -526,14 +527,14 @@ func resolveTrackerLink(c *api.Client, id, geo, device string) (status, dest str
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return "ERR", err.Error()
+		return "ERR", err.Error(), nil
 	}
 	defer res.Body.Close()
 	loc := res.Header.Get("Location")
 	if loc == "" {
-		return fmt.Sprintf("%d", res.StatusCode), "(blank — click dropped!)"
+		return fmt.Sprintf("%d", res.StatusCode), "(blank — click dropped!)", nil
 	}
-	return fmt.Sprintf("%d", res.StatusCode), loc
+	return fmt.Sprintf("%d", res.StatusCode), loc, nil
 }
 
 var trackerCheckCmd = &cobra.Command{
@@ -569,7 +570,12 @@ var trackerCheckCmd = &cobra.Command{
 		rows := make([]map[string]interface{}, 0, len(ids))
 		failed := 0
 		for _, id := range ids {
-			status, dest := resolveTrackerLink(c, id, "", "")
+			status, dest, apiErr := resolveTrackerLink(c, id, "", "")
+			if refused := licenceRefusal(apiErr); refused != nil {
+				// The install refuses the CLI, not this tracker: every
+				// remaining check would meet the same 402.
+				return fmt.Errorf("checking tracker %s (%d of %d checked before it; the rest not attempted): %w", id, len(rows), len(ids), refused)
+			}
 			ok := strings.HasPrefix(status, "3")
 			if !ok {
 				failed++

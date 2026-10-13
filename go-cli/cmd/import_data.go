@@ -66,12 +66,16 @@ var dataImportCmd = &cobra.Command{
 
 			created, err := c.Post(endpoint, body)
 			if err != nil {
-				failed++
-				msg := fmt.Sprintf("record %d: %v", i+1, err)
-				errorsOut = append(errorsOut, msg)
-				if !skipErrors {
-					return fmt.Errorf("import failed (%s)", msg)
+				// A refused key, no connection or the install's licence
+				// refusal would meet every later record too, so they stop
+				// --skip-errors as well. %w keeps the record's own category,
+				// exit code and hint (auth 2, network 3, licence 6, ...).
+				if !skipErrors || abortsImport(err) {
+					return fmt.Errorf("import failed at record %d of %d (%d imported and %d staged before it, the rest not attempted): %w",
+						i+1, len(records), imported, staged, err)
 				}
+				failed++
+				errorsOut = append(errorsOut, fmt.Sprintf("record %d: %v", i+1, err))
 				continue
 			}
 			// Under --staged the server records a proposal instead of the

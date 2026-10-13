@@ -28,6 +28,7 @@ type convImportFake struct {
 	gets          []int64
 	posts         []convImportPost
 	failPost      map[int64]bool  // POST answers 500
+	licencePost   map[int64]bool  // POST answers the install's 402 licence refusal
 	postNotFound  map[int64]bool  // POST answers 404 Click not found
 	dropPost      map[int64]bool  // POST closes the connection unanswered
 	postReturns   map[int64]int64 // POST answers with this existing conversion
@@ -60,7 +61,7 @@ type convImportPost struct {
 
 func newConvImportFake(clicks ...int64) *convImportFake {
 	f := &convImportFake{clicks: map[int64]*fakeImportClick{}, nextConv: 1000, keys: map[string]map[string]interface{}{},
-		failPost: map[int64]bool{}, postNotFound: map[int64]bool{}, dropPost: map[int64]bool{}, postReturns: map[int64]int64{},
+		failPost: map[int64]bool{}, licencePost: map[int64]bool{}, postNotFound: map[int64]bool{}, dropPost: map[int64]bool{}, postReturns: map[int64]int64{},
 		ledgerHidden: map[int64]bool{}, getStatus: map[int64]int{}}
 	for _, c := range clicks {
 		f.clicks[c] = &fakeImportClick{}
@@ -152,6 +153,11 @@ func (f *convImportFake) server(t *testing.T) *httptest.Server {
 				if err == nil {
 					conn.Close()
 				}
+				return
+			}
+			if f.licencePost[click] {
+				w.WriteHeader(402)
+				w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install's ClickServer API key."}`))
 				return
 			}
 			if f.failPost[click] {

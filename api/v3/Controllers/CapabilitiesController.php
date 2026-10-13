@@ -5,10 +5,38 @@ declare(strict_types=1);
 namespace Api\V3\Controllers;
 
 use Prosper202\License\ClickServerKeyValidator;
+use Prosper202\License\CliAccessCache;
 use Prosper202\License\ShellAccessCache;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 
 class CapabilitiesController
 {
+    /**
+     * Licence answers already fetched in this request, per key, so
+     * /capabilities asks my.tracking202.com at most once per key on a cold
+     * cache (shell and cli share it). Holds null for "unknown" too.
+     *
+     * @var array<string, array{valid: bool, paid: ?bool}|null>
+     */
+    private array $licenceChecks = [];
+
+    /**
+     * Whether a request comes from the Go CLI, the only client the Pro gate
+     * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
+     * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
+     *
+     * The User-Agent is the client's own claim, so this is a licensing
+     * prompt for the product, not an access control: the same API key keeps
+     * answering curl, the PHP CLI and the web app whatever the licence says,
+     * and a Go CLI build that sent another User-Agent would too. Nothing
+     * that must stay closed may rely on it (CLAUDE.md #16).
+     */
+    public static function isGoCliUserAgent(string $userAgent): bool
+    {
+        return str_starts_with($userAgent, 'p202-cli/') && str_contains($userAgent, '(Go)');
+    }
+
     public function __construct(
         private readonly \mysqli $db,
         private readonly ?int $userId = null,
@@ -149,6 +177,7 @@ class CapabilitiesController
                     ],
                 ],
                 'shell' => $this->shellAccess(),
+                'cli' => $this->cliAccess(),
                 'server' => [
                     'build' => $this->resolveBuildVersion(),
                     'commit' => defined('P202_GIT_COMMIT') ? (string)P202_GIT_COMMIT : 'unknown',
@@ -243,10 +272,13 @@ class CapabilitiesController
      * against my.tracking202.com. Returns false if the user has no key or
      * the key is invalid.
      *
-     * Results are cached per-key (ShellAccessCache::TTL_SECONDS) to avoid
-     * hitting my.tracking202.com on every capabilities request. If ClickServer
-     * is unreachable the last known result is used regardless of age, and
-     * access is denied when no prior result exists (fail-closed).
+     * Results are cached per-key (ShellAccessCache: an allow for TTL_SECONDS,
+     * a refusal for DENIAL_TTL_SECONDS) to avoid hitting my.tracking202.com
+     * on every capabilities request. If ClickServer
+     * is unreachable the last known result is used, up to
+     * STALE_TTL_SECONDS old, and access is denied when no prior result
+     * exists (fail-closed); the
+     * unanswered check is not repeated for UNKNOWN_TTL_SECONDS.
      */
     private function shellAccess(): bool
     {
@@ -255,46 +287,226 @@ class CapabilitiesController
         }
 
         $customerKey = $this->loadClickServerKey();
-        if ($customerKey === '') {
-            return false;
+        if ($customerKey === null || $customerKey === '') {
+            return false; // no key, or a lookup that failed: the shell is fail-closed
         }
 
-        $cached = ShellAccessCache::read($customerKey);
+        // A refusal is believed for DENIAL_TTL_SECONDS, an allow for
+        // TTL_SECONDS, as for the CLI: nothing else refreshes the entry when
+        // the key becomes valid, and the two verdicts on /capabilities should
+        // not disagree about it for an hour.
+        $cached = ShellAccessCache::readVerdict($customerKey);
         if ($cached !== null) {
             return $cached;
         }
-
-        // Short timeouts: this runs on the synchronous request path, so a
-        // slow ClickServer must not stall /capabilities for long.
-        $result = ClickServerKeyValidator::validate($customerKey, 2, 4);
-        if ($result === null) {
+        // An unanswered check holds off the next for UNKNOWN_TTL_SECONDS, as
+        // for the CLI: /capabilities is what the Go CLI opens with, and
+        // during an outage every call would otherwise pay the timeouts.
+        if (ShellAccessCache::recentlyUnknown($customerKey)) {
             return ShellAccessCache::readStale($customerKey) === true;
         }
-        ShellAccessCache::write($customerKey, $result);
-        return $result;
+
+        $result = $this->checkKey($customerKey);
+        if ($result === null) {
+            ShellAccessCache::markUnknown($customerKey);
+            return ShellAccessCache::readStale($customerKey) === true;
+        }
+        return $result['valid'];
     }
 
-    private function loadClickServerKey(): string
+    /**
+     * Whether the Go CLI may run against this install: the ClickServer key's
+     * account has an active Prosper202 ClickServer subscription (trials count).
+     *
+     * Cached per key (CliAccessCache). Only an authoritative answer is
+     * cached, a refusal included: "valid, not paid" and "no such key" are the
+     * service's own words. An allow holds for TTL_SECONDS (an hour, which a
+     * lapsed subscription outlives), a refusal for DENIAL_TTL_SECONDS (five
+     * minutes, which is how long a customer who starts the trial waits).
+     * Fails OPEN whenever the answer is unknown (my.tracking202.com
+     * unreachable, an error page, an answer without a boolean 'paid'),
+     * whatever an earlier answer was: an outage never refuses anyone, and the
+     * unanswered check holds off the next for UNKNOWN_TTL_SECONDS so a burst
+     * of CLI requests during one pays the connect timeout once. Falls back
+     * to the install owner's key when the API user has none, so sub-users of
+     * a paid install are covered. Known residual: a cache
+     * directory another local user pre-created is refused (ShellAccessCache::dir,
+     * which logs it), and without it nothing is cached, hold-off included.
+     */
+    public function cliAccess(): bool
+    {
+        // A broken lookup must never become a denial: any error here is
+        // "unknown", and unknown lets the CLI through.
+        try {
+            return $this->cliAccessVerdict();
+        } catch (\Throwable $e) {
+            error_log('p202: CLI licence check failed, allowing: ' . $e->getMessage());
+            return true;
+        }
+    }
+
+    private function cliAccessVerdict(): bool
+    {
+        if ($this->userId === null) {
+            // Unreachable from the API (Auth::userId() is an int, and the
+            // user-less controller only serves /versions); kept open like
+            // every other unknown here rather than as the one silent denial.
+            return true;
+        }
+
+        $customerKey = $this->loadClickServerKey();
+        if ($customerKey === null) {
+            // Whether this user has a key of their own is unknown; judging
+            // them by the owner's would be a guess in either direction.
+            return true;
+        }
+        if ($customerKey === '') {
+            $customerKey = $this->loadOwnerClickServerKey();
+            if ($customerKey === null) {
+                return true; // the owner lookup failed: unknown, open
+            }
+        }
+        if ($customerKey === '') {
+            return false; // no key on the install is a real "not licensed"
+        }
+
+        $cached = CliAccessCache::readVerdict($customerKey);
+        if ($cached !== null) {
+            return $cached;
+        }
+        if (CliAccessCache::recentlyUnknown($customerKey)) {
+            return true;
+        }
+
+        $result = $this->checkKey($customerKey);
+        if ($result === null || $result['paid'] === null) {
+            CliAccessCache::markUnknown($customerKey);
+            return true;
+        }
+        return $result['paid'];
+    }
+
+    /**
+     * The account owner's ClickServer key for the requesting user's install.
+     * The owner is the lowest user_id on the same install_hash that is active,
+     * not deleted and holds a key, which is exactly how the web app resolves
+     * the account owner (AUTH::determineAccountOwnerId uses the same WHERE
+     * and ORDER BY), so the CLI and the dashboard agree on whose key counts.
+     *
+     * @return string|null the owner's key; '' when nobody on the install holds
+     *         one (not licensed); null when the lookup failed or the user has
+     *         no install_hash to find an owner by (unknown, never "no key")
+     */
+    private function loadOwnerClickServerKey(): ?string
+    {
+        // Connection::bind (CLAUDE.md #7), not a direct $stmt->bind_param().
+        // One string literal, single-quoted SQL strings: StaticSqlSchemaTest
+        // prepares it against the installed schema, and '' is a string under
+        // every sql_mode where "" is an identifier under ANSI_QUOTES.
+        $conn = new Connection($this->db);
+        try {
+            $stmt = $conn->prepareRead(
+                "SELECT u.install_hash,
+                        (SELECT o.p202_customer_api_key FROM 202_users o
+                          WHERE o.install_hash = u.install_hash
+                          AND o.user_deleted != 1 AND o.user_active = 1
+                          AND o.p202_customer_api_key IS NOT NULL AND o.p202_customer_api_key != ''
+                          ORDER BY o.user_id ASC LIMIT 1) AS owner_key
+                 FROM 202_users u WHERE u.user_id = ? LIMIT 1"
+            );
+        } catch (QueryException) {
+            return null;
+        }
+        try {
+            $conn->bind($stmt, 'i', [$this->userId]);
+        } catch (QueryException) {
+            $stmt->close();
+            return null;
+        }
+        if (!mysqli_stmt_execute($stmt)) {
+            $stmt->close();
+            return null;
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            return null;
+        }
+        $row = $result->fetch_assoc();
+        $stmt->close();
+        if (!is_array($row) || trim((string)($row['install_hash'] ?? '')) === '') {
+            return null; // no such user, or no install to find an owner on: unknown
+        }
+        return trim((string)($row['owner_key'] ?? ''));
+    }
+
+    /**
+     * One licence call per key per request, filling both caches from it.
+     * Short timeouts: this runs on the synchronous request path, so a slow
+     * my.tracking202.com must not stall /capabilities for long.
+     *
+     * @return array{valid: bool, paid: ?bool}|null null = unknown (outage)
+     */
+    private function checkKey(string $customerKey): ?array
+    {
+        if (array_key_exists($customerKey, $this->licenceChecks)) {
+            return $this->licenceChecks[$customerKey];
+        }
+        // One asker per key across processes: a burst of cold requests would
+        // otherwise each pass the cache and the hold-off and each pay the
+        // timeouts. The others read "unknown" and the claimant's verdict
+        // lands in the cache for all of them.
+        if (!ShellAccessCache::beginCheck($customerKey)) {
+            return $this->licenceChecks[$customerKey] = null;
+        }
+        try {
+            $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+        } finally {
+            ShellAccessCache::endCheck($customerKey);
+        }
+        if ($result !== null) {
+            ShellAccessCache::write($customerKey, $result['valid']);
+            if ($result['paid'] !== null) {
+                CliAccessCache::write($customerKey, $result['paid']);
+            }
+        }
+        return $this->licenceChecks[$customerKey] = $result;
+    }
+
+    /**
+     * The requesting user's own ClickServer key.
+     *
+     * @return string|null the key, '' when they have none, null when the
+     *         lookup failed (unknown: never read as "no key"). A value, not a
+     *         flag on the controller: /capabilities runs the shell check and
+     *         the CLI check on one instance, and a flag set by the first
+     *         lookup would have coloured the second.
+     */
+    private function loadClickServerKey(): ?string
     {
         $stmt = $this->db->prepare(
             'SELECT p202_customer_api_key FROM 202_users WHERE user_id = ? LIMIT 1'
         );
         if (!$stmt) {
-            return '';
+            return null;
         }
-        // bind_param() binds by reference; a readonly property can't be passed
-        // by reference (PHP 8: "Cannot indirectly modify readonly property"),
-        // so copy it to a local first.
-        $userId = $this->userId;
-        $stmt->bind_param('i', $userId);
+        // Connection::bind checks the bind (CLAUDE.md #7): unchecked, a failed
+        // bind would run the query with no user and read as "this user has no
+        // key", sending them to the owner's licence in silence.
+        try {
+            (new Connection($this->db))->bind($stmt, 'i', [$this->userId]);
+        } catch (QueryException) {
+            $stmt->close();
+            return null;
+        }
         if (!mysqli_stmt_execute($stmt)) {
             $stmt->close();
-            return '';
+            return null;
         }
         $result = $stmt->get_result();
         if ($result === false) {
             $stmt->close();
-            return '';
+            return null;
         }
         $row = $result->fetch_assoc();
         $stmt->close();
