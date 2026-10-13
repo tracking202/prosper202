@@ -38,7 +38,7 @@ $connect2 = __DIR__ . '/../../../202-config/connect2.php';
 foreach (
     [
         'setCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'systemHash',
-        'replaceTrackerPlaceholders', 'replaceTokens',
+        'replaceTrackerPlaceholders', 'replaceClickPlaceholders', 'p202ClickUrlTokens', 'replaceTokens',
     ] as $name
 ) {
     eval(lift_function($connect2, $name));

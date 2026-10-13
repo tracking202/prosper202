@@ -13,9 +13,12 @@ declare(strict_types=1);
  * by its tokens and evaluated beside stand-ins for what it calls. The body
  * that runs is the shipped body, byte for byte.
  *
- * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank> [<scenario>]
+ * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
+ *       caught_secret> [<scenario>]
  *   caught: ($db, what was being done, the failure the caller caught)
  *   caught_blank: the same with an empty failure
+ *   db_sql_secret: ($db, $sql), the failing statement quoting a value
+ *   caught_secret: a caught failure and a statement, each quoting a value
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it)
  *
@@ -97,7 +100,7 @@ if (basename((string) $file) === 'connect2.php') {
 } elseif ($scenario === 'gone' || $scenario === 'lookup_fails') {
     // The admin pages' own (functions.php, beside functions-tracking202.php),
     // which answers false.
-    foreach (['_mysqli_query', 'p202LogFailedQuery', 'p202FailedQueryMessage'] as $query) {
+    foreach (['_mysqli_query', 'p202LogFailedQuery'] as $query) {
         eval(lift_function(dirname((string) $file) . '/functions.php', $query));
     }
 } else {
@@ -308,6 +311,15 @@ if ($shape === 'db') {
     $db->query($sql) or record_mysql_error($db, 'recording the probe', 'the failure the caller caught');
 } elseif ($shape === 'caught_blank') {
     $db->query($sql) or record_mysql_error($db, 'recording the probe', '');
+} elseif ($shape === 'db_sql_secret') {
+    $secret = $sql . " WHERE k = 's3cr3t-sql'";
+    $db->query($secret) or record_mysql_error($db, $secret);
+} elseif ($shape === 'caught_secret') {
+    $db->query($sql) or record_mysql_error(
+        $db,
+        "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
+        "MySQL execute failed: Duplicate entry 's3cr3t-msg' for key 'uk' [errno 1062]"
+    );
 } else {
     $db->query($sql) or record_mysql_error($sql);
 }

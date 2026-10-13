@@ -18,18 +18,17 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
         $db = $database->getConnection();
     }
     if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
+        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
         echo 'Database error. The webmaster has been notified.';
         die();
     }
 
     global $server_row;
 
-    // record the mysql error
-    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
-
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
+    // The server's message and the statement, without the values they
+    // quote: they are logged, and listed in Account › Settings.
+    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
 
     // The session's zone, for the footer's clock; this page counts nothing in
     // it. AUTH::set_timezone() would read the account's zone from the
@@ -42,7 +41,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 
     // Rolled back first, and never a fatal in place of the page; see
     // p202RecordMysqlErrorRow().
-    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
         $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
         $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -54,7 +53,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
             ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
             : 0;
         $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
         $mysql['mysql_error_time'] = time();
 
         $report_sql = "INSERT     INTO  202_mysql_errors
@@ -289,6 +288,22 @@ function p202TrackingBaseUrl(): string
 function getTrackingDomain(): string
 {
     return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+}
+
+/**
+ * The account's dash email as a JavaScript string, for the footer's support
+ * widget: written between quotes as stored, an address with a ' ended the
+ * string and broke the script.
+ */
+function p202DashEmailJson(): string
+{
+    $json = json_encode(
+        (string) getDashEmail(),
+        JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    return $json === false ? '""' : $json;
 }
 
 /**

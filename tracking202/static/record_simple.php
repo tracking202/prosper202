@@ -74,7 +74,8 @@ $user_sql = "SELECT 		user_timezone,
 							user_keyword_searched_or_bidded,
                             user_pref_referer_data,
                             user_pref_dynamic_bid,
-							maxmind_isp
+							maxmind_isp,
+                            user_public_publisher_id
 			   FROM 		202_users
 				   LEFT JOIN	202_users_pref USING (user_id)
 				   WHERE 		202_users.user_id='" . $mysql['user_id'] . "'";
@@ -433,7 +434,29 @@ if ($cloaking_on === true) {
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+// The click's rows are written below, so its URL's tokens come from the values
+// in hand: read back, they are not there yet.
+$redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
+    'keyword' => $keyword,
+    't202pubid' => $user_row['user_public_publisher_id'] ?? '',
+    'c1' => $c1,
+    'c2' => $c2,
+    'c3' => $c3,
+    'c4' => $c4,
+    'gclid' => (string) $_GET['gclid'],
+    'utm_source' => $utm_source,
+    'utm_medium' => $utm_medium,
+    'utm_campaign' => $utm_campaign,
+    'utm_term' => $utm_term,
+    'utm_content' => $utm_content,
+    'country' => $countryName,
+    'country_code' => $countryCode,
+    'region' => $regionName,
+    'city' => $cityName,
+    'cpc' => $mysql['click_cpc'],
+    'payout' => $tracker_row['aff_campaign_payout'] ?? '',
+    'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
+]);
 $click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
 $mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 

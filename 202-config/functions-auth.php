@@ -517,15 +517,15 @@ class AUTH
             [$user_id, $auth_key, $hash] = $parts;
             if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
                 try {
-                    $secret = self::get_user_secret_key($user_id);
+                    $secret = self::get_user_secret_key($user_id, false);
                 } catch (\RuntimeException $e) {
                     // Not verified, so not signed in; the cookie is kept for
                     // a request that can read the key.
                     error_log('remember-me: ' . $e->getMessage());
                     return false;
                 }
-                // No such user: anyone can send that cookie, so it is refused
-                // without a log line per request.
+                // No such user, or none with a key: anyone can send that
+                // cookie, so it is refused without a log line per request.
                 if ($secret === null) {
                     return false;
                 }
@@ -587,10 +587,13 @@ class AUTH
     }
 
     /**
-     * The account's remember-me key, minted and stored on first use; null
-     * when there is no such account. A read or a store that fails throws.
+     * The account's remember-me key, minted and stored when it has none; null
+     * for no account. With $mintIfNone false (the cookie check, which a
+     * stranger can call) an account with no key answers null as well: a
+     * cookie is signed only with a key already stored. A read or a store that
+     * fails throws.
      */
-    public static function get_user_secret_key($user_id): ?string
+    public static function get_user_secret_key($user_id, bool $mintIfNone = true): ?string
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
@@ -620,6 +623,9 @@ class AUTH
             );
         }
         if (empty($user_row['secret_key'])) {
+            if (!$mintIfNone) {
+                return null;
+            }
             $mysql['secret_key'] = self::generate_random_string(48);
             $sql = '
 				UPDATE

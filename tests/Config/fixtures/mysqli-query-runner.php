@@ -20,7 +20,7 @@ require_once __DIR__ . '/lift-function.php';
 $functions = __DIR__ . '/../../../202-config/functions.php';
 eval(lift_function($functions, '_mysqli_query'));
 eval(lift_function($functions, 'p202LogFailedQuery'));
-eval(lift_function($functions, 'p202FailedQueryMessage'));
+require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
 
 mysqli_report(MYSQLI_REPORT_STRICT);
 $db = new mysqli(

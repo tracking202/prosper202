@@ -1307,7 +1307,14 @@ direct link they are blank now (measured: `c1=&kw=` from a click carrying
 `c1=hello`), while `rtr.php`, whose rows were still written first, filled
 them. Before moving a write, find every reader of what it writes in the same
 request; `RotatorClickWriter` resolves the rotator's URL inside the click's
-transaction, after the rows, for that reason.
+transaction, after the rows, for that reason. An endpoint that redirects
+before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
+values it holds (`replaceClickPlaceholders()`), and the read-back is for one
+whose rows are written. The read-back's first pass had the opposite fault:
+it filled tokens before reading the click, from values no caller passed, and
+`round((float) null, 2)` is a 0 that reads like a cost, so `[[cpc]]` was 0 on
+every path while `[[cpc2]]`, left for the second pass, was right
+(`ClickUrlTokensInstanceTest`).
 
 ### 33. A tagged version's upgrade step is frozen
 `upgrade_needed()` compares the stored version with the code's, and the

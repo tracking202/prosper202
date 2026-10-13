@@ -15,7 +15,9 @@ use Tests\Support\SourceScan;
  * block or one around it, before it) names the failure it caught, as its
  * third argument; so does a call in a catch block, whatever its try did,
  * because a rollback made inside a call (Connection::transaction() rolls
- * back before it rethrows) names nothing a scan can see.
+ * back before it rethrows) names nothing a scan can see. A helper that rolls
+ * back and answers false instead of throwing is not seen either: a call after
+ * it, outside a catch, is the author's to name.
  */
 final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
 {
