@@ -62,8 +62,10 @@ function record_mysql_error($dbOrSql, $sql = null): never
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
         // On the connection just rolled back: the global one this used
         // before may be another, with a transaction of its own still open.
+        // The statement it failed on carries what it records: the server's
+        // words are left to _mysqli_query()'s own line, if it logs one.
         if (_mysqli_query($db, $report_sql) === false) {
-            throw new \RuntimeException($db->error);
+            throw new \RuntimeException('the server refused the row');
         }
     });
 

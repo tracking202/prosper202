@@ -601,6 +601,10 @@ class AUTH
             throw new \RuntimeException('Reading the remember-me key of user ' . (int) $user_id . ' failed (logged by _mysqli_query())');
         }
         $user_row = $user_result->fetch_assoc();
+        // No account: a key minted for it would be stored nowhere.
+        if (!is_array($user_row)) {
+            throw new \RuntimeException('There is no user ' . (int) $user_id . ' to hold a remember-me key');
+        }
         if (empty($user_row['secret_key'])) {
             $mysql['secret_key'] = self::generate_random_string(48);
             $sql = '

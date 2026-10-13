@@ -29,6 +29,8 @@ declare(strict_types=1);
  *                   failing through the defining file's real
  *                   _mysqli_query(), which on the click path calls
  *                   record_mysql_error() again
+ *   insert_fails    the lookups answering, and the error row's INSERT
+ *                   refused by the server
  */
 
 [$script, $file, $shape, $scenario] = $argv + [null, null, 'db', 'page'];
@@ -103,6 +105,10 @@ if ($scenario === 'gone' || $scenario === 'lookup_fails') {
         // The error record really written, through the procedural call so
         // the recording below counts only what the page asks itself.
         $statement = $sql ?? $dbOrSql;
+        if (($GLOBALS['scenario'] ?? 'page') === 'insert_fails') {
+            $refused = 'p202_no_such_table_for_the_error_row';
+            $statement = preg_replace('/\b202_mysql_errors\b/', $refused, (string) $statement);
+        }
         $result = mysqli_query($GLOBALS['db'], (string) $statement);
         if ($result === false) {
             echo 'RECORD FAILED: ' . mysqli_error($GLOBALS['db']) . "\n";

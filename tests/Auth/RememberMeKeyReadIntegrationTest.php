@@ -146,6 +146,20 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         self::assertNull(self::storedKey());
     }
 
+    public function testAUserWithNoAccountGetsNoKey(): void
+    {
+        $db = self::$db;
+        self::assertNotNull($db);
+        self::assertNotFalse($db->query('DELETE FROM 202_users WHERE user_id = ' . self::USER), $db->error);
+
+        $out = self::runScenario('none');
+
+        // The UPDATE that stores a new key matches no row and still answers
+        // true: the key it minted was handed out stored nowhere.
+        self::assertSame('THREW There is no user ' . self::USER . " to hold a remember-me key\n", $out);
+        self::assertNull(self::storedKey());
+    }
+
     public function testTheCookieCheckSignsNobodyInAndLeavesTheStoredKey(): void
     {
         self::account(self::STORED);

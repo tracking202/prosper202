@@ -171,6 +171,33 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertLessThanOrEqual(2, substr_count($logged, 'MySQL error: '), $all);
     }
 
+    /** @return array<string, array{string}> */
+    public static function definitions(): array
+    {
+        return ['functions-tracking202.php' => ['functions-tracking202.php'], 'connect2.php' => ['connect2.php']];
+    }
+
+    /**
+     * The error row's INSERT refused: the page says it could not be
+     * recorded, and the line saying why is the recorder's own, not the
+     * server's words about a statement that carries the failed one.
+     *
+     * @dataProvider definitions
+     */
+    public function testARefusedErrorRowIsLoggedWithoutTheServersWords(string $file): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, $logged, $all] = self::runScenario($file, 'db_sql', 'insert_fails', $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, false);
+        self::assertStringContainsString(
+            'MySQL error not recorded in 202_mysql_errors: the server refused the row',
+            $logged,
+            $all
+        );
+        self::assertStringNotContainsString('p202_no_such_table_for_the_error_row', $logged, $all);
+    }
+
     /** @return array{string, string, string} stdout, the error log, and both with stderr */
     private static function runScenario(string $file, string $shape, string $scenario, int $marker): array
     {
