@@ -64,7 +64,10 @@ and set its cookie anyway, and a failed read of the account's secret was
 read as "no secret", so a new one was minted over the stored one and every
 remembered browser of the account was signed out. It logs every failure now
 (`p202LogFailedQuery()`: the caller, MySQL's errno and words, the statement
-with its quoted values taken out, since some carry a secret), and
+with its quoted values taken out, since some carry a secret — and MySQL's
+words too, which repeat a value as sent, its quotes unescaped: `Duplicate
+entry 'O'Brien' for key …`, so redacting the statement alone left the value
+in the line, found by review), and
 `MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
 away. It cannot see a result that is assigned and never tested, which is
 what the 240 calls that assign one leave to the next sweep.
@@ -339,7 +342,7 @@ Two amplifiers, both of which turned this from a blip into a breach:
   once, so a rollback left memcached naming a row that no longer existed and
   every later click to the URL stored the dangling id for 7 days (found by
   the adversarial review, reproduced live). Writes made inside a transaction
-  wait for its commit (`p202HoldCacheWrites()`).
+  wait for its commit (`p202WithHeldCacheWrites()`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not

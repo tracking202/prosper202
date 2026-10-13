@@ -87,9 +87,9 @@ function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
  * most of its callers read as "no rows" or never look at, so this line is
  * where the failure shows.
  *
- * The statement is logged with its quoted values taken out: the line names
- * the caller and the table, and some of these statements carry a secret
- * (the remember-me keys, the licence key).
+ * The statement and the server's message are logged with the values they
+ * quote taken out: the line names the caller and the table, and some of
+ * these statements carry a secret (the remember-me keys, the licence key).
  *
  * @param array{file?: string, line?: int} $caller
  */
@@ -98,19 +98,40 @@ function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): vo
     // A quote left open (a malformed statement) is taken out to the end.
     $shape = (string) preg_replace('/\'(?:[^\'\\\\]|\\\\.)*(?:\'|\z)|"(?:[^"\\\\]|\\\\.)*(?:"|\z)/s', '?', $sql);
     $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
-    // A syntax error quotes the statement from where parsing stopped, values
-    // and all; any other error is logged as MySQL wrote it.
-    $error = $connection->errno === 1064
-        ? (string) preg_replace("/ near '.*' at line (\\d+)\\z/s", ' near … at line $1', $connection->error)
-        : $connection->error;
     error_log(sprintf(
         'MySQL query failed at %s:%d [errno %d]: %s | %s',
         $caller['file'] ?? '?',
         $caller['line'] ?? 0,
         $connection->errno,
-        $error,
+        p202FailedQueryMessage($connection->errno, $connection->error),
         mb_strimwidth($shape, 0, 500, '…')
     ));
+}
+
+/**
+ * The server's message for a failed statement, without the values it quotes.
+ *
+ * Many messages repeat a value from the statement as sent, its own quotes
+ * unescaped: 1062 `Duplicate entry 'O'Brien' for key 'uk'`, 1366 and 1292
+ * under a strict sql_mode, 1064's quote of the statement from where parsing
+ * stopped. So everything from the first quote to the last is taken out,
+ * except in the messages known to quote nothing but names, and a duplicate
+ * entry keeps the name of its key.
+ */
+function p202FailedQueryMessage(int $errno, string $message): string
+{
+    // Unknown, duplicate or ambiguous database, table, column or key; a
+    // column refused a null, a default, a long or a truncated value; a
+    // foreign key.
+    $namesOnly = [1048, 1049, 1050, 1051, 1052, 1054, 1060, 1061, 1091, 1146, 1265, 1364, 1406, 1451, 1452];
+    if (in_array($errno, $namesOnly, true)) {
+        return $message;
+    }
+    if ($errno === 1062 && preg_match("/\\ADuplicate entry '.*' for key ('[^']*')\\z/s", $message, $m) === 1) {
+        return 'Duplicate entry ? for key ' . $m[1];
+    }
+
+    return (string) preg_replace('/[\'"].*[\'"]|[\'"].*\z/s', '?', $message);
 }
 
 function salt_user_pass($user_pass): string

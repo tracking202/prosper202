@@ -56,6 +56,8 @@ if (!function_exists('p202RecordMysqlErrorRow')) {
      */
     function p202RecordMysqlErrorRow(\mysqli $db, callable $write): void
     {
+        // Never reset: record_mysql_error() ends the request, and a call from
+        // the page it goes on to draw throws rather than draw a second one.
         static $recording = false;
         if ($recording) {
             throw new \RuntimeException('a statement run to record it failed as well');

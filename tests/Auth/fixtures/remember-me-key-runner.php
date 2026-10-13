@@ -28,6 +28,7 @@ $functions = __DIR__ . '/../../../202-config/functions.php';
 $real = lift_function($functions, '_mysqli_query');
 eval(str_replace('function _mysqli_query(', 'function p202_real_mysqli_query(', $real));
 eval(lift_function($functions, 'p202LogFailedQuery'));
+eval(lift_function($functions, 'p202FailedQueryMessage'));
 
 // The real _mysqli_query(), with the statement this scenario fails replaced
 // by one the server refuses; and the DB singleton connect.php's config

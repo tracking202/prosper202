@@ -20,6 +20,7 @@ require_once __DIR__ . '/lift-function.php';
 $functions = __DIR__ . '/../../../202-config/functions.php';
 eval(lift_function($functions, '_mysqli_query'));
 eval(lift_function($functions, 'p202LogFailedQuery'));
+eval(lift_function($functions, 'p202FailedQueryMessage'));
 
 mysqli_report(MYSQLI_REPORT_STRICT);
 $db = new mysqli(
@@ -44,3 +45,19 @@ echo 'unclosed ', $answer(_mysqli_query($db, $unclosed));
 echo 'success ', $answer(_mysqli_query($db, 'SELECT 1'));
 echo 'line ', __LINE__ + 1, "\n";
 echo 'caller ', $answer(_mysqli_query('SELECT * FROM p202_no_such_table_for_mysqli_query'));
+
+// Messages that repeat a value, its quote unescaped: a duplicate entry, and
+// a value a column refuses under a strict sql_mode.
+$setup = static function (string $sql) use ($db): void {
+    if ($db->query($sql) === false) {
+        throw new RuntimeException($db->error . ' in ' . $sql);
+    }
+};
+$setup('CREATE TEMPORARY TABLE p202_mysqli_query_values (k VARCHAR(40) PRIMARY KEY, n INT NULL)');
+// Escaped as real_escape_string() escapes it.
+$duplicate = "INSERT INTO p202_mysqli_query_values (k) VALUES ('O\\'Brien s3cr3t-dup')";
+$setup($duplicate);
+echo 'duplicate ', $answer(_mysqli_query($db, $duplicate));
+$setup("SET SESSION sql_mode = 'STRICT_ALL_TABLES'");
+$refused = "INSERT INTO p202_mysqli_query_values (k, n) VALUES ('x', 'O\\'Brien s3cr3t-int')";
+echo 'refused ', $answer(_mysqli_query($db, $refused));

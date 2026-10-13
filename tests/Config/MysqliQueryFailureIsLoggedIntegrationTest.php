@@ -57,13 +57,13 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
 
         // Still false to the caller, and true for a statement that worked.
         self::assertStringContainsString("secret FALSE\nescaped FALSE\nunclosed FALSE\nsuccess OK\n", $stdout, $all);
-        self::assertStringContainsString("caller FALSE\n", $stdout, $all);
+        self::assertStringContainsString("caller FALSE\nduplicate FALSE\nrefused FALSE\n", $stdout, $all);
 
         $lines = array_values(array_filter(
             explode("\n", $logged),
             static fn (string $l): bool => str_contains($l, 'MySQL query failed')
         ));
-        self::assertCount(4, $lines, "one line for each failure, none for the success:\n$all");
+        self::assertCount(6, $lines, "one line for each failure, none for the success:\n$all");
 
         $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
         self::assertMatchesRegularExpression(
@@ -82,15 +82,31 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
         // A quote left open is taken out to the end, and the syntax error's
         // own quote of the statement with it.
         self::assertMatchesRegularExpression(
-            '~\[errno 1064\]: You have an error in your SQL syntax; .* near … at line 1 \| '
+            '~\[errno 1064\]: You have an error in your SQL syntax; .* near \? at line 1 \| '
                 . preg_quote('SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ?', '~') . '$~',
             $lines[2],
             $all
         );
-        self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");
 
         // The caller's own line: the one-argument form, through the global connection.
         self::assertSame(1, preg_match('/^line (\d+)$/m', $stdout, $m), $all);
         self::assertStringContainsString(':' . $m[1] . ' [errno 1146]', $lines[3], $all);
+
+        // The server's message repeats the value; the key's name is kept.
+        // (MySQL 8 names the key with its table.)
+        self::assertMatchesRegularExpression(
+            "~\\[errno 1062\\]: Duplicate entry \\? for key '([^']*\\.)?PRIMARY' \\| "
+                . preg_quote('INSERT INTO p202_mysqli_query_values (k) VALUES (?)', '~') . '$~',
+            $lines[4],
+            $all
+        );
+        self::assertMatchesRegularExpression(
+            '~\[errno 1366\]: Incorrect integer value: \? (for column `[^\']*` )?at row 1 \| '
+                . preg_quote('INSERT INTO p202_mysqli_query_values (k, n) VALUES (?, ?)', '~') . '$~',
+            $lines[5],
+            $all
+        );
+        self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");
+        self::assertStringNotContainsString('Brien', $logged, "a value's remainder reached the log:\n$all");
     }
 }

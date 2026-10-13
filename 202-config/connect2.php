@@ -70,7 +70,7 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
-    // Held while a transaction is open; see p202HoldCacheWrites().
+    // Held while a transaction is open; see p202WithHeldCacheWrites().
     if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
         $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
         return true;
@@ -89,28 +89,31 @@ function setCache($key, $value, $exp = null)
 }
 
 /**
- * Hold the cache writes made from here on until p202ReleaseCacheWrites().
+ * Run $work with the cache writes it makes held: written once it returns,
+ * dropped when it throws (and the throw passed on).
  *
  * The lookups that run inside a click's transaction cache the id of a row
  * they insert at once (INDEXES::get_site_url_id(), 7 days; its domain, 30),
  * so a rollback after them left an entry naming no row, and every click to
- * that URL stored the dangling id until it expired. Held, an entry is
- * written only once its row is committed, and never when it is not.
+ * that URL stored the dangling id until it expired. Run the transaction as
+ * $work and an entry is written only once its row is committed.
  */
-function p202HoldCacheWrites(): void
+function p202WithHeldCacheWrites(callable $work): void
 {
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
+    }
     $GLOBALS['p202HeldCacheWrites'] = [];
-}
-
-/** Write the held entries ($committed) or drop them, and stop holding. */
-function p202ReleaseCacheWrites(bool $committed): void
-{
-    $held = $GLOBALS['p202HeldCacheWrites'] ?? null;
+    try {
+        $work();
+    } catch (\Throwable $e) {
+        $GLOBALS['p202HeldCacheWrites'] = null;
+        throw $e;
+    }
+    $held = $GLOBALS['p202HeldCacheWrites'];
     $GLOBALS['p202HeldCacheWrites'] = null;
-    if ($committed && is_array($held)) {
-        foreach ($held as [$key, $value, $exp]) {
-            setCache($key, $value, $exp);
-        }
+    foreach ($held as [$key, $value, $exp]) {
+        setCache($key, $value, $exp);
     }
 }
 

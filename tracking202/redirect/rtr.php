@@ -747,30 +747,29 @@ $rtrClick->clickOut = (int) $mysql['click_out'];
 $rtrClick->clickRefererSiteUrlId = (int) $mysql['click_referer_site_url_id'];
 $rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
-// The site URL lookup inside the transaction caches the ids it inserts:
-// held until the rows commit.
-p202HoldCacheWrites();
+// Inside the transaction: the placeholders are read back from the rows just
+// written. A plain closure: it hands the resolved URL out.
+$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id): int {
+	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+	return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
+};
 try {
-	// Its own Connection on $db: the closure below reads back through $db,
-	// and only a transaction on that same handle shows it the new rows.
-	(new \Prosper202\Click\RotatorClickWriter(new \Prosper202\Database\Connection($db)))->write(
+	// Its own Connection on $db: the resolver reads back through $db, and
+	// only a transaction on that same handle shows it the new rows.
+	$rtrWriter = new \Prosper202\Click\RotatorClickWriter(new \Prosper202\Database\Connection($db));
+	// The site URL lookup caches the ids of the rows it inserts: held until
+	// the transaction commits, and dropped with a rollback.
+	p202WithHeldCacheWrites(static fn () => $rtrWriter->write(
 		$rtrClick,
 		(int) $mysql['rotator_id'],
 		(int) $mysql['rule_id'],
 		(int) $mysql['rule_redirect_id'],
 		isset($_GET['lpr']) && $_GET['lpr'] != '',
-		// Inside the transaction: the placeholders are read back from the
-		// rows just written. A plain closure: it hands the resolved URL out.
-		function () use ($db, &$redirect_site_url, $click_id): int {
-			$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
-			return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
-		}
-	);
+		$rtrResolveRedirect
+	));
 } catch (\Throwable $rtrWriteError) {
-	p202ReleaseCacheWrites(false);
 	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'] . ': ' . $rtrWriteError->getMessage());
 }
-p202ReleaseCacheWrites(true);
 
 	if ($rule['aff_campaign_id'] != null) {
 		//set the cookie
