@@ -95,6 +95,13 @@ function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
  */
 function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
 {
+    // Cut to whole bytes, then off a character the cut split: no mbstring
+    // here, on every failed query (the polyfill has no mb_strcut()).
+    $cut = static fn (string $text, int $bytes): string => (string) preg_replace(
+        '/(?:[\xC0-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF7][\x80-\xBF]{0,2})\z/',
+        '',
+        substr($text, 0, $bytes)
+    );
     // A quote left open (a malformed statement, a value ending in a
     // backslash) is taken out to the end. Where a value ends depends on the
     // session's sql_mode: under NO_BACKSLASH_ESCAPES real_escape_string()
@@ -111,7 +118,7 @@ function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): vo
     } else {
         $shape = $escaped === $literal
             ? $escaped
-            : mb_strcut($escaped, 0, strspn($escaped ^ $literal, "\0"), 'UTF-8') . '…';
+            : $cut($escaped, strspn($escaped ^ $literal, "\0")) . '…';
         $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
     }
     error_log(sprintf(
@@ -120,7 +127,7 @@ function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): vo
         $caller['line'] ?? 0,
         $connection->errno,
         p202FailedQueryMessage($connection->errno, $connection->error),
-        mb_strimwidth($shape, 0, 500, '…')
+        strlen($shape) > 500 ? $cut($shape, 497) . '…' : $shape
     ));
 }
 

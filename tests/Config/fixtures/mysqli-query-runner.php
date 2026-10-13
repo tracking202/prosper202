@@ -80,3 +80,8 @@ $setup("SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'");
 $nbe = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = '"
     . $db->real_escape_string('s3cr3t-nbe\\') . "' AND secret_key = 's3cr3t-nbe2'";
 echo 'nbe ', $answer(_mysqli_query($db, $nbe));
+$setup("SET SESSION sql_mode = ''");
+// A statement past the line's 500 bytes, cut inside a two-byte character.
+$wide = 'SELECT 1 FROM p202_no_such_table_for_mysqli_query /* ';
+$wide .= (497 - strlen($wide)) % 2 === 0 ? 'x' : '';
+echo 'wide ', $answer(_mysqli_query($db, $wide . str_repeat('é', 300) . ' */'));

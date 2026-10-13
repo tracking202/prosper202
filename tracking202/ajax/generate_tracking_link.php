@@ -207,8 +207,8 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	// begin_transaction() is checked because under this bootstrap's
 	// mysqli_report(MYSQLI_REPORT_STRICT) a failure returns false rather than
 	// throwing; ignoring it would run everything below in autocommit with the
-	// rollback() calls undoing nothing. record_mysql_error() is declared
-	// `never` -- it logs mysqli_error($db) and exits -- so nothing follows it.
+	// rollbacks undoing nothing. record_mysql_error($db, ...) reads the error,
+	// then rolls back and exits (it is `never`): nothing follows it.
 	if (!$db->begin_transaction()) {
 		record_mysql_error('begin_transaction() for tracker creation');
 	}
@@ -216,8 +216,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
 		$drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
 		if (!$db->query($drop_tracker)) {
-			$db->rollback();
-			record_mysql_error($drop_tracker);
+			record_mysql_error($db, $drop_tracker);
 		}
 	}
 
@@ -234,8 +233,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 								`tracker_time`='".$mysql['tracker_time']."'";
 	$tracker_result = $db->query($tracker_sql);
 	if (!$tracker_result) {
-		$db->rollback();
-		record_mysql_error($tracker_sql);
+		record_mysql_error($db, $tracker_sql);
 		die('Error creating tracker');
 	}
 
@@ -264,8 +262,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'";
 	$tracker_result = $db->query($tracker_sql);
 	if (!$tracker_result) {
-		$db->rollback();
-		record_mysql_error($tracker_sql);
+		record_mysql_error($db, $tracker_sql);
 		die('Error setting tracker ID');
 	}
 

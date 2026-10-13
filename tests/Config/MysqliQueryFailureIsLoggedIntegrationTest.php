@@ -29,14 +29,18 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
         }
     }
 
-    public function testAFailedStatementIsLoggedWithItsCallerAndWithoutItsValues(): void
+    /**
+     * @param list<string> $php the interpreter and its settings
+     * @return array{int, string, string, string} exit, stdout, stderr, the error log
+     */
+    private static function runRunner(array $php): array
     {
         $log = tempnam(sys_get_temp_dir(), 'p202-mq-');
         self::assertIsString($log);
         try {
             $proc = proc_open(
                 [
-                    PHP_BINARY, '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-d', 'display_errors=stderr',
+                    ...$php, '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-d', 'display_errors=stderr',
                     __DIR__ . '/fixtures/mysqli-query-runner.php',
                 ],
                 [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
@@ -52,13 +56,21 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
         } finally {
             @unlink($log);
         }
+
+        return [$exit, $stdout, $stderr, $logged];
+    }
+
+    public function testAFailedStatementIsLoggedWithItsCallerAndWithoutItsValues(): void
+    {
+        [$exit, $stdout, $stderr, $logged] = self::runRunner([PHP_BINARY]);
         $all = "exit $exit\n$stdout$stderr$logged";
         self::assertSame(0, $exit, $all);
 
         // Still false to the caller, and true for a statement that worked.
         self::assertStringContainsString("secret FALSE\nescaped FALSE\nunclosed FALSE\nsuccess OK\n", $stdout, $all);
         self::assertStringContainsString(
-            "caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\nlong FALSE\nbackslash FALSE\nnbe FALSE\n",
+            "caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\nlong FALSE\nbackslash FALSE\nnbe FALSE\n"
+                . "wide FALSE\n",
             $stdout,
             $all
         );
@@ -67,7 +79,7 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             explode("\n", $logged),
             static fn (string $l): bool => str_contains($l, 'MySQL query failed')
         ));
-        self::assertCount(10, $lines, "one line for each failure, none for the success:\n$all");
+        self::assertCount(11, $lines, "one line for each failure, none for the success:\n$all");
 
         $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
         self::assertMatchesRegularExpression(
@@ -139,7 +151,39 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             $lines[9],
             $all
         );
+        // Cut to 500 bytes, and not inside a character.
+        self::assertSame(1, preg_match('//u', $lines[10]), "a split character in the line:\n$all");
+        self::assertStringEndsWith('éé…', $lines[10], $all);
         self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");
         self::assertStringNotContainsString('Brien', $logged, "a value's remainder reached the log:\n$all");
+    }
+
+    /**
+     * The line is written on every failed query, so it needs nothing an
+     * install may lack: run without mbstring (which Symfony's polyfill does
+     * not cover for mb_strcut() or mb_strimwidth()), it still logs every
+     * failure and answers false.
+     */
+    public function testTheLineIsWrittenWithoutMbstring(): void
+    {
+        $php = [PHP_BINARY, '-n', '-d', 'extension_dir=' . ini_get('extension_dir')];
+        foreach (['mysqlnd', 'mysqli', 'tokenizer'] as $extension) {
+            array_push($php, '-d', 'extension=' . $extension);
+        }
+        $ready = 'echo extension_loaded("mysqli") && extension_loaded("tokenizer")'
+            . ' && !extension_loaded("mbstring") ? "ready" : "no";';
+        $command = implode(' ', array_map('escapeshellarg', [...$php, '-r', $ready]));
+        $probe = (string) shell_exec($command . ' 2>/dev/null');
+        if ($probe !== 'ready') {
+            self::markTestSkipped('This PHP cannot load mysqli without mbstring (not shared extensions here).');
+        }
+
+        [$exit, $stdout, $stderr, $logged] = self::runRunner($php);
+        $all = "exit $exit\n$stdout$stderr$logged";
+
+        self::assertSame(0, $exit, $all);
+        self::assertStringNotContainsString('undefined function', $all);
+        self::assertStringEndsWith("nbe FALSE\nwide FALSE\n", $stdout, $all);
+        self::assertSame(11, substr_count($logged, 'MySQL query failed'), $all);
     }
 }

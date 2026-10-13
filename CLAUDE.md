@@ -1015,7 +1015,9 @@ connection, which a caller that has rolled back has already cleared: the
 rotator writer's failure was filed with a blank error and its message in the
 statement column (Get Links and the redirector breakdown did the same). A
 caller that caught the failure names it (`record_mysql_error()`'s third
-argument).
+argument). Two of Get Links' five calls were fixed and three found a round
+later; `ErrorPageAfterRollbackNamesTheFailureTest` now holds every call made
+after a rollback to naming the failure.
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
