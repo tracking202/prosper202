@@ -72,9 +72,10 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             $logged,
             "the real error is logged:\n$all"
         );
-        // The page asks the failed connection nothing more: a read there
-        // fails the same way and throws, a fatal in place of this page. The
-        // first line proves the runner's recording saw the runner's query.
+        // The page asks the failed connection nothing more, the admin page's
+        // footer included: a read there fails the same way and throws, a
+        // fatal in place of this page. The first line proves the runner's
+        // recording saw the runner's query.
         self::assertStringContainsString('ASKED FIRST: ' . self::FAILING . "\n", $stdout);
         self::assertStringNotContainsString(
             'ASKED BY THE PAGE: ',
@@ -165,7 +166,19 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
 
         self::assertStringNotContainsString('Fatal error', $all);
         self::assertTheErrorPageEndedTheRequest($stdout, $all, false);
-        self::assertStringContainsString('MySQL error not recorded in 202_mysql_errors: ', $logged, $all);
+        // Which failure: a lost connection's transaction cannot be rolled
+        // back; a failed lookup is logged by the admin copy's _mysqli_query(),
+        // which answers false, and on the click path calls
+        // record_mysql_error() again, which throws back.
+        $why = match (true) {
+            $scenario === 'gone' => 'its transaction could not be rolled back: ',
+            $file === 'connect2.php' => 'a statement run to record it failed as well',
+            default => 'Call to a member function fetch_assoc() on false',
+        };
+        self::assertStringContainsString('MySQL error not recorded in 202_mysql_errors: ' . $why, $logged, $all);
+        if ($scenario === 'lookup_fails' && $file !== 'connect2.php') {
+            self::assertStringContainsString('MySQL query failed at ', $logged, $all);
+        }
         // The error itself, and on the click path the lookup's own: never
         // the tens of thousands a recursion writes.
         self::assertLessThanOrEqual(2, substr_count($logged, 'MySQL error: '), $all);
@@ -228,6 +241,14 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
 
         $all = "exit $exit\n" . $stdout . $stderr . substr($logged, 0, 4000);
         self::assertSame(0, $exit, "the error page exits cleanly:\n$all");
+        // A function the runner did not provide reads as a failure to record,
+        // which some scenarios expect: it must not be why.
+        self::assertStringNotContainsString('Call to undefined function', $stdout . $stderr . $logged, $all);
+        if ($file !== 'connect2.php') {
+            // The admin page goes on to its footer, which it draws to the end.
+            self::assertStringContainsString('</footer>', $stdout, $all);
+            self::assertStringContainsString('</html>', $stdout, $all);
+        }
 
         return [$stdout, $logged, $all];
     }

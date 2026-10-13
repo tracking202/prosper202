@@ -73,3 +73,10 @@ echo 'long ', $answer(_mysqli_query($db, $long));
 // A quote left open whose value ends in a backslash.
 $backslash = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = 's3cr3t-bs\\";
 echo 'backslash ', $answer(_mysqli_query($db, $backslash));
+// Under NO_BACKSLASH_ESCAPES, real_escape_string() leaves a backslash in
+// place: the value is whole to the server, and read with escapes it runs on
+// into the next one.
+$setup("SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'");
+$nbe = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = '"
+    . $db->real_escape_string('s3cr3t-nbe\\') . "' AND secret_key = 's3cr3t-nbe2'";
+echo 'nbe ', $answer(_mysqli_query($db, $nbe));

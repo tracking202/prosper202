@@ -76,7 +76,9 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
 <?php
 
-    template_bottom();
+    // Without the footer's reads (the dash email, the cron ping's tracking
+    // domain): they would ask the database that has just failed.
+    template_bottom(false);
     die();
 }
 
@@ -2840,6 +2842,12 @@ function getDashEmail(): string|bool
     //get the main users dash email and api key from the db
     $sql = "SELECT user_dash_email,p202_customer_api_key FROM 202_users WHERE user_id ='" . $_SESSION['user_id'] . "'";
     $user_result = _mysqli_query($sql);
+    // Every signed-in page's footer reads this: a failed read (logged by
+    // _mysqli_query()) leaves the address unknown rather than the page cut
+    // off by a fatal.
+    if (!$user_result instanceof \mysqli_result) {
+        return false;
+    }
     $user_row = $user_result->fetch_assoc();
 
     if ($user_row === null) {

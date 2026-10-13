@@ -92,33 +92,52 @@ if ($scenario === 'gone' || $scenario === 'lookup_fails') {
     // The defining file's own _mysqli_query(): connect2.php's calls
     // record_mysql_error() when a statement fails, functions.php's (the
     // admin pages', beside functions-tracking202.php) answers false.
-    $queryFile = basename((string) $file) === 'connect2.php'
-        ? (string) $file
-        : dirname((string) $file) . '/functions.php';
-    eval(lift_function($queryFile, '_mysqli_query'));
+    if (basename((string) $file) === 'connect2.php') {
+        eval(lift_function((string) $file, '_mysqli_query'));
+    } else {
+        foreach (['_mysqli_query', 'p202LogFailedQuery', 'p202FailedQueryMessage'] as $query) {
+            eval(lift_function(dirname((string) $file) . '/functions.php', $query));
+        }
+    }
 } else {
     function _mysqli_query($dbOrSql, $sql = null)
     {
+        // The error row is the page's own write. Anything else is a read the
+        // page asks (the admin footer reads through here), recorded with the
+        // connection's own.
+        $statement = $sql ?? $dbOrSql;
+        $isTheRow = str_contains((string) $statement, '202_mysql_errors');
+        if (!$isTheRow) {
+            $GLOBALS['db']->asked[] = (string) $statement;
+        }
         if (($GLOBALS['scenario'] ?? 'page') === 'page') {
             return true;
         }
         // The error record really written, through the procedural call so
         // the recording below counts only what the page asks itself.
-        $statement = $sql ?? $dbOrSql;
         if (($GLOBALS['scenario'] ?? 'page') === 'insert_fails') {
             $refused = 'p202_no_such_table_for_the_error_row';
             $statement = preg_replace('/\b202_mysql_errors\b/', $refused, (string) $statement);
         }
         $result = mysqli_query($GLOBALS['db'], (string) $statement);
-        if ($result === false) {
+        if ($result === false && $isTheRow) {
             echo 'RECORD FAILED: ' . mysqli_error($GLOBALS['db']) . "\n";
         }
 
         return $result;
     }
 }
-function template_bottom(): void
-{
+// The admin page ends with the signed-in footer, and the footer reads the
+// database the page is about (the account's dash email, the tracking domain
+// of the cron ping): its real source, and what it calls. The click path
+// loads no template.php and its page draws no footer.
+if (basename((string) $file) !== 'connect2.php') {
+    $config = dirname((string) $file);
+    eval(lift_function("$config/template.php", 'template_bottom'));
+    eval(lift_function("$config/functions.php", 'get_absolute_url'));
+    foreach (['getDashEmail', 'p202CronBeaconStatement', 'getTrackingDomain', 'p202StoredTrackingDomain'] as $footer) {
+        eval(lift_function("$config/functions-tracking202.php", $footer));
+    }
 }
 // connect2.php's own, which the click path's body logs the address through:
 // the address as stored, unmasked here (no privacy setting in this process).

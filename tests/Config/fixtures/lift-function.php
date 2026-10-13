@@ -11,6 +11,18 @@ declare(strict_types=1);
 /** The source of `function <name>(...) { ... }` in $path. */
 function lift_function(string $path, string $name): string
 {
+    return lift_declaration($path, T_FUNCTION, $name);
+}
+
+/** The source of `class <name> { ... }` in $path. */
+function lift_class(string $path, string $name): string
+{
+    return lift_declaration($path, T_CLASS, $name);
+}
+
+/** The source of the declaration that $keyword and then $name begin in $path. */
+function lift_declaration(string $path, int $keyword, string $name): string
+{
     $tokens = token_get_all((string) file_get_contents($path));
     $out = '';
     $capturing = false;
@@ -20,7 +32,7 @@ function lift_function(string $path, string $name): string
         $t = $tokens[$i];
         $text = is_array($t) ? $t[1] : $t;
         if (!$capturing) {
-            if (is_array($t) && $t[0] === T_FUNCTION) {
+            if (is_array($t) && $t[0] === $keyword) {
                 $j = $i + 1;
                 while ($j < $n && is_array($tokens[$j]) && $tokens[$j][0] === T_WHITESPACE) {
                     $j++;

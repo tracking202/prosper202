@@ -58,7 +58,7 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
         // Still false to the caller, and true for a statement that worked.
         self::assertStringContainsString("secret FALSE\nescaped FALSE\nunclosed FALSE\nsuccess OK\n", $stdout, $all);
         self::assertStringContainsString(
-            "caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\nlong FALSE\nbackslash FALSE\n",
+            "caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\nlong FALSE\nbackslash FALSE\nnbe FALSE\n",
             $stdout,
             $all
         );
@@ -67,7 +67,7 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             explode("\n", $logged),
             static fn (string $l): bool => str_contains($l, 'MySQL query failed')
         ));
-        self::assertCount(9, $lines, "one line for each failure, none for the success:\n$all");
+        self::assertCount(10, $lines, "one line for each failure, none for the success:\n$all");
 
         $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
         self::assertMatchesRegularExpression(
@@ -78,8 +78,10 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             $lines[0],
             $all
         );
+        // An escaped quote: read without escapes, the quotes after it pair up
+        // shifted, so the line stops where the two readings part.
         self::assertStringEndsWith(
-            '| SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ? AND x = ?',
+            '| SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ?…',
             $lines[1],
             $all
         );
@@ -100,13 +102,13 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
         // (MySQL 8 names the key with its table.)
         self::assertMatchesRegularExpression(
             "~\\[errno 1062\\]: Duplicate entry \\? for key '([^']*\\.)?PRIMARY' \\| "
-                . preg_quote('INSERT INTO p202_mysqli_query_values (k) VALUES (?)', '~') . '$~',
+                . preg_quote('INSERT INTO p202_mysqli_query_values (k) VALUES (?…', '~') . '$~',
             $lines[4],
             $all
         );
         self::assertMatchesRegularExpression(
             '~\[errno 1366\]: Incorrect integer value: \? (for column `[^\']*` )?at row 1 \| '
-                . preg_quote('INSERT INTO p202_mysqli_query_values (k, n) VALUES (?, ?)', '~') . '$~',
+                . preg_quote('INSERT INTO p202_mysqli_query_values (k, n) VALUES (?, ?…', '~') . '$~',
             $lines[5],
             $all
         );
@@ -128,6 +130,13 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             '~\[errno 1064\]: .* \| '
                 . preg_quote('SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ?', '~') . '$~',
             $lines[8],
+            $all
+        );
+        // A backslash left in place under NO_BACKSLASH_ESCAPES: read with
+        // escapes, the value runs on and the next one is kept.
+        self::assertStringEndsWith(
+            '| SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ?…',
+            $lines[9],
             $all
         );
         self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");

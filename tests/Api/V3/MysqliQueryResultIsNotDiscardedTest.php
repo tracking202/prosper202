@@ -97,7 +97,8 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
         $depth = 0;
         $pending = null;
         foreach ($tokens as $i => $token) {
-            $isTheCall = $token->line === $line && $token->is(T_STRING) && $token->text === '_mysqli_query';
+            $isTheCall = $token->line === $line
+                && SourceScan::callableName($token->id, $token->text) === '_mysqli_query';
             if ($token->line > $line || $isTheCall) {
                 break;
             }
@@ -178,6 +179,8 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
                 ['f'],
             ],
             'at file scope' => ["<?php _mysqli_query(\$sql);", ['']],
+            'fully qualified' => ["<?php function f() { \\_mysqli_query(\$sql); }", ['f']],
+            'in another case' => ["<?php function f() { _MySQLi_Query(\$sql); }", ['f']],
             'assigned' => ["<?php function f() { \$r = _mysqli_query(\$sql); }", []],
             'tested' => ["<?php function f() { if (_mysqli_query(\$sql) === false) { throw new E(); } }", []],
             'returned' => ["<?php function f() { return _mysqli_query(\$sql); }", []],

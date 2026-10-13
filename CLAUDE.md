@@ -67,7 +67,10 @@ remembered browser of the account was signed out. It logs every failure now
 with its quoted values taken out, since some carry a secret — and MySQL's
 words too, which repeat a value as sent, its quotes unescaped: `Duplicate
 entry 'O'Brien' for key …`, so redacting the statement alone left the value
-in the line, found by review), and
+in the line, found by review; and where a quoted value ends depends on the
+session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
+read with escapes the next value was kept — so the line keeps only what a
+reading with escapes and one without both leave in), and
 `MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
 away. It cannot see a result that is assigned and never tested, which is
 what the 240 calls that assign one leave to the next sweep.
@@ -766,7 +769,12 @@ final token something else, `Other\name` is another function — and an
 unqualified name is the global one only in a file that declares no
 namespace and imports no function, which both tests now assert (a `use
 function Other\version_compare;` at the top of the ladder rebound the
-downgrade guard's comparison with every check green). And bounding the
+downgrade guard's comparison with every check green). The other direction
+is as silent: PHP 8 reads `\name` as one token (`T_NAME_FULLY_QUALIFIED`),
+not `T_STRING`, and names functions and methods without regard to case, so
+the discarded-result floor never saw `\_mysqli_query($sql);` or
+`_MYSQLI_QUERY($sql);`; `SourceScan::callableName()` reads every spelling
+of a global call, for each scan that names one. And bounding the
 guard call was not reading it: `install_csrf_ok($expected, $submitted)`
 was shown to decide the work and executed on token pairs, and never asked
 what the page hands it — `install_csrf_ok($_POST['token'],
@@ -971,7 +979,13 @@ error was never recorded. CI's fresh database found it; locally the suite
 passed because a reused database still had the table. An error path must not
 ask the failing dependency again, and its test should not depend on whether
 the dependency happens to be healthy: the runner now records every statement
-the page asks the connection, and the page may ask none.
+the page asks the connection, and the page may ask none. That held for the
+body and not for the page: the runner stubbed the admin footer, which reads
+the account's dash email and the cron ping's tracking domain, and the dash
+email read called `fetch_assoc()` on the false a lost connection answers —
+a fatal after the alert, found by tracing a review question. The error page
+draws the footer without its reads (`template_bottom(false)`), and the
+runner draws the real one.
 
 The error page's own write is the same question asked of the connection's
 state. `record_mysql_error()` inserted its row on the connection that had
@@ -1770,7 +1784,11 @@ where a check quietly fails to check what it appears to.
   effect is satisfied by every failure there is; a refusal has to be
   asserted positively — the status the page answers with and the sentence
   the guard itself writes — and the sibling cases already did, one screen
-  up.
+  up. A scenario that expects a failure is the same trap: the error page's
+  `lookup_fails` runs passed on `Call to undefined function` (the runner
+  had not lifted the logger its real `_mysqli_query()` calls), which the
+  recorder's catch logged as the failure to record the scenario expected.
+  Assert which failure.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*
