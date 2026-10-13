@@ -611,8 +611,13 @@ class AUTH
         }
         $user_row = $user_result->fetch_assoc();
         // No account: a key minted for it would be stored nowhere.
-        if (!is_array($user_row)) {
+        if ($user_row === null) {
             return null;
+        }
+        if (!is_array($user_row)) {
+            throw new \RuntimeException(
+                'Reading the remember-me key of user ' . (int) $user_id . ' failed: its row could not be fetched'
+            );
         }
         if (empty($user_row['secret_key'])) {
             $mysql['secret_key'] = self::generate_random_string(48);

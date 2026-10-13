@@ -252,7 +252,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 			$tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage($db, (int) $tracker_row['tracker_id']);
 		} catch (\RuntimeException $e) {
 			$db->rollback();
-			record_mysql_error('choosing a free tracker public id: ' . $e->getMessage());
+			record_mysql_error('choosing a free tracker public id', null, $e->getMessage());
 		}
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
@@ -277,7 +277,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 		$commitError = $db->error;
 		$db->rollback();
 		error_log('generate_tracking_link: commit failed: ' . $commitError);
-		record_mysql_error('commit() for tracker creation: ' . $commitError);
+		record_mysql_error('commit() for tracker creation', null, $commitError);
 	}
 
 	$parsed_url = [];

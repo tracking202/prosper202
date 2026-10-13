@@ -140,6 +140,35 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         $db->close();
     }
 
+    /**
+     * A caller that caught the failure (the rotator writer's, rolled back
+     * before the page runs) names it: the row holds it as the error, and
+     * what was being done as the statement, where the error text was blank.
+     *
+     * @dataProvider definitions
+     */
+    public function testACaughtFailureIsRecordedAsTheError(string $file): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, $logged, $all] = self::runScenario($file, 'caught', 'txn', $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        $db = self::database();
+        $row = $db->query('SELECT mysql_error_text, mysql_error_sql FROM 202_mysql_errors WHERE user_id = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
+        self::assertSame(
+            [['mysql_error_text' => 'the failure the caller caught', 'mysql_error_sql' => 'recording the probe']],
+            $row->fetch_all(MYSQLI_ASSOC),
+            $all
+        );
+        self::assertStringContainsString(
+            'MySQL error: the failure the caller caught | SQL: recording the probe',
+            $logged,
+            $all
+        );
+        $db->close();
+    }
+
     /** @return array<string, array{string, string}> */
     public static function definitionsAndFailedRecords(): array
     {

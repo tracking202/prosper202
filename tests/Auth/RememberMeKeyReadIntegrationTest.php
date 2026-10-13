@@ -141,6 +141,20 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         self::assertSame(self::STORED, self::storedKey(), 'a failed read replaced the stored key');
     }
 
+    /** A row that cannot be fetched is a failed read, not an account that is not there. */
+    public function testARowThatCannotBeFetchedThrows(): void
+    {
+        self::account(self::STORED);
+
+        $out = self::runScenario('fetch_fails');
+
+        self::assertSame(
+            'THREW Reading the remember-me key of user ' . self::USER . " failed: its row could not be fetched\n",
+            $out
+        );
+        self::assertSame(self::STORED, self::storedKey());
+    }
+
     public function testAKeyThatWasNotStoredIsNotHandedOut(): void
     {
         self::account(null);

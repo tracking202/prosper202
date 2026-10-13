@@ -5,7 +5,11 @@ use UAParser\Parser;
 require_once __DIR__ . '/mysql-error-args.php';
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -22,7 +26,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     global $server_row;
 
     // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
+    $clean['mysql_error_text'] = $error ?? mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);

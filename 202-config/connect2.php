@@ -2860,7 +2860,11 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     return $redirect_site_url;
 }
 
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     global $server_row;
 
@@ -2884,7 +2888,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     }
 
     // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
+    $clean['mysql_error_text'] = $error ?? mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);

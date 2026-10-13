@@ -768,7 +768,7 @@ try {
 		$rtrResolveRedirect
 	));
 } catch (\Throwable $rtrWriteError) {
-	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'] . ': ' . $rtrWriteError->getMessage());
+	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
 }
 
 	if ($rule['aff_campaign_id'] != null) {

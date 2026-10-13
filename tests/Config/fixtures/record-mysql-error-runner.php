@@ -13,7 +13,8 @@ declare(strict_types=1);
  * by its tokens and evaluated beside stand-ins for what it calls. The body
  * that runs is the shipped body, byte for byte.
  *
- * argv: <defining file> <call shape: db | db_sql | sql> [<scenario>]
+ * argv: <defining file> <call shape: db | db_sql | sql | caught> [<scenario>]
+ *   caught: ($db, what was being done, the failure the caller caught)
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it)
  *
@@ -289,6 +290,8 @@ if ($shape === 'db') {
     $db->query($sql) or record_mysql_error($db);
 } elseif ($shape === 'db_sql') {
     $db->query($sql) or record_mysql_error($db, $sql);
+} elseif ($shape === 'caught') {
+    $db->query($sql) or record_mysql_error($db, 'recording the probe', 'the failure the caller caught');
 } else {
     $db->query($sql) or record_mysql_error($sql);
 }

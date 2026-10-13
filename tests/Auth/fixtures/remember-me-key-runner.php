@@ -9,6 +9,7 @@
  * argv: <scenario>
  *   read_fails      the SELECT of the stored secret key fails
  *   write_fails     no key is stored yet, and the UPDATE storing one fails
+ *   fetch_fails     the SELECT answers, and fetching its row answers false
  *   cookie_check    remember_me_on_logged_out() with a cookie for the user,
  *                   the SELECT of the secret key failing
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RMK_USER (the user id)
@@ -39,10 +40,25 @@ eval(<<<'PHP'
         $statement = (string) ($sql ?? $dbOrSql);
         $fails = $GLOBALS['fails'];
         if ($fails !== '' && preg_match($fails, $statement) === 1) {
+            if ($GLOBALS['fetchFails']) {
+                return new FetchFailsResult();
+            }
             $statement = 'SELECT nothing FROM p202_no_such_table_for_remember_me';
         }
 
         return $sql === null ? p202_real_mysqli_query($statement) : p202_real_mysqli_query($dbOrSql, $statement);
+    }
+
+    // A result whose row cannot be fetched: fetch_assoc() answers false.
+    final class FetchFailsResult extends \mysqli_result
+    {
+        public function __construct()
+        {
+        }
+        public function fetch_assoc(): array|null|false
+        {
+            return false;
+        }
     }
 
     class DB
@@ -70,10 +86,11 @@ $GLOBALS['db'] = $db;
 $userId = (int) getenv('P202_RMK_USER');
 
 $GLOBALS['fails'] = match ($scenario) {
-    'read_fails', 'cookie_check' => '/^\s*SELECT\s+secret_key\b/i',
+    'read_fails', 'cookie_check', 'fetch_fails' => '/^\s*SELECT\s+secret_key\b/i',
     'write_fails' => '/^\s*UPDATE\s+202_users\s+SET\s+secret_key\b/i',
     default => '',
 };
+$GLOBALS['fetchFails'] = $scenario === 'fetch_fails';
 
 if ($scenario === 'cookie_check' || $scenario === 'cookie_no_account') {
     $_SESSION = [];

@@ -1002,7 +1002,12 @@ in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
 `autocommit_off`, `gone` and `lookup_fails` scenarios). The fix first kept
 the page's "it has been recorded" for the case where recording failed
 (found by review): the page's sentence is a status line too, and it
-follows what the recorder answers.
+follows what the recorder answers. And the page read the error from the
+connection, which a caller that has rolled back has already cleared: the
+rotator writer's failure was filed with a blank error and its message in the
+statement column (Get Links and the redirector breakdown did the same). A
+caller that caught the failure names it (`record_mysql_error()`'s third
+argument).
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
