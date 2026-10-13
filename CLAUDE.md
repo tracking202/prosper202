@@ -56,6 +56,19 @@ error had every report page count "today" in a stale zone with nothing said,
 while the test listed it as graceful. A fallback that reads like an answer is
 the silent case again; it throws now.
 
+The admin pages' `_mysqli_query()` was the same false with nothing said at
+all: an `@` (which silenced nothing; the report modes this app sets raise no
+warning for a failed query) and a bare `return`. A call standing alone as a
+statement lost the failure outright: the remember-me sign-in stored no key
+and set its cookie anyway, and a failed read of the account's secret was
+read as "no secret", so a new one was minted over the stored one and every
+remembered browser of the account was signed out. It logs every failure now
+(`p202LogFailedQuery()`: the caller, MySQL's errno and words, the statement
+with its quoted values taken out, since some carry a secret), and
+`MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
+away. It cannot see a result that is assigned and never tested, which is
+what the 240 calls that assign one leave to the next sweep.
+
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
 answers 200; it caught a failed rollup, printed `Error: …` into the body and
@@ -951,6 +964,20 @@ ask the failing dependency again, and its test should not depend on whether
 the dependency happens to be healthy: the runner now records every statement
 the page asks the connection, and the page may ask none.
 
+The error page's own write is the same question asked of the connection's
+state. `record_mysql_error()` inserted its row on the connection that had
+just failed, inside whatever transaction the caller had open, and die()
+ended the request: the row went with the rollback at disconnect, and the
+page told the operator the error "has been recorded" over nothing (measured
+under `begin_transaction()` and `autocommit(false)`, both definitions).
+And the row's lookups went through `_mysqli_query()`, whose click-path copy
+calls `record_mysql_error()` when a statement fails: on a dead connection
+the error page recursed through itself until memory ran out, writing tens
+of thousands of log lines in one request. An error path ends the caller's transaction before it
+writes anything of its own, and anything it calls that can fail lands back
+in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
+`autocommit_off`, `gone` and `lookup_fails` scenarios).
+
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
 null`. The setup page writes NULL in the parts a redirect does not use; the
@@ -1226,6 +1253,16 @@ an early return, a fast path, a branch on a new result type — list every
 side effect of the skipped code (flags, counters, cache writes, the "done"
 mark) and move each one to where the new path still runs it;
 `ClickUpgradeIntegrationTest` holds this one.
+
+Moving a write later is the same skip, seen from whoever read it. Phase 6
+moved `dl.php`'s click rows after the redirect for latency, and the redirect
+URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
+`replaceTrackerPlaceholders()`, which reads them back from those rows: on a
+direct link they are blank now (measured: `c1=&kw=` from a click carrying
+`c1=hello`), while `rtr.php`, whose rows were still written first, filled
+them. Before moving a write, find every reader of what it writes in the same
+request; `RotatorClickWriter` resolves the rotator's URL inside the click's
+transaction, after the rows, for that reason.
 
 ### 33. A tagged version's upgrade step is frozen
 `upgrade_needed()` compares the stored version with the code's, and the
