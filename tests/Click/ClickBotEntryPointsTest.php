@@ -187,7 +187,7 @@ final class ClickBotEntryPointsTest extends TestCase
         }
         self::$sources = [];
         $root = dirname(__DIR__, 2);
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($it as $file) {
             $path = strtolower(substr((string) $file->getPathname(), strlen($root) + 1));
             $skipped = preg_match('#^(vendor|tests|node_modules|\.git|\.claude|sdk|go-cli)/#', $path) === 1;

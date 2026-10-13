@@ -107,8 +107,8 @@ GET /attribution/reports/breakdown?group_by=campaign&model_id=3&compare_model_id
 | `group_by` | `campaign` | `campaign`, `traffic_source`, `landing_page`, `keyword`, `c1`–`c4`, `country`, `device`, `day` |
 | `model_id` | effective | Without it each conversion is read under its campaign's `attribution_model_id` when that model is active, otherwise the account default |
 | `compare_model_id` | | A second model; adds `compare_*` columns |
-| `period` | last 30 days | `today`, `yesterday`, `last7`, `last30`, `last90` |
-| `time_from`, `time_to` | | Unix seconds; exclusive with `period` |
+| `period` | last 30 days | `today`, `yesterday`, `last7`, `last14`, `last30`, `last90`, `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `alltime` — the reports' periods ([Reports › Periods](11-reports.md#periods)): calendar ones start at the account's midnight; `alltime` is from the first click |
+| `time_from`, `time_to` | | Unix seconds, a date (`2026-10-01`, in the account's timezone; `time_to` runs through its last second) or a time with its offset; `time_from=0` is all time; exclusive with `period` |
 | `limit` | 100 | 1–1000 |
 | `offset` | 0 | Rows to skip. Rows keep the report's order (attributed revenue, highest first, then `key`) and `meta.groups` is how many there are, so a larger `offset` reads the rows past the first `limit` |
 | `keys` | | Only these rows: 1–1000 row keys as `data[].key` returns them, comma-separated. Rows keep the report's order, `meta.groups` counts the matches and `totals` still cover the whole report. Every request computes the whole report, so asking for a few rows by key is one computation where paging is one per page |
@@ -124,6 +124,14 @@ dimension before the converting click). Money is an exact decimal string. The
 credited range is the conversions' `conv_time`; the cost range is the clicks'
 `click_time`. `totals.attributed_revenue` is the counted value of the
 conversions in range, the same under every model.
+
+Under `group_by=day` a row's `key` (and `name`) is a date, `YYYY-MM-DD`, in
+the account's time zone, which `meta.timezone` names (the user's
+`user_timezone`, UTC when unset): a conversion at 03:30 UTC on 8 March is on
+7 March for an account in New York, and one at 18:45 UTC on 1 October is on
+2 October for an account in India. An export grouped by day uses the same
+zone. (The days used to be the database connection's, which was the
+server's zone for the API and UTC for an export.)
 
 With `cohort=click` the credited range is the `click_time` of the click each
 credit lands on, and an assist is an assisting touch made in the range, for a

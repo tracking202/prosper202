@@ -103,16 +103,20 @@ if (!function_exists('withWritableSession')) {
 DEFINE('TRACKING202_RSS_URL', 'http://rss.tracking202.com');
 DEFINE('TRACKING202_ADS_URL', 'https://ads.tracking202.com');
 
-// Messaging API configuration (Intercom-style messenger).
-// Central server contract: 202-config/Messaging/CENTRAL-API.md
-// Both values are overridable via environment variables so a developer can point
-// the app at the local mock server (202-config/Messaging/mock-server.php) without
-// editing tracked config, e.g. MESSAGING_API_URL=http://127.0.0.1:8787/messaging
+// The portal: product analytics (POST <MESSAGING_API_URL>/track, contract in
+// 202-config/Messaging/CENTRAL-API.md) and the chat pass the chat box takes to
+// the chat service (CHAT_PASS_URL, 202-account/ajax/chat-pass.php). Each is
+// overridable from the environment so a developer can point the app at a
+// local stub without editing tracked config, e.g.
+// CHAT_PASS_URL=http://127.0.0.1:8787/api/v3/chat/pass (http only on loopback).
 if (!defined('MESSAGING_API_URL')) {
     DEFINE('MESSAGING_API_URL', getenv('MESSAGING_API_URL') ?: 'https://my.tracking202.com/api/v3/messaging');
 }
+if (!defined('CHAT_PASS_URL')) {
+    DEFINE('CHAT_PASS_URL', getenv('CHAT_PASS_URL') ?: 'https://my.tracking202.com/api/v3/chat/pass');
+}
 if (!defined('MESSAGING_SYNC_THROTTLE')) {
-    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user network syncs
+    DEFINE('MESSAGING_SYNC_THROTTLE', (int) (getenv('MESSAGING_SYNC_THROTTLE') ?: 20)); // seconds between per-user analytics deliveries
 }
 
 //fix for nginx with no server name set. SERVER_NAME does not exist under CLI
@@ -209,25 +213,6 @@ foreach ($navigation as $key => $row) {
     }
 }
 
-//get the real ip
-$_SERVER['HTTP_X_FORWARDED_FOR'] = match (true) {
-    !empty($_SERVER['HTTP_CF_CONNECTING_IP']) => $_SERVER['HTTP_CF_CONNECTING_IP'],
-    !empty($_SERVER['HTTP_X_CLUSTER_CLIENT_IP']) => $_SERVER['HTTP_X_CLUSTER_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_SUCURI_CLIENTIP']) => $_SERVER['HTTP_X_SUCURI_CLIENTIP'],
-    !empty($_SERVER['HTTP_X_REAL_IP']) => $_SERVER['HTTP_X_REAL_IP'],
-    !empty($_SERVER['HTTP_CLIENT_IP']) => $_SERVER['HTTP_CLIENT_IP'],
-    !empty($_SERVER['HTTP_X_FORWARDED_FOR']) && (($_SERVER['SERVER_ADDR'] ?? '') != $_SERVER['HTTP_X_FORWARDED_FOR']) => $_SERVER['HTTP_X_FORWARDED_FOR'],
-    // REMOTE_ADDR does not exist under CLI (cron workers)
-    default => $_SERVER['REMOTE_ADDR'] ?? '',
-};
-
-
-$tempip = explode(",", (string) $_SERVER['HTTP_X_FORWARDED_FOR']);
-$_SERVER['HTTP_X_FORWARDED_FOR'] = trim($tempip[0]);
-
-// Store the IP address temporarily, we'll pass it to ipAddress() after functions.php is included
-$temp_ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
-
 if (file_exists(ROOT_PATH  . '202-config.php')) {
     include_once(ROOT_PATH  . '202-config.php');
 } else {
@@ -299,8 +284,10 @@ require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
-// Now that functions.php is included, we can use ipAddress()
-$ip_address = ipAddress($temp_ip_address);
+// The visitor's address (VisitorIp: the one reader of the forwarding
+// headers), once the autoloader and functions.php's ipAddress() are loaded.
+// Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
+$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
@@ -314,7 +301,6 @@ include_once(CONFIG_PATH . '/Role.class.php');
 include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
 include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
-include_once(CONFIG_PATH . '/functions-timeframe.php');
 include_once(CONFIG_PATH . '/functions-db.php');
 include_once(CONFIG_PATH . '/functions-indexes.php');
 include_once(CONFIG_PATH . '/functions-icons.php');
@@ -367,10 +353,8 @@ function setCache($key, $value, $exp = null)
 // ipAddress() function has been moved to functions.php - using that implementation instead
 // to avoid duplicate function declaration errors
 
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
+// inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
+// renders an address (HtmlReportFormatter) can be loaded without this file.
 
 function inet6_aton($ip)
 {
@@ -451,11 +435,18 @@ if (($navigation[1]) and ($navigation[1] != '202-config')) {
     //	include_once(ROOT_PATH . '/202-cronjobs/index.php'); 
 }
 
-//set token to prevent CSRF attacks
-if (!isset($_SESSION['token'])) {
+//set token to prevent CSRF attacks. A token that is set but not usable
+//(blanked, false, an array) is seeded again: every guard
+//(AUTH::csrf_token_matches()) refuses one, by the same AUTH::csrf_token_usable(),
+//so keeping it would refuse every form this session posts until sign-out.
+//128 bits from the CSPRNG, as p202_standalone_wizard_token() mints the
+//pre-login pages' token; the md5 of uniqid() this replaced took 31 bits from
+//the CSPRNG (random_int up to mt_getrandmax()) and the rest from the clock
+//and lcg_value().
+if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
     withWritableSession(static function (): void {
-        if (!isset($_SESSION['token'])) {
-            $_SESSION['token'] = md5(uniqid((string) random_int(0, mt_getrandmax()), true));
+        if (!AUTH::csrf_token_usable($_SESSION['token'] ?? null)) {
+            $_SESSION['token'] = bin2hex(random_bytes(16));
         }
     });
 }

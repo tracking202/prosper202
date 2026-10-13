@@ -117,7 +117,13 @@ func attributionExportBody(cmd *cobra.Command) (map[string]interface{}, error) {
 	}
 	for _, field := range []string{"time_from", "time_to"} {
 		if v, ok := params[field]; ok {
-			n, _ := strconv.ParseInt(v, 10, 64)
+			// The export body takes JSON numbers. The range flags are checked
+			// as unix seconds upstream; a value that still does not parse must
+			// not become 0, which the server reads as all time.
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, validationError("invalid --%s %q: unix time in seconds", strings.ReplaceAll(field, "_", "-"), v)
+			}
 			body[field] = n
 		}
 	}

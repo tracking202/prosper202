@@ -26,17 +26,21 @@ final class MysqlConversionLedger
      * The campaign's payout mode and default payout for a click's campaign.
      *
      * A click whose campaign row is gone keeps the behaviour every campaign
-     * had before the ledger (REPLACE). A campaign row whose payout_mode is
+     * had before the ledger (REPLACE). So does a click that names another
+     * account's campaign: $userId is the click's owner, and nothing stopped
+     * a tracker naming another account's campaign before the API checked
+     * linked ids (229df10), so such a click must not be valued by that
+     * account's payout or payout mode. A campaign row whose payout_mode is
      * neither value throws, naming it.
      *
      * @return array{mode: PayoutMode, default_payout: string}
      */
-    public function campaignTerms(int $campaignId): array
+    public function campaignTerms(int $campaignId, int $userId): array
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT payout_mode, aff_campaign_payout FROM 202_aff_campaigns WHERE aff_campaign_id = ? LIMIT 1'
+            'SELECT payout_mode, aff_campaign_payout FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? LIMIT 1'
         );
-        $this->conn->bind($stmt, 'i', [$campaignId]);
+        $this->conn->bind($stmt, 'ii', [$campaignId, $userId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
             return ['mode' => PayoutMode::REPLACE, 'default_payout' => '0'];
@@ -129,10 +133,13 @@ final class MysqlConversionLedger
      * reversals included, though a reversal carries no supersession of its
      * own: it stops netting when its sale is superseded, and starts again
      * when the sale counts again, without any column of its own changing.
+     *
+     * $userId is the click's owner: the campaign's payout mode applies only
+     * when the campaign is that account's (campaignTerms()).
      */
-    public function recompute(int $clickId, int $campaignId): ClickValue
+    public function recompute(int $clickId, int $campaignId, int $userId): ClickValue
     {
-        $terms = $this->campaignTerms($campaignId);
+        $terms = $this->campaignTerms($campaignId, $userId);
         $rows = $this->loadRows($clickId);
 
         $countedBefore = ClickValueCalculator::countedAsStored($rows);
@@ -221,7 +228,7 @@ final class MysqlConversionLedger
         $this->conn->bind($stmt, 'isi', [$byConvId, $reason->value, $convId]);
         $this->conn->executeUpdate($stmt);
 
-        $this->recompute($click['click_id'], $click['campaign_id']);
+        $this->recompute($click['click_id'], $click['campaign_id'], $click['user_id']);
         $this->enqueue([$convId], 'counted_state');
     }
 
@@ -229,7 +236,7 @@ final class MysqlConversionLedger
      * The click of a goal row, locked (click before conversion, as on every
      * path that writes both).
      *
-     * @return array{click_id: int, campaign_id: int}
+     * @return array{click_id: int, campaign_id: int, user_id: int}
      */
     private function lockGoalRowsClick(int $convId): array
     {
@@ -242,14 +249,14 @@ final class MysqlConversionLedger
         if ((string) $row['source'] !== ConversionSource::GOAL->value) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' is a ' . (string) $row['source'] . ' row, not a goal row');
         }
-        $lock = $this->conn->prepareWrite('SELECT click_id, aff_campaign_id FROM 202_clicks WHERE click_id = ? LIMIT 1 FOR UPDATE');
+        $lock = $this->conn->prepareWrite('SELECT click_id, aff_campaign_id, user_id FROM 202_clicks WHERE click_id = ? LIMIT 1 FOR UPDATE');
         $this->conn->bind($lock, 'i', [(int) $row['click_id']]);
         $click = $this->conn->fetchOne($lock);
         if ($click === null) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . (int) $row['click_id'] . ', which does not exist');
         }
 
-        return ['click_id' => (int) $click['click_id'], 'campaign_id' => (int) $click['aff_campaign_id']];
+        return ['click_id' => (int) $click['click_id'], 'campaign_id' => (int) $click['aff_campaign_id'], 'user_id' => (int) $click['user_id']];
     }
 
     /**

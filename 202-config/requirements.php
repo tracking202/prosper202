@@ -14,24 +14,14 @@ if (is_installed() == true) {
 			  <small>You appear to have already installed Prosper202. To reinstall please clear your old database tables first. <a href='/202-login.php'>Login Now</a></small>");
 }
 
-    // Get Database version
-		$mysqlversion = $db ? $db->server_info : '';
-	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
-	    // Support For MariaDB
-	    $mysqlversion = $match[1];
-	    $dbwording="MariaDB >= 10.6";
-	    if ((version_compare($mysqlversion, '10.6') < 0)) {
-	        $version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.6, or newer.';
-	    }
+    // Database floors: database_version_check() in version.php
+	$dbCheck = database_version_check($db ? (string) $db->server_info : '');
+	$mysqlversion = $dbCheck['version'];
+	$dbwording = $dbCheck['product'] . ' >= ' . $dbCheck['floor'];
+	if ($dbCheck['error'] !== null) {
+	    $version_error['mysqlversion'] = $dbCheck['error'];
 	}
-	else{
-	    $dbwording="MySQL >= 8.0";
-	    if ((version_compare($mysqlversion, '8.0') < 0)) {
-	        $version_error['mysqlversion'] = 'Prosper202 requires MySQL 8.0, or newer.';
-	    }
-	     
-	}
-	
+
 	$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
 
         if (!php_version_supported()) {
@@ -48,7 +38,10 @@ if (is_installed() == true) {
 	}
 
 	// Check if partitioning is supported by querying INFORMATION_SCHEMA.PARTITIONS
-	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS LIMIT 1";
+	// Whether the table can be read at all (a COUNT answers one row whatever
+	// it counts), asked of this database's tables: unscoped, MySQL lists every
+	// table's partitions on the server, seconds on a host with many databases.
+	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_SCHEMA = DATABASE()";
 	$result = $db ? $db->query($sql) : false;
 	
 	if ($result && $result->num_rows > 0) {

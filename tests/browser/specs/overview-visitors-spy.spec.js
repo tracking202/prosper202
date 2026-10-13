@@ -425,6 +425,39 @@ module.exports = {
     },
 
     {
+      // charts.php let the engine's exception go: the switch answered an
+      // error page, and the chart said only "HTTP 500". It answers what the
+      // Overview says in a chart's place, and the page shows those words.
+      name: 'A chart that cannot be redrawn says why, in its place',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        db.write(PREF_RESET);
+        const savedRange = db.value('SELECT chart_time_range FROM 202_charts WHERE user_id=1');
+        db.temporarily('SELECT 1', "UPDATE 202_charts SET chart_time_range='" + savedRange + "' WHERE user_id=1");
+        db.write("UPDATE 202_charts SET chart_time_range='days' WHERE user_id=1");
+
+        await app.goto('/tracking202/overview/');
+        await checks.overviewReportDrawn(ui, '#overview-report');
+        await ui.untilInPage(() => document.querySelector('#overview-chart svg.highcharts-root') !== null, undefined, { describe: 'the chart to draw' });
+
+        // The chart's table unreadable for the one request, as a failed
+        // query leaves it; put back before anything else reads it.
+        db.write('RENAME TABLE 202_dataengine TO 202_dataengine_held');
+        try {
+          await ui.click('label[for="overview-chart-hours"]');
+          await ui.untilInPage(() => /could not be/.test((document.getElementById('overview-chart') || {}).textContent || ''), undefined,
+            { describe: 'the chart to say it could not be redrawn' });
+        } finally {
+          db.write('RENAME TABLE 202_dataengine_held TO 202_dataengine');
+        }
+        expect.match(await ui.text('#overview-chart'),
+          /The chart could not be redrawn: The chart could not be read; the server log says why\. This is not a statement that there were no clicks\./,
+          'in the words the Overview uses for a chart it could not read');
+        expect.eq(db.value('SELECT chart_time_range FROM 202_charts WHERE user_id=1'), 'hours', 'the resolution chosen is stored all the same');
+      },
+    },
+
+    {
       name: 'A rotator rule shows its criteria and redirects in place',
       async run(ctx) {
         const { app, ui, db, expect } = ctx;

@@ -52,7 +52,7 @@ final class StagedChangesControllerTest extends TestCase
     {
         $db = $this->createMysqliMock([
             "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-            '202_api_keys' => ['user_id' => $userId, 'scope' => $scope],
+            '202_api_keys' => ['user_id' => $userId, 'user_active' => 1, 'scope' => $scope],
             '202_user_role' => [['role_name' => $role]],
         ]);
         return Auth::fromRequest(['Authorization' => 'Bearer key'], $db);

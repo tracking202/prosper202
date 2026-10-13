@@ -21,10 +21,10 @@ class AttributionModelUpdateCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Update an attribution model')
             ->addArgument('id', InputArgument::REQUIRED, 'Model ID')
-            ->addOption('model_name', null, InputOption::VALUE_REQUIRED, 'Model name')
-            ->addOption('model_type', null, InputOption::VALUE_REQUIRED, 'Type: ' . implode(', ', ModelType::values()))
-            ->addOption('weighting_config', null, InputOption::VALUE_REQUIRED, 'Weighting config as a JSON object')
-            ->addOption('lookback_days', null, InputOption::VALUE_REQUIRED, 'Lookback in days, 1-365')
+            ->addOption('model-name', null, InputOption::VALUE_REQUIRED, 'Model name')
+            ->addOption('model-type', null, InputOption::VALUE_REQUIRED, 'Type: ' . implode(', ', ModelType::values()))
+            ->addOption('weighting-config', null, InputOption::VALUE_REQUIRED, 'Weighting config as a JSON object')
+            ->addOption('lookback-days', null, InputOption::VALUE_REQUIRED, 'Lookback in days, 1-365')
             ->addOption('status', null, InputOption::VALUE_REQUIRED, 'active or inactive')
             ->addOption('default', null, InputOption::VALUE_NONE, 'Make this the account default model');
     }
@@ -32,11 +32,11 @@ class AttributionModelUpdateCommand extends BaseCommand
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
         $body = [];
-        $name = $input->getOption('model_name');
+        $name = $input->getOption('model-name');
         if ($name !== null) {
             $body['model_name'] = $name;
         }
-        $type = $input->getOption('model_type');
+        $type = $input->getOption('model-type');
         if ($type !== null) {
             $body['model_type'] = $type;
         }
@@ -71,21 +71,21 @@ class AttributionModelUpdateCommand extends BaseCommand
      */
     public static function collectDefinition(InputInterface $input, array &$body): ?string
     {
-        $weightingConfig = $input->getOption('weighting_config');
+        $weightingConfig = $input->getOption('weighting-config');
         if ($weightingConfig !== null) {
             $decodedConfig = json_decode((string) $weightingConfig, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                return sprintf('Invalid --weighting_config JSON: %s', json_last_error_msg());
+                return sprintf('Invalid --weighting-config JSON: %s', json_last_error_msg());
             }
             if (!is_array($decodedConfig)) {
-                return 'Invalid --weighting_config: pass a JSON object, e.g. {"half_life_hours":24}';
+                return 'Invalid --weighting-config: pass a JSON object, e.g. {"half_life_hours":24}';
             }
             $body['weighting_config'] = (object) $decodedConfig;
         }
-        $lookback = $input->getOption('lookback_days');
+        $lookback = $input->getOption('lookback-days');
         if ($lookback !== null) {
             if (preg_match('/^[1-9][0-9]{0,2}$/D', (string) $lookback) !== 1 || (int) $lookback > 365) {
-                return 'Invalid --lookback_days: a whole number of days from 1 to 365';
+                return 'Invalid --lookback-days: a whole number of days from 1 to 365';
             }
             $body['lookback_days'] = (int) $lookback;
         }

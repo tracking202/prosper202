@@ -7,6 +7,9 @@ namespace {
 if (!defined('MESSAGING_API_URL')) {
     define('MESSAGING_API_URL', '');
 }
+if (!defined('CHAT_PASS_URL')) {
+    define('CHAT_PASS_URL', '');
+}
 if (!defined('MESSAGING_SYNC_THROTTLE')) {
     define('MESSAGING_SYNC_THROTTLE', 20);
 }

@@ -50,7 +50,7 @@ final class SkanEncodingHistoryWritersTest extends TestCase
             if (!is_dir($path)) {
                 continue;
             }
-            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($path, \FilesystemIterator::SKIP_DOTS));
+            $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($path));
             foreach ($it as $file) {
                 if ($file->isFile() && str_ends_with($file->getFilename(), '.php')) {
                     $out[] = substr($file->getPathname(), strlen(self::ROOT) + 1);

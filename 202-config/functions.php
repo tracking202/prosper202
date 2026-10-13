@@ -121,28 +121,26 @@ if (!function_exists('array_any')) {
 
 function is_installed(): bool
 {
-	// Skip the check only for API key setup
-	if (str_contains((string) $_SERVER['PHP_SELF'], '202-config/get_apikey.php')) {
-		return false;
-	}
-
 	$database = DB::getInstance();
 	$db = $database->getConnection();
 
-	//if a user account already exists, this application is installed
+	// Installed means an account exists in 202_users. Only a missing table (1146)
+	// answers "not installed"; any other failure is treated as installed.
 	try {
-		$user_sql = "SELECT COUNT(*) AS cnt FROM 202_users";
-		$user_result = $db->query($user_sql);
-		if ($user_result) {
-			$row = $user_result->fetch_assoc();
-			$user_result->free();
-			return ((int) $row['cnt']) > 0;
-		}
-	} catch (mysqli_sql_exception) {
-		// Table doesn't exist yet, return false
-		return false;
+		$user_result = $db->query("SELECT COUNT(*) AS cnt FROM 202_users");
+	} catch (mysqli_sql_exception $e) {
+		// 1146 = table does not exist.
+		return $e->getCode() !== 1146;
 	}
-	return false;
+	if ($user_result === false) {
+		return $db->errno !== 1146;
+	}
+	$row = $user_result->fetch_assoc();
+	$user_result->free();
+	if (!is_array($row) || !isset($row['cnt'])) {
+		return true;
+	}
+	return ((int) $row['cnt']) > 0;
 }
 
 function upgrade_needed(): bool
@@ -543,24 +541,37 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 	{
 		// Set default values
 		$set = 'P1D';
-		$add = 'day';
 		
 		switch ($type) {
 			case 'days':
 				$set = 'P1D';
-				$add = 'day';
 				break;
 
 			case 'hours':
 				$set = 'PT1H';
-				$add = 'hour';
 				break;
 		}
 
+		// Stepped through the account's zone, the page's default
+		// (AUTH::set_timezone()), whose days and hours the chart's groups
+		// are (DataEngine::getChart()). The callers pass DateTime('@…'),
+		// which is UTC: the points were UTC days and hours, so the chart of
+		// an account east of UTC started on the day before its window, and
+		// an hourly chart west of UTC had no point for the first hours of
+		// its window, whose clicks were drawn nowhere.
+		$zone = new \DateTimeZone(date_default_timezone_get());
+		$fromdate = (clone $fromdate)->setTimezone($zone);
+		$todate = (clone $todate)->setTimezone($zone);
+
+        // The window's last second is its end: a DatePeriod leaves out its
+        // end, so this ends on the window's last day or hour. It ended a
+        // whole day or hour after the window's last second, which put one
+        // more point on the chart than the window has: today drawn as Oct 07
+        // and Oct 08, and by hour a last point at the midnight after it.
 		return new \DatePeriod(
 			$fromdate,
 			new \DateInterval($set),
-			$todate->modify('+1 ' . $add)
+			$todate->modify('+1 second')
 		);
 	}
 
@@ -576,33 +587,6 @@ require_once __DIR__ . '/functions-standalone-ui.php';
 		$ext = substr((string) $str, $i + 1, $l);
 
 		return $ext;
-	}
-
-	function getPath($path)
-	{
-		$url = "http" . (!empty($_SERVER['HTTPS']) ? "s" : "") .
-			"://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-		$dirs = explode('/', trim((string) preg_replace('/\/+/', '/', (string) $path), '/'));
-		foreach ($dirs as $key => $value)
-			if (empty($value))  unset($dirs[$key]);
-		$parsedUrl = parse_url($url);
-		$pathUrl = explode('/', trim($parsedUrl['path'], '/'));
-		foreach ($pathUrl as $key => $value)
-			if (empty($value))  unset($pathUrl[$key]);
-		$count = count($pathUrl);
-		foreach ($dirs as $dir)
-			if ($dir === '..')
-				if ($count > 0)
-					array_pop($pathUrl);
-				else
-					throw new Exception('Wrong Path');
-			else if ($dir !== '.')
-				if (preg_match('/^(\w|\d|\.| |_|-)+$/', $dir)) {
-					$pathUrl[] = $dir;
-					++$count;
-				} else
-					throw new Exception('Not Allowed Char');
-		return $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . '/' . implode('/', $pathUrl);
 	}
 
 	function formatOffset($offset)

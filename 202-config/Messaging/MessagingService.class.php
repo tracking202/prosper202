@@ -2,83 +2,100 @@
 
 declare(strict_types=1);
 
+use Prosper202\Database\Connection;
+
 include_once(__DIR__ . '/MessagingClient.class.php');
 
 /**
  * MessagingService
  *
- * Per-user orchestration of the Intercom-style messenger on a self-hosted
- * Prosper202 install. Owns the local cache (the 202_messaging_* tables) and
- * mediates between the browser widget and the central messaging API.
+ * Product analytics for one user of a self-hosted install: custom attributes
+ * and behavioural events are recorded locally (202_messaging_attributes,
+ * 202_messaging_events) and delivered to the portal's POST /track by sync(),
+ * which 202-account/ajax/messaging/track.php runs after every record, and
+ * deliverPending() runs for every user with something pending from the
+ * hourly tier of 202-cronjobs/index.php (and 202-cronjobs/sync-messaging.php,
+ * for an operator who wants a tighter cadence).
+ *
+ * Chat is not here. The install no longer stores or syncs messages: the
+ * browser talks to the chat service directly with a pass that
+ * 202-account/ajax/chat-pass.php fetches from the portal, using the identity
+ * identityFor() builds.
  *
  * Design notes:
- *  - All network calls go through MessagingClient and happen OUTSIDE database
- *    transactions; only the resulting DB writes are transactional.
- *  - sync() is throttled (MESSAGING_SYNC_THROTTLE) so the widget can call it on
- *    every poll without hammering the central server.
- *  - Outbound messages are queued locally first (optimistic UI) and pushed; if a
- *    push fails the row stays 'pending' and a later sync()/cron retries it.
- *  - Every $stmt->execute() return value is checked (CLAUDE.md #1): inside a
- *    transaction a silent false would otherwise commit a partial write.
+ *  - All network calls go through MessagingClient and happen outside any
+ *    database transaction.
+ *  - sync() is throttled (MESSAGING_SYNC_THROTTLE) per user, so a burst of
+ *    events is one /track call; what the throttle holds back is delivered by
+ *    the next sync, and track.php tells the page when that is due. A sync
+ *    sends at most $maxBatches batches of BATCH_SIZE events; SYNC_MORE says
+ *    rows are still pending, and the page asks again like for a throttle.
+ *  - The cron runs hourly, not every minute: each failed delivery counts an
+ *    attempt on the events it carried, and MAX_PUSH_ATTEMPTS failures drop
+ *    them, so a minutely retry would lose everything a five-minute portal
+ *    outage caught.
+ *  - Every statement goes through Prosper202\Database\Connection, which
+ *    throws on a failed prepare, execute or result read (CLAUDE.md #1).
  */
 class MessagingService
 {
+    /** sync() outcomes. */
+    public const SYNC_IDLE = 'idle';           // nothing was pending
+    public const SYNC_THROTTLED = 'throttled'; // something is pending; the last sync was too recent
+    public const SYNC_SENT = 'sent';           // the pending rows were delivered
+    public const SYNC_MORE = 'more';           // batches were delivered and rows are still pending
+    public const SYNC_FAILED = 'failed';       // delivery (or reading what to deliver) failed
+
+    /** Events per /track call. */
+    public const BATCH_SIZE = 100;
+
     private const MAX_PUSH_ATTEMPTS = 5;
 
     private mysqli $db;
+    private Connection $conn;
     private int $userId;
     /** @var array<string,mixed> */
     private array $identity;
     private ?MessagingClient $client = null;
 
     /**
-     * @param array<string,mixed> $identity Identity payload for the central API.
+     * @param array<string,mixed> $identity Identity payload for the portal.
      */
     public function __construct(mysqli $db, int $userId, array $identity)
     {
         $this->db       = $db;
+        $this->conn     = new Connection($db);
         $this->userId   = $userId;
         $this->identity = $identity;
     }
 
     /**
-     * Build a service for a given local user, assembling the central identity
-     * payload from the user record and the locally-stored attribute snapshot.
+     * A service for a local user, with the identity /track authenticates
+     * with and the stored attribute snapshot.
      *
-     * @return self|null Null if the user cannot be resolved.
+     * @param mysqli|null $db The connection to use; null for the application's
+     * @return self|null Null when no active user has this id.
+     * @throws \Prosper202\Database\Exceptions\QueryException when the user cannot be read
      */
-    public static function forUser(int $userId): ?self
+    public static function forUser(int $userId, ?mysqli $db = null): ?self
     {
         if ($userId <= 0) {
             return null;
         }
 
-        $db = DB::getInstance()->getConnection();
-
-        $feedback = get_user_data_feedback($userId);
-        if ($feedback['install_hash'] === null && $feedback['user_email'] === null) {
-            // Unknown user — nothing to identify to the central server.
+        $db ??= DB::getInstance()->getConnection();
+        $identity = self::identityFor($db, $userId);
+        if ($identity === null) {
             return null;
         }
 
         $service = new self($db, $userId, []);
-
-        // Sub-users on a multi-user install share the owner's install_hash but may
-        // not carry their own p202_customer_api_key. The central API authenticates
-        // with api_key + install_hash, so fall back to the install owner's key
-        // (mirroring the license lookup in functions-auth.php) rather than sending
-        // an empty key, which the server would reject.
-        $apiKey = $feedback['api_key'];
-        if (($apiKey === null || $apiKey === '') && !empty($feedback['install_hash'])) {
-            $apiKey = self::resolveInstallApiKey($db, (string) $feedback['install_hash']);
-        }
-
         $service->identity = [
-            'install_hash'  => $feedback['install_hash'],
-            'api_key'       => $apiKey,
+            'install_hash'  => $identity['install_hash'],
+            'api_key'       => $identity['api_key'],
             'user_id'       => $userId,
-            'user_email'    => $feedback['user_email'],
-            'registered_at' => $feedback['time_stamp'],
+            'user_email'    => $identity['user_email'],
+            'registered_at' => $identity['registered_at'],
             'attributes'    => $service->getAttributes(),
         ];
 
@@ -86,27 +103,105 @@ class MessagingService
     }
 
     /**
-     * Find the install owner's customer API key by install_hash, for sub-users
-     * whose own row carries no p202_customer_api_key.
+     * Who this user is to the portal: the install hash, the customer API key,
+     * and the user's id, email, display name and registration time. Both the
+     * analytics identity (forUser()) and the chat pass request (chat-pass.php)
+     * are built from this, so the two cannot resolve the key differently.
+     *
+     * The API key is the user's own, or else the install owner's: sub-users
+     * share the owner's install_hash but often carry no
+     * p202_customer_api_key, and the portal authenticates with the key and
+     * the hash together (mirroring the license lookup in functions-auth.php).
+     * '' when neither has one.
+     *
+     * The display name is first and last name, else the sign-in name, cut
+     * to the chat pass's 100 UTF-16 code units (the protocol counts lengths
+     * as JavaScript does, and the portal sends a longer name as none).
+     *
+     * Null when no active, undeleted user has this id: a deactivated user's
+     * session keeps working until it expires, and it may not act through
+     * either channel (CLAUDE.md #5). A failed read throws rather than
+     * answering '' for the key: '' means "this install has no key", which
+     * hides the chat box, and must never stand in for "could not read"
+     * (CLAUDE.md #11).
+     *
+     * @return array{install_hash: string, api_key: string, user_id: int, user_email: string, user_name: string, registered_at: int}|null
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    private static function resolveInstallApiKey(mysqli $db, string $installHash): ?string
+    public static function identityFor(mysqli $db, int $userId): ?array
     {
-        $sql = "SELECT p202_customer_api_key FROM 202_users
-                 WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1
-                   AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''
-                 ORDER BY user_id ASC LIMIT 1";
-        $stmt = $db->prepare($sql);
-        if (!$stmt) {
+        $conn = new Connection($db);
+        $stmt = $conn->prepareRead(
+            'SELECT user_name, user_fname, user_lname, user_email, user_time_register,
+                    p202_customer_api_key, install_hash
+               FROM 202_users
+              WHERE user_id = ? AND user_deleted = 0 AND user_active = 1'
+        );
+        $conn->bind($stmt, 'i', [$userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
             return null;
         }
-        $stmt->bind_param('s', $installHash);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
+
+        $installHash = trim((string) $row['install_hash']);
+        $apiKey = trim((string) ($row['p202_customer_api_key'] ?? ''));
+        if ($apiKey === '' && $installHash !== '') {
+            $apiKey = self::installApiKey($conn, $installHash);
         }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? (string) $row['p202_customer_api_key'] : null;
+
+        $name = trim(trim((string) ($row['user_fname'] ?? '')) . ' ' . trim((string) ($row['user_lname'] ?? '')));
+        if ($name === '') {
+            $name = trim((string) $row['user_name']);
+        }
+
+        return [
+            'install_hash'  => $installHash,
+            'api_key'       => $apiKey,
+            'user_id'       => $userId,
+            'user_email'    => trim((string) $row['user_email']),
+            'user_name'     => self::cutToUtf16Units($name, 100),
+            'registered_at' => (int) $row['user_time_register'],
+        ];
+    }
+
+    /**
+     * $text cut to at most $units UTF-16 code units, never inside a
+     * character: a character outside the Basic Multilingual Plane (an
+     * emoji) is two.
+     */
+    private static function cutToUtf16Units(string $text, int $units): string
+    {
+        $cut = '';
+        $used = 0;
+        foreach (mb_str_split($text, 1, 'UTF-8') as $character) {
+            $cost = intdiv(strlen(mb_convert_encoding($character, 'UTF-16LE', 'UTF-8')), 2);
+            if ($used + $cost > $units) {
+                break;
+            }
+            $cut .= $character;
+            $used += $cost;
+        }
+
+        return rtrim($cut);
+    }
+
+    /**
+     * The install owner's customer API key, for a user whose own row has
+     * none: the first active user sharing the install hash that has one.
+     * '' when none does.
+     */
+    private static function installApiKey(Connection $conn, string $installHash): string
+    {
+        $stmt = $conn->prepareRead(
+            "SELECT p202_customer_api_key FROM 202_users
+              WHERE install_hash = ? AND user_deleted != 1 AND user_active = 1
+                AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''
+              ORDER BY user_id ASC LIMIT 1"
+        );
+        $conn->bind($stmt, 's', [$installHash]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? '' : trim((string) $row['p202_customer_api_key']);
     }
 
     private function client(): MessagingClient
@@ -115,661 +210,160 @@ class MessagingService
     }
 
     // ---------------------------------------------------------------------
-    // Sync orchestration
+    // Delivery
     // ---------------------------------------------------------------------
 
     /**
-     * Flush pending outbound data and pull fresh state from the central server.
+     * Deliver pending events and a changed attribute snapshot to POST /track.
      *
-     * Throttled: unless $force is true, a sync that ran within
-     * MESSAGING_SYNC_THROTTLE seconds is skipped (no network), so the widget can
-     * call this on every poll cheaply.
+     * Nothing pending is SYNC_IDLE and touches neither the network nor the
+     * throttle. Otherwise, unless $force, a sync that ran within
+     * MESSAGING_SYNC_THROTTLE seconds holds the rows back (SYNC_THROTTLED;
+     * secondsUntilSyncDue() says for how long). The attempt is stamped before
+     * the network call, so a portal that is down is not asked again within
+     * the window. A database failure is SYNC_FAILED, logged, never "idle".
      *
-     * @return bool True if a successful pull occurred this call.
+     * One call sends up to $maxBatches batches of BATCH_SIZE events, one
+     * /track call each, and stops at the first failure. When the last batch
+     * went out and rows are still pending, the answer is SYNC_MORE rather
+     * than SYNC_SENT: a backlog left after an outage is not reported as
+     * delivered, and the caller asks again (the page after the throttle, the
+     * cron on its next run).
+     *
+     * @param int $maxBatches Batches this call may send (at least 1)
+     * @return self::SYNC_* the outcome
      */
-    public function sync(bool $force = false): bool
+    public function sync(bool $force = false, int $maxBatches = 1): string
     {
-        if (!$force && !$this->isSyncDue()) {
-            return false;
-        }
-
-        $this->markSyncStart();
-
-        // Push first so the user's own messages/events reach the server before we
-        // pull state back (network happens here, never inside a transaction).
-        $this->flushEvents();
-        $this->pushPending();
-        $this->reportReadReceipts();
-
-        $cursor   = $this->getCursor();
-        $response = $this->client()->pull($this->identity, $cursor);
-
-        if ($response === null) {
-            $this->recordSyncError('pull failed');
-            return false;
-        }
-
-        $this->applyPull($response);
-        return true;
-    }
-
-    /**
-     * Apply a /pull response to the local cache inside a single transaction.
-     *
-     * @param array<string,mixed> $response
-     */
-    private function applyPull(array $response): void
-    {
-        $conversations = $response['conversations'] ?? null;
-        if (!is_array($conversations)) {
-            // A 200 with a malformed body is a server bug; do not silently treat
-            // it as "no conversations" and wipe nothing — just record the error.
-            $this->recordSyncError('malformed pull response');
-            return;
-        }
-
+        $maxBatches = max(1, $maxBatches);
         try {
-            // Checked inside the try so the catch below is the one recovery path
-            // for every failure of this pull, including "could not even begin".
-            // An ignored false here would run the loop in autocommit, land half
-            // a pull permanently, and leave the rollback nothing to undo while
-            // recordSyncSuccess() advanced the cursor past it.
-            if (!$this->db->begin_transaction()) {
-                throw new RuntimeException('begin transaction failed');
-            }
-            foreach ($conversations as $conversation) {
-                if (!is_array($conversation) || empty($conversation['external_id'])) {
-                    continue;
+            $sent = false;
+            for ($batch = 0; $batch < $maxBatches; $batch++) {
+                $events = $this->pendingEvents();
+                $attributesDirty = $this->areAttributesDirty();
+                if ($events === [] && !$attributesDirty) {
+                    return $sent ? self::SYNC_SENT : self::SYNC_IDLE;
+                }
+                if (!$sent && !$force && $this->secondsUntilSyncDue() > 0) {
+                    return self::SYNC_THROTTLED;
                 }
 
-                $conversationId = $this->upsertConversation($conversation);
-
-                // Track the newest message so we touch the conversation's
-                // last_message_at/preview exactly once (not once per message).
-                $newestTs   = null;
-                $newestBody = '';
-                $messages   = $conversation['messages'] ?? [];
-                if (is_array($messages)) {
-                    // Pass the position within the conversation: it is stable
-                    // across polls and is the only discriminator available to
-                    // the synthetic-id fallback in upsertMessage().
-                    foreach (array_values($messages) as $position => $message) {
-                        if (!is_array($message)) {
-                            continue;
-                        }
-                        $this->upsertMessage($conversationId, $message, $position);
-                        $ts = $this->normalizeDate($message['created_at'] ?? null);
-                        if ($ts !== null && ($newestTs === null || $ts > $newestTs)) {
-                            $newestTs   = $ts;
-                            $newestBody = isset($message['body']) ? (string) $message['body'] : '';
-                        }
-                    }
+                $this->markSyncStart();
+                if (!$this->flushEvents($events, $attributesDirty)) {
+                    $this->recordSyncError('track failed');
+                    return self::SYNC_FAILED;
                 }
-                if ($newestTs !== null) {
-                    $this->touchConversation($conversationId, $newestTs, $newestBody);
-                }
+                $this->recordSyncSuccess();
+                $sent = true;
             }
 
-            // Optional: the server may signal conversations it has removed/retracted
-            // so the local cache doesn't keep them forever (see CENTRAL-API.md).
-            if (isset($response['deleted_conversation_ids']) && is_array($response['deleted_conversation_ids'])) {
-                $this->deleteConversations($response['deleted_conversation_ids']);
-            }
-
-            if (!$this->db->commit()) {
-                throw new RuntimeException('commit pull failed');
-            }
+            return $this->pendingEvents() === [] && !$this->areAttributesDirty() ? self::SYNC_SENT : self::SYNC_MORE;
         } catch (Throwable $e) {
-            $this->db->rollback();
-            error_log('MessagingService: applyPull failed: ' . $e->getMessage());
-            $this->recordSyncError('apply failed: ' . $e->getMessage());
-            return;
+            error_log('MessagingService: sync for user ' . $this->userId . ' failed: ' . $e->getMessage());
         }
 
-        $newCursor = isset($response['cursor']) ? (string) $response['cursor'] : null;
-        $this->recordSyncSuccess($newCursor);
+        return self::SYNC_FAILED;
     }
 
-    // ---------------------------------------------------------------------
-    // Conversations / messages cache writes
-    // ---------------------------------------------------------------------
-
     /**
-     * Insert or update a conversation; returns its local primary key.
+     * The active users with something to deliver: an event still pending
+     * (and not out of attempts) or a changed attribute snapshot.
      *
-     * @param array<string,mixed> $c
+     * @return list<int> user ids, ascending
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    private function upsertConversation(array $c): int
+    public static function usersWithPendingDelivery(mysqli $db): array
     {
-        $externalId = (string) $c['external_id'];
-        $type       = in_array($c['type'] ?? '', ['conversation', 'broadcast'], true) ? $c['type'] : 'conversation';
-        $status     = in_array($c['status'] ?? '', ['open', 'closed'], true) ? $c['status'] : 'open';
-        $subject    = isset($c['subject']) ? (string) $c['subject'] : null;
-        $lastAt     = $this->normalizeDate($c['last_message_at'] ?? null);
-
-        $existingId = $this->findConversationId($externalId);
-
-        if ($existingId !== null) {
-            $sql  = "UPDATE 202_messaging_conversations
-                        SET type = ?, subject = ?, status = ?, last_message_at = COALESCE(?, last_message_at)
-                      WHERE id = ?";
-            $stmt = $this->db->prepare($sql);
-            if (!$stmt) {
-                throw new RuntimeException('prepare update conversation failed');
-            }
-            $stmt->bind_param('ssssi', $type, $subject, $status, $lastAt, $existingId);
-            if (!$stmt->execute()) {
-                $stmt->close();
-                throw new RuntimeException('update conversation failed');
-            }
-            $stmt->close();
-            return $existingId;
-        }
-
-        $sql  = "INSERT INTO 202_messaging_conversations
-                    (user_id, external_id, type, subject, status, last_message_at)
-                 VALUES (?, ?, ?, ?, ?, ?)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('prepare insert conversation failed');
-        }
-        $stmt->bind_param('isssss', $this->userId, $externalId, $type, $subject, $status, $lastAt);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new RuntimeException('insert conversation failed');
-        }
-        $newId = (int) $stmt->insert_id;
-        $stmt->close();
-        return $newId;
-    }
-
-    /**
-     * Insert a local-only placeholder conversation (no server id yet).
-     */
-    private function insertLocalConversation(string $externalId): int
-    {
-        $now  = date('Y-m-d H:i:s');
-        $sql  = "INSERT INTO 202_messaging_conversations
-                    (user_id, external_id, type, status, last_message_at, local_only)
-                 VALUES (?, ?, 'conversation', 'open', ?, 1)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('prepare insert local conversation failed');
-        }
-        $stmt->bind_param('iss', $this->userId, $externalId, $now);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new RuntimeException('insert local conversation failed');
-        }
-        $newId = (int) $stmt->insert_id;
-        $stmt->close();
-        return $newId;
-    }
-
-    private function isLocalConversation(int $conversationId): bool
-    {
-        $sql  = "SELECT local_only FROM 202_messaging_conversations WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return false;
-        }
-        $stmt->bind_param('i', $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? ((int) $row['local_only'] === 1) : false;
-    }
-
-    /**
-     * Delete local conversations (and their messages) the server has retracted.
-     * Scoped to this user via findConversationId(). Runs inside applyPull's txn.
-     *
-     * @param array<int,mixed> $externalIds
-     */
-    private function deleteConversations(array $externalIds): void
-    {
-        foreach ($externalIds as $externalId) {
-            if (!is_string($externalId) && !is_int($externalId)) {
-                continue;
-            }
-            $conversationId = $this->findConversationId((string) $externalId);
-            if ($conversationId === null) {
-                continue;
-            }
-            // Table/column names are hardcoded (not user input); only the id is bound.
-            foreach (['202_messaging_messages' => 'conversation_id', '202_messaging_conversations' => 'id'] as $table => $col) {
-                $sql  = "DELETE FROM {$table} WHERE {$col} = ?";
-                $stmt = $this->db->prepare($sql);
-                if (!$stmt) {
-                    throw new RuntimeException('prepare delete conversation failed');
-                }
-                $stmt->bind_param('i', $conversationId);
-                if (!$stmt->execute()) {
-                    $stmt->close();
-                    throw new RuntimeException('delete conversation failed');
-                }
-                $stmt->close();
-            }
-        }
-    }
-
-    /**
-     * Insert or reconcile a message within a conversation.
-     *
-     * Reconciliation: an outbound message we queued locally has a client_token
-     * but no external_id yet. When the server echoes it back (in /pull or /send),
-     * we match on client_token and stamp the canonical external_id rather than
-     * inserting a duplicate.
-     *
-     * @param array<string,mixed> $m
-     */
-    private function upsertMessage(int $conversationId, array $m, int $position = 0): void
-    {
-        $externalId  = isset($m['external_id']) ? (string) $m['external_id'] : null;
-        $clientToken = isset($m['client_token']) ? (string) $m['client_token'] : null;
-        $direction   = ($m['direction'] ?? '') === 'outbound' ? 'outbound' : 'inbound';
-        $author      = in_array($m['author'] ?? '', ['team', 'system', 'user'], true) ? $m['author'] : 'team';
-        $body        = isset($m['body']) ? (string) $m['body'] : '';
-        // Keep the provided value separate from the substituted "now": the
-        // synthetic id below must not hash a timestamp that changes every poll.
-        $providedCreatedAt = $this->normalizeDate($m['created_at'] ?? null);
-        $createdAt   = $providedCreatedAt ?? date('Y-m-d H:i:s');
-
-        // Reconcile a locally-queued outbound message by its client token.
-        if ($clientToken !== null) {
-            $localId = $this->findMessageIdByClientToken($conversationId, $clientToken);
-            if ($localId !== null) {
-                $sql  = "UPDATE 202_messaging_messages
-                            SET external_id = ?, delivery_status = 'sent', created_at = ?
-                          WHERE id = ?";
-                $stmt = $this->db->prepare($sql);
-                if (!$stmt) {
-                    throw new RuntimeException('prepare reconcile message failed');
-                }
-                $stmt->bind_param('ssi', $externalId, $createdAt, $localId);
-                if (!$stmt->execute()) {
-                    $stmt->close();
-                    throw new RuntimeException('reconcile message failed');
-                }
-                $stmt->close();
-                return;
-            }
-        }
-
-        // The contract guarantees an external_id; if a message arrives without one,
-        // derive a stable synthetic id from its content so repeated pulls dedupe via
-        // messageExists() below instead of inserting a fresh copy every sync.
-        if ($externalId === null) {
-            // Hash only fields that are stable across polls. Using the local
-            // $createdAt here meant a message with no created_at got a fresh id
-            // every sync, so messageExists() never matched and the poll inserted
-            // a duplicate row each time (~180/hour with a tab open) — the
-            // UNIQUE (conversation_id, external_id) key could not help.
-            //
-            // $position is required, not decorative: without it, a message
-            // lacking created_at hashed to direction|author||body alone, so two
-            // genuinely distinct messages with the same author and text (a
-            // repeated "ok") collided and the second was silently dropped as
-            // already-seen. Position is stable across polls and distinguishes
-            // them.
-            $externalId = 'syn_' . md5($direction . '|' . $author . '|' . ($providedCreatedAt ?? '') . '|' . $position . '|' . $body);
-        }
-
-        // Skip if we already have this message.
-        if ($this->messageExists($conversationId, $externalId)) {
-            return;
-        }
-
-        $deliveryStatus = $direction === 'outbound' ? 'sent' : 'delivered';
-
-        $sql  = "INSERT INTO 202_messaging_messages
-                    (conversation_id, external_id, client_token, direction, author, body, created_at, delivery_status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('prepare insert message failed');
-        }
-        $stmt->bind_param('isssssss', $conversationId, $externalId, $clientToken, $direction, $author, $body, $createdAt, $deliveryStatus);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new RuntimeException('insert message failed');
-        }
-        $stmt->close();
-    }
-
-    private function touchConversation(int $conversationId, string $createdAt, string $body): void
-    {
-        $preview = mb_substr(trim($body), 0, 200);
-        // Advance the preview only when this message is at least as new as the
-        // stored last_message_at (the preview assignment is evaluated first, so it
-        // still sees the pre-update last_message_at). This prevents an out-of-order
-        // delta from showing an older message's text against a newer timestamp.
-        $sql  = "UPDATE 202_messaging_conversations
-                    SET last_message_preview = IF(? >= COALESCE(last_message_at, '1970-01-01 00:00:00'), ?, last_message_preview),
-                        last_message_at = GREATEST(COALESCE(last_message_at, ?), ?)
-                  WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('prepare touch conversation failed');
-        }
-        $stmt->bind_param('ssssi', $createdAt, $preview, $createdAt, $createdAt, $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new RuntimeException('touch conversation failed');
-        }
-        $stmt->close();
-    }
-
-    // ---------------------------------------------------------------------
-    // Outbound messages
-    // ---------------------------------------------------------------------
-
-    /**
-     * Queue a user-composed message and attempt an immediate push.
-     *
-     * @param string|null $conversationExternalId Existing thread, or null/empty for a new one.
-     * @return array{conversation_external_id:string,message:array}|null
-     *         The optimistic message + its conversation external id, or null on a hard failure.
-     */
-    public function sendMessage(?string $conversationExternalId, string $body): ?array
-    {
-        $body = trim($body);
-        if ($body === '') {
-            return null;
-        }
-
-        $clientToken = $this->generateToken();
-
-        // Resolve (or create) the local conversation so the UI has something to show.
-        if ($conversationExternalId !== null && $conversationExternalId !== '') {
-            $conversationId = $this->findConversationId($conversationExternalId);
-            if ($conversationId === null) {
-                // Unknown thread — fall back to starting a new one.
-                $conversationExternalId = null;
-            }
-        }
-
-        if ($conversationExternalId === null || $conversationExternalId === '') {
-            // Local-only placeholder until the server issues a real id. The
-            // local_only column (not the id string) drives routing in pushMessage,
-            // so a server-issued id can never be mistaken for a local placeholder.
-            $conversationExternalId = 'local-' . $clientToken;
-            $conversationId = $this->insertLocalConversation($conversationExternalId);
-        }
-
-        $now  = date('Y-m-d H:i:s');
-        $sql  = "INSERT INTO 202_messaging_messages
-                    (conversation_id, client_token, direction, author, body, created_at, delivery_status)
-                 VALUES (?, ?, 'outbound', 'user', ?, ?, 'pending')";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            error_log('MessagingService: prepare queue outbound failed');
-            return null;
-        }
-        $stmt->bind_param('isss', $conversationId, $clientToken, $body, $now);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            error_log('MessagingService: queue outbound failed');
-            return null;
-        }
-        $messageId = (int) $stmt->insert_id;
-        $stmt->close();
-
-        $this->touchConversation($conversationId, $now, $body);
-
-        // Best-effort immediate delivery; on failure the row stays 'pending'.
-        $this->pushMessage($messageId);
-
-        // Re-read so the caller gets the (possibly reconciled) canonical row.
-        $message = $this->getMessageById($messageId);
-        $convExt = $this->getConversationExternalId($conversationId) ?? $conversationExternalId;
-
-        return [
-            'conversation_external_id' => $convExt,
-            'message'                  => $message ?? [],
-        ];
-    }
-
-    /**
-     * Push all pending outbound messages that have not exhausted their retries.
-     */
-    private function pushPending(): void
-    {
-        $sql = "SELECT id FROM 202_messaging_messages
-                 WHERE direction = 'outbound' AND delivery_status = 'pending'
-                   AND sync_attempts < ?
-                   AND conversation_id IN (SELECT id FROM 202_messaging_conversations WHERE user_id = ?)
-                 ORDER BY id ASC";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return;
-        }
-        $result = $stmt->get_result();
-        $ids = [];
-        while ($row = $result->fetch_assoc()) {
-            $ids[] = (int) $row['id'];
-        }
-        $stmt->close();
-
-        foreach ($ids as $id) {
-            $this->pushMessage($id);
-        }
-    }
-
-    /**
-     * Push a single queued message to the central server and reconcile the result.
-     */
-    private function pushMessage(int $messageId): bool
-    {
-        $message = $this->getMessageById($messageId);
-        if ($message === null || $message['delivery_status'] !== 'pending') {
-            return false;
-        }
-
-        $conversationId = (int) $message['conversation_id'];
-        // Local-only placeholders have no server id yet → tell the server this is a
-        // new thread; otherwise reply into the existing conversation.
-        $sendConvId = $this->isLocalConversation($conversationId)
-            ? null
-            : $this->getConversationExternalId($conversationId);
-
-        $response = $this->client()->send(
-            $this->identity,
-            $sendConvId,
-            (string) $message['body'],
-            (string) $message['client_token']
+        $conn = new Connection($db);
+        $stmt = $conn->prepareRead(
+            "SELECT u.user_id
+               FROM 202_users u
+              WHERE u.user_active = 1 AND u.user_deleted = 0
+                AND (EXISTS (SELECT 1 FROM 202_messaging_events e
+                              WHERE e.user_id = u.user_id AND e.delivery_status = 'pending'
+                                AND e.sync_attempts < ?)
+                  OR EXISTS (SELECT 1 FROM 202_messaging_attributes a
+                              WHERE a.user_id = u.user_id AND a.dirty = 1))
+              ORDER BY u.user_id ASC"
         );
+        $conn->bind($stmt, 'i', [self::MAX_PUSH_ATTEMPTS]);
 
-        if ($response === null) {
-            $this->incrementPushAttempts($messageId);
-            return false;
-        }
-
-        try {
-            // See applyPull(): checked inside the try so the catch is the single
-            // recovery path, and because an ignored false silently downgrades
-            // the reconcile to autocommit with no rollback to undo it.
-            if (!$this->db->begin_transaction()) {
-                throw new RuntimeException('begin transaction failed');
-            }
-            // Adopt the server's canonical conversation identifiers.
-            if (isset($response['conversation']) && is_array($response['conversation'])
-                && !empty($response['conversation']['external_id'])) {
-                $this->reconcileConversation($conversationId, $response['conversation']);
-            }
-
-            $serverMessage = $response['message'] ?? null;
-            $externalId = is_array($serverMessage) && isset($serverMessage['external_id'])
-                ? (string) $serverMessage['external_id']
-                : null;
-            $createdAt = is_array($serverMessage)
-                ? ($this->normalizeDate($serverMessage['created_at'] ?? null) ?? (string) $message['created_at'])
-                : (string) $message['created_at'];
-
-            $sql  = "UPDATE 202_messaging_messages
-                        SET external_id = ?, delivery_status = 'sent', created_at = ?
-                      WHERE id = ?";
-            $stmt = $this->db->prepare($sql);
-            if (!$stmt) {
-                throw new RuntimeException('prepare push reconcile failed');
-            }
-            $stmt->bind_param('ssi', $externalId, $createdAt, $messageId);
-            if (!$stmt->execute()) {
-                $stmt->close();
-                throw new RuntimeException('push reconcile failed');
-            }
-            $stmt->close();
-
-            if (!$this->db->commit()) {
-                throw new RuntimeException('commit push reconcile failed');
-            }
-        } catch (Throwable $e) {
-            $this->db->rollback();
-            error_log('MessagingService: pushMessage reconcile failed: ' . $e->getMessage());
-            $this->incrementPushAttempts($messageId);
-            return false;
-        }
-
-        return true;
+        return array_map(static fn (array $row): int => (int) $row['user_id'], $conn->fetchAll($stmt));
     }
 
     /**
-     * Replace a local conversation's identifiers with the server's canonical ones
-     * (used when a 'pending_' placeholder gets a real external id).
+     * The cron's delivery: every user usersWithPendingDelivery() names, up
+     * to $maxBatchesPerUser batches each, past the per-request throttle (the
+     * cron's cadence is the throttle). 202-cronjobs/index.php runs it hourly
+     * on every default deployment; 202-cronjobs/sync-messaging.php is the
+     * same run on its own.
      *
-     * @param array<string,mixed> $c
-     */
-    private function reconcileConversation(int $conversationId, array $c): void
-    {
-        $externalId = (string) $c['external_id'];
-        $type       = in_array($c['type'] ?? '', ['conversation', 'broadcast'], true) ? $c['type'] : 'conversation';
-        $status     = in_array($c['status'] ?? '', ['open', 'closed'], true) ? $c['status'] : 'open';
-        $subject    = isset($c['subject']) ? (string) $c['subject'] : null;
-
-        $sql  = "UPDATE 202_messaging_conversations
-                    SET external_id = ?, type = ?, status = ?, subject = ?, local_only = 0
-                  WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            throw new RuntimeException('prepare reconcile conversation failed');
-        }
-        $stmt->bind_param('ssssi', $externalId, $type, $status, $subject, $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            throw new RuntimeException('reconcile conversation failed');
-        }
-        $stmt->close();
-    }
-
-    private function incrementPushAttempts(int $messageId): void
-    {
-        $sql  = "UPDATE 202_messaging_messages
-                    SET sync_attempts = sync_attempts + 1,
-                        delivery_status = IF(sync_attempts + 1 >= ?, 'failed', 'pending')
-                  WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $messageId);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: incrementPushAttempts failed for message ' . $messageId);
-        }
-        $stmt->close();
-    }
-
-    // ---------------------------------------------------------------------
-    // Read state
-    // ---------------------------------------------------------------------
-
-    /**
-     * Mark all inbound messages in a conversation as read.
+     * A user who cannot be read is that user's failure, not the run's. After
+     * $maxConsecutiveFailures failed deliveries in a row the run stops: the
+     * portal is most likely down, every further user would wait out the
+     * client's timeouts and spend one of their events' attempts, and what
+     * is left is delivered next run ('stopped' counts the users not tried).
      *
-     * This only touches local state (the source of truth for the unread badge),
-     * so it stays off the network and keeps the request fast. Read receipts are
-     * reported to the central server separately by reportReadReceipts(), which
-     * runs during sync()/cron rather than in the page request.
+     * @return array{sent: int, more: int, idle: int, failed: int, stopped: int}
+     * @throws \Prosper202\Database\Exceptions\QueryException when the users cannot be listed
      */
-    public function markConversationRead(string $conversationExternalId): void
+    public static function deliverPending(mysqli $db, int $maxBatchesPerUser = 10, int $maxConsecutiveFailures = 3): array
     {
-        $conversationId = $this->findConversationId($conversationExternalId);
-        if ($conversationId === null) {
-            return;
+        $counts = ['sent' => 0, 'more' => 0, 'idle' => 0, 'failed' => 0, 'stopped' => 0];
+        $users = self::usersWithPendingDelivery($db);
+        $failedInARow = 0;
+        foreach ($users as $i => $userId) {
+            if ($failedInARow >= max(1, $maxConsecutiveFailures)) {
+                $counts['stopped'] = count($users) - $i;
+                error_log('Analytics delivery: ' . $failedInARow . ' deliveries failed in a row; '
+                    . $counts['stopped'] . ' user(s) wait for the next run');
+                break;
+            }
+            try {
+                $service = self::forUser($userId, $db);
+            } catch (Throwable $e) {
+                error_log('Analytics delivery: user ' . $userId . ' could not be read: ' . $e->getMessage());
+                $counts['failed']++;
+                continue;
+            }
+            if ($service === null) {
+                continue;
+            }
+
+            $outcome = $service->sync(true, $maxBatchesPerUser);
+            if ($outcome === self::SYNC_FAILED) {
+                $counts['failed']++;
+                $failedInARow++;
+                continue;
+            }
+            $failedInARow = 0;
+            $counts[$outcome === self::SYNC_THROTTLED ? 'idle' : $outcome]++;
         }
 
-        $now  = date('Y-m-d H:i:s');
-        $sql  = "UPDATE 202_messaging_messages
-                    SET read_at = ?
-                  WHERE conversation_id = ? AND direction = 'inbound' AND read_at IS NULL";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('si', $now, $conversationId);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: markConversationRead update failed');
-        }
-        $stmt->close();
+        return $counts;
     }
 
     /**
-     * Best-effort report of read inbound messages whose receipt has not yet been
-     * sent to the central server. Runs during sync()/cron, never in a page request.
+     * Seconds until sync() may call the portal again; 0 when it may now.
+     *
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    private function reportReadReceipts(): void
+    public function secondsUntilSyncDue(): int
     {
-        // Map local row id => external_id. We flag by local id, never by
-        // external_id alone: the same external_id can belong to another user's row
-        // on a multi-user install (UNIQUE key is (conversation_id, external_id)),
-        // so an external_id-scoped UPDATE would wrongly suppress their receipt.
-        $rows = [];
-        $sql = "SELECT id, external_id FROM 202_messaging_messages
-                 WHERE read_at IS NOT NULL AND receipt_sent = 0
-                   AND direction = 'inbound' AND external_id IS NOT NULL
-                   AND conversation_id IN (SELECT id FROM 202_messaging_conversations WHERE user_id = ?)
-                 LIMIT 200";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('i', $this->userId);
-        if ($stmt->execute()) {
-            $result = $stmt->get_result();
-            while ($row = $result->fetch_assoc()) {
-                $rows[(int) $row['id']] = (string) $row['external_id'];
-            }
-        }
-        $stmt->close();
+        $throttle = defined('MESSAGING_SYNC_THROTTLE') ? (int) MESSAGING_SYNC_THROTTLE : 20;
 
-        if ($rows === []) {
-            return;
+        $stmt = $this->conn->prepareRead('SELECT last_sync FROM 202_messaging_sync WHERE user_id = ?');
+        $this->conn->bind($stmt, 'i', [$this->userId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null || $row['last_sync'] === null) {
+            return 0;
+        }
+        $last = strtotime((string) $row['last_sync']);
+        if ($last === false) {
+            return 0;
         }
 
-        $response = $this->client()->markRead($this->identity, array_values($rows));
-        if ($response === null) {
-            return; // try again next sync
-        }
-
-        // Flag exactly the rows we just reported, by local id. The ids are
-        // integers we just read from the DB (array keys), so they are safe to
-        // inline — this avoids the by-reference pitfalls of binding a dynamic
-        // IN-list via bind_param(...$ids).
-        $ids = array_map('intval', array_keys($rows));
-        $idList = implode(',', $ids);
-        $sql  = "UPDATE 202_messaging_messages SET receipt_sent = 1 WHERE id IN ($idList)";
-        if (!$this->db->query($sql)) {
-            error_log('MessagingService: reportReadReceipts flag update failed');
-        }
+        return max(0, $throttle - (time() - $last));
     }
 
     // ---------------------------------------------------------------------
@@ -780,6 +374,7 @@ class MessagingService
      * Merge custom attributes into the stored snapshot and mark it for delivery.
      *
      * @param array<string,mixed> $attributes
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
     public function updateAttributes(array $attributes): void
     {
@@ -797,33 +392,27 @@ class MessagingService
 
         $json = json_encode($current);
         if ($json === false) {
-            error_log('MessagingService: failed to encode attributes: ' . json_last_error_msg());
-            return;
+            throw new \RuntimeException('MessagingService: failed to encode attributes: ' . json_last_error_msg());
         }
 
         $now  = date('Y-m-d H:i:s');
-        $sql  = "INSERT INTO 202_messaging_attributes (user_id, data, dirty, updated_at)
-                 VALUES (?, ?, 1, ?)
-                 ON DUPLICATE KEY UPDATE data = VALUES(data), dirty = 1, updated_at = VALUES(updated_at)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            error_log('MessagingService: prepare updateAttributes failed');
-            return;
-        }
-        $stmt->bind_param('iss', $this->userId, $json, $now);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: updateAttributes failed');
-        }
-        $stmt->close();
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_messaging_attributes (user_id, data, dirty, updated_at)
+             VALUES (?, ?, 1, ?)
+             ON DUPLICATE KEY UPDATE data = VALUES(data), dirty = 1, updated_at = VALUES(updated_at)'
+        );
+        $this->conn->bind($stmt, 'iss', [$this->userId, $json, $now]);
+        $this->conn->executeUpdate($stmt);
 
-        // Keep the in-memory identity fresh for any send/pull later this request.
+        // Keep the in-memory identity fresh for a sync later this request.
         $this->identity['attributes'] = $current;
     }
 
     /**
-     * Record a behavioural event for later delivery to the central server.
+     * Record a behavioural event for delivery to the portal.
      *
      * @param array<string,mixed>|null $metadata
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
     public function recordEvent(string $name, ?array $metadata = null): void
     {
@@ -836,479 +425,207 @@ class MessagingService
         if ($metadata !== null && $metadata !== []) {
             $encoded = json_encode($metadata);
             if ($encoded === false) {
-                error_log('MessagingService: failed to encode event metadata: ' . json_last_error_msg());
-                return;
+                throw new \RuntimeException('MessagingService: failed to encode event metadata: ' . json_last_error_msg());
             }
             $metaJson = $encoded;
         }
 
         $token = $this->generateToken();
         $now   = date('Y-m-d H:i:s');
-        $sql   = "INSERT INTO 202_messaging_events
-                    (user_id, event_name, metadata, occurred_at, client_token, delivery_status)
-                  VALUES (?, ?, ?, ?, ?, 'pending')";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            error_log('MessagingService: prepare recordEvent failed');
-            return;
-        }
-        $stmt->bind_param('issss', $this->userId, $name, $metaJson, $now, $token);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: recordEvent failed');
-        }
-        $stmt->close();
+        $stmt  = $this->conn->prepareWrite(
+            "INSERT INTO 202_messaging_events
+                (user_id, event_name, metadata, occurred_at, client_token, delivery_status)
+             VALUES (?, ?, ?, ?, ?, 'pending')"
+        );
+        $this->conn->bind($stmt, 'issss', [$this->userId, $name, $metaJson, $now, $token]);
+        $this->conn->executeInsert($stmt);
     }
 
     /**
-     * Deliver the attribute snapshot (if changed) plus any pending events.
+     * The events waiting for delivery, oldest first, at most BATCH_SIZE a call.
+     *
+     * @return list<array{_local_id: int, name: string, metadata: mixed, occurred_at: string, client_token: string}>
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
-    private function flushEvents(): void
+    private function pendingEvents(): array
     {
+        $stmt = $this->conn->prepareRead(
+            "SELECT id, event_name, metadata, occurred_at, client_token
+               FROM 202_messaging_events
+              WHERE user_id = ? AND delivery_status = 'pending'
+                AND sync_attempts < ?
+              ORDER BY id ASC
+              LIMIT ?"
+        );
+        $this->conn->bind($stmt, 'iii', [$this->userId, self::MAX_PUSH_ATTEMPTS, self::BATCH_SIZE]);
+
         $events = [];
-        $sql = "SELECT id, event_name, metadata, occurred_at, client_token
-                  FROM 202_messaging_events
-                 WHERE user_id = ? AND delivery_status = 'pending'
-                   AND sync_attempts < ?
-                 ORDER BY id ASC
-                 LIMIT 100";
-        $stmt = $this->db->prepare($sql);
-        if ($stmt) {
-            $max = self::MAX_PUSH_ATTEMPTS;
-            $stmt->bind_param('ii', $this->userId, $max);
-            if ($stmt->execute()) {
-                $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
-                    $metadata = null;
-                    if ($row['metadata'] !== null) {
-                        $decoded = json_decode((string) $row['metadata'], true);
-                        $metadata = is_array($decoded) ? $decoded : null;
-                    }
-                    $events[] = [
-                        '_local_id'    => (int) $row['id'],
-                        'name'         => $row['event_name'],
-                        'metadata'     => $metadata,
-                        'occurred_at'  => $row['occurred_at'],
-                        'client_token' => $row['client_token'],
-                    ];
-                }
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            $metadata = null;
+            if ($row['metadata'] !== null) {
+                $decoded = json_decode((string) $row['metadata'], true);
+                $metadata = is_array($decoded) ? $decoded : null;
             }
-            $stmt->close();
+            $events[] = [
+                '_local_id'    => (int) $row['id'],
+                'name'         => (string) $row['event_name'],
+                'metadata'     => $metadata,
+                'occurred_at'  => (string) $row['occurred_at'],
+                'client_token' => (string) $row['client_token'],
+            ];
         }
 
-        $attributesDirty = $this->areAttributesDirty();
+        return $events;
+    }
 
-        if ($events === [] && !$attributesDirty) {
-            return; // nothing to flush
-        }
-
+    /**
+     * Deliver the attribute snapshot plus the given events; true when the
+     * portal took them, and only then are they marked sent.
+     *
+     * @param list<array<string,mixed>> $events from pendingEvents()
+     * @throws \Prosper202\Database\Exceptions\QueryException
+     */
+    private function flushEvents(array $events, bool $attributesDirty): bool
+    {
         // Strip internal keys before sending.
         $payloadEvents = array_map(static function (array $e): array {
             unset($e['_local_id']);
             return $e;
         }, $events);
 
-        $response = $this->client()->track($this->identity, $this->getAttributes(), $payloadEvents);
+        [$attributes, $attributesVersion] = $this->attributeSnapshot();
+        $response = $this->client()->track($this->identity, $attributes, $payloadEvents);
 
         if ($response === null) {
             // Bump attempts so poison events eventually stop being retried.
             foreach ($events as $e) {
                 $this->incrementEventAttempts($e['_local_id']);
             }
-            return;
+            return false;
         }
 
-        // Mark delivered.
         foreach ($events as $e) {
             $this->markEventSent($e['_local_id']);
         }
         if ($attributesDirty) {
-            $this->clearAttributesDirty();
+            $this->clearAttributesDirty($attributesVersion);
         }
+
+        return true;
     }
 
     private function incrementEventAttempts(int $eventId): void
     {
-        $sql  = "UPDATE 202_messaging_events
-                    SET sync_attempts = sync_attempts + 1,
-                        delivery_status = IF(sync_attempts + 1 >= ?, 'failed', 'pending')
-                  WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $max = self::MAX_PUSH_ATTEMPTS;
-        $stmt->bind_param('ii', $max, $eventId);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: incrementEventAttempts failed for event ' . $eventId);
-        }
-        $stmt->close();
+        $stmt = $this->conn->prepareWrite(
+            "UPDATE 202_messaging_events
+                SET sync_attempts = sync_attempts + 1,
+                    delivery_status = IF(sync_attempts + 1 >= ?, 'failed', 'pending')
+              WHERE id = ?"
+        );
+        $this->conn->bind($stmt, 'ii', [self::MAX_PUSH_ATTEMPTS, $eventId]);
+        $this->conn->executeUpdate($stmt);
     }
 
     private function markEventSent(int $eventId): void
     {
-        $sql  = "UPDATE 202_messaging_events SET delivery_status = 'sent' WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('i', $eventId);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: markEventSent failed for event ' . $eventId);
-        }
-        $stmt->close();
-    }
-
-    // ---------------------------------------------------------------------
-    // Read models for the widget
-    // ---------------------------------------------------------------------
-
-    /**
-     * @return array{unread_count:int,conversations:array<int,array<string,mixed>>}
-     */
-    public function getInbox(): array
-    {
-        $conversations = [];
-        // Single aggregate join instead of a correlated COUNT subquery per row.
-        // (Runs under sql_mode='' per connect.php, so GROUP BY c.id is allowed.)
-        $sql = "SELECT c.external_id, c.type, c.subject, c.status, c.last_message_at, c.last_message_preview,
-                       CAST(COALESCE(SUM(m.direction = 'inbound' AND m.read_at IS NULL), 0) AS UNSIGNED) AS unread
-                  FROM 202_messaging_conversations c
-                  LEFT JOIN 202_messaging_messages m ON m.conversation_id = c.id
-                 WHERE c.user_id = ?
-                 GROUP BY c.id
-                 ORDER BY c.last_message_at DESC, c.id DESC
-                 LIMIT 50";
-        $stmt = $this->db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param('i', $this->userId);
-            if ($stmt->execute()) {
-                $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
-                    $row['unread'] = (int) $row['unread'];
-                    $conversations[] = $row;
-                }
-            }
-            $stmt->close();
-        }
-
-        $unreadTotal = 0;
-        foreach ($conversations as $c) {
-            $unreadTotal += $c['unread'];
-        }
-
-        return [
-            'unread_count'  => $unreadTotal,
-            'conversations' => $conversations,
-        ];
-    }
-
-    /**
-     * @return array{conversation:array<string,mixed>|null,messages:array<int,array<string,mixed>>}
-     */
-    public function getConversation(string $conversationExternalId): array
-    {
-        $conversationId = $this->findConversationId($conversationExternalId);
-        if ($conversationId === null) {
-            return ['conversation' => null, 'messages' => []];
-        }
-
-        $conversation = null;
-        $sql = "SELECT external_id, type, subject, status, last_message_at
-                  FROM 202_messaging_conversations WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param('i', $conversationId);
-            if ($stmt->execute()) {
-                $conversation = $stmt->get_result()->fetch_assoc() ?: null;
-            }
-            $stmt->close();
-        }
-
-        $messages = [];
-        $sql = "SELECT external_id, direction, author, body, created_at, read_at, delivery_status
-                  FROM 202_messaging_messages
-                 WHERE conversation_id = ?
-                 ORDER BY created_at ASC, id ASC
-                 LIMIT 500";
-        $stmt = $this->db->prepare($sql);
-        if ($stmt) {
-            $stmt->bind_param('i', $conversationId);
-            if ($stmt->execute()) {
-                $result = $stmt->get_result();
-                while ($row = $result->fetch_assoc()) {
-                    $messages[] = $row;
-                }
-            }
-            $stmt->close();
-        }
-
-        return ['conversation' => $conversation, 'messages' => $messages];
-    }
-
-    // ---------------------------------------------------------------------
-    // Small DB helpers
-    // ---------------------------------------------------------------------
-
-    private function findConversationId(string $externalId): ?int
-    {
-        $sql  = "SELECT id FROM 202_messaging_conversations WHERE user_id = ? AND external_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return null;
-        }
-        $stmt->bind_param('is', $this->userId, $externalId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? (int) $row['id'] : null;
-    }
-
-    private function getConversationExternalId(int $conversationId): ?string
-    {
-        $sql  = "SELECT external_id FROM 202_messaging_conversations WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return null;
-        }
-        $stmt->bind_param('i', $conversationId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? (string) $row['external_id'] : null;
-    }
-
-    private function findMessageIdByClientToken(int $conversationId, string $clientToken): ?int
-    {
-        $sql  = "SELECT id FROM 202_messaging_messages WHERE conversation_id = ? AND client_token = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return null;
-        }
-        $stmt->bind_param('is', $conversationId, $clientToken);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? (int) $row['id'] : null;
-    }
-
-    private function messageExists(int $conversationId, string $externalId): bool
-    {
-        $sql  = "SELECT id FROM 202_messaging_messages WHERE conversation_id = ? AND external_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return false;
-        }
-        $stmt->bind_param('is', $conversationId, $externalId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-        $exists = (bool) $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $exists;
-    }
-
-    /**
-     * @return array<string,mixed>|null
-     */
-    private function getMessageById(int $messageId): ?array
-    {
-        $sql  = "SELECT id, conversation_id, external_id, client_token, direction, author, body,
-                        created_at, read_at, delivery_status
-                   FROM 202_messaging_messages WHERE id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return null;
-        }
-        $stmt->bind_param('i', $messageId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ?: null;
+        $stmt = $this->conn->prepareWrite("UPDATE 202_messaging_events SET delivery_status = 'sent' WHERE id = ?");
+        $this->conn->bind($stmt, 'i', [$eventId]);
+        $this->conn->executeUpdate($stmt);
     }
 
     /**
      * @return array<string,mixed>
+     * @throws \Prosper202\Database\Exceptions\QueryException
      */
     private function getAttributes(): array
     {
-        $sql  = "SELECT data FROM 202_messaging_attributes WHERE user_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return [];
-        }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return [];
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+        return $this->attributeSnapshot()[0];
+    }
 
-        if (!$row || $row['data'] === null) {
-            return [];
+    /**
+     * The stored attributes and the server's MD5 of them, which names the
+     * version a delivery sent (null when nothing is stored).
+     *
+     * @return array{0: array<string,mixed>, 1: string|null}
+     * @throws \Prosper202\Database\Exceptions\QueryException
+     */
+    private function attributeSnapshot(): array
+    {
+        $stmt = $this->conn->prepareRead('SELECT data, MD5(data) AS version FROM 202_messaging_attributes WHERE user_id = ?');
+        $this->conn->bind($stmt, 'i', [$this->userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        if ($row === null || $row['data'] === null) {
+            return [[], null];
         }
+        $version = (string) $row['version'];
 
         $decoded = json_decode((string) $row['data'], true);
         if (!is_array($decoded)) {
             // Our own snapshot should always decode; log corruption rather than
             // silently dropping it.
             error_log('MessagingService: stored attributes for user ' . $this->userId . ' are corrupt');
-            return [];
+            return [[], $version];
         }
-        return $decoded;
+        return [$decoded, $version];
     }
 
     private function areAttributesDirty(): bool
     {
-        $sql  = "SELECT dirty FROM 202_messaging_attributes WHERE user_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return false;
-        }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return false;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row ? ((int) $row['dirty'] === 1) : false;
+        $stmt = $this->conn->prepareRead('SELECT dirty FROM 202_messaging_attributes WHERE user_id = ?');
+        $this->conn->bind($stmt, 'i', [$this->userId]);
+        $row = $this->conn->fetchOne($stmt);
+
+        return $row !== null && (int) $row['dirty'] === 1;
     }
 
-    private function clearAttributesDirty(): void
+    /**
+     * Only the version that was sent: attributes another request saved while
+     * the delivery was in flight stay pending for the next sync.
+     */
+    private function clearAttributesDirty(?string $sentVersion): void
     {
-        $sql  = "UPDATE 202_messaging_attributes SET dirty = 0 WHERE user_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: clearAttributesDirty failed');
-        }
-        $stmt->close();
+        $stmt = $this->conn->prepareWrite('UPDATE 202_messaging_attributes SET dirty = 0 WHERE user_id = ? AND MD5(data) <=> ?');
+        $this->conn->bind($stmt, 'is', [$this->userId, $sentVersion]);
+        $this->conn->executeUpdate($stmt);
     }
 
     // ---------------------------------------------------------------------
-    // Sync-state helpers (202_messaging_sync)
+    // Sync state (202_messaging_sync)
     // ---------------------------------------------------------------------
-
-    private function isSyncDue(): bool
-    {
-        $throttle = defined('MESSAGING_SYNC_THROTTLE') ? (int) MESSAGING_SYNC_THROTTLE : 20;
-
-        $sql  = "SELECT last_sync FROM 202_messaging_sync WHERE user_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return true;
-        }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return true;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$row || $row['last_sync'] === null) {
-            return true;
-        }
-        return (time() - strtotime((string) $row['last_sync'])) >= $throttle;
-    }
-
-    private function getCursor(): ?string
-    {
-        $sql  = "SELECT sync_cursor FROM 202_messaging_sync WHERE user_id = ?";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return null;
-        }
-        $stmt->bind_param('i', $this->userId);
-        if (!$stmt->execute()) {
-            $stmt->close();
-            return null;
-        }
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return $row && $row['sync_cursor'] !== null ? (string) $row['sync_cursor'] : null;
-    }
 
     private function markSyncStart(): void
     {
         $now  = date('Y-m-d H:i:s');
-        $sql  = "INSERT INTO 202_messaging_sync (user_id, last_sync) VALUES (?, ?)
-                 ON DUPLICATE KEY UPDATE last_sync = VALUES(last_sync)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('is', $this->userId, $now);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: markSyncStart failed');
-        }
-        $stmt->close();
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_messaging_sync (user_id, last_sync) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE last_sync = VALUES(last_sync)'
+        );
+        $this->conn->bind($stmt, 'is', [$this->userId, $now]);
+        $this->conn->executeUpdate($stmt);
     }
 
-    private function recordSyncSuccess(?string $cursor): void
+    private function recordSyncSuccess(): void
     {
         $now  = date('Y-m-d H:i:s');
-        $sql  = "INSERT INTO 202_messaging_sync (user_id, last_sync, last_success, sync_cursor, error_count, last_error)
-                 VALUES (?, ?, ?, ?, 0, NULL)
-                 ON DUPLICATE KEY UPDATE last_success = VALUES(last_success),
-                                         sync_cursor = VALUES(sync_cursor),
-                                         error_count = 0,
-                                         last_error = NULL";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('isss', $this->userId, $now, $now, $cursor);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: recordSyncSuccess failed');
-        }
-        $stmt->close();
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_messaging_sync (user_id, last_sync, last_success, error_count, last_error)
+             VALUES (?, ?, ?, 0, NULL)
+             ON DUPLICATE KEY UPDATE last_success = VALUES(last_success), error_count = 0, last_error = NULL'
+        );
+        $this->conn->bind($stmt, 'iss', [$this->userId, $now, $now]);
+        $this->conn->executeUpdate($stmt);
     }
 
     private function recordSyncError(string $error): void
     {
-        $sql  = "INSERT INTO 202_messaging_sync (user_id, error_count, last_error)
-                 VALUES (?, 1, ?)
-                 ON DUPLICATE KEY UPDATE error_count = error_count + 1, last_error = VALUES(last_error)";
-        $stmt = $this->db->prepare($sql);
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('is', $this->userId, $error);
-        if (!$stmt->execute()) {
-            error_log('MessagingService: recordSyncError failed');
-        }
-        $stmt->close();
-    }
-
-    // ---------------------------------------------------------------------
-    // Misc
-    // ---------------------------------------------------------------------
-
-    private function normalizeDate(mixed $value): ?string
-    {
-        if ($value === null || $value === '') {
-            return null;
-        }
-        $ts = strtotime((string) $value);
-        return $ts === false ? null : date('Y-m-d H:i:s', $ts);
+        $stmt = $this->conn->prepareWrite(
+            'INSERT INTO 202_messaging_sync (user_id, error_count, last_error)
+             VALUES (?, 1, ?)
+             ON DUPLICATE KEY UPDATE error_count = error_count + 1, last_error = VALUES(last_error)'
+        );
+        $this->conn->bind($stmt, 'is', [$this->userId, $error]);
+        $this->conn->executeUpdate($stmt);
     }
 
     private function generateToken(): string

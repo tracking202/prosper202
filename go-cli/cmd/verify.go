@@ -27,10 +27,24 @@ func probeClient() *http.Client {
 // appendTrackingKW appends the test keyword param using the correct separator
 // whether or not the link already has a query string.
 func appendTrackingKW(link string) string {
-	if strings.Contains(link, "?") {
-		return link + "&t202kw=test"
+	return withLinkParam(link, "t202kw", "test")
+}
+
+// withLinkParam adds key=value to a tracking link's query, before any
+// fragment: a landing-page tracker's link keeps the page's #fragment, and a
+// parameter after it never reaches the server. The link already carries
+// t202kw= (empty, or the traffic source's macro); the redirects read the
+// last occurrence, so the appended value wins.
+func withLinkParam(link, key, value string) string {
+	fragment := ""
+	if i := strings.IndexByte(link, '#'); i >= 0 {
+		link, fragment = link[:i], link[i:]
 	}
-	return link + "?t202kw=test"
+	sep := "?"
+	if strings.Contains(link, "?") {
+		sep = "&"
+	}
+	return link + sep + key + "=" + value + fragment
 }
 
 // geoIPs maps an ISO country code to a representative public IP, used to spoof

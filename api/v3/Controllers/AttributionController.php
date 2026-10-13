@@ -8,6 +8,9 @@ use Api\V3\Exception\ConflictException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Exception\WriteCommittedException;
+use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
 use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\ExportFiles;
 use Prosper202\Attribution\ExportStore;
@@ -33,7 +36,11 @@ use Prosper202\Database\Connection;
  */
 class AttributionController
 {
-    private const PERIODS = ['today', 'yesterday', 'last7', 'last30', 'last90'];
+    use StatementHelpers;
+    use AccountTimezone;
+
+    /** The reports' periods (TimeBound::PERIODS); alltime is from the first click. */
+    private const PERIODS = TimeBound::PERIODS;
 
     private Connection $conn;
     private ModelRepository $models;
@@ -70,6 +77,7 @@ class AttributionController
 
     public function createModel(array $payload): array
     {
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::MODEL_FIELDS, 'an attribution model');
         $name = self::requiredName($payload);
         $typeValue = $payload['model_type'] ?? null;
         if (!is_string($typeValue) || $typeValue === '') {
@@ -106,18 +114,14 @@ class AttributionController
         }
     }
 
+    /** The fields a model is written with, on create and update alike. */
+    private const MODEL_FIELDS = ['model_name', 'model_type', 'weighting_config', 'lookback_days', 'status', 'is_default'];
+
     public function updateModel(int $id, array $payload): array
     {
-        $known = ['model_name', 'model_type', 'weighting_config', 'lookback_days', 'status', 'is_default'];
-        $unknown = array_diff(array_keys($payload), $known);
-        if ($unknown !== []) {
-            throw new ValidationException(
-                'Unknown field(s): ' . implode(', ', $unknown),
-                array_fill_keys(array_values($unknown), 'Not a model field; valid: ' . implode(', ', $known))
-            );
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, self::MODEL_FIELDS, 'an attribution model');
         if ($payload === []) {
-            throw new ValidationException('No fields to update', ['model' => 'Send at least one of: ' . implode(', ', $known)]);
+            throw new ValidationException('No fields to update', ['model' => 'Send at least one of: ' . implode(', ', self::MODEL_FIELDS)]);
         }
 
         $this->conn->transaction(function () use ($id, $payload): void {
@@ -275,7 +279,7 @@ class AttributionController
                 throw new ValidationException('Invalid keys', ['keys' => 'A comma-separated list of 1 to ' . AttributionReports::MAX_LIMIT . ' row keys, as data[].key returns them']);
             }
         }
-        [$from, $to] = self::range($params);
+        [$from, $to] = $this->range($params);
         $limit = self::positiveInt($params, 'limit') ?? 100;
         if ($limit > AttributionReports::MAX_LIMIT) {
             throw new ValidationException('limit too large', ['limit' => 'At most ' . AttributionReports::MAX_LIMIT]);
@@ -297,6 +301,8 @@ class AttributionController
             }
         }
 
+        // The account's zone: group_by=day's days are its calendar days.
+        $timezone = $this->accountTimezone();
         $result = (new AttributionReports($this->conn))->breakdown(
             $this->userId,
             $modelId,
@@ -308,7 +314,8 @@ class AttributionController
             $limit,
             $offset,
             $cohort,
-            $keys
+            $keys,
+            $timezone
         );
 
         return [
@@ -318,6 +325,7 @@ class AttributionController
                 'group_by' => $groupBy,
                 'time_from' => $from,
                 'time_to' => $to,
+                'timezone' => $timezone,
                 // conversion: credits and assists of the sales made in the
                 // range; click: of the clicks made in it, whenever they
                 // converted (the classic reports' population).
@@ -350,7 +358,7 @@ class AttributionController
     public function journeyMetrics(array $params): array
     {
         self::rejectUnknown($params, ['time_from', 'time_to', 'period']);
-        [$from, $to] = self::range($params);
+        [$from, $to] = $this->range($params);
 
         return [
             'data' => (new AttributionReports($this->conn))->journeyMetrics($this->userId, $from, $to),
@@ -430,13 +438,7 @@ class AttributionController
     public function createExport(array $payload): array
     {
         $known = ['group_by', 'model_id', 'compare_model_id', 'time_from', 'time_to', 'period', 'run_at', 'webhook_url', 'webhook_secret'];
-        $unknown = array_diff(array_keys($payload), $known);
-        if ($unknown !== []) {
-            throw new ValidationException(
-                'Unknown field(s): ' . implode(', ', $unknown),
-                array_fill_keys(array_values($unknown), 'Not an export field; valid: ' . implode(', ', $known))
-            );
-        }
+        \Api\V3\Support\PayloadKeys::refuseUnknown($payload, $known, 'an attribution export');
 
         $groupBy = $payload['group_by'] ?? 'campaign';
         if (!is_string($groupBy) || !in_array($groupBy, AttributionReports::dimensions(), true)) {
@@ -454,7 +456,7 @@ class AttributionController
             }
             $rangeParams[$field] = (string) $value;
         }
-        [$from, $to] = self::range($rangeParams);
+        [$from, $to] = $this->range($rangeParams);
 
         $default = $this->models->defaultRow($this->userId);
         if ($default === null) {
@@ -900,12 +902,12 @@ class AttributionController
     }
 
     /**
-     * The report range: time_from/time_to (unix seconds), or a period, or
-     * the last 30 days.
+     * The report range: time_from/time_to (TimeBound's forms), or a period,
+     * or the last 30 days.
      *
      * @return array{0: int, 1: int}
      */
-    private static function range(array $params): array
+    private function range(array $params): array
     {
         $hasPeriod = isset($params['period']) && $params['period'] !== '';
         $hasTimes = (isset($params['time_from']) && $params['time_from'] !== '') || (isset($params['time_to']) && $params['time_to'] !== '');
@@ -914,19 +916,16 @@ class AttributionController
         }
         $now = time();
         if ($hasPeriod) {
-            $period = (string) $params['period'];
-            $todayStart = strtotime('today midnight');
-            return match ($period) {
-                'today' => [$todayStart, $now],
-                'yesterday' => [$todayStart - 86400, $todayStart - 1],
-                'last7' => [$now - 7 * 86400, $now],
-                'last30' => [$now - 30 * 86400, $now],
-                'last90' => [$now - 90 * 86400, $now],
-                default => throw new ValidationException('Invalid period', ['period' => 'Valid: ' . implode(', ', self::PERIODS)]),
-            };
+            // TimeBound computes every report's periods: today and yesterday
+            // at the account's midnight, as the attribution pages draw them,
+            // not the server's. alltime has no bounds, which this report's
+            // range reads as 0 (all time, as time_from=0 is) to now.
+            [$from, $to] = TimeBound::period($params['period'], fn (): string => $this->accountTimezone(), $now, self::PERIODS);
+
+            return [$from ?? 0, $to ?? $now];
         }
-        $from = self::timestamp($params, 'time_from') ?? $now - 30 * 86400;
-        $to = self::timestamp($params, 'time_to') ?? $now;
+        $from = $this->timestamp($params, 'time_from') ?? $now - 30 * 86400;
+        $to = $this->timestamp($params, 'time_to') ?? $now;
         if ($from > $to) {
             throw new ValidationException('time_from is after time_to', ['time_from' => 'Must not be after time_to']);
         }
@@ -934,17 +933,23 @@ class AttributionController
         return [$from, $to];
     }
 
-    private static function timestamp(array $params, string $field): ?int
+    /**
+     * A bound as TimeBound reads it — unix seconds, a date in the account's
+     * timezone, or a time with its offset — except that 0 is all time: an
+     * absent time_from here is the last 30 days, so 0 is how a caller asks
+     * for every click.
+     */
+    private function timestamp(array $params, string $field): ?int
     {
-        if (!isset($params[$field]) || $params[$field] === '') {
+        $value = $params[$field] ?? null;
+        if ($value === null || $value === '') {
             return null;
         }
-        $v = $params[$field];
-        if ((!is_string($v) && !is_int($v)) || preg_match('/^[0-9]{1,10}$/D', (string) $v) !== 1) {
-            throw new ValidationException('Invalid ' . $field, [$field => 'Unix time in seconds']);
+        if ($value === 0 || $value === '0') {
+            return 0;
         }
 
-        return (int) $v;
+        return TimeBound::parse($params, $field, fn (): string => $this->accountTimezone());
     }
 
     /** @param list<int> $binds */

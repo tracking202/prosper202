@@ -178,6 +178,55 @@ final class ConversionCreateDuplicateTest extends TestCase
         self::assertSame('claimed', $this->keyState('dup-vanished-1', $payload), 'a retry may run again');
     }
 
+    /**
+     * The transaction id located conversion 41 and nothing compared the
+     * request to it, so a different payout answered `duplicate: true` and
+     * the sale was dropped. It is refused naming transaction_id, writes
+     * nothing, and leaves the Idempotency-Key free; the same payout written
+     * another way is still the sale.
+     */
+    public function testADuplicateStatingADifferentPayoutIsRefused(): void
+    {
+        $recorded = static function (FakeMysqliConnection $db): FakeMysqliConnection {
+            $db->whenQueryContainsReturnRows(
+                'SELECT click_payout, conv_time, customer_id, reverses_conv_id FROM 202_conversion_logs',
+                [[
+                    'click_payout' => '5.00000', 'conv_time' => 1700000100,
+                    'customer_id' => null, 'reverses_conv_id' => null,
+                ]]
+            );
+
+            return $db;
+        };
+        $payload = ['click_id' => 10, 'transaction_id' => 'T-1', 'payout' => 7.5];
+        RequestContext::setHeaders(['Idempotency-Key' => 'dup-different-1']);
+        $db = $recorded($this->ledgerWithRow(0));
+
+        try {
+            $this->post($db, $payload);
+            self::fail('a different payout under a recorded transaction id must be refused');
+        } catch (\Api\V3\Exception\ValidationException $e) {
+            self::assertSame(422, $e->getHttpStatus());
+            self::assertStringContainsString('payout recorded 5.00000, sent 7.50000', $e->getMessage());
+            self::assertSame(
+                ['transaction_id' => 'Already recorded as conversion 41 with a different payout;'
+                    . ' a different sale needs its own transaction_id'],
+                $e->getFieldErrors()
+            );
+        }
+        self::assertCount(0, $db->statementsContaining('INSERT INTO 202_conversion_logs'));
+        self::assertSame(
+            'claimed',
+            $this->keyState('dup-different-1', $payload),
+            'nothing was written, so the key is not spent'
+        );
+
+        RequestContext::reset();
+        $same = (new ConversionsController($recorded($this->ledgerWithRow(0)), 1))
+            ->create(['click_id' => 10, 'transaction_id' => 'T-1', 'payout' => '5.00']);
+        self::assertTrue($same['duplicate'] ?? null, 'the recorded payout, written another way, is the same sale');
+    }
+
     public function testARefusedDuplicateLeavesTheIdempotencyKeyFree(): void
     {
         $payload = ['click_id' => 10, 'transaction_id' => 'T-1'];

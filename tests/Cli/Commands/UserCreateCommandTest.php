@@ -33,12 +33,12 @@ class UserCreateCommandTest extends TestCase
         $def = $this->command->getDefinition();
 
         $expectedOptions = [
-            'user_name',
-            'user_email',
-            'user_pass',
-            'user_fname',
-            'user_lname',
-            'user_timezone',
+            'user-name',
+            'user-email',
+            'user-pass',
+            'user-fname',
+            'user-lname',
+            'user-timezone',
             'json',
         ];
 
@@ -50,7 +50,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserNameIsRequired(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_name');
+        $opt = $def->getOption('user-name');
 
         // The option itself uses VALUE_REQUIRED (i.e., if provided, it needs a value)
         $this->assertTrue($opt->isValueRequired());
@@ -61,7 +61,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserEmailIsRequired(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_email');
+        $opt = $def->getOption('user-email');
 
         $this->assertTrue($opt->isValueRequired());
         $this->assertStringContainsString('required', strtolower($opt->getDescription()));
@@ -70,7 +70,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserPassIsOptional(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_pass');
+        $opt = $def->getOption('user-pass');
 
         // VALUE_OPTIONAL means the option can be provided with or without a value
         $this->assertFalse($opt->isValueRequired());
@@ -81,7 +81,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserTimezoneDefaultsToUtc(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_timezone');
+        $opt = $def->getOption('user-timezone');
 
         $this->assertSame('UTC', $opt->getDefault());
     }
@@ -89,7 +89,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserFnameOption(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_fname');
+        $opt = $def->getOption('user-fname');
 
         $this->assertTrue($opt->isValueRequired());
         $this->assertNull($opt->getDefault());
@@ -98,7 +98,7 @@ class UserCreateCommandTest extends TestCase
     public function testUserLnameOption(): void
     {
         $def = $this->command->getDefinition();
-        $opt = $def->getOption('user_lname');
+        $opt = $def->getOption('user-lname');
 
         $this->assertTrue($opt->isValueRequired());
         $this->assertNull($opt->getDefault());

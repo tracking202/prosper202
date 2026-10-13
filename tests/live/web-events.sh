@@ -271,7 +271,7 @@ eq "$(field "list(d['field_errors'])")" '["colour"]' "by name"
 eq "$(api POST /events "{\"click_id\":\"1e3\",\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\"}]}")" 422 "a click id the int cast would rewrite"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\",\"received_at\":1,\"revenue_trusted\":true}]}")" 422 \
    "received_at and revenue_trusted are the server's"
-eq "$(field "sorted(d['field_errors'])")" '["events[0].received_at", "events[0].revenue_trusted"]' "each named"
+eq "$(field "sorted(d['field_errors'])")" '["events.0.received_at", "events.0.revenue_trusted"]' "each named"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[{\"name\":\"signup\"}]}")" 422 "an event without an id"
 eq "$(api POST /events "{\"click_id\":$C_API,\"events\":[]}")" 422 "no events"
 eq "$(api POST /events "{\"click_id\":999999999,\"events\":[{\"event_id\":\"a1\",\"name\":\"signup\"}]}")" 404 "an unknown click"
@@ -409,12 +409,12 @@ PHPCLI=(php)
 [ -n "${P202_CLI_PREPEND:-}" ] && PHPCLI+=(-d "auto_prepend_file=$P202_CLI_PREPEND")
 phpcli() { (cd "$ROOT" && HOME="$OUT/home" "${PHPCLI[@]}" bin/p202 "$@"); }
 if phpcli config:set-url "$BASE" > /dev/null 2> "$OUT/phpcli.err" && phpcli config:set-key "$P202_API_KEY" > /dev/null 2>> "$OUT/phpcli.err"; then
-  phpcli event:send --click_id="$C_CLI" --name=signup --id=cli-2 --json > "$OUT/phpcli.json" 2>> "$OUT/phpcli.err"
+  phpcli event:send --click-id="$C_CLI" --name=signup --id=cli-2 --json > "$OUT/phpcli.json" 2>> "$OUT/phpcli.err"
   eq "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['data']['accepted'])" "$OUT/phpcli.json" 2>/dev/null)" "['cli-2']" "event:send records an event"
   eq "$(value $C_CLI)" "1/8.50000" "and the click is worth both goals"
-  phpcli event:send --click_id=1e3 --name=signup --id=cli-3 > "$OUT/phpcli.txt" 2>&1
+  phpcli event:send --click-id=1e3 --name=signup --id=cli-3 > "$OUT/phpcli.txt" 2>&1
   eq "$?" 1 "a click id the int cast would rewrite is refused"
-  has "$OUT/phpcli.txt" "--click_id" "by name"
+  has "$OUT/phpcli.txt" "--click-id" "by name"
 else
   bad "the PHP CLI could not start (set P202_CLI_PREPEND on a partial vendor/): $(head -3 "$OUT/phpcli.err")"
 fi

@@ -64,13 +64,14 @@ class AppSkanEncodingsController extends Controller
     protected function fields(): array
     {
         return [
-            'registration_id'  => ['type' => 'i', 'default' => 0],
-            'fine_value'       => ['type' => 'i'],
-            'coarse_value'     => ['type' => 's', 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
-            'goal_id'          => ['type' => 'i', 'required' => true],
-            'revenue_override' => ['type' => 'd'],
+            'registration_id'  => ['type' => 'i', 'default' => 0, 'range' => self::INT_UNSIGNED],
+            'fine_value'       => ['type' => 'i', 'nullable' => true, 'range' => self::TINYINT_UNSIGNED],
+            'coarse_value'     => ['type' => 's', 'nullable' => true, 'max_length' => 6, 'allowed' => ['low', 'medium', 'high']],
+            'goal_id'          => ['type' => 'i', 'required' => true, 'range' => self::INT_UNSIGNED],
+            'revenue_override' => ['type' => 'd', 'nullable' => true, 'range' => [-999999.99999, 999999.99999]],
             // Since when the current meaning applies; set on every write,
-            // never by the caller (assertRawBody() refuses it).
+            // never by the caller (read-only: a body may carry it only with
+            // the encoding's own value).
             'effective_at'     => ['type' => 'i', 'readonly' => true],
         ];
     }
@@ -88,17 +89,29 @@ class AppSkanEncodingsController extends Controller
 
     /**
      * The raw body's shape, checked before validatePayload() casts anything
-     * (CLAUDE.md #18) and before it drops fields it does not know (#4): an
-     * encoding written the old way (event_name, revenue) is refused by name,
-     * not stored without its event.
+     * (CLAUDE.md #18): an encoding written the old way (event_name, revenue)
+     * is refused by name with what replaced it, not stored without its event.
+     *
+     * The keys GET answers that no write sets (encoding_id, user_id,
+     * effective_at, version, etag: readOnlyKeys()) are left to
+     * validatePayload(), which holds them to the rule every CRUD resource
+     * follows: on an update each must be the value the encoding holds, so a
+     * body read with GET can be sent back whole, and any other value is
+     * refused (a stale version is the 409 an If-Match would give); on a
+     * create each is refused. This method refused them outright, so a GET
+     * body sent back with PUT was a 422 here and accepted everywhere else.
      *
      * @param array<string, mixed> $payload
      */
-    private static function assertRawBody(array $payload): void
+    private function assertRawBody(array $payload): void
     {
         $allowed = ['registration_id', 'fine_value', 'coarse_value', 'goal_id', 'revenue_override'];
+        $readOnly = $this->readOnlyKeys();
         $errors = [];
         foreach (array_keys($payload) as $key) {
+            if (in_array((string) $key, $readOnly, true)) {
+                continue;
+            }
             if (in_array((string) $key, ['event_name', 'revenue'], true)) {
                 $errors[(string) $key] = 'An encoding names a goal now: send goal_id (a goal from GET /goals) and, for tiered '
                     . 'decoding, revenue_override. The goal says what reaching it is worth.';
@@ -142,7 +155,7 @@ class AppSkanEncodingsController extends Controller
         // then serves it to that app's builds (CLAUDE.md #18). An absent
         // registration_id is left to the field's declared default, the
         // account-wide set.
-        self::assertRawBody($payload);
+        $this->assertRawBody($payload);
         return parent::create($payload);
     }
 
@@ -167,7 +180,7 @@ class AppSkanEncodingsController extends Controller
         // Raw, for the same reason create() checks it raw. registration_id
         // and goal_id are NOT NULL, so they have no "clear" spelling: an
         // explicit null is bad input here, not a sentinel.
-        self::assertRawBody($payload);
+        $this->assertRawBody($payload);
         if (array_key_exists('goal_id', $payload) && $payload['goal_id'] === null) {
             throw new ValidationException('Invalid goal_id', ['goal_id' => 'An encoding always names a goal; send another goal id, or delete the encoding.']);
         }
@@ -233,7 +246,11 @@ class AppSkanEncodingsController extends Controller
         // Last, once the update is known to be valid: keep the meaning it
         // replaces. If the UPDATE then fails, the history holds a copy of a
         // meaning that is still current — the same meaning twice, which
-        // decodes exactly as once.
+        // decodes exactly as once. That holds for an update that changes no
+        // meaning at all (a GET body sent back whole): it is retired and
+        // restarted like any other, rather than skipped on a comparison
+        // that, wrong once, would lose a meaning without a word
+        // (SkanEncodingHistoryWritersTest holds the retire unconditional).
         $now = time();
         (new SkanEncodingHistory($this->db))->retireEncoding($this->userId, (int)$id, $now);
 

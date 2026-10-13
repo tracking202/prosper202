@@ -28,7 +28,9 @@ var attributionCohorts = []string{"conversion", "click"}
 
 var attributionDimensions = []string{"campaign", "traffic_source", "landing_page", "keyword", "c1", "c2", "c3", "c4", "country", "device", "day"}
 
-var attributionPeriods = []string{"today", "yesterday", "last7", "last30", "last90"}
+// attributionPeriods are the reports' periods: AttributionController takes
+// TimeBound::PERIODS, as every report does.
+var attributionPeriods = reportPeriods
 
 // attributionModelStatuses are Prosper202\Attribution\Model's statuses.
 var attributionModelStatuses = []string{"active", "inactive"}

@@ -72,12 +72,26 @@ rules:
     - Prosper202\PHPStan\Rules\UncheckedTransactionBoundaryRule
     # CLAUDE.md #4 — silent data loss on malformed input.
     - Prosper202\PHPStan\Rules\ForbidSilentJsonDecodeRule
+    # …and a request parameter tested by truthiness: empty('0') is true, so
+    # LTV's period=0 answered over the default window and GET
+    # /conversions?campaign_id=0 with every campaign's conversions.
+    - Prosper202\PHPStan\Rules\ForbidFalsyRequestParamTestRule
+    # …and a query parameter cast to a number: (int) 'abc' is 0, and a clamp
+    # made limit=abc one row and limit=1000 500 that read as all of them.
+    - Prosper202\PHPStan\Rules\ForbidNumericCastOfRequestParamRule
+    # …and a request value cast to a flag: (bool) 'false' is true, so a sync
+    # job sent force_update "false" overwrote the target's differing records.
+    - Prosper202\PHPStan\Rules\ForbidBoolCastOfRequestParamRule
     # CLAUDE.md #5 — inconsistent security patterns across similar operations.
     - Prosper202\PHPStan\Rules\ForbidDirectPasswordHashRule
     # CLAUDE.md #7 — bind_param type string mismatches.
     - Prosper202\PHPStan\Rules\BindParamArityRule
     # CLAUDE.md #8 — assumed closure, reference, and capture semantics.
     - Prosper202\PHPStan\Rules\ForbidArrowFnByRefCaptureRule
+    # …and its write half: a captured copy handed to a by-reference
+    # parameter, so the callee's report is discarded. UpdateController
+    # answered 200 to another account's campaign id this way.
+    - Prosper202\PHPStan\Rules\ForbidByRefArgumentFromCaptureRule
     # CLAUDE.md "Verify your assumptions" — a check that cannot fail is not a
     # check. `assertSame('verified-only', 'verified-only')` stood in for the
     # attribution report suite's only test of the verified-only default.

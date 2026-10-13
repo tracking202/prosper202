@@ -27,7 +27,7 @@ final class FallbackRedirectScriptsTest extends TestCase
         $repo = dirname(__DIR__, 2);
         self::$tree = sys_get_temp_dir() . '/p202-fallback-' . bin2hex(random_bytes(4));
         mkdir(self::$tree . '/tracking202/redirect', 0777, true);
-        mkdir(self::$tree . '/202-config', 0777, true);
+        mkdir(self::$tree . '/202-config/Http', 0777, true);
         foreach (['dl.php', 'lp.php', 'off.php'] as $script) {
             copy(self::script($repo, $script), self::$tree . '/tracking202/redirect/' . $script);
         }
@@ -35,6 +35,8 @@ final class FallbackRedirectScriptsTest extends TestCase
             copy($repo . '/tests/fixtures/fallback-harness/' . $stub, self::$tree . '/202-config/' . $stub);
         }
         file_put_contents(self::$tree . '/202-config/class-dataengine-slim.php', "<?php\n");
+        // off.php loads it by hand, before the bootstrap (and its autoloader).
+        copy($repo . '/202-config/Http/ClickCookie.php', self::$tree . '/202-config/Http/ClickCookie.php');
     }
 
     public static function tearDownAfterClass(): void
@@ -42,11 +44,12 @@ final class FallbackRedirectScriptsTest extends TestCase
         $files = [
             'tracking202/redirect/dl.php', 'tracking202/redirect/lp.php', 'tracking202/redirect/off.php',
             '202-config/connect2.php', '202-config/harness-functions.php', '202-config/class-dataengine-slim.php',
+            '202-config/Http/ClickCookie.php',
         ];
         foreach ($files as $file) {
             @unlink(self::$tree . '/' . $file);
         }
-        foreach (['tracking202/redirect', 'tracking202', '202-config', ''] as $dir) {
+        foreach (['tracking202/redirect', 'tracking202', '202-config/Http', '202-config', ''] as $dir) {
             @rmdir(self::$tree . '/' . $dir);
         }
     }

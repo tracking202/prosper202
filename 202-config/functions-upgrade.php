@@ -487,14 +487,26 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * on such a database — 202_conversion_logs and 202_aff_campaigns — and
      * the columns this release adds to those arrive through it. See
      * 202-config/Database/SchemaReconciler.php for what it will and will
-     * not change.
+     * not change. Logs only what it could not do: upgrade-equals-install
+     * reads every "Prosper202 upgrade" line as a step that did not converge.
+     *
+     * $retirements are the step's removals: each a `DROP TABLE IF EXISTS`
+     * of a table the installer no longer declares, written out in the step
+     * so every scan of the ladder reads the table names. The reconciler
+     * never emits a destructive statement, so a table the code stopped
+     * using stays on every upgraded database unless a step drops it, and
+     * then the upgraded database is not the installed one. They run after
+     * the definitions converge, and one that fails (or is not that
+     * statement) fails the step like a failed CREATE: the version stays,
+     * and the next run drops what is left.
      *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
-     * @return bool True when every table exists and matches its definition.
-     *         False leaves the version where it is, so the next run retries
-     *         the whole step.
+     * @param  list<string> $retirements
+     * @return bool True when every table exists and matches its definition,
+     *         and every retired table is gone. False leaves the version
+     *         where it is, so the next run retries the whole step.
      */
-    function _upgrade_measurement_tables(array $definitions): bool
+    function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -564,9 +576,20 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
-        foreach ($reconciler->getApplied() as $statement) {
-            error_log('Prosper202 upgrade: reconciled measurement schema: ' . $statement);
+        if ($ok) {
+            foreach ($retirements as $retirement) {
+                if (preg_match('/^DROP TABLE IF EXISTS `202_[a-z0-9_]+`(?:, `202_[a-z0-9_]+`)*$/', $retirement) !== 1) {
+                    $ok = false;
+                    error_log('Prosper202 upgrade: refused a retirement that is not a DROP TABLE IF EXISTS of 202_ tables');
+                    continue;
+                }
+                if (_upgrade_query($retirement) === false) {
+                    $ok = false;
+                    error_log('Prosper202 upgrade: failed to remove a retired table: ' . $retirement);
+                }
+            }
         }
+
         foreach ($reconciler->getUnreconciled() as $note) {
             error_log('Prosper202 upgrade: measurement schema difference left in place: ' . $note);
         }
@@ -2397,15 +2420,19 @@ class UPGRADE
                     if ($row['redirect_url'] != null) {
                         $redirect_name = "URL: <a href=" . $row['redirect_url'] . ">link</a>";
                     } else if ($row['redirect_campaign'] != null) {
-                        $redirect_type_sql = "SELECT aff_campaign_name FROM 202_aff_campaigns WHERE aff_campaign_id = '" . $row['redirect_campaign'] . "'";
+                        // The name is stored on the redirect, so it is read only
+                        // from the rule's own account (CLAUDE.md #27): a rule
+                        // could name another account's campaign or page, whose
+                        // name this copied into a redirect every report shows.
+                        $redirect_type_sql = "SELECT ac.aff_campaign_name FROM 202_aff_campaigns AS ac INNER JOIN 202_rotators AS ro ON (ro.id = '" . (int) $row['rotator_id'] . "' AND ro.user_id = ac.user_id) WHERE ac.aff_campaign_id = '" . (int) $row['redirect_campaign'] . "'";
                         $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
-                        $redirect_name = "Campaign: " . $redirect_type_row['aff_campaign_name'];
+                        $redirect_name = "Campaign: " . ($redirect_type_row['aff_campaign_name'] ?? '');
                     } else if ($row['redirect_lp'] != null) {
-                        $redirect_type_sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '" . $row['redirect_lp'] . "'";
+                        $redirect_type_sql = "SELECT lp.landing_page_nickname FROM 202_landing_pages AS lp INNER JOIN 202_rotators AS ro ON (ro.id = '" . (int) $row['rotator_id'] . "' AND ro.user_id = lp.user_id) WHERE lp.landing_page_id = '" . (int) $row['redirect_lp'] . "'";
                         $redirect_type_result = _upgrade_query($redirect_type_sql);
                         $redirect_type_row = $redirect_type_result->fetch_assoc();
-                        $redirect_name = "Landing page: " . $redirect_type_row['landing_page_nickname'];
+                        $redirect_name = "Landing page: " . ($redirect_type_row['landing_page_nickname'] ?? '');
                     } else if ($row['auto_monetizer'] != null) {
                         $redirect_name = "Auto Monetizer";
                     }
@@ -4247,7 +4274,8 @@ class UPGRADE
             // outcomes); the Android installs, the notification outbox, and
             // the install-token key with the table that holds it. The DDL is the
             // installer's own definitions, so this block cannot drift from
-            // them.
+            // them. As 1.9.76 shipped it: 202_users_pref's new column is the
+            // next step's.
             //
             // Gated on 1.9.75 rather than 1.9.76: a block gated on the code
             // version is unreachable from upgrade.php (upgrade_needed() is
@@ -4274,10 +4302,45 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.76', '>')) {
+        if ($prosper202_version == '1.9.76') {
 
-            $prosper202_version = '1.9.76';
+            // 202_users_pref gains user_delete_data_before, the scheduled
+            // click deletion's time, which replaced an id marker (see
+            // Prosper202\Click\ClickRetention). The column was first put in
+            // the 1.9.75 step, after v1.9.76 had been tagged: an install
+            // already on 1.9.76 never runs that step, so it never got the
+            // column, and the cron job's click deletions, the Settings page's
+            // retention form and GET /system/retention all failed on it. The
+            // reconciler adds it where the installer declares it, and does
+            // nothing where it is already there.
+            //
+            // The in-app chat's message cache goes with it: the install no
+            // longer stores or syncs chat (the browser talks to the chat
+            // service with a pass, 202-account/ajax/chat-pass.php), so
+            // 202_messaging_conversations and 202_messaging_messages are no
+            // longer the installer's. The analytics tables beside them stay.
+            //
+            // Gated on 1.9.76 rather than 1.9.77, for the reason above.
+            $prefs_ok = _upgrade_measurement_tables(
+                [\Prosper202\Database\Tables\UserTables::usersPref()],
+                ['DROP TABLE IF EXISTS `202_messaging_messages`, `202_messaging_conversations`']
+            );
+
+            if ($prefs_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.77'") !== false) {
+                    $prosper202_version = '1.9.77';
+                } else {
+                    error_log('Prosper202 upgrade: reconciled 202_users_pref and removed the chat tables but failed to persist version 1.9.77; leaving version at 1.9.76 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: 202_users_pref could not be reconciled or the chat tables removed; leaving version at 1.9.76 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.77', '>')) {
+
+            $prosper202_version = '1.9.77';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

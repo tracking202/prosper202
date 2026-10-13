@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Api\V3\Support;
 
 use Api\V3\Exception\DatabaseException;
+use Api\V3\Exception\RemoteApiException;
+use Api\V3\Exception\SyncRecordException;
 use Api\V3\Exception\ValidationException;
 
 class SyncEngine
@@ -19,6 +21,10 @@ class SyncEngine
         'rotators' => 'rotators',
         'trackers' => 'trackers',
     ];
+
+    /** Why a sync takes no updated_since, said by the job request's 422 and by a queued job that carries one. */
+    public const string UPDATED_SINCE_REFUSAL = 'A sync cannot be limited by update time: the records it carries keep none, so no list can be filtered by one. '
+        . 'Send "incremental": true instead, which skips the records unchanged since the last sync of this pair.';
 
     private const array DEPENDENCY_ORDER = [
         'aff-networks',
@@ -69,15 +75,42 @@ class SyncEngine
         ],
     ];
 
+    /**
+     * The fields of a source record that a write to the target must not
+     * carry: its ids and owner, what the server assigns (public ids, times),
+     * and the version/etag every GET adds. The target refuses a read-only
+     * field on a create, and on an update unless it holds the target record's
+     * own value (Controller::validatePayload()), so they are left out. A
+     * rotator's rules go through /rotators/{id}/rules (syncRotatorRules()) and
+     * its auto-monetizer is the Setup page's, so neither travels in the
+     * rotator's own body. Compared records drop them too.
+     */
     private const array IMMUTABLE_FIELDS = [
-        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted'],
-        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted'],
-        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted'],
-        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted'],
-        'rotators' => ['id', 'user_id'],
-        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time'],
-        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_deleted'],
-        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted'],
+        'campaigns' => ['id', 'user_id', 'aff_campaign_id', 'aff_campaign_time', 'aff_campaign_id_public', 'aff_campaign_deleted', 'version', 'etag'],
+        'aff-networks' => ['id', 'user_id', 'aff_network_id', 'aff_network_deleted', 'version', 'etag'],
+        'ppc-networks' => ['id', 'user_id', 'ppc_network_id', 'ppc_network_deleted', 'version', 'etag'],
+        'ppc-accounts' => ['id', 'user_id', 'ppc_account_id', 'ppc_account_deleted', 'version', 'etag'],
+        'rotators' => ['id', 'user_id', 'auto_monetizer', 'rules'],
+        'trackers' => ['id', 'user_id', 'tracker_id', 'tracker_time', 'version', 'etag'],
+        'landing-pages' => ['id', 'user_id', 'landing_page_id', 'landing_page_id_public', 'landing_page_deleted', 'version', 'etag'],
+        'text-ads' => ['id', 'user_id', 'text_ad_id', 'text_ad_deleted', 'version', 'etag'],
+    ];
+
+    /**
+     * One entity's counts in a run. `conflicted` is the part of `failed` the
+     * target refused with a 409, each named in `conflicts`
+     * (recordSyncError()); a job never retries those by itself.
+     */
+    private const array ENTITY_RESULT = [
+        'synced' => 0,
+        'skipped' => 0,
+        'failed' => 0,
+        'pruned' => 0,
+        'created' => 0,
+        'updated' => 0,
+        'conflicted' => 0,
+        'errors' => [],
+        'conflicts' => [],
     ];
 
     public function __construct(private readonly ServerStateStore $store)
@@ -196,10 +229,27 @@ class SyncEngine
         try {
             [$sourceClient, $targetClient] = $this->buildClients($sourceProfile, $targetProfile);
             $entities = $this->selectedEntities($entityArg);
-            $manifest = is_array($options['manifest'] ?? null) ? $options['manifest'] : ['mappings' => [], 'source_hashes' => []];
+            $manifest = is_array($options['manifest'] ?? null)
+                ? $options['manifest']
+                : ['mappings' => [], 'source_hashes' => []];
 
-            $updatedSince = isset($options['updated_since']) ? (string)$options['updated_since'] : '';
-            $sourceData = $this->fetchPortableData($sourceClient, $updatedSince !== '' ? ['updated_since' => $updatedSince] : []);
+            // The source is read whole. The records a sync carries keep no
+            // update time, so a list cannot be filtered by one: the source's
+            // lists answered `updated_since` with a 500 (a column probe no
+            // server prepares), and now refuse it. An incremental sync sent
+            // the manifest's last_sync_epoch as updated_since, so every
+            // re-sync after the first failed -- measured live, "500 from GET
+            // aff-networks". It skips what has not changed by the manifest's
+            // hashes instead (`incremental`, below), which needs no time. A
+            // job that still carries an explicit updated_since (queued before
+            // SyncController refused one) fails saying so, rather than
+            // syncing more than it asked for.
+            if (isset($options['updated_since']) && (string) $options['updated_since'] !== '') {
+                throw new ValidationException('updated_since cannot limit a sync', [
+                    'updated_since' => self::UPDATED_SINCE_REFUSAL,
+                ]);
+            }
+            $sourceData = $this->fetchPortableData($sourceClient);
             $targetData = $this->fetchPortableData($targetClient);
 
             $sourceLookups = $this->buildEntityLookups($sourceData);
@@ -211,28 +261,6 @@ class SyncEngine
             $prune = (bool)($options['prune'] ?? false);
             $prunePreview = (bool)($options['prune_preview'] ?? false);
 
-            // Prune decisions must be made against the FULL source key set.
-            // When updated_since filters the fetch above, every unchanged
-            // source record is absent from $sourceData, and diffing the target
-            // against that filtered set would classify the bulk of the target
-            // install as "only in target" and delete it.
-            $pruneSourceKeys = null;
-            if (($prune || $prunePreview) && $updatedSince !== '') {
-                $fullSourceData = $this->fetchPortableData($sourceClient);
-                $fullSourceLookups = $this->buildEntityLookups($fullSourceData);
-                $pruneSourceKeys = [];
-                foreach ($entities as $pruneEntity) {
-                    $pruneSourceKeys[$pruneEntity] = [];
-                    foreach ($fullSourceData[$pruneEntity] as $fullRow) {
-                        $fullKey = $this->naturalKeyForEntity($pruneEntity, $fullRow, $fullSourceLookups);
-                        if ($fullKey !== '') {
-                            $pruneSourceKeys[$pruneEntity][$fullKey] = true;
-                        }
-                    }
-                }
-                unset($fullSourceData, $fullSourceLookups);
-            }
-
             $results = [];
             $mappings = [];
             $sourceHashes = [];
@@ -243,15 +271,7 @@ class SyncEngine
                 $remapSpan = $this->startTraceSpan('sync.execute.remap', ['entity' => $entity]);
                 $remapOps = 0;
                 try {
-            $result = [
-                'synced' => 0,
-                'skipped' => 0,
-                'failed' => 0,
-                'pruned' => 0,
-                'created' => 0,
-                'updated' => 0,
-                'errors' => [],
-            ];
+            $result = self::ENTITY_RESULT;
 
             $sourceRows = $sourceData[$entity];
             usort($sourceRows, function (array $a, array $b) use ($entity, $sourceLookups): int {
@@ -325,12 +345,14 @@ class SyncEngine
                     }
 
                     if (!$dryRun) {
+                        $putLanded = false; // a failure after it (a rotator's rules) is not the PUT's refusal
                         try {
                             $extraHeaders = [];
                             if (!empty($targetRow['etag'])) {
                                 $extraHeaders['If-Match'] = (string)$targetRow['etag'];
                             }
                             $targetClient->put(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId, $payload, $extraHeaders);
+                            $putLanded = true;
                             if (
                                 $entity === 'rotators'
                                 && $sourceId !== ''
@@ -350,8 +372,10 @@ class SyncEngine
                             if ($entity === 'rotators') {
                                 $this->store->incrementMetric('rotator_rule_resync_failed', 1);
                             }
-                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                                throw $e;
+                            $op = $putLanded ? 'update (applied; its rules then failed)' : 'update';
+                            $refused = !$putLanded;
+                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $targetId, $refused)) {
+                                throw $this->stopped($result, $entity, $key, $op, $e);
                             }
                             continue;
                         }
@@ -369,8 +393,8 @@ class SyncEngine
                 try {
                     $payload = $this->buildSyncPayload($entity, $sourceRow, $sourceLookups, $targetLookups);
                 } catch (\Throwable $e) {
-                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                        throw $e;
+                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create')) {
+                        throw $this->stopped($result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -383,8 +407,8 @@ class SyncEngine
                 try {
                     $created = $targetClient->post(self::ENTITY_ENDPOINTS[$entity], $payload);
                 } catch (\Throwable $e) {
-                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                        throw $e;
+                    if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, 'create', '', true)) {
+                        throw $this->stopped($result, $entity, $key, 'create', $e);
                     }
                     continue;
                 }
@@ -407,8 +431,9 @@ class SyncEngine
                         try {
                             $this->syncRotatorRules($sourceClient, $targetClient, $sourceId, $createdId, $sourceLookups, $targetLookups);
                         } catch (\Throwable $e) {
-                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors)) {
-                                throw $e;
+                            $op = 'create (applied; its rules then failed)';
+                            if (!$this->recordSyncError($result, $entity, $key, $e, $skipErrors, $op, $createdId)) {
+                                throw $this->stopped($result, $entity, $key, $op, $e);
                             }
                         }
                     }
@@ -432,7 +457,9 @@ class SyncEngine
                 $pruneSpan = $this->startTraceSpan('sync.execute.prune', ['entity' => $entity]);
                 $allow = $this->normalizeEntitySet($options['prune_allowlist'] ?? []);
                 $deny = $this->normalizeEntitySet($options['prune_denylist'] ?? []);
-                $knownSourceKeys = $pruneSourceKeys !== null ? ($pruneSourceKeys[$entity] ?? []) : $sourceKeys;
+                // Every source record, the skipped-as-unchanged included: the
+                // source is read whole, so nothing it holds is "only in target".
+                $knownSourceKeys = $sourceKeys;
 
                 foreach ($targetData[$entity] as $targetRow) {
                     $targetKey = $this->naturalKeyForEntity($entity, $targetRow, $targetLookups);
@@ -465,8 +492,9 @@ class SyncEngine
                         $targetClient->delete(self::ENTITY_ENDPOINTS[$entity] . '/' . $targetId);
                         $result['pruned']++;
                     } catch (\Throwable $e) {
-                        if (!$this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors)) {
-                            throw $e;
+                        $recorded = $this->recordSyncError($result, $entity, $targetKey, $e, $skipErrors, 'delete', $targetId, true);
+                        if (!$recorded) {
+                            throw $this->stopped($result, $entity, $targetKey, 'delete', $e);
                         }
                     }
                 }
@@ -1170,16 +1198,83 @@ class SyncEngine
         };
     }
 
-    /** @param array<string, mixed> $result */
-    private function recordSyncError(array &$result, string $entity, string $key, \Throwable $error, bool $skipErrors): bool
-    {
+    /**
+     * Count a record that failed and say why, by name: a remote refusal is
+     * described with the status and message the other instance answered
+     * (RemoteApiException). This recorded $error->getMessage(), and a
+     * remote refusal's message was "Internal server error" - a 409 from a
+     * force-update whose target changed after the sync read it read exactly
+     * like an outage, and the conflict metric (which matched "version
+     * mismatch" in that text) never counted one.
+     *
+     * A 409 to a write this sync made ($refusedWrite: the request was the
+     * write itself, not a step after it) is a conflict: the target refused
+     * it, so nothing was written, and the record is listed in `conflicts`
+     * with what to do. It is not retried here or by the job: re-sending it
+     * after a re-read would force the source over whatever change the 409
+     * protected (CLAUDE.md #13); re-running the sync is the caller's call.
+     *
+     * @param array<string, mixed> $result
+     * @return bool whether to go on (skip_errors)
+     */
+    private function recordSyncError(
+        array &$result,
+        string $entity,
+        string $key,
+        \Throwable $error,
+        bool $skipErrors,
+        string $operation = '',
+        string $targetId = '',
+        bool $refusedWrite = false
+    ): bool {
         $result['failed']++;
-        $result['errors'][] = sprintf('%s[%s]: %s', $entity, $key, $error->getMessage());
-        $msg = strtolower($error->getMessage());
-        if (str_contains($msg, 'version mismatch') || str_contains($msg, 'etag')) {
+        $what = self::describeFailure($error);
+        $result['errors'][] = sprintf('%s[%s]: %s%s', $entity, $key, $operation !== '' ? $operation . ': ' : '', $what);
+        if ($refusedWrite && $error instanceof RemoteApiException && $error->isConflict()) {
             $this->store->incrementMetric('conflicts', 1);
+            $result['conflicted'] = (int)($result['conflicted'] ?? 0) + 1;
+            $result['conflicts'][] = [
+                'entity' => $entity,
+                'key' => $key,
+                'operation' => $operation,
+                'target_id' => $targetId !== '' ? $targetId : null,
+                'status' => $error->remoteStatus,
+                'reason' => $error->remoteMessage,
+                'written' => false,
+                'next_step' => 'The target refused this write: the record changed after this sync read it, or a '
+                    . 'matching one already exists. Nothing was written, and it is not retried by itself. Re-run '
+                    . 'the sync to compare against the target as it is now (plan first to see the difference).',
+            ];
         }
         return $skipErrors;
+    }
+
+    /** A failure as a sync job reports it: a remote refusal by its status and message. */
+    private static function describeFailure(\Throwable $error): string
+    {
+        return $error instanceof RemoteApiException ? $error->describe() : $error->getMessage();
+    }
+
+    /**
+     * What a run without skip_errors stops with: the record and operation
+     * named, the cause described, and the conflict record when the cause is
+     * one (the job runner does not retry a conflict).
+     *
+     * @param array<string, mixed> $result after recordSyncError()
+     */
+    private function stopped(
+        array $result,
+        string $entity,
+        string $key,
+        string $operation,
+        \Throwable $error
+    ): SyncRecordException {
+        $conflicts = is_array($result['conflicts'] ?? null) ? $result['conflicts'] : [];
+        $last = $conflicts !== [] ? $conflicts[array_key_last($conflicts)] : null;
+        $conflict = is_array($last) && ($last['key'] ?? null) === $key && ($last['operation'] ?? null) === $operation
+            && $error instanceof RemoteApiException && $error->isConflict() ? $last : null;
+
+        return new SyncRecordException($entity, $key, $operation, self::describeFailure($error), $conflict, $error);
     }
 
     /** @param array<string, array<string, string>> $mappings */
@@ -1351,7 +1446,9 @@ class SyncEngine
      */
     public static function pairKeyFor(array $sourceProfile, array $targetProfile): string
     {
-        return sha1(strtolower((string)($sourceProfile['url'] ?? '')) . '|' . strtolower((string)($targetProfile['url'] ?? '')));
+        return sha1(
+            strtolower((string)($sourceProfile['url'] ?? '')) . '|' . strtolower((string)($targetProfile['url'] ?? ''))
+        );
     }
 
     private function pairKey(array $sourceProfile, array $targetProfile): string

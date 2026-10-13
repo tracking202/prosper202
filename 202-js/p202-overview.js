@@ -51,6 +51,23 @@
             + 'Your session may have expired; reload the page and try again.</div></div>';
     }
 
+    /* What charts.php said when it refused or failed: its {"error": ...}
+       sentence, or the status when there is none to read. */
+    function said(xhr) {
+        var body = xhr && xhr.responseJSON;
+        if (!body && xhr && xhr.responseText) {
+            try {
+                body = JSON.parse(xhr.responseText);
+            } catch (error) {
+                body = null;
+            }
+        }
+        if (body && typeof body.error === 'string' && body.error !== '') {
+            return body.error;
+        }
+        return (xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server') + '. Try again.';
+    }
+
     /* Everything a freshly drawn fragment needs: tooltips, sortable tables,
        remembered disclosures (p202-ui.js), and any chart it carries. */
     function prepare(root) {
@@ -114,7 +131,7 @@
             .fail(function (xhr) {
                 chart.style.opacity = '';
                 chart.innerHTML = '<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
-                    + '<div class="p202-flash__body">The chart could not be redrawn (' + escapeHtml(xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer') + ').</div></div>';
+                    + '<div class="p202-flash__body">The chart could not be redrawn: ' + escapeHtml(said(xhr)) + '</div></div>';
             });
     });
 
@@ -181,7 +198,7 @@
                 var body = form.querySelector('[data-p202-chart-error]');
                 if (body) {
                     body.hidden = false;
-                    body.textContent = 'The chart was not saved (' + (xhr && xhr.status ? 'HTTP ' + xhr.status : 'no answer from the server') + '). Try again.';
+                    body.textContent = 'The chart was not saved: ' + said(xhr);
                 }
             });
     });

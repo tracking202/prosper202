@@ -65,7 +65,7 @@ final class SourceScan
 
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+                self::tree($root),
                 static fn(\SplFileInfo $file): bool => !in_array($file->getFilename(), $pruned, true)
             )
         );
@@ -86,6 +86,34 @@ final class SourceScan
         ksort($files);
 
         return self::$cache[$key] = $files;
+    }
+
+    /**
+     * The directory tree under $root, for a RecursiveIteratorIterator, without
+     * the directories that are another checkout (isOtherCheckout()). Every
+     * walk of the repository goes through this; WalksSkipOtherCheckoutsTest
+     * holds the tests to it.
+     */
+    public static function tree(string $root): \RecursiveIterator
+    {
+        return new \RecursiveCallbackFilterIterator(
+            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+            static fn(\SplFileInfo $entry): bool => !self::isOtherCheckout($entry)
+        );
+    }
+
+    /**
+     * A directory below the walk's root that holds its own `.git` — a file
+     * for a git worktree, a directory for a clone — is another checkout, not
+     * this tree's source: Claude Code's `.claude/worktrees/*` (a worktree per
+     * agent, each at its own revision), or a package cloned by hand. A walk
+     * that entered one read the project two and three times over at other
+     * revisions, and the structural tests failed on the copies' old code in
+     * any checkout that had worktrees, while passing in CI, which has none.
+     */
+    public static function isOtherCheckout(\SplFileInfo $entry): bool
+    {
+        return $entry->isDir() && !$entry->isLink() && file_exists($entry->getPathname() . '/.git');
     }
 
     /**

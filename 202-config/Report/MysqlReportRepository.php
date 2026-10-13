@@ -41,6 +41,17 @@ final class MysqlReportRepository implements ReportRepositoryInterface
 
     private const array ALLOWED_SORTS = ['total_clicks', 'total_leads', 'total_income', 'total_cost', 'total_net', 'roi', 'epc', 'conv_rate'];
 
+    /**
+     * Dimensions whose rows belong to an account: a click names one of them
+     * by id, and nothing stopped a tracker naming another account's (the
+     * API checks it on write since 229df10; older rows remain). Joined only
+     * within the click's own account, as ReportsController::dimensionJoin()
+     * joins them, so a breakdown never shows another account's name.
+     */
+    private const array ACCOUNT_DIMENSIONS = [
+        'campaign', 'aff_network', 'ppc_account', 'ppc_network', 'landing_page', 'text_ad',
+    ];
+
     public function __construct(private Connection $conn)
     {
     }
@@ -86,7 +97,7 @@ final class MysqlReportRepository implements ReportRepositoryInterface
                 ref.{$bd['name']} as name,
                 " . self::METRIC_SELECT . "
             FROM 202_dataengine de
-            INNER JOIN {$bd['table']} ref ON de.{$bd['de_id']} = ref.{$bd['id']}
+            " . self::dimensionJoin($breakdownType) . "
             $whereClause
             GROUP BY ref.{$bd['id']}, ref.{$bd['name']}
             ORDER BY $sortBy $sortDir, ref.{$bd['id']} ASC
@@ -103,15 +114,39 @@ final class MysqlReportRepository implements ReportRepositoryInterface
         return $this->conn->fetchAll($stmt);
     }
 
+    /**
+     * A dimension's join onto 202_dataengine `de` as the alias `ref`, within
+     * the click's account for ACCOUNT_DIMENSIONS.
+     */
+    public static function dimensionJoin(string $dimension): string
+    {
+        $bd = self::BREAKDOWNS[$dimension] ?? throw new RuntimeException("Invalid breakdown type: $dimension");
+        $on = "de.{$bd['de_id']} = ref.{$bd['id']}";
+        if (in_array($dimension, self::ACCOUNT_DIMENSIONS, true)) {
+            $on .= ' AND ref.user_id = de.user_id';
+        }
+
+        return "INNER JOIN {$bd['table']} ref ON $on";
+    }
+
+    /** @return list<string> every breakdown dimension */
+    public static function dimensions(): array
+    {
+        return array_keys(self::BREAKDOWNS);
+    }
+
     public function timeseries(
         ReportQuery $query,
         string $interval = 'day',
+        string $timezone = 'UTC',
     ): array {
+        // $timezone's clock, without MySQL's zone tables or session zone (LocalTime).
+        $local = LocalTime::datetimeSql('de.click_time', $timezone);
         $groupExpr = match ($interval) {
-            'hour'  => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d %H:00')",
-            'day'   => "FROM_UNIXTIME(de.click_time, '%Y-%m-%d')",
-            'week'  => "FROM_UNIXTIME(de.click_time, '%x-W%v')",
-            'month' => "FROM_UNIXTIME(de.click_time, '%Y-%m')",
+            'hour'  => "DATE_FORMAT($local, '%Y-%m-%d %H:00')",
+            'day'   => "DATE_FORMAT($local, '%Y-%m-%d')",
+            'week'  => "DATE_FORMAT($local, '%x-W%v')",
+            'month' => "DATE_FORMAT($local, '%Y-%m')",
             default => throw new RuntimeException("Invalid interval: $interval"),
         };
 
@@ -137,21 +172,14 @@ final class MysqlReportRepository implements ReportRepositoryInterface
         [$whereClause, $types, $binds] = $this->buildWhere($query);
 
         $sql = "SELECT
-                COALESCE(
-                    HOUR(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
-                    MOD(FLOOR(de.click_time / 3600), 24)
-                ) as hour_of_day,
+                HOUR(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as hour_of_day,
                 " . self::METRIC_SELECT . "
             FROM 202_dataengine de
             $whereClause
             GROUP BY hour_of_day";
 
-        // Timezone param prepended
-        $allBinds = array_merge([$timezone], $binds);
-        $allTypes = 's' . $types;
-
         $stmt = $this->conn->prepareRead($sql);
-        $this->conn->bind($stmt, $allTypes, $allBinds);
+        $this->conn->bind($stmt, $types, $binds);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -161,20 +189,14 @@ final class MysqlReportRepository implements ReportRepositoryInterface
         [$whereClause, $types, $binds] = $this->buildWhere($query);
 
         $sql = "SELECT
-                COALESCE(
-                    WEEKDAY(CONVERT_TZ(FROM_UNIXTIME(de.click_time), '+00:00', ?)),
-                    MOD(FLOOR(de.click_time / 86400) + 3, 7)
-                ) as day_of_week,
+                WEEKDAY(" . LocalTime::datetimeSql('de.click_time', $timezone) . ") as day_of_week,
                 " . self::METRIC_SELECT . "
             FROM 202_dataengine de
             $whereClause
             GROUP BY day_of_week";
 
-        $allBinds = array_merge([$timezone], $binds);
-        $allTypes = 's' . $types;
-
         $stmt = $this->conn->prepareRead($sql);
-        $this->conn->bind($stmt, $allTypes, $allBinds);
+        $this->conn->bind($stmt, $types, $binds);
 
         return $this->conn->fetchAll($stmt);
     }

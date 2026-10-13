@@ -3,7 +3,7 @@ declare(strict_types=1);
 //include mysql settings
 include_once('connect.php');
 
-//check to see if this is already installed, if so don't do anything
+// Runs only while no account exists; afterwards hand the key to sign-in.
 if (is_installed() == true) {
 	if (isset($_GET['customers_api_key']) && $_GET['customers_api_key'] != '') {
 		// encode value before placing in redirect header, then terminate
@@ -39,40 +39,31 @@ if ($html['user_api'] == '') {
 	</form>
 <?php echo p202_standalone_card_end(); ?>
 <script>
-	// The key is checked by the license service before the installer is
-	// opened; the installer reads it from the user_api cookie.
+	// Save carries the key to the installer in the user_api cookie; the
+	// installer checks it with the license service when the account form is
+	// submitted.
 	document.addEventListener('DOMContentLoaded', function () {
 		var form = document.getElementById('getapikey');
 		if (!form) { return; }
 		form.addEventListener('submit', function (event) {
 			event.preventDefault();
 			var key = document.getElementById('user_api').value;
-			$.post(<?php echo json_encode(get_absolute_url() . '202-account/ajax/validate-apikey.php'); ?>, { apikey: key }).done(function (response) {
-				var json = {};
-				try { json = JSON.parse(response); } catch (e) { json = {}; }
-				if (json.msg === 'Key valid') {
-					// Secure whenever the page is on HTTPS (as the browser sees it, so
-					// behind a TLS-terminating proxy too): the key is a credential.
-					document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
-					document.location.href = 'install.php';
-				} else {
-					document.getElementById('getapikey-error').textContent = 'This API key is not valid. Fetch it again from my.tracking202.com.';
-					if (confirm('Your Api Key Is Invalid. Would You Like Help Finding Your Key?')) {
-						document.location.href = 'https://my.tracking202.com/api/customers/login?redirect=get-api';
-					}
-				}
-			});
+			// Carry the key to the installer, which validates it with the
+			// license service server-side on submit. (This page can't: the
+			// validation endpoint needs a signed-in user, and on a fresh
+			// install nobody is yet.) Secure whenever the page is on HTTPS
+			// (as the browser sees it, proxy included): the key is a credential.
+			document.cookie = 'user_api=' + encodeURIComponent(key) + '; path=' + <?php echo json_encode(get_absolute_url() . '202-config/'); ?> + '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');
+			document.location.href = 'install.php';
 		});
 	});
 </script>
 
 <?php
-if (isset($_SERVER["HTTPS"]) && strtolower((string) $_SERVER["HTTPS"]) == "on") {
-	$strProtocol = 'https://';
-} else {
-	$strProtocol = 'http://';
-}
-
+// The license service's cookie for this install's address. The service, not
+// the requester, is who this URL is for, so it is the stored address (or the
+// server's own name), as on the account home: never the Host header this
+// request chose (CLAUDE.md #16; RequestHostSourceTest).
 ?>
-<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo base64_encode($strProtocol .  $_SERVER['SERVER_NAME'] . get_absolute_url()); ?>" alt="" width="1" height="1" class="d-block">
+<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo htmlspecialchars(base64_encode(p202TrackingBaseUrl()), ENT_QUOTES, 'UTF-8'); ?>" alt="" width="1" height="1" class="d-block">
 <?php info_bottom();

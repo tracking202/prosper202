@@ -172,6 +172,50 @@ module.exports = {
     },
 
     {
+      // The edit form read a Raw pixel through stripslashes(), so every save
+      // of the account, changing nothing, wrote it back a level of
+      // backslashes shorter; and the handler deleted unlisted pixels only
+      // from inside the branch for a listed one, so clearing the only pixel
+      // left it firing. A browser also submits every line break in a
+      // textarea as CRLF, which the handler stores as \n.
+      name: 'Traffic sources: a Raw pixel keeps every byte across saves, and the only pixel can be removed',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        const account = db.value("SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_account_name='eval-account-1'");
+        const hex = (text) => Buffer.from(text, 'utf8').toString('hex').toUpperCase();
+        const stored = () => db.value('SELECT HEX(pixel_code) FROM 202_ppc_account_pixels WHERE ppc_account_id=' + account);
+        const raw = '<script>\nvar s = "line\\nbreak", p = "C:\\\\dir\\\\f";\n</script>';
+        expect.ok(raw.includes('\\\\') && raw.includes('\\n') && raw.includes('\n'), 'the fixture carries \\\\, \\n and a line break');
+        const edit = async () => {
+          await app.goto(SETUP + 'ppc_accounts.php?edit_ppc_account_id=' + account);
+          if (await app.disclosureOpen('#account-form details') === false) {
+            await app.openDisclosure('#account-form details');
+          }
+        };
+
+        await edit();
+        await ui.select('#pixel-type-0', '5');
+        await ui.fill({ '#pixel-code-0': raw, '#pixel-correction-0': '' });
+        await app.submit('#account-form button[type="submit"]');
+        expect.eq(stored(), hex(raw), 'the Raw pixel is stored as typed, its line breaks as \\n');
+        for (const n of [1, 2]) {
+          await edit();
+          expect.eq(await ui.value('#pixel-code-0'), raw, 'the edit form shows it as stored (' + n + ')');
+          await app.submit('#account-form button[type="submit"]');
+          expect.eq(stored(), hex(raw), 'saving the account unchanged (' + n + ') leaves it the same bytes');
+        }
+
+        // The first row has no remove button: clearing its code removes it.
+        await edit();
+        await ui.fill({ '#pixel-code-0': '' });
+        await app.submit('#account-form button[type="submit"]');
+        expect.eq(db.count('202_ppc_account_pixels', 'ppc_account_id=' + account), 0, 'clearing the only pixel removes it');
+        await edit();
+        expect.eq(await ui.value('#pixel-code-0'), '', 'and the edit form shows none');
+      },
+    },
+
+    {
       name: 'Traffic sources: the custom-variables dialog saves through the endpoint',
       async run(ctx) {
         const { app, ui, db, expect } = ctx;

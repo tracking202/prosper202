@@ -65,45 +65,52 @@ class AppRegistrationsController extends Controller
             'platform'     => ['type' => 's', 'required' => true, 'max_length' => 16],
             'app_key'      => ['type' => 's', 'required' => true, 'max_length' => AppIdentity::MAX_KEY_LENGTH],
             'app_name'     => ['type' => 's', 'required' => true, 'max_length' => 255],
-            'notes'        => ['type' => 's', 'max_length' => 500],
+            'notes'        => ['type' => 's', 'nullable' => true, 'max_length' => 500],
             // 1 = test signals (AdAttributionKit development-key postbacks;
             // Android test installs) count as trusted; 0 = they store flagged
             // and are pruned like any other unvouched row.
-            'accept_test_signals' => ['type' => 'i', 'allowed' => [0, 1]],
+            'accept_test_signals' => ['type' => 'i', 'allowed' => [0, 1], 'range' => self::TINYINT_UNSIGNED],
             // Android: how many days after its click an install may begin
             // and still be attributed to it (1-365, default 7).
-            'attribution_window_days' => ['type' => 'i'],
+            'attribution_window_days' => ['type' => 'i', 'range' => self::SMALLINT_UNSIGNED],
             // Android: 1 = an event's reported revenue may be paid by a goal
             // valued from_property; 0 (default) = stored and reported, not
             // credited, because the app token is public.
-            'trust_client_revenue' => ['type' => 'i', 'allowed' => [0, 1]],
+            'trust_client_revenue' => ['type' => 'i', 'allowed' => [0, 1], 'range' => self::TINYINT_UNSIGNED],
             // Android: Play Integrity off (default), observe or require
             // (IntegrityMode). Anything but off needs the service-account
             // credential first (PUT /apps/{id}/integrity-credential) and a
             // Cloud project number (assertIntegrityUsable()).
-            'integrity_mode' => ['type' => 's', 'allowed' => IntegrityMode::values()],
+            'integrity_mode' => ['type' => 's', 'allowed' => IntegrityMode::values(), 'max_length' => 8],
             // Android: the Google Cloud project number the SDK requests
             // standard integrity tokens with; published in the schema
             // document so the build need not hard-code it. Replaced, never
-            // cleared (an explicit null is refused).
-            'integrity_cloud_project_number' => ['type' => 'i'],
+            // cleared: update() refuses an explicit null by name (the column
+            // holds NULL until a number is set, so a create may send one).
+            'integrity_cloud_project_number' => ['type' => 'i', 'nullable' => true, 'range' => self::BIGINT_UNSIGNED],
             // Android, the abuse limits (plan §7.1; AppLimits, FastGoalPolicy):
             // the click-to-install-time tails an install is flagged for, the
             // installs the app and the events one install may report a
             // minute (429 over them), and how soon after its install a goal
             // is flagged and whether it then pays (count) or not (hold).
             // Read raw and range-checked in assertAndroidPolicy().
-            'ctit_min_seconds' => ['type' => 'i'],
-            'ctit_max_seconds' => ['type' => 'i'],
-            'install_cap_per_minute' => ['type' => 'i'],
-            'event_cap_per_minute' => ['type' => 'i'],
-            'fast_goal_seconds' => ['type' => 'i'],
-            'fast_goal_policy' => ['type' => 's', 'allowed' => FastGoalPolicy::policies()],
+            'ctit_min_seconds' => ['type' => 'i', 'range' => self::SMALLINT_UNSIGNED],
+            'ctit_max_seconds' => ['type' => 'i', 'range' => self::INT_UNSIGNED],
+            'install_cap_per_minute' => ['type' => 'i', 'range' => self::SMALLINT_UNSIGNED],
+            'event_cap_per_minute' => ['type' => 'i', 'range' => self::SMALLINT_UNSIGNED],
+            'fast_goal_seconds' => ['type' => 'i', 'range' => self::SMALLINT_UNSIGNED],
+            'fast_goal_policy' => ['type' => 's', 'allowed' => FastGoalPolicy::policies(), 'max_length' => 8],
             // What an app build presents in X-P202-App-Token to the pre-auth
             // routes. Served to the owner, never client-writable; rotate with
             // rotateAppToken().
             'app_token'    => ['type' => 's', 'readonly' => true],
         ];
+    }
+
+    #[\Override]
+    protected function handledKeys(): array
+    {
+        return ['store_link'];
     }
 
     #[\Override]

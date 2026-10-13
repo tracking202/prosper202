@@ -40,7 +40,7 @@ final class ServerPostbacksAreQueuedTest extends TestCase
     {
         $out = [];
         foreach (['tracking202', 'api', '202-config'] as $dir) {
-            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT . $dir, \FilesystemIterator::SKIP_DOTS));
+            $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT . $dir));
             foreach ($it as $file) {
                 if ($file->getExtension() === 'php') {
                     $out[] = substr($file->getPathname(), strlen(self::ROOT));

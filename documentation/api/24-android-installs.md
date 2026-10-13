@@ -41,7 +41,7 @@ https://play.google.com/store/apps/details?id=com.example.app&referrer=p202%3D[[
   cached fallback also expands it empty.
 - Link the campaign to the app: `app_registration_id` on the campaign
   (`PUT /campaigns/{id}` or `p202 campaign update <id>
-  --app_registration_id <registration>`). `p202 app link <id> --campaign-id
+  --app-registration-id <registration>`). `p202 app link <id> --campaign-id
   N --apply` (or the link builder on Setup › Mobile Apps) does both steps at
   once — the store link as the offer URL, and the link — and `GET
   /apps/{id}/store-link?campaign_id=N` says whether a campaign is ready and,
@@ -74,6 +74,11 @@ The SDK calls two public routes, selected by the app's token in the
 Both are rate-limited per peer address (120 installs and 600 event requests
 a minute), never per a header the sender chooses. The body shapes and
 every answer are in the [contract](21-app-sdk-contract.md#the-android-intake).
+The install row keeps the device's address as `remote_ip` the way a click
+keeps a visitor's: the forwarded address when a proxy names one, masked to
+its /24 (/48) when the privacy setting holds back for it
+([Privacy](14-users.md#privacy-user_pref_privacy)). It is display data; the
+rate limit never reads it.
 
 What happens to an install, in **one transaction** (nothing is stored when
 anything fails, so the SDK's retry is safe):

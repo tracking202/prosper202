@@ -183,7 +183,7 @@ final class ComponentClassIsConsumedTest extends TestCase
                 }
             }
         }
-        self::assertGreaterThanOrEqual(4, count($sheets), 'the shell loads the chrome, theme, component and messenger sheets');
+        self::assertGreaterThanOrEqual(4, count($sheets), 'the shell loads the chrome, theme, component and chat sheets');
         return array_keys($sheets);
     }
 
@@ -244,7 +244,7 @@ final class ComponentClassIsConsumedTest extends TestCase
     {
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+                \Tests\Support\SourceScan::tree($root),
                 function (\SplFileInfo $file) use ($root): bool {
                     $relative = ltrim(str_replace($root, '', $file->getPathname()), '/');
                     foreach (self::SKIP_DIRS as $skip) {

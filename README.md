@@ -337,9 +337,21 @@ curl -H "Authorization: Bearer <api-key>" https://your-server/api/v3/campaigns
 
 ## CLI Tools
 
-### PHP CLI (`bin/p202`)
+Two command-line tools answer to `p202`. The **Go CLI** (`go-cli/`, below)
+is the primary one: it has the full command set, profiles, staged writes,
+dry-run deletes and agent-readable errors. The **legacy PHP CLI** (`bin/p202`)
+covers a subset with `noun:verb` command names, and says so: its
+`--version` line and `list` name it and point at the Go CLI. Both read
+`~/.p202/config.json`, and the PHP CLI uses the Go CLI's active profile, so
+a server set up with either is the one both use. Call each by its path
+(`./go-cli/p202`, `./bin/p202`) when both are on your `PATH`.
 
-Symfony Console CLI for managing remote Prosper202 installations.
+### Legacy PHP CLI (`bin/p202`)
+
+Symfony Console CLI for managing remote Prosper202 installations; a subset of
+the Go CLI's commands. It stays at `bin/p202` for the scripts that call it.
+Like the Go CLI's, its flags are written in kebab-case; the snake_case
+spelling is accepted too (`--aff-campaign-id` or `--aff_campaign_id`).
 
 ```bash
 # Configure
@@ -402,14 +414,20 @@ recover from a failure without a person in the loop. So:
   needed. People at a terminal and existing scripts keep tables; `--table`,
   `P202_OUTPUT` or `p202 config set-default output.format` override it, and
   `p202 config show` says which format is in use and why.
-- **Find a command by describing the task.** `p202 search find dead offer
-  links` ranks commands, flags and flag values by your words, offline, and
-  says when nothing matches well; `p202 commands --json` lists every command
-  and flag, with its allowed values, in one call.
+- **Find a command by describing the task.** `p202 commands --brief` lists
+  every command on one line with the web UI page it does, about 6,000 tokens:
+  the catalog an agent reads to choose. `p202 search find dead offer links`
+  ranks commands, flags and flag values by your words, offline; the name of a
+  web UI page (`p202 search spy`) or the words for it (`p202 search realtime
+  traffic`) give the exact command line, and a weak first match is flagged as
+  one (`good_match: false`) rather than passed off as the answer;
+  `p202 commands --json` lists every command and flag, with its allowed
+  values, in one call.
 - **Valid values are always spelled out.** Every flag that takes a fixed set
   lists it in its help, and a wrong value is refused before any request with
-  the full list: `--period must be one of: today, yesterday, last7, last30,
-  last90; got "last31"`.
+  the full list: `--period must be one of: today, yesterday, last7, last14,
+  last30, last90, thismonth, lastmonth, thisyear, lastyear, alltime; got
+  "last31"`.
 - **Writes can wait for a person.** `--staged` records any write as a
   proposal that someone reviews and runs with `p202 change apply`, `--dry-run`
   previews deletes and bulk edits, and API keys can be scoped down to

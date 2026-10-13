@@ -8,8 +8,11 @@ ob_start();
 
 $urlvarslist = $_GET;
 $rpi = $_GET['rpi'];
+// The click cookie, or its -legacy twin (ClickCookie; the autoloader is not loaded yet).
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
+$cookieClickId = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202subid');
 
-if(!isset($_COOKIE['tracking202subid']) || !is_numeric($_COOKIE['tracking202subid']) || !isset($rpi) || !is_numeric($rpi)) { 
+if($cookieClickId === null || !is_numeric($cookieClickId) || !isset($rpi) || !is_numeric($rpi)) { 
     die();
 } 
 
@@ -24,11 +27,12 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$mysql['click_id'] = $db->real_escape_string($_COOKIE['tracking202subid']);
+$mysql['click_id'] = $db->real_escape_string((string) $cookieClickId);
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
 $rotator_sql = "SELECT
 					   rt.id,
+					   rt.user_id,
 					   rt.default_url,
 					   rt.default_campaign,
 					   rt.default_lp,
@@ -53,13 +57,26 @@ $rotator_sql = "SELECT
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 
+// The click the cookie names must be one of the rotator's account's. The
+// cookie is the visitor's to set and a click id is a sequential number, and
+// everything below writes to that click (its rotator, its rule, its
+// campaign and payout): any click on the install was moved into any
+// account's rotator (CLAUDE.md #27). Another account's click, or none, is
+// refused as an unknown rotator is.
+$offrtrClickOwner = p202ClickOwner((int) $cookieClickId);
+if ($offrtrClickOwner === null || $offrtrClickOwner['user_id'] !== (int) ($rotator_row['user_id'] ?? 0)) {
+	die();
+}
+
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 $rule_sql = "SELECT ru.id as rule_id
 			 FROM 202_rotator_rules AS ru
 			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'"; 
 $rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
 
-$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
+// The visitor's address by the rule every click endpoint uses (VisitorIp),
+// so the rotator routes on the address dl.php and the pages recorded.
+$ip_address = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
 
 if ($rotator_row['maxmind_isp'] == '1') {
 	$IspData = getIspData($ip_address);
@@ -191,11 +208,11 @@ foreach ($rule_row as $rule) {
 
 				case 'ip':
 					if ($statement) {
-						if (in_array($ip_address, $values)) {
+						if (\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					} else {
-						if (!in_array($ip_address, $values)) {
+						if (!\Prosper202\Rotator\IpCriterion::contains($values, $ip_address)) {
 							$rotate[] = true;
 						}
 					}
@@ -251,6 +268,14 @@ foreach ($rule_row as $rule) {
 	}
 }	
 
+// No rule matched: the click is the rotator's default, which every report
+// reads as rule 0, as rtr.php records it. The loop above leaves
+// $mysql['rule_id'] at the last rule it tried (unset when the rotator has
+// none), and that rule was credited with every default click.
+if ($default) {
+	$mysql['rule_id'] = '0';
+}
+
 $mysql['click_out'] = 1;
 
 // rule_redirect_id is resolved later (after the redirect lookup) and updated then
@@ -262,6 +287,22 @@ $click_sql = "
 		rotator_id='".$mysql['rotator_id']."',
 		rule_id='".$mysql['rule_id']."',
 		rule_redirect_id = '0'";
+$click_result = $db->query($click_sql) or record_mysql_error($db);
+
+// The click row names its rotator as rtr.php's does: 202_clicks.rotator_id is
+// what GET /clicks serves, and this left it 0, so a click a landing page sent
+// through its offer rotator read as one that never met a rotator. In
+// rtr.php's rows 202_clicks.rule_id is the chosen redirect's id (the rule is
+// 202_clicks_rotator.rule_id); it is set to that below, once one is chosen.
+// The attribution rollup reads neither column, so the rewrite needs no mark.
+$click_sql = "
+	UPDATE
+		202_clicks
+	SET
+		rotator_id='".$mysql['rotator_id']."',
+		rule_id='0'
+	WHERE
+		click_id='".$mysql['click_id']."'";
 $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 if ($default == false) {
@@ -298,8 +339,21 @@ if ($default == false) {
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
-				WHERE 2c.click_id='".$mysql['click_id']."'";
-		$rule_redirect_row = memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+				WHERE 2c.click_id='".$mysql['click_id']."'
+				ORDER BY rur.id";
+		// One row per redirect of the rule, chosen by weight with rtr.php's
+		// chooser, as rtr.php chooses: the first row alone sent every click
+		// to the rule's first redirect, a weight of 0 included. (In id order,
+		// the order rtr.php's scan of the table reads them in, so a rule with
+		// no weight anywhere sends both entry points to the same first one;
+		// the changed text also keys a fresh cache entry, so a row the old
+		// single-row read cached is never taken for a list.)
+		$rule_redirect_rows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+		if (count($rule_redirect_rows) > 1) {
+			$rule_redirect_row = $rule_redirect_rows[getSplitTestValue($rule_redirect_rows)];
+		} else {
+			$rule_redirect_row = $rule_redirect_rows[0] ?? null;
+		}
 
 			// backfill the resolved redirect id onto the click row
 			if (is_array($rule_redirect_row) && isset($rule_redirect_row['rule_redirect_id'])) {
@@ -312,9 +366,23 @@ if ($default == false) {
 					WHERE
 						click_id='".$mysql['click_id']."'";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				$update_sql = "
+					UPDATE
+						202_clicks
+					SET
+						rule_id = '".$mysql['rule_redirect_id']."'
+					WHERE
+						click_id='".$mysql['click_id']."'";
+				$click_result = $db->query($update_sql) or record_mysql_error($db);
 			}
 
-			if ($rule_redirect_row['redirect_campaign'] != null) {
+			// The reports read a click's rotator and rule from its rollup row,
+			// which only the campaign branch below refreshed: a rule that sends
+			// to a landing page or a URL left the click out of every rotator
+			// report until the dataengine job next covered its hour.
+			(new DataEngine())->setDirtyHour($mysql['click_id']);
+
+			if (!empty($rule_redirect_row['redirect_campaign'])) {
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
 
@@ -353,9 +421,9 @@ if ($default == false) {
 				// Initialize before the branch so the non-cloaked path doesn't read an
 				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
 				$cloaking_on = false;
-				if (($rule_redirect_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-				(($rule_redirect_row['click_cloaking'] == - 1) and ($rule_redirect_row['aff_campaign_cloaking'] == 1)) or ((! isset($rule_redirect_row['click_cloaking'])) and ($rule_redirect_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-				{
+				// The setting the click keeps, or the redirect campaign's when it
+				// leaves the decision to the campaign (ClickCloaking).
+				if (\Prosper202\Click\ClickCloaking::isOn($rule_redirect_row)) {
 				    $cloaking_on = true;
 				    $mysql['click_cloaking'] = 1;
 				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -374,13 +442,9 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
-				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
-
-				if ($cloaking_on == true) {
-				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				}
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
@@ -412,7 +476,7 @@ if ($default == false) {
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
-						action="/tracking202/redirect/cl2.php">
+						action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 						<input type="hidden" name="q"
 							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>
@@ -433,11 +497,13 @@ if ($default == false) {
 				    die();
 				}
 
-			} else if ($rule_redirect_row['redirect_lp'] != null) {
-				$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
+			} else if (!empty($rule_redirect_row['redirect_lp'])) {
+				// The chosen redirect's landing page (lp joins on rur.redirect_lp),
+				// not the rotator default's, which $rotator_row carries.
+				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id']);
 				header('location: ' . $redirect_site_url);
 				die();
-			} else if($rule_redirect_row['redirect_url'] != null) {
+			} else if(!empty($rule_redirect_row['redirect_url'])) {
 				header('location: ' . $rule_redirect_row['redirect_url']);
 				die();
 			} else if ($rule_redirect_row['auto_monetizer'] != null) {
@@ -446,7 +512,11 @@ if ($default == false) {
 			}
 } else {
 
-		if ($rotator_row['default_campaign'] != null) {
+		// As in the rule branch: the click's rollup row carries its rotator
+		// now, whichever kind of default the rotator sends it to.
+		(new DataEngine())->setDirtyHour($mysql['click_id']);
+
+		if (!empty($rotator_row['default_campaign'])) {
 				$click_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
@@ -500,9 +570,12 @@ if ($default == false) {
 				// Initialize before the branch so the non-cloaked path doesn't read an
 				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
 				$cloaking_on = false;
-				if (($click_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-				(($click_row['click_cloaking'] == - 1) and ($rotator_row['aff_campaign_cloaking'] == 1)) or ((! isset($click_row['click_cloaking'])) and ($rotator_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-				{
+				// The setting the click keeps, or the default campaign's when it
+				// leaves the decision to the campaign (ClickCloaking).
+				if (\Prosper202\Click\ClickCloaking::isOn([
+					'click_cloaking' => $click_row['click_cloaking'] ?? null,
+					'aff_campaign_cloaking' => $rotator_row['aff_campaign_cloaking'] ?? null,
+				])) {
 				    $cloaking_on = true;
 				    $mysql['click_cloaking'] = 1;
 				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -521,13 +594,9 @@ if ($default == false) {
 				";
 				$click_result = $db->query($update_sql) or record_mysql_error($db);
 
-				$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
-
-				if ($cloaking_on == true) {
-				    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-				}
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
@@ -559,7 +628,7 @@ if ($default == false) {
 				</head>
 				<body>
 					<form name="form1" id="form1" method="get"
-						action="/tracking202/redirect/cl2.php">
+						action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 						<input type="hidden" name="q"
 							value="<?php echo htmlspecialchars((string) $redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 					</form>
@@ -580,11 +649,11 @@ if ($default == false) {
 				    die();
 				}
 
-		} else if ($rotator_row['default_lp'] != null) {
+		} else if (!empty($rotator_row['default_lp'])) {
 			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
 			header('location: ' . $redirect_site_url);
 			die();
-		} else if($rotator_row['default_url'] != null) {
+		} else if(!empty($rotator_row['default_url'])) {
 			header('location: ' . $rotator_row['default_url']);
 			die();
 		} else if ($rotator_row['auto_monetizer'] != null) {

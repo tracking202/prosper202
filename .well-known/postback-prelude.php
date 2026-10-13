@@ -59,7 +59,7 @@ require_once $p202PostbackRoot . '/vendor/autoload.php';
 // database identity, read from the $dbname/$dbhost globals that
 // 202-config.php defines. Built before that require it logs "no database
 // identity in scope when resolving the v3 API state directory" and falls
-// back to the unscoped /tmp/p202-api-v3-state — a different store than the
+// back to the unscoped /tmp/p202-api-v3-state-unscoped — a different store than the
 // web tier's, so the limit would be counted in buckets nothing else reads.
 // Confirmed by running it both ways, not inferred from the code.
 $p202PostbackMethod = \Api\V3\Apps\PublicIntake::preflight(

@@ -18,7 +18,7 @@ COLUMNS = ('Clicks', 'Leads', 'Income', 'Cost')
 
 
 def number(text):
-    """"$1,234.50", "($-5.00)", "12" -> Decimal; the page's own formats."""
+    """"$1,234.50", "($5.00)", "12" -> Decimal; the page's own formats (an older one wrote "($-5.00)")."""
     t = text.strip()
     negative = t.startswith('(') and t.endswith(')')
     t = t.strip('()').replace('$', '').replace(',', '')

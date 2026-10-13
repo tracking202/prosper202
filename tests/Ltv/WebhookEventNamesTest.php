@@ -10,9 +10,11 @@ use Prosper202\Ltv\MysqlWebhookRepository;
 use Tests\Support\FakeMysqliConnection;
 
 /**
- * Event-name semantics behind the Landing Page Optimizer bridge (E.1): KNOWN_EVENTS is a
- * documentation listing, validation is well-formedness only, and the '*'
- * wildcard stores the '' subscribe-all value enqueue() already honors.
+ * Event-name semantics behind the Landing Page Optimizer bridge (E.1): KNOWN_EVENTS is
+ * what this install sends and what a webhook may subscribe to, an emitter's name is
+ * checked for its form only (WebhookEventsAreKnownTest holds the emitters to the
+ * list), and the '*' wildcard stores the '' subscribe-all value enqueue() already
+ * honors — the way to receive the events later versions add.
  */
 final class WebhookEventNamesTest extends TestCase
 {
@@ -50,14 +52,34 @@ final class WebhookEventNamesTest extends TestCase
         $this->repo(new FakeMysqliConnection())->create(7, 'https://8.8.8.8/hooks/p202', ['*', 'conversion.recorded']);
     }
 
-    public function testCreateAcceptsWellFormedFutureEventWithoutRepositoryEdits(): void
+    /**
+     * A name this install never sends subscribes to nothing: `revenue.recoded`
+     * made a hook that received nothing and answered 201. It is refused with
+     * the names that exist, and nothing is written; '*' is how a subscriber
+     * takes the events later versions add.
+     */
+    public function testCreateRefusesANameThisInstallNeverSends(): void
     {
-        $write = new FakeMysqliConnection();
-        $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', ['lead.scored', 'conversion.recorded']);
+        foreach (['revenue.recoded', 'lead.scored'] as $name) {
+            $write = new FakeMysqliConnection();
+            try {
+                $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', [$name, 'conversion.recorded']);
+                self::fail("\"$name\" was accepted");
+            } catch (\RuntimeException $e) {
+                $refused = '"' . $name . '" is not an event this install sends';
+                self::assertStringContainsString($refused, $e->getMessage());
+                self::assertStringContainsString(implode(', ', MysqlWebhookRepository::KNOWN_EVENTS), $e->getMessage());
+                self::assertStringContainsString('"*"', $e->getMessage());
+            }
+            $inserts = $write->statementsContaining('INSERT INTO 202_ltv_webhooks');
+            self::assertSame([], $inserts, "$name: nothing written");
+        }
 
+        $write = new FakeMysqliConnection();
+        $this->repo($write)->create(7, 'https://8.8.8.8/hooks/p202', ['revenue.recorded', 'conversion.recorded']);
         $inserts = $write->statementsContaining('INSERT INTO 202_ltv_webhooks');
         self::assertCount(1, $inserts);
-        self::assertSame('lead.scored,conversion.recorded', $inserts[0]->boundValues[3]);
+        self::assertSame('revenue.recorded,conversion.recorded', $inserts[0]->boundValues[3]);
     }
 
     public function testCreateEmptyListDefaultsToKnownEvents(): void

@@ -20,21 +20,21 @@ class UserUpdateCommand extends BaseCommand
         parent::configure();
         $this->setDescription('Update a user')
             ->addArgument('id', InputArgument::REQUIRED, 'User ID')
-            ->addOption('user_fname', null, InputOption::VALUE_REQUIRED, 'First name')
-            ->addOption('user_lname', null, InputOption::VALUE_REQUIRED, 'Last name')
-            ->addOption('user_email', null, InputOption::VALUE_REQUIRED, 'Email')
-            ->addOption('user_pass', null, InputOption::VALUE_OPTIONAL, 'New password (prompted securely if flag given without value)')
-            ->addOption('user_timezone', null, InputOption::VALUE_REQUIRED, 'Timezone')
-            ->addOption('user_active', null, InputOption::VALUE_REQUIRED, '1=active, 0=inactive');
+            ->addOption('user-fname', null, InputOption::VALUE_REQUIRED, 'First name')
+            ->addOption('user-lname', null, InputOption::VALUE_REQUIRED, 'Last name')
+            ->addOption('user-email', null, InputOption::VALUE_REQUIRED, 'Email')
+            ->addOption('user-pass', null, InputOption::VALUE_OPTIONAL, 'New password (prompted securely if flag given without value)')
+            ->addOption('user-timezone', null, InputOption::VALUE_REQUIRED, 'Timezone')
+            ->addOption('user-active', null, InputOption::VALUE_REQUIRED, '1=active, 0=inactive');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
         $body = $this->collectOptions($input, ['user_fname', 'user_lname', 'user_email', 'user_timezone', 'user_active']);
 
-        // Handle password separately — prompt securely if --user_pass given without value
-        $passVal = $input->getOption('user_pass');
-        if ($passVal === null && $input->hasParameterOption('--user_pass')) {
+        // Handle password separately — prompt securely if --user-pass given without value
+        $passVal = $input->getOption('user-pass');
+        if ($passVal === null && $input->hasParameterOption('--user-pass')) {
             $passVal = $this->promptHiddenSecret($input, $output, 'New password (hidden): ');
         }
         if (is_string($passVal) && $passVal !== '') {

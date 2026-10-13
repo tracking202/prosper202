@@ -33,7 +33,7 @@ class CrudCommandsTest extends TestCase
                 'widget_size' => 'Size in inches',
             ],
             ['widget_name'],
-            ['filter[color]' => 'Filter by color']
+            ['filter[color]' => 'Filter by color', 'filter[size_class]' => 'Filter by size class']
         );
 
         // Commands need to be registered in an Application to have their helpers set up
@@ -87,6 +87,52 @@ class CrudCommandsTest extends TestCase
         $def = $cmd->getDefinition();
 
         $this->assertTrue($def->hasOption('filter[color]'));
+        $this->assertTrue($def->hasOption('filter[size-class]'));
+        $this->assertFalse($def->hasOption('filter[size_class]'));
+    }
+
+    /**
+     * Fields and list parameters are given as the API names them: each is an
+     * option in kebab-case, and the request carries the API's name.
+     */
+    public function testOptionsAreKebabCaseAndTheRequestCarriesTheApiNames(): void
+    {
+        $client = new class ('http://localhost', 'test-key') extends \P202Cli\ApiClient {
+            /** @var list<array{string, string, array<string, mixed>}> */
+            public array $calls = [];
+
+            public function get(string $path, array $params = []): array
+            {
+                $this->calls[] = ['GET', $path, $params];
+                return ['data' => []];
+            }
+
+            public function post(string $path, array $body = []): array
+            {
+                $this->calls[] = ['POST', $path, $body];
+                return ['data' => []];
+            }
+
+            public function put(string $path, array $body = []): array
+            {
+                $this->calls[] = ['PUT', $path, $body];
+                return ['data' => []];
+            }
+        };
+        $property = new \ReflectionProperty(\P202Cli\Commands\BaseCommand::class, 'client');
+        foreach ($this->commands as $command) {
+            $property->setValue($command, $client);
+        }
+
+        (new CommandTester($this->app->find('widget:create')))->execute(['--widget-name' => 'W', '--widget-size' => '3', '--json' => true]);
+        (new CommandTester($this->app->find('widget:update')))->execute(['id' => '4', '--widget-color' => 'red', '--json' => true]);
+        (new CommandTester($this->app->find('widget:list')))->execute(['--filter[size-class]' => 'L', '--json' => true]);
+
+        $this->assertSame([
+            ['POST', 'widgets', ['widget_name' => 'W', 'widget_size' => '3']],
+            ['PUT', 'widgets/4', ['widget_color' => 'red']],
+            ['GET', 'widgets', ['limit' => '50', 'offset' => '0', 'filter[size_class]' => 'L']],
+        ], $client->calls);
     }
 
     public function testListCommandHasJsonOption(): void
@@ -121,9 +167,9 @@ class CrudCommandsTest extends TestCase
         $cmd = $this->app->find('widget:create');
         $def = $cmd->getDefinition();
 
-        $this->assertTrue($def->hasOption('widget_name'));
-        $this->assertTrue($def->hasOption('widget_color'));
-        $this->assertTrue($def->hasOption('widget_size'));
+        $this->assertTrue($def->hasOption('widget-name'));
+        $this->assertTrue($def->hasOption('widget-color'));
+        $this->assertTrue($def->hasOption('widget-size'));
     }
 
     public function testCreateCommandRequiredOptionsMarkedCorrectly(): void
@@ -132,14 +178,14 @@ class CrudCommandsTest extends TestCase
         $def = $cmd->getDefinition();
 
         // Required fields have '(required)' in their description
-        $nameOpt = $def->getOption('widget_name');
+        $nameOpt = $def->getOption('widget-name');
         $this->assertStringContainsString('(required)', $nameOpt->getDescription());
 
         // Non-required fields do not
-        $colorOpt = $def->getOption('widget_color');
+        $colorOpt = $def->getOption('widget-color');
         $this->assertStringNotContainsString('(required)', $colorOpt->getDescription());
 
-        $sizeOpt = $def->getOption('widget_size');
+        $sizeOpt = $def->getOption('widget-size');
         $this->assertStringNotContainsString('(required)', $sizeOpt->getDescription());
     }
 
@@ -155,12 +201,12 @@ class CrudCommandsTest extends TestCase
         $tester = new CommandTester($cmd);
 
         $status = $tester->execute([
-            '--widget_name' => '   ',
+            '--widget-name' => '   ',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
         $this->assertStringContainsString(
-            'Missing required option: --widget_name',
+            'Missing required option: --widget-name',
             $tester->getDisplay()
         );
     }
@@ -182,9 +228,9 @@ class CrudCommandsTest extends TestCase
         $cmd = $this->app->find('widget:update');
         $def = $cmd->getDefinition();
 
-        $this->assertTrue($def->hasOption('widget_name'));
-        $this->assertTrue($def->hasOption('widget_color'));
-        $this->assertTrue($def->hasOption('widget_size'));
+        $this->assertTrue($def->hasOption('widget-name'));
+        $this->assertTrue($def->hasOption('widget-color'));
+        $this->assertTrue($def->hasOption('widget-size'));
     }
 
     public function testUpdateCommandHasJsonOption(): void
@@ -253,7 +299,7 @@ class CrudCommandsTest extends TestCase
 
         // Create command should not mark anything as required
         $createCmd = $app->find('simple:create');
-        $nameOpt = $createCmd->getDefinition()->getOption('simple_name');
+        $nameOpt = $createCmd->getDefinition()->getOption('simple-name');
         $this->assertStringNotContainsString('(required)', $nameOpt->getDescription());
 
         // List command should only have limit, offset, and json
@@ -273,13 +319,13 @@ class CrudCommandsTest extends TestCase
 
         $tester = new CommandTester($app->find('attribution:model:create'));
         $status = $tester->execute([
-            '--model_name' => 'Linear',
-            '--model_type' => 'linear',
-            '--weighting_config' => '{"touches":',
+            '--model-name' => 'Linear',
+            '--model-type' => 'linear',
+            '--weighting-config' => '{"touches":',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid --weighting-config JSON', $tester->getDisplay());
     }
 
     public function testAttributionUpdateRejectsInvalidWeightingConfigJson(): void
@@ -291,11 +337,11 @@ class CrudCommandsTest extends TestCase
         $tester = new CommandTester($app->find('attribution:model:update'));
         $status = $tester->execute([
             'id' => '12',
-            '--weighting_config' => '{invalid}',
+            '--weighting-config' => '{invalid}',
         ]);
 
         $this->assertSame(Command::FAILURE, $status);
-        $this->assertStringContainsString('Invalid --weighting_config JSON', $tester->getDisplay());
+        $this->assertStringContainsString('Invalid --weighting-config JSON', $tester->getDisplay());
     }
 
     /**
@@ -310,13 +356,23 @@ class CrudCommandsTest extends TestCase
             $app->add($command);
             $tester = new CommandTester($app->find($name));
             $args = $name === 'attribution:model:create'
-                ? ['--model_name' => 'Linear', '--model_type' => 'linear', '--lookback_days' => '400']
-                : ['id' => '12', '--lookback_days' => '400'];
+                ? ['--model-name' => 'Linear', '--model-type' => 'linear', '--lookback-days' => '400']
+                : ['id' => '12', '--lookback-days' => '400'];
             $status = $tester->execute($args);
 
             $this->assertSame(Command::FAILURE, $status, $name);
-            $this->assertStringContainsString('Invalid --lookback_days: a whole number of days from 1 to 365', $tester->getDisplay(), $name);
+            $this->assertStringContainsString('Invalid --lookback-days: a whole number of days from 1 to 365', $tester->getDisplay(), $name);
         }
+    }
+
+    public function testAttributionExportNamesTheOptionItRefuses(): void
+    {
+        $app = new Application('test', '1.0');
+        $app->add(new \P202Cli\Commands\AttributionExportCreateCommand());
+        $tester = new CommandTester($app->find('attribution:export:create'));
+
+        $this->assertSame(Command::FAILURE, $tester->execute(['--time-from' => 'yesterday']));
+        $this->assertStringContainsString('--time-from must be a whole number (unix seconds)', $tester->getDisplay());
     }
 
     public function testAttributionBreakdownLimitOverTheServersIsRefusedLocally(): void

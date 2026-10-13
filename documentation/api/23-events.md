@@ -91,8 +91,11 @@ curl -X POST https://your-domain.com/api/v3/events \
 | `events` | 1–100 events: `event_id` (required), `name` (required), `occurred_at` (unix seconds, default now), `properties`, `revenue`, `transaction_id` |
 
 `received_at` and `revenue_trusted` are the server's and are refused in the
-body; any other unknown field is a `422` naming it. `201` when an event was
-stored, `200` when every event was a duplicate:
+body; any other unknown field is a `422` naming it. A refused event field is
+named by the event's position in the list, the way every list in a body is
+(`items.0.unit_price` on a conversion): `events.1.event_id`,
+`events.0.properties.plan`. `201` when an event was stored, `200` when every
+event was a duplicate:
 
 ```json
 {"data": {
@@ -117,7 +120,7 @@ The CLIs:
 ```bash
 p202 event send --click-id 123 --name purchase --id ORD-1001 --revenue 49 --props '{"plan":"pro"}'
 p202 event send --click-id 123 --file events.json            # a list of events, or {"events": [...]}
-bin/p202 event:send --click_id=123 --name=purchase --id=ORD-1001 --revenue=49
+bin/p202 event:send --click-id=123 --name=purchase --id=ORD-1001 --revenue=49
 ```
 
 A file (or `--props`) holds exactly one JSON value: anything after it but

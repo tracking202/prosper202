@@ -952,7 +952,7 @@ final class GoalEngine
         foreach ($events as $event) {
             $eventsById[$event->eventId] = $event;
         }
-        $terms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId) : [];
+        $terms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId, $userId) : [];
 
         $ids = [];
         foreach ($plan['keep'] as $key => $row) {
@@ -1084,7 +1084,7 @@ final class GoalEngine
         $existing = $this->conn->fetchOne($find);
         // A revived row keeps its own fast-goal decision; a new row takes
         // the one of the retired row it replaces, when it has one.
-        $v = $this->valuation($subject, $o, $term, $event, $existing ?? $decided);
+        $v = $this->valuation($userId, $subject, $o, $term, $event, $existing ?? $decided);
         $payable = $v['payable'];
         $amountUnits = $v['units'];
         $notify = $v['notify'];
@@ -1210,19 +1210,21 @@ final class GoalEngine
      * registration's policy says now: a held outcome stays held, and one
      * that was paid under `count` is not held by a later switch to `hold`.
      *
+     * @param int $userId the subject's account: only its own campaign's terms
+     *        pay (a click can name another account's campaign, 229df10)
      * @param array<string, mixed>|null $term
      * @param array<string, mixed>|null $decided the stored outcome row whose fast-goal decision stands
      * @return array{payable: bool, units: int|null, source: string, note: string|null, notify: bool, install: bool, name: string, too_fast: bool}
      */
-    private function valuation(GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, ?array $decided = null): array
+    private function valuation(int $userId, GoalSubject $subject, Outcome $o, ?array $term, ?GoalEvent $event, ?array $decided = null): array
     {
         $meta = $this->goalMeta($o->goalId);
         $isInstallGoal = $meta['builtin'] === MysqlGoalRepository::BUILTIN_INSTALL;
         $notify = $term !== null && (int) $term['notify_traffic_source'] === 1;
         if ($isInstallGoal) {
-            $campaignTerms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId) : [];
+            $campaignTerms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId, $userId) : [];
             $defaultPayout = $subject->campaignId !== null
-                ? (new MysqlConversionLedger($this->conn))->campaignTerms($subject->campaignId)['default_payout']
+                ? (new MysqlConversionLedger($this->conn))->campaignTerms($subject->campaignId, $userId)['default_payout']
                 : '0';
             [$payable, $amountUnits, $source, $note] = self::installPayability($o, $subject->campaignId, $campaignTerms, $term, $defaultPayout);
             // A campaign that lists no goals pays on install and notifies by
@@ -1465,7 +1467,7 @@ final class GoalEngine
         foreach ($events as $event) {
             $eventsById[$event->eventId] = $event;
         }
-        $terms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId) : [];
+        $terms = $subject->campaignId !== null ? $this->goals->campaignTerms($subject->campaignId, $userId) : [];
         foreach ($plan['keep'] as $key => $stored) {
             $o = $recomputed[$key];
             $event = $eventsById[$o->eventId] ?? null;
@@ -1488,13 +1490,13 @@ final class GoalEngine
                 if ($changed !== null) {
                     $post['clicks'][$changed] = true;
                 }
-                $this->restate((int) $stored['outcome_id'], $subject, $this->valuation($subject, $o, null, $event, $stored), null);
+                $this->restate((int) $stored['outcome_id'], $subject, $this->valuation($userId, $subject, $o, null, $event, $stored), null);
                 continue;
             }
             if ($convId !== null) {
                 continue;
             }
-            $v = $this->valuation($subject, $o, $terms[$o->goalId] ?? null, $event, $stored);
+            $v = $this->valuation($userId, $subject, $o, $terms[$o->goalId] ?? null, $event, $stored);
             [$convId, $new] = $this->attachLedgerRow($userId, $subject, $o, $event, $v, (int) $stored['outcome_id'], $post);
             $this->restate((int) $stored['outcome_id'], $subject, $v, $convId);
             if ($new) {

@@ -25,7 +25,7 @@ final class RespondJsonErrorNeverReturnsTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $definitions = [];
-        $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root));
         foreach ($it as $file) {
             $path = substr((string) $file->getPathname(), strlen($root) + 1);
             if (!str_ends_with($path, '.php') || preg_match('#^(vendor|\.git|\.claude|node_modules)/#', $path) === 1) {

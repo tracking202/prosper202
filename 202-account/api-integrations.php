@@ -316,7 +316,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					// install to the SaaS — without it pairing cannot proceed.
 					throw new RuntimeException('This account has no install hash, so the install cannot pair. Log in as the account owner (user 1) to connect.');
 				}
-				$lpo_install_url = $strProtocol . $_SERVER['HTTP_HOST'] . rtrim(get_absolute_url(), '/');
+				$lpo_install_url = rtrim(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER), '/');
 				$lpo_init = $lpo_client->pairInit($lpo_api_key, $lpo_install_hash, $lpo_install_url);
 				$lpo_site_key = trim((string) ($lpo_init['site_key'] ?? ''));
 				$lpo_hook_url = trim((string) ($lpo_init['hook_url'] ?? ''));

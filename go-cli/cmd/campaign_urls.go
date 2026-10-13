@@ -182,7 +182,7 @@ func renderURLChanges(changes []urlChange, undoPath string) error {
 
 // applyURLChanges confirms and sends the rows without a status (one PUT per
 // campaign), saves the applied ones in an undo manifest, and renders every row.
-func applyURLChanges(c *api.Client, rows []urlChange, force bool, record undoManifest, retryHint string) error {
+func applyURLChanges(cmd *cobra.Command, c *api.Client, rows []urlChange, force bool, record undoManifest, retryHint string) error {
 	todo := pendingURLChanges(rows)
 	order, bodies := groupChangesByCampaign(todo)
 	skipped := countStatus(rows, "skipped")
@@ -194,7 +194,11 @@ func applyURLChanges(c *api.Client, rows []urlChange, force bool, record undoMan
 		if skipped > 0 {
 			fmt.Fprintf(os.Stderr, "%d slot(s) are skipped and left as they are.\n", skipped)
 		}
-		if !confirmPrompt("Apply these %d change(s)?", len(todo)) {
+		ok, err := confirmAction(cmd, "Apply these %d change(s)?", len(todo))
+		if err != nil {
+			return err
+		}
+		if !ok {
 			fmt.Fprintln(os.Stderr, "Cancelled.")
 			return nil
 		}
@@ -388,7 +392,7 @@ func newCampaignReplaceURLCmd() *cobra.Command {
 				return nil
 			}
 			record := undoManifest{Profile: target.Profile, BaseURL: target.BaseURL, Match: match, With: with, Set: setTmpl}
-			return applyURLChanges(c, changes, force, record,
+			return applyURLChanges(cmd, c, changes, force, record,
 				"Rows with status failed carry the server error. Fix it and re-run the same command: updated campaigns no longer match --match (unless the --with text still contains it), so only the failures are retried.")
 		},
 	}

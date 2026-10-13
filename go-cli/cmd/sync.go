@@ -309,6 +309,17 @@ func executeSync(entityArg, fromProfile, toProfile string, opts syncOptions) err
 		return fmt.Errorf("encoding output: %w", err)
 	}
 	render(payload)
+	// --skip-errors goes on past a failed record; it does not make the sync
+	// a success. It exited 0 with records failed, which a script reads as
+	// everything synced. The results list each failure.
+	failed := 0
+	for _, r := range runOutput.Results {
+		failed += r.Failed
+	}
+	if failed > 0 {
+		return partialFailureError("%d record(s) failed to sync; the results list each under errors", failed).
+			WithHint("Fix the cause on the source (or the target) and run the same sync again: records already synced are found on the target by their natural key, not created twice.")
+	}
 	return nil
 }
 
@@ -651,11 +662,14 @@ func replaceEntityRecord(targetData map[string][]map[string]interface{}, entity,
 	targetData[entity] = append(targetData[entity], updated)
 }
 
+// handleSyncRecordError records a record's failure and says whether to go on.
+// --skip-errors goes past a record's own failure, never past the key's: a 401
+// or 403 fails every later record the same way, so it stops the run.
 func handleSyncRecordError(entity, key string, err error, skipErrors bool, result *syncdata.EntityResult) bool {
 	result.Failed++
 	msg := fmt.Sprintf("%s[%s]: %v", entity, key, err)
 	result.Errors = append(result.Errors, msg)
-	return skipErrors
+	return skipErrors && api.ErrorCategory(err) != "auth"
 }
 
 // comparableHash fingerprints a record for incremental-sync change detection.
@@ -690,7 +704,7 @@ func addSyncFlags(cmd *cobra.Command) {
 	cmd.Flags().String("source", "", "Source profile name (alias of --from)")
 	cmd.Flags().String("target", "", "Target profile name (alias of --to)")
 	cmd.Flags().Bool("dry-run", false, "Show sync actions without writing")
-	cmd.Flags().Bool("skip-errors", false, "Continue processing after record-level failures")
+	cmd.Flags().Bool("skip-errors", false, "Continue processing after record-level failures; exits 5 when any record failed, and a 401 or 403 still stops it")
 	cmd.Flags().Bool("force-update", false, "Update mismatched target records")
 }
 
@@ -771,7 +785,13 @@ func tryServerSideSync(entityArg, fromProfile, toProfile string, opts syncOption
 				status := strings.ToLower(strings.TrimSpace(scalarString(jobObj["status"])))
 				if status == "succeeded" || status == "failed" || status == "partial" || status == "cancelled" {
 					render(jobResp)
-
+					// The job's own outcome is the command's: a failed,
+					// partial or cancelled job exited 0 here, read by a
+					// script as a sync that happened.
+					if status != "succeeded" {
+						return true, partialFailureError("sync job %s ended %s; the job above lists what failed", jobID, status).
+							WithHint("Fix the cause and run the same sync again: records already synced are found on the target by their natural key, not created twice. `p202 sync history` lists past runs.")
+					}
 					return true, nil // server-side sync ran; the caller must not fall back
 				}
 				time.Sleep(250 * time.Millisecond)

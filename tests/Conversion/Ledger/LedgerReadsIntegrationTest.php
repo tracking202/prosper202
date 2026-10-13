@@ -228,9 +228,9 @@ final class LedgerReadsIntegrationTest extends TestCase
 
         $checked = 0;
         foreach ([100, 101, 102, 103, 104, 105, 106, 107, 108] as $clickId) {
-            $campaign = (int) self::$db->query("SELECT aff_campaign_id FROM 202_clicks WHERE click_id=$clickId")->fetch_row()[0];
+            [$campaign, $owner] = array_map('intval', self::$db->query("SELECT aff_campaign_id, user_id FROM 202_clicks WHERE click_id=$clickId")->fetch_row());
             $rows = $ledger->loadRows($clickId);
-            $value = ClickValueCalculator::calculate($rows, $ledger->campaignTerms($campaign)['mode']);
+            $value = ClickValueCalculator::calculate($rows, $ledger->campaignTerms($campaign, $owner)['mode']);
             $want = array_keys($value->counted);
             sort($want);
             $got = $sql[$clickId]['counted'] ?? [];

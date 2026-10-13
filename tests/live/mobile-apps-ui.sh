@@ -494,15 +494,15 @@ if [ -n "${P202_PHP_CLI:-}" ]; then
     PCLIHOME="$OUT/pclihome"; mkdir -p "$PCLIHOME"
     pcli() { (cd "$ROOT" && HOME="$PCLIHOME" $P202_PHP_CLI "$@"); }
     pcli config:set-url "$BASE" > /dev/null && pcli config:set-key "$P202_API_KEY" > /dev/null
-    pcli app:report --platform=android --group_by=registration "--registration_id=$RA" --json > "$OUT/pcli1.json" 2>&1
+    pcli app:report --platform=android --group-by=registration "--registration-id=$RA" --json > "$OUT/pcli1.json" 2>&1
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['data']['groups'][0]['installs'], d['data']['totals']['received'])" "$OUT/pcli1.json" 2>&1)" "$DB_INSTALLS $DB_RECEIVED" \
        "bin/p202 app:report --platform=android: the rows' numbers"
-    pcli app:report --group_by=goal > "$OUT/pcli2.txt" 2>&1
+    pcli app:report --group-by=goal > "$OUT/pcli2.txt" 2>&1
     eq "$?" 1 "bin/p202 app:report refuses an Android grouping without --platform=android, before any request"
     has "$OUT/pcli2.txt" "--platform=android" "naming the option"
-    pcli app:link "$RA" "--campaign_id=$CA" --json > "$OUT/pcli3.json" 2>&1
+    pcli app:link "$RA" "--campaign-id=$CA" --json > "$OUT/pcli3.json" 2>&1
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['data']['campaign']['ready'])" "$OUT/pcli3.json" 2>&1)" True "bin/p202 app:link: the campaign is ready"
-    pcli app:notifications "--registration_id=$RA" --json > "$OUT/pcli4.json" 2>&1
+    pcli app:notifications "--registration-id=$RA" --json > "$OUT/pcli4.json" 2>&1
     eq "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['data']))" "$OUT/pcli4.json" 2>&1)" \
        "$(Q "SELECT COUNT(*) FROM 202_notification_pending n WHERE n.conv_id IN (SELECT conversion_id FROM 202_goal_outcomes WHERE subject_type = 'install' AND app_registration_id = $RA)")" \
        "bin/p202 app:notifications: this app's queued postbacks"

@@ -66,7 +66,7 @@ func TestClickConversionsAndConversionFiltersRefuseBadValuesBeforeAnyRequest(t *
 	}{
 		{[]string{"click", "conversions", "abc"}, "click id must be a positive integer", "p202 click list"},
 		{[]string{"click", "conversions", "0"}, "positive integer", "p202 click list"},
-		{[]string{"conversion", "list", "--click_id", "7x"}, "--click_id must be a positive integer", "p202 click list"},
+		{[]string{"conversion", "list", "--click-id", "7x"}, "--click-id must be a positive integer", "p202 click list"},
 		{[]string{"conversion", "list", "--source", "webhook"}, "--source must be one of: pixel, postback", ""},
 		{[]string{"conversion", "list", "--goal", "first"}, "--goal must be a positive integer", "p202 goal list"},
 	}
@@ -90,7 +90,7 @@ func TestClickConversionsAndConversionFiltersRefuseBadValuesBeforeAnyRequest(t *
 
 func TestConversionListSendsTheLedgerFilters(t *testing.T) {
 	_, seen := goalServer(t, 200, `{"data":[],"pagination":{"total":0,"limit":50,"offset":0}}`)
-	if _, _, err := executeCommand("conversion", "list", "--click_id", "7", "--source", "goal", "--goal", "4"); err != nil {
+	if _, _, err := executeCommand("conversion", "list", "--click-id", "7", "--source", "goal", "--goal", "4"); err != nil {
 		t.Fatalf("conversion list: %v", err)
 	}
 	if len(*seen) != 1 {

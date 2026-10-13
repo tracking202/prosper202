@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin"
+ALL_TIERS="syntax phpstan phpcs unit go golangci schema patterns actionlint swift kotlin openapi"
 
 usage() {
     cat <<'EOF'
@@ -244,6 +244,12 @@ reason_for() {
             have java || { echo "no JDK (java) on PATH; the SDK's core needs only a JDK 17+"; return; }
             have "${P202_GRADLE:-gradle}" || { echo "gradle not on PATH (set P202_GRADLE, or install Gradle 8.14 from services.gradle.org)"; return; }
             ;;
+        openapi)
+            [ -f docs/openapi.yaml ] || { echo "docs/openapi.yaml not in this tree"; return; }
+            [ -x scripts/check-openapi-yaml.py ] || { echo "scripts/check-openapi-yaml.py missing or not executable"; return; }
+            have python3 || { echo "python3 not on PATH"; return; }
+            python3 -c 'import yaml' >/dev/null 2>&1 || { echo "python3 has no yaml module (pip install pyyaml==6.0.2, the version CI's OpenAPI job installs)"; return; }
+            ;;
     esac
     echo ""
 }
@@ -288,6 +294,13 @@ run_syntax() {
 # classes come from vendor, so nothing in an unchanged file can have been
 # broken by the change; the same text in a changed or new file is the
 # change's to answer for.
+#
+# PHPStan also prints each of those errors a second time, as a top-level
+# "Error message "…" cannot be ignored, use excludePaths instead." (the
+# config's ignore entries name them, and class.notFound cannot be ignored).
+# Counted as findings, those echoes put "5 other" on every partial-vendor run,
+# which teaches the reader to skip the number. An echo is environmental when
+# the error it quotes was; an echo of anything else is still a finding.
 phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, newline separated; prints "ENV OTHER"
     CHANGED="$2" php -r '
         $j = json_decode(stream_get_contents(STDIN), true);
@@ -298,16 +311,29 @@ phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, new
             }
             return false;
         };
-        $env = 0; $other = 0;
+        $env = 0; $other = 0; $envMessages = [];
         foreach (($j["files"] ?? []) as $path => $f) {
-            foreach (($f["messages"] ?? []) as $m) {
+            $messages = $f["messages"] ?? [];
+            $symfonyParentMissing = false;
+            foreach ($messages as $m) {
                 $isEnv = !$isChanged((string) $path)
                     && preg_match("#(^|/)cli/#", (string) $path)
                     && preg_match("/unknown class Symfony\\\\|Symfony\\\\[A-Za-z\\\\]+ not found/", (string) ($m["message"] ?? ""));
+                if ($isEnv) { $env++; $envMessages[] = (string) $m["message"]; $symfonyParentMissing = true; }
+            }
+            foreach ($messages as $m) {
+                if (in_array((string) ($m["message"] ?? ""), $envMessages, true)) { continue; }
+                // #[\Override] on a method of a class whose Symfony parent never
+                // arrived overrides nothing PHPStan can see: the same missing
+                // class, in the same unchanged file.
+                $isEnv = $symfonyParentMissing && ($m["identifier"] ?? "") === "method.override";
                 if ($isEnv) { $env++; } else { $other++; }
             }
         }
-        $other += count($j["errors"] ?? []);
+        foreach (($j["errors"] ?? []) as $e) {
+            $echo = preg_match("/^Error message \"(.*)\" cannot be ignored, use excludePaths instead\\.$/s", (string) $e, $q) === 1;
+            if ($echo && in_array($q[1], $envMessages, true)) { $env++; } else { $other++; }
+        }
         echo $env, " ", $other;
     ' <<< "$1" 2>/dev/null || echo "? ?"
 }
@@ -339,7 +365,7 @@ run_phpstan() {
         split=$(phpstan_partial_vendor_split "$json" "$(changed_php_files)")
         env=${split%% *}; other=${split##* }
         if [ "$env" != "?" ] && [ "$other" -eq 0 ] && [ "$env" -gt 0 ]; then
-            COULD_NOT_RUN_REASON="$env class.notFound errors, all Symfony classes under cli/ that this partial vendor never delivered, and no other findings; see references/sandbox-recovery.md"
+            COULD_NOT_RUN_REASON="$env errors, all Symfony classes under cli/ that this partial vendor never delivered (and PHPStan's notices that it cannot ignore them), and no other findings; see references/sandbox-recovery.md"
             return $TIER_COULD_NOT_RUN
         fi
         if [ "$env" != "?" ] && [ "$env" -gt 0 ]; then
@@ -1017,6 +1043,15 @@ run_kotlin() {
     return 0
 }
 
+# Mirrors the OpenAPI spec job (.github/workflows/openapi.yml): the spec
+# parses as YAML with no key given twice in one mapping. The PHP tests that
+# pair the spec with the router read it line by line, so a description that
+# made the whole file unparseable for every OpenAPI tool left every one of
+# them green, and nothing else in this ladder read it.
+run_openapi() {
+    python3 scripts/check-openapi-yaml.py docs/openapi.yaml
+}
+
 # ------------------------------------------------- tiers from the diff
 
 tiers_from_diff() {
@@ -1051,6 +1086,7 @@ tiers_from_diff() {
     echo "$files" | grep -q '^sdk/ios-attribution/'         && tiers="$tiers swift"
     echo "$files" | grep -qE '^(sdk/android-attribution/|tests/fixtures/app-sdk-contract/)' && tiers="$tiers kotlin"
     echo "$files" | grep -q '\.sql$'                    && tiers="$tiers schema"
+    echo "$files" | grep -qE '^(docs/openapi\.yaml|scripts/check-openapi-yaml\.py)$' && tiers="$tiers openapi"
     echo "$tiers" | tr ' ' '\n' | awk 'NF' | sort -u | tr '\n' ' '
 }
 
@@ -1079,7 +1115,7 @@ if [ "$MODE" = probe ]; then
         fi
     done
     echo
-    echo "Not scripted: live end-to-end, agent eval. Do these by hand (SKILL.md steps 8-9)."
+    echo "Not scripted: live end-to-end, agent eval. Do these by hand (SKILL.md tiers 13-14)."
     exit 0
 fi
 

@@ -18,7 +18,7 @@
         ],
         "checks": [
           {
-            "run": "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id'); c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | head -1); click=$(p202 click list --aff_campaign_id \"$c\" --json | jq -r '[.data[].click_id | tonumber] | max'); p202 app install list \"$reg\" --click-id \"$click\" --json | jq '[.data[] | select(.match_state==\"attributed\" and .trusted==1 and .conversion_id != null)] | length == 1'",
+            "run": "reg=$(p202 app list --platform android --all --json | jq -r '.data[] | select(.app_key==\"com.p202.eval.summit\") | .registration_id'); c=$(p202 campaign list --all --json | jq -r '.data[] | select(.aff_campaign_name==\"EVAL ANDROID CAMPAIGN\") | .aff_campaign_id' | head -1); click=$(p202 click list --aff-campaign-id \"$c\" --json | jq -r '[.data[].click_id | tonumber] | max'); p202 app install list \"$reg\" --click-id \"$click\" --json | jq '[.data[] | select(.match_state==\"attributed\" and .trusted==1 and .conversion_id != null)] | length == 1'",
             "includes": [
               "true"
             ]

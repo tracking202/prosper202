@@ -20,6 +20,7 @@ $mysql['click_id_public'] = $db->real_escape_string((string)$pci);
 $click_sql = "
 	SELECT
 		202_clicks.click_id,
+		202_clicks.user_id,
 		202_clicks.aff_campaign_id,
 		click_cloaking,
 		click_cloaking_site_url_id,
@@ -40,6 +41,10 @@ if (!$click_row || !isset($click_row['click_id'])) {
 }
 
 $click_id = $click_row['click_id'];
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($click_row['user_id'] ?? null);
 $aff_campaign_id = $click_row['aff_campaign_id'];
 $mysql['click_id'] = $db->real_escape_string((string) $click_id);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) $aff_campaign_id);

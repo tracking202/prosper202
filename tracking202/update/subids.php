@@ -2,13 +2,10 @@
 
 declare(strict_types=1);
 include_once(substr(__DIR__, 0, -19) . '/202-config/connect.php');
-include_once(substr(__DIR__, 0, -19) . '/202-config/class-dataengine-slim.php');
 require_once __DIR__ . '/_includes/update_ui.php';
 
-use Prosper202\Click\ClickId;
-use Prosper202\Conversion\Ledger\ConversionSource;
-use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
+use Prosper202\Update\SubidBatch;
 AUTH::require_user();
 
 if (!$userObj->hasPermission("access_to_update_section")) {
@@ -34,55 +31,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	} else {
 		$userId = (int) $_SESSION['user_id'];
 
-		// One subid per line, whatever line ending the browser sent.
-		$lines = preg_split('/\R/', trim((string) ($_POST['subids'] ?? ''))) ?: [];
-
-		// Conversion rows go through the single canonical writer, which
-		// locks the click, records the row and derives the click's value
-		// from its rows. once_per_click: marking a click that is already a
-		// lead changes nothing (the page used to re-flag it).
-		$conn = new Connection($db);
-		$conversionRepo = new MysqlConversionRepository($conn);
-		$de = new DataEngine();
-
-		foreach ($lines as $line) {
-			$line = trim($line);
-			if ($line === '') {
-				continue;
-			}
-			$clickId = ClickId::parse($line);
-			if ($clickId === null) {
-				$ignored[] = $line;
-				continue;
-			}
-
-			$result = $conversionRepo->record(
-				$userId,
-				[
-					'click_id'   => $clickId,
-					'source'     => ConversionSource::SUBID_UPLOAD->value,
-					'user_agent' => 'subid-upload',
-					'pixel_type' => 0,
-					'once_per_click' => true,
-				],
-				function (int $lockedClickId) use ($conn, $userId): void {
-					// A converting click is never left filtered.
-					foreach (['UPDATE 202_clicks SET click_filtered = 0 WHERE click_id = ? AND user_id = ?',
-						'UPDATE 202_clicks_spy SET click_filtered = 0 WHERE click_id = ? AND user_id = ?'] as $sql) {
-						$stmt = $conn->prepareWrite($sql);
-						$conn->bind($stmt, 'ii', [$lockedClickId, $userId]);
-						$conn->executeUpdate($stmt);
-					}
-				}
-			);
-
-			if (!$result['clickFound']) {
-				$ignored[] = $line;
-				continue;
-			}
-			if (!$result['duplicate']) {
-				$marked++;
-				$de->setDirtyHour((string) $clickId);
+		// One subid per line, whatever line ending the browser sent. Each is
+		// recorded through the single canonical writer (SubidBatch::mark(),
+		// which POST /api/v3/conversions/subids runs too): it locks the
+		// click, records the row, derives the click's value from its rows
+		// and refreshes the click's report row. once_per_click: marking a
+		// click that is already a lead changes nothing (the page used to
+		// re-flag it), and a converting click is never left filtered.
+		$result = (new SubidBatch(new Connection($db)))->mark($userId, p202_update_lines((string) ($_POST['subids'] ?? '')));
+		$marked = $result['marked'];
+		foreach ($result['lines'] as $line) {
+			if ($line['status'] === SubidBatch::NOT_A_SUBID || $line['status'] === SubidBatch::NOT_FOUND) {
+				$ignored[] = $line['subid'];
 			}
 		}
 

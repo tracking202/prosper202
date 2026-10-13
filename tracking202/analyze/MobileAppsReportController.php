@@ -14,6 +14,7 @@ use Api\V3\Controllers\UsersController;
 use Api\V3\Exception\ValidationException;
 use Api\V3\HttpException;
 use Tracking202\Apps\RegisteredApps;
+use Tracking202\Report\ReportWindow;
 
 /**
  * Analyze › Mobile Apps: what the apps' signals add up to, on both
@@ -130,12 +131,14 @@ class MobileAppsReportController
      * are not.
      *
      * The windows match too, which is the part that was wrong when this
-     * shipped: grab_timeframe()'s 'last7' is `-7 days 00:00:00` through
-     * today, i.e. EIGHT whole days, and 'This Month' runs to the last day of
-     * the month. Naming the presets after the calendar's while resolving
-     * them a day shorter gave one label two meanings, and an operator
-     * reconciling clicks against installs would have read the gap as missing
-     * postbacks. tests/Analyze executes both and fails if they diverge.
+     * shipped: the click calendar's 'last7' is seven days back from
+     * midnight through today, i.e. EIGHT whole days, and its 'This Month'
+     * runs from the 1st to the end of today. Naming the presets after the
+     * calendar's while resolving them differently gave one label two
+     * meanings, and an operator reconciling clicks against installs would
+     * have read the gap as missing postbacks. So every preset the calendar
+     * has is the calendar's window (ReportWindow::preset(), in UTC: see
+     * resolveWindow()), and tests/Analyze fails if they diverge.
      */
     public const RANGES = [
         'today'     => 'Today',
@@ -149,16 +152,14 @@ class MobileAppsReportController
     ];
 
     /**
-     * The "last N days" presets, as the calendar counts them: N days back
-     * from midnight, through the end of today, so the window spans N + 1
-     * whole days. One table rather than an arm each — four arms of the same
-     * expression re-derived the offset four times, and the arm that also
-     * served "anything unknown" meant a preset added without one reported
-     * the default window under its own name.
+     * The "last N days" presets the click calendar does not have, counted
+     * as it counts its own: N days back from midnight, through the end of
+     * today, so the window spans N + 1 whole days. Last 30 Days stays here
+     * too because it is also the span of a custom window given no start.
+     * A preset with neither a calendar window nor an entry here throws
+     * rather than report some other window under its name.
      */
     private const RANGE_DAYS = [
-        'last7'  => 7,
-        'last14' => 14,
         'last30' => 30,
         'last90' => 90,
     ];
@@ -512,40 +513,27 @@ class MobileAppsReportController
         }
 
         if ($range !== self::CUSTOM_RANGE) {
-            if (isset(self::RANGE_DAYS[$range])) {
-                return [
-                    'range' => $range,
-                    'from' => $today - self::RANGE_DAYS[$range] * $day,
-                    'to' => $endOfToday,
-                    'notes' => $notes,
-                ];
+            // A preset the click calendar has is the calendar's window —
+            // ReportWindow, which grab_timeframe() resolves every click
+            // report's named range with — in UTC, this report's days. This
+            // Month is the 1st through the end of today there, as it is on
+            // every click report; it ran to the last day of the month here,
+            // under a comment saying the calendar did too.
+            if (in_array($range, ReportWindow::PRESETS, true)) {
+                $window = ReportWindow::preset($range, 'UTC', $now);
+
+                return ['range' => $range, 'from' => $window['from'], 'to' => $window['to'], 'notes' => $notes];
             }
 
-            // Month 0 is December of the year before, which is what gmmktime()
-            // does with it; verified rather than assumed.
-            $monthStart = static fn (int $monthsBack): int => (int)gmmktime(
-                0,
-                0,
-                0,
-                (int)gmdate('n', $now) - $monthsBack,
-                1,
-                (int)gmdate('Y', $now)
-            );
-            // No default arm: every name in RANGES is answered here or in
-            // RANGE_DAYS above, and a preset added to one without the other
-            // must fail loudly rather than quietly report the default window
-            // under its own name. readFilters() has already replaced anything
-            // that is not in RANGES, so this cannot be reached from a request.
-            [$start, $end] = match ($range) {
-                'today' => [$today, $endOfToday],
-                'yesterday' => [$today - $day, $today - 1],
-                // To the end of the month, as the click calendar's own
-                // "This Month" does. Days with no postbacks cost nothing.
-                'thismonth' => [$monthStart(0), $monthStart(-1) - 1],
-                'lastmonth' => [$monthStart(1), $monthStart(0) - 1],
-            };
+            // This report's own (Last 90 Days). No default: a preset in
+            // RANGES with neither a calendar window nor a RANGE_DAYS entry
+            // must fail loudly rather than quietly report the default
+            // window under its own name. readFilters() has already replaced
+            // anything that is not in RANGES, so a request cannot reach it.
+            $days = self::RANGE_DAYS[$range]
+                ?? throw new \LogicException("The range '$range' has no window: give it a RANGE_DAYS entry or a ReportWindow preset.");
 
-            return ['range' => $range, 'from' => $start, 'to' => $end, 'notes' => $notes];
+            return ['range' => $range, 'from' => $today - $days * $day, 'to' => $endOfToday, 'notes' => $notes];
         }
 
         // A date that is present and unreadable is refused, not quietly

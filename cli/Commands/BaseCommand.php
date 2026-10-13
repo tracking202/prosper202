@@ -8,6 +8,7 @@ use P202Cli\ApiClient;
 use P202Cli\ApiException;
 use P202Cli\Config;
 use P202Cli\Formatter;
+use P202Cli\OptionName;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -75,16 +76,22 @@ abstract class BaseCommand extends Command
     }
 
     /**
-     * Collect the named options that were explicitly provided (non-null).
+     * The given options for the named API fields, keyed by the field: each
+     * field is read from its kebab-case option (OptionName::of()), and one
+     * the command does not declare, or that was not given, is left out.
+     *
+     * @param list<string> $fields
+     * @return array<string, mixed>
      */
-    protected function collectOptions(InputInterface $input, array $names): array
+    protected function collectOptions(InputInterface $input, array $fields): array
     {
         $params = [];
-        foreach ($names as $name) {
-            if ($input->hasOption($name)) {
-                $value = $input->getOption($name);
+        foreach ($fields as $field) {
+            $option = OptionName::of($field);
+            if ($input->hasOption($option)) {
+                $value = $input->getOption($option);
                 if ($value !== null) {
-                    $params[$name] = $value;
+                    $params[$field] = $value;
                 }
             }
         }
@@ -105,10 +112,10 @@ abstract class BaseCommand extends Command
 
         $decoded = json_decode((string)$raw, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \RuntimeException("Invalid JSON in --{$name}: " . json_last_error_msg());
+            throw new \RuntimeException('Invalid JSON in ' . OptionName::flag($name) . ': ' . json_last_error_msg());
         }
         if (!is_array($decoded)) {
-            throw new \RuntimeException("--{$name} must be a JSON array or object");
+            throw new \RuntimeException(OptionName::flag($name) . ' must be a JSON array or object');
         }
         return $decoded;
     }

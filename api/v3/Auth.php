@@ -12,6 +12,14 @@ namespace Api\V3;
  */
 final readonly class Auth
 {
+    /** The account the installer creates; its role is Super user. */
+    public const SUPER_USER_ID = 1;
+    private const ROLE_SUPER_USER = 1;
+    private const ROLE_ADMIN = 2;
+    /** The legacy permission only the Super user role carries. */
+    private const MANAGE_ADMINS = 'add_edit_delete_admin';
+    private const PERSONAL_SETTINGS = 'access_to_personal_settings';
+
     private function __construct(
         private int $userId,
         /** @var string[] lower-cased role names */
@@ -49,10 +57,14 @@ final readonly class Auth
 
         // Join 202_users so keys belonging to soft-deleted users stop
         // authenticating — "deleting" a user must actually revoke access.
+        // A deactivated user (Account › Users' Active switch off) is refused
+        // too, as the sign-in and the remember-me cookie refuse them
+        // (functions-auth.php): this read user_deleted alone, so turning a
+        // user off left every key they held working with their role.
         $scopeColumnExists = self::apiKeyScopeColumnExists($db);
         $sql = $scopeColumnExists
-            ? 'SELECT k.user_id, k.scope FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
-            : 'SELECT k.user_id FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
+            ? 'SELECT k.user_id, k.scope, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1'
+            : 'SELECT k.user_id, u.user_active FROM 202_api_keys k INNER JOIN 202_users u ON u.user_id = k.user_id WHERE k.api_key = ? AND u.user_deleted = 0 LIMIT 1';
         $stmt = $db->prepare($sql);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
@@ -72,6 +84,11 @@ final readonly class Auth
 
         if (!$row || !isset($row['user_id'])) {
             throw new AuthException('Invalid API key.', 401);
+        }
+        // Only 1 is active: the column is int(1) NOT NULL DEFAULT 1, and the
+        // sign-in asks for `user_active = 1`, so anything else is refused.
+        if ((string) ($row['user_active'] ?? '') !== '1') {
+            throw new AuthException('The account this API key belongs to is deactivated; an Admin can turn it back on in Account › Users.', 401);
         }
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
@@ -344,6 +361,118 @@ final readonly class Auth
      */
     public function requirePermission(\mysqli $db, string $permission): void
     {
+        if (!$this->hasPermission($db, $permission)) {
+            throw new AuthException(
+                "This account's role does not have the '" . $permission . "' permission.",
+                403
+            );
+        }
+    }
+
+    /**
+     * Act on another user's account (profile, password, API keys, signing
+     * key, preferences): the rules of 202-account/user-management.php, which
+     * the API's plain requireAdmin() did not carry. Admin and Super user
+     * both pass requireAdmin(), so an Admin key could make itself Super
+     * user, set user 1's password, or mint a full-access key for user 1 —
+     * every one of which the page refuses (error pattern #5).
+     *
+     * - nobody but user 1 acts on user 1;
+     * - an account holding the Admin or Super user role is acted on only
+     *   with add_edit_delete_admin (the Super user's permission) — an
+     *   Admin acting on its own Admin account included, as on the page.
+     */
+    public function requireMayManageUser(\mysqli $db, int $targetUserId): void
+    {
+        $this->requireAdmin();
+        if ($targetUserId === self::SUPER_USER_ID && $this->userId !== self::SUPER_USER_ID) {
+            throw new AuthException('Only the Super user (user 1) can act on the Super user account.', 403);
+        }
+        if (!$this->hasPermission($db, self::MANAGE_ADMINS)
+            && $this->userHoldsRole($db, $targetUserId, [self::ROLE_SUPER_USER, self::ROLE_ADMIN])) {
+            throw new AuthException(
+                "Changing an Admin or Super user account needs the '" . self::MANAGE_ADMINS . "' permission, which only the Super user role has.",
+                403
+            );
+        }
+    }
+
+    /**
+     * Personal settings — the preferences, the API keys, the account's time
+     * zone: for your own account, the permission Personal Settings asks
+     * (account.php shows a user without it only their email and password);
+     * for another's, a user requireMayManageUser() lets you act on.
+     *
+     * Self passed with no permission at all, so any role with a key set
+     * every preference the page withholds from it — the privacy setting
+     * that governs its visitors, the tracking domain, the currency its
+     * payouts are re-priced into — and minted itself more keys.
+     */
+    public function requirePersonalSettingsOf(\mysqli $db, int $targetUserId): void
+    {
+        if ($this->userId === $targetUserId) {
+            $this->requirePermission($db, self::PERSONAL_SETTINGS);
+            return;
+        }
+        $this->requireMayManageUser($db, $targetUserId);
+    }
+
+    /** Your own account, or one requireMayManageUser() lets you act on. */
+    public function requireSelfOrMayManageUser(\mysqli $db, int $targetUserId): void
+    {
+        if ($this->userId === $targetUserId) {
+            return;
+        }
+        $this->requireMayManageUser($db, $targetUserId);
+    }
+
+    /**
+     * Grant or take away a role. On top of requireMayManageUser(): user 1's
+     * role is fixed (the page never edits user 1), Super user is never
+     * granted (the page offers roles 2-6 only), and Admin is granted only
+     * with add_edit_delete_admin. $roleId is null for a removal, whose
+     * target's own roles requireMayManageUser() has already weighed.
+     */
+    public function requireMayChangeRoles(\mysqli $db, int $targetUserId, ?int $grantRoleId): void
+    {
+        $this->requireMayManageUser($db, $targetUserId);
+        if ($targetUserId === self::SUPER_USER_ID) {
+            throw new AuthException("The Super user's role cannot be changed.", 403);
+        }
+        if ($grantRoleId === self::ROLE_SUPER_USER) {
+            throw new AuthException('The Super user role cannot be granted; only the account the installer created holds it.', 403);
+        }
+        if ($grantRoleId === self::ROLE_ADMIN && !$this->hasPermission($db, self::MANAGE_ADMINS)) {
+            throw new AuthException(
+                "Granting the Admin role needs the '" . self::MANAGE_ADMINS . "' permission, which only the Super user role has.",
+                403
+            );
+        }
+    }
+
+    /**
+     * Remove a user: add_edit_delete_admin, and never user 1 or yourself
+     * (user-management.php's delete handler).
+     */
+    public function requireMayDeleteUser(\mysqli $db, int $targetUserId): void
+    {
+        $this->requireAdmin();
+        $this->requirePermission($db, self::MANAGE_ADMINS);
+        if ($targetUserId <= self::SUPER_USER_ID) {
+            throw new AuthException('The Super user (user 1) cannot be removed.', 403);
+        }
+        if ($targetUserId === $this->userId) {
+            throw new AuthException('You cannot remove your own account.', 403);
+        }
+    }
+
+    /**
+     * Whether this key's user holds a legacy role permission. A failed
+     * lookup is a 500, never false (error pattern #11): "could not tell"
+     * must not read as either answer.
+     */
+    public function hasPermission(\mysqli $db, string $permission): bool
+    {
         $stmt = $db->prepare(
             'SELECT 1 FROM 202_user_role ur
              JOIN 202_role_permission rp ON rp.role_id = ur.role_id
@@ -366,12 +495,36 @@ final readonly class Auth
         $granted = $result->fetch_row() !== null;
         $stmt->close();
 
-        if (!$granted) {
-            throw new AuthException(
-                "This account's role does not have the '" . $permission . "' permission.",
-                403
-            );
+        return $granted;
+    }
+
+    /**
+     * Whether $userId holds any of $roleIds. Same failure rule as
+     * hasPermission(): a lookup that fails is a 500, not "no".
+     *
+     * @param list<int> $roleIds
+     */
+    private function userHoldsRole(\mysqli $db, int $userId, array $roleIds): bool
+    {
+        $marks = implode(',', array_fill(0, count($roleIds), '?'));
+        $stmt = $db->prepare("SELECT 1 FROM 202_user_role WHERE user_id = ? AND role_id IN ($marks) LIMIT 1");
+        if (!$stmt) {
+            throw new AuthException('Authorization unavailable', 500);
         }
+        self::bind($stmt, str_repeat('i', count($roleIds) + 1), $userId, ...$roleIds);
+        if (!self::execute($stmt)) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $result = $stmt->get_result();
+        if ($result === false) {
+            $stmt->close();
+            throw new AuthException('Authorization unavailable', 500);
+        }
+        $holds = $result->fetch_row() !== null;
+        $stmt->close();
+
+        return $holds;
     }
 
     public function requireSelfOrAdmin(int $targetUserId): void

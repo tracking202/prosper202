@@ -18,8 +18,12 @@ declare(strict_types=1);
  * what this decides: a Secure flag only withholds the cookie from plain
  * HTTP, so a client that claims HTTPS falsely makes its own cookie
  * unusable over plain HTTP and nobody else's (error pattern #16 asks what
- * the claim can win; here, nothing). Do not reuse it for a decision a false
- * claim could win — trusting a peer, choosing a redirect target.
+ * the claim can win; here, nothing). The scheme of this install's own URLs
+ * on the request's own host (TrackingBaseUrl::forRequest()) is the same
+ * kind of answer: a false claim only changes the claimant's own redirect,
+ * cookie or stored click URL, on the host it asked for. Do not reuse it for
+ * a decision a false claim could win — trusting a peer, choosing the host
+ * of a redirect, or a URL sent to someone else.
  *
  * @param array<string, mixed> $server normally $_SERVER
  */

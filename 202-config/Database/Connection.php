@@ -220,16 +220,16 @@ final class Connection
     private function resultSet(object $stmt): mysqli_result
     {
         $result = $stmt->get_result();
-        if ($result instanceof mysqli_result) {
-            return $result;
+        if (!$result instanceof mysqli_result) {
+            try {
+                $error = $stmt->error;
+            } catch (\Error) {
+                $error = '(unknown)';
+            }
+            $stmt->close();
+            throw new QueryException('MySQL get_result failed: ' . ($error !== '' ? $error : '(no result set)'));
         }
-        try {
-            $error = $stmt->error;
-        } catch (\Error) {
-            $error = '(unknown)';
-        }
-        $stmt->close();
-        throw new QueryException('MySQL get_result failed: ' . ($error !== '' ? $error : '(no result set)'));
+        return $result;
     }
 
     /**

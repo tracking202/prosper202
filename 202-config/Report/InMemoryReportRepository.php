@@ -86,17 +86,19 @@ final class InMemoryReportRepository implements ReportRepositoryInterface
     public function timeseries(
         ReportQuery $query,
         string $interval = 'day',
+        string $timezone = 'UTC',
     ): array {
         $filtered = $this->filter($query);
+        $tz = new \DateTimeZone($timezone);
 
         $groups = [];
         foreach ($filtered as $row) {
-            $ts = (int) ($row['click_time'] ?? 0);
+            $local = (new \DateTimeImmutable('@' . (int) ($row['click_time'] ?? 0)))->setTimezone($tz);
             $period = match ($interval) {
-                'hour'  => date('Y-m-d H:00', $ts),
-                'day'   => date('Y-m-d', $ts),
-                'week'  => date('o-\\WW', $ts),
-                'month' => date('Y-m', $ts),
+                'hour'  => $local->format('Y-m-d H:00'),
+                'day'   => $local->format('Y-m-d'),
+                'week'  => $local->format('o-\\WW'),
+                'month' => $local->format('Y-m'),
                 default => throw new RuntimeException("Invalid interval: $interval"),
             };
             $groups[$period][] = $row;

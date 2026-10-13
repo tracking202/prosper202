@@ -12,11 +12,13 @@ $acip = $_GET['acip'] ?? '';
 
 
 // Creat blank #pci and save it with either a pci from the get var or the cookie
+// (or its -legacy twin: ClickCookie, loaded by hand, as the autoloader is not yet).
+require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 $pci = '';
 if (isset($_GET['pci']))
-    $pci = $_GET['pci'];
-elseif (isset($_COOKIE['tracking202pci']))
-    $pci = $_COOKIE['tracking202pci'];
+    $pci = is_string($_GET['pci']) ? $_GET['pci'] : '';
+elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null)
+    $pci = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci');
 
 if (! is_numeric($acip))
     die();
@@ -31,32 +33,33 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-if(isset($_COOKIE['tracking202subid'])) { //if there's a cookie use it
-    $click_id = $_COOKIE['tracking202subid'];
+if(getCookie202('tracking202subid') !== null) { //if there's a cookie use it
+    $click_id = getCookie202('tracking202subid');
 }
 
-else if ($db) { //if not find the list clicks id of the ip within a 30 day range
+// Nothing named the click: the visitor's last click by address. Only then —
+// a click the request names (?pci=, or the pci cookie) is the one below
+// resolves; this guess replaced it whenever the subid cookie was missing,
+// which is every visitor the privacy setting holds back (no cookies), and
+// their stored address is masked, so the guess was another visitor's click
+// in the same /24, or none.
+else if ($db && $pci === '') {
     // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
     // the redirect, so we must not dereference a false $db here first.
     $mysql['user_id'] = 1;
-    $mysql['ip_address'] = $db->real_escape_string($_SERVER['REMOTE_ADDR']);
+    // The lookup is among the first account's clicks, stored under its
+    // setting, which is the install's (p202ApplyOwnerPrivacy()).
+    p202ApplyOwnerPrivacy($mysql['user_id']);
     $daysago = time() - 86400; // 24 hours
-    $click_sql1 = "	SELECT 	202_clicks.click_id,ppc_account_id,click_id_public 
-					FROM 		202_clicks
-					LEFT JOIN	202_clicks_advance USING (click_id)
-					LEFT JOIN 	202_ips USING (ip_id)
-                    LEFT JOIN	202_clicks_record USING (click_id)
-					WHERE 	202_ips.ip_address='".$mysql['ip_address']."'
-					AND		202_clicks.user_id='".$mysql['user_id']."'
-					AND		202_clicks.click_time >= '".$daysago."'
-					ORDER BY 	202_clicks.click_id DESC
-					LIMIT 		1";
-
-    $click_result1 = $db->query($click_sql1) or record_mysql_error($click_sql1);
-    // No matching click within the window yields zero rows; guard so a null row
-    // doesn't trigger array-offset-on-null warnings/empty values downstream.
-    $click_row1 = ($click_result1 instanceof mysqli_result) ? $click_result1->fetch_assoc() : null;
-    $click_row1 = $click_row1 ?: [];
+    // The visitor's last click by the address the click path stored
+    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+        new \Prosper202\Database\Connection($db),
+        p202StoredVisitorIp(),
+        (int) $mysql['user_id'],
+        $daysago,
+        !trackingEnabled()
+    ) ?? [];
     $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
     $click_id = $mysql['click_id'];
     $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
@@ -184,7 +187,7 @@ if ($pci == '') {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>
@@ -252,7 +255,15 @@ $info_sql = "
 	WHERE
 		2ac.aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
 		AND 2cr.click_id_public='" . $mysql['click_id_public'] . "'
+		AND 2ac.user_id = 2c.user_id
 ";
+// The offer and the click are named separately (an advanced landing page
+// lets the visitor choose among the account's offers, so the campaign may
+// differ from the click's), and the click is then moved into the offer's
+// campaign at its payout. Nothing tied the two to one account: any
+// account's acip moved any click, whose public id is its id between two
+// random digits, into that account's campaign (CLAUDE.md #27). Another
+// account's campaign now names no row, the unknown-pair path below.
 
 $info_row = memcache_mysql_fetch_assoc($db, $info_sql);
 
@@ -331,9 +342,9 @@ $mysql['click_out'] = 1;
 // Initialize before the branch so the non-cloaked path doesn't read an
 // undefined variable at the $cloaking_on checks further down (matches dl.php/lp.php).
 $cloaking_on = false;
-if (($info_row['click_cloaking'] == 1) or // if tracker has overrided cloaking on
-(($info_row['click_cloaking'] == - 1) and ($info_row['aff_campaign_cloaking'] == 1)) or ((! isset($info_row['click_cloaking'])) and ($info_row['aff_campaign_cloaking'] == 1))) // if no tracker but but by default campaign has cloaking on
-{
+// The setting the click keeps (record_adv.php: the tracker's, -1 when it
+// leaves the decision to the campaign), or the campaign's (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($info_row)) {
     $cloaking_on = true;
     $mysql['click_cloaking'] = 1;
     // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
@@ -353,13 +364,9 @@ $update_sql = "
 //delay_sql($db, $update_sql);
 $click_result = $db->query($update_sql) or record_mysql_error($db);
 
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 $click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
-
-if ($cloaking_on == true) {
-    $cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-}
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
@@ -392,6 +399,10 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $mysql['landing_page_id'] = $db->real_escape_string((string)$info_row['landing_page_id']);
 $mysql['user_id'] = $db->real_escape_string((string)$info_row['user_id']);
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($info_row['user_id'] ?? null);
 
 // set timezone correctly
 $user_sql = "SELECT user_timezone FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
@@ -400,9 +411,13 @@ AUTH::set_timezone($user_row['user_timezone']);
 
 $now = time();
 
-$today_day = date('j', time());
-$today_month = date('n', time());
-$today_year = date('Y', time());
+// Integers: this file is strict_types, and date() returns strings, which
+// mktime() refused with a TypeError — every advanced landing page's campaign
+// link (go.php?acip=, off.php?acip=) answered 500. dl.php and
+// record_simple.php cast theirs; StrictTypesMktimeArgumentsTest holds all three.
+$today_day = (int) date('j', time());
+$today_month = (int) date('n', time());
+$today_year = (int) date('Y', time());
 
 // the click_time is recorded in the middle of the day
 $click_time = mktime(12, 0, 0, $today_month, $today_day, $today_year);
@@ -444,7 +459,7 @@ if ($cloaking_on == true) {
 <body>
 
 	<form name="form1" id="form1" method="get"
-		action="/tracking202/redirect/cl2.php">
+		action="<?php echo htmlspecialchars(p202InstallPath('tracking202/redirect/cl2.php')); ?>">
 		<input type="hidden" name="q"
 			value="<?php echo htmlspecialchars($redirect_site_url, ENT_QUOTES, 'UTF-8'); ?>" />
 	</form>

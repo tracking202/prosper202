@@ -1,11 +1,27 @@
 <?php
 declare(strict_types=1);
+
+if (!function_exists('legacy_api_ratio')) {
+	/**
+	 * $a / $b times $scale, rounded; 0 when $b is zero or not a number. The
+	 * reports divided with @round($a / $b): since PHP 8 a zero divisor throws
+	 * DivisionByZeroError, which @ does not silence, so a row with no clicks
+	 * or no cost answered 500.
+	 */
+	function legacy_api_ratio(mixed $a, mixed $b, int $precision = 0, int|float $scale = 1): float
+	{
+		$num = is_numeric($a) ? (float) $a : 0.0;
+		$den = is_numeric($b) ? (float) $b : 0.0;
+
+		return $den == 0.0 ? 0.0 : round($num / $den * $scale, $precision);
+	}
+}
 function getAuth($db, $variables): mixed {
 	$mysql['api_key'] = $db->real_escape_string((string) ($variables['apikey'] ?? ''));
 	// Join 202_users so a soft-deleted user's key stops authenticating, exactly
 	// as api/v3/Auth.php does. Deleting a user must revoke access on EVERY API
-	// version, not just the newest one.
-	$key_sql = "SELECT 	k.*
+	// version, not just the newest one; so must deactivating one (below).
+	$key_sql = "SELECT 	k.*, u.`user_active`
 				FROM   	`202_api_keys` k
 				INNER JOIN `202_users` u ON u.`user_id` = k.`user_id`
 				WHERE  	k.`api_key`='".$mysql['api_key']."' AND u.`user_deleted` = 0";
@@ -13,6 +29,14 @@ function getAuth($db, $variables): mixed {
 	$key_row = $key_result->fetch_assoc();
 
 	if($key_result->num_rows > 0) {
+
+		// A deactivated user's key is refused, as the sign-in refuses them
+		// (`user_active = 1`, functions-auth.php) and api/v3/Auth.php does:
+		// this read user_deleted alone, so a user turned off in Account ›
+		// Users kept reading reports with every key they held.
+		if ((string) ($key_row['user_active'] ?? '') !== '1') {
+			return ['msg' => 'The account this API key belongs to is deactivated', 'error' => true, 'status' => 401];
+		}
 
 		// A v3-scoped key is an attenuated credential. This legacy API
 		// predates scoping and cannot enforce it, so refuse the key
@@ -153,6 +177,27 @@ function runReports($db, $vars, $user, $timezone): array {
 	
 }
 
+/**
+ * The table a report groups by, joined as `2l` on the click's id for it.
+ * Each is written out: the name used to be built from the report type
+ * (`202_{$type}`), so no reader could tell which tables a report reads. A
+ * text ad is an account's own record, joined only within the click's account
+ * (CLAUDE.md #27): a click naming another account's ad reads as naming none,
+ * and is counted in the "[no text ad]" row.
+ */
+function reportDimensionJoin(string $type): string
+{
+	return match ($type) {
+		'keywords' => " LEFT OUTER JOIN 202_keywords AS 2l ON (2l.keyword_id = 2ca.keyword_id)",
+		'text_ads' => " LEFT OUTER JOIN 202_text_ads AS 2l ON (2l.text_ad_id = 2ca.text_ad_id AND 2l.user_id = 2c.user_id)",
+		'ips' => " LEFT OUTER JOIN 202_ips AS 2l ON (2l.ip_id = 2ca.ip_id)",
+		'locations_country' => " LEFT OUTER JOIN 202_locations_country AS 2l ON (2l.country_id = 2ca.country_id)",
+		'locations_city' => " LEFT OUTER JOIN 202_locations_city AS 2l ON (2l.city_id = 2ca.city_id)",
+		'locations_isp' => " LEFT OUTER JOIN 202_locations_isp AS 2l ON (2l.isp_id = 2ca.isp_id)",
+		default => throw new InvalidArgumentException("reportQuery(): no report type '$type'"),
+	};
+}
+
 function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid = null, $c1 = null, $c2 = null, $c3 = null, $c4 = null): array {
 
 	$date = [
@@ -175,15 +220,18 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 	$total_net = 0.0;
 	$total_roi = 0.0;
 
-	$mysql['user_id'] = $db->real_escape_string($user);
-	$select_id = $db->real_escape_string($id);
-	$mysql['date_from'] = $db->real_escape_string($date_from);
-	$mysql['date_to'] = $db->real_escape_string($date_to);
-	$mysql['aff_campaign_id'] = $db->real_escape_string($cid);
-	$mysql['c1'] = $db->real_escape_string($c1);
-	$mysql['c2'] = $db->real_escape_string($c2);
-	$mysql['c3'] = $db->real_escape_string($c3);
-	$mysql['c4'] = $db->real_escape_string($c4);
+	// The timestamps are ints from mktime(), and cid and c1-c4 are null when
+	// not asked for: under strict types real_escape_string() threw on each,
+	// and every report request answered 500.
+	$mysql['user_id'] = (int) $user;
+	$select_id = $db->real_escape_string((string) $id);
+	$mysql['date_from'] = (int) $date_from;
+	$mysql['date_to'] = (int) $date_to;
+	$mysql['aff_campaign_id'] = $db->real_escape_string(is_scalar($cid) ? (string) $cid : '');
+	$mysql['c1'] = $db->real_escape_string(is_scalar($c1) ? (string) $c1 : '');
+	$mysql['c2'] = $db->real_escape_string(is_scalar($c2) ? (string) $c2 : '');
+	$mysql['c3'] = $db->real_escape_string(is_scalar($c3) ? (string) $c3 : '');
+	$mysql['c4'] = $db->real_escape_string(is_scalar($c4) ? (string) $c4 : '');
 
 	$report_sql = "SELECT *
 				FROM   	202_clicks AS 2c
@@ -198,10 +246,10 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 				//If landing pages report type
 				} elseif($type == "landing_pages") {
 					$report_sql .= " LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2c.click_id)
-									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id)";
+									 LEFT OUTER JOIN 202_landing_pages AS 2lp ON (2lp.landing_page_id = 2c.landing_page_id AND 2lp.user_id = 2c.user_id)";
 				} else {
 					//If any other report type
-				   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+					$report_sql .= reportDimensionJoin($type);
 				}
 
 				//If any of C1-C4 variables are set
@@ -254,8 +302,11 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					   		LEFT OUTER JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2c.click_id)
 							LEFT OUTER JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
 							LEFT OUTER JOIN 202_site_domains AS 2l ON (2l.site_domain_id = 2su.site_domain_id)";
-					   } else {
-					   		$report_sql .= " LEFT OUTER JOIN 202_".$type." AS 2l ON (2l.".$select_id." = 2ca.".$select_id.")";
+					   } elseif($type != "landing_pages") {
+					   		// This appended the join to $report_sql, which had
+					   		// already run, so outside the referers report the
+					   		// figures below never had a `2l` to read.
+					   		$click_sql .= reportDimensionJoin($type);
 					   }
 
 					   //If any of C1-C4 variables are set
@@ -291,6 +342,11 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					   } elseif($type == "landing_pages") {
 					   		$click_sql .= "AND 2c.".$select_id."='".$report_row[$select_id]."'
 					   				  GROUP BY 2c.".$select_id;
+					   } elseif($type == "text_ads" && $report_row[$select_id] === null) {
+					   		// The "[no text ad]" row: no ad, or one that is not this
+					   		// account's (the join reads it as none) -- every click
+					   		// the report grouped there, not only those with id 0.
+					   		$click_sql .= "AND 2l.text_ad_id IS NULL";
 					   } else {
 					   		$click_sql .= "AND 2ca.".$select_id."='".$report_row[$select_id]."'";
 					   }		
@@ -312,9 +368,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//ctr rate
 					$ctr_ratio = 0;
-					$ctr_ratio = @round($click_throughs/$clicks*100,2);
+					$ctr_ratio = legacy_api_ratio($click_throughs, $clicks, 2, 100);
 
-					$total_ctr_ratio = @round($total_click_throughs/$total_clicks*100,2);
+					$total_ctr_ratio = legacy_api_ratio($total_click_throughs, $total_clicks, 2, 100);
 
 				//avg cpc and cost
 					$avg_cpc = 0;
@@ -324,7 +380,7 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$cost = $clicks * $avg_cpc;
 
 					$total_cost += $cost;
-					$total_avg_cpc = @round($total_cost/$total_clicks, 5);
+					$total_avg_cpc = legacy_api_ratio($total_cost, $total_clicks, 5);
 
 				//leads
 					$leads = 0;
@@ -334,9 +390,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//signup ratio
 					$su_ratio = 0;
-					$su_ratio = @round($leads/$clicks*100,2);
+					$su_ratio = legacy_api_ratio($leads, $clicks, 2, 100);
 
-					$total_su_ratio = @round($total_leads/$total_clicks*100,2);
+					$total_su_ratio = legacy_api_ratio($total_leads, $total_clicks, 2, 100);
 
 				//current payout
 					$payout = 0;
@@ -350,9 +406,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 					$total_income += $income;
 				//grab the EPC
 					$epc = 0;
-					$epc = @round($income/$clicks,2);
+					$epc = legacy_api_ratio($income, $clicks, 2);
 
-					$total_epc = $total_clicks > 0 ? round($total_income/$total_clicks,2) : 0;
+					$total_epc = legacy_api_ratio($total_income, $total_clicks, 2);
 
 				//net income
 					$net = 0;
@@ -362,9 +418,9 @@ function reportQuery($db, $type, $id, $name, $user, $date_from, $date_to, $cid =
 
 				//roi
 					$roi = 0;
-					$roi = @round($net/$cost*100);
+					$roi = legacy_api_ratio($net, $cost, 0, 100);
 
-					$total_roi = @round($total_net/$total_cost);
+					$total_roi = legacy_api_ratio($total_net, $total_cost, 0, 100); // a percentage, as each row's is (it was the bare ratio, so -50% read "-1%")
 
 			if ($name == "keyword") {
 				if(!$report_row['keyword']) $report_row[$name] = "[no keyword]";

@@ -833,9 +833,15 @@ var goalCampaignRemoveCmd = &cobra.Command{
 		if api.StagedMode() {
 			return stageDeletes(c, endpoint, []string{args[1]})
 		}
-		if force, _ := cmd.Flags().GetBool("force"); !force && !confirmPrompt("Stop campaign %s paying for goal %s?", args[1], args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if force, _ := cmd.Flags().GetBool("force"); !force {
+			ok, err := confirmAction(cmd, "Stop campaign %s paying for goal %s?", args[1], args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		if err := c.Delete(endpoint + "/" + args[1]); err != nil {
 			return err

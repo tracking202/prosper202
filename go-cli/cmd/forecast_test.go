@@ -238,9 +238,9 @@ func TestForecastPassesFilters(t *testing.T) {
 
 	_, _, err := executeCommand("forecast",
 		"--metric=revenue",
-		"--aff_campaign_id=42",
-		"--ppc_account_id=7",
-		"--country_id=3",
+		"--aff-campaign-id=42",
+		"--ppc-account-id=7",
+		"--country-id=3",
 	)
 	if err != nil {
 		t.Fatalf("forecast error: %v", err)

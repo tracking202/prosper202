@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,14 @@ import (
 )
 
 const defaultProfileName = "default"
+
+// ErrNoURL and ErrNoAPIKey mark a profile that cannot reach a server yet.
+// The messages wrapping them say what to run; the CLI's error path finds
+// them with errors.Is to put the setup commands in the hint as well.
+var (
+	ErrNoURL    = errors.New("no URL configured")
+	ErrNoAPIKey = errors.New("no API key configured")
+)
 
 var (
 	overrideMu      sync.RWMutex
@@ -99,10 +108,10 @@ func (c *Config) Validate() error {
 
 func (p *Profile) Validate() error {
 	if p.URL == "" {
-		return fmt.Errorf("no URL configured. Run: p202 config set-url <url>")
+		return fmt.Errorf("%w. Run: p202 config set-url <url>", ErrNoURL)
 	}
 	if p.APIKey == "" {
-		return fmt.Errorf("no API key configured. Run: p202 config set-key <key>")
+		return fmt.Errorf("%w. Run: p202 config set-key <key>", ErrNoAPIKey)
 	}
 	return nil
 }

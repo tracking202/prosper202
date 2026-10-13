@@ -28,6 +28,30 @@ In general, installs and upgrades work fine. If there is an issue, it might warr
 
 In general it is best to install Prosper on its own standalone domain but people have installed Prosper on subdomains and made it work.
 
+## Does my tracking domain need HTTPS?
+
+Serve it over HTTPS if you can. The click cookies a landing page or a conversion pixel on another site relies on are `Secure; SameSite=None`, and browsers only keep those over HTTPS.
+
+Over plain HTTP, Prosper202 reads each click cookie's second copy (`tracking202subid-legacy` and so on), which browsers keep on the usual first-party terms:
+
+- A landing page or thank-you page on the tracking domain's own site works. An example is a tracker at `track.example.com` with a landing page at `www.example.com`.
+- The Get LP Code redirect page (options 2 and 3) works from any site. It finds the click through a cookie on the landing page itself.
+- A plain `lp.php` link or a pixel on another site cannot carry the click. A browser will not keep or send the tracker's cookie there. A pixel then falls back to the visitor's last click from the same IP address.
+
+## Where does the password reset email link to?
+
+To the tracking domain stored in **Account › Personal Settings**, never to the address the reset was requested from. Whoever asks for a reset chooses that address, and the email goes to the account's owner. If no tracking domain is set, the email gives the reset page and its code without a link: open it on the address you sign in at.
+
+## Does the installer set my tracking domain?
+
+No. A fresh install has no tracking domain stored, and until you set one:
+
+- The pages build the links, snippets and postback URLs they show you on the address your browser used to open the page. Open them on the address your visitors and networks will use, or the links name that other address.
+- Anything sent to someone else uses the server's own name and port instead: the address registered with the hosted service (which runs the automatic cron jobs and sends the daily email by calling your install back) and its cookie for your install's address. Behind a reverse proxy or a published container port, that may be an address nobody outside can reach.
+- The password reset email has no link (see above).
+
+To set one, sign in as the account the installer created, open **Account › Personal Settings**, expand **Advanced** and fill in **Tracking domain** with the host only, such as `track.example.com`. The same value is `user_tracking_domain` on `PUT /api/v3/users/1/preferences`, or `p202 user prefs update 1 --user-tracking-domain track.example.com` from the CLI. That first account's value is the one the password reset email, the landing-page script and the scheduled jobs use; any other account's value is used only by the pages that account signs in to.
+
  ## Is Memcache required?
 
 No, but strongly recommended.

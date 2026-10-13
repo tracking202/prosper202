@@ -63,6 +63,11 @@ if (!$tracker_row) {
 	die();
 }
 
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this landing page's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($tracker_row['user_id'] ?? null);
+
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string) ($tracker_row['user_id'] ?? '0'));
 $user_sql = "SELECT 		user_timezone,
@@ -77,7 +82,7 @@ $user_row = memcache_mysql_fetch_assoc($db, $user_sql);
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string) ($user_row['user_pref_dynamic_bid'] ?? '0'));
 AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 
-if ($_GET['t202id']) {
+if (!empty($_GET['t202id'])) {
 	//grab tracker data if avaliable
 	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
 
@@ -89,7 +94,7 @@ if ($_GET['t202id']) {
 							2cv.parameters
 					FROM    202_trackers AS 2tr
 					LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
-					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter) AS parameters FROM 202_ppc_network_variables GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
+					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
 					WHERE   2tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
 	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
 
@@ -134,11 +139,11 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "bidded":
 		#try to get the bidded keyword first
-		if ($_GET['OVKEY']) { //if this is a Y! keyword
+		if (!empty($_GET['OVKEY'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVKEY'];
-		} elseif ($_GET['t202kw']) {
+		} elseif (!empty($_GET['t202kw'])) {
 			$keyword = (string)$_GET['t202kw'];
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (!empty($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = (string)$_GET['target_passthrough'];
 		} else { //if this is a zango, or more keyword
 			$keyword = (string)$_GET['keyword'];
@@ -149,35 +154,35 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 		#try to get the searched keyword
 		if (!empty($referer_query['q'])) {
 			$keyword = $referer_query['q'];
-		} elseif ($_GET['OVRAW']) { //if this is a Y! keyword
+		} elseif (!empty($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
-		} elseif ($_GET['target_passthrough']) { //if this is a mediatraffic! keyword
+		} elseif (!empty($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
 			$keyword = (string)$_GET['target_passthrough'];
-		} elseif ($_GET['keyword']) { //if this is a zango, or more keyword
+		} elseif (!empty($_GET['keyword'])) { //if this is a zango, or more keyword
 			$keyword = (string)$_GET['keyword'];
-		} elseif ($_GET['search_word']) { //if this is a eniro, or more keyword
+		} elseif (!empty($_GET['search_word'])) { //if this is a eniro, or more keyword
 			$keyword = (string)$_GET['search_word'];
-		} elseif ($_GET['query']) { //if this is a naver, or more keyword
+		} elseif (!empty($_GET['query'])) { //if this is a naver, or more keyword
 			$keyword = (string)$_GET['query'];
-		} elseif ($_GET['encquery']) { //if this is a aol, or more keyword
+		} elseif (!empty($_GET['encquery'])) { //if this is a aol, or more keyword
 			$keyword = (string)$_GET['encquery'];
-		} elseif ($_GET['terms']) { //if this is a about.com, or more keyword
+		} elseif (!empty($_GET['terms'])) { //if this is a about.com, or more keyword
 			$keyword = (string)$_GET['terms'];
-		} elseif ($_GET['rdata']) { //if this is a viola, or more keyword
+		} elseif (!empty($_GET['rdata'])) { //if this is a viola, or more keyword
 			$keyword = (string)$_GET['rdata'];
-		} elseif ($_GET['qs']) { //if this is a virgilio, or more keyword
+		} elseif (!empty($_GET['qs'])) { //if this is a virgilio, or more keyword
 			$keyword = (string)$_GET['qs'];
-		} elseif ($_GET['wd']) { //if this is a baidu, or more keyword
+		} elseif (!empty($_GET['wd'])) { //if this is a baidu, or more keyword
 			$keyword = (string)$_GET['wd'];
-		} elseif ($_GET['text']) { //if this is a yandex, or more keyword
+		} elseif (!empty($_GET['text'])) { //if this is a yandex, or more keyword
 			$keyword = (string)$_GET['text'];
-		} elseif ($_GET['szukaj']) { //if this is a wp.pl, or more keyword
+		} elseif (!empty($_GET['szukaj'])) { //if this is a wp.pl, or more keyword
 			$keyword = (string)$_GET['szukaj'];
-		} elseif ($_GET['qt']) { //if this is a O*net, or more keyword
+		} elseif (!empty($_GET['qt'])) { //if this is a O*net, or more keyword
 			$keyword = (string)$_GET['qt'];
-		} elseif ($_GET['k']) { //if this is a yam, or more keyword
+		} elseif (!empty($_GET['k'])) { //if this is a yam, or more keyword
 			$keyword = (string)$_GET['k'];
-		} elseif ($_GET['words']) { //if this is a Rambler, or more keyword
+		} elseif (!empty($_GET['words'])) { //if this is a Rambler, or more keyword
 			$keyword = (string)$_GET['words'];
 		} else {
 			$keyword = (string)$_GET['t202kw'];
@@ -222,11 +227,10 @@ $mysql['c4_id'] = $db->real_escape_string((string) $c4_id);
 
 $custom_var_ids = [];
 
-$ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-$parameters = explode(',', (string) $tracker_row['parameters']);
-
-foreach ($parameters as $key => $value) {
-	if ($value === '' || !isset($_GET[$value])) {
+// The traffic source's variables; none for a click with no tracker (no
+// t202id, or one that names none), as for a source that has none.
+foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
+	if (!isset($_GET[$value])) {
 		continue;
 	}
 
@@ -234,7 +238,7 @@ foreach ($parameters as $key => $value) {
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
-		$variable_id = $trackingRepo->findOrCreateVariable($variable, (int) $ppc_variable_ids[$key]);
+		$variable_id = $trackingRepo->findOrCreateVariable($variable, $ppcVariableId);
 		$custom_var_ids[] = $variable_id;
 	}
 }
@@ -289,8 +293,9 @@ if (isset($utm_content) && $utm_content != '') {
 }
 $mysql['utm_content_id'] = $db->real_escape_string((string) $utm_content_id);
 
-$ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-$ip_id = $locationRepo->findOrCreateIp($ip);
+$ip = \Prosper202\Http\VisitorIp::fromServer($_SERVER);
+// Stored masked under the owner's privacy setting (p202StoredVisitorIp).
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
 $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
 $detect = new DeviceDetect();
@@ -339,7 +344,7 @@ $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_re
 
 
 //see if this click should be filtered
-$ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+$ip_address = $ip;
 $user_id = $tracker_row['user_id'];
 
 //GEO Lookup
@@ -374,7 +379,7 @@ if ($user_row['maxmind_isp'] == '1') {
 if ($clickIsBot) {
 	$mysql['click_filtered'] = '1';
 } else {
-	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $ip_address, $user_id);
+	$click_filtered = FILTER::startFilter($db, 0, $ip_id, $user_id);
 	$mysql['click_filtered'] = $db->real_escape_string((string) $click_filtered);
 }
 
@@ -401,11 +406,9 @@ if ($total_vars > 0) {
 	$mysql['variable_set_id'] = '0';
 }
 
-// Determine cloaking
-if (($tracker_row['click_cloaking'] == 1) or
-	(($tracker_row['click_cloaking'] == -1) and ($tracker_row['aff_campaign_cloaking'] == 1)) or
-	((!isset($tracker_row['click_cloaking'])) and ($tracker_row['aff_campaign_cloaking'] == 1))
-) {
+// Determine cloaking: the tracker's setting, or the campaign's when there is
+// no tracker or it leaves the decision to the campaign (ClickCloaking).
+if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
 } else {
@@ -418,13 +421,13 @@ $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ((string) ($_GET['referer'] ?? '
 $click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 
-$outbound_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
+$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/pci.php?pci=' . $click_id_public;
 $click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 $mysql['click_cloaking_site_url_id'] = '0';
 
 if ($cloaking_on === true) {
-	$cloaking_site_url = 'http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
+	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
 	$click_cloaking_site_url_id = $locationRepo->findOrCreateSiteUrl($cloaking_site_url);
 	$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 }
@@ -440,9 +443,8 @@ $clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
 // p202lpid the landing page's script sends, a signed customer id — linked
 // after the click is stored; nothing when consent is withheld or the
 // campaign's identity capture is off.
-$clickIdentity = \Prosper202\Identity\ClickIdentity::fromRequest(
+$clickIdentity = p202ClickIdentity(
 	$_GET,
-	$_COOKIE,
 	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
 	// Minted only when the landing page is on the tracker's own site; a
 	// cross-site script request links by the page's p202lpid instead.
@@ -483,8 +485,6 @@ setOutboundCookie($outbound_site_url);
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
 
-p202LinkImpressionToClick($db, $mysql['click_id'], $mysql['landing_page_id'], 'record_simple');
-
 header('Content-Type: application/javascript; charset=UTF-8');
 ?>
 
@@ -504,11 +504,18 @@ header('Content-Type: application/javascript; charset=UTF-8');
 (function () {
 
 var subid =<?php echo json_encode((string) $click_id); ?>;
-createCookie('tracking202subid',subid,0);
-
 var outbound = <?php echo json_encode((string) $outbound_site_url); ?>;
-createCookie('tracking202outbound',outbound,0);
 
-<?php echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id); ?>
+<?php
+// The click cookies on the landing page's own site: none for a visitor the
+// privacy setting holds back (p202ClickCookieJs()). The variables above are
+// what the script has always answered with (the live passes read the click
+// id from them); they set nothing.
+echo p202ClickCookieJs([
+    'tracking202subid' => (string) $click_id,
+    'tracking202outbound' => (string) $outbound_site_url,
+]);
+echo p202MintPersonalizationCookieJs($db, (int) $mysql['user_id'], $_GET, (int) $click_id, trackingEnabled());
+?>
 
 }());

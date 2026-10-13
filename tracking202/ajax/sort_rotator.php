@@ -9,10 +9,12 @@ declare(strict_types=1);
  * Drawn into tracking202/overview/rotator-breakdown.php on the v2 shell; the
  * window, the clicks counted and CPC or CPV are the user's report
  * preferences, which that page has just applied from its URL. The figures
- * are the classic page's, query for query. A rule's criteria and redirects,
- * which the classic page fetched into a modal from the Setup page's endpoint,
- * are read here and shown under the rule, so the report does not depend on
- * Setup's markup.
+ * are Tracking202\Report\RotatorBreakdown's: a click's rotator and rule are
+ * its 202_clicks_rotator row, as GET /rotators/{id}/stats reads them (that
+ * class says what counting from 202_clicks got wrong). A rule's criteria and
+ * redirects, which the classic page fetched into a modal from the Setup
+ * page's endpoint, are read here and shown under the rule, so the report
+ * does not depend on Setup's markup.
  */
 
 include_once(substr(__DIR__, 0, -17) . '/202-config/connect.php');
@@ -39,7 +41,7 @@ $to = (int) $time['to'];
 $userId = (int) $_SESSION['user_id'];
 
 $prefs = p202_report_prefs_load(new \Prosper202\Database\Connection($db), $userId);
-$click_filtered = \Prosper202\DataEngine\UserPrefFilters::showFilter((string) ($prefs['user_pref_show'] ?? ''));
+$show = (string) ($prefs['user_pref_show'] ?? '');
 $cpv = ($prefs['user_cpc_or_cpv'] ?? '') === 'cpv';
 // The one masking decision every report surface shares (CampaignDataMask):
 // it exempts a publisher session, whose queries are already scoped to its own
@@ -59,35 +61,18 @@ $fetchAll = static function (string $sql) use ($db): array {
 	return $result->fetch_all(MYSQLI_ASSOC);
 };
 
-/** The figures for one set of clicks, as the classic page summed them. */
-$stats = static function (string $where) use ($fetchAll, $click_filtered, $from, $to): array {
-	$rows = $fetchAll("SELECT
-			COUNT(*) AS clicks,
-			SUM(c.click_lead) AS leads,
-			ac.aff_campaign_payout AS payout,
-			SUM(c.click_payout*c.click_lead) AS income,
-			AVG(c.click_cpc) AS avg_cpc,
-			SUM(c.click_cpc) AS cost
-		FROM 202_clicks AS c
-		LEFT OUTER JOIN 202_aff_campaigns AS ac ON (c.aff_campaign_id = ac.aff_campaign_id)
-		WHERE " . $where . $click_filtered . " AND click_time >= '" . $from . "' AND click_time <= '" . $to . "'");
-	$row = $rows[0] ?? [];
-	return [
-		'clicks' => (float) ($row['clicks'] ?? 0),
-		'leads' => (float) ($row['leads'] ?? 0),
-		'payout' => (float) ($row['payout'] ?? 0),
-		'income' => (float) ($row['income'] ?? 0),
-		'avg_cpc' => (float) ($row['avg_cpc'] ?? 0),
-		'cost' => (float) ($row['cost'] ?? 0),
-	];
-};
-
-/** One row of figures, formatted as the classic page formatted them. */
+/**
+ * One row of figures (RotatorBreakdown's clicks, leads, income, cost),
+ * formatted as the classic page formatted them. Payout is income per lead and
+ * the average CPC cost per click, both from the row's own sums.
+ */
 $cells = static function (array $s, int $roiPrecision) use ($cpv, $canSee, $e): array {
 	$net = $s['income'] - $s['cost'];
 	$su = $s['clicks'] > 0 ? round($s['leads'] / $s['clicks'] * 100, 2) : 0;
 	$epc = $s['clicks'] > 0 ? round($s['income'] / $s['clicks'], 2) : 0;
 	$roi = $s['cost'] > 0 ? round($net / $s['cost'] * 100, $roiPrecision) : 0;
+	$s['payout'] = $s['leads'] > 0 ? $s['income'] / $s['leads'] : 0;
+	$s['avg_cpc'] = $s['clicks'] > 0 ? $s['cost'] / $s['clicks'] : 0;
 	$tone = $net > 0 ? 'text-success' : ($net < 0 ? 'text-danger' : '');
 	$toned = static fn (string $text): string => $tone === '' ? $e($text) : '<span class="' . $tone . '">' . $e($text) . '</span>';
 	$hidden = ['text' => '?'];
@@ -105,13 +90,18 @@ $cells = static function (array $s, int $roiPrecision) use ($cpv, $canSee, $e): 
 	];
 };
 
-/** A rule's criteria and where it sends a click, under its name. */
-$ruleDetails = static function (int $ruleId) use ($fetchAll, $e): string {
+/**
+ * A rule's criteria and where it sends a click, under its name. The rule is
+ * one of this account's redirectors' (RotatorBreakdown reads `ro.user_id`);
+ * a campaign or landing page it sends to is named only when it is this
+ * account's too (CLAUDE.md #27), and otherwise shown by its id.
+ */
+$ruleDetails = static function (int $ruleId) use ($fetchAll, $e, $userId): string {
 	$criteria = $fetchAll('SELECT DISTINCT type, statement, value FROM 202_rotator_rules_criteria WHERE rule_id = ' . $ruleId);
 	$redirects = $fetchAll('SELECT rr.redirect_url, rr.redirect_campaign, rr.redirect_lp, rr.weight, ac.aff_campaign_name, lp.landing_page_nickname
 		FROM 202_rotator_rules_redirects AS rr
-		LEFT JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = rr.redirect_campaign)
-		LEFT JOIN 202_landing_pages AS lp ON (lp.landing_page_id = rr.redirect_lp AND lp.landing_page_deleted = 0)
+		LEFT JOIN 202_aff_campaigns AS ac ON (ac.aff_campaign_id = rr.redirect_campaign AND ac.user_id = ' . $userId . ')
+		LEFT JOIN 202_landing_pages AS lp ON (lp.landing_page_id = rr.redirect_lp AND lp.landing_page_deleted = 0 AND lp.user_id = ' . $userId . ')
 		WHERE rr.rule_id = ' . $ruleId);
 
 	$items = [];
@@ -136,51 +126,34 @@ $ruleDetails = static function (int $ruleId) use ($fetchAll, $e): string {
 		. '</ul></details>';
 };
 
-$rotators = $fetchAll('SELECT id, name FROM 202_rotators WHERE user_id = ' . $userId);
+try {
+	$rotators = (new \Tracking202\Report\RotatorBreakdown($db))->rotators($userId, $from, $to, $show);
+} catch (\Prosper202\Database\Exceptions\QueryException $failed) {
+	// The classic page's database error, not an empty report.
+	record_mysql_error($db, $failed->getMessage());
+}
 
 $rows = [];
-$total = ['clicks' => 0.0, 'leads' => 0.0, 'payout' => 0.0, 'income' => 0.0, 'cost' => 0.0];
-$lastRules = 0;
-$lastDefaultPayout = 0.0;
+$total = \Tracking202\Report\RotatorBreakdown::zero();
 foreach ($rotators as $rotator) {
-	$rotatorId = (int) $rotator['id'];
-	$all = $stats("rotator_id='" . $rotatorId . "'");
-	foreach (['clicks', 'leads', 'income', 'cost'] as $key) {
-		$total[$key] += $all[$key];
-	}
-	$total['payout'] += $all['payout'];
-	$rows[] = ['name' => ['html' => '<strong>' . $e($rotator['name']) . '</strong>']] + $cells($all, 0);
+	$total = \Tracking202\Report\RotatorBreakdown::add($total, $rotator['totals']);
+	$rows[] = ['name' => ['html' => '<strong>' . $e($rotator['name']) . '</strong>']] + $cells($rotator['totals'], 0);
 
-	$rules = $fetchAll('SELECT id, rule_name FROM 202_rotator_rules WHERE rotator_id = ' . $rotatorId);
-	foreach ($rules as $rule) {
-		$ruleStats = $stats("rule_id='" . (int) $rule['id'] . "'");
-		$rows[] = ['name' => ['html' => '<div class="ps-3">' . $e($rule['rule_name']) . $ruleDetails((int) $rule['id']) . '</div>']] + $cells($ruleStats, 2);
+	foreach ($rotator['rules'] as $rule) {
+		$label = $rule['deleted']
+			? '<div class="ps-3">Deleted rule <span class="text-secondary small">#' . $e($rule['id']) . ', since removed; its clicks in this window</span></div>'
+			: '<div class="ps-3">' . $e($rule['name']) . $ruleDetails($rule['id']) . '</div>';
+		$rows[] = ['name' => ['html' => $label]] + $cells($rule['figures'], 2);
 	}
 
-	$default = $stats("rotator_id='" . $rotatorId . "' AND rule_id='0'");
-	$lastRules = count($rules);
-	$lastDefaultPayout = $default['payout'];
-	$rows[] = ['name' => ['html' => '<div class="ps-3">Default <span class="text-secondary small">when no rule matches</span></div>']] + $cells($default, 2);
+	$rows[] = ['name' => ['html' => '<div class="ps-3">Default <span class="text-secondary small">when no rule matches</span></div>']] + $cells($rotator['default'], 2);
 }
 
-// The classic page's own arithmetic for the report's average payout: every
-// rotator's payout plus the LAST rotator's default payout, over the last
-// rotator's rule count plus one. Kept as it was, odd as it is: it is a
-// figure, and changing what it means is a change to the report rather than
-// to its page.
-$totals = null;
-if ($rotators !== []) {
-	$payout = round(($total['payout'] + $lastDefaultPayout) / ($lastRules + 1), 2);
-	$totalCells = $cells([
-		'clicks' => $total['clicks'],
-		'leads' => $total['leads'],
-		'payout' => $payout,
-		'income' => $total['income'],
-		'avg_cpc' => $total['clicks'] > 0 ? round($total['cost'] / $total['clicks'], 5) : 0,
-		'cost' => $total['cost'],
-	], 0);
-	$totals = ['name' => 'Totals for report'] + $totalCells;
-}
+// The report's totals are every rotator's clicks summed, its payout income
+// per lead over all of them. The classic page averaged the rotators' payouts
+// with the last rotator's default counted twice, over that rotator's rule
+// count plus one: a figure that described none of the rows above it.
+$totals = $rotators === [] ? null : ['name' => 'Totals for report'] + $cells($total, 0);
 
 $columns = [['key' => 'name', 'label' => 'Rotator']];
 foreach (['clicks' => 'Clicks', 'leads' => 'Leads', 'su' => 'S/U', 'payout' => 'Payout', 'epc' => 'EPC', 'cpc' => 'Avg CPC', 'income' => 'Income', 'cost' => 'Cost', 'net' => 'Net', 'roi' => 'ROI'] as $key => $label) {

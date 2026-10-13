@@ -65,6 +65,9 @@ $run = function (string $sql) use ($db): mysqli_result|bool {
 
 try {
     // ---------- 1. Subscription lifecycle sweep ----------
+    // Every account's subscriptions, on purpose: the lapse rules are the
+    // same for all, and each row is moved and recomputed for its own
+    // customer, whose account it already is.
     // Collect the owners of subscriptions about to age out FIRST: their
     // cached mrr/active_subscription_count must be recomputed right after
     // the sweep, because a lapsed subscriber's last_activity_time is

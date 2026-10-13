@@ -86,6 +86,11 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             $logged,
             "the real error is logged:\n$all"
         );
+        // The page asks the failed connection nothing more: a read there
+        // fails the same way and throws, a fatal in place of this page. The
+        // first line proves the runner's recording saw the runner's query.
+        self::assertStringContainsString("ASKED FIRST: SELECT nothing FROM p202_no_such_table_for_record_mysql_error\n", $stdout);
+        self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, "the error page queried the database that just failed:\n$all");
         if ($shape === 'db') {
             self::assertStringContainsString('SQL: (statement not given)', $logged);
         } else {

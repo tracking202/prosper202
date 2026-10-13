@@ -69,11 +69,19 @@ $error = [
 	'user_pass' => ''
 ];
 
-if (isset($_COOKIE['user_api'])) {
+// The license key reaches the installer from the fetch-a-key step via the
+// user_api cookie that step sets (the portal returns the key to
+// get_apikey.php in its query string — that is pre-existing). The cookie is
+// no longer *required* to render the form: the key is validated when the form
+// is submitted (below, with the same service the fetch-a-key page used), so a
+// visitor who lands here directly sees the form rather than being bounced to
+// a page that, on a fresh install, could not hand them a usable key. On a
+// submit the posted field wins, so a validation error re-renders with the key
+// the user sent.
+if (isset($_POST['user_api'])) {
+	$html['user_api'] = htmlentities((string) $_POST['user_api'], ENT_QUOTES, 'UTF-8');
+} elseif (isset($_COOKIE['user_api'])) {
 	$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
-} else {
-	header("Location: " . get_absolute_url() . "202-config/get_apikey.php");
-	exit;
 }
 
 //check to see if this is already installed, if so don't do anything
@@ -120,8 +128,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	$error['user_name']  = $fieldErrors['user_name'];
 	$error['user_pass']  = $fieldErrors['user_pass'];
 
-	//if the CSRF check passed and no validation error occurred, create the account
-	if ($csrf_ok && empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
+	// Validate the license key here, server-side, with the same service the
+	// fetch-a-key page used. This is why the installer no longer depends on a
+	// pre-login AJAX check that could not run before an account existed. Only
+	// an explicit "Key valid" proceeds: an invalid key, or a service we cannot
+	// reach, fails closed exactly as that page did (CLAUDE.md #11). Skipped
+	// when the CSRF check already failed, so a forged POST does no network
+	// work. The key is read only from the posted field and sent only to the
+	// service — never placed in a redirect, header or log line.
+	$license_ok = false;
+	if ($csrf_ok) {
+		$license_ok = install_license_key_is_valid(api_key_validate((string) ($_POST['user_api'] ?? '')));
+		if (!$license_ok && ($error['general'] ?? '') === '') {
+			$error['general'] = '<div class="error">We couldn\'t confirm that license key with my.tracking202.com. <a href="' . get_absolute_url() . '202-config/get_apikey.php">Fetch your key again</a>, then submit once more.</div>';
+		}
+	}
+
+	//if the CSRF check passed, the license key is valid and no validation error occurred, create the account
+	if ($csrf_ok && $license_ok && empty($error['user_email']) && empty($error['user_name']) && empty($error['user_pass'])) {
 
 		//no error, so now set up the mysql database structures and the account
 		$installer = new INSTALL();
@@ -365,7 +389,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['user_name'])) {
 		$html['user_name'] = htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8');
 	}
-	$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+	// Re-render with the key the user just submitted (it is a hidden field),
+	// falling back to the cookie, so a validation error does not blank it.
+	if (isset($_POST['user_api'])) {
+		$html['user_api'] = htmlentities((string) $_POST['user_api'], ENT_QUOTES, 'UTF-8');
+	} elseif (isset($_COOKIE['user_api'])) {
+		$html['user_api'] = htmlentities((string) $_COOKIE['user_api'], ENT_QUOTES, 'UTF-8');
+	}
 	// Don't store password in HTML for security reasons
 
 	// AJAX submissions get JSON: either the rendered success panel to swap in, or
@@ -374,7 +404,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if ($success) {
 			ob_start();
 			$base_url = install_request_base_url($_SERVER, get_absolute_url());
-			render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
+			render_install_success($html, $install_warnings, get_absolute_url(), \Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER), $base_url);
 			$panel = ob_get_clean();
 			install_json([
 				'success'  => true,
@@ -410,18 +440,11 @@ if (!$success) {
 		$version_error['phpversion'] = 'Prosper202 requires PHP ' . PROSPER202_MIN_PHP_VERSION . ', or newer.';
 	}
 
-	// Get Database version
-	$mysqlversion = $db->server_info;
-	if (preg_match('/-(10\..+)-MariaDB/i', (string) $mysqlversion, $match)) {
-		// Support For MariaDB
-		$mysqlversion = $match[1];
-		if ((version_compare($mysqlversion, '10.6') < 0)) {
-			$version_error['mysqlversion'] = 'Prosper202 requires MariaDB 10.6, or newer.';
-		}
-	} else {
-		if ((version_compare($mysqlversion, '8.0') < 0)) {
-			$version_error['mysqlversion'] = 'Prosper202 requires MySQL 8.0, or newer.';
-		}
+	// Database floors: database_version_check() in version.php
+	$dbCheck = database_version_check((string) $db->server_info);
+	$mysqlversion = $dbCheck['version'];
+	if ($dbCheck['error'] !== null) {
+		$version_error['mysqlversion'] = $dbCheck['error'];
 	}
 
 	$html['mysqlversion'] = htmlentities((string) $mysqlversion, ENT_QUOTES, 'UTF-8');
@@ -679,6 +702,6 @@ if (!$success) {
 if ($success) {
 	info_top(['title' => 'Installed - Prosper202 ClickServer', 'wide' => true]);
 	$base_url = install_request_base_url($_SERVER, get_absolute_url());
-	render_install_success($html, $install_warnings, get_absolute_url(), (string) ($_SERVER['SERVER_NAME'] ?? ''), $base_url);
+	render_install_success($html, $install_warnings, get_absolute_url(), \Prosper202\Click\TrackingBaseUrl::requestHost($_SERVER), $base_url);
 	info_bottom();
 }

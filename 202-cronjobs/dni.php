@@ -13,9 +13,10 @@ try {
 		if ($results && $results->num_rows > 0) {
 			$row = $results->fetch_assoc();
 
-			// validate install_hash with constant-time comparison
-			if (!hash_equals((string)$row['install_hash'], (string)($_GET['hash'] ?? ''))) {
-				die("Unautorized!");
+			// The registering account's install hash, constant-time, and never
+			// an empty one: hash_equals('', '') is true (InstallHash).
+			if (!\Prosper202\User\InstallHash::matches($row['install_hash'] ?? null, $_GET['hash'] ?? null)) {
+				die("Unauthorized!");
 			}
 
 			if ($_GET['processed'] == 'false') {
@@ -37,6 +38,9 @@ try {
 				curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
 				$response = curl_exec($curl);
 			} else if ($_GET['processed'] == 'true') {
+				// The hosted service's callback names the network by its id
+				// and key, the pair it was sent above: it marks that network
+				// of whichever account registered it, by design.
 				$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE networkId = '" . $mysql['networkId'] . "' AND apiKey = '" . $row['apiKey'] . "'";
 				$results = $db->query($sql);
 			}

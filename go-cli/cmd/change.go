@@ -90,7 +90,11 @@ var changeApplyCmd = &cobra.Command{
 				return fmt.Errorf("parsing staged change: %w", perr)
 			}
 			summary, _ := obj["summary"].(string)
-			if !confirmPrompt("Apply staged change %s (%s)?", args[0], summary) {
+			ok, err := confirmAction(cmd, "Apply staged change %s (%s)?", args[0], summary)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				// stderr, not stdout: the go-cli contract keeps stdout empty
 				// unless it carries data, so a --json caller never parses this
 				// as a result. Every cancel path in crud.go does the same.

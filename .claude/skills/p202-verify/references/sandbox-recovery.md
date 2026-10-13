@@ -73,8 +73,11 @@ php phpstan.phar analyse -c phpstan.neon.dist --no-progress
 ```
 
 Expect about six `class.notFound` errors for `cli/` on a partial vendor, all
-of the shape `extends unknown class Symfony\...`. The `phpstan` tier
-recognises that shape when `vendor:` is partial: if those are the only
+of the shape `extends unknown class Symfony\...`, each printed a second time
+as a top-level `Error message "…" cannot be ignored, use excludePaths
+instead.` (and, in `cli/Application.php`, an `#[\Override]` that overrides
+nothing PHPStan can see). The `phpstan` tier recognises those shapes when
+`vendor:` is partial: if those are the only
 errors it reports SKIP naming the count, and if there are others it reports
 FAIL as `(N environmental, M other)` so the real findings are not buried.
 PHPStan discovers symbols through Composer package metadata, so a package

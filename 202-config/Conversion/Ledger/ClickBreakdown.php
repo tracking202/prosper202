@@ -31,8 +31,8 @@ final class ClickBreakdown
 
     /**
      * @param int|null $ownerUserId the account the click must belong to; null
-     *        for a session that may see every account's clicks (the report
-     *        pages' non-publisher sessions)
+     *        for a session that may see every account's clicks
+     *        (Prosper202\DataEngine\DataScope::userId())
      * @return array{click: array<string, mixed>, rows: list<array<string, mixed>>}|null
      *         null when there is no such click for that owner
      */
@@ -44,7 +44,7 @@ final class ClickBreakdown
         $sql = 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_lead, c.click_payout, c.click_time,
                        ac.aff_campaign_name
                 FROM 202_clicks c
-                LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
+                LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                 WHERE c.click_id = ?' . ($ownerUserId !== null ? ' AND c.user_id = ?' : ' AND c.user_id <> 0') . ' LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $ownerUserId !== null ? 'ii' : 'i', $ownerUserId !== null ? [$clickId, $ownerUserId] : [$clickId]);
@@ -54,7 +54,7 @@ final class ClickBreakdown
         }
         $userId = (int) $click['user_id'];
 
-        $terms = (new MysqlConversionLedger($this->conn))->campaignTerms((int) $click['aff_campaign_id']);
+        $terms = (new MysqlConversionLedger($this->conn))->campaignTerms((int) $click['aff_campaign_id'], $userId);
 
         $stmt = $this->conn->prepareRead(
             'SELECT conv_id, click_id, click_payout, payable, deleted, reverses_conv_id, source, source_ref,

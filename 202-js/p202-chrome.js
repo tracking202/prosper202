@@ -179,11 +179,13 @@
             if (!close) {
                 return;
             }
+            // The snooze is a write, so it carries the session token (the
+            // jQuery prefilter in template.php does not see fetch()).
             fetchText(slot.getAttribute('data-p202-snooze'), {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'delay=1'
+                body: 'delay=1&token=' + encodeURIComponent(slot.getAttribute('data-p202-token') || '')
             }).catch(function () { /* the banner is gone for this page either way */ });
         });
         if (window.fetch) {

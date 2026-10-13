@@ -45,12 +45,29 @@ final class AuthTest extends TestCase
     public function testFromRequestWithValidBearerTokenCreatesAuth(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 7],
+            '202_api_keys' => ['user_id' => 7, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'Admin']],
         ]);
 
         $auth = Auth::fromRequest(['Authorization' => 'Bearer abc123validkey'], $db);
         $this->assertSame(7, $auth->userId());
+    }
+
+    public function testFromRequestRefusesADeactivatedUsersKey(): void
+    {
+        foreach ([0, '0', null] as $active) {
+            $db = $this->createMysqliMock([
+                '202_api_keys' => ['user_id' => 7, 'user_active' => $active],
+                '202_user_role' => [['role_name' => 'Admin']],
+            ]);
+            try {
+                Auth::fromRequest(['Authorization' => 'Bearer abc123validkey'], $db);
+                $this->fail('a key of a user whose user_active is ' . var_export($active, true) . ' authenticated');
+            } catch (AuthException $e) {
+                $this->assertSame(401, $e->getCode());
+                $this->assertStringContainsString('deactivated', $e->getMessage());
+            }
+        }
     }
 
     public function testFromRequestWithMissingAuthHeaderThrowsAuthException(): void
@@ -80,7 +97,7 @@ final class AuthTest extends TestCase
     public function testFromRequestWithLowercaseAuthorizationHeader(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 3],
+            '202_api_keys' => ['user_id' => 3, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -107,7 +124,7 @@ final class AuthTest extends TestCase
     public function testFromRequestWithArrayHeaderValue(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 5],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1],
             '202_user_role' => [],
         ]);
 
@@ -153,7 +170,7 @@ final class AuthTest extends TestCase
             ->getMock();
 
         $showScopeStmt = $this->createStmtMock(true, $this->createResultMock([]));
-        $apiKeyResult = $this->createResultMock([['user_id' => 7]]);
+        $apiKeyResult = $this->createResultMock([['user_id' => 7, 'user_active' => 1]]);
         $apiStmt = $this->createStmtMock(true, $apiKeyResult);
         $roleStmt = $this->createStmtMock(false, $this->createResultMock([]));
 
@@ -172,7 +189,7 @@ final class AuthTest extends TestCase
             ->getMock();
 
         $showScopeStmt = $this->createStmtMock(true, $this->createResultMock([]));
-        $apiKeyResult = $this->createResultMock([['user_id' => 7]]);
+        $apiKeyResult = $this->createResultMock([['user_id' => 7, 'user_active' => 1]]);
         $apiStmt = $this->createStmtMock(true, $apiKeyResult);
         $roleStmt = $this->createStmtMock(true, false);
 
@@ -186,7 +203,7 @@ final class AuthTest extends TestCase
     public function testUserIdReturnsCorrectUserId(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 42],
+            '202_api_keys' => ['user_id' => 42, 'user_active' => 1],
             '202_user_role' => [],
         ]);
 
@@ -197,7 +214,7 @@ final class AuthTest extends TestCase
     public function testRolesReturnsLowercaseRoleNames(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [
                 ['role_name' => 'Admin'],
                 ['role_name' => 'EDITOR'],
@@ -212,7 +229,7 @@ final class AuthTest extends TestCase
     public function testRolesReturnsEmptyArrayWhenNoRoles(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
         ]);
 
         $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
@@ -222,7 +239,7 @@ final class AuthTest extends TestCase
     public function testIsAdminTrueWhenUserHasAdminRole(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'admin']],
         ]);
 
@@ -233,7 +250,7 @@ final class AuthTest extends TestCase
     public function testIsAdminTrueWhenUserHasAdministratorRole(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'Administrator']],
         ]);
 
@@ -244,7 +261,7 @@ final class AuthTest extends TestCase
     public function testIsAdminFalseWhenUserHasNoAdminRole(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [
                 ['role_name' => 'user'],
                 ['role_name' => 'editor'],
@@ -258,7 +275,7 @@ final class AuthTest extends TestCase
     public function testRequireAdminThrows403WhenNotAdmin(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -271,7 +288,7 @@ final class AuthTest extends TestCase
     public function testRequireAdminPassesForAdmin(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'admin']],
         ]);
 
@@ -283,7 +300,7 @@ final class AuthTest extends TestCase
     public function testRequireSelfOrAdminPassesWhenTargetingSelf(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 5],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -295,7 +312,7 @@ final class AuthTest extends TestCase
     public function testRequireSelfOrAdminPassesWhenAdminTargetingOther(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'admin']],
         ]);
 
@@ -307,7 +324,7 @@ final class AuthTest extends TestCase
     public function testRequireSelfOrAdminThrows403WhenNonAdminTargetingOther(): void
     {
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 5],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -321,7 +338,7 @@ final class AuthTest extends TestCase
     {
         $db = $this->createMysqliMock([
             "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-            '202_api_keys' => ['user_id' => 5, 'scope' => 'sync:read,sync:write'],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1, 'scope' => 'sync:read,sync:write'],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -334,7 +351,7 @@ final class AuthTest extends TestCase
     {
         $db = $this->createMysqliMock([
             "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-            '202_api_keys' => ['user_id' => 5, 'scope' => 'sync:read'],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1, 'scope' => 'sync:read'],
             '202_user_role' => [['role_name' => 'user']],
         ]);
 
@@ -348,7 +365,7 @@ final class AuthTest extends TestCase
     {
         $db = $this->createMysqliMock([
             "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-            '202_api_keys' => ['user_id' => 5, 'scope' => $scope],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1, 'scope' => $scope],
             '202_user_role' => [['role_name' => $role]],
         ]);
 
@@ -398,7 +415,7 @@ final class AuthTest extends TestCase
     {
         // No scope column at all (pre-1.9.75 schema): the key parses to `*`.
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 5],
+            '202_api_keys' => ['user_id' => 5, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'user']],
         ]);
         $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
@@ -420,7 +437,7 @@ final class AuthTest extends TestCase
         // The installer grants role 1, "Super user" — the install owner must
         // pass the v3 admin gates.
         $db = $this->createMysqliMock([
-            '202_api_keys' => ['user_id' => 1],
+            '202_api_keys' => ['user_id' => 1, 'user_active' => 1],
             '202_user_role' => [['role_name' => 'Super user']],
         ]);
         $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);

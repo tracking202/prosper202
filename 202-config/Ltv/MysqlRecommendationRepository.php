@@ -35,6 +35,12 @@ use Prosper202\Database\Connection;
  * revenue) when revenue data exists, by score alone otherwise; ties break on
  * campaign_id.
  *
+ * Only the account's own campaigns are ever suggested: a conversion or click
+ * names its campaign by id, and nothing stopped a tracker naming another
+ * account's before the API checked linked ids (229df10), so every campaign
+ * join here also requires the campaign's user_id to be the row's — another
+ * account's offer name and URL are never handed to this account's customer.
+ *
  * Cold start (v3): most customers have no conversion-linked history at all —
  * revenue arrives via /ltv/revenue or subscriptions, or the account is young —
  * so customers without usable transitions fall through a tiered chain instead
@@ -403,7 +409,7 @@ final class MysqlRecommendationRepository
                     ot.from_customers, ot.last_seen_at,
                     ac.aff_campaign_name AS name, ac.aff_campaign_url AS url
              FROM 202_offer_transitions ot
-             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = ot.to_campaign_id
+             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = ot.to_campaign_id AND ac.user_id = ot.user_id
                 AND ac.aff_campaign_deleted = 0
              WHERE ot.user_id = ? AND ot.from_campaign_id IN ({$sourcePlaceholders}) {$notIn}"
         );
@@ -592,17 +598,17 @@ final class MysqlRecommendationRepository
             "SELECT s.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url,
                     COUNT(*) AS clicks, MAX(s.click_time) AS last_at
              FROM (
-                 SELECT ck.aff_campaign_id AS campaign_id, ck.click_time
+                 SELECT ck.aff_campaign_id AS campaign_id, ck.click_time, ck.user_id
                  FROM 202_clicks_tracking ct
                  JOIN 202_clicks ck ON ck.click_id = ct.click_id AND ck.user_id = ?
                  WHERE ct.customer_id = ?
                  UNION ALL
-                 SELECT ck.aff_campaign_id, ck.click_time
+                 SELECT ck.aff_campaign_id, ck.click_time, ck.user_id
                  FROM 202_customers c
                  JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = ?
                  WHERE c.customer_id = ? AND c.user_id = ?
              ) s
-             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = s.campaign_id
+             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = s.campaign_id AND ac.user_id = s.user_id
                 AND ac.aff_campaign_deleted = 0
              WHERE 1 = 1 {$notIn}
              GROUP BY s.campaign_id, ac.aff_campaign_name, ac.aff_campaign_url
@@ -640,7 +646,7 @@ final class MysqlRecommendationRepository
         $stmt = $this->conn->prepareRead(
             "SELECT cl.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url
              FROM 202_conversion_logs cl
-             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
+             JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
                 AND ac.aff_campaign_deleted = 0
              WHERE cl.user_id = ? AND cl.deleted = 0 AND cl.conv_time >= ?
                AND cl.click_payout >= 0 {$notIn}

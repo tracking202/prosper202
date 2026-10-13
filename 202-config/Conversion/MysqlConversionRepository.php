@@ -70,7 +70,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
             $whereClause
             ORDER BY cl.conv_time DESC LIMIT ? OFFSET ?";
 
@@ -91,7 +91,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
                 ac.aff_campaign_name
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1";
 
         $stmt = $this->conn->prepareRead($sql);
@@ -154,16 +154,21 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        conv_time, campaign_id, click_time, and the legacy columns
      *        time_difference, ip, pixel_type, user_agent.
      *        LTV keys (all optional): customer_id, customer_ref +
-     *        customer_ref_type, customer_crm, items.
+     *        customer_ref_type, customer_crm, items; ltv_requires_customer
+     *        (true = refuse items or customer_crm when no customer resolves,
+     *        rather than record the conversion without them).
      * @param (callable(int $clickId, float $payout): void)|null $clickSideUpdate
      *        Runs inside the transaction after the insert. It must not write
      *        click_lead or click_payout (ClickValueWritersTest enforces it):
      *        the recompute that follows owns both.
-     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, deleted?: bool, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float}
+     * @return array{convId: int, duplicate: bool, clickFound: bool, customerId: int|null, dedupeKey?: string, deleted?: bool, reversesConvId?: int|null, campaignId?: int, clickTime?: int, payout?: float, ltvDropped?: list<string>}
      *         A duplicate of a keyed row names the row it matched (convId,
      *         dedupeKey) and says whether it is deleted: a deleted row keeps
      *         its key, so the same conversion is not recorded again.
+     *         ltvDropped names the LTV fields of a recorded row that were
+     *         stored nowhere because no customer resolved.
      * @throws ReversalException when a reversal names no row, or a different reversal of that row is on file
+     * @throws LtvDataWithoutCustomer when ltv_requires_customer is set and items or customer_crm have no customer
      */
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
     {
@@ -264,8 +269,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // The ip column is varchar(45): exactly one address fits, a forwarding
         // chain does not, and an over-long value fails the INSERT under strict
         // sql_mode and rolls the conversion back. Whatever a caller hands in,
-        // the row gets one valid address or nothing (p202ClientIp() picks the
-        // address at the endpoints; this is the writer's own floor).
+        // the row gets one valid address or nothing (p202StoredVisitorIp()
+        // picks the address at the endpoints; this is the writer's own floor).
         $ip = trim((string) ($data['ip'] ?? ''));
         $data['ip'] = $ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) !== false ? $ip : '';
 
@@ -321,7 +326,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $clickCampaignId = (int) $click['aff_campaign_id'];
-        $terms = $ledger->campaignTerms($clickCampaignId);
+        $terms = $ledger->campaignTerms($clickCampaignId, $userId);
 
         // A reversal names the row it reverses by that row's transaction
         // id. It is its own row with its own key (never tx:<id>, which the
@@ -444,6 +449,24 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // unlinked, exactly as before the LTV feature.
         $customerId = empty($data['skip_ltv']) ? $this->resolveCustomer($userId, $clickId, $data, $convTime) : null;
 
+        // Line items and CRM fields belong to a customer (its revenue event,
+        // its record). With none resolved they have nowhere to go: a caller
+        // that can be answered asked to be refused, here, before the row is
+        // written (the transaction rolls back what the click lock and
+        // ensureManaged() touched); a pixel keeps its conversion, and the
+        // result names what was not stored so it can say so.
+        $ltvDropped = [];
+        if ($customerId === null && empty($data['skip_ltv'])) {
+            foreach (['items', 'customer_crm'] as $field) {
+                if (!empty($data[$field])) {
+                    $ltvDropped[] = $field;
+                }
+            }
+            if ($ltvDropped !== [] && !empty($data['ltv_requires_customer'])) {
+                throw new LtvDataWithoutCustomer($ltvDropped);
+            }
+        }
+
         $columns = ['click_id', 'transaction_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time'];
         $types = 'isisiii';
         $values = [$clickId, $transactionId, $campaignId, Amount::fromUnits($amountUnits), $userId, $clickTime, $convTime];
@@ -535,7 +558,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($ledgerEvent['inserted']) {
                 $this->customers->applyEventToRollups($userId, $customerId, $eventType, $payout, $convTime, $convTime);
                 $items = $data['items'] ?? [];
-                if (is_array($items) && $items !== []) {
+                if (!is_array($items)) {
+                    // Skipped, the sale was recorded without its items.
+                    throw new RuntimeException('items must be a list of line items');
+                }
+                if ($items !== []) {
                     $this->customers->insertLineItems($userId, $ledgerEvent['eventId'], $items, $currency, $convTime, $payout);
                 }
             }
@@ -565,7 +592,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             $clickSideUpdate($clickId, $payout);
         }
 
-        $ledger->recompute($clickId, $clickCampaignId);
+        $ledger->recompute($clickId, $clickCampaignId, $userId);
         $ledger->enqueue(array_values(array_filter([$convId, $reverses !== null ? (int) $reverses['conv_id'] : null])), 'recorded');
 
         return [
@@ -574,6 +601,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             'reversesConvId' => $reverses !== null ? (int) $reverses['conv_id'] : null,
             // threaded out for the post-commit bridge emit (closure locals)
             'campaignId' => $campaignId, 'clickTime' => $clickTime, 'payout' => $payout,
+            // LTV fields recorded nowhere, as no customer resolved
+            'ltvDropped' => $ltvDropped,
         ];
     }
 
@@ -641,7 +670,11 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         $ref = isset($data['customer_ref']) ? trim((string) $data['customer_ref']) : '';
         $refType = isset($data['customer_ref_type']) ? (string) $data['customer_ref_type'] : null;
-        $crm = isset($data['customer_crm']) && is_array($data['customer_crm']) ? $data['customer_crm'] : [];
+        $crm = $data['customer_crm'] ?? [];
+        if (!is_array($crm)) {
+            // Read as none, the conversion was recorded and the CRM dropped.
+            throw new RuntimeException('customer_crm must be an object of CRM fields');
+        }
 
         return $this->customers->resolveForConversion(
             $userId,
@@ -827,7 +860,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         $ledger = new MysqlConversionLedger($this->conn);
-        $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+        $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         $ledger->enqueue([$convId], 'counted_state');
 
         return $clickId;
@@ -957,7 +990,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         if ($click !== null) {
-            $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+            $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         }
         $ledger->enqueue($affected, 'counted_state');
 
@@ -1018,11 +1051,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     private function refreshReportRollup(int $clickId): void
     {
         try {
-            $stmt = $this->conn->prepareWrite(ClickRollupSql::insertSelect(
-                '202_dataengine',
-                '2c.click_id=' . $clickId,
-                updateLandingPageId: true
-            ));
+            $stmt = $this->conn->prepareWrite(
+                ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . $clickId)
+            );
             $this->conn->executeUpdate($stmt);
         } catch (Throwable $e) {
             error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
@@ -1235,7 +1266,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                     $deleted[] = $convId;
                 }
 
-                $ledger->recompute($clickId, (int) $click['aff_campaign_id']);
+                $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
                 if ($deleted !== []) {
                     $ledger->enqueue($deleted, 'counted_state');
                 }

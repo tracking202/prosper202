@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -50,7 +51,38 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 			Cause: err,
 		}
 	}
-	field, op, want, hasHaving := parseHaving(having)
+	field, op, want, hasHaving, err := havingFilter(having)
+	if err != nil {
+		return nil, err
+	}
+
+	// A masked answer's clicks, leads and money are null, and toFloat reads
+	// null as 0: --min-clicks 10 answered {"data": []} and --having
+	// total_leads=0 every row, exit 0, as if they had been read. A filter on
+	// a hidden figure is refused as `report losers` refuses one; a filter on
+	// a ratio the role does see still runs.
+	masked := maskedFigures(data)
+	if masked {
+		var hidden []string
+		if minClicks > 0 {
+			hidden = append(hidden, "--min-clicks")
+		}
+		if minCost > 0 {
+			hidden = append(hidden, "--min-cost")
+		}
+		if zeroLeads {
+			hidden = append(hidden, "--zero-leads")
+		}
+		if hasHaving && containsString(maskedReportFigures, field) {
+			hidden = append(hidden, "--having "+strings.TrimSpace(having))
+		}
+		if len(hidden) > 0 {
+			refusal := errMaskedFigures("report breakdown " + strings.Join(hidden, " "))
+			refusal.Hint = "Drop " + strings.Join(hidden, " and ") + " to see every row with the ratios this role does see, " +
+				"or filter on one of those: --having 'roi<0' (epc, avg_cpc, conv_rate, roi, cpa). " + refusal.Hint
+			return nil, refusal
+		}
+	}
 
 	out := make([]map[string]interface{}, 0, len(resp.Data))
 	for _, r := range resp.Data {
@@ -68,11 +100,39 @@ func applyBreakdownFilters(cmd *cobra.Command, data []byte) ([]byte, error) {
 		}
 		out = append(out, r)
 	}
-	b, err := json.Marshal(map[string]interface{}{"data": out})
+	filtered := map[string]interface{}{"data": out}
+	// The rows kept still hold nulls for hidden figures: the flag goes with
+	// them, or --ndjson rows and the table's note lose it.
+	if masked {
+		filtered["masked"] = true
+	}
+	b, err := json.Marshal(filtered)
 	if err != nil {
 		return nil, fmt.Errorf("encoding output: %w", err)
 	}
 	return b, nil
+}
+
+// havingFilter reads --having, refusing one it cannot read: a filter that
+// does not parse was dropped (every row answered, exit 0), and one on a field
+// no breakdown row has read that field as 0 ({"data": []}, exit 0) -- each
+// an answer to a question nobody asked (CLAUDE.md #4). The breakdown command
+// asks it before building a client, so a bad filter costs no request.
+func havingFilter(having string) (field, op string, want float64, has bool, err error) {
+	if strings.TrimSpace(having) == "" {
+		return "", "", 0, false, nil
+	}
+	field, op, want, ok := parseHaving(having)
+	if !ok || math.IsNaN(want) || math.IsInf(want, 0) {
+		return "", "", 0, false, validationError("--having %q is not FIELD OP NUMBER", having).
+			WithHint("Write one comparison, e.g. --having 'roi<0' or --having 'total_leads=0'; OP is one of >=, <=, !=, =, >, <.")
+	}
+	if !containsString(metricColumns, field) {
+		return "", "", 0, false, validationError("--having names %q, which no breakdown row has; valid: %s (or clicks, leads, conversions, revenue, income, cost, profit, net)",
+			field, strings.Join(metricColumns, ", ")).
+			WithHint("Use one of the fields above, e.g. --having 'roi<0'.")
+	}
+	return field, op, want, true, nil
 }
 
 func parseHaving(s string) (field, op string, value float64, ok bool) {
@@ -113,11 +173,14 @@ func compareNum(a float64, op string, b float64) bool {
 // dimensionAliases maps short/friendly breakdown dimension names to the API
 // field the backend expects. Identity entries are accepted as-is.
 var dimensionAliases = map[string]string{
-	"lp":      "landing_page",
-	"source":  "ppc_account",
-	"network": "aff_network",
-	"offer":   "campaign",
-	"geo":     "country",
+	"lp":           "landing_page",
+	"source":       "ppc_account",
+	"network":      "aff_network",
+	"offer":        "campaign",
+	"geo":          "country",
+	"referrer":     "referer",
+	"referrer_url": "referer_url",
+	"rule":         "rotator_rule",
 }
 
 // breakdownDimensions are the dimensions ReportsController::BREAKDOWNS
@@ -127,6 +190,8 @@ var dimensionAliases = map[string]string{
 var breakdownDimensions = []string{
 	"campaign", "aff_network", "ppc_account", "ppc_network", "landing_page", "keyword",
 	"country", "city", "region", "browser", "platform", "device", "isp", "text_ad",
+	"ip", "referer", "referer_url", "device_type", "c1", "c2", "c3", "c4",
+	"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "rotator", "rotator_rule",
 }
 
 // dimensionEnum is a --breakdown/--group-by flag's accepted values.
@@ -166,10 +231,11 @@ var metricAliases = map[string]string{
 
 // Sort columns each report endpoint accepts (ReportsController's
 // ALLOWED_SORTS, DAYPART_ALLOWED_SORTS, WEEKPART_ALLOWED_SORTS) and the
-// metric columns a breakdown row carries (METRIC_FIELDS).
+// metric columns a breakdown row carries (METRIC_FIELDS). A breakdown sorts by
+// any metric column its rows carry.
 var (
-	breakdownSorts = []string{"total_clicks", "total_leads", "total_income", "total_cost", "total_net", "roi", "epc", "conv_rate"}
 	metricColumns  = []string{"total_clicks", "total_click_throughs", "total_leads", "total_income", "total_cost", "total_net", "epc", "avg_cpc", "conv_rate", "roi", "cpa"}
+	breakdownSorts = metricColumns
 	daypartSorts   = append([]string{"hour_of_day"}, metricColumns...)
 	weekpartSorts  = append([]string{"day_of_week"}, metricColumns...)
 	sortDirections = []string{"ASC", "DESC"}
@@ -208,7 +274,7 @@ func applyReportSort(cmd *cobra.Command, params map[string]string) {
 	}
 }
 
-// addSortFlags registers --sort (one of columns) and --sort_dir on a report
+// addSortFlags registers --sort (one of columns) and --sort-dir on a report
 // subcommand. The global flag normalizer makes --sort-dir an accepted
 // spelling automatically.
 func addSortFlags(cmd *cobra.Command, columns []string) {

@@ -181,8 +181,8 @@ caps server-side. Two things remain yours:
   create your agent might retry a stable key. (API-key creation never
   replays — the response contains the secret; LTV writes keep their own
   upsert/dedup semantics.)
-- **Business caps.** If your agent writes `--aff_campaign_payout`,
-  `--click_cpc`, or rotator weights autonomously, cap the *resulting* value
+- **Business caps.** If your agent writes `--aff-campaign-payout`,
+  `--click-cpc`, or rotator weights autonomously, cap the *resulting* value
   in the harness (max payout movement per session, floor/ceiling on CPC),
   and serialize writes per session so parallel calls can't stack past a cap.
 

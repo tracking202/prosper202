@@ -63,10 +63,12 @@ class ClickConversionsCommandTest extends TestCase
         $app = new Application('test', '1.0');
         $app->add(new ConversionListCommand());
         $tester = new CommandTester($app->find('conversion:list'));
-        foreach ([['--click_id' => '7x'], ['--goal' => 'first'], ['--source' => 'webhook']] as $options) {
+        foreach ([['--click-id' => '7x'], ['--goal' => 'first'], ['--source' => 'webhook']] as $options) {
             self::assertSame(1, $tester->execute($options), json_encode($options));
             self::assertStringContainsString('must be', $tester->getDisplay());
         }
         self::assertStringContainsString('--source must be one of pixel, postback', $tester->getDisplay());
+        $tester->execute(['--click-id' => '7x']);
+        self::assertStringContainsString('--click-id must be a positive integer', $tester->getDisplay());
     }
 }

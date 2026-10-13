@@ -38,63 +38,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$rawNetwork = is_string($_POST['aff_network_id'] ?? null) ? trim($_POST['aff_network_id']) : '';
 		$rawCampaign = is_string($_POST['aff_campaign_id'] ?? null) ? trim($_POST['aff_campaign_id']) : '';
 
-		if ($rawNetwork === '' || $rawNetwork === '0') {
-			$errors['aff_network_id'] = 'You have to at least select an affiliate network to clear out.';
-		} elseif (!ctype_digit($rawNetwork) || p202_update_owned_row($conn, '202_aff_networks', 'aff_network_id', (int) $rawNetwork, $userId) === null) {
-			$errors['aff_network_id'] = 'Choose one of your categories from the list.';
-		} else {
-			$networkId = (int) $rawNetwork;
-		}
-
-		if ($rawCampaign !== '' && $rawCampaign !== '0') {
-			$campaign = ctype_digit($rawCampaign) ? p202_update_owned_row($conn, '202_aff_campaigns', 'aff_campaign_id', (int) $rawCampaign, $userId) : null;
-			if ($campaign === null) {
-				$errors['aff_campaign_id'] = 'Choose one of your campaigns from the list.';
-			} elseif ($networkId > 0 && (int) $campaign['aff_network_id'] !== $networkId) {
-				// Without the page script the campaign list is not narrowed to
-				// the category; a campaign from another one is refused rather
-				// than cleared under a category it is not in.
-				$errors['aff_campaign_id'] = 'That campaign is not in the category you chose.';
-			} else {
-				$campaignId = (int) $campaign['aff_campaign_id'];
-			}
-		}
+		// What to reset, checked and done by SubidBatch, which
+		// POST /api/v3/conversions/subids/reset runs too: the category must be
+		// the account's, and a campaign must be one of its campaigns.
+		$batch = new \Prosper202\Update\SubidBatch($conn);
+		$scope = $batch->resetScope($userId, $rawNetwork, $rawCampaign);
+		$errors = $scope['errors'];
+		$networkId = $scope['network_id'];
+		$campaignId = $scope['campaign_id'];
 
 		if ($errors === []) {
 			set_time_limit(0);
-			if ($campaignId > 0) {
-				$select = "SELECT c.click_id, c.click_time FROM 202_clicks AS c
-					WHERE c.user_id = ? AND c.aff_campaign_id = ?
-					AND (c.click_lead = 1 OR EXISTS (SELECT 1 FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0))";
-				$scopeId = $campaignId;
-			} else {
-				$select = "SELECT c.click_id, c.click_time FROM 202_clicks AS c
-					INNER JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id
-					WHERE c.user_id = ? AND ac.aff_network_id = ?
-					AND (c.click_lead = 1 OR EXISTS (SELECT 1 FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0))";
-				$scopeId = $networkId;
-			}
-			$stmt = $conn->prepareWrite($select);
-			$conn->bind($stmt, 'ii', [$userId, $scopeId]);
-			$rows = $conn->fetchAll($stmt);
-			$clickIds = array_map(static fn (array $row): int => (int) $row['click_id'], $rows);
-
-			$repo = new \Prosper202\Conversion\MysqlConversionRepository($conn);
-			$cleared = 0;
-			foreach (array_chunk($clickIds, 500) as $chunk) {
-				$cleared += $repo->clearClicks($userId, $chunk);
-			}
-
-			if ($cleared > 0) {
-				// The data engine rebuilds the hours these clicks fall in. The
-				// window starts at the earliest cleared click; the page used to
-				// take whichever click the database returned first, which could
-				// leave earlier hours showing the income just cleared.
-				$times = array_map(static fn (array $row): int => (int) $row['click_time'], $rows);
-				$dirty = $conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = 0, aff_campaign_id = ?, aff_network_id = ?, landing_page_id = 0, user_id = ?, click_time_from = ?, click_time_to = ?');
-				$conn->bind($dirty, 'iiiii', [$campaignId, $networkId, $userId, min($times), time()]);
-				$conn->executeUpdate($dirty);
-			}
+			$cleared = $batch->reset($userId, $networkId, $campaignId);
 		}
 	}
 }

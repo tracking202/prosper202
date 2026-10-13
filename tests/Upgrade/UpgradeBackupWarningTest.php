@@ -130,7 +130,7 @@ final class UpgradeBackupWarningTest extends TestCase
     private static function appSources(): iterable
     {
         $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator(self::root(), \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree(self::root())
         );
         foreach ($files as $file) {
             /** @var \SplFileInfo $file */

@@ -123,7 +123,7 @@ final class SourceScanTest extends TestCase
                 continue;
             }
             $php = [];
-            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator("$root/$dir", \FilesystemIterator::SKIP_DOTS));
+            $it = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree("$root/$dir"));
             foreach ($it as $file) {
                 if ($file->isFile() && $file->getExtension() === 'php') {
                     $php[] = substr($file->getPathname(), strlen($root) + 1);
@@ -140,5 +140,105 @@ final class SourceScanTest extends TestCase
         self::assertArrayHasKey('api/v3/Support/StatementHelpers.php', $files);
         self::assertArrayNotHasKey('tests/Support/SourceScan.php', $files);
         self::assertArrayHasKey('tests/Support/SourceScan.php', SourceScan::phpFiles(includeTests: true));
+    }
+
+    /**
+     * A walk through tree() does not enter another checkout: a directory
+     * holding a `.git` file (a git worktree, as .claude/worktrees/* are) or a
+     * `.git` directory (a clone). The tree's own files, and a directory that
+     * merely has `git` in its name, are walked.
+     */
+    public function testTheWalkSkipsOtherCheckouts(): void
+    {
+        $root = sys_get_temp_dir() . '/p202-sourcescan-' . bin2hex(random_bytes(6));
+        $made = [];
+        $mk = static function (string $path, ?string $contents = null) use (&$made): void {
+            if ($contents === null) {
+                self::assertTrue(mkdir($path, 0o700, true));
+            } else {
+                self::assertNotFalse(file_put_contents($path, $contents));
+            }
+            $made[] = $path;
+        };
+        try {
+            $mk($root);
+            $mk("$root/.git");
+            $mk("$root/api");
+            $mk("$root/api/A.php", '<?php');
+            $mk("$root/.claude");
+            $mk("$root/.claude/worktrees");
+            $mk("$root/.claude/worktrees/agent-1");
+            $mk("$root/.claude/worktrees/agent-1/.git", "gitdir: $root/.git/worktrees/agent-1\n");
+            $mk("$root/.claude/worktrees/agent-1/api");
+            $mk("$root/.claude/worktrees/agent-1/api/A.php", '<?php');
+            $mk("$root/cloned");
+            $mk("$root/cloned/.git");
+            $mk("$root/cloned/B.php", '<?php');
+            $mk("$root/digit");
+            $mk("$root/digit/C.php", '<?php');
+
+            $seen = [];
+            foreach (new \RecursiveIteratorIterator(SourceScan::tree($root)) as $file) {
+                $seen[] = substr($file->getPathname(), strlen($root) + 1);
+            }
+            sort($seen);
+            self::assertSame(['api/A.php', 'digit/C.php'], array_values(array_filter($seen, static fn (string $f): bool => !str_starts_with($f, '.git'))));
+        } finally {
+            foreach (array_reverse($made) as $path) {
+                is_dir($path) ? rmdir($path) : unlink($path);
+            }
+        }
+    }
+
+    /**
+     * Walks of the repository go through SourceScan::tree(); the only direct
+     * RecursiveDirectoryIterators left in tests/ walk a scratch directory the
+     * test made (to remove it, or to read what it wrote), listed here by file
+     * with how many, beside the one script that cannot load SourceScan. A new walk of the tree written the direct way would read
+     * every worktree under .claude/worktrees as more of the source.
+     */
+    public function testEveryWalkOfTheTreeSkipsOtherCheckouts(): void
+    {
+        $scratchWalks = [
+            'tests/Api/V3/IdempotencyReservationTest.php' => 3,
+            'tests/Api/V3/PreferenceSecretCoverageTest.php' => 1,
+            'tests/Api/V3/ServerStateStoreDefaultDirTest.php' => 1,
+            'tests/Api/V3/ServerStateStoreQuotaTest.php' => 1,
+            'tests/Api/V3/ServerStateStoreRateLimitTest.php' => 1,
+            'tests/Api/V3/StagedChangeRetentionTest.php' => 1,
+            'tests/Api/V3/StagedChangesControllerTest.php' => 2,
+            'tests/Api/V3/SyncConflictTest.php' => 1,
+            'tests/Apps/Android/AndroidDatabase.php' => 1,
+            'tests/Apps/Android/CampaignLinkChangeFeedTest.php' => 1,
+            'tests/Apps/Android/Integrity/FakeGoogle.php' => 1,
+            'tests/Apps/AppTokenHygieneTest.php' => 1,
+            'tests/Conversion/ConversionCreateDuplicateTest.php' => 1,
+            'tests/Conversion/ConversionIdempotencyIntegrationTest.php' => 1,
+            'tests/Release/ReleaseTreeTest.php' => 1,
+            'tests/Support/SourceScan.php' => 1,
+            // Not a scratch walk: the standalone script CI runs to list the
+            // integration suites, without the test autoloader, over tests/
+            // alone, where no checkout lives.
+            'tests/integration-suites.php' => 1,
+        ];
+        $direct = [];
+        foreach (SourceScan::phpFiles(includeTests: true) as $path => $source) {
+            if (!str_starts_with($path, 'tests/')) {
+                continue;
+            }
+            $n = SourceScan::countMatches('/new\s+\\\\?RecursiveDirectoryIterator\s*\(/', $source, $path);
+            if ($n > 0) {
+                $direct[$path] = $n;
+            }
+        }
+        ksort($direct);
+        ksort($scratchWalks);
+        self::assertSame(
+            $scratchWalks,
+            $direct,
+            'A test walks a directory with a RecursiveDirectoryIterator of its own. A walk of the repository must use '
+            . 'SourceScan::tree($dir), which skips other checkouts (.claude/worktrees/*); a walk of a scratch '
+            . 'directory the test made is listed in $scratchWalks.'
+        );
     }
 }

@@ -35,6 +35,9 @@ case "$1 $2" in
   "campaign delete") echo deleted ;;
   "report summary") echo '{"data":{"total_clicks":6,"total_net":12.5}}' ;;
   "change list") echo '{"data":[{"change_id":"chg_x","status":"staged"}]}' ;;
+  "report breakdown") echo 'Error [validation]: unknown flag: --keyword' >&2; exit 2 ;;
+  "system login-log") echo '{"error":{"category":"auth","message":"Admin access required."}}' >&2; exit 2 ;;
+  "echo stdin") cat ;;
   *) echo '{"data":[]}' ;;
 esac
 `
@@ -117,7 +120,7 @@ func TestRunnerDetectsStateMutation(t *testing.T) {
 
 	r := &Runner{
 		P202Bin:  bin,
-		AgentCmd: `p202 campaign create --aff_campaign_name X >/dev/null; echo created`,
+		AgentCmd: `p202 campaign create --aff-campaign-name X >/dev/null; echo created`,
 		Timeout:  30 * time.Second,
 		Stderr:   io.Discard,
 	}

@@ -38,8 +38,9 @@ final class ShellIsolationTest extends TestCase
         '202-css/p202-chrome.css',
         '202-css/p202-theme.css',
         '202-css/p202-components.css',
-        '202-css/messenger.css',
+        '202-css/p202-chat.css',
         '202-js/p202-chrome.js',
+        '202-js/p202-chat.js',
         '202-js/p202-ui.js',
         '202-js/chart.theme.js',
     ];
@@ -138,7 +139,7 @@ final class ShellIsolationTest extends TestCase
         $left = [];
         $seen = 0;
         foreach (['202-css', '202-js'] as $top) {
-            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/' . $top, \FilesystemIterator::SKIP_DOTS));
+            $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/' . $top));
             foreach ($iterator as $file) {
                 /** @var \SplFileInfo $file */
                 if (!$file->isFile()) {
@@ -388,7 +389,7 @@ final class ShellIsolationTest extends TestCase
         $files = [];
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+                \Tests\Support\SourceScan::tree($root),
                 function (\SplFileInfo $file) use ($root): bool {
                     $relative = ltrim(str_replace($root, '', $file->getPathname()), '/');
                     foreach (self::SKIP_DIRS as $skip) {

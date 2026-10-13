@@ -106,6 +106,32 @@ expect "staged-but-uncommitted new file" 2 yes
 git reset -q
 rm -f src/staged.php
 
+# Pattern 8: an alias the server reads as a number. A digit-led alias is
+# fine (`AS 2c` runs on every Visitors request); all digits, an exponent,
+# hex and binary are refused (each executed on MariaDB 10.11).
+expect_alias() { # name sql want_exit want_caught
+    local name="$1" sql="$2" want_exit="$3" want_caught="$4" got_exit got_caught=no
+    printf '<?php\n$sql = "%s";\n' "$sql" > src/alias.php
+    ./check.sh >/dev/null 2>"$REPO/stderr.txt"
+    got_exit=$?
+    if grep -qF 'SQL alias the server reads as a number' "$REPO/stderr.txt"; then got_caught=yes; fi
+    rm -f src/alias.php
+    if [ "$got_exit" = "$want_exit" ] && [ "$got_caught" = "$want_caught" ]; then
+        printf '  ok    %-46s exit=%s caught=%s\n' "$name" "$got_exit" "$got_caught"
+        pass=$((pass + 1))
+    else
+        printf '  FAIL  %-46s exit=%s caught=%s (wanted exit=%s caught=%s)\n' \
+            "$name" "$got_exit" "$got_caught" "$want_exit" "$want_caught"
+        fail=$((fail + 1))
+    fi
+}
+expect_alias "alias: a digit-led name (AS 2c) is fine" "SELECT 2c.click_id FROM 202_dataengine AS 2c" 0 no
+expect_alias "alias: AS 2st is fine" "SELECT 2st.clicks FROM 202_dataengine AS 2st" 0 no
+expect_alias "alias: all digits (AS 22) is refused" "SELECT 1 AS 22" 2 yes
+expect_alias "alias: an exponent (AS 2e1) is refused" "SELECT t.x FROM t AS 2e1" 2 yes
+expect_alias "alias: hex (AS 0x1F) is refused" "SELECT 1 AS 0x1F" 2 yes
+expect_alias "alias: binary (AS 0b101) is refused" "SELECT 1 AS 0b101" 2 yes
+
 # ── Static assertions on the PHPStan invocation ──
 #
 # PHPStan under --error-format=raw prints bare "path:line:message" lines and

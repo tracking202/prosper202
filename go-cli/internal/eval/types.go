@@ -11,6 +11,8 @@
 // wires in.
 package eval
 
+import "fmt"
+
 // Priorities are the values a case's priority takes, most urgent first.
 var Priorities = []string{"critical", "high", "medium", "low"}
 
@@ -37,11 +39,20 @@ type Case struct {
 // assert nothing.
 type Expected struct {
 	// RunsOneOf passes when at least one command the agent ran contains
-	// one of these substrings. NeverRuns fails on any command containing
-	// one of these substrings (a `--dry-run` or `--staged` variant still
+	// one of these substrings AND exited with RunsOneOfExit (0 unless the
+	// case says otherwise). A matching command that failed does not count:
+	// a stale binary that answered "unknown flag" to every command used to
+	// satisfy this check by being invoked. RunsOneOfExit is for an
+	// error-path case whose point is the refusal (exit 2 for a key the
+	// server refuses); it applies to every pattern in RunsOneOf.
+	//
+	// NeverRuns fails on any command containing one of these substrings,
+	// whatever it exited with — an attempt at a forbidden command is the
+	// failure, refused or not (a `--dry-run` or `--staged` variant still
 	// matches — name the allowed variant in RunsOneOf when it is fine).
-	RunsOneOf []string `json:"runs_one_of,omitempty"`
-	NeverRuns []string `json:"never_runs,omitempty"`
+	RunsOneOf     []string `json:"runs_one_of,omitempty"`
+	RunsOneOfExit int      `json:"runs_one_of_exit,omitempty"`
+	NeverRuns     []string `json:"never_runs,omitempty"`
 
 	// StateUnchanged commands run before and after the agent's turn; their
 	// stdout must be byte-identical. Include --json so ordering is stable.
@@ -76,15 +87,41 @@ const (
 	StatusError      = "error"       // the case could not run (setup or agent invocation failed)
 )
 
+// Invocation is one `p202` command the agent ran, as the capture shim saw
+// it: the command line, and the exit status it returned — nil when it was
+// started and never seen to finish (killed with its shim, or still running
+// in the background when the turn ended).
+type Invocation struct {
+	Command  string `json:"command"`
+	ExitCode *int   `json:"exit_code"`
+}
+
+// Succeeded says whether the command finished with exit status 0.
+func (i Invocation) Succeeded() bool { return i.ExitCode != nil && *i.ExitCode == 0 }
+
+// describe renders the invocation for a failure line: the command and how
+// it ended.
+func (i Invocation) describe() string {
+	if i.ExitCode == nil {
+		return fmt.Sprintf("%q did not finish", i.Command)
+	}
+	return fmt.Sprintf("%q exited %d", i.Command, *i.ExitCode)
+}
+
 // Result is the graded outcome of one case.
 type Result struct {
-	ID         string   `json:"id"`
-	Priority   string   `json:"priority,omitempty"`
-	Status     string   `json:"status"`
-	Failures   []string `json:"failures,omitempty"` // one line per failed expectation
-	Judge      string   `json:"judge,omitempty"`    // the judge's verdict line, when one ran
-	Commands   int      `json:"commands"`           // p202 invocations captured
-	DurationMs int64    `json:"duration_ms"`
+	ID       string   `json:"id"`
+	Priority string   `json:"priority,omitempty"`
+	Status   string   `json:"status"`
+	Failures []string `json:"failures,omitempty"` // one line per failed expectation
+	Judge    string   `json:"judge,omitempty"`    // the judge's verdict line, when one ran
+	Commands int      `json:"commands"`           // p202 invocations captured
+	// CommandsFailed counts the captured invocations that did not finish
+	// with exit 0. Most of an agent's commands should succeed; a run where
+	// they all failed is a broken binary or configuration, whatever the
+	// case's own expectations say.
+	CommandsFailed int   `json:"commands_failed"`
+	DurationMs     int64 `json:"duration_ms"`
 }
 
 // Summary aggregates a run.

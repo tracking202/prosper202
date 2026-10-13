@@ -9,6 +9,8 @@ use Api\V3\Apps\AppPolicy;
 use Api\V3\Apps\AppRegistry;
 use Api\V3\Apps\AppRetention;
 use Api\V3\Apps\RetentionClass;
+use Prosper202\Database\Connection;
+use Prosper202\Http\StoredVisitorIp;
 
 /**
  * Accepts platform-signed attribution postbacks — SKAdNetwork and
@@ -186,7 +188,14 @@ final class PostbackReceiver
             'key_id'                  => ['s', $parsed->keyId],
             'dedupe_hash'             => ['s', $dedupeHash],
             'raw_payload'             => ['s', $rawBody],
-            'remote_ip'               => ['s', substr($remoteIp, 0, 45)],
+            // The device's address, stored as the click path stores a
+            // visitor's: masked when the install's or the owner's privacy
+            // setting holds back for it (an unclaimed postback answers to the
+            // install's alone). The rate limit never read this column.
+            'remote_ip'               => [
+                's',
+                StoredVisitorIp::forAccount(new Connection($this->db), $remoteIp, $registration?->userId),
+            ],
             'created_at'              => ['i', $receivedAt],
         ];
 

@@ -26,9 +26,24 @@ use RuntimeException;
  * Every line is accounted for in the result. A line whose subid is not an
  * exact click id of this account, or whose amount is not a number, is
  * skipped with the reason, never silently (CLAUDE.md error pattern #4).
+ * Lines are not held in memory: the route takes 8 MB reports, and holding
+ * 440,000 lines took 376 MB.
+ *
+ * One reader behind every surface that uploads a report — the Upload Revenue
+ * Reports page and POST /api/v3/conversions/uploads — and behind preview(),
+ * so a dry run reads each line exactly as the import will.
  */
 final class RevenueUploadImporter
 {
+    /** The status of a line not recorded: skipped with a reason, or read as the header. */
+    public const SKIPPED = 'skipped';
+    public const HEADER = 'header';
+
+    /** The most lines not recorded a result lists; the rest are counted. */
+    public const LISTED_LINES = 1000;
+
+    private const NO_CLICK = 'no click with this subid in your account';
+
     public function __construct(
         private Connection $conn,
         private MysqlConversionRepository $conversions,
@@ -40,11 +55,16 @@ final class RevenueUploadImporter
      * @return array{
      *     batch_id: int,
      *     lines: list<array{line: int, subid: string, amount: string, status: string, reason: string}>,
-     *         status is recorded, skipped, or header (line 1 when it holds no subid),
+     *     unlisted: int,
+     *     reasons: array<string, int>,
      *     totals: array<int, string>,
+     *     total: string,
      *     recorded: int,
      *     skipped: int
-     * } totals: click_id => the sum of this file's recorded lines for it.
+     * } lines: the first LISTED_LINES not recorded (skipped, or the header);
+     *   reasons: skipped lines counted by reason; totals: click_id => sum.
+     * @throws BatchInterrupted when a line's write fails after the batch was
+     *         created: the lines before it are committed rows of the batch
      */
     public function import(int $userId, string $fileName, $handle, int $subidColumn, int $amountColumn): array
     {
@@ -54,84 +74,312 @@ final class RevenueUploadImporter
 
         $batchId = $this->createBatch($userId, $fileName);
 
-        $lines = [];
+        $unrecorded = self::unrecorded();
         $totals = [];
+        $total = '0.00000';
         $recorded = 0;
         $skipped = 0;
         $lineNo = 0;
-        while (($row = fgetcsv($handle, 100000, ',', '"', '\\')) !== false) {
-            $lineNo++;
-            if (!is_array($row) || $row === [null]) {
+        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
+            if ($line === null) {
                 continue; // a blank line
             }
-            $subid = trim((string) ($row[$subidColumn] ?? ''));
-            $rawAmount = trim((string) ($row[$amountColumn] ?? ''));
-
-            $clickId = ClickId::parse($subid);
-            if ($clickId === null) {
-                // The first line is the header row the column picker showed;
-                // it is expected not to hold a subid. It is still listed, as
-                // the header, so a file with no header whose first subid is
-                // malformed shows that line instead of losing it.
-                if ($lineNo > 1) {
+            if ($line['status'] !== null) {
+                // The header, or a line that cannot be read.
+                if ($line['status'] === self::SKIPPED) {
                     $skipped++;
-                    $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'skipped',
-                        'reason' => 'not a subid (a click id is a whole number)'];
-                } else {
-                    $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'header',
-                        'reason' => 'read as the header row (not a subid)'];
                 }
+                self::notRecorded($unrecorded, $line);
                 continue;
             }
+            $clickId = (int) $line['click_id'];
+            $amount = (string) $line['amount'];
 
-            $amount = self::parseAmount($rawAmount);
-            if ($amount === null) {
-                $skipped++;
-                $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'skipped',
-                    'reason' => 'the commission is not a number'];
-                continue;
+            try {
+                $result = $this->conversions->record($userId, [
+                    'click_id' => $clickId,
+                    'payout' => $amount,
+                    'source' => ConversionSource::REVENUE_UPLOAD->value,
+                    'source_ref' => \Prosper202\Conversion\Ledger\SourceRef::uploadBatch($batchId),
+                    'dedupe_key' => DedupeKey::upload($batchId, $lineNo),
+                    'user_agent' => 'revenue-upload',
+                    'pixel_type' => 0,
+                    // A network's report of revenue already counted is not a new
+                    // sale: it writes no LTV purchase and emits no bridge event,
+                    // exactly as the upload never did.
+                    'skip_ltv' => true,
+                    'skip_bridge' => true,
+                ]);
+            } catch (\Throwable $e) {
+                // Every line before this one is a committed row of the batch:
+                // say so, and leave the batch's counts saying what was read so
+                // far (best-effort; the rows are what count).
+                try {
+                    $this->finishBatch($batchId, $lineNo - 1, $recorded, $skipped);
+                } catch (\Throwable $finish) {
+                    error_log('revenue upload: batch ' . $batchId . ' counts not updated after line ' . $lineNo . ' failed: ' . $finish->getMessage());
+                }
+                throw new BatchInterrupted('line ' . $lineNo, $recorded, $batchId, $e);
             }
-
-            $result = $this->conversions->record($userId, [
-                'click_id' => $clickId,
-                'payout' => $amount,
-                'source' => ConversionSource::REVENUE_UPLOAD->value,
-                'source_ref' => \Prosper202\Conversion\Ledger\SourceRef::uploadBatch($batchId),
-                'dedupe_key' => DedupeKey::upload($batchId, $lineNo),
-                'user_agent' => 'revenue-upload',
-                'pixel_type' => 0,
-                // A network's report of revenue already counted is not a new
-                // sale: it writes no LTV purchase and emits no bridge event,
-                // exactly as the upload never did.
-                'skip_ltv' => true,
-                'skip_bridge' => true,
-            ]);
 
             if (!$result['clickFound']) {
                 $skipped++;
-                $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => 'skipped',
-                    'reason' => 'no click with this subid in your account'];
+                self::notRecorded($unrecorded, ['line' => $lineNo, 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
+                    'reason' => self::NO_CLICK]);
                 continue;
             }
 
             $recorded++;
             $totals[$clickId] = Amount::fromUnits(Amount::toUnits($totals[$clickId] ?? '0') + Amount::toUnits($amount));
-            $lines[] = ['line' => $lineNo, 'subid' => $subid, 'amount' => $amount, 'status' => 'recorded', 'reason' => ''];
+            $total = Amount::fromUnits(Amount::toUnits($total) + Amount::toUnits($amount));
         }
 
-        $this->finishBatch($batchId, $lineNo, $recorded, $skipped);
+        try {
+            $this->finishBatch($batchId, $lineNo, $recorded, $skipped);
+        } catch (\Throwable $e) {
+            throw new BatchInterrupted('closing batch ' . $batchId, $recorded, $batchId, $e);
+        }
 
-        return ['batch_id' => $batchId, 'lines' => $lines, 'totals' => $totals, 'recorded' => $recorded, 'skipped' => $skipped];
+        return ['batch_id' => $batchId] + $unrecorded
+            + ['totals' => $totals, 'total' => $total, 'recorded' => $recorded, 'skipped' => $skipped];
+    }
+
+    /**
+     * What import() would record, writing nothing: the same lines read by the
+     * same rules, each line whose subid is a click of the account counted as
+     * would_record (and summed into the totals), and every other line skipped
+     * or read as the header with the reason import() gives. Reads the stream
+     * twice (subids, then lines) instead of holding it, so it must be seekable.
+     *
+     * @param resource $handle An open, seekable CSV stream positioned at its start.
+     * @return array{
+     *     lines: list<array{line: int, subid: string, amount: string, status: string, reason: string}>,
+     *     unlisted: int,
+     *     reasons: array<string, int>,
+     *     totals: array<int, string>,
+     *     total: string,
+     *     would_record: int,
+     *     skipped: int
+     * } as import() answers, with would_record for recorded
+     */
+    public function preview(int $userId, $handle, int $subidColumn, int $amountColumn): array
+    {
+        if ($subidColumn < 0 || $amountColumn < 0) {
+            throw new RuntimeException('choose the subid column and the commission column');
+        }
+        $start = ftell($handle);
+        if ($start === false || !stream_get_meta_data($handle)['seekable']) {
+            throw new RuntimeException('the report cannot be read twice: preview() needs a seekable stream');
+        }
+
+        // Which of the subids are the account's clicks, read in chunks: the
+        // question record() answers with clickFound.
+        $ids = [];
+        $lineNo = 0;
+        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
+            if ($line !== null && $line['status'] === null) {
+                $ids[(int) $line['click_id']] = true;
+            }
+        }
+        $owned = [];
+        foreach (array_chunk(array_keys($ids), 500) as $chunk) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT click_id FROM 202_clicks WHERE user_id = ? AND click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')'
+            );
+            $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
+            foreach ($this->conn->fetchAll($stmt) as $row) {
+                $owned[(int) $row['click_id']] = true;
+            }
+        }
+        unset($ids);
+
+        if (fseek($handle, $start) !== 0) {
+            throw new RuntimeException('the report could not be read a second time');
+        }
+        $unrecorded = self::unrecorded();
+        $totals = [];
+        $total = '0.00000';
+        $wouldRecord = 0;
+        $skipped = 0;
+        $lineNo = 0;
+        while (($line = self::readLine($handle, $lineNo, $subidColumn, $amountColumn)) !== false) {
+            if ($line === null) {
+                continue; // a blank line
+            }
+            if ($line['status'] !== null) {
+                if ($line['status'] === self::SKIPPED) {
+                    $skipped++;
+                }
+                self::notRecorded($unrecorded, $line);
+                continue;
+            }
+            $clickId = (int) $line['click_id'];
+            if (!isset($owned[$clickId])) {
+                $skipped++;
+                self::notRecorded($unrecorded, ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['raw_amount'], 'status' => self::SKIPPED,
+                    'reason' => self::NO_CLICK]);
+                continue;
+            }
+            $wouldRecord++;
+            $totals[$clickId] = Amount::fromUnits(Amount::toUnits($totals[$clickId] ?? '0') + Amount::toUnits((string) $line['amount']));
+            $total = Amount::fromUnits(Amount::toUnits($total) + Amount::toUnits((string) $line['amount']));
+        }
+
+        return $unrecorded + ['totals' => $totals, 'total' => $total, 'would_record' => $wouldRecord, 'skipped' => $skipped];
+    }
+
+    /**
+     * @return array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>}
+     */
+    private static function unrecorded(): array
+    {
+        return ['lines' => [], 'unlisted' => 0, 'reasons' => []];
+    }
+
+    /**
+     * @param array{lines: list<array<string, mixed>>, unlisted: int, reasons: array<string, int>} $unrecorded
+     * @param array<string, mixed> $line
+     */
+    private static function notRecorded(array &$unrecorded, array $line): void
+    {
+        if ($line['status'] === self::SKIPPED) {
+            $reason = (string) $line['reason'];
+            $unrecorded['reasons'][$reason] = ($unrecorded['reasons'][$reason] ?? 0) + 1;
+        }
+        if (count($unrecorded['lines']) < self::LISTED_LINES) {
+            $unrecorded['lines'][] = ['line' => $line['line'], 'subid' => $line['subid'], 'amount' => $line['amount'], 'status' => $line['status'], 'reason' => $line['reason']];
+            return;
+        }
+        $unrecorded['unlisted']++;
+    }
+
+    /**
+     * The next CSV record, read by the rules import() and preview() share:
+     * false at the end of the stream, null for a blank line, otherwise the
+     * line — with status null when it holds a subid and an amount to record
+     * (click_id, amount, raw_amount), or its final status (header, skipped)
+     * and the reason.
+     *
+     * The first line is the header row the column picker showed; it is
+     * expected not to hold a subid. It is still listed, as the header, so a
+     * file with no header whose first subid is malformed shows that line
+     * instead of losing it.
+     *
+     * @param resource $handle
+     * @param int $lineNo the number of the record before this one; advanced past it
+     * @return array<string, mixed>|null|false
+     */
+    private static function readLine($handle, int &$lineNo, int $subidColumn, int $amountColumn): array|null|false
+    {
+        $row = fgetcsv($handle, null, ',', '"', '\\');
+        if ($row === false) {
+            return false;
+        }
+        $lineNo++;
+        if (!is_array($row) || $row === [null]) {
+            return null;
+        }
+        $subid = trim((string) ($row[$subidColumn] ?? ''));
+        $rawAmount = trim((string) ($row[$amountColumn] ?? ''));
+
+        $clickId = ClickId::parse($subid);
+        if ($clickId === null) {
+            return $lineNo > 1
+                ? ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => self::SKIPPED,
+                    'reason' => 'not a subid (a click id is a whole number)']
+                : ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => self::HEADER,
+                    'reason' => 'read as the header row (not a subid)'];
+        }
+
+        $amount = self::parseAmount($rawAmount);
+        if ($amount === null) {
+            return ['line' => $lineNo, 'subid' => $subid, 'amount' => $rawAmount, 'status' => self::SKIPPED,
+                'reason' => 'the commission is not a number'];
+        }
+
+        return ['line' => $lineNo, 'subid' => $subid, 'click_id' => $clickId, 'amount' => $amount, 'raw_amount' => $rawAmount, 'status' => null];
+    }
+
+    /**
+     * Words that name the affiliate's money, the likeliest first: a network
+     * report's "Commission" or "Payout" is the affiliate's take, its
+     * "Revenue", "Amount" or "Sale" more often the order's value.
+     */
+    private const AMOUNT_WORDS = ['commission', 'payout', 'earning', 'revenue', 'income', 'amount', 'sale'];
+
+    /**
+     * A header that names one of these is not a money column, whatever money
+     * word it also holds: "Sale ID", "Commission Rate", "Payout Date",
+     * "Sale Count", "Commission Status".
+     */
+    private const NOT_AMOUNT = '/\bid\b|_id\b|\bno\b|\bnumber\b|#|date|time|count|\bqty\b|quantity|rate|%|percent|status|type|currency/';
+
+    /**
+     * The subid and commission columns a revenue report's header names, when
+     * it names them plainly: the column picker pre-selects them and says so,
+     * the API uses them when no column is named, and the person changes them
+     * if the guess is wrong (UI standard, rule 4).
+     *
+     * The subid is the first header that names one. The commission is the
+     * header with the likeliest money word (AMOUNT_WORDS), the first of those
+     * on a tie, never one that names an id, a date, a count, a rate or a
+     * status (NOT_AMOUNT). It took the first header with any money word, so
+     * "Date,Sub ID,Sale Amount,Commission" recorded each order's total as the
+     * commission, and "Sale ID,Sub ID,Commission" each sale's id (measured).
+     * Null when nothing qualifies — the column is then left for the person to
+     * choose, never guessed at random.
+     *
+     * @param list<string> $header
+     * @return array{subid: ?int, amount: ?int}
+     */
+    public static function guessColumns(array $header): array
+    {
+        $subid = null;
+        $amount = null;
+        $amountRank = PHP_INT_MAX;
+        foreach ($header as $index => $name) {
+            $name = strtolower(trim((string) $name));
+            if ($subid === null && preg_match('/sub[\s_-]*id|click[\s_-]*id|\bt202|\baff[\s_-]*sub|\bsid\b/', $name)) {
+                $subid = (int) $index;
+                continue;
+            }
+            if (preg_match(self::NOT_AMOUNT, $name)) {
+                continue;
+            }
+            foreach (self::AMOUNT_WORDS as $rank => $word) {
+                if ($rank < $amountRank && str_contains($name, $word)) {
+                    $amount = (int) $index;
+                    $amountRank = $rank;
+                    break;
+                }
+            }
+        }
+        return ['subid' => $subid, 'amount' => $amount];
     }
 
     /**
      * A commission cell as a decimal string, or null when it is not one.
      * Currency symbols, thousands separators and surrounding spaces are what
      * network reports put around a number; anything else is not a number.
+     *
+     * A comma is read only as a thousands separator: between groups of three
+     * digits, before any decimal point, the first group not starting with 0
+     * ("1,234.56", "1,000,000"; "0,125" is a decimal comma). Every comma
+     * was deleted wherever it stood, so a report written with a decimal comma
+     * had "12,50" recorded as 1250.00000, "1.234,56" as 1.23456 and "1,23" as
+     * 123.00000, each line marked recorded (measured through POST
+     * /conversions/uploads). A comma anywhere else is not a number, and the
+     * line is skipped with the reason, never guessed at (CLAUDE.md #4).
      */
     public static function parseAmount(string $raw): ?string
     {
-        $clean = str_replace(['$', ',', ' ', "\u{00A0}"], '', trim($raw));
+        $clean = str_replace(['$', ' ', "\u{00A0}"], '', trim($raw));
+        if (str_contains($clean, ',')) {
+            if (preg_match('/^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/D', $clean) !== 1) {
+                return null;
+            }
+            $clean = str_replace(',', '', $clean);
+        }
         if (preg_match('/^-?\d+(\.\d+)?$/D', $clean) !== 1) {
             return null;
         }

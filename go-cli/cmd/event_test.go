@@ -114,7 +114,7 @@ func TestEventSendHintsForServerRefusals(t *testing.T) {
 	}{
 		{404, `{"error":true,"message":"Click 9 not found","status":404}`, "p202 click list"},
 		{409, `{"error":true,"message":"Event id \"e\" was already recorded","status":409}`, "new --id"},
-		{422, `{"error":true,"message":"The events are invalid","status":422,"field_errors":{"events[0].name":"bad"}}`, "23-events.md"},
+		{422, `{"error":true,"message":"The events are invalid","status":422,"field_errors":{"events.0.name":"bad"}}`, "23-events.md"},
 	}
 	for _, tc := range cases {
 		goalServer(t, tc.status, tc.body)

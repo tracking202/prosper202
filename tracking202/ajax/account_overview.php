@@ -75,7 +75,13 @@ if ($canSee) {
 	$range = $user_row['chart_time_range'] === 'hours' ? 'hours' : 'days';
 	$rangeOutputFormat = $range === 'hours' ? 'M d h:iA' : 'M d';
 	$rangePeriod = returnRanges(new DateTime('@' . $from), new DateTime('@' . $to), $range);
-	$chart = $de->getChart($from, $to, $chartLines, $range, $rangeOutputFormat, $rangePeriod);
+	// A chart whose query failed throws (it used to draw zeros, "no
+	// traffic"); the rest of the Overview still renders under a notice.
+	try {
+		$chart = $de->getChart($from, $to, $chartLines, $range, $rangeOutputFormat, $rangePeriod);
+	} catch (\RuntimeException) {
+		$chart = null;
+	}
 
 	$categories = [];
 	foreach ($rangePeriod as $point) {
@@ -110,7 +116,11 @@ if ($canSee) {
 			<button type="button" class="btn btn-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#overview-chart-builder"><i class="bi bi-graph-up"></i> Choose what the chart shows</button>
 		</div>
 	</div>
+	<?php if ($chart === null) {
+		echo p202_flash('bad', 'The chart could not be read; the server log says why. This is not a statement that there were no clicks.');
+	} else { ?>
 	<div id="overview-chart" class="mb-4" style="height: 300px;" data-p202-chart="<?php echo $e($chartConfig); ?>" role="img" aria-label="Chart of the figures you chose, over the window above"></div>
+	<?php } ?>
 
 	<div class="modal fade" id="overview-chart-builder" tabindex="-1" aria-labelledby="overview-chart-builder-title" aria-hidden="true">
 		<div class="modal-dialog modal-lg">
@@ -161,10 +171,17 @@ if ($canSee) {
 }
 
 // ── The tables ───────────────────────────────────────────────────────
-$lpsData = $de->getReportData('LpOverview', $from, $to, $cpv);
-$campaignsData = $de->getReportData('campaignOverview', $from, $to, $cpv);
-$slpDirectLinkPerPPC = $de->getReportData('slp_direct_link_per_ppc', $from, $to, $cpv);
-$alpPerPPC = $de->getReportData('alp_per_ppc', $from, $to, $cpv);
+// A failed read throws (DataEngine::collectRows()): the tables are replaced
+// by a notice rather than drawn empty, which would read as no traffic.
+try {
+	$lpsData = $de->getReportData('LpOverview', $from, $to, $cpv);
+	$campaignsData = $de->getReportData('campaignOverview', $from, $to, $cpv);
+	$slpDirectLinkPerPPC = $de->getReportData('slp_direct_link_per_ppc', $from, $to, $cpv);
+	$alpPerPPC = $de->getReportData('alp_per_ppc', $from, $to, $cpv);
+} catch (\RuntimeException) {
+	echo p202_flash('bad', 'The overview tables could not be read; the server log says why. This is not a statement that there were no clicks.');
+	return;
+}
 
 $empty = p202_overview_empty($base);
 

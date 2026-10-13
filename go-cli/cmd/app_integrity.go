@@ -151,9 +151,15 @@ var appIntegrityCredentialClearCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if !force && !confirmPrompt("Delete the Play Integrity credential of registration %s?", args[0]) {
-			fmt.Fprintln(os.Stderr, "Cancelled.")
-			return nil
+		if !force {
+			ok, err := confirmAction(cmd, "Delete the Play Integrity credential of registration %s?", args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintln(os.Stderr, "Cancelled.")
+				return nil
+			}
 		}
 		data, err := c.DeleteReturning("apps/" + args[0] + "/integrity-credential")
 		if err != nil {

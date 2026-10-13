@@ -87,6 +87,10 @@ $cvar_sql_row = $cvar_sql_result->fetch_assoc();
 if (!$cvar_sql_row) {
 	p202RespondJsonError(404, 'Click data not found');
 }
+// The privacy setting in force for this visitor: the stricter of the
+// install's and this click's account's (p202ApplyOwnerPrivacy()), before
+// the address is stored or a cookie set.
+p202ApplyOwnerPrivacy($cvar_sql_row['user_id'] ?? null);
 $mysql['t202kw'] = $db->real_escape_string((string)($cvar_sql_row['keyword'] ?? ''));
 $mysql['c1'] = $db->real_escape_string((string)($cvar_sql_row['c1'] ?? ''));
 $mysql['c2'] = $db->real_escape_string((string)($cvar_sql_row['c2'] ?? ''));
@@ -178,7 +182,7 @@ try {
 			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
 			'time_difference' => $time_difference,
-			'ip'              => p202ClientIp($_SERVER),
+			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 2,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',
 			'click_payout'    => ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '',

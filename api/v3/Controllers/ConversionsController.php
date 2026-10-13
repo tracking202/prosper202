@@ -9,15 +9,33 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Exception\NotFoundException;
 use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
+use Api\V3\Support\AccountTimezone;
+use Api\V3\Support\LtvBody;
+use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\TimeBound;
+use Api\V3\Support\QueryInt;
+use Prosper202\Conversion\Ledger\Amount;
+use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Database\Tables\ConversionTables;
 
 class ConversionsController
 {
     use StatementHelpers;
+    use AccountTimezone;
 
     public function __construct(private readonly \mysqli $db, private readonly int $userId)
     {
     }
+
+    /**
+     * The campaign a name is read from: the conversion's, only when it is
+     * the conversion's own account's. A conversion takes its click's
+     * campaign id, and nothing stopped a tracker naming another account's
+     * campaign before the API checked linked ids (229df10); such a row is
+     * served with no campaign name, as GET /clicks serves its click.
+     */
+    private const CAMPAIGN_JOIN = 'LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id AND ac.user_id = cl.user_id';
 
     /**
      * The columns a conversion is served with: the row, its campaign's name,
@@ -34,26 +52,35 @@ class ConversionsController
 
     public function list(array $params): array
     {
-        $limit = max(1, min(500, (int)($params['limit'] ?? 50)));
-        $offset = max(0, (int)($params['offset'] ?? 0));
+        $limit = QueryInt::param($params, 'limit', 50, 1, 500, 'rows per page');
+        $offset = QueryInt::param($params, 'offset', 0, 0, PHP_INT_MAX, 'rows to skip');
 
         $where = ['cl.user_id = ?'];
         $binds = [$this->userId];
         $types = 'i';
 
-        if (!empty($params['campaign_id'])) {
+        // Read as its siblings below read theirs. It was !empty(), and
+        // empty('0') is true, so campaign_id=0 (`--aff-campaign-id 0`) was no
+        // filter and answered with every campaign's conversions; a value that
+        // was not a number was cast to 0 and answered with none.
+        if (array_key_exists('campaign_id', $params)) {
+            $campaignId = self::positiveId($params['campaign_id']);
+            if ($campaignId === null) {
+                throw new ValidationException('Invalid conversion filter: campaign_id', ['campaign_id' => 'Must be a positive integer campaign id (see `p202 campaign list`)']);
+            }
             $where[] = 'cl.campaign_id = ?';
-            $binds[] = (int)$params['campaign_id'];
+            $binds[] = $campaignId;
             $types .= 'i';
         }
-        if (!empty($params['time_from'])) {
+        [$from, $to] = TimeBound::window($params, fn (): string => $this->accountTimezone());
+        if ($from !== null) {
             $where[] = 'cl.conv_time >= ?';
-            $binds[] = (int)$params['time_from'];
+            $binds[] = $from;
             $types .= 'i';
         }
-        if (!empty($params['time_to'])) {
+        if ($to !== null) {
             $where[] = 'cl.conv_time <= ?';
-            $binds[] = (int)$params['time_to'];
+            $binds[] = $to;
             $types .= 'i';
         }
 
@@ -110,9 +137,9 @@ class ConversionsController
         $total = (int)$this->result($stmt)->fetch_assoc()['total'];
         $stmt->close();
 
-        $sql = 'SELECT ' . self::COLUMNS . "
+        $sql = 'SELECT ' . self::COLUMNS . '
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            ' . self::CAMPAIGN_JOIN . "
             $whereClause
             ORDER BY cl.conv_time DESC, cl.conv_id DESC LIMIT ? OFFSET ?";
 
@@ -142,7 +169,7 @@ class ConversionsController
     {
         $sql = 'SELECT ' . self::COLUMNS . '
             FROM 202_conversion_logs cl
-            LEFT JOIN 202_aff_campaigns ac ON cl.campaign_id = ac.aff_campaign_id
+            ' . self::CAMPAIGN_JOIN . '
             WHERE cl.conv_id = ? AND cl.user_id = ? AND cl.deleted = 0 LIMIT 1';
 
         $stmt = $this->prepare($sql);
@@ -168,6 +195,10 @@ class ConversionsController
     private static function present(array $row): array
     {
         $row['payable'] = (int) $row['payable'] === 1;
+        // DECIMAL, which mysqli hands back as a string ("1.50000").
+        if (isset($row['click_payout']) && is_string($row['click_payout']) && is_numeric($row['click_payout'])) {
+            $row['click_payout'] = (float) $row['click_payout'];
+        }
         $ref = \Prosper202\Conversion\Ledger\SourceRef::parse(isset($row['source_ref']) ? (string) $row['source_ref'] : null);
         $isGoal = $ref !== null && $ref['kind'] === \Prosper202\Conversion\Ledger\SourceRef::GOAL;
         $row['goal_id'] = $isGoal ? $ref['id'] : null;
@@ -190,17 +221,100 @@ class ConversionsController
         return is_int($id) && $id > 0 ? $id : null;
     }
 
+    /**
+     * transaction_id and reversal_id as the ledger keys them: a string, or a
+     * JSON integer read as its digits (the rule LtvBody reads /ltv/revenue's
+     * references by), at most DedupeKey::MAX_TEXT bytes once trimmed, as
+     * the key is built from the trimmed id. Absent or null is none.
+     *
+     * A number past PHP_INT_MAX is decoded as a float, which cannot tell
+     * 12345678901234567891 from 12345678901234567892 (both are
+     * 12345678901234567168), so it is refused, not read: send such an id as
+     * a string. Past 255 bytes, DedupeKey threw from inside the write and the
+     * request answered 500 naming nothing.
+     *
+     * @param array<array-key, mixed> $payload
+     * @return array<string, string>
+     */
+    private static function referenceErrors(array $payload): array
+    {
+        $errors = [];
+        $about = [
+            'transaction_id' => 'the network\'s id for the sale',
+            'reversal_id' => 'the network\'s id for the reversal',
+        ];
+        foreach ($about as $key => $what) {
+            if (!array_key_exists($key, $payload) || $payload[$key] === null) {
+                continue;
+            }
+            $value = $payload[$key];
+            if (!is_string($value) && !is_int($value)) {
+                $errors[$key] = 'must be a string, or a whole number up to ' . PHP_INT_MAX . ': ' . $what
+                    . ' (send a longer number as a string)';
+                continue;
+            }
+            $bytes = strlen(trim((string) $value));
+            if ($bytes > DedupeKey::MAX_TEXT) {
+                $errors[$key] = 'must be at most ' . DedupeKey::MAX_TEXT . ' bytes: ' . $what . ' (got ' . $bytes . ')';
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * The largest amount, in Amount's units, 202_conversion_logs.click_payout
+     * holds, read from the table's definition rather than restated:
+     * decimal(P,S) holds P nines' worth of units of 10^-S, and S has to be
+     * Amount's scale for those to be Amount's units.
+     */
+    private static function payoutColumnMaxUnits(): int
+    {
+        $ddl = ConversionTables::conversionLogs()->createStatement;
+        $found = preg_match('/`click_payout`\s+decimal\((\d+),(\d+)\)/i', $ddl, $m) === 1;
+        if (!$found || (int) $m[2] !== Amount::SCALE || (int) $m[1] > 18) {
+            throw new \LogicException(
+                '202_conversion_logs.click_payout is not a decimal(P,' . Amount::SCALE . ') column'
+            );
+        }
+
+        return (int) str_repeat('9', (int) $m[1]);
+    }
+
     public function create(array $payload): array
     {
-        $clickId = (int)($payload['click_id'] ?? 0);
-        if ($clickId <= 0) {
-            throw new ValidationException('click_id is required', ['click_id' => 'Must be a positive integer']);
-        }
+        // Every key below is read; anything else was dropped with a 201 — a
+        // misspelled `transaction_id` recorded the sale without the id that
+        // dedupes its retries (CLAUDE.md #4).
+        PayloadKeys::refuseUnknown($payload, [
+            'click_id', 'transaction_id', 'conv_time', 'payout', 'status', 'reversal_id',
+            'customer_id', 'customer_ref', 'customer_ref_type', 'customer_crm', 'items',
+        ], 'a conversion');
+        // And the objects inside it, as strictly: the repository read the
+        // keys of a line item and of customer_crm it knew and cast them, so
+        // `unit_pirce` stored no price, a unit_price of "abc" stored 0 and
+        // `frist_name` no name, each answered 201 (CLAUDE.md #4). And the
+        // references a sale is keyed and identified by, as /ltv/revenue reads
+        // its own: (string) made the JSON integers 12345678901234567891 and
+        // 12345678901234567892 (floats past PHP_INT_MAX) both
+        // "1.2345678901235E+19", so the second sale was answered duplicate
+        // and dropped, an object "Array" and true "1" (measured); is_scalar()
+        // let a customer_ref through the same way.
+        PayloadKeys::refuse(
+            PayloadKeys::objectErrors($payload, 'customer_crm', LtvBody::crmKeys(), 'customer_crm', LtvBody::crm(...))
+            + PayloadKeys::listErrors($payload, 'items', LtvBody::LINE_ITEM_KEYS, 'a line item', LtvBody::lineItem(...))
+            + LtvBody::identity($payload)
+            + self::referenceErrors($payload)
+        );
+        // Read strictly: (int) made "12abc" click 12 and "abc" no click, and
+        // a conv_time of "2026-10-07" the 2026th second of 1970.
+        $clickId = QueryInt::required($payload, 'click_id', 1, PHP_INT_MAX, 'the click the conversion is recorded on');
 
         $data = [
             'click_id' => $clickId,
+            // A string or an integer by now (referenceErrors()).
             'transaction_id' => (string)($payload['transaction_id'] ?? ''),
-            'conv_time' => (int)($payload['conv_time'] ?? time()),
+            'conv_time' => QueryInt::param($payload, 'conv_time', time(), 0, 2147483647, 'a unix time; leave it out for now'),
             // Provenance: written through the API, by this key (a digest of
             // it; the breakdown names the key from it).
             'source' => \Prosper202\Conversion\Ledger\ConversionSource::API->value,
@@ -215,6 +329,21 @@ class ConversionsController
             $payout = $payload['payout'];
             if (!is_int($payout) && !is_float($payout) && !(is_string($payout) && preg_match('/^-?\d+(\.\d+)?$/D', trim($payout)) === 1)) {
                 throw new ValidationException('payout must be a number', ['payout' => 'Must be a decimal number, e.g. 12.50']);
+            }
+            // And one a conversion row can hold, as stored (rounded to five
+            // places): Amount refused 14 digits or more and overflowed on a
+            // JSON integer from 10^14, each a 500 naming nothing, and 1234567
+            // reached the INSERT, a strict-mode 500, or under an empty
+            // sql_mode stored as 999999.99999 and answered 201 (measured).
+            try {
+                $units = Amount::toUnits(is_int($payout) ? (string) $payout : $payout);
+            } catch (\InvalidArgumentException) {
+                $units = null;
+            }
+            $max = self::payoutColumnMaxUnits();
+            if ($units === null || abs($units) > $max) {
+                throw new ValidationException('payout is out of range', ['payout' => 'Must be from -'
+                    . Amount::fromUnits($max) . ' to ' . Amount::fromUnits($max) . ', what one conversion holds']);
             }
             $data['payout'] = is_string($payout) ? trim($payout) : $payout;
         }
@@ -233,32 +362,55 @@ class ConversionsController
                 }
                 $data['reversal_ref'] = trim((string) $payload['reversal_id']);
             }
+        } elseif (isset($payload['reversal_id'])) {
+            // A reversal_id without the status was dropped, and the body
+            // recorded a new sale: money added where the caller meant to
+            // take it back, answered 201.
+            throw new ValidationException('reversal_id is read only with status "reversed"', [
+                'reversal_id' => 'Send status "reversed" with it to reverse the sale named by transaction_id; a new sale takes no reversal_id',
+            ]);
         }
 
-        // LTV: optional customer identity + product line items. An invalid
-        // customer_ref_type or malformed items array is rejected by the
-        // repository with an explicit error — never silently dropped.
-        if (!empty($payload['customer_id'])) {
-            $data['customer_id'] = (int)$payload['customer_id'];
+        // LTV: optional customer identity + product line items, whose shape
+        // was checked above, with customer_ref and customer_ref_type
+        // (LtvBody::identity()); the repository keeps its own refusal of a
+        // type it does not know — never silently dropped.
+        // Given means present and not null. These were !empty(), and
+        // empty('0') is true: customer_ref "0" (a real id where a system
+        // counts from 0) was dropped and the revenue landed on whatever the
+        // click resolved to, and customer_id 0 or "x" named no one, silently.
+        if (isset($payload['customer_id'])) {
+            $customerId = self::positiveId($payload['customer_id']);
+            if ($customerId === null) {
+                throw new ValidationException('customer_id must be a positive integer', ['customer_id' => 'An LTV customer id (see `p202 ltv customers`)']);
+            }
+            $data['customer_id'] = $customerId;
         }
-        if (!empty($payload['customer_ref'])) {
+        if (isset($payload['customer_ref'])) {
+            if (!is_scalar($payload['customer_ref']) || trim((string) $payload['customer_ref']) === '') {
+                throw new ValidationException('customer_ref must be a non-empty string', ['customer_ref' => 'Your id for the customer']);
+            }
             $data['customer_ref'] = (string)$payload['customer_ref'];
-            if (!empty($payload['customer_ref_type'])) {
-                $data['customer_ref_type'] = (string)$payload['customer_ref_type'];
+            if (isset($payload['customer_ref_type'])) {
+                if (!is_string($payload['customer_ref_type'])) {
+                    throw new ValidationException('customer_ref_type must be a string', ['customer_ref_type' => 'email_md5, email_sha256, esp_id, merchant_id, subid or custom']);
+                }
+                // The repository refuses a type it does not know and reads ''
+                // as its default, custom (normalizeAliasType()).
+                $data['customer_ref_type'] = $payload['customer_ref_type'];
             }
         }
         if (isset($payload['customer_crm'])) {
-            if (!is_array($payload['customer_crm'])) {
-                throw new ValidationException('customer_crm must be an object', ['customer_crm' => 'Must be an object of CRM fields']);
-            }
             $data['customer_crm'] = $payload['customer_crm'];
         }
         if (isset($payload['items'])) {
-            if (!is_array($payload['items'])) {
-                throw new ValidationException('items must be an array', ['items' => 'Must be an array of line items']);
-            }
             $data['items'] = $payload['items'];
         }
+        // Line items and CRM fields belong to a customer. When none resolves
+        // (none named, the click linked to none, the account's c-param naming
+        // none) the conversion was recorded without them and answered 201;
+        // the repository refuses instead, before the row is written.
+        $data['ltv_requires_customer'] = true;
 
         // Delegate to the single canonical conversion writer so the V3 API and the
         // legacy postback/pixel endpoints share one transactional, idempotent path
@@ -275,6 +427,12 @@ class ConversionsController
                 throw new NotFoundException($e->getMessage());
             }
             throw new ValidationException($e->getMessage(), ['transaction_id' => $e->getMessage()]);
+        } catch (\Prosper202\Conversion\LtvDataWithoutCustomer $e) {
+            throw new ValidationException($e->getMessage(), $e->fieldErrors());
+        } catch (\Prosper202\Ltv\LtvInputException $e) {
+            // The LTV repositories' refusals name their field (an unknown
+            // customer_ref_type, a line item's quantity), as on /ltv/*.
+            throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
         } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
             // A real database failure is a 500 even though QueryException
             // extends RuntimeException — under MYSQLI_REPORT_STRICT a failed
@@ -309,6 +467,14 @@ class ConversionsController
                 ['conv_id' => $convId, 'click_id' => $clickId, 'deleted' => true]
             );
         }
+        // A duplicate is this sale again only when what it states is what
+        // the recorded conversion holds. The ledger key (the transaction id)
+        // located the row and nothing compared the request to it, so the
+        // same transaction id with another payout or customer answered 201
+        // `duplicate: true` and the change was dropped (CLAUDE.md #15).
+        if ($duplicate && $convId > 0) {
+            $this->refuseADifferentSale($convId, $clickId, $payload, $data, (string) ($recorded['dedupeKey'] ?? ''));
+        }
 
         // A customer_ref on an authenticated request is the operator's own
         // statement, so it links the click into the identity graph without
@@ -340,6 +506,125 @@ class ConversionsController
         }
 
         return $response;
+    }
+
+    /**
+     * Refuse a request that matched a recorded conversion's ledger key but
+     * states a different sale, naming what differs; nothing was written.
+     *
+     * Compared when the request states it (each is stored as sent): the
+     * payout (negated for a reversal, as the writer negates it), conv_time,
+     * the customer it names (Prosper202\Ltv\RevenueReplay, merges followed)
+     * and its line items, against the conversion's revenue event. Left out,
+     * the payout and the time mean the campaign's or the click's payout and
+     * now, which a retry cannot be held to; customer_crm only describes a
+     * customer the write creates. The postback and pixel paths keep the
+     * first statement of a sale, as networks resend theirs; this is the
+     * API's answer to its own caller.
+     *
+     * @param array<string, mixed> $payload the body as sent
+     * @param array<string, mixed> $data what record() was given
+     */
+    private function refuseADifferentSale(
+        int $convId,
+        int $clickId,
+        array $payload,
+        array $data,
+        string $dedupeKey
+    ): void {
+        $statesConvTime = array_key_exists('conv_time', $payload) && $payload['conv_time'] !== null;
+        $statesAnything = array_key_exists('payout', $data) || $statesConvTime || isset($data['customer_id'])
+            || isset($data['customer_ref']) || isset($data['items']);
+        if (!$statesAnything) {
+            return; // it states nothing a recorded sale could differ in
+        }
+        $conn = new \Prosper202\Database\Connection($this->db);
+        $stmt = $conn->prepareWrite(
+            'SELECT click_payout, conv_time, customer_id, reverses_conv_id FROM 202_conversion_logs
+             WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$convId, $this->userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new DatabaseException(
+                'Conversion ' . $convId . ' matched this request but could not be read to compare it'
+            );
+        }
+
+        $differences = [];
+        if (array_key_exists('payout', $data)) {
+            $sent = \Prosper202\Conversion\Ledger\Amount::toUnits($data['payout']);
+            if ($row['reverses_conv_id'] !== null) {
+                $sent = -abs($sent);
+            }
+            $kept = \Prosper202\Conversion\Ledger\Amount::toUnits((string) $row['click_payout']);
+            if ($sent !== $kept) {
+                $differences['payout'] = 'recorded ' . \Prosper202\Conversion\Ledger\Amount::fromUnits($kept)
+                    . ', sent ' . \Prosper202\Conversion\Ledger\Amount::fromUnits($sent);
+            }
+        }
+        if ($statesConvTime && (int) $data['conv_time'] !== (int) $row['conv_time']) {
+            $differences['conv_time'] = 'recorded ' . (int) $row['conv_time'] . ', sent ' . (int) $data['conv_time'];
+        }
+
+        $replay = new \Prosper202\Ltv\RevenueReplay(new \Prosper202\Ltv\MysqlCustomerRepository($conn));
+        if (isset($data['customer_id']) || isset($data['customer_ref'])) {
+            $customer = isset($data['customer_id'])
+                ? ['id' => (int) $data['customer_id']]
+                : ['ref' => (string) $data['customer_ref'], 'type' => $data['customer_ref_type'] ?? null];
+            $recorded = $row['customer_id'] !== null ? (int) $row['customer_id'] : null;
+            try {
+                $difference = $replay->customerDifference($this->userId, $recorded, $customer);
+            } catch (\Prosper202\Ltv\LtvInputException $e) {
+                // A customer_ref_type off the list or a malformed digest: a
+                // new conversion refuses it in the repository, which a
+                // duplicate never reaches.
+                throw new ValidationException($e->getMessage(), $e->fieldErrors(), $e);
+            }
+            if ($difference !== null) {
+                $differences['customer'] = $difference;
+            }
+        }
+        if (isset($data['items']) && is_array($data['items'])) {
+            $eventStmt = $conn->prepareWrite(
+                'SELECT event_id, amount FROM 202_revenue_events WHERE conv_id = ? AND user_id = ? LIMIT 1'
+            );
+            $conn->bind($eventStmt, 'ii', [$convId, $this->userId]);
+            $event = $conn->fetchOne($eventStmt);
+            $difference = $replay->itemsDifference(
+                $this->userId,
+                $event !== null ? (int) $event['event_id'] : null,
+                array_values($data['items']),
+                $event !== null ? (float) $event['amount'] : (float) $row['click_payout']
+            );
+            if ($difference !== null) {
+                $differences['items'] = $difference;
+            }
+        }
+        if ($differences === []) {
+            return;
+        }
+
+        if (str_starts_with($dedupeKey, 'tx:')) {
+            $sale = 'The sale with transaction_id "' . substr($dedupeKey, 3) . '" on click ' . $clickId;
+        } elseif (str_starts_with($dedupeKey, 'rev:')) {
+            $sale = 'This reversal on click ' . $clickId;
+        } else {
+            $sale = 'Click ' . $clickId . '\'s conversion without a transaction_id';
+        }
+        $what = implode('; ', array_map(
+            static fn (string $field, string $difference): string => $field . ' ' . $difference,
+            array_keys($differences),
+            $differences
+        ));
+        throw new ValidationException(
+            $sale . ' is already recorded as conversion ' . $convId . ', and this request states a'
+                . ' different sale (' . $what . '). Nothing was recorded: send it as recorded to get conversion '
+                . $convId . ' back, send a different sale with its own transaction_id, or take this one back with'
+                . ' status "reversed".',
+            ['transaction_id' => 'Already recorded as conversion ' . $convId . ' with a different '
+                . implode(', ', array_keys($differences)) . '; a different sale needs its own transaction_id']
+        );
     }
 
     /**

@@ -8,7 +8,7 @@ require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 // Validate required parameter
 $clickIdPublic = RedirectHelper::getIntParam('pci');
 if ($clickIdPublic === null) {
-    RedirectHelper::redirect('/202-404.php');
+    RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
 
 $mysql['click_id_public'] = $db->real_escape_string((string)$clickIdPublic);
@@ -36,12 +36,12 @@ $tracker_sql = "
 $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
 
 if (!$tracker_row) {
-	$action_site_url = "/202-404.php";
-	$redirect_site_url = "/202-404.php";
+	$action_site_url = p202InstallPath('202-404.php');
+	$redirect_site_url = p202InstallPath('202-404.php');
 	$referrer = '';
 	$html['aff_campaign_name'] = '';
 } else {
-	$action_site_url = "/tracking202/redirect/cl2.php";
+	$action_site_url = p202InstallPath('tracking202/redirect/cl2.php');
 	//modify the redirect site url to go through another cloaked link
 	$redirect_site_url = $tracker_row['site_url_address'];
 	$referrer = $tracker_row['user_pref_cloak_referer'] ?? '';

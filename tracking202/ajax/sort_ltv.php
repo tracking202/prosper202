@@ -58,7 +58,9 @@ try {
         $breakdown = $ltv->breakdown($query, $by, 25, 0);
     }
     $customers = $ltv->customers($query, 'total_revenue', 'DESC', $limit, $offset, $search, $segment !== '' ? $segment : null);
-    $cohorts = $ltv->cohorts($userId, 6);
+    // The account's calendar months: AUTH::set_timezone() put the account's zone
+    // in force for this request, as grab_timeframe() reads it.
+    $cohorts = $ltv->cohorts($userId, 6, null, date_default_timezone_get());
     // Reuse the aggregates computed above — predict($query) would re-run
     // the same summary and MRR queries in the hottest LTV render.
     $predict = $ltv->predictFromComputed($summary, $mrr);

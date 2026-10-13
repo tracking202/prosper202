@@ -63,6 +63,23 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'a malformed cookie is refused, not skipped' => [[], ['tracking202subid' => 'abc'], 0, ['click_id' => null, 'malformed' => 'tracking202subid']];
         yield 'zero is not a click' => [['subid' => '0'], [], 0, ['click_id' => null, 'malformed' => 'subid']];
         yield 'an array is not a click' => [['subid' => ['1']], [], 0, ['click_id' => null, 'malformed' => 'subid']];
+        // Plain HTTP: the Secure cookie never exists, its -legacy twin does (ClickCookie).
+        yield 'the campaign cookie\'s -legacy twin' => [
+            [],
+            ['tracking202subid_a_5-legacy' => '8', 'tracking202subid-legacy' => '9'],
+            5,
+            ['click_id' => 8, 'malformed' => null],
+        ];
+        $click = static fn (int $id): array => ['click_id' => $id, 'malformed' => null];
+        yield 'the general cookie\'s -legacy twin' => [[], ['tracking202subid-legacy' => '9'], 5, $click(9)];
+        $both = ['tracking202subid' => '9', 'tracking202subid-legacy' => '7'];
+        yield 'the cookie before its twin' => [[], $both, 0, $click(9)];
+        yield 'a malformed twin is refused too' => [
+            [],
+            ['tracking202subid-legacy' => 'abc'],
+            0,
+            ['click_id' => null, 'malformed' => 'tracking202subid'],
+        ];
     }
 
     // --- reversals ---------------------------------------------------------
@@ -139,7 +156,25 @@ final class LedgerEndpointHelpersTest extends TestCase
         yield 'plain' => ['12.5', '12.50000'];
         yield 'dollar sign' => ['$12.50', '12.50000'];
         yield 'thousands separator' => ['$1,234.56', '1234.56000'];
+        yield 'thousands separators, no decimals' => ['1,000,000', '1000000.00000'];
+        yield 'negative with a thousands separator' => ['-1,234.50', '-1234.50000'];
         yield 'spaces' => [' 3 ', '3.00000'];
+        // A comma is a thousands separator only between groups of three
+        // digits. Deleting it wherever it stood read a decimal comma as
+        // a separator: "12,50" was 1250 and "1.234,56" 1.23456.
+        yield 'decimal comma' => ['12,50', null];
+        yield 'decimal comma, one digit' => ['12,5', null];
+        yield 'decimal comma after a thousands point' => ['1.234,56', null];
+        yield 'comma before two digits' => ['1,23', null];
+        yield 'comma before four digits' => ['1,2345', null];
+        yield 'group of four before a comma' => ['1234,567', null];
+        yield 'comma after the decimal point' => ['1.234,567', null];
+        yield 'leading comma' => [',123', null];
+        yield 'trailing comma' => ['123,', null];
+        yield 'two commas together' => ['1,,234', null];
+        // No thousands group starts with 0: "0,125" is a decimal comma.
+        yield 'decimal comma of three digits after 0' => ['0,125', null];
+        yield 'leading zero before a comma' => ['01,234', null];
         yield 'negative (a charge-back line)' => ['-4.00', '-4.00000'];
         yield 'empty' => ['', null];
         yield 'text' => ['pending', null];

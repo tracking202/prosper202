@@ -111,6 +111,12 @@ jobs:
           echo "MySQL did not become ready in time" >&2
           exit 1
 
+      # The fresh install takes the license-key step, which checks the key
+      # with my.tracking202.com; CI's key is made up, so answer from a local
+      # stub (see the script) rather than production.
+      - name: Stub my.tracking202.com (CI only, verified TLS)
+        run: bash tests/fixtures/agent-eval/ci/licence-stub.sh start "${{ runner.temp }}/p202-stub"
+
       - name: Upgrade 1.9.55 and compare it with a fresh install
         env:
           P202_ORIGIN_PHP: php7.4
@@ -132,3 +138,7 @@ jobs:
             ${{ runner.temp }}/uei/*.txt
             ${{ runner.temp }}/uei/fresh-runtime/*.log
           if-no-files-found: ignore
+
+      - name: Stop the my.tracking202.com stub
+        if: always()
+        run: bash tests/fixtures/agent-eval/ci/licence-stub.sh stop "${{ runner.temp }}/p202-stub"

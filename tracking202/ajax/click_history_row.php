@@ -24,9 +24,9 @@ $html['outbound'] = htmlentities(safe_url((string)($click_row['outbound'] ?? '')
 
 if ($click_row['click_cloaking']) {
 	if (!$click_row['click_alp']) {
-		$html['cloaking'] = htmlentities('http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public']);
+		$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_row['click_id_public']);
 	} else {
-		$html['cloaking'] = htmlentities('http://' . $_SERVER['SERVER_NAME'] . get_absolute_url() . 'tracking202/redirect/off.php?acip=' . $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public']);
+		$html['cloaking'] = htmlentities(\Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/off.php?acip=' . $click_row['aff_campaign_id_public'] . '&pci=' . $click_row['click_id_public']);
 	}
 } else {
 	$html['cloaking'] = '';

@@ -39,9 +39,12 @@
 - [Text Ads](api/08-text-ads.md)
 - [Clicks](api/09-clicks.md)
 - [Conversions](api/10-conversions.md)
+- [Update: past clicks' CPC, subids, revenue reports](api/26-update.md)
+- [Setup: landing-page code, pixels and postbacks, traffic-source variables and pixels](api/27-setup.md)
 - [Reports](api/11-reports.md)
 - [Rotators](api/12-rotators.md)
 - [Attribution](api/13-attribution.md)
+- [LTV: customers, revenue, subscriptions, products, custom fields, companies, webhooks](api/20-ltv.md)
 - [App measurement: registry and Apple postbacks (SKAdNetwork, AdAttributionKit)](api/19-app-measurement.md)
 - [App SDK wire contract](api/21-app-sdk-contract.md)
 - [Goals: definitions, versions, campaign payouts, evaluation](api/22-goals.md)
@@ -59,8 +62,9 @@
 
 - [Go CLI (p202)](cli/10-go-cli.md) — cross-platform binary with multi-profile, sync, and diff
 - [Forecasting Guide](cli/11-forecasting.md) — how `p202 forecast` works, with worked examples: bands, ensemble, coherent metrics, seasonality, level shifts, transient masking
+- [What the UI does, through the API and `p202`](cli/12-ui-parity.md) — every web page, the REST route and the `p202` command that does the same, and what still needs the browser
 
-A separate PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands); it does not yet have a dedicated reference page here.
+A legacy PHP/Symfony Console CLI also ships at `bin/p202` (run `php bin/p202 list` to see its commands): a subset of the Go CLI's, with `noun:verb` names, kept for the scripts that call it by that path. Its `--version` line and `list` say it is the legacy CLI and point back to the Go CLI reference above; it reads the Go CLI's active profile from `~/.p202/config.json`. It has no reference page of its own.
 
 ### Tutorials and Guides
 

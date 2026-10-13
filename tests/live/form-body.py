@@ -9,7 +9,10 @@ value tells them apart (delete_user_id=42). The form containing it is found and 
 fields are serialized: hidden, text-like and password inputs with their value,
 checked checkboxes and radios, the selected option of each select (or the
 first, as a browser does), textareas. Disabled fields and buttons are left
-out. Each name=value argument then replaces that field (or adds it), so a pass
+out, and so is everything inside a <template>: its content is inert, never
+part of the form (the Traffic Sources page keeps a pixel row there for its
+Add-a-pixel button, and posting it as a second row made every pass save two
+pixels where a browser saves one). Each name=value argument then replaces that field (or adds it), so a pass
 submits what the page rendered and changes only what it means to change.
 
 The point is error pattern #21: a live pass that scrapes the first token on
@@ -32,9 +35,15 @@ class Forms(HTMLParser):
         self.select = None       # [name, disabled, chosen value or None, first value or None]
         self.option = None
         self.textarea = None
+        self.template = 0        # depth of <template> elements we are inside
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag == 'template':
+            self.template += 1
+            return
+        if self.template:
+            return
         if tag == 'form':
             self.current = ([], set())
             self.forms.append(self.current)
@@ -72,6 +81,11 @@ class Forms(HTMLParser):
             self.textarea[1] += data
 
     def handle_endtag(self, tag):
+        if tag == 'template':
+            self.template = max(0, self.template - 1)
+            return
+        if self.template:
+            return
         if tag == 'option' and self.option is not None and self.select is not None:
             value = self.option[0] if self.option[0] is not None else self.option[2].strip()
             if self.select[3] is None:

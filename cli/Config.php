@@ -76,14 +76,64 @@ class Config
         }
     }
 
+    /**
+     * The keys that name a server, which the Go CLI keeps per profile.
+     *
+     * Both CLIs read and write ~/.p202/config.json. This one kept `url` and
+     * `api_key` at the top level; the Go CLI keeps them under
+     * `profiles.<active_profile>` and folds top-level ones into that profile
+     * on its next save, clearing them. So after any Go CLI write this CLI
+     * found no url and no key ("not configured"), and a url set here
+     * replaced the Go CLI's on its next save. They are read from and written
+     * to the active profile now whenever the file has profiles, which is the
+     * same place both CLIs end up with.
+     */
+    private const PROFILE_KEYS = ['url', 'api_key'];
+
+    /** The profile the Go CLI would use, when the file has profiles. */
+    private function activeProfile(): ?string
+    {
+        if (!isset($this->data['profiles']) || !is_array($this->data['profiles'])) {
+            return null;
+        }
+        $name = $this->data['active_profile'] ?? '';
+
+        return is_string($name) && trim($name) !== '' ? trim($name) : 'default';
+    }
+
     public function get(string $key, mixed $default = null): mixed
     {
+        $profile = $this->activeProfile();
+        if ($profile !== null && in_array($key, self::PROFILE_KEYS, true)) {
+            $value = $this->data['profiles'][$profile][$key] ?? null;
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+
         return $this->data[$key] ?? $default;
     }
 
     public function set(string $key, mixed $value): void
     {
+        $profile = $this->activeProfile();
+        if ($profile !== null && in_array($key, self::PROFILE_KEYS, true)) {
+            if (!is_array($this->data['profiles'][$profile] ?? null)) {
+                $this->data['profiles'][$profile] = [];
+            }
+            $this->data['profiles'][$profile][$key] = $value;
+            // No top-level copy for the Go CLI to fold over the profile.
+            unset($this->data[$key]);
+
+            return;
+        }
         $this->data[$key] = $value;
+    }
+
+    /** The active profile's name, or null for a file with no profiles. */
+    public function profileName(): ?string
+    {
+        return $this->activeProfile();
     }
 
     public function getUrl(): string

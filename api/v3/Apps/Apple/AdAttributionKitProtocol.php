@@ -89,7 +89,8 @@ final class AdAttributionKitProtocol implements PostbackProtocol
             postbackId: (string)$payload['postback-identifier'],
             appId: (int)$payload['advertised-item-identifier'],
             sequenceIndex: (int)$payload['postback-sequence-index'],
-            didWin: (bool)$payload['did-win'],
+            // validatePayload() refused anything but a JSON boolean.
+            didWin: $payload['did-win'] === true,
             signatureState: $this->verifier->verify($decoded),
             keyId: (string)$decoded['header']['kid'],
             columns: [

@@ -7,6 +7,7 @@ namespace Api\V3\Controllers;
 use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
+use Api\V3\Support\QueryInt;
 
 class SystemController
 {
@@ -133,7 +134,7 @@ class SystemController
 
     public function errors(array $params): array
     {
-        $limit = max(1, min(100, (int)($params['limit'] ?? 20)));
+        $limit = QueryInt::param($params, 'limit', 20, 1, 100, 'errors, newest first');
         $stmt = $this->prepare(
             'SELECT mysql_error_id, mysql_error_time, mysql_error_text AS mysql_error_message, mysql_error_sql '
             . 'FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT ?'

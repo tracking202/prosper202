@@ -399,7 +399,7 @@ eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition
 eq "$(field "list(d['field_errors'])")" '["definition.repeat.max"]' "naming definition.repeat.max"
 eq "$(api POST /goals/evaluate '{"goals":[{"goal_id":1,"definition":{"name":"B","trigger":{"event":"buy"}}}],"subject":{"type":"click"},"events":[{"event_id":"e","name":"buy","occurred_at":1,"received_at":1,"revenue":1000000}]}')" 422 \
    "revenue beyond what a conversion holds is refused"
-eq "$(field "list(d['field_errors'])")" '["events[0].revenue"]' "naming events[0].revenue"
+eq "$(field "list(d['field_errors'])")" '["events.0.revenue"]' "naming events.0.revenue"
 BIG='{"name":"G","trigger":{"event":"buy"},"threshold":{"sum":{"prop":"$revenue","gte":"0.00001"}},"repeat":{"mode":"each","max":6000}}'
 eq "$(api POST /goals/evaluate "{\"goals\":[{\"goal_id\":1,\"definition\":$BIG},{\"goal_id\":2,\"definition\":$BIG}],\"subject\":{\"type\":\"click\"},\"events\":[{\"event_id\":\"e\",\"name\":\"buy\",\"occurred_at\":1,\"received_at\":1,\"revenue\":1}]}")" 422 \
    "an evaluation of 12,000 outcomes is refused"

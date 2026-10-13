@@ -34,7 +34,7 @@ if (!empty($_GET['edit_aff_network_id'])) {
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// validate session token before any state change
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$error['token'] = '<div class="error">Invalid token, please reload the page and try again.</div>';
 	}
 
@@ -127,7 +127,7 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and ($add_success != true)) {
 if (isset($_GET['delete_aff_network_id'])) {
 
 	// validate session token before any state change
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
 		die();
 	}

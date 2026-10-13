@@ -247,7 +247,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 		<div class="p202-frame">
 			<?php echo p202_chrome_header(is_array($navigation) ? $navigation : [], $userObj ?? null, $user_data, $base); ?>
 			<?php if (!empty($_SESSION['user_id']) && empty($_SESSION['publisher'])) { ?>
-			<div id="update_needed" class="p202c-update" data-p202-check="<?php echo htmlspecialchars($base . '202-account/ajax/check-for-update.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-banner="<?php echo htmlspecialchars($base . '202-account/ajax/update-needed.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-snooze="<?php echo htmlspecialchars($base . '202-account/ajax/delay-alert.php', ENT_QUOTES, 'UTF-8'); ?>"></div>
+			<div id="update_needed" class="p202c-update" data-p202-check="<?php echo htmlspecialchars($base . '202-account/ajax/check-for-update.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-banner="<?php echo htmlspecialchars($base . '202-account/ajax/update-needed.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-snooze="<?php echo htmlspecialchars($base . '202-account/ajax/delay-alert.php', ENT_QUOTES, 'UTF-8'); ?>" data-p202-token="<?php echo htmlspecialchars(is_string($_SESSION['token'] ?? null) ? $_SESSION['token'] : '', ENT_QUOTES, 'UTF-8'); ?>"></div>
 			<?php } ?>
 
 			<?php if (($navigation[1] ?? '') == 'tracking202') {
@@ -428,24 +428,27 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 			window.addEventListener('load', function() {
 				window.setTimeout(function() {
 					if (navigator.sendBeacon) {
-						navigator.sendBeacon("//<?php echo getTrackingDomain() . get_absolute_url(); ?>202-cronjobs/");
+						<?php echo p202CronBeaconStatement(); ?>
 					}
 				}, 3000);
 			});
 		</script>
-		<?php if (!empty($_SESSION['user_id'])) { ?>
-			<!-- Prosper202 Messenger: config + command-queue stub + widget -->
+		<?php if (!empty($_SESSION['user_id'])) {
+			$p202ChatJson = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE;
+			?>
+			<!-- The chat box: 202-js/p202-chat.js, which the shell loads deferred, reads
+			     this, and replaces the command queue below with the real
+			     Prosper202Messenger, replaying what was queued. -->
 			<script type="text/javascript">
-				window.P202M_CONFIG = {
-					base: <?php echo json_encode(get_absolute_url()); ?>,
-					token: <?php echo json_encode($_SESSION['token'] ?? ''); ?>
+				window.P202_CHAT_CONFIG = {
+					base: <?php echo json_encode(get_absolute_url(), $p202ChatJson); ?>,
+					token: <?php echo json_encode(is_string($_SESSION['token'] ?? null) ? $_SESSION['token'] : '', $p202ChatJson); ?>,
+					user: <?php echo (int) $_SESSION['user_id']; ?>
 				};
-				/* Buffer any early Prosper202Messenger(...) calls until the widget loads. */
 				window.Prosper202Messenger = window.Prosper202Messenger || function () {
 					(window.Prosper202Messenger.q = window.Prosper202Messenger.q || []).push(arguments);
 				};
 			</script>
-			<script type="text/javascript" src="<?php echo get_absolute_url(); ?>202-js/messenger.js"></script>
 		<?php } ?>
 	</body>
 	</html>

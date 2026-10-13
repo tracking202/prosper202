@@ -415,7 +415,7 @@ func TestCheckURLsValidatesFlagsBeforeAnyRequest(t *testing.T) {
 		hint string
 	}{
 		{"bad slot", []string{"--slot", "6"}, "Slot 1 is the primary offer URL"},
-		{"bad ids", []string{"--ids", "12,abc"}, "... list"},
+		{"bad ids", []string{"--ids", "12,abc"}, "`p202 campaign list`"},
 		{"bad network", []string{"--aff-network-id", "affiliates"}, "p202 aff-network list"},
 		{"zero timeout", []string{"--timeout", "0s"}, "--timeout 5s"},
 		{"negative timeout", []string{"--timeout", "-1s"}, "--timeout 5s"},

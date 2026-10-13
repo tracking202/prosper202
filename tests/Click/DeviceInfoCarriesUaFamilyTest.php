@@ -85,7 +85,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     public function testACurrentCachedEntryIsServedWithoutParsing(): void
     {
         $GLOBALS['memcacheWorking'] = true;
-        $cached = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1', 'ua_device_family' => 'Other'];
+        $cached = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1', 'ua_device_family' => 'Other', 'ua_only' => true];
         $GLOBALS['memcache'] = self::cache([md5('user-agent' . self::CHROME . 'test') => $cached]);
 
         self::assertSame($cached, \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME));

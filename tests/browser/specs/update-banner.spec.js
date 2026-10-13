@@ -13,7 +13,8 @@
  * and served in place of that one response. Everything else is the real
  * path: the chrome script's idle-time request to check-for-update.php, its
  * drawing into #update_needed, Bootstrap's own dismissal, and the POST to
- * delay-alert.php that snoozes it. After the snooze the page is reloaded with
+ * delay-alert.php that snoozes it, carrying the session token (a snooze
+ * without it is refused 403). After the snooze the page is reloaded with
  * nothing stood in for, and the real endpoints answer.
  *
  * Checked at 1280px and 390px, light and dark.
@@ -83,7 +84,19 @@ async function bannerPass(ctx, label) {
     await page.click('[data-p202-update-banner] .btn-close');
     const snooze = await snoozed;
     expect.eq(snooze.status(), 200, label + ': closing it posts the snooze, and the server takes it');
-    expect.eq(snooze.request().postData(), 'delay=1', label + ': with the field delay-alert.php reads');
+    // The snooze writes the session, so it carries the session token: the
+    // one the banner's slot was rendered with, which is the one the page's
+    // forms carry (fetch() is not covered by the jQuery prefilter).
+    const slotToken = await page.getAttribute('#update_needed', 'data-p202-token');
+    expect.ok(/^[0-9a-f]{32}$/.test(slotToken || ''), label + ': the slot carries the session token', slotToken);
+    expect.eq(snooze.request().postData(), 'delay=1&token=' + slotToken, label + ': with the field delay-alert.php reads and the token');
+    const forged = await page.evaluate((url) => fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'delay=1',
+    }).then((r) => r.status), await page.getAttribute('#update_needed', 'data-p202-snooze'));
+    expect.eq(forged, 403, label + ': the same snooze without the token is refused');
     await ui.until(async () => !(await ui.exists('[data-p202-update-banner]')), { describe: 'the banner to close' });
     expect.ok(true, label + ': the banner is gone');
   } finally {

@@ -165,7 +165,7 @@ if (!empty($_GET['customers_api_key'])) {
 
 //if they want to remove their stats202 app key on file, do so
 if (!empty($_GET['remove_user_stats202_app_key'])) {
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_REQUEST['token'] ?? null)) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
@@ -183,7 +183,7 @@ if (!empty($_GET['remove_user_stats202_app_key'])) {
 
 //if they want to remove their user api key on file, do so
 if (!empty($_GET['remove_user_api_key'])) {
-	if (!hash_equals((string)($_SESSION['token'] ?? ''), (string)($_REQUEST['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_REQUEST['token'] ?? null)) {
 		http_response_code(403);
 		die('Invalid token.');
 	}
@@ -227,6 +227,8 @@ $keywordChoices = ['searched' => 'Pickup Searched Keyword', 'bidded' => 'Pickup 
 $bidChoices = ['0' => 'Pickup Bid from setup data', '1' => 'Pickup Bid dynamically from t202b variable'];
 $refererChoices = ['browser' => 'Pickup Referer from browser', 't202ref' => 'Pickup Referer from t202ref variable'];
 $privacyChoices = ['disabled' => 'Disabled', 'eu' => 'Enabled for European Traffic', 'all' => 'Enabled for All Traffic'];
+$privacyHelp = 'Which visitors get no tracking cookies and a masked address. European traffic is anyone'
+    . ' the location lookup does not place outside Europe.';
 $cloakChoices = ['origin' => 'Show Prosper202 Domain', 'never' => 'Show Blank Referer'];
 $adChoices = ['show_all' => 'Show All Ads', 'hide_login' => 'Hide Ads On Login Screen', 'hide_all' => 'Hide All Ads'];
 
@@ -266,7 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// classic page stored whatever arrived; a value outside the list
 			// is refused by name rather than written.
 			$postedTimezone = (string)($_POST['user_timezone'] ?? '');
-			if (!in_array($postedTimezone, DateTimeZone::listIdentifiers(), true)) {
+			if (!\Prosper202\Report\AccountZone::isZone($postedTimezone)) {
 				$error['user_timezone'] = 'Choose a time zone from the list.';
 			}
 			if (!array_key_exists((string)($_POST['user_daily_email'] ?? ''), $dailyEmailChoices)) {
@@ -340,7 +342,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$_SESSION['user_pref_ad_settings'] = $mysql['user_pref_ad_settings'];
 					//set the  session's user_timezone
 					$_SESSION['user_timezone'] = $postedTimezone;
-					registerDailyEmail($mysql['user_daily_email'], $mysql['user_timezone'], $user_row['install_hash'] ?? '');
+					// The daily email is the install owner's: daily-email.php
+					// sends user 1's campaigns to user 1's address, and the
+					// hosted service keeps one schedule per install. Another
+					// user's save re-registered it at their own hour and zone.
+					if ((int) $_SESSION['user_id'] === 1) {
+						p202_account_register_daily_email($mysql['user_daily_email'], $postedTimezone, $user_row['install_hash'] ?? '');
+					}
 
 					//try to set non expiring cache for values that are used in redirects
 					if (!empty($memcacheWorking)) {
@@ -351,7 +359,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 						setCache(md5('user_referer_' . $tid . systemHash()), $mysql['user_referer'], 0);
 						setCache(md5('cloak_referer_' . $tid . systemHash()), $mysql['cloak_referer'], 0);
 						setCache(md5('user_pref_dynamic_bid_' . $tid . systemHash()), $mysql['user_pref_dynamic_bid'], 0);
-						setCache(md5('user_pref_privacy_' . $tid . systemHash()), $mysql['user_pref_privacy'], 0);
+						// Not the privacy setting: connect2.php reads it from its row.
 					}
 
 					$emailUpdated = ($originalUserEmail !== $submittedEmail);
@@ -790,6 +798,18 @@ $keyScope = static function (mixed $raw): array {
 $currencyValue = (string)($_POST['account_currency'] ?? ($user_row['user_account_currency'] ?? 'USD'));
 $sel = static fn (string $code): string => $currencyValue === $code ? ' selected' : '';
 $currentTimezone = $profileValue('user_timezone', 'user_timezone');
+// The select offers PHP's list, which leaves out the backward-compatible
+// names a renamed zone keeps (Europe/Kiev, Europe/Kyiv since 2022). An
+// account holding one had no option selected, so the browser sent the first
+// in the list and saving Personal settings for any other reason moved the
+// account to Africa/Abidjan. Its own zone is offered first, selected; a
+// stored value that is no zone is UTC on every report, and shows as UTC.
+$timezoneOptions = DateTimeZone::listIdentifiers();
+if (!\Prosper202\Report\AccountZone::isZone($currentTimezone)) {
+	$currentTimezone = 'UTC';
+} elseif (!in_array($currentTimezone, $timezoneOptions, true)) {
+	array_unshift($timezoneOptions, $currentTimezone);
+}
 
 $profileAdvancedErrors = array_intersect_key($profileErrors, array_flip(['user_keyword_searched_or_bidded', 'user_bid', 'user_referer', 'user_pref_privacy', 'cloak_referer', 'user_pref_ad_settings', 'user_tracking_domain']));
 
@@ -856,7 +876,7 @@ echo p202_account_render_flashes($extraFlashes);
 								<label class="form-label" for="user_timezone">Time zone <span class="text-danger">*</span></label>
 								<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_timezone'); ?>" name="user_timezone" id="user_timezone">
 									<?php
-									foreach (DateTimeZone::listIdentifiers() as $tz) {
+									foreach ($timezoneOptions as $tz) {
 										$current_tz = new DateTimeZone($tz);
 										$offset = $current_tz->getOffset($dt);
 										$transition = $current_tz->getTransitions($dt->getTimestamp(), $dt->getTimestamp());
@@ -911,7 +931,7 @@ echo p202_account_render_flashes($extraFlashes);
 										<select class="form-select<?php echo p202_account_invalid($profileErrors, 'user_pref_privacy'); ?>" name="user_pref_privacy" id="user_pref_privacy">
 											<?php echo $renderOptions($privacyChoices, $profileValue('user_pref_privacy', 'user_pref_privacy')); ?>
 										</select>
-										<div class="form-text">Which visitors get privacy handling of their data.</div>
+										<div class="form-text"><?php echo $e($privacyHelp); ?></div>
 										<?php echo p202_account_field_error($profileErrors, 'user_pref_privacy'); ?>
 									</div>
 									<div class="col-md-6">
@@ -932,7 +952,7 @@ echo p202_account_render_flashes($extraFlashes);
 									</div>
 									<div class="col-12">
 										<label class="form-label" for="user_tracking_domain">Tracking domain</label>
-										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e((string)($_SERVER['HTTP_HOST'] ?? '')); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
+										<input type="text" class="form-control<?php echo p202_account_invalid($profileErrors, 'user_tracking_domain'); ?>" id="user_tracking_domain" name="user_tracking_domain" placeholder="<?php echo $e(\Prosper202\Http\RequestHost::fromServer($_SERVER) ?? ''); ?>" value="<?php echo $e($profileValue('user_tracking_domain', 'user_tracking_domain')); ?>">
 										<div class="form-text">Leave empty to build tracking links on this install's own domain.</div>
 										<?php echo p202_account_field_error($profileErrors, 'user_tracking_domain'); ?>
 									</div>

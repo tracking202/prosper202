@@ -278,6 +278,66 @@ final class AttributionReportsIntegrationTest extends TestCase
         self::assertSame(2, $effective['totals']['conversions']);
     }
 
+    /**
+     * group_by=day is the account's calendar days, whatever zone the
+     * connection is in, from the full computation and the rollup alike,
+     * through the API and through an export's breakdownAll() (the cron's
+     * call, which names no zone). It was FROM_UNIXTIME() in the
+     * connection's zone: the server's for the API, and UTC in the cron once
+     * the report engine had set it.
+     */
+    public function testTheDayIsTheAccountsDay(): void
+    {
+        $this->campaign(1);
+        $conversions = [
+            1 => '2026-03-08T03:30:00Z', // New York: Sat 7 Mar 22:30 EST.   India: Sun 8 Mar 09:00.
+            2 => '2026-07-01T02:00:00Z', // New York: Tue 30 Jun 22:00 EDT.  India: Wed 1 Jul 07:30.
+            3 => '2026-10-01T18:45:00Z', // New York: Thu 1 Oct 14:45 EDT.   India: Fri 2 Oct 00:15.
+        ];
+        foreach ($conversions as $id => $utc) {
+            $t = (new \DateTimeImmutable($utc))->getTimestamp();
+            $this->click($id, 1, $t - 120, '0.10');
+            $this->visit($id, $t - 120, self::cookie("day$id"));
+            $this->convert($id, '5.00', "D$id", $t);
+        }
+        $this->work();
+        $rollup = new \Prosper202\Attribution\AttributionRollup($this->conn, static fn (): int => 1_791_331_200);
+        for ($i = 0; $i < 20 && $rollup->run(3600)->hoursBuilt > 0; $i++) {
+        }
+        self::assertGreaterThan(0, (int) self::scalar('SELECT COUNT(*) FROM 202_attribution_rollup WHERE user_id = 1'), 'the rollup summed the hours');
+
+        self::$db->query("SET time_zone = '+07:00'");
+        try {
+            foreach ([
+                'America/New_York' => ['2026-03-07', '2026-06-30', '2026-10-01'],
+                'Asia/Kolkata' => ['2026-03-08', '2026-07-01', '2026-10-02'],
+                'UTC' => ['2026-03-08', '2026-07-01', '2026-10-01'],
+            ] as $zone => $days) {
+                self::fixture("UPDATE 202_users SET user_timezone = '$zone' WHERE user_id = 1");
+                $out = (new AttributionController(self::$db, 1))->breakdown(['group_by' => 'day', 'time_from' => '2026-01-01', 'time_to' => '2026-12-31']);
+                $keys = array_column($out['data'], 'key');
+                sort($keys);
+                self::assertSame($days, $keys, "$zone: the conversions' days");
+                self::assertSame($zone, $out['meta']['timezone'] ?? null, "$zone: the response names the zone its days are in");
+                foreach ($out['data'] as $row) {
+                    self::assertSame(1, $row['clicks'], "$zone {$row['key']}: the click two minutes before is on the same day");
+                    self::assertSame($row['key'], $row['name']);
+                }
+                [$from, $to] = [(int) $out['meta']['time_from'], (int) $out['meta']['time_to']];
+                $default = $this->defaultModelId();
+                $full = (new AttributionReports($this->conn, false))->breakdownAll(1, null, null, $default, 'day', $from, $to);
+                $rolled = new AttributionReports($this->conn, true);
+                self::assertSame($full, $rolled->breakdownAll(1, null, null, $default, 'day', $from, $to), "$zone: the rollup's days are the full computation's");
+                self::assertGreaterThan(0, $rolled->lastServedHours(), "$zone: and the rollup served hours");
+                $byClick = array_column((new AttributionReports($this->conn))->breakdownAll(1, null, null, $default, 'day', $from, $to, AttributionReports::COHORT_CLICK)['rows'], 'key');
+                sort($byClick);
+                self::assertSame($days, $byClick, "$zone: the click cohort's days");
+            }
+        } finally {
+            self::$db->query("SET time_zone = 'SYSTEM'");
+        }
+    }
+
     public function testJourneyMetricsAndOneConversionExplained(): void
     {
         [$a, $b] = $this->scenario();

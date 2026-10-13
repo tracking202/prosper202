@@ -150,13 +150,14 @@ func TestEnumAcceptsAliasesAndFoldsCaseOnlyWhenAsked(t *testing.T) {
 	}
 }
 
-// The motivating case: an agent asked for a referer breakdown, was told only
+// The motivating case: an agent asked for a breakdown the server lacks (it was
+// referer, before the server had one), was told only
 // "unsupported" and pointed at --help, which did not list the values either.
-func TestAnalyticsGroupByRefererNamesEveryDimensionAndSearch(t *testing.T) {
+func TestAnalyticsGroupByUnknownDimensionNamesEveryDimensionAndSearch(t *testing.T) {
 	setTestHome(t, t.TempDir())
-	_, _, err := executeCommand("analytics", "--group-by", "referer", "--json")
+	_, _, err := executeCommand("analytics", "--group-by", "language", "--json")
 	if err == nil {
-		t.Fatal("referer was accepted")
+		t.Fatal("language was accepted")
 	}
 	if code := exitCodeForError(err); code != ExitValidation {
 		t.Errorf("exit code %d, want %d", code, ExitValidation)

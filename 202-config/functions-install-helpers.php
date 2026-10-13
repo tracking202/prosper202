@@ -104,6 +104,27 @@ if (!function_exists('install_validate_account')) {
     }
 }
 
+if (!function_exists('install_license_key_is_valid')) {
+    /**
+     * Whether the license service's answer for a key reads as "Key valid".
+     * `api_key_validate()` returns the raw HTTP body, which is normally the
+     * service's JSON ({"code":200,"msg":"Key valid",...}); this parses that one
+     * answer and nothing else. Anything that is not an explicit "Key valid" —
+     * an invalid-key reply, an HTML error page, curl_exec()'s false from an
+     * unreachable service, malformed JSON — is not valid, so the installer
+     * fails closed exactly as the fetch-a-key page did: a license it cannot
+     * confirm is not a license (CLAUDE.md #11).
+     */
+    function install_license_key_is_valid(string|bool $body): bool
+    {
+        if (!is_string($body)) {
+            return false;
+        }
+        $decoded = json_decode($body, true);
+        return is_array($decoded) && ($decoded['msg'] ?? null) === 'Key valid';
+    }
+}
+
 if (!function_exists('install_encode_response')) {
     /**
      * Encode an install AJAX payload to JSON. On a json_encode() failure (e.g. a
@@ -133,17 +154,17 @@ if (!function_exists('install_request_base_url')) {
      * cron line and CLI connection hints. Prefers the Host header so a non-default
      * port (e.g. Docker's :8000) or vhost is preserved — SERVER_NAME drops the port,
      * and inside a container SERVER_PORT is the internal 80, not the mapped port the
-     * user sees. $server is injected so this stays testable; callers MUST escape the
-     * result before emitting it (a forged Host header is attacker-controlled).
+     * user sees. The origin is TrackingBaseUrl::requestOrigin(): the Host header only
+     * when it is a host (RequestHost), the scheme as every other self-URL takes it.
+     * $server is injected so this stays testable; callers still escape the result
+     * before emitting it.
      *
      * @param array<string,mixed> $server $_SERVER
      * @param string               $base   get_absolute_url() (the app path)
      */
     function install_request_base_url(array $server, string $base): string
     {
-        $scheme = (isset($server['HTTPS']) && strtolower((string) $server['HTTPS']) === 'on') ? 'https' : 'http';
-        $host = (string) ($server['HTTP_HOST'] ?? $server['SERVER_NAME'] ?? 'localhost');
-        return $scheme . '://' . $host . $base;
+        return \Prosper202\Click\TrackingBaseUrl::requestOrigin($server) . $base;
     }
 }
 

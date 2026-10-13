@@ -8,12 +8,13 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\Ledger\ConversionSource;
 
 /**
- * The two CLIs check `--source` before they send it, so each keeps a copy of
- * the ledger's source list. A copy that falls behind refuses a source the
- * server accepts (or sends one it refuses), so both copies are read here —
- * as text, the Go one from its source file and the PHP one from its
- * command, which needs Symfony Console to load — and must equal the enum,
- * in its order.
+ * The two CLIs check `--source` before they send it. The Go CLI keeps a copy
+ * of the ledger's source list; a copy that falls behind refuses a source the
+ * server accepts (or sends one it refuses), so it is read here, as text, and
+ * must equal the enum, in its order. The PHP CLI no longer keeps one: it
+ * reads the enum (P202Cli\ServerLists::conversionSources()), and its
+ * command, read as text (loading it needs Symfony Console), must not grow a
+ * copy back.
  */
 final class ConversionSourceListsTest extends TestCase
 {
@@ -38,8 +39,9 @@ final class ConversionSourceListsTest extends TestCase
         self::assertSame(1, preg_match('/var conversionSources = \[\]string\{(.*?)\}/s', $go, $m), 'go-cli/cmd/conversion.go declares conversionSources');
         self::assertSame($want, self::quoted($m[1]), 'the Go CLI\'s --source list is the ledger\'s');
 
+        self::assertSame($want, \P202Cli\ServerLists::conversionSources(), 'the PHP CLI\'s --source list is the ledger\'s');
         $php = (string) file_get_contents($root . '/cli/Commands/ConversionListCommand.php');
-        self::assertSame(1, preg_match('/public const SOURCES = \[(.*?)\];/s', $php, $m), 'ConversionListCommand declares SOURCES');
-        self::assertSame($want, self::quoted($m[1]), 'the PHP CLI\'s --source list is the ledger\'s');
+        self::assertSame(0, preg_match('/\'(postback|legacy_baseline)\'/', $php), 'ConversionListCommand spells no source itself');
+        self::assertGreaterThanOrEqual(2, substr_count($php, 'ServerLists::conversionSources()'), 'its help and its check both read the list');
     }
 }

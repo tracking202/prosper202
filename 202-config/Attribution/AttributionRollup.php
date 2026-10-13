@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use Prosper202\Database\Connection;
+use Prosper202\Report\LocalTime;
 use Prosper202\Report\RollupDirty;
 
 /**
@@ -30,8 +31,9 @@ use Prosper202\Report\RollupDirty;
  *    cheaply know — a rotator re-click rewriting an existing click — writes
  *    a 202_attribution_rollup_dirty_clicks row instead, and this class turns
  *    it into the hours of the click and of every conversion whose journey
- *    holds it. A report computes every dirty hour exactly, and computes the
- *    whole account exactly while any changed click is unresolved.
+ *    holds it or whose credits name it. A report computes every dirty hour
+ *    exactly, and computes the whole account exactly while any changed
+ *    click is unresolved.
  * 3. **One snapshot.** Each report statement unions the rollup rows with the
  *    exact rows for the hours it cannot serve, and carries a guard evaluated
  *    in the same statement: the account is still built past the planned
@@ -163,10 +165,12 @@ final class AttributionRollup
     }
 
     /**
-     * Turn changed clicks into dirty hours: the hours of every row the click
-     * has (the cost side), and the conversion hours of every journey that
-     * holds it (credits and assists), then drop the click row — in one
-     * transaction, so a report sees either the click or its hours.
+     * Turn changed clicks into dirty hours: every hour the rollup summed
+     * them into — their own rows' (the cost side), and the conversion hours
+     * of every journey that holds one and every credit that names one
+     * (RollupDirty::summedHours(); a journey that lost a position still
+     * credits its click) — then drop the click rows, in one transaction, so
+     * a report sees either the click or its hours.
      */
     public function resolveDirtyClicks(int $deadline): int
     {
@@ -181,35 +185,22 @@ final class AttributionRollup
                 break;
             }
             $this->conn->transaction(function () use ($rows): void {
-                foreach ($rows as $row) {
-                    $clickId = (int) $row['click_id'];
-                    $marks = [];
-                    $stmt = $this->conn->prepareWrite('SELECT DISTINCT user_id, click_time DIV 3600 AS h FROM 202_clicks WHERE click_id = ?');
-                    $this->conn->bind($stmt, 'i', [$clickId]);
-                    foreach ($this->conn->fetchAll($stmt) as $r) {
-                        $marks[] = [(int) $r['user_id'], (int) $r['h']];
+                $marks = [];
+                $summed = RollupDirty::summedHours($this->conn, array_map(static fn (array $r): int => (int) $r['click_id'], $rows));
+                foreach ($summed as $userId => $hours) {
+                    // An account the rollup has never summed (or whose
+                    // state a user deletion removed) has no hours to
+                    // spoil; a mark there would never be consumed.
+                    if ($this->state($userId) !== null) {
+                        $marks[$userId] = $hours;
                     }
-                    $stmt = $this->conn->prepareWrite(
-                        'SELECT DISTINCT jm.user_id, jm.conv_time DIV 3600 AS h
-                         FROM 202_attribution_journeys j JOIN 202_attribution_journey_meta jm ON jm.conv_id = j.conv_id
-                         WHERE j.click_id = ?'
-                    );
-                    $this->conn->bind($stmt, 'i', [$clickId]);
-                    foreach ($this->conn->fetchAll($stmt) as $r) {
-                        $marks[] = [(int) $r['user_id'], (int) $r['h']];
-                    }
-                    foreach ($marks as [$userId, $hour]) {
-                        // An account the rollup has never summed (or whose
-                        // state a user deletion removed) has no hours to
-                        // spoil; a mark there would never be consumed.
-                        if ($this->state($userId) !== null) {
-                            RollupDirty::hours($this->conn, $userId, $hour, $hour);
-                        }
-                    }
-                    $del = $this->conn->prepareWrite('DELETE FROM 202_attribution_rollup_dirty_clicks WHERE dirty_id = ?');
-                    $this->conn->bind($del, 'i', [(int) $row['dirty_id']]);
-                    $this->conn->executeUpdate($del);
                 }
+                RollupDirty::hourRuns($this->conn, $marks);
+                $del = $this->conn->prepareWrite(
+                    'DELETE FROM 202_attribution_rollup_dirty_clicks WHERE dirty_id IN ('
+                    . self::intList(array_map(static fn (array $r): int => (int) $r['dirty_id'], $rows)) . ')'
+                );
+                $this->conn->executeUpdate($del);
             });
             $resolved += count($rows);
             if (count($rows) < self::CLICK_BATCH) {
@@ -564,12 +555,14 @@ final class AttributionRollup
             $this->conn->executeUpdate($stmt);
         }
 
-        // An hour whose journeys hold a click younger than the seal (a
-        // conversion dated before its own click can) is summed but left
-        // dirty, so reports compute it exactly until that click is old:
-        // the redirects that rewrite a young click do not mark it
+        // An hour whose journeys or credits hold a click younger than the
+        // seal (a conversion dated before its own click can) is summed but
+        // left dirty, so reports compute it exactly until that click is
+        // old: the redirects that rewrite a young click do not mark it
         // (RollupDirty::HOT_PATH_SECONDS), which is only sound if no clean
-        // hour holds one.
+        // hour holds one. The credits are read as well as the journeys: a
+        // journey that lost a position still credits its click.
+        $young = ($this->clock)() - self::SEAL_SECONDS;
         $stmt = $this->conn->prepareWrite(
             'SELECT DISTINCT jm.conv_time DIV 3600 AS h
              FROM 202_attribution_journey_meta jm
@@ -577,10 +570,21 @@ final class AttributionRollup
              JOIN 202_clicks c ON c.click_id = j.click_id
              WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ? AND c.click_time > ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$userId, $from, $to, ($this->clock)() - self::SEAL_SECONDS]);
-        foreach ($this->conn->fetchAll($stmt) as $r) {
-            RollupDirty::hours($this->conn, $userId, (int) $r['h'], (int) $r['h']);
+        $this->conn->bind($stmt, 'iiii', [$userId, $from, $to, $young]);
+        $hours = array_map(static fn (array $r): int => (int) $r['h'], $this->conn->fetchAll($stmt));
+        if ($modelIds !== []) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT DISTINCT cr.conv_time DIV 3600 AS h
+                 FROM 202_attribution_credits cr
+                 JOIN 202_clicks c ON c.click_id = cr.click_id
+                 WHERE cr.model_id IN (' . self::intList($modelIds) . ') AND cr.conv_time >= ? AND cr.conv_time <= ? AND c.click_time > ?'
+            );
+            $this->conn->bind($stmt, 'iii', [$from, $to, $young]);
+            foreach ($this->conn->fetchAll($stmt) as $r) {
+                $hours[] = (int) $r['h'];
+            }
         }
+        RollupDirty::hourRuns($this->conn, [$userId => $hours]);
     }
 
     /**
@@ -653,7 +657,7 @@ final class AttributionRollup
 
     /**
      * A UTC day's rows, summed from its hours. The day dimension has none:
-     * a report groups it by the local date of each hour. A key's NULL and
+     * a report groups it by each hour's date in the account's zone. A key's NULL and
      * its value stay apart as they are in the hours (the journey browsers
      * need that; a breakdown sums both into one group either way).
      */
@@ -719,7 +723,7 @@ final class AttributionRollup
     public static function keySql(string $dimension, string $timeColumn): array
     {
         if ($dimension === 'day') {
-            // One key per hour: the report turns the hour into a local date.
+            // One key per hour: the report turns the hour into the account's date.
             return ['0', ''];
         }
         [$key, , $joins] = AttributionReports::dimensionSql($dimension, $timeColumn);
@@ -733,14 +737,14 @@ final class AttributionRollup
 
     /**
      * The dimension key over rows (not hours): keySql() with the day
-     * dimension's real key, the local date of $timeColumn.
+     * dimension's real key, $timeColumn's date in $timezone (the account's).
      *
      * @return array{0: string, 1: null, 2: string}
      */
-    public static function keySqlWithTime(string $dimension, string $timeColumn): array
+    public static function keySqlWithTime(string $dimension, string $timeColumn, ?string $timezone = null): array
     {
         if ($dimension === 'day') {
-            [$key] = AttributionReports::dimensionSql($dimension, $timeColumn);
+            [$key] = AttributionReports::dimensionSql($dimension, $timeColumn, $timezone);
 
             return [$key, null, ''];
         }
@@ -804,20 +808,57 @@ final class AttributionRollup
     }
 
     /**
-     * 1 when every instant of hour $hourExpr falls on one local date in the
-     * session's time zone: the date at its first and last second agree and
-     * the UTC offset did not change inside it (TO_SECONDS of the local
-     * wall-clock time minus the instant is the offset plus a constant). With
-     * one offset for the whole hour the wall clock runs forward without a
-     * jump, so two equal end dates mean one date throughout.
+     * The UTC hours of [$firstHour, $lastHour] that do not fall on one date
+     * in $timezone: those holding a local midnight that is not on the hour
+     * (every day in a zone whose offset is not a whole number of hours —
+     * India's +05:30, Nepal's +05:45, St John's −03:30), and those holding a
+     * change of offset that is not on the hour (Lord Howe's half-hour DST;
+     * Moncton's changes at 00:01 until 2006). Every other hour has one
+     * offset throughout, so its wall clock runs forward without a jump and
+     * never passes midnight. In a zone that is always a whole number of
+     * hours from UTC and changes on the hour there are none, and the day
+     * dimension is served from the rollup's hours as the other dimensions
+     * are.
+     *
+     * Read from PHP's zone database (LocalTime::offsets()), the account's
+     * zone, not the connection's: this was SQL over FROM_UNIXTIME(), in
+     * whatever zone the connection happened to be in.
+     *
+     * @return list<int> hour numbers (seconds / 3600), ascending
      */
-    public static function hourIsOneLocalDateSql(string $hourExpr): string
+    public static function hoursAcrossLocalDates(string $timezone, int $firstHour, int $lastHour, ?int $now = null): array
     {
-        $start = "($hourExpr) * 3600";
-        $end = "($hourExpr) * 3600 + 3599";
+        if ($firstHour > $lastHour) {
+            return [];
+        }
+        $lo = $firstHour * 3600;
+        $hi = $lastHour * 3600 + 3599;
+        $offsets = LocalTime::offsets($timezone, $now ?? time());
+        $hours = [];
+        foreach ($offsets as $i => [$from, $offset]) {
+            // The last second this offset holds.
+            $until = isset($offsets[$i + 1]) ? $offsets[$i + 1][0] - 1 : PHP_INT_MAX;
+            if ($until < $lo || $from > $hi) {
+                continue;
+            }
+            if ($i > 0 && $from % 3600 !== 0 && $from >= $lo) {
+                $hours[intdiv($from, 3600)] = true;
+            }
+            if ($offset % 3600 === 0) {
+                continue; // its midnights are on the hour
+            }
+            $start = max($from, $lo);
+            $end = min($until, $hi);
+            // The first local midnight at or after $start: (m + offset) % 86400 = 0.
+            $m = $start + ((-($start + $offset)) % 86400 + 86400) % 86400;
+            for (; $m <= $end; $m += 86400) {
+                $hours[intdiv($m, 3600)] = true;
+            }
+        }
+        $list = array_keys($hours);
+        sort($list);
 
-        return "(DATE(FROM_UNIXTIME($start)) = DATE(FROM_UNIXTIME($end))
-                 AND TO_SECONDS(FROM_UNIXTIME($start)) - $start = TO_SECONDS(FROM_UNIXTIME($end)) - ($end))";
+        return $list;
     }
 
     /**

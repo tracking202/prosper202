@@ -98,7 +98,7 @@ final class StaticSqlSchemaTest extends TestCase
         $found = [];
 
         $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)
+            \Tests\Support\SourceScan::tree($root)
         );
         foreach ($iterator as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'php') {

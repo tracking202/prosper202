@@ -251,7 +251,7 @@ final class ClickValueWritersTest extends TestCase
     {
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+                \Tests\Support\SourceScan::tree($root),
                 static function (\SplFileInfo $file) use ($root): bool {
                     if ($file->isDir()) {
                         return !in_array($file->getFilename(), self::SKIP_DIRS, true)

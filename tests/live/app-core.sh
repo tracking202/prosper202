@@ -304,10 +304,12 @@ eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE transaction_id='core-old-t
 eq "$(Q "SELECT COUNT(*) FROM 202_app_postbacks WHERE transaction_id='core-a-$RUN'")" 1 "a fresh refuted row inside its window stays"
 
 say "the /apps routes ask for the Mobile Apps pages' role permissions"
-# Role 4 (campaign optimizer) has neither attribution permission; role 3
-# (campaign manager) may view attribution reports but not manage models. The
-# pages let both read the registry and let neither change it; only role 3
-# sees the report.
+# Role 4 (campaign optimizer) has no Setup access and neither attribution
+# permission; role 3 (campaign manager) has Setup access and may view
+# attribution reports but not manage models. Setup › Mobile Apps lets role 3
+# read the registry and refuses role 4 outright (its base class asks for
+# access_to_setup_section first), so the reads do the same; neither may
+# change it, and only role 3 sees the report.
 mkrole() { # $1 name, $2 role -> the new account's API key
   local uid
   api POST /users "{\"user_name\":\"$1-$RUN\",\"user_email\":\"$1-$RUN@example.test\",\"user_pass\":\"$1-pass-1\"}" > /dev/null
@@ -320,8 +322,10 @@ LIM_KEY=$(mkrole core-optimizer 4)
 VIEW_KEY=$(mkrole core-manager 3)
 [[ "$LIM_KEY" =~ ^[0-9a-f]{16,}$ ]] && [[ "$VIEW_KEY" =~ ^[0-9a-f]{16,}$ ]] && ok "two role-limited accounts with keys" || bad "could not make the accounts: '$LIM_KEY' '$VIEW_KEY'"
 
+eq "$(api GET /apps '' "$LIM_KEY")" 403 "without Setup access the registry is refused, as Setup › Mobile Apps refuses it"
+has "$OUT/body" "'access_to_setup_section' permission" "by the Setup permission"
+eq "$(api GET /apps '' "$VIEW_KEY")" 200 "with it the registry reads as it does on the Setup page"
 for key in "$LIM_KEY" "$VIEW_KEY"; do
-  eq "$(api GET /apps '' "$key")" 200 "the registry reads as it does on the Setup page"
   eq "$(api POST /apps '{"platform":"android","app_key":"com.example.denied","app_name":"Denied"}' "$key")" 403 "a registration is refused"
   has "$OUT/body" "'manage_attribution_models' permission" "by the manage permission"
   eq "$(api PUT "/apps/$AID/integrity-credential" '{"service_account_json":"{}"}' "$key")" 403 "a Play Integrity credential is refused"

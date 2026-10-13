@@ -26,6 +26,20 @@ scope area (`goals:read`, `goals:write`, `goals:stage`). The CLI is
 
 Writes are stageable (`?staged=1`); creates honor `Idempotency-Key`.
 
+**Roles.** Goals are Setup's, as the two pages that edit them are: every
+route, reads and the two computations included, needs a role with
+`access_to_setup_section` (a `403` naming it otherwise), and a write to an
+app's goal or the account's — create, edit, archive, re-evaluate — also
+needs `manage_attribution_models`, as Setup › Mobile Apps' writes do. What a
+campaign pays for a goal (`PUT`/`DELETE /goals/{id}/campaigns/…`) is the
+campaign's, on Setup › Campaigns, and needs Setup alone. A role without
+`access_to_campaign_data` reads the money as `null` with `"masked": true`:
+a campaign's `payout` for a goal, a definition's `value.amount`, and an
+outcome's (or a re-evaluation's) `value`. The routes asked for no role
+before, so a Campaign viewer's key could create paid goals, set payouts,
+re-evaluate past clicks (which announces new outcomes to traffic sources)
+and read every payout.
+
 Events reach goals from pixels and postbacks (`event=`), `POST /events` and
 `p202.track()` on landing pages — see [web events](23-events.md) — and a
 campaign's own goals are edited on its Setup › Campaigns page too. An app's

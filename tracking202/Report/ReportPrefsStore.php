@@ -220,7 +220,11 @@ final class ReportPrefsStore
      * The option lists the filter bar's menus need, from this user's own
      * setup. Deleted entries are left out, as the classic menus left them
      * out; a stored value that points at one is still shown, by the partial,
-     * as "not in your list".
+     * as "not in your list". A parent is read only when it is this account's
+     * too (CLAUDE.md #27): an account filed under another account's source,
+     * or a campaign under another account's category, is left out as one
+     * under a deleted parent is, and a landing page or text ad naming
+     * another account's campaign is listed under "No campaign".
      *
      * @return array<string, array<string|int, string|array<string|int, string>>>
      */
@@ -239,7 +243,7 @@ final class ReportPrefsStore
         $lists['ppc_account_id'] = [];
         foreach ($this->query(
             'SELECT a.ppc_account_id, a.ppc_account_name, n.ppc_network_name FROM 202_ppc_accounts a'
-            . ' JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id'
+            . ' JOIN 202_ppc_networks n ON n.ppc_network_id = a.ppc_network_id AND n.user_id = a.user_id'
             . ' WHERE a.user_id = ? AND a.ppc_account_deleted = 0 AND n.ppc_network_deleted = 0'
             . ' ORDER BY n.ppc_network_name, a.ppc_account_name',
             $userId
@@ -260,7 +264,7 @@ final class ReportPrefsStore
         $lists['aff_campaign_id'] = [];
         foreach ($this->query(
             'SELECT c.aff_campaign_id, c.aff_campaign_name, n.aff_network_name FROM 202_aff_campaigns c'
-            . ' JOIN 202_aff_networks n ON n.aff_network_id = c.aff_network_id'
+            . ' JOIN 202_aff_networks n ON n.aff_network_id = c.aff_network_id AND n.user_id = c.user_id'
             . ' WHERE c.user_id = ? AND c.aff_campaign_deleted = 0 AND n.aff_network_deleted = 0'
             . ' ORDER BY n.aff_network_name, c.aff_campaign_name',
             $userId
@@ -274,7 +278,7 @@ final class ReportPrefsStore
         $lists['landing_page_id'] = [];
         foreach ($this->query(
             'SELECT lp.landing_page_id, lp.landing_page_nickname, lp.landing_page_type, c.aff_campaign_name FROM 202_landing_pages lp'
-            . ' LEFT JOIN 202_aff_campaigns c ON c.aff_campaign_id = lp.aff_campaign_id'
+            . ' LEFT JOIN 202_aff_campaigns c ON c.aff_campaign_id = lp.aff_campaign_id AND c.user_id = lp.user_id'
             . ' WHERE lp.user_id = ? AND lp.landing_page_deleted = 0'
             . ' ORDER BY lp.landing_page_type, c.aff_campaign_name, lp.landing_page_nickname',
             $userId
@@ -288,7 +292,7 @@ final class ReportPrefsStore
         $lists['text_ad_id'] = [];
         foreach ($this->query(
             'SELECT t.text_ad_id, t.text_ad_name, c.aff_campaign_name FROM 202_text_ads t'
-            . ' LEFT JOIN 202_aff_campaigns c ON c.aff_campaign_id = t.aff_campaign_id'
+            . ' LEFT JOIN 202_aff_campaigns c ON c.aff_campaign_id = t.aff_campaign_id AND c.user_id = t.user_id'
             . ' WHERE t.user_id = ? AND t.text_ad_deleted = 0'
             . ' ORDER BY c.aff_campaign_name, t.text_ad_name',
             $userId

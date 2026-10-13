@@ -6,46 +6,71 @@ import (
 	"p202/internal/api"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 )
 
 var clickCmd = &cobra.Command{
 	Use:   "click",
-	Short: "View tracked clicks (inbound visitor events from traffic sources)",
+	Short: "View tracked clicks (inbound visitor events from traffic sources), and set what past clicks cost",
 }
 
 var clickListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tracked clicks with optional filters by campaign, time range, or bot status",
+	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
+		"traffic source, keyword, IP, location, device, referrer and landing URLs. It takes\n" +
+		"the Visitors page's filters, as `p202 report` does: --keyword and --referer\n" +
+		"(contains), --ip, --device-type, --show real|filtered|filtered_bot|leads, location,\n" +
+		"browser and platform ids, and --period.\n\n" +
+		"--follow is the Spy page: it prints the newest --limit clicks (default 10), then\n" +
+		"each new click as it arrives, polling every --interval, until interrupted or\n" +
+		"--stop-after elapses. Under --json or --ndjson it writes one JSON object per\n" +
+		"click per line.\n\n" +
+		"  p202 click list --aff-campaign-id 12 --time-from 2026-10-01 --all --csv\n" +
+		"  p202 click list --keyword shoes --show real --period last7\n" +
+		"  p202 click list --follow --ndjson --stop-after 10m",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		follow, _ := cmd.Flags().GetBool("follow")
+		if follow {
+			for _, f := range []string{"all", "offset", "page", "period", "time_from", "time_to"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s does not apply to --follow, which shows the newest clicks and then each new one", f).
+						WithHint("Drop --%s, or drop --follow to list a fixed range.", f)
+				}
+			}
+		} else {
+			for _, f := range []string{"interval", "stop-after"} {
+				if cmd.Flags().Changed(f) {
+					return validationError("--%s only applies with --follow", f)
+				}
+			}
+		}
 		c, err := api.NewFromConfig()
 		if err != nil {
 			return err
 		}
 		params := map[string]string{}
-		flags := []string{"time_from", "time_to",
-			"aff_campaign_id", "ppc_account_id", "landing_page_id",
-			"click_lead", "click_bot"}
+		// The Visitors page's filters: the reports' window and filters
+		// (ReportFilter on the server), and the lead and bot switches.
+		flags := append(append(append([]string{}, reportWindowFlags...), reportFilterFlags...), "click_lead", "click_bot")
 		for _, f := range flags {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
 				params[f] = v
 			}
 		}
+		if follow {
+			return followClicks(cmd, c, params)
+		}
 		allRows, _ := cmd.Flags().GetBool("all")
 		if allRows {
-			rows, err := fetchAllRowsWithParams(c, "clicks", params)
+			// The server's masked flag goes with the rows it hid money in.
+			rows, masked, err := fetchAllRowsMasked(c, "clicks", params)
 			if err != nil {
 				return err
 			}
-			encoded, err := json.Marshal(map[string]interface{}{
-				"data": rows,
-				"pagination": map[string]interface{}{
-					"total":  len(rows),
-					"limit":  len(rows),
-					"offset": 0,
-				},
-			})
+			encoded, err := json.Marshal(listEnvelope(rows, masked))
 			if err != nil {
 				return fmt.Errorf("encoding %d clicks: %w", len(rows), err)
 			}
@@ -139,15 +164,15 @@ summary (value, payout mode, whether the rows add up to what the reports show).`
 type clickBreakdown struct {
 	Data  []map[string]interface{} `json:"data"`
 	Click struct {
-		ClickID      json.Number `json:"click_id"`
-		PayoutMode   string      `json:"payout_mode"`
-		Lead         bool        `json:"lead"`
-		ClickPayout  string      `json:"click_payout"`
-		LedgerState  string      `json:"ledger_state"`
-		LedgerValue  *string     `json:"ledger_value"`
-		MatchesClick bool        `json:"matches_click"`
-		Rows         json.Number `json:"rows"`
-		CountedRows  json.Number `json:"counted_rows"`
+		ClickID      json.Number  `json:"click_id"`
+		PayoutMode   string       `json:"payout_mode"`
+		Lead         bool         `json:"lead"`
+		ClickPayout  json.Number  `json:"click_payout"` // a number; older servers sent a numeric string, which json.Number also reads
+		LedgerState  string       `json:"ledger_state"`
+		LedgerValue  *json.Number `json:"ledger_value"`
+		MatchesClick bool         `json:"matches_click"`
+		Rows         json.Number  `json:"rows"`
+		CountedRows  json.Number  `json:"counted_rows"`
 	} `json:"click"`
 }
 
@@ -199,7 +224,7 @@ func renderClickConversions(data []byte) error {
 
 	value := "not converted"
 	if b.Click.Lead {
-		value = b.Click.ClickPayout
+		value = b.Click.ClickPayout.String()
 	}
 	fmt.Printf("\nClick %s: %s (%s mode), %s of %s conversions counted.\n",
 		b.Click.ClickID, value, b.Click.PayoutMode, b.Click.CountedRows, b.Click.Rows)
@@ -209,7 +234,7 @@ func renderClickConversions(data []byte) error {
 	case !b.Click.MatchesClick:
 		ledger := "no value"
 		if b.Click.LedgerValue != nil {
-			ledger = *b.Click.LedgerValue
+			ledger = b.Click.LedgerValue.String()
 		}
 		fmt.Printf("Warning: the counted conversions add up to %s, which is not the click's %s. The next conversion on this click recomputes it.\n", ledger, value)
 	}
@@ -221,15 +246,15 @@ func init() {
 	clickListCmd.Flags().StringP("offset", "o", "", "Pagination offset")
 	clickListCmd.Flags().Bool("all", false, "Fetch all rows across pages")
 	clickListCmd.Flags().String("page", "", "Page number (maps to offset)")
-	clickListCmd.Flags().String("time_from", "", "Start timestamp (unix)")
-	clickListCmd.Flags().String("time_to", "", "End timestamp (unix)")
-	clickListCmd.Flags().String("aff_campaign_id", "", "Filter by campaign ID")
-	clickListCmd.Flags().String("ppc_account_id", "", "Filter by PPC account ID")
-	clickListCmd.Flags().String("landing_page_id", "", "Filter by landing page ID")
+	// The window and the Visitors page's filters, as the reports take them.
+	addReportFilters(clickListCmd)
 	clickListCmd.Flags().String("click_lead", "", "Filter: 0=clicks only, 1=conversions only")
 	enumFlag(clickListCmd, "click_lead", newEnum(binaryValues))
 	clickListCmd.Flags().String("click_bot", "", "Filter: 0=human, 1=bot")
 	enumFlag(clickListCmd, "click_bot", newEnum(binaryValues))
+	clickListCmd.Flags().Bool("follow", false, "Keep printing new clicks as they arrive (the Spy page)")
+	clickListCmd.Flags().Duration("interval", 5*time.Second, "With --follow: how often to poll (at least 1s)")
+	clickListCmd.Flags().Duration("stop-after", 0, "With --follow: stop after this long, e.g. 10m (0 follows until interrupted)")
 
 	clickCmd.AddCommand(clickListCmd, clickGetCmd, clickConversionsCmd)
 	rootCmd.AddCommand(clickCmd)

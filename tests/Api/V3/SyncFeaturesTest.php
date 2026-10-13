@@ -144,6 +144,8 @@ final class InMemoryExecuteSyncEngine extends SyncEngine
     /** @var array<string, array<int, array<string, mixed>>> */
     public array $targetData = [];
     private int $fetchCount = 0;
+    /** @var list<array<string, mixed>> the query each fetch was made with */
+    public array $fetchQueries = [];
 
     protected function buildClients(array $sourceProfile, array $targetProfile): array
     {
@@ -155,6 +157,7 @@ final class InMemoryExecuteSyncEngine extends SyncEngine
 
     protected function fetchPortableData(RemoteApiClient $client, array $query = []): array
     {
+        $this->fetchQueries[] = $query;
         $this->fetchCount++;
         return $this->fetchCount === 1 ? $this->sourceData : $this->targetData;
     }
@@ -190,6 +193,24 @@ final class SyncFeaturesTest extends TestCase
         $this->assertSame('v3', $result['data']['api_version']);
         $this->assertTrue($result['data']['sync_features']['sync_plan']);
         $this->assertTrue($result['data']['entity_support']['campaigns']['bulk_upsert']);
+        $this->assertSame('named-timezone', $result['data']['server']['timezone_support']);
+    }
+
+    /**
+     * A server without MySQL's zone tables (CONVERT_TZ() to a named zone is
+     * NULL) still reads every report in the account's named zone, so the
+     * capability says so. It answered `fallback-only` there, which was the
+     * truth only while the reports asked MySQL to convert.
+     */
+    public function testTimezoneSupportDoesNotDependOnTheDatabasesZoneTables(): void
+    {
+        $db = $this->createMysqliMock([
+            'SELECT version FROM 202_version' => ['version' => '1.2.3'],
+            'CONVERT_TZ' => ['tz' => null],
+        ]);
+
+        $result = (new CapabilitiesController($db))->capabilities();
+
         $this->assertSame('named-timezone', $result['data']['server']['timezone_support']);
     }
 
@@ -406,6 +427,11 @@ final class SyncFeaturesTest extends TestCase
         $first = $engine->buildPlan($source, $target, 'campaigns');
         $second = $engine->buildPlan($source, $target, 'campaigns');
 
+        // The plan is the same; when it was generated is not, and two builds
+        // that straddle a second differ there (this failed on that boundary).
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT/', (string) ($first['generated_at'] ?? ''));
+        $this->assertMatchesRegularExpression('/^\d{4}-\d\d-\d\dT/', (string) ($second['generated_at'] ?? ''));
+        unset($first['generated_at'], $second['generated_at']);
         $this->assertSame(
             json_encode($first, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             json_encode($second, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
@@ -615,7 +641,13 @@ final class SyncFeaturesTest extends TestCase
         $this->assertSame('delete', $result['data'][0]['operation']);
     }
 
-    public function testIncrementalSyncUsesManifestLastSyncEpoch(): void
+    /**
+     * An incremental sync skips by the manifest's hashes and asks the
+     * source's lists for no update time: it sent last_sync_epoch as their
+     * updated_since, which no list can apply (they answered 500, measured
+     * live), so every re-sync after the first failed.
+     */
+    public function testIncrementalSyncPassesTheManifestAndNoUpdateTime(): void
     {
         $db = $this->createMysqliMock();
         $store = new ServerStateStore($this->tmpDir);
@@ -640,8 +672,57 @@ final class SyncFeaturesTest extends TestCase
         ]);
         $controller->runWorker(['limit' => 5]);
 
-        $this->assertSame('1700000000', (string)($engine->lastOptions['updated_since'] ?? ''));
-        $this->assertArrayHasKey('manifest', $engine->lastOptions);
+        $this->assertNotEmpty($engine->lastOptions, 'the job ran');
+        $this->assertArrayNotHasKey('updated_since', $engine->lastOptions);
+        $this->assertSame(1700000000, $engine->lastOptions['manifest']['last_sync_epoch'] ?? null, 'the manifest reaches the engine');
+    }
+
+    /** A job body's updated_since is refused naming it, where it used to fail the job's first run. */
+    public function testASyncJobRefusesAnUpdateTime(): void
+    {
+        $store = new ServerStateStore($this->tmpDir);
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, new FakeSyncEngine($store));
+        $body = [
+            'source' => ['url' => 'https://prod.example.com', 'api_key' => 'prod-key'],
+            'target' => ['url' => 'https://stage.example.com', 'api_key' => 'stage-key'],
+            'updated_since' => '1700000000',
+        ];
+        foreach (['createJob', 'reSync'] as $method) {
+            try {
+                $controller->$method($body);
+                $this->fail("$method took updated_since");
+            } catch (ValidationException $e) {
+                $this->assertSame(['updated_since'], array_keys($e->getFieldErrors()), $method);
+                $this->assertStringContainsString('"incremental": true', $e->getFieldErrors()['updated_since']);
+            }
+        }
+        $this->assertSame([], $store->listJobs([], 10), 'nothing was queued');
+    }
+
+    /** The engine reads the source whole, and a queued job that still carries an update time fails saying so. */
+    public function testExecuteReadsTheSourceWholeAndRefusesAnUpdateTime(): void
+    {
+        $store = new ServerStateStore($this->tmpDir);
+        $empty = array_fill_keys(['aff-networks', 'campaigns', 'trackers', 'ppc-networks', 'ppc-accounts', 'landing-pages', 'text-ads', 'rotators'], []);
+        $source = ['name' => 'source', 'url' => 'https://source.example.com', 'api_key' => 'source-key'];
+        $target = ['name' => 'target', 'url' => 'https://target.example.com', 'api_key' => 'target-key'];
+
+        $engine = new InMemoryExecuteSyncEngine($store);
+        $engine->sourceData = $empty;
+        $engine->targetData = $empty;
+        $engine->execute($source, $target, 'campaigns', ['dry_run' => true, 'incremental' => true, 'manifest' => ['last_sync_epoch' => 1700000000, 'mappings' => [], 'source_hashes' => []]]);
+        $this->assertSame([[], []], $engine->fetchQueries, 'source and target are each read whole');
+
+        $engine = new InMemoryExecuteSyncEngine($store);
+        $engine->sourceData = $empty;
+        $engine->targetData = $empty;
+        try {
+            $engine->execute($source, $target, 'campaigns', ['dry_run' => true, 'updated_since' => '1700000000']);
+            $this->fail('a job carrying updated_since ran');
+        } catch (ValidationException $e) {
+            $this->assertSame(['updated_since'], array_keys($e->getFieldErrors()));
+        }
+        $this->assertSame([], $engine->fetchQueries, 'nothing was read');
     }
 
     public function testPruneRequiresConfirmationToken(): void
@@ -814,6 +895,38 @@ final class SyncFeaturesTest extends TestCase
         $this->assertContains('failed', $statuses);
         $this->assertContains('cancelled', $statuses);
         $this->assertNotEmpty((string)$success['data']['job_id']);
+    }
+
+    /**
+     * The audit list's status and both audit reads' format take fixed
+     * lists. An unknown format was answered as json, and a status nothing
+     * is written with answered an empty list that read as "no such jobs";
+     * each is a 422 naming the parameter and its values now.
+     */
+    public function testAuditRefusesAFormatOrStatusNotOnItsList(): void
+    {
+        $store = new ServerStateStore($this->tmpDir);
+        $controller = new SyncController($this->createMysqliMock(), 42, $store, new FakeSyncEngine($store));
+        $formats = ['format' => 'Valid values: json, csv'];
+        $statuses = ['status' => 'Valid values: succeeded, partial, failed, cancelled'];
+        $cases = [
+            'format=xml' => [fn () => $controller->auditList(['format' => 'xml']), $formats],
+            'one record, format=xml' => [fn () => $controller->auditGet('any', ['format' => 'xml']), $formats],
+            'status=success' => [fn () => $controller->auditList(['status' => 'success']), $statuses],
+            'status as a list' => [fn () => $controller->auditList(['status' => ['failed']]), $statuses],
+        ];
+        foreach ($cases as $case => [$call, $errors]) {
+            try {
+                $call();
+                $this->fail("$case was answered");
+            } catch (ValidationException $e) {
+                $this->assertSame($errors, $e->getFieldErrors(), $case);
+            }
+        }
+
+        $csv = $controller->auditList(['format' => 'CSV', 'status' => 'failed']);
+        $this->assertArrayHasKey('csv', $csv, 'the format in either case');
+        $this->assertArrayNotHasKey('csv', $controller->auditList(['format' => '']), 'empty is the json default');
     }
 
     private function removeDir(string $path): void

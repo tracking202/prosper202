@@ -114,3 +114,11 @@ jobs:
       # drifted from composer.json would ship the old set with only a warning.
       - name: composer.lock matches composer.json
         run: composer validate --no-check-publish --no-check-all
+
+  # Flags are written in kebab-case everywhere; snake_case is an accepted alias.
+  flag-spelling:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: No tracked text spells a flag in snake_case
+        run: python3 -I scripts/check-flag-spelling.py

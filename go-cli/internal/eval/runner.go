@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,11 +20,32 @@ import (
 // is set (the agent phase) the invocation is appended to that file, then the
 // real binary runs. That is what makes command capture agent-agnostic — an
 // agent needs no adapter beyond shelling out to p202 as usual.
+//
+// Each invocation writes two lines, paired by the shim's pid (unique among
+// running processes, so concurrent invocations cannot be confused):
+//
+//	start <pid> p202 <args>   before the binary runs, so an attempt that
+//	                          never finishes still counts for never_runs
+//	exit <pid> <status>       when it returns
+//
+// The exit line is what lets runs_one_of credit only a command that
+// worked: the shim used to exec the binary and record nothing after, so a
+// stale binary answering "unknown flag" to every command graded as having
+// run them. Not exec'ing has one cost, measured under dash: a signal sent to
+// the shim's pid alone kills the shim and leaves the binary running (and
+// the run unfinished in the log). GNU `timeout` and the runner's own
+// timeout signal the whole process group, so neither does. Newlines inside
+// arguments are folded to spaces, so one invocation is one line.
 const shimScript = `#!/bin/sh
-if [ -n "$P202_EVAL_CMDLOG" ]; then
-  printf 'p202 %s\n' "$*" >> "$P202_EVAL_CMDLOG"
+if [ -z "$P202_EVAL_CMDLOG" ]; then
+  exec "$P202_EVAL_REAL_BIN" "$@"
 fi
-exec "$P202_EVAL_REAL_BIN" "$@"
+line=$(printf 'p202 %s' "$*" | tr '\n' ' ')
+printf 'start %s %s\n' "$$" "$line" >> "$P202_EVAL_CMDLOG"
+"$P202_EVAL_REAL_BIN" "$@"
+status=$?
+printf 'exit %s %s\n' "$$" "$status" >> "$P202_EVAL_CMDLOG"
+exit "$status"
 `
 
 // Runner executes eval cases against a pluggable agent command.
@@ -36,8 +58,9 @@ type Runner struct {
 	// `p202` on PATH, and print the agent's reply to stdout, exiting 0.
 	AgentCmd string
 	// JudgeCmd, when set, grades each case's rubric: it receives a JSON
-	// object {id, ask, rubric, reply, commands} on stdin and must print a
-	// verdict line starting with PASS or FAIL.
+	// object {id, ask, rubric, reply, commands, runs} on stdin (runs: each
+	// command with its exit_code, null when it never finished) and must
+	// print a verdict line starting with PASS or FAIL.
 	JudgeCmd string
 	// Timeout bounds one agent invocation (default 5m). Setup, state, and
 	// check commands get the same bound individually.
@@ -158,8 +181,13 @@ func (r *Runner) runCase(c Case, baseEnv []string, shimDir string) Result {
 		return finish()
 	}
 
-	commands := readCommandLog(cmdLog)
-	result.Commands = len(commands)
+	runs := readCommandLog(cmdLog)
+	result.Commands = len(runs)
+	for _, run := range runs {
+		if !run.Succeeded() {
+			result.CommandsFailed++
+		}
+	}
 
 	stateAfter := map[string]string{}
 	stateErrs := map[string]string{}
@@ -183,7 +211,7 @@ func (r *Runner) runCase(c Case, baseEnv []string, shimDir string) Result {
 		checkOutputs[chk.Run] = out
 	}
 
-	result.Failures = grade(c.Expected, commands, reply, stateBefore, stateAfter, stateErrs, checkOutputs, checkErrs)
+	result.Failures = grade(c.Expected, runs, reply, stateBefore, stateAfter, stateErrs, checkOutputs, checkErrs)
 
 	// The rubric half: judged when a judge is configured, otherwise the
 	// case cannot fully pass and says so instead of passing silently.
@@ -194,7 +222,7 @@ func (r *Runner) runCase(c Case, baseEnv []string, shimDir string) Result {
 				return finish()
 			}
 		} else {
-			verdict, err := r.judge(c, reply, commands, baseEnv)
+			verdict, err := r.judge(c, reply, runs, baseEnv)
 			result.Judge = verdict
 			if err != nil {
 				result.Status = StatusError
@@ -215,13 +243,25 @@ func (r *Runner) runCase(c Case, baseEnv []string, shimDir string) Result {
 	return finish()
 }
 
-func (r *Runner) judge(c Case, reply string, commands []string, env []string) (string, error) {
+// judge hands the rubric to the judge command. `commands` stays the list of
+// command lines it always was; `runs` carries each with its exit status, so
+// a rubric that asks whether the agent ran something can tell a command that
+// worked from one that was refused.
+func (r *Runner) judge(c Case, reply string, runs []Invocation, env []string) (string, error) {
+	commands := make([]string, 0, len(runs))
+	for _, run := range runs {
+		commands = append(commands, run.Command)
+	}
+	if runs == nil {
+		runs = []Invocation{}
+	}
 	input, err := json.Marshal(map[string]interface{}{
 		"id":       c.ID,
 		"ask":      c.Ask,
 		"rubric":   c.Expected.Rubric,
 		"reply":    reply,
 		"commands": commands,
+		"runs":     runs,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encoding judge input: %w", err)
@@ -271,18 +311,42 @@ func (r *Runner) shell(command string, env []string, stdin string) (string, stri
 	return stdout.String(), stderr.String(), err
 }
 
-func readCommandLog(path string) []string {
+// readCommandLog reads the shim's log (see shimScript) into one Invocation
+// per command, in the order they started. An exit line pairs with the
+// latest unfinished start of the same pid. A line the shim does not write
+// is kept as a command that never finished: it still counts for
+// never_runs, and never for runs_one_of.
+func readCommandLog(path string) []Invocation {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil // the agent ran no p202 commands
 	}
-	var commands []string
+	var runs []Invocation
+	open := map[string]int{} // shim pid -> index of its unfinished run
 	for _, line := range strings.Split(string(raw), "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			commands = append(commands, trimmed)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
+		kind, rest, _ := strings.Cut(line, " ")
+		pid, value, _ := strings.Cut(rest, " ")
+		switch kind {
+		case "start":
+			open[pid] = len(runs)
+			runs = append(runs, Invocation{Command: strings.TrimSpace(value)})
+			continue
+		case "exit":
+			i, started := open[pid]
+			status, convErr := strconv.Atoi(strings.TrimSpace(value))
+			if started && convErr == nil {
+				runs[i].ExitCode = &status
+				delete(open, pid)
+				continue
+			}
+		}
+		runs = append(runs, Invocation{Command: line})
 	}
-	return commands
+	return runs
 }
 
 func sanitizeID(id string) string {

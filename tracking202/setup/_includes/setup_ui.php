@@ -344,7 +344,9 @@ function p202_setup_rows(mysqli $db, string $sql): array
 }
 
 /**
- * The account's live campaigns grouped by category, for one <optgroup>ed
+ * The account's live campaigns grouped by their own category (a campaign
+ * naming another account's category, which a write could before 229df10,
+ * is not offered: that category's name is not this account's), for one <optgroup>ed
  * select (the UI standard's replacement for the dependent category →
  * campaign pair). Each option carries its category id as data-network, so a
  * form that still posts aff_network_id fills it from the chosen campaign.
@@ -355,7 +357,7 @@ function p202_setup_campaign_options(mysqli $db, int $userId): array
 {
     $rows = p202_setup_rows($db, "SELECT ac.aff_campaign_id, ac.aff_campaign_name, an.aff_network_id, an.aff_network_name
         FROM 202_aff_campaigns AS ac
-        INNER JOIN 202_aff_networks AS an ON (an.aff_network_id = ac.aff_network_id)
+        INNER JOIN 202_aff_networks AS an ON (an.aff_network_id = ac.aff_network_id AND an.user_id = ac.user_id)
         WHERE ac.user_id = '" . $userId . "' AND ac.aff_campaign_deleted = 0 AND an.aff_network_deleted = 0
         ORDER BY an.aff_network_name ASC, ac.aff_campaign_name ASC");
     $groups = [];

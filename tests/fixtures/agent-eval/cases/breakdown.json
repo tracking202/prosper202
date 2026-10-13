@@ -5,7 +5,7 @@
       "priority": "high",
       "state": "seeded fixture; the sixth-newest click carries two API conversions, EVAL-BD-1 ($3.00) then EVAL-BD-2 ($4.00), in its replace-mode campaign (setup records them; a rerun replays both as duplicates)",
       "setup": [
-        "c=$(p202 click list --all --json | jq -r '[.data[].click_id] | sort | reverse | .[5]'); p202 conversion create --click_id \"$c\" --payout 3 --transaction_id EVAL-BD-1 --json >/dev/null; p202 conversion create --click_id \"$c\" --payout 4 --transaction_id EVAL-BD-2 --json >/dev/null"
+        "c=$(p202 click list --all --json | jq -r '[.data[].click_id] | sort | reverse | .[5]'); p202 conversion create --click-id \"$c\" --payout 3 --transaction-id EVAL-BD-1 --json >/dev/null; p202 conversion create --click-id \"$c\" --payout 4 --transaction-id EVAL-BD-2 --json >/dev/null"
       ],
       "ask": "The sale with transaction id EVAL-BD-2 was recorded on one of my clicks. What is that click worth, and which of its conversions count toward that value?",
       "expected": {

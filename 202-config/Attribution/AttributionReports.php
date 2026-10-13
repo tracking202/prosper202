@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Prosper202\Attribution;
 
 use Prosper202\Database\Connection;
+use Prosper202\Report\AccountZone;
+use Prosper202\Report\LocalTime;
 
 /**
  * The multi-touch reads (plan §6.3 "Reports"): grouped credits joined to
@@ -49,22 +51,31 @@ use Prosper202\Database\Connection;
  */
 final class AttributionReports
 {
-    /** @var array<string, array{key: string, name: string, joins: list<string>}> */
+    /**
+     * Each dimension's group key, name and joins. A campaign, traffic source
+     * or landing page is named only from the click's own account
+     * (`dn.user_id = c.user_id`): a click names them by id, and nothing
+     * stopped a tracker naming another account's before the API checked
+     * linked ids (229df10). Such a click is still counted, under its stored
+     * id, with no name — as GET /clicks and the classic reports read it.
+     *
+     * @var array<string, array{key: string, name: string, joins: list<string>}>
+     */
     private const DIMENSIONS = [
         'campaign' => [
             'key' => 'c.aff_campaign_id',
             'name' => 'dn.aff_campaign_name',
-            'joins' => ['LEFT JOIN 202_aff_campaigns dn ON dn.aff_campaign_id = c.aff_campaign_id'],
+            'joins' => ['LEFT JOIN 202_aff_campaigns dn ON dn.aff_campaign_id = c.aff_campaign_id AND dn.user_id = c.user_id'],
         ],
         'traffic_source' => [
             'key' => 'c.ppc_account_id',
             'name' => 'dn.ppc_account_name',
-            'joins' => ['LEFT JOIN 202_ppc_accounts dn ON dn.ppc_account_id = c.ppc_account_id'],
+            'joins' => ['LEFT JOIN 202_ppc_accounts dn ON dn.ppc_account_id = c.ppc_account_id AND dn.user_id = c.user_id'],
         ],
         'landing_page' => [
             'key' => 'c.landing_page_id',
             'name' => 'dn.landing_page_nickname',
-            'joins' => ['LEFT JOIN 202_landing_pages dn ON dn.landing_page_id = c.landing_page_id'],
+            'joins' => ['LEFT JOIN 202_landing_pages dn ON dn.landing_page_id = c.landing_page_id AND dn.user_id = c.user_id'],
         ],
         'keyword' => [
             'key' => 'ca.keyword_id',
@@ -107,11 +118,13 @@ final class AttributionReports
                 'LEFT JOIN 202_device_types dn ON dn.type_id = dm.device_type',
             ],
         ],
-        // Day: the conversion's day for credits and assists, the click's day
-        // for clicks and cost (the {time} placeholder), in the database
-        // session's time zone like /reports/timeseries. In the click cohort
-        // all of a row is the click's day.
-        'day' => ['key' => "FROM_UNIXTIME({time}, '%Y-%m-%d')", 'name' => "FROM_UNIXTIME({time}, '%Y-%m-%d')", 'joins' => []],
+        // Day: the account's calendar date ({date}, which dimensionSql()
+        // writes with LocalTime in the account's zone) of the conversion for
+        // credits and assists, of the click for clicks and cost. In the click
+        // cohort all of a row is the click's day. It was FROM_UNIXTIME() in
+        // the connection's zone: the server's for the API, and UTC in the
+        // cron once the report engine had set it there.
+        'day' => ['key' => '{date}', 'name' => '{date}', 'joins' => []],
     ];
 
     public const MAX_LIMIT = 1000;
@@ -170,11 +183,14 @@ final class AttributionReports
      *                           instead of paging through the report, which
      *                           computes every group for each page; groups
      *                           then counts the matching rows
+     * @param string|null $timezone the account's zone, whose calendar days
+     *                           group_by=day reads; null reads it from the
+     *                           account (breakdownAll())
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>, groups: int}
      */
-    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0, string $cohort = self::COHORT_CONVERSION, ?array $keys = null): array
+    public function breakdown(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, int $limit, int $offset = 0, string $cohort = self::COHORT_CONVERSION, ?array $keys = null, ?string $timezone = null): array
     {
-        $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $cohort);
+        $all = $this->breakdownAll($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $cohort, $timezone);
         $rows = $all['rows'];
         if ($keys !== null) {
             $wanted = array_flip($keys);
@@ -193,9 +209,12 @@ final class AttributionReports
      * revenue, highest first). The export reads this; a page or an API
      * response reads breakdown(), which says how many groups it left out.
      *
+     * @param string|null $timezone the account's zone, whose calendar days
+     *                              group_by=day reads; null reads it from the
+     *                              account, as the export cron does
      * @return array{rows: list<array<string, mixed>>, totals: array<string, mixed>}
      */
-    public function breakdownAll(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, string $cohort = self::COHORT_CONVERSION): array
+    public function breakdownAll(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, string $cohort = self::COHORT_CONVERSION, ?string $timezone = null): array
     {
         if (!isset(self::DIMENSIONS[$groupBy])) {
             throw new \InvalidArgumentException('unknown dimension ' . $groupBy);
@@ -204,17 +223,19 @@ final class AttributionReports
             throw new \InvalidArgumentException('unknown cohort ' . $cohort);
         }
         $byClick = $cohort === self::COHORT_CLICK;
+        // Only the day reads a clock.
+        $zone = $groupBy === 'day' ? ($timezone ?? AccountZone::read($this->conn, $userId)) : null;
 
         $this->servedHours = 0;
-        $parts = $this->useRollup && !$byClick ? $this->rolledParts($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to) : null;
+        $parts = $this->useRollup && !$byClick ? $this->rolledParts($userId, $modelId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $zone) : null;
         if ($parts !== null) {
             ['primary' => $primary, 'compare' => $compare, 'cost' => $cost, 'assists' => $assists,
                 'totals' => $totals, 'compareTotals' => $compareTotals] = $parts;
         } else {
-            $primary = $this->creditsBy($userId, $modelId, $defaultModelId, $groupBy, $from, $to, $byClick);
-            $compare = $compareModelId !== null ? $this->creditsBy($userId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $byClick) : null;
-            $cost = $this->costBy($userId, $groupBy, $from, $to);
-            $assists = $this->assistsBy($userId, $groupBy, $from, $to, $byClick);
+            $primary = $this->creditsBy($userId, $modelId, $defaultModelId, $groupBy, $from, $to, $byClick, $zone);
+            $compare = $compareModelId !== null ? $this->creditsBy($userId, $compareModelId, $defaultModelId, $groupBy, $from, $to, $byClick, $zone) : null;
+            $cost = $this->costBy($userId, $groupBy, $from, $to, $zone);
+            $assists = $this->assistsBy($userId, $groupBy, $from, $to, $byClick, $zone);
             $totals = $this->totals($userId, $modelId, $defaultModelId, $from, $to, $byClick);
             $compareTotals = $compareModelId !== null ? $this->totals($userId, $compareModelId, $defaultModelId, $from, $to, $byClick) : null;
         }
@@ -262,14 +283,14 @@ final class AttributionReports
     /**
      * @return array<string, array{name: string|null, conversions: string, revenue: string}>
      */
-    private function creditsBy(int $userId, ?int $modelId, int $defaultModelId, string $groupBy, int $from, int $to, bool $byClick = false): array
+    private function creditsBy(int $userId, ?int $modelId, int $defaultModelId, string $groupBy, int $from, int $to, bool $byClick, ?string $timezone): array
     {
         $time = $byClick ? 'c.click_time' : 'cr.conv_time';
-        [$key, $name, $joins] = self::dimensionSql($groupBy, $time);
+        [$key, $name, $joins] = self::dimensionSql($groupBy, $time, $timezone);
         [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to, $time);
 
         $stmt = $this->conn->prepareRead(
-            "SELECT COALESCE($key, 0) AS k, MAX($name) AS n, SUM(cr.credit) AS conversions, SUM(cr.revenue) AS revenue
+            "SELECT COALESCE($key, 0) AS k, " . self::nameColumn($key, $name) . " AS n, SUM(cr.credit) AS conversions, SUM(cr.revenue) AS revenue
              FROM $source
              JOIN 202_clicks c ON c.click_id = cr.click_id
              $joins
@@ -280,10 +301,31 @@ final class AttributionReports
 
         $out = [];
         foreach ($this->conn->fetchAll($stmt) as $r) {
-            $out[(string) $r['k']] = ['name' => $r['n'] !== null ? (string) $r['n'] : null, 'conversions' => (string) $r['conversions'], 'revenue' => (string) $r['revenue']];
+            $out[(string) $r['k']] = ['name' => self::nameOf($key, $name, $r), 'conversions' => (string) $r['conversions'], 'revenue' => (string) $r['revenue']];
         }
 
         return $out;
+    }
+
+    /**
+     * A full-computation read's name column: MAX(name) — or, where the name
+     * is the key (the day), nothing, so the key's expression (LocalTime's
+     * CASE over the zone's offsets) is worked out once a row, not twice.
+     * nameOf() then reads the name from the key.
+     */
+    private static function nameColumn(string $key, string $name): string
+    {
+        return $name === $key ? 'NULL' : "MAX($name)";
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function nameOf(string $key, string $name, array $row): ?string
+    {
+        if ($name === $key) {
+            return (string) $row['k'];
+        }
+
+        return $row['n'] !== null ? (string) $row['n'] : null;
     }
 
     /**
@@ -322,11 +364,11 @@ final class AttributionReports
     }
 
     /** @return array<string, array{name: string|null, clicks: int, cost: string}> */
-    private function costBy(int $userId, string $groupBy, int $from, int $to): array
+    private function costBy(int $userId, string $groupBy, int $from, int $to, ?string $timezone): array
     {
-        [$key, $name, $joins] = self::dimensionSql($groupBy, 'c.click_time');
+        [$key, $name, $joins] = self::dimensionSql($groupBy, 'c.click_time', $timezone);
         $stmt = $this->conn->prepareRead(
-            "SELECT COALESCE($key, 0) AS k, MAX($name) AS n, COUNT(*) AS clicks, SUM(c.click_cpc) AS cost
+            "SELECT COALESCE($key, 0) AS k, " . self::nameColumn($key, $name) . " AS n, COUNT(*) AS clicks, SUM(c.click_cpc) AS cost
              FROM 202_clicks c
              $joins
              WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0
@@ -336,7 +378,7 @@ final class AttributionReports
 
         $out = [];
         foreach ($this->conn->fetchAll($stmt) as $r) {
-            $out[(string) $r['k']] = ['name' => $r['n'] !== null ? (string) $r['n'] : null, 'clicks' => (int) $r['clicks'], 'cost' => (string) $r['cost']];
+            $out[(string) $r['k']] = ['name' => self::nameOf($key, $name, $r), 'clicks' => (int) $r['clicks'], 'cost' => (string) $r['cost']];
         }
 
         return $out;
@@ -348,12 +390,12 @@ final class AttributionReports
      *
      * @return array<string, array{name: string|null, assists: int}>
      */
-    private function assistsBy(int $userId, string $groupBy, int $from, int $to, bool $byClick = false): array
+    private function assistsBy(int $userId, string $groupBy, int $from, int $to, bool $byClick, ?string $timezone): array
     {
         $time = $byClick ? 'j.click_time' : 'jm.conv_time';
-        [$key, $name, $joins] = self::dimensionSql($groupBy, $time);
+        [$key, $name, $joins] = self::dimensionSql($groupBy, $time, $timezone);
         $stmt = $this->conn->prepareRead(
-            "SELECT COALESCE($key, 0) AS k, MAX($name) AS n, COUNT(DISTINCT j.conv_id) AS assists
+            "SELECT COALESCE($key, 0) AS k, " . self::nameColumn($key, $name) . " AS n, COUNT(DISTINCT j.conv_id) AS assists
              FROM 202_attribution_journey_meta jm
              JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
              JOIN 202_clicks c ON c.click_id = j.click_id
@@ -365,7 +407,7 @@ final class AttributionReports
 
         $out = [];
         foreach ($this->conn->fetchAll($stmt) as $r) {
-            $out[(string) $r['k']] = ['name' => $r['n'] !== null ? (string) $r['n'] : null, 'assists' => (int) $r['assists']];
+            $out[(string) $r['k']] = ['name' => self::nameOf($key, $name, $r), 'assists' => (int) $r['assists']];
         }
 
         return $out;
@@ -696,7 +738,7 @@ final class AttributionReports
                     cl.payable, cl.deleted, cl.superseded_reason, cl.reverses_conv_id, ac.aff_campaign_name
              FROM 202_attribution_journey_meta jm
              JOIN 202_conversion_logs cl ON cl.conv_id = jm.conv_id AND cl.user_id = jm.user_id
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = cl.campaign_id AND ac.user_id = cl.user_id
              WHERE jm.user_id = ? AND jm.conv_time >= ? AND jm.conv_time <= ?
              ORDER BY jm.conv_time DESC, jm.conv_id DESC LIMIT ?'
         );
@@ -745,8 +787,8 @@ final class AttributionReports
                        FROM 202_identity_observations o WHERE o.click_id = j.click_id) AS signals
              FROM 202_attribution_journeys j
              LEFT JOIN 202_clicks c ON c.click_id = j.click_id
-             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id
-             LEFT JOIN 202_ppc_accounts pa ON pa.ppc_account_id = c.ppc_account_id
+             LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
+             LEFT JOIN 202_ppc_accounts pa ON pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id
              WHERE j.conv_id = ? ORDER BY j.position"
         );
         $this->conn->bind($stmt, 'i', [$convId]);
@@ -880,7 +922,7 @@ final class AttributionReports
      *               totals: array{conversions: int, attributed_conversions: string, attributed_revenue: string},
      *               compareTotals: array{conversions: int, attributed_conversions: string, attributed_revenue: string}|null}|null
      */
-    private function rolledParts(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to): ?array
+    private function rolledParts(int $userId, ?int $modelId, ?int $compareModelId, int $defaultModelId, string $groupBy, int $from, int $to, ?string $timezone): ?array
     {
         for ($attempt = 0; $attempt < self::ROLLUP_ATTEMPTS; $attempt++) {
             $models = [AttributionRollup::EFFECTIVE];
@@ -889,7 +931,7 @@ final class AttributionReports
                     $models[] = $m;
                 }
             }
-            $plan = $this->rollupPlan($userId, $modelId === null, $models, $defaultModelId, $groupBy, $from, $to);
+            $plan = $this->rollupPlan($userId, $modelId === null, $models, $defaultModelId, $groupBy, $from, $to, $timezone);
             if ($plan === null) {
                 return null;
             }
@@ -921,21 +963,27 @@ final class AttributionReports
     /**
      * Which whole hours of [$from, $to] the rollup serves, as runs of
      * hours, the UTC days among them (not for the day dimension, which is
-     * grouped by each hour's local date), and the second ranges left to
-     * compute exactly. An hour is served when it is summed (below the
-     * account's built_through_hour), not dirty, no changed click of the
-     * account is unresolved, and — for the effective model — the rows were
-     * summed under the live overrides and the default asked for; for the
-     * day dimension, also when every second of it falls on one local date;
-     * for the journey counts ($groupBy 'journeys'), only while the account's
-     * rollup carries the journey part (AttributionRollup::journeysMarkerSql()).
+     * grouped by each hour's date in the account's zone), and the second
+     * ranges left to compute exactly. An hour is served when it is summed
+     * (below the account's built_through_hour), not dirty, no changed click
+     * of the account is unresolved, and — for the effective model — the rows
+     * were summed under the live overrides and the default asked for; for
+     * the day dimension, also when every second of it falls on one date of
+     * the account's (AttributionRollup::hoursAcrossLocalDates()); for the
+     * journey counts ($groupBy 'journeys'), only while the account's rollup
+     * carries the journey part (AttributionRollup::journeysMarkerSql()).
      *
      * @param bool $effective the effective rows are read ($defaultModelId is the default asked for)
      * @param list<int> $models the model ids whose rows are read (EFFECTIVE for the parts no model shapes)
+     * @param string|null $timezone the account's zone; the day dimension needs it
      * @return array<string, mixed>|null
      */
-    private function rollupPlan(int $userId, bool $effective, array $models, int $defaultModelId, string $groupBy, int $from, int $to): ?array
+    private function rollupPlan(int $userId, bool $effective, array $models, int $defaultModelId, string $groupBy, int $from, int $to, ?string $timezone = null): ?array
     {
+        $dayDimension = $groupBy === 'day';
+        if ($dayDimension && $timezone === null) {
+            throw new \LogicException('The day dimension is read in the account\'s zone; none was given.');
+        }
         $journeys = $groupBy === 'journeys';
         $stmt = $this->conn->prepareRead(
             'SELECT s.built_through_hour AS built, s.default_model_id AS dm,
@@ -967,19 +1015,16 @@ final class AttributionReports
             $excluded[] = [max($first, (int) $r['hour_from']), min($last, (int) $r['hour_to'])];
         }
 
-        $dayDimension = $groupBy === 'day';
         if ($dayDimension) {
-            // Hours that straddle a local midnight (or a change of offset)
-            // cannot be given one date: compute those exactly.
-            $stmt = $this->conn->prepareRead(
-                'SELECT DISTINCT r.bucket FROM 202_attribution_rollup r
-                 WHERE r.user_id = ' . $userId . ' AND r.part IN (' . AttributionRollup::PART_CREDITS . ', ' . AttributionRollup::PART_COST . ', ' . AttributionRollup::PART_ASSISTS . ')
-                   AND r.dim = ' . AttributionRollup::DIMENSION_CODES['day'] . ' AND r.model_id IN (' . AttributionRollup::intList($models) . ')
-                   AND r.grain = ' . AttributionRollup::GRAIN_HOUR . " AND r.bucket BETWEEN $first AND $last
-                   AND NOT " . AttributionRollup::hourIsOneLocalDateSql('r.bucket')
-            );
-            foreach ($this->conn->fetchAll($stmt) as $r) {
-                $excluded[] = [(int) $r['bucket'], (int) $r['bucket']];
+            // The rollup's hours are UTC hours. One in which the account's
+            // date changes — at a midnight that is not on the hour (India's
+            // +05:30, Nepal's +05:45), or at a change of offset inside it
+            // (Lord Howe's half-hour DST) — has no one date, so it is
+            // computed exactly. Which hours those are depends on the zone
+            // alone, not on the rows, so nothing the guard reads can change
+            // it between the plan and the read.
+            foreach (AttributionRollup::hoursAcrossLocalDates((string) $timezone, $first, $last) as $hour) {
+                $excluded[] = [$hour, $hour];
             }
         }
 
@@ -1014,6 +1059,7 @@ final class AttributionReports
         return [
             'user' => $userId,
             'groupBy' => $groupBy,
+            'zone' => $timezone,
             'effective' => $effective,
             'default' => $defaultModelId,
             'modelIds' => $modelIds,
@@ -1050,13 +1096,9 @@ final class AttributionReports
         if ($plan['groupBy'] === 'journeys') {
             $sql .= ' AND ' . AttributionRollup::journeysMarkerSql($u);
         }
-        if ($plan['groupBy'] === 'day') {
-            $sql .= " AND NOT EXISTS (SELECT 1 FROM 202_attribution_rollup r2 WHERE r2.user_id = $u"
-                . ' AND r2.part IN (' . AttributionRollup::PART_CREDITS . ', ' . AttributionRollup::PART_COST . ', ' . AttributionRollup::PART_ASSISTS . ')'
-                . ' AND r2.dim = ' . AttributionRollup::DIMENSION_CODES['day'] . ' AND r2.model_id IN (' . AttributionRollup::intList($plan['models']) . ')'
-                . ' AND r2.grain = ' . AttributionRollup::GRAIN_HOUR . ' AND ' . self::rangesSql('r2.bucket', $plan['runs'])
-                . ' AND NOT ' . AttributionRollup::hourIsOneLocalDateSql('r2.bucket') . ')';
-        }
+        // The day dimension's planned hours were chosen from the zone alone
+        // (rollupPlan()), so it adds nothing here: the hours that carry no
+        // one date are never among them, whatever rows they come to hold.
 
         return '(' . $sql . ')';
     }
@@ -1086,39 +1128,61 @@ final class AttributionReports
     }
 
     /**
-     * The group key and whether it had a value, for rollup rows.
+     * The group key and whether it had a value, for rollup rows. A day row
+     * is an hour, and its key is the account's date at the hour's first
+     * second, which is the date of all of it (rollupPlan() serves no hour
+     * that has two).
      *
+     * @param array<string, mixed> $plan
      * @return array{0: string, 1: string}
      */
-    private static function rolledKey(string $groupBy): array
+    private static function rolledKey(array $plan): array
     {
-        if ($groupBy === 'day') {
-            return ["FROM_UNIXTIME(r.bucket * 3600, '%Y-%m-%d')", '1'];
+        if ($plan['groupBy'] === 'day') {
+            return ["DATE_FORMAT(" . LocalTime::datetimeSql('r.bucket * 3600', (string) $plan['zone']) . ", '%Y-%m-%d')", '1'];
         }
 
         return ['r.dim_key', '1 - r.key_null'];
     }
 
     /**
+     * Whether an exact row's key had a value. A day always has one (as its
+     * rollup rows say, rolledKey()), and testing it would work the key's
+     * expression out a second time for every row.
+     *
+     * @param array<string, mixed> $plan
+     */
+    private static function exactNamed(array $plan, string $key): string
+    {
+        return $plan['groupBy'] === 'day' ? '1' : "($key) IS NOT NULL";
+    }
+
+    /**
      * The name of each group, looked up now: what MAX(name) over the group's
      * rows is in the full computation, since every name table is joined on
-     * its primary key and a row without a value has no name.
+     * its primary key and a row without a value has no name. A name its join
+     * reads only from the click's account is read only from the report's
+     * account here (every click a report sums is that account's), so a key
+     * naming another account's record has no name on either path.
      */
-    private static function nameSql(string $groupBy): string
+    public static function nameSql(string $groupBy, int $userId): string
     {
         if ($groupBy === 'day') {
             return 'g.k';
         }
-        [$table, $id, $name] = self::nameLookup($groupBy);
+        [$table, $id, $name, $owned] = self::nameLookup($groupBy);
 
-        return "IF(g.named = 1, (SELECT dn.`$name` FROM `$table` dn WHERE dn.`$id` = g.k), NULL)";
+        return "IF(g.named = 1, (SELECT dn.`$name` FROM `$table` dn WHERE dn.`$id` = g.k"
+            . ($owned ? ' AND dn.user_id = ' . $userId : '') . '), NULL)';
     }
 
     /**
      * The table, key column and name column a dimension's names come from,
-     * read from its own join so the two cannot disagree.
+     * and whether the name is read only from the click's account, read
+     * from its own join so the two cannot disagree. A join of any other
+     * shape throws: the lookup would not read what the join reads.
      *
-     * @return array{0: string, 1: string, 2: string}
+     * @return array{0: string, 1: string, 2: string, 3: bool}
      */
     public static function nameLookup(string $groupBy): array
     {
@@ -1127,8 +1191,8 @@ final class AttributionReports
             throw new \LogicException('dimension ' . $groupBy . ' has no name column');
         }
         foreach ($d['joins'] as $join) {
-            if (preg_match('/^LEFT JOIN (\w+) dn ON dn\.(\w+) = [\w.]+$/D', $join, $m) === 1) {
-                return [$m[1], $m[2], $n[1]];
+            if (preg_match('/^LEFT JOIN (\w+) dn ON dn\.(\w+) = [\w.]+( AND dn\.user_id = c\.user_id)?$/D', $join, $m) === 1) {
+                return [$m[1], $m[2], $n[1], ($m[3] ?? '') !== ''];
             }
         }
         throw new \LogicException('dimension ' . $groupBy . ' has no name join');
@@ -1141,17 +1205,17 @@ final class AttributionReports
     private function rolledCredits(array $plan, ?int $modelId): ?array
     {
         $groupBy = (string) $plan['groupBy'];
-        [$rk, $rnamed] = self::rolledKey($groupBy);
-        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'cr.conv_time');
+        [$rk, $rnamed] = self::rolledKey($plan);
+        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'cr.conv_time', $plan['zone']);
         [$source, $where] = $this->exactCreditSource($plan, $modelId, self::rangesSql('cr.conv_time', $plan['exact']));
         $branches = self::rollupBranches($plan, AttributionRollup::PART_CREDITS, AttributionRollup::DIMENSION_CODES[$groupBy],
             $modelId ?? AttributionRollup::EFFECTIVE, ["$rk AS k", "$rnamed AS named", 'r.credit AS credit', 'r.revenue AS revenue', 'NULL AS guard']);
-        $branches[] = "SELECT COALESCE($key, 0), ($key) IS NOT NULL, cr.credit, cr.revenue, NULL
+        $branches[] = "SELECT COALESCE($key, 0), " . self::exactNamed($plan, $key) . ", cr.credit, cr.revenue, NULL
                        FROM $source JOIN 202_clicks c ON c.click_id = cr.click_id $joins WHERE $where";
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, $modelId === null);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.conversions, g.revenue, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.conversions, g.revenue, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, SUM(u.credit) AS conversions, SUM(u.revenue) AS revenue, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );
@@ -1176,17 +1240,17 @@ final class AttributionReports
     {
         $groupBy = (string) $plan['groupBy'];
         $u = (int) $plan['user'];
-        [$rk, $rnamed] = self::rolledKey($groupBy);
-        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'c.click_time');
+        [$rk, $rnamed] = self::rolledKey($plan);
+        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'c.click_time', $plan['zone']);
         $branches = self::rollupBranches($plan, AttributionRollup::PART_COST, AttributionRollup::DIMENSION_CODES[$groupBy],
             AttributionRollup::EFFECTIVE, ["$rk AS k", "$rnamed AS named", 'r.n AS n', 'r.cost AS cost', 'NULL AS guard']);
-        $branches[] = "SELECT COALESCE($key, 0), ($key) IS NOT NULL, 1, c.click_cpc, NULL
+        $branches[] = "SELECT COALESCE($key, 0), " . self::exactNamed($plan, $key) . ", 1, c.click_cpc, NULL
                        FROM 202_clicks c $joins
                        WHERE c.user_id = $u AND " . self::rangesSql('c.click_time', $plan['exact']) . ' AND c.click_bot = 0';
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.clicks, g.cost, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.clicks, g.cost, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, SUM(u.n) AS clicks, SUM(u.cost) AS cost, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );
@@ -1211,11 +1275,11 @@ final class AttributionReports
     {
         $groupBy = (string) $plan['groupBy'];
         $u = (int) $plan['user'];
-        [$rk, $rnamed] = self::rolledKey($groupBy);
-        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'jm.conv_time');
+        [$rk, $rnamed] = self::rolledKey($plan);
+        [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'jm.conv_time', $plan['zone']);
         $branches = self::rollupBranches($plan, AttributionRollup::PART_ASSISTS, AttributionRollup::DIMENSION_CODES[$groupBy],
             AttributionRollup::EFFECTIVE, ["$rk AS k", "$rnamed AS named", 'r.n AS n', 'NULL AS conv_id', 'NULL AS guard']);
-        $branches[] = "SELECT COALESCE($key, 0), ($key) IS NOT NULL, NULL, j.conv_id, NULL
+        $branches[] = "SELECT COALESCE($key, 0), " . self::exactNamed($plan, $key) . ", NULL, j.conv_id, NULL
                        FROM 202_attribution_journey_meta jm
                        JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
                        JOIN 202_clicks c ON c.click_id = j.click_id
@@ -1224,7 +1288,7 @@ final class AttributionReports
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
-            'SELECT g.k AS k, ' . self::nameSql($groupBy) . ' AS n, g.assists, g.guard FROM (
+            'SELECT g.k AS k, ' . self::nameSql($groupBy, (int) $plan['user']) . ' AS n, g.assists, g.guard FROM (
                 SELECT u.k, MAX(u.named) AS named, COALESCE(SUM(u.n), 0) + COUNT(DISTINCT u.conv_id) AS assists, MAX(u.guard) AS guard
                 FROM (' . implode("\n UNION ALL ", $branches) . ') u GROUP BY u.k) g'
         );
@@ -1342,20 +1406,29 @@ final class AttributionReports
 
     /**
      * A dimension's key expression, name expression and joins, over the
-     * clicks aliased `c` ({time} is the clock the part reads).
+     * clicks aliased `c`. The day is $timeColumn's date in $timezone, the
+     * account's: a day asked for without a zone throws rather than reading
+     * one (UTC, or the connection's) the account does not live in.
      *
      * @return array{0: string, 1: string, 2: string}
      */
-    public static function dimensionSql(string $groupBy, string $timeColumn): array
+    public static function dimensionSql(string $groupBy, string $timeColumn, ?string $timezone = null): array
     {
         if (!isset(self::DIMENSIONS[$groupBy])) {
             throw new \InvalidArgumentException('unknown dimension ' . $groupBy);
         }
         $d = self::DIMENSIONS[$groupBy];
+        $date = '';
+        if (str_contains($d['key'] . $d['name'], '{date}')) {
+            if ($timezone === null) {
+                throw new \LogicException("The $groupBy dimension is read in the account's zone; none was given.");
+            }
+            $date = 'DATE_FORMAT(' . LocalTime::datetimeSql($timeColumn, $timezone) . ", '%Y-%m-%d')";
+        }
 
         return [
-            str_replace('{time}', $timeColumn, $d['key']),
-            str_replace('{time}', $timeColumn, $d['name']),
+            str_replace('{date}', $date, $d['key']),
+            str_replace('{date}', $date, $d['name']),
             implode("\n", $d['joins']),
         ];
     }

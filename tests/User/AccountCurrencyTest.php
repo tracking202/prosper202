@@ -81,13 +81,12 @@ final class AccountCurrencyTest extends TestCase
      * copy — which is what it did: twenty-one `if ($currency == ...)` lines,
      * one edit away from disagreeing with the validator forever.
      *
-     * Asserted over the source rather than by calling dollar_format(),
-     * because 202-config/functions-tracking202.php runs code at file scope
-     * (there is a template_bottom() and a die() above this function) and
-     * cannot be loaded into a test process — which is why
-     * tests/DataEngine/HtmlReportFormatterTest.php stands in a stub for it.
-     * Requiring it here fataled the whole suite on "Cannot redeclare
-     * dollar_format()" while every suite run on its own stayed green.
+     * Asserted over the source rather than by calling dollar_format().
+     * Requiring 202-config/functions-tracking202.php here once fataled the
+     * whole suite on "Cannot redeclare dollar_format()" while every suite
+     * run on its own stayed green: HtmlReportFormatterTest defined a
+     * stand-in at file load. That test now loads the real file
+     * (require_once, which this could share), so the stand-in is gone.
      */
     public function testTheRendererReadsThatTableRatherThanKeepingItsOwn(): void
     {

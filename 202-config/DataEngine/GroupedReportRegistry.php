@@ -8,6 +8,10 @@ namespace Prosper202\DataEngine;
  * Registry of the single-dimension grouped reports. The SQL fragments are
  * preserved from the legacy per-report methods; only their duplication was
  * removed.
+ *
+ * A text ad or landing page is named only within the click's own account
+ * (`ref.user_id = 2st.user_id`): a click naming another account's reads as
+ * naming none, and is counted in the report's unnamed row (CLAUDE.md #27).
  */
 final class GroupedReportRegistry
 {
@@ -28,7 +32,7 @@ final class GroupedReportRegistry
             ),
             'textad' => new GroupedReportDefinition(
                 labelSelect: '`text_ad_name`',
-                joins: ' LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id) ',
+                joins: ' LEFT JOIN 202_text_ads on (2st.text_ad_id= 202_text_ads.text_ad_id AND 202_text_ads.user_id = 2st.user_id) ',
                 groupBy: 'text_ad_name',
             ),
             'referer' => new GroupedReportDefinition(
@@ -67,7 +71,7 @@ final class GroupedReportRegistry
             ),
             'landingpage' => new GroupedReportDefinition(
                 labelSelect: 'landing_page_nickname',
-                joins: ' LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_page_id) ',
+                joins: ' LEFT JOIN 202_landing_pages on (2st.landing_page_id = 202_landing_pages.landing_page_id AND 202_landing_pages.user_id = 2st.user_id) ',
                 groupBy: 'landing_page_nickname',
             ),
             'device' => new GroupedReportDefinition(

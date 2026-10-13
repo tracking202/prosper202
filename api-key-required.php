@@ -3,12 +3,6 @@ declare(strict_types=1);
 include_once(__DIR__ . '/202-config/connect.php');
 include_once(__DIR__ . '/202-config/functions-tracking202.php');
 
-if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
-	$strProtocol = 'https://';
-} else {
-	$strProtocol = 'http://';
-}
-
 // Check if API key already exists in database
 $existing_key_check = $db->query("SELECT p202_customer_api_key FROM 202_users WHERE user_id='1' AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''");
 $has_existing_key = false;
@@ -100,8 +94,11 @@ if ($success) {
 <?php
 	echo p202_standalone_card_end();
 }
-// The license service's cookie for this install's address (an image, as before).
+// The license service's cookie for this install's address (an image, as
+// before). The service is who this URL is for, so it is the stored address
+// (or the server's own name), as on the account home: never the Host header
+// this request chose (CLAUDE.md #16; RequestHostSourceTest).
 ?>
-	<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo htmlspecialchars(base64_encode($strProtocol . ($_SERVER['SERVER_NAME'] ?? '') . $base), ENT_QUOTES, 'UTF-8'); ?>" alt="" width="1" height="1" class="d-block">
+	<img src="https://my.tracking202.com/api/v2/dni/deeplink/cookie/set/<?php echo htmlspecialchars(base64_encode(p202TrackingBaseUrl()), ENT_QUOTES, 'UTF-8'); ?>" alt="" width="1" height="1" class="d-block">
 <?php
 info_bottom();

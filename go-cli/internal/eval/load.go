@@ -106,6 +106,12 @@ func validateCase(c Case) error {
 	if !hasExpectation && c.Skip == "" {
 		return fmt.Errorf("expected asserts nothing; give the case at least one expectation or a rubric")
 	}
+	if e.RunsOneOfExit != 0 && len(e.RunsOneOf) == 0 {
+		return fmt.Errorf("runs_one_of_exit is set without runs_one_of; it says which exit status a runs_one_of command must return")
+	}
+	if e.RunsOneOfExit < 0 || e.RunsOneOfExit > 255 {
+		return fmt.Errorf("runs_one_of_exit %d is not an exit status (0-255)", e.RunsOneOfExit)
+	}
 	for j, chk := range e.Checks {
 		if strings.TrimSpace(chk.Run) == "" {
 			return fmt.Errorf("checks[%d].run is required", j)

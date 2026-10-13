@@ -25,9 +25,7 @@ final class TableRegistry
     public const string DELETED_LOG = '202_deleted_log';
     public const string SYNC_AUDIT = '202_sync_audit';
 
-    // Messaging tables (Intercom-style messenger)
-    public const string MESSAGING_CONVERSATIONS = '202_messaging_conversations';
-    public const string MESSAGING_MESSAGES = '202_messaging_messages';
+    // Product analytics for the portal (202-config/Messaging/MessagingService.class.php)
     public const string MESSAGING_SYNC = '202_messaging_sync';
     public const string MESSAGING_EVENTS = '202_messaging_events';
     public const string MESSAGING_ATTRIBUTES = '202_messaging_attributes';

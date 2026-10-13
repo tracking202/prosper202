@@ -63,9 +63,9 @@ switch ($case) {
 		if ($handle === false) {
 			p202_upload_stop('The uploaded report could not be read. Nothing was changed; please upload it again.', 'Upload a report', $self);
 		}
-		$row = fgetcsv($handle, 100000, ",", escape: '\\');
+		$row = fgetcsv($handle, null, ",", escape: '\\');
 		// The first data line, so each column shows what it holds.
-		$sample = $row === false ? false : fgetcsv($handle, 100000, ",", escape: '\\');
+		$sample = $row === false ? false : fgetcsv($handle, null, ",", escape: '\\');
 		fclose($handle);
 		if (!is_array($row) || $row === [null]) {
 			p202_upload_stop('The report has no header line to choose the columns from. Nothing was changed.', 'Upload another report', $self);
@@ -215,7 +215,7 @@ switch ($case) {
 				<section class="p202-panel">
 					<div class="p202-panel__head">
 						<h2 class="p202-panel__title">Lines not recorded</h2>
-						<span class="p202-pill p202-pill--warn"><?php echo count($skippedRows) . ' skipped'; ?></span>
+						<span class="p202-pill p202-pill--warn"><?php echo number_format((int) $import['skipped']) . ' skipped'; ?></span>
 					</div>
 					<div class="p202-panel__body">
 						<?php echo p202_data_table(
@@ -223,6 +223,13 @@ switch ($case) {
 							$skippedRows,
 							['id' => 'upload-skipped', 'caption' => 'Lines of the report that were not recorded, and why']
 						); ?>
+						<?php if ((int) $import['unlisted'] > 0) {
+							$byReason = [];
+							foreach ($import['reasons'] as $reason => $count) {
+								$byReason[] = p202_setup_e((string) $reason) . ' (' . number_format((int) $count) . ')';
+							} ?>
+						<p class="form-text mb-0"><?php echo 'The first ' . number_format(count($skippedRows)) . ' are listed; ' . number_format((int) $import['unlisted']) . ' more were skipped. Every skipped line, by reason: ' . implode('; ', $byReason) . '.'; ?></p>
+						<?php } ?>
 					</div>
 				</section>
 			</div>
@@ -275,7 +282,7 @@ switch ($case) {
 
 			if (!$error && $handle !== false) {
 				//this counter, will help us determine the first row of the array
-				$row = @fgetcsv($handle, 100000, ",", escape: '\\');
+				$row = @fgetcsv($handle, null, ",", escape: '\\');
 
 				#if there was no row detected, an error occured on this uploaded
 				if (!$row) {

@@ -27,13 +27,19 @@ function record_mysql_error($dbOrSql, $sql = null): never
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
-    $auth = new AUTH();
-    $auth->set_timezone($_SESSION['user_timezone']);
+    // The session's zone, for the footer's clock; this page counts nothing in
+    // it. AUTH::set_timezone() would read the account's zone from the
+    // database that has just failed, and a failed read there throws (a fatal
+    // in place of this page, with the error never recorded).
+    $sessionZone = is_string($_SESSION['user_timezone'] ?? null) ? $_SESSION['user_timezone'] : '';
+    if (\Prosper202\Report\AccountZone::isZone($sessionZone)) {
+        date_default_timezone_set($sessionZone);
+    }
 
-    $ip_id = INDEXES::get_ip_id($_SERVER['HTTP_X_FORWARDED_FOR']);
+    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
     $mysql['ip_id'] = $db->real_escape_string($ip_id);
 
-    $site_url = 'http://' . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
     $site_id = INDEXES::get_site_url_id($site_url);
     $mysql['site_id'] = $db->real_escape_string($site_id);
 
@@ -62,6 +68,12 @@ function record_mysql_error($dbOrSql, $sql = null): never
 
     template_bottom();
     die();
+}
+
+/** A packed IPv6 address as text (inet_ntop(), quiet on a malformed value). */
+function inet6_ntoa($ip)
+{
+    return @inet_ntop($ip);
 }
 
 function dollar_format($amount, $currency = null, $cpv = false)
@@ -104,7 +116,10 @@ function dollar_format($amount, $currency = null, $cpv = false)
         if ($amount >= 0) {
             $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
         } else {
-            $new_amount = $currency_before . number_format($amount, $decimals) . $currency_after;
+            // Accounting form: the parentheses are the sign, so the amount
+            // inside has none ("($5.00)", as the v1/v2 APIs write it). It
+            // kept its own, and a refund read "($-5.00)".
+            $new_amount = $currency_before . number_format(abs($amount), $decimals) . $currency_after;
             $new_amount = '(' . $new_amount . ')';
         }
     } else {
@@ -123,8 +138,13 @@ function grab_timeframe($unused = null): array
 
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT user_pref_time_predefined, user_pref_time_from, user_pref_time_to FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $user_result = _mysqli_query($user_sql);; // ($user_sql);
-    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    // A read that failed is not an account without preferences: that row
+    // gave every report the window 0 to 0, which holds no clicks.
+    $user_result = _mysqli_query($user_sql);
+    if (!$user_result instanceof mysqli_result) {
+        record_mysql_error($user_sql);
+    }
+    $user_row = $user_result->fetch_assoc() ?? [];
     $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
     $pref_time = $user_row['user_pref_time_predefined'] ?? '';
 
@@ -133,70 +153,24 @@ function grab_timeframe($unused = null): array
         'to' => time(),
     ];
 
-    if (($pref_time == 'today') or (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '')) {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'yesterday') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time() - 86400), (int)date('d', time() - 86400), (int)date('Y', time() - 86400));
-    }
-
-    if ($pref_time == 'last7') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 7), (int)date('d', time() - 86400 * 7), (int)date('Y', time() - 86400 * 7));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last14') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 14), (int)date('d', time() - 86400 * 14), (int)date('Y', time() - 86400 * 14));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'last30') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time() - 86400 * 30), (int)date('d', time() - 86400 * 30), (int)date('Y', time() - 86400 * 30));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'thismonth') {
-        $time['from'] = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastmonth') {
-        // Anchor to the last day of the previous month (first of this month minus one day)
-        // so the range is correct regardless of month length or today's date.
-        $last_month_day = mktime(0, 0, 0, (int)date('m', time()), 1, (int)date('Y', time())) - 86400;
-        $time['from'] = mktime(0, 0, 0, (int)date('m', $last_month_day), 1, (int)date('Y', $last_month_day));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', $last_month_day), (int)date('d', $last_month_day), (int)date('Y', $last_month_day));
-    }
-
-    if ($pref_time == 'thisyear') {
-        $time['from'] = mktime(0, 0, 0, 1, 1, (int)date('Y', time()));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
-    }
-
-    if ($pref_time == 'lastyear') {
-        $last_year = (int)date('Y', time()) - 1;
-        $time['from'] = mktime(0, 0, 0, 1, 1, $last_year);
-        $time['to'] = mktime(23, 59, 59, 12, 31, $last_year);
-    }
-
-    if ($pref_time == 'alltime') {
-
-        // for the time from, do something special select the exact date this user was registered and use that :)
-        if (isset($_SESSION['user_id'])) {
+    // A named window, in the account's zone (AUTH::set_timezone() above
+    // reads it from the account), with calendar days rather than 86400-second
+    // strides: ReportWindow says what each one is and what this got wrong.
+    if (in_array($pref_time, \Tracking202\Report\ReportWindow::PRESETS, true)) {
+        $registeredAt = null;
+        if ($pref_time === 'alltime' && isset($_SESSION['user_id'])) {
             $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
             $user2_sql = "SELECT user_time_register FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
             $user2_result = $db->query($user2_sql) or record_mysql_error($user2_sql);
             $user2_row = $user2_result->fetch_assoc();
-            if ($user2_row !== null) {
-                $time['from'] = $user2_row['user_time_register'];
+            if ($user2_row !== null && is_numeric($user2_row['user_time_register'] ?? null)) {
+                $registeredAt = (int) $user2_row['user_time_register'];
             }
         }
-
-        $time['from'] = mktime(0, 0, 0, (int)date('m', (int)$time['from']), (int)date('d', (int)$time['from']), (int)date('Y', (int)$time['from']));
-        $time['to'] = mktime(23, 59, 59, (int)date('m', time()), (int)date('d', time()), (int)date('Y', time()));
+        $time = \Tracking202\Report\ReportWindow::preset($pref_time, date_default_timezone_get(), time(), $registeredAt);
+    } elseif (isset($user_row['user_pref_time_from']) && $user_row['user_pref_time_from'] != '') {
+        // A custom window: today until the stored bounds are read below.
+        $time = \Tracking202\Report\ReportWindow::preset('today', date_default_timezone_get(), time());
     }
 
     if ($pref_time == '') {
@@ -208,37 +182,35 @@ function grab_timeframe($unused = null): array
     return $time;
 }
 
-function getLastDayOfMonth($month, $year)
+/**
+ * The tracking domain as stored for the signed-in user, or for the primary
+ * account without a session (CLI cron workers), like the connect2.php
+ * variant — otherwise CLI could never resolve a configured domain and URL
+ * builders would degrade to 'localhost'. '' when none is set.
+ * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
+ *
+ * A read that fails throws, naming the account. It answered '' -- "none
+ * stored" -- for a failed query too, and every caller builds on that: one
+ * transient database error moved every link getTrackingDomain() builds to
+ * the request's host, and the address p202TrackingBaseUrl() registers with
+ * the hosted service to the server's own name, with nothing to say so
+ * (CLAUDE.md #11: a lookup that cannot answer must not answer). The
+ * connect2.php twin, getTrackingDomain(), throws the same way.
+ *
+ * $userId names the account instead. Whatever the server itself calls must
+ * name one: every signed-in user sets their own domain on Personal
+ * Settings, and a session-dependent read let any of them choose the host
+ * the report rebuild fetched (process_dataengine_job.php reads user 1's).
+ */
+function p202StoredTrackingDomain(?int $userId = null): string
 {
-    return (int)date("d", mktime(0, 0, 0, (int)$month + 1, 0, (int)$year));
-}
-
-function getTrackingDomain(): string
-{
-    // Keep in sync with the connect2.php variant of this function: SERVER_NAME
-    // does not exist for CLI runs (cron workers) — the declared string return
-    // type would turn the missing key into a fatal TypeError — and the raw
-    // value is sanitized against host-header injection.
-    $raw_server_name = $_SERVER['SERVER_NAME'] ?? '';
-    $tracking_domain = (string) preg_replace('/[^a-zA-Z0-9.\-:]/', '', (string) $raw_server_name);
-
-    // Add port if non-standard (not 80/443)
-    $port = $_SERVER['SERVER_PORT'] ?? 80;
-    if ($port != 80 && $port != 443) {
-        $tracking_domain .= ':' . $port;
-    }
-
-    // Use the logged-in user's configured tracking domain; without a session
-    // (CLI cron workers) fall back to the primary account, like the
-    // connect2.php variant — otherwise CLI could never resolve a configured
-    // domain and URL builders would degrade to 'localhost'. _mysqli_query
-    // returns false (handled below) when the schema doesn't exist yet.
-    $lookup_user_id = (isset($_SESSION['user_id']) && !empty($_SESSION['user_id']))
-        ? (string) $_SESSION['user_id']
-        : '1';
+    $lookup_user_id = $userId !== null
+        ? (string) $userId
+        : ((isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) ? (string) $_SESSION['user_id'] : '1');
 
     $database = DB::getInstance();
     $db = $database->getConnection();
+    $failed = 'Unable to read the tracking domain of account ' . $lookup_user_id;
     $tracking_domain_sql = "
 		SELECT
 			`user_tracking_domain`
@@ -247,19 +219,85 @@ function getTrackingDomain(): string
 		WHERE
 			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
 	";
-    $tracking_domain_result = _mysqli_query($tracking_domain_sql);
-    
-    if ($tracking_domain_result && $tracking_domain_row = $tracking_domain_result->fetch_assoc()) {
-        if (isset($tracking_domain_row['user_tracking_domain']) && 
-            is_string($tracking_domain_row['user_tracking_domain']) && 
-            strlen($tracking_domain_row['user_tracking_domain']) > 0) {
-            // host[:port] only: a stored full URL doubled the scheme in every
-            // link built from it (see TrackingDomain).
-            $tracking_domain = \Prosper202\Click\TrackingDomain::normalize((string) $tracking_domain_row['user_tracking_domain']) ?: $tracking_domain;
-        }
+    try {
+        $tracking_domain_result = _mysqli_query($tracking_domain_sql);
+    } catch (\mysqli_sql_exception $e) {
+        // Strict reporting throws MySQL's sentence; name whose read it was.
+        throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
     }
-    
-    return $tracking_domain;
+    if (!$tracking_domain_result instanceof \mysqli_result) {
+        try {
+            $error = (string) $db->error;
+        } catch (\Error) {
+            $error = '';
+        }
+        throw new \RuntimeException($failed . ($error !== '' ? ': ' . $error : ''));
+    }
+    $row = $tracking_domain_result->fetch_assoc();
+
+    return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
+}
+
+/**
+ * This install's tracking base, `scheme://host[:port]/<install path>/`:
+ * TrackingBaseUrl::build() over the install owner's (user 1's) stored
+ * tracking domain (a stored scheme kept, the request's otherwise).
+ * callAutoCron(), registerDailyEmail(), getDNIHost() and the account home's
+ * deeplink pixel hand it to the hosted service, which calls the install back
+ * there with the install hash. They took the scheme from SERVER_PROTOCOL,
+ * which is "HTTP/1.1" or "HTTP/2.0" and never names https, so every install
+ * was registered as http://, and a site served only over HTTPS was called
+ * back where nothing answers.
+ *
+ * It is the owner's domain, not the signed-in user's: every user sets their
+ * own on Personal settings and every user row carries the install hash, so a
+ * session-dependent read let any user save attacker.example and have the
+ * hosted service call it with the hash that authenticates the cron
+ * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
+ * answered `http://attacker.example/`.
+ */
+function p202TrackingBaseUrl(): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
+}
+
+/**
+ * The tracking domain (`host[:port]`) of the links, snippets and postback
+ * URLs a page shows the person who asked for it: the stored one, or the host
+ * this request arrived at (TrackingBaseUrl::domainForResponse(), which says
+ * why not the server's own name and port). Its callers are listed, each with
+ * why its URL goes back to the requester, in RequestHostSourceTest; a URL
+ * sent to anyone else is p202TrackingBaseUrl(). Keep in step with the
+ * connect2.php copy.
+ */
+function getTrackingDomain(): string
+{
+    return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+}
+
+/**
+ * The statement in every signed-in page's footer script (template.php) that
+ * has the user's own browser ping this install's cron endpoint:
+ * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/");`.
+ *
+ * The ping is optional and the page above it has rendered, so a tracking
+ * domain that cannot be read -- getTrackingDomain() throws rather than guess
+ * -- skips the ping, logged, instead of cutting the page off mid-footer; the
+ * statement is then a comment saying so.
+ */
+function p202CronBeaconStatement(): string
+{
+    try {
+        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/';
+        $flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_THROW_ON_ERROR;
+
+        return 'navigator.sendBeacon(' . json_encode($url, $flags) . ');';
+    } catch (\Throwable $e) {
+        error_log('p202: the cron ping was skipped: ' . $e->getMessage());
+
+        return '/* the cron ping was skipped: the tracking domain could not be read */';
+    }
 }
 
 // the above, if true, are options to turn on specific filtering techniques.
@@ -288,8 +326,13 @@ function query(
     // grab user preferences
     $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string((string) $_SESSION['user_id']) : 0;
     $user_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $user_result = _mysqli_query($user_sql); // ($user_sql);
-    $user_row = ($user_result instanceof mysqli_result) ? ($user_result->fetch_assoc() ?? []) : [];
+    // A read that failed is not an account without preferences: that row
+    // dropped every filter the user had set.
+    $user_result = _mysqli_query($user_sql);
+    if (!$user_result instanceof mysqli_result) {
+        record_mysql_error($user_sql);
+    }
+    $user_row = $user_result->fetch_assoc() ?? [];
     $user_row = \Prosper202\DataEngine\ReportView::apply($user_row, $_SESSION['user_id'] ?? null);
 
     // Apply sane defaults when optional arguments are omitted
@@ -327,11 +370,11 @@ function query(
         if ($user_row['user_pref_ppc_network_id'] and ! ($user_row['user_pref_ppc_account_id'])) {
 
             if (! preg_match('/202_ppc_accounts/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id) ";
+                $command .= " LEFT JOIN 202_ppc_accounts AS 2pa ON (2c.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2c.user_id) ";
             }
 
             if (! preg_match('/202_ppc_networks/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id) ";
+                $command .= " LEFT JOIN 202_ppc_networks AS 2pn ON (2pa.ppc_network_id = 2pn.ppc_network_id AND 2pn.user_id = 2c.user_id) ";
             }
         }
 
@@ -339,46 +382,16 @@ function query(
         if ($user_row['user_pref_aff_network_id'] and ! ($user_row['user_pref_aff_campaign_id'])) {
 
             if (! preg_match('/202_aff_campaigns/', (string) $command)) {
-                $command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id) ";
+                $command .= " LEFT JOIN 202_aff_campaigns AS 2ac ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id) ";
             }
 
             if (! preg_match('/202_aff_networks/', (string) $command)) {
-                $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id) ";
+                $command .= " LEFT JOIN 202_aff_networks AS 2an ON (2ac.aff_network_id = 2an.aff_network_id AND 2an.user_id = 2c.user_id) ";
             }
         }
 
-        // if domain lookup
-        if ($user_row['user_pref_referer']) {
-
-            if (! preg_match('/202_clicks_site/', (string) $command)) {
-                $command .= " LEFT JOIN 202_clicks_site AS 2cs ON (2c.click_id = 2cs.click_id) ";
-            }
-
-            if (! preg_match('/202_site_urls/', (string) $command)) {
-                $command .= " LEFT JOIN 202_site_urls AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id) ";
-            }
-
-            if (! preg_match('/202_site_domains/', (string) $command)) {
-                $command .= " LEFT JOIN 202_site_domains AS 2sd ON (2su.site_domain_id = 2sd.site_domain_id) ";
-            }
-            // Count query: no JOINs needed — use subquery (see count_where below)
-        }
-
-        // if there is a keyword lookup, and we have not joined the 202 keywords table. do so now
-        if ($user_row['user_pref_keyword']) {
-            if (! preg_match('/202_keywords/', (string) $command)) {
-                $command .= " LEFT JOIN 202_keywords AS 2k ON (2ca.keyword_id = 2k.keyword_id) ";
-            }
-            // Count query: no JOIN needed — use subquery (see count_where below)
-        }
-
-        // if there is a ip lookup, and we have not joined the 202 ip table. do so now
-        if ($user_row['user_pref_ip']) {
-            if (! preg_match('/202_ips/', (string) $command)) {
-                $command .= " LEFT JOIN 202_ips AS 2i ON (2ca.ip_id = 2i.ip_id) ";
-            }
-            // Count query: no JOIN needed — use subquery (see count_where below)
-        }
+        // The referer, keyword and IP filters need no join: they are
+        // subqueries over the click row's ids (TextFilterSql, below).
 
         // if there is a country lookup, and we have not joined the 202 country table. do so now
         if ($user_row['user_pref_country_id'] and ! preg_match('/202_locations_country/', (string) $command)) {
@@ -414,15 +427,14 @@ function query(
         }
     }
 
-    $count_where = ''; //initialize count_where variable
-    $isPublisher = !empty($_SESSION['publisher']);
-    if (!$isPublisher) { //user is able to see all campaigns
-        $click_sql = $command . " WHERE $db_table.user_id!='0' ";
-        $count_where = " WHERE $db_table.user_id!='0' ";
-    } else {
-        $click_sql = $command . " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' "; //user can only see thier campaigns
-        $count_where = " WHERE $db_table.user_id='" . $_SESSION['user_own_id'] . "' ";
-    }
+    // Whose clicks: the rule every report page reads (DataScope). This read
+    // the absent publisher key as "may see every campaign", so the Visitors
+    // list and Spy showed every account's clicks to every signed-in user.
+    $dataUserId = \Prosper202\DataEngine\DataScope::userId();
+    $count_where = $dataUserId === null
+        ? " WHERE $db_table.user_id!='0' "
+        : " WHERE $db_table.user_id='" . $dataUserId . "' ";
+    $click_sql = $command . $count_where;
     if ($user_row['user_pref_subid']) {
         $mysql['user_landing_subid'] = $db->real_escape_string($user_row['user_pref_subid']);
         $click_sql .= " AND      2c.click_id='" . $mysql['user_landing_subid'] . "'";
@@ -452,11 +464,15 @@ function query(
         if ($user_row['user_pref_ppc_network_id'] and ! ($user_row['user_pref_ppc_account_id'])) {
             $mysql['user_pref_ppc_network_id'] = $db->real_escape_string($user_row['user_pref_ppc_network_id']);
             if ($user_row['user_pref_ppc_network_id'] == '16777215') {
+                // The count reads what the list's joins read: the click's
+                // own account's traffic source account, and that account's
+                // own source (CLAUDE.md #27). One naming another account's
+                // reads as no source in both.
                 $click_sql .= "  AND      2pn.ppc_network_id IS NULL";
-                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS 2pa2 WHERE 2pa2.ppc_account_id = 2c.ppc_account_id AND 2pa2.ppc_network_id IS NOT NULL)";
+                $count_where .= "  AND      NOT EXISTS (SELECT 1 FROM 202_ppc_accounts AS own_pa INNER JOIN 202_ppc_networks AS own_pn ON (own_pn.ppc_network_id = own_pa.ppc_network_id AND own_pn.user_id = own_pa.user_id) WHERE own_pa.ppc_account_id = 2c.ppc_account_id AND own_pa.user_id = 2c.user_id)";
             } else {
                 $click_sql .= "  AND      2pn.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "'";
-                $count_where .= "  AND      2c.ppc_account_id IN (SELECT ppc_account_id FROM 202_ppc_accounts WHERE ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
+                $count_where .= "  AND      2c.ppc_account_id IN (SELECT own_pa.ppc_account_id FROM 202_ppc_accounts AS own_pa INNER JOIN 202_ppc_networks AS own_pn ON (own_pn.ppc_network_id = own_pa.ppc_network_id AND own_pn.user_id = own_pa.user_id) WHERE own_pa.user_id = 2c.user_id AND own_pa.ppc_network_id='" . $mysql['user_pref_ppc_network_id'] . "')";
             }
         }
 
@@ -520,25 +536,17 @@ function query(
             $count_where .= " AND      2c.isp_id=" . $mysql['user_pref_isp_id'];
         }
 
-        if ($user_row['user_pref_referer']) {
-            $mysql['user_pref_referer'] = $db->real_escape_string($user_row['user_pref_referer']);
-            $click_sql .= " AND 2sd.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%'";
-            $count_where .= " AND EXISTS (SELECT 1 FROM 202_clicks_site AS 2cs2 JOIN 202_site_urls AS 2su2 ON (2cs2.click_referer_site_url_id = 2su2.site_url_id) JOIN 202_site_domains AS 2sd2 ON (2su2.site_domain_id = 2sd2.site_domain_id) WHERE 2cs2.click_id = 2c.click_id AND 2sd2.site_domain_host LIKE '%" . $mysql['user_pref_referer'] . "%')";
-        }
-
-        if ($user_row['user_pref_keyword']) {
-            $mysql['user_pref_keyword'] = $db->real_escape_string($user_row['user_pref_keyword']);
-            $click_sql .= " AND 2k.keyword_id in (SELECT keyword_id from 202_keywords where keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
-							COLLATE utf8_general_ci) ";
-            $count_where .= " AND 2c.keyword_id IN (SELECT keyword_id FROM 202_keywords WHERE keyword LIKE CONVERT( _utf8 '%" . $mysql['user_pref_keyword'] . "%' USING utf8 )
-							COLLATE utf8_general_ci) ";
-        }
-
-        if ($user_row['user_pref_ip']) {
-            $mysql['user_pref_ip'] = $db->real_escape_string($user_row['user_pref_ip']);
-            $click_sql .= " AND 2i.ip_address LIKE '%" . $mysql['user_pref_ip'] . "%'";
-            $count_where .= " AND 2c.ip_id IN (SELECT ip_id FROM 202_ips WHERE ip_address LIKE '%" . $mysql['user_pref_ip'] . "%')";
-        }
+        // Referer, keyword and IP, as every report and GET /clicks read them
+        // (TextFilterSql): this list matched the referer's domain only, the
+        // text as a LIKE pattern (`50%` matched "500 off"), and the address
+        // as a substring (10.0.0.1 matched 10.0.0.12).
+        $textFilters = \Prosper202\DataEngine\TextFilterSql::where(
+            $user_row,
+            $db_table,
+            static fn (string $text): string => $db->real_escape_string($text)
+        );
+        $click_sql .= $textFilters;
+        $count_where .= $textFilters;
 
         if ($user_row['user_pref_device_id']) {
             $mysql['user_pref_device_id'] = (int) $user_row['user_pref_device_id'];
@@ -565,13 +573,16 @@ function query(
 
         $mysql['from'] = $db->real_escape_string((string)$time['from']);
         $mysql['to'] = $db->real_escape_string((string)$time['to']);
+        // Both bounds are inclusive, as every report and GET /clicks read a
+        // window: a day ends at 23:59:59 and the next begins at 00:00:00, so
+        // `>` and `<` dropped the clicks of those two seconds from the list.
         if ($mysql['from'] != '') {
-            $click_sql .= " AND click_time > " . $mysql['from'] . " ";
-            $count_where .= " AND click_time > " . $mysql['from'] . " ";
+            $click_sql .= " AND click_time >= " . $mysql['from'] . " ";
+            $count_where .= " AND click_time >= " . $mysql['from'] . " ";
         }
         if ($mysql['to'] != '') {
-            $click_sql .= " AND click_time < " . $mysql['to'] . " ";
-            $count_where .= " AND click_time < " . $mysql['to'] . " ";
+            $click_sql .= " AND click_time <= " . $mysql['to'] . " ";
+            $count_where .= " AND click_time <= " . $mysql['to'] . " ";
         }
     }
 
@@ -626,9 +637,15 @@ function query(
         if (isset($mysql['user_landing_subid']) && $mysql['user_landing_subid']) {
             $count_sql_to_run .= " AND 2c.click_id='" . $mysql['user_landing_subid'] . "'";
         }
+        // A count that failed is not a count of 0, which the Visitors page
+        // showed as "0-0 of 0" above the rows it listed, with no pages to
+        // reach the rest.
         $count_result = _mysqli_query($count_sql_to_run);
-        $count_row = $count_result ? $count_result->fetch_assoc() : null;
-        $rows = (int)($count_row !== null ? ($count_row['count'] ?? 0) : 0);
+        if (!$count_result instanceof mysqli_result) {
+            record_mysql_error($count_sql_to_run);
+        }
+        $count_row = $count_result->fetch_assoc();
+        $rows = (int) ($count_row['count'] ?? 0);
     }
 
     if ($count == true) {
@@ -2228,9 +2245,7 @@ function changelogPremium(): array
 
 function callAutoCron($endpoint)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = $protocol . '' . getTrackingDomain() . get_absolute_url();
-    $domain = base64_encode($domain);
+    $domain = base64_encode(p202TrackingBaseUrl());
 
     // Initiate curl
     $ch = curl_init();
@@ -2255,9 +2270,7 @@ function callAutoCron($endpoint)
 
 function registerDailyEmail($time, $timezone, $hash)
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
-    $domain = base64_encode($domain);
+    $domain = base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
 
     if ($time) {
         $date = new DateTime($time . ':00:00', new DateTimeZone($timezone));
@@ -2317,9 +2330,7 @@ function tagUserByNetwork($install_hash, $type, $network)
 
 function getDNIHost(): string
 {
-    $protocol = stripos((string) $_SERVER['SERVER_PROTOCOL'], 'https') !== false ? 'https://' : 'http://';
-    $domain = rtrim($protocol . '' . getTrackingDomain() . get_absolute_url(), '/');
-    return base64_encode($domain);
+    return base64_encode(rtrim(p202TrackingBaseUrl(), '/'));
 }
 
 function getAllDniNetworks($install_hash)
@@ -2988,17 +2999,8 @@ function getSecureStatus(): bool
  */
 function generateTrackingLoaderSnippet(string $landing_page_id_public): string
 {
-    return '<script>
-	(function(d, s) {
-		var upxf = d.getElementsByTagName(s)[0], load = function(url, id) {
-			if (d.getElementById(id)) {return;}
-			var if202 = d.createElement("script");if202.src = url;if202.async = true;if202.id = id;
-			upxf.parentNode.insertBefore(if202, upxf);
-		};
-		var t = new URLSearchParams(window.location.search).get("t202id") || "";
-		load("//' . getTrackingDomain() . get_absolute_url() . 'tracking202/static/landing.php?lpip=' . $landing_page_id_public . '&t202id=" + encodeURIComponent(t), "upxif");
-	}(document, "script"));
-	</script>';
+    // Prosper202\Setup\LandingPageCode builds it, for the pages and the API.
+    return \Prosper202\Setup\LandingPageCode::loader('//' . getTrackingDomain() . get_absolute_url(), $landing_page_id_public);
 }
 
 /**
@@ -3011,27 +3013,7 @@ function generateTrackingLoaderSnippet(string $landing_page_id_public): string
  */
 function getDynamicContentSegments(): array
 {
-    return [
-        't202Country'      => "Visitor's Country",
-        't202CountryCode'  => "Visitor's Country Code",
-        't202Region'       => "Visitor's Region/State",
-        't202City'         => "Visitor's City",
-        't202Postal'       => "Visitor's Postal/Zip Code",
-        't202Browser'      => "Visitor's Browser",
-        't202OS'           => "Visitor's Operating System",
-        't202Device'       => "Visitor's Device Type",
-        't202ISP'          => "Visitor's ISP",
-        't202kw'           => 'Value passed in t202kw',
-        't202c1'           => 'Value passed in C1',
-        't202c2'           => 'Value passed in C2',
-        't202c3'           => 'Value passed in C3',
-        't202c4'           => 'Value passed in C4',
-        't202utm_source'   => 'Value passed in utm_source',
-        't202utm_medium'   => 'Value passed in utm_medium',
-        't202utm_term'     => 'Value passed in utm_term',
-        't202utm_content'  => 'Value passed in utm_content',
-        't202utm_campaign' => 'Value passed in utm_campaign',
-    ];
+    return \Prosper202\Setup\LandingPageCode::SEGMENTS;
 }
 
 /**

@@ -170,14 +170,74 @@ class Slack {
 	return $message;
   }
 
-  private function sendMessage($message) {
+  /** The name a notice goes out under when nothing better is known. */
+  public const NEUTRAL_SENDER = 'Prosper202';
 
-    $data = "payload=" . json_encode([
+  /**
+   * Who a notice says it is from (Slack's username), so a channel that hears
+   * from several installs can tell them apart: the host the request named.
+   * A run with no request — the cron job from the PHP CLI — has no
+   * SERVER_NAME (read raw, that was an "Undefined array key" warning on
+   * every notice it sent), so it is the install's tracking domain, as
+   * getTrackingDomain() falls back to it, and NEUTRAL_SENDER when none is
+   * set.
+   *
+   * @param array<string, mixed> $server normally $_SERVER
+   * @param string|null $trackingDomain user 1's user_tracking_domain, as stored; null when it could not be read
+   */
+  public static function senderName(array $server, ?string $trackingDomain): string
+  {
+    $name = is_scalar($server['SERVER_NAME'] ?? null) ? trim((string) $server['SERVER_NAME']) : '';
+    if ($name !== '') {
+      return $name;
+    }
+    $domain = $trackingDomain === null ? '' : \Prosper202\Click\TrackingDomain::normalize($trackingDomain);
+
+    return $domain !== '' ? $domain : self::NEUTRAL_SENDER;
+  }
+
+  /** The body sendMessage() posts. */
+  public function payload(string $message): string
+  {
+    $hasName = is_scalar($_SERVER['SERVER_NAME'] ?? null) && trim((string) $_SERVER['SERVER_NAME']) !== '';
+
+    return "payload=" . json_encode([
             "channel"  		=> "#prosper202",
-            "text"      	=> urlencode((string) $message),
-            "username" 		=> $_SERVER['SERVER_NAME'],
+            "text"      	=> urlencode($message),
+            "username" 		=> self::senderName($_SERVER, $hasName ? null : self::installTrackingDomain()),
             "icon_url"    	=> "https://s3-us-west-2.amazonaws.com/slack-files2/avatars/2015-02-28/3879263534_1958d0336574bea6f52d_48.jpg"
     		]);
+  }
+
+  /**
+   * User 1's tracking domain, as stored; null when there is no database to
+   * ask or it could not be read. It only names the sender, so a read that
+   * fails costs the notice its install's name, never the notice.
+   */
+  private static function installTrackingDomain(): ?string
+  {
+    try {
+      if (!class_exists('DB', false)) {
+        return null;
+      }
+      $database = DB::getInstance();
+      $mysqli = $database ? $database->getConnection() : null;
+      if (!$mysqli instanceof mysqli) {
+        return null;
+      }
+      $conn = new \Prosper202\Database\Connection($mysqli);
+      $row = $conn->fetchOne($conn->prepareRead('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1 LIMIT 1'));
+
+      return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : null;
+    } catch (\Throwable $e) {
+      error_log('Slack: the tracking domain could not be read for the sender name: ' . $e->getMessage());
+      return null;
+    }
+  }
+
+  private function sendMessage($message) {
+
+    $data = $this->payload((string) $message);
 
     $ch = curl_init($this->webhook_url);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");

@@ -1,16 +1,16 @@
 <?php
 
 /**
- * Messaging Sync Cron Job
+ * Analytics Delivery Cron Job
  *
- * Proactively syncs the Intercom-style messenger for active users so that
- * broadcasts and support replies arrive (and queued outbound messages/events are
- * delivered) even when a user does not currently have the dashboard open.
+ * Delivers pending product-analytics events and changed attributes
+ * (202_messaging_events, 202_messaging_attributes) to the portal's POST
+ * /track for every user with something pending: MessagingService::
+ * deliverPending(), which the hourly tier of 202-cronjobs/index.php also
+ * runs on every default deployment. Run this file on its own only for a
+ * tighter cadence; not more often than every 5 minutes, because each failed
+ * delivery spends one of an event's five attempts.
  *
- * The widget itself also syncs on every poll (throttled), so this cron is a
- * booster rather than the primary path.
- *
- * Run every few minutes via cron (every 5 minutes is a good cadence):
  *   /usr/bin/php /path/to/prosper202/202-cronjobs/sync-messaging.php
  */
 
@@ -37,41 +37,18 @@ register_shutdown_function(static function () use ($lockFile): void {
 });
 
 try {
-    echo 'Starting messaging sync at ' . date('Y-m-d H:i:s') . "\n";
+    echo 'Starting analytics delivery at ' . date('Y-m-d H:i:s') . "\n";
 
-    $database = DB::getInstance();
-    $db = $database->getConnection();
+    $counts = MessagingService::deliverPending(DB::getInstance()->getConnection());
 
-    // Active, non-deleted users only.
-    $sql = "SELECT user_id FROM 202_users WHERE user_active = 1 AND user_deleted = 0";
-    $result = $db->query($sql);
-    if ($result === false) {
-        throw new RuntimeException('failed to list users');
-    }
-
-    $synced = 0;
-    $failed = 0;
-    while ($row = $result->fetch_assoc()) {
-        $userId  = (int) $row['user_id'];
-        $service = MessagingService::forUser($userId);
-        if ($service === null) {
-            continue;
-        }
-
-        // Force past the per-request throttle; the cron cadence is the throttle here.
-        if ($service->sync(true)) {
-            $synced++;
-        } else {
-            $failed++;
-        }
-    }
-
-    echo "Messaging sync completed at " . date('Y-m-d H:i:s') . "\n";
-    echo "Results: {$synced} synced, {$failed} with no successful pull\n";
-    error_log("Messaging sync completed: {$synced} synced, {$failed} no-pull");
-    exit(0);
+    $summary = "{$counts['sent']} delivered, {$counts['more']} with more pending, {$counts['idle']} with nothing pending, "
+        . "{$counts['failed']} failed, {$counts['stopped']} not tried after repeated failures";
+    echo 'Analytics delivery completed at ' . date('Y-m-d H:i:s') . "\n";
+    echo "Results: {$summary}\n";
+    error_log("Analytics delivery completed: {$summary}");
+    exit($counts['failed'] > 0 ? 1 : 0);
 } catch (Throwable $e) {
-    $msg = 'Messaging sync failed: ' . $e->getMessage();
+    $msg = 'Analytics delivery failed: ' . $e->getMessage();
     echo $msg . "\n";
     error_log($msg);
     exit(1);

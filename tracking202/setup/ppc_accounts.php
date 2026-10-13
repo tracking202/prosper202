@@ -11,7 +11,6 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 $slack = false;
-$slack_pixel_added_message = false;
 $error = [];
 $html = [];
 $selected = [];
@@ -41,14 +40,17 @@ $pixel_types = [];
 $ppc_pixel_type_sql = "SELECT * FROM `202_pixel_types`";
 $ppc_pixel_type_result = _mysqli_query($ppc_pixel_type_sql);
 
+// pixel_type_id => name, unescaped, for the Slack messages.
+$pixelTypeNames = [];
 while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
 	$pixel_types[] = ['pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8')];
+	$pixelTypeNames[(int) ($ppc_pixel_type_row['pixel_type_id'] ?? 0)] = (string) ($ppc_pixel_type_row['pixel_type'] ?? '');
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		$error['token'] = 'Invalid or expired form token. Please reload the page and try again.';
 	}
 
@@ -96,10 +98,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 	if (isset($_POST['ppc_network_id']) && ($network_editing == false)) {
 
-		$pixel_ids = [];
-		// pixel id => [type, correction URL], saved once the pixels are.
-		$correctionPixels = [];
-
 		$ppc_account_name = trim((string) $_POST['ppc_account_name']);
 		$do_edit_ppc_account = trim(filter_input(INPUT_POST, 'do_edit_ppc_account', FILTER_SANITIZE_NUMBER_INT));
 		if ($ppc_account_name == '' && $do_edit_ppc_account == '1') {
@@ -131,6 +129,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				break;
 			}
 		}
+		// The pixels the account is left with, read before anything is
+		// written: a code with no type is refused with the rest of the form.
+		$pixelRows = \Prosper202\Setup\AccountPixels::fromForm($_POST, $error);
 
 		if (empty($error)) {
 			//check to see if this user is the owner of the ppc network hes trying to add an account to
@@ -197,89 +198,68 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			// Cast to int: this id is interpolated into SQL without quotes, where
 			// real_escape_string() would not prevent injection in a numeric context.
 			$the_ppc_account_id = (int)($db->insert_id != 0 ? $db->insert_id : $mysql['ppc_account_id']);
+            // An account moved to another traffic source: its clicks' report
+            // rows keep the source they were rolled up under until they are
+            // rolled up again, so they are queued for the cron job
+            // (RollupRefresh). The account is saved either way; a queue that
+            // fails is logged.
+            $sourceBefore = (int) ($ppc_old_account_row['ppc_network_id'] ?? 0);
+            if ($editing == true && $ppc_account_result && $sourceBefore !== (int) $mysql['ppc_network_id']) {
+                try {
+                    $rollupConn = new \Prosper202\Database\Connection($db);
+                    $owner = (int) $mysql['user_id'];
+                    \Prosper202\DataEngine\RollupRefresh::account($rollupConn, $owner, $the_ppc_account_id, time());
+                } catch (\Throwable $e) {
+                    error_log('ppc_accounts.php: traffic source account ' . $the_ppc_account_id . ' moved source,'
+                        . ' but its clicks were not queued for the report rollup: ' . $e->getMessage());
+                }
+            }
 			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
 			// (After the insert_id capture above: markDirty's queries reset it.)
 			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 
-			foreach ($_POST['pixel_type_id'] as $key => $value) {
-				$mysql['pixel_type_id'] = $db->real_escape_string($value);
-				$mysql['pixel_id'] = $db->real_escape_string($_POST['pixel_id'][$key]);
+			// The account is left with exactly the pixels the form listed, none
+			// included (AccountPixels), in one transaction.
+			$savedPixels = (new \Prosper202\Setup\AccountPixels(new \Prosper202\Database\Connection($db)))->save($the_ppc_account_id, $pixelRows);
 
-				$pixel_type_sql = "SELECT * FROM `202_pixel_types` WHERE pixel_type_id = '" . $mysql['pixel_type_id'] . "'";
-				$pixel_type_result = _mysqli_query($pixel_type_sql);
-				$pixel_type_row = $pixel_type_result->fetch_assoc();
-
-				$pixelCode = trim((string) $_POST['pixel_code'][$key]);
-				$mysql['pixel_code'] = $db->real_escape_string($pixelCode);
-
-				if ($mysql['pixel_code'] != "" && $mysql['pixel_type_id'] != "") {
-
-					if ($mysql['pixel_id'] != "") {
-						$pixel_sql = "UPDATE 202_ppc_account_pixels SET pixel_code='" . $mysql['pixel_code'] . "', pixel_type_id=" . (int)$mysql['pixel_type_id'] . " WHERE pixel_id=" . (int)$mysql['pixel_id'] . " AND ppc_account_id=" . $the_ppc_account_id;
-
-						if ($slack) {
-							if ($ppc_old_account_row['pixel_type_id'] != $value) {
-								$slack->push('traffic_source_account_pixel_type_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'old_pixel_type' => $ppc_old_account_row['pixel_type'], 'new_pixel_type' => $pixel_type_row['pixel_type'], 'user' => $user_row['username']]);
-							}
-
-							if ($ppc_old_account_row['pixel_code'] != $_POST['pixel_code'][$key]) {
-								$slack->push('traffic_source_account_pixel_code_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'user' => $user_row['username']]);
-							}
-						}
-						$db->query($pixel_sql);
-						$pixel_ids[] = (int)$mysql['pixel_id'];
-						$correctionPixels[(int)$mysql['pixel_id']] = [(int)$mysql['pixel_type_id'], trim((string) ($_POST['pixel_correction_url'][$key] ?? ''))];
-					} else {
-						$pixel_sql = "INSERT INTO 202_ppc_account_pixels (ppc_account_id, pixel_code,pixel_type_id)
-								VALUES(" . $the_ppc_account_id . ",'"
-							. $mysql['pixel_code'] . "',"
-							. (int)$mysql['pixel_type_id'] . ")";
-
-						$slack_pixel_added_message_vars = ['type' => $pixel_type_row['pixel_type'], 'network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']];
-						$slack_pixel_added_message = true;
-
-						$db->query($pixel_sql);
-						$pixel_ids[] = $db->insert_id;
-						if ((int) $db->insert_id > 0) {
-							$correctionPixels[(int) $db->insert_id] = [(int)$mysql['pixel_type_id'], trim((string) ($_POST['pixel_correction_url'][$key] ?? ''))];
-						}
-					}
-
-					$sql = "DELETE FROM 202_ppc_account_pixels WHERE pixel_id NOT IN (" . implode(",", $pixel_ids) . ") AND ppc_account_id=" . $the_ppc_account_id;
-					//_mysqli_query($sql);
-				}
-
+			if ($slack) {
+				$typeName = static fn (int $id): string => $pixelTypeNames[$id] ?? (string) $id;
 				if ($editing == true) {
-					if ($slack) {
-						if ($ppc_old_account_row['ppc_account_name'] != $_POST['ppc_account_name']) {
-							$slack->push('traffic_source_account_name_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'old_account_name' => $ppc_old_account_row['ppc_account_name'], 'new_account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']]);
+					foreach ($savedPixels as $pixel) {
+						if ($pixel['previous'] === null) {
+							continue;
+						}
+						if ($pixel['previous']['pixel_type_id'] !== $pixel['pixel_type_id']) {
+							$slack->push('traffic_source_account_pixel_type_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'old_pixel_type' => $typeName($pixel['previous']['pixel_type_id']), 'new_pixel_type' => $typeName($pixel['pixel_type_id']), 'user' => $user_row['username']]);
+						}
+						if ($pixel['previous']['pixel_code'] !== $pixel['pixel_code']) {
+							$slack->push('traffic_source_account_pixel_code_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $ppc_old_account_row['ppc_account_name'], 'user' => $user_row['username']]);
 						}
 					}
-					//if editing true, refresh back with the edit get variable GONE GONE!
-					//_mysqli_query($sql);
-
+					if ($ppc_old_account_row['ppc_account_name'] != $_POST['ppc_account_name']) {
+						$slack->push('traffic_source_account_name_changed', ['network_name' => $ppc_network_row['ppc_network_name'], 'old_account_name' => $ppc_old_account_row['ppc_account_name'], 'new_account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']]);
+					}
 				} else {
-					if ($slack) {
-						$slack->push('traffic_source_account_created', ['account_name' => $_POST['ppc_account_name'], 'network_name' => $ppc_network_row['ppc_network_name'], 'user' => $user_row['username']]);
-
-						if ($slack_pixel_added_message) {
-							$slack->push('traffic_source_account_pixel_added', $slack_pixel_added_message_vars);
-						}
+					$slack->push('traffic_source_account_created', ['account_name' => $_POST['ppc_account_name'], 'network_name' => $ppc_network_row['ppc_network_name'], 'user' => $user_row['username']]);
+					foreach ($savedPixels as $pixel) {
+						$slack->push('traffic_source_account_pixel_added', ['type' => $typeName($pixel['pixel_type_id']), 'network_name' => $ppc_network_row['ppc_network_name'], 'account_name' => $_POST['ppc_account_name'], 'user' => $user_row['username']]);
 					}
 				}
 			}
-			if (isset($sql) && !empty($sql)) {
-				_mysqli_query($sql);
-			}
+
 			// Each server pixel's correction URL, set or cleared; a pixel that
 			// stopped being a server pixel, or stopped existing, keeps none.
 			// saveForAccount() reads which pixels the account has, and their
-			// types, itself: the ids above came from the request.
+			// types, itself.
+			$correctionPixels = [];
+			foreach ($savedPixels as $pixel) {
+				$correctionPixels[$pixel['pixel_id']] = $pixel['correction_url'];
+			}
 			(new \Prosper202\Notifications\CorrectionUrls(new \Prosper202\Database\Connection($db)))->saveForAccount(
 				(int) $_SESSION['user_id'],
 				$the_ppc_account_id,
-				array_map(static fn (array $pixel): string => $pixel[1], $correctionPixels),
+				$correctionPixels,
 				time()
 			);
 			header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
@@ -290,7 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 if (isset($_GET['delete_ppc_network_id'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		die();
 	}
@@ -322,7 +302,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
 if (isset($_GET['delete_ppc_account_id'])) {
 
 	// Require a valid session token for this state-changing request.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_GET['token'] ?? ''))) {
+	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 		die();
 	}
@@ -384,27 +364,13 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 
 
 	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'] ?? '';
-	$ppc_account_pixel_sql = "SELECT  *
-						 FROM   `202_ppc_account_pixels`
-						 WHERE  `ppc_account_id`=" . (int) ($ppc_account_row['ppc_account_id'] ?? 0) . "";
-	//echo $ppc_account_pixel_sql;
-	$ppc_account_pixel_result = _mysqli_query($ppc_account_pixel_sql); //($ppc_account_sql);
-
-	$pixel_array = [];
-
-	if ($ppc_account_pixel_result->num_rows > 0) {
-		while ($ppc_account_pixel_row = $ppc_account_pixel_result->fetch_assoc()) {
-			// Raw values: the v2 form escapes on output, once. (The classic
-			// form escaped Raw pixels here and printed the others unescaped.)
-			if ($ppc_account_pixel_row['pixel_type_id'] == 5) {
-				$selected['pixel_code'] = stripslashes((string) $ppc_account_pixel_row['pixel_code']);
-			} else {
-				$selected['pixel_code'] = $ppc_account_pixel_row['pixel_code'];
-			}
-
-			$pixel_array[] = ['pixel_type_id' => $ppc_account_pixel_row['pixel_type_id'], 'pixel_code' => $selected['pixel_code'], 'pixel_id' => $ppc_account_pixel_row['pixel_id']];
-		}
-	}
+	// The account's pixels as stored and as fired; the form escapes them on
+	// output, once. A Raw pixel was read through stripslashes() here, so
+	// each save wrote it back with a level of backslashes fewer
+	// (AccountPixels says more). An account that is not the user's was not
+	// found above, and has id 0 and no pixels.
+	$pixel_array = (new \Prosper202\Setup\AccountPixels(new \Prosper202\Database\Connection($db)))
+		->forAccount((int) ($ppc_account_row['ppc_account_id'] ?? 0));
 	$correctionUrls = (new \Prosper202\Notifications\CorrectionUrls(new \Prosper202\Database\Connection($db)))
 		->forPixels((int) $_SESSION['user_id'], array_map(static fn (array $p): int => (int) $p['pixel_id'], $pixel_array));
 	foreach ($pixel_array as &$pixelWithCorrection) {
@@ -538,7 +504,7 @@ echo p202_setup_query_flashes([
 ], $_GET);
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
-	if (isset($error['pixel_correction_url'])) {
+	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id'])) {
 		// The pixels sit under a disclosure, so the sentence is said at the
 		// top as well as opening it (below).
 		$hasPixels = true;

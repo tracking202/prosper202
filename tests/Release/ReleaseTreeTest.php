@@ -112,7 +112,7 @@ final class ReleaseTreeTest extends TestCase
             'tests/a.php' => '',
             '202-config/connect.php' => '',
             '202-config/PHPStan/Rules/R.php' => '',
-            '202-config/Messaging/mock-server.php' => '',
+            '202-config/Messaging/CENTRAL-API.md' => '',
             '202-config/Messaging/MessagingClient.class.php' => '',
             'go-cli/main.go' => '',
             'go-cli/.ax-session/state' => '',
@@ -125,7 +125,7 @@ final class ReleaseTreeTest extends TestCase
             ship: ['index.php', '202-config', 'go-cli', '.claude'],
             exclude: ['tests', 'task-plan-*.md'],
             keepOnly: ['.claude' => ['skills'], '.claude/skills' => ['onboard-prosper202'], 'go-cli' => ['dist']],
-            excludeNested: ['202-config/PHPStan', '202-config/Messaging/mock-server.php'],
+            excludeNested: ['202-config/PHPStan', '202-config/Messaging/CENTRAL-API.md'],
         ));
 
         self::assertSame([], $tree->prune($stage));

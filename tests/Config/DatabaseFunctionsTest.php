@@ -6,8 +6,10 @@ namespace Tests\Config;
 use Tests\TestCase;
 
 /**
- * Tests for functions-db.php
- * Database helper functions with memcache integration
+ * Tests for functions-db.php: the memcache_get()/memcache_set() shims, its
+ * only functions. The database helpers it used to carry were guarded
+ * copies of functions-tracking202.php's, which connect.php loads first, so
+ * no page ran them and the cases that exercised them tested a stand-in.
  */
 final class DatabaseFunctionsTest extends TestCase
 {
@@ -88,100 +90,6 @@ final class DatabaseFunctionsTest extends TestCase
         $this->assertFalse($result);
     }
 
-    public function testMemcacheMySQLFetchAssocReturnsCachedResult(): void
-    {
-        global $memcache;
-
-        $cachedData = ['id' => 1, 'name' => 'Test'];
-        $memcache->addToCache('cached_result', $cachedData);
-
-        $result = memcache_mysql_fetch_assoc('cached_result');
-
-        $this->assertSame($cachedData, $result);
-    }
-
-    public function testMemcacheMySQLFetchAssocFetchesFromResultObject(): void
-    {
-        // This test is skipped because the function tries to use the result object as a cache key
-        // which causes a type error with our mock
-        $this->markTestSkipped('memcache_mysql_fetch_assoc uses result object as cache key');
-    }
-
-    public function testMemcacheMySQLFetchAssocReturnsFalseForNonObject(): void
-    {
-        $result = memcache_mysql_fetch_assoc('not_in_cache');
-
-        $this->assertFalse($result);
-    }
-
-    public function testForeachMemcacheMySQLFetchAssocReturnsAllRows(): void
-    {
-        // This test is skipped because the function internally calls memcache_mysql_fetch_assoc
-        // which uses the result object as a cache key
-        $this->markTestSkipped('foreach_memcache_mysql_fetch_assoc uses result object as cache key internally');
-    }
-
-    public function testForeachMemcacheMySQLFetchAssocReturnsEmptyArrayForEmptyResult(): void
-    {
-        // This test is skipped because the function internally calls memcache_mysql_fetch_assoc
-        // which uses the result object as a cache key
-        $this->markTestSkipped('foreach_memcache_mysql_fetch_assoc uses result object as cache key internally');
-    }
-
-    public function testUserCacheTimeReturnsCachedTime(): void
-    {
-        global $memcache;
-
-        $cachedTime = 1234567890;
-        $memcache->addToCache('user_cache_time_1', $cachedTime);
-
-        $result = user_cache_time(1);
-
-        $this->assertSame($cachedTime, $result);
-    }
-
-    public function testUserCacheTimeGeneratesNewTimeWhenNotCached(): void
-    {
-        $before = time();
-        $result = user_cache_time(999);
-        $after = time();
-
-        $this->assertGreaterThanOrEqual($before, $result);
-        $this->assertLessThanOrEqual($after, $result);
-    }
-
-    public function testUserCacheTimeCachesNewTime(): void
-    {
-        // The user_cache_time function uses memcache_set which returns false for non-standard memcache
-        // So the value won't actually be cached, but the function still returns a timestamp
-        $result = user_cache_time(999);
-
-        // Verify it returns a valid timestamp
-        $this->assertIsInt($result);
-        $this->assertGreaterThan(0, $result);
-    }
-
-    public function testGetUserDataFeedbackReturnsCachedData(): void
-    {
-        global $memcache;
-
-        $cachedData = [
-            'install_hash' => 'abc123',
-            'user_email' => 'test@example.com',
-        ];
-        $memcache->addToCache('user_data_feedback_1', $cachedData);
-
-        $result = get_user_data_feedback(1);
-
-        $this->assertSame($cachedData, $result);
-    }
-
-    public function testGetUserDataFeedbackReturnsDefaultsWhenNotCached(): void
-    {
-        // Skip this test because _mysqli_query is not defined
-        $this->markTestSkipped('get_user_data_feedback requires _mysqli_query which is not available in tests');
-    }
-
     public function testMemcacheSetWithExpirationReturnsFalse(): void
     {
         // The memcache_set function checks instanceof Memcache or Memcached
@@ -214,18 +122,4 @@ final class DatabaseFunctionsTest extends TestCase
         $this->assertEquals($complexData, $result);
     }
 
-    public function testUserCacheTimeIsDifferentForDifferentUsers(): void
-    {
-        // Set different cache times for different users
-        $time1 = user_cache_time(1);
-
-        // Small delay to ensure different time
-        usleep(1000);
-
-        $time2 = user_cache_time(2);
-
-        // Both should return valid timestamps
-        $this->assertGreaterThan(0, $time1);
-        $this->assertGreaterThan(0, $time2);
-    }
 }

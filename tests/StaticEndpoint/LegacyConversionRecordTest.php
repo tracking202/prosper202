@@ -124,7 +124,8 @@ final class LegacyConversionRecordTest extends TestCase
      */
     public function testClientIpIsOneValidAddressOrNothing(array $server, string $expected): void
     {
-        $ip = p202ClientIp($server);
+        // p202ClientIp() was folded into StoredVisitorIp (here with privacy off).
+        $ip = \Prosper202\Http\StoredVisitorIp::fromServer($server, false);
         self::assertSame($expected, $ip);
         self::assertLessThanOrEqual(45, strlen($ip), 'must fit 202_conversion_logs.ip varchar(45)');
     }

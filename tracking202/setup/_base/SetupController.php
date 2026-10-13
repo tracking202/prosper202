@@ -26,7 +26,7 @@ abstract class SetupController
         $this->requireSetupPermission();
         $this->initializeUser();
         $this->initializeSlack();
-        $this->generateCsrfToken();
+        $this->readCsrfToken();
     }
     
     /**
@@ -116,24 +116,26 @@ abstract class SetupController
     }
     
     /**
-     * Generate CSRF token for forms
+     * The session's anti-CSRF token, for the forms: the app's one token,
+     * which connect.php seeds, under the field name these forms have always
+     * posted (csrf_token). An unseeded session renders an empty field, and
+     * validateCsrfToken() refuses whatever comes back.
      */
-    private function generateCsrfToken(): void
+    private function readCsrfToken(): void
     {
-        if (!isset($_SESSION['csrf_token'])) {
-            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-        }
-        $this->csrfToken = $_SESSION['csrf_token'];
+        $token = $_SESSION['token'] ?? null;
+        $this->csrfToken = is_string($token) ? $token : '';
     }
-    
+
     /**
-     * Validate CSRF token from POST requests
+     * Validate CSRF token from POST requests, through the app's one
+     * comparison (AUTH::csrf_token_matches(), which fails closed on an empty
+     * or non-string token on either side). This controller used to keep a
+     * second token under its own session key and compare it here inline.
      */
     private function validateCsrfToken(): void
     {
-        $submittedToken = $_POST['csrf_token'] ?? '';
-        
-        if (!hash_equals($_SESSION['csrf_token'], $submittedToken)) {
+        if (!AUTH::csrf_token_matches($_POST['csrf_token'] ?? null)) {
             throw new \InvalidArgumentException('Invalid CSRF token');
         }
     }

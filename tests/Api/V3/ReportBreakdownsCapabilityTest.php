@@ -42,7 +42,7 @@ final class ReportBreakdownsCapabilityTest extends TestCase
     {
         $controller = new ReportsController($this->createMysqliMock(), 1);
         try {
-            $controller->breakdown(['breakdown' => 'referer']);
+            $controller->breakdown(['breakdown' => 'language']);
             $this->fail('an unknown breakdown was accepted');
         } catch (ValidationException $e) {
             $this->assertStringContainsString(implode(', ', ReportsController::breakdownDimensions()), json_encode($e->getFieldErrors(), JSON_THROW_ON_ERROR));

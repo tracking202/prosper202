@@ -24,8 +24,9 @@ use PHPUnit\Framework\TestCase;
  * What it reads: `$router`, `$previewRouter` and a group's `$r` calling
  * `->group('prefix', function … { … }, [middleware])` and
  * `->delete('path', <closure or arrow fn>)`. An authorization call is
- * `->requireAdmin(`, `->requireSelfOrAdmin(`, `->requirePermission(…, 'name')`
- * (by permission name), or a call to a local closure variable (`$manage()`)
+ * any `->require<Name>(` (`requireAdmin`, `requireMayManageUser`, …) by
+ * name, `->requirePermission(…, 'name')` by permission name, or a call to a
+ * local closure variable (`$manage()`)
  * whose own body makes one of those. What it refuses rather than guesses at:
  * a DELETE registered through `->add(` or with a handler that is not a
  * closure literal, a path or prefix that is not a string literal, and a
@@ -214,10 +215,13 @@ PHP;
             $v = $this->t[$j][1];
             if ($v === '->' && isset($this->t[$j + 1])) {
                 $name = $this->t[$j + 1][1];
-                if ($name === 'requireAdmin' || $name === 'requireSelfOrAdmin') {
-                    $found[] = $name;
-                } elseif ($name === 'requirePermission') {
+                // Every require* method is an authorization check, read by
+                // name: a fixed list of names went blind the day Auth grew
+                // requireMayManageUser() and its siblings (error pattern #20).
+                if ($name === 'requirePermission') {
                     $found[] = 'permission:' . $this->permissionName($j + 2, $line);
+                } elseif (preg_match('/^require[A-Z]/', $name) === 1) {
+                    $found[] = $name;
                 }
             } elseif ($this->t[$j][0] === T_VARIABLE && ($this->t[$j + 1][1] ?? '') === '(' && isset($closures[$v])) {
                 array_push($found, ...$closures[$v]);

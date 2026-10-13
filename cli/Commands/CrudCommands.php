@@ -8,6 +8,7 @@ use P202Cli\ApiClient;
 use P202Cli\ApiException;
 use P202Cli\Config;
 use P202Cli\Formatter;
+use P202Cli\OptionName;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
@@ -16,7 +17,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * Factory for generating standard CRUD commands (list, get, create, update, delete)
- * from an entity definition.
+ * from an entity definition. Fields and list parameters are named as the API
+ * names them; each is declared as its kebab-case option (OptionName::of()) and
+ * sent under the API's name.
  *
  * Each generated command extends BaseCommand for shared error handling.
  */
@@ -55,7 +58,7 @@ class CrudCommands
                     ->addOption('offset', 'o', InputOption::VALUE_REQUIRED, 'Offset', '0');
 
                 foreach ($this->listParams as $param => $desc) {
-                    $this->addOption($param, null, InputOption::VALUE_REQUIRED, $desc);
+                    $this->addOption(OptionName::of($param), null, InputOption::VALUE_REQUIRED, $desc);
                 }
             }
 
@@ -63,7 +66,7 @@ class CrudCommands
             {
                 $params = ['limit' => $input->getOption('limit'), 'offset' => $input->getOption('offset')];
                 foreach ($this->listParams as $param => $desc) {
-                    $val = $input->getOption($param);
+                    $val = $input->getOption(OptionName::of($param));
                     if ($val !== null) {
                         $params[$param] = $val;
                     }
@@ -112,7 +115,7 @@ class CrudCommands
                 $this->setDescription("Create a new {$this->entity}");
                 foreach ($this->fields as $field => $desc) {
                     $req = in_array($field, $this->required) ? ' (required)' : '';
-                    $this->addOption($field, null, InputOption::VALUE_REQUIRED, $desc . $req);
+                    $this->addOption(OptionName::of($field), null, InputOption::VALUE_REQUIRED, $desc . $req);
                 }
             }
 
@@ -120,19 +123,15 @@ class CrudCommands
             {
                 $body = [];
                 foreach ($this->fields as $field => $desc) {
-                    $val = $input->getOption($field);
+                    $val = $input->getOption(OptionName::of($field));
                     if ($val !== null) {
                         $body[$field] = $val;
                     }
                 }
 
                 foreach ($this->required as $r) {
-                    if (!array_key_exists($r, $body)) {
-                        $output->writeln("<error>Missing required option: --$r</error>");
-                        return Command::FAILURE;
-                    }
-                    if (is_string($body[$r]) && trim($body[$r]) === '') {
-                        $output->writeln("<error>Missing required option: --$r</error>");
+                    if (!array_key_exists($r, $body) || (is_string($body[$r]) && trim($body[$r]) === '')) {
+                        $output->writeln('<error>Missing required option: ' . OptionName::flag($r) . '</error>');
                         return Command::FAILURE;
                     }
                 }
@@ -157,7 +156,7 @@ class CrudCommands
                 $this->setDescription("Update an existing {$this->entity}")
                     ->addArgument('id', InputArgument::REQUIRED, 'The record ID');
                 foreach ($this->fields as $field => $desc) {
-                    $this->addOption($field, null, InputOption::VALUE_REQUIRED, $desc);
+                    $this->addOption(OptionName::of($field), null, InputOption::VALUE_REQUIRED, $desc);
                 }
             }
 
@@ -165,7 +164,7 @@ class CrudCommands
             {
                 $body = [];
                 foreach ($this->fields as $field => $desc) {
-                    $val = $input->getOption($field);
+                    $val = $input->getOption(OptionName::of($field));
                     if ($val !== null) {
                         $body[$field] = $val;
                     }

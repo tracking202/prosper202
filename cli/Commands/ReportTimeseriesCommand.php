@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace P202Cli\Commands;
 
+use P202Cli\ServerLists;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
@@ -18,16 +19,16 @@ class ReportTimeseriesCommand extends BaseCommand
     {
         parent::configure();
         $this->setDescription('Get performance over time')
-            ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Interval: hour, day, week, month', 'day')
-            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: today, yesterday, last7, last30, last90')
-            ->addOption('time_from', null, InputOption::VALUE_REQUIRED, 'Start timestamp')
-            ->addOption('time_to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
-            ->addOption('aff_campaign_id', null, InputOption::VALUE_REQUIRED, 'Filter by campaign ID')
-            ->addOption('ppc_account_id', null, InputOption::VALUE_REQUIRED, 'Filter by PPC account ID')
-            ->addOption('aff_network_id', null, InputOption::VALUE_REQUIRED, 'Filter by affiliate network ID')
-            ->addOption('ppc_network_id', null, InputOption::VALUE_REQUIRED, 'Filter by PPC network ID')
-            ->addOption('landing_page_id', null, InputOption::VALUE_REQUIRED, 'Filter by landing page ID')
-            ->addOption('country_id', null, InputOption::VALUE_REQUIRED, 'Filter by country ID');
+            ->addOption('interval', 'i', InputOption::VALUE_REQUIRED, 'Interval: ' . ServerLists::list(ServerLists::TIMESERIES_INTERVALS), 'day')
+            ->addOption('period', 'p', InputOption::VALUE_REQUIRED, 'Period: ' . ServerLists::list(ServerLists::periods()))
+            ->addOption('time-from', null, InputOption::VALUE_REQUIRED, 'Start timestamp')
+            ->addOption('time-to', null, InputOption::VALUE_REQUIRED, 'End timestamp')
+            ->addOption('aff-campaign-id', null, InputOption::VALUE_REQUIRED, 'Filter by campaign ID')
+            ->addOption('ppc-account-id', null, InputOption::VALUE_REQUIRED, 'Filter by PPC account ID')
+            ->addOption('aff-network-id', null, InputOption::VALUE_REQUIRED, 'Filter by affiliate network ID')
+            ->addOption('ppc-network-id', null, InputOption::VALUE_REQUIRED, 'Filter by PPC network ID')
+            ->addOption('landing-page-id', null, InputOption::VALUE_REQUIRED, 'Filter by landing page ID')
+            ->addOption('country-id', null, InputOption::VALUE_REQUIRED, 'Filter by country ID');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int

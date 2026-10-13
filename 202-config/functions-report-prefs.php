@@ -281,6 +281,14 @@ function p202_report_prefs_from_query(array $query, array $names, array $groups 
                     $errors[$name] = $field['label'] . ' is longer than ' . $field['max'] . ' characters.';
                     break;
                 }
+                // The IP filter is one address, exactly, on every report and
+                // in the API (TextFilterSql); Visitors matched it as a
+                // substring, so part of an address has to be refused here
+                // rather than quietly match nothing.
+                if ($name === 'ip' && $value !== '' && filter_var($value, FILTER_VALIDATE_IP) === false) {
+                    $errors[$name] = $field['label'] . " '" . $value . "' is not an IP address; give one whole address, IPv4 or IPv6.";
+                    break;
+                }
                 $columns[$field['column']] = $value;
                 break;
 

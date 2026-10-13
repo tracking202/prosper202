@@ -209,7 +209,7 @@ final class GoalsControllerIntegrationTest extends TestCase
         self::assertSame('2.00000', $result['outcomes'][0]['value']);
         self::assertSame('0', self::$db->query('SELECT COUNT(*) AS n FROM 202_goal_outcomes')->fetch_assoc()['n']);
 
-        self::assertArrayHasKey('events[0].name', self::fieldErrors(fn () => $this->api()->evaluate([
+        self::assertArrayHasKey('events.0.name', self::fieldErrors(fn () => $this->api()->evaluate([
             'goals' => [['goal_id' => 1, 'definition' => ['name' => 'Buy', 'trigger' => ['event' => 'buy']]]],
             'subject' => ['type' => 'click'], 'events' => [['event_id' => 'e', 'name' => 'b u y', 'occurred_at' => 1, 'received_at' => 1]],
         ])));
@@ -241,7 +241,7 @@ final class GoalsControllerIntegrationTest extends TestCase
         self::assertSame([['goal_id' => 1, 'version' => 1, 'reason' => 'invalid_definition']], $result['disabled']);
 
         foreach ([1000000, -1000000, 9999999999999, 1.0e300] as $revenue) {
-            self::assertArrayHasKey('events[0].revenue', self::fieldErrors(fn () => $this->api()->evaluate([
+            self::assertArrayHasKey('events.0.revenue', self::fieldErrors(fn () => $this->api()->evaluate([
                 'goals' => [['goal_id' => 1, 'definition' => ['name' => 'Buy', 'trigger' => ['event' => 'buy']]]],
                 'subject' => ['type' => 'click'],
                 'events' => [['event_id' => 'e', 'name' => 'buy', 'occurred_at' => 1, 'received_at' => 1, 'revenue' => $revenue]],

@@ -18,7 +18,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class ConversionPathsDoNotCallTheEngineTest extends TestCase
 {
-    private const PATHS = ['tracking202/static', 'tracking202/update', 'tracking202/redirect', '202-config/Conversion', 'api/v3/Controllers/ConversionsController.php', '202-config/static-endpoint-helpers.php', '202-config/connect2.php'];
+    private const PATHS = ['tracking202/static', 'tracking202/update', '202-config/Update', 'tracking202/redirect', '202-config/Conversion', 'api/v3/Controllers/ConversionsController.php', 'api/v3/Controllers/UpdateController.php', '202-config/static-endpoint-helpers.php', '202-config/connect2.php'];
 
     public function testNoConversionPathReachesIntoTheEngine(): void
     {
@@ -31,7 +31,7 @@ final class ConversionPathsDoNotCallTheEngineTest extends TestCase
                 continue;
             }
             self::assertDirectoryExists($full);
-            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($full, \FilesystemIterator::SKIP_DOTS)) as $f) {
+            foreach (new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($full)) as $f) {
                 if ($f->getExtension() === 'php') {
                     $files[] = $f->getPathname();
                 }

@@ -74,7 +74,7 @@ final class PreferenceSecretCoverageTest extends TestCase
         'revcontent_user_id', 'facebook_ads_linked', 'user_pref_ad_settings',
         'user_ltv_customer_cparam', 'user_ltv_personalization_fields',
         'user_ltv_score_weights', 'user_ltv_rec_fatigue', 'lpo_status',
-        'lpo_ctx_kw',
+        'lpo_ctx_kw', 'user_delete_data_before',
     ];
 
     public function testEveryCredentialColumnOfUsersPrefIsRedactedOnApply(): void
@@ -180,7 +180,7 @@ final class PreferenceSecretCoverageTest extends TestCase
             $store = new ServerStateStore($dir);
             $db = $this->createMysqliMock([
                 "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
-                '202_api_keys' => ['user_id' => 5, 'scope' => '*'],
+                '202_api_keys' => ['user_id' => 5, 'user_active' => 1, 'scope' => '*'],
                 '202_user_role' => [['role_name' => 'admin']],
             ]);
             $auth = Auth::fromRequest(['Authorization' => 'Bearer key'], $db);

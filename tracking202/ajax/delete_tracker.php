@@ -3,6 +3,7 @@ declare(strict_types=1);
 include_once(substr(__DIR__, 0,-17) . '/202-config/connect.php');
 
 AUTH::require_user();
+AUTH::require_permissions('access_to_setup_section');
 
 $slack = false;
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -19,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $userObj->hasPermission("remove_trac
 	// Deleting a tracker is a write, and every other Setup write asks for the
 	// session token (error pattern #5); this one did not until U4. The page
 	// posts through jQuery, whose prefilter attaches the token.
-	if (!hash_equals((string) ($_SESSION['token'] ?? ''), (string) ($_POST['token'] ?? ''))) {
+	if (!AUTH::check_csrf_token()) {
 		http_response_code(403);
 		die('Invalid token, please reload the page and try again.');
 	}

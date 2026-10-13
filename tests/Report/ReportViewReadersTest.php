@@ -68,7 +68,7 @@ final class ReportViewReadersTest extends TestCase
     public function testEveryReadOfTheReportFiltersGoesThroughTheView(): void
     {
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->root . '/202-config', \FilesystemIterator::SKIP_DOTS));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($this->root . '/202-config'));
         foreach ($iterator as $file) {
             if ($file->getExtension() === 'php') {
                 $files[] = substr($file->getPathname(), strlen($this->root) + 1);
@@ -258,7 +258,7 @@ final class ReportViewReadersTest extends TestCase
     {
         $files = [];
         foreach ($dirs as $dir) {
-            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->root . '/' . $dir, \FilesystemIterator::SKIP_DOTS));
+            $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($this->root . '/' . $dir));
             foreach ($iterator as $file) {
                 if ($file->getExtension() === 'php') {
                     $files[] = substr($file->getPathname(), strlen($this->root) + 1);

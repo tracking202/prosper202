@@ -57,6 +57,7 @@ subset, because the tier that matters is the one that touches your path.
 | `sdk/ios-attribution/**` | swift (`swift build && swift test`, mirroring the Swift SDK job); SKIP with the toolchain hint when `swift` is absent |
 | `sdk/android-attribution/**`, `tests/fixtures/app-sdk-contract/**` | kotlin (`gradle -p sdk/android-attribution -Pp202.android=false :core:test`, mirroring the Android SDK job); SKIP when `java` or `gradle` is absent |
 | `.github/workflows/**` | actionlint, which is CI's workflow gate; a workflow-only change previously selected nothing that could see an invalid action input |
+| `docs/openapi.yaml`, `scripts/check-openapi-yaml.py` | openapi (`scripts/check-openapi-yaml.py`, mirroring the OpenAPI Spec job): the spec parses as YAML with no key given twice. The PHP tests that pair the spec with the router read it line by line, so an edit that left it unparseable for every OpenAPI tool selected nothing that noticed; SKIP when `python3` has no `yaml` module |
 | anything auth, scope, idempotency, or staged-write shaped | all of the above, plus a live end-to-end pass |
 
 An unregistered PHPStan rule never runs. A rule that fires on correct code
@@ -78,8 +79,10 @@ suggestion.
 
 # after committing, --changed has nothing left to look at and every tier it
 # selects from the diff skips. Compare against a ref instead, which covers the
-# commits AND anything still uncommitted:
-.claude/skills/p202-verify/scripts/verify.sh --since origin/master --changed
+# commits AND anything still uncommitted. The ref is the branch the work's pull
+# request targets: the version branch (CLAUDE.md, "Branches"), e.g. 1.9.77, or
+# master for the version branch's own merge:
+.claude/skills/p202-verify/scripts/verify.sh --since origin/1.9.77 --changed
 
 # one tier
 .claude/skills/p202-verify/scripts/verify.sh --tier phpstan
@@ -103,7 +106,7 @@ as `PASS`.
 Tiers, in order, with the command each wraps:
 
 1. `syntax` — `php -l` over the tree, `bash -n` over `*.sh`
-2. `phpstan` — `vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=512M`. On a partial `vendor/` the documented errors (`cli/` classes extending Symfony classes composer never delivered, in files the change did not touch; the same text in a changed file is the change's, since a misspelled superclass prints it too) are separated from everything else: if they are the only errors the tier is SKIP naming the count, otherwise FAIL as `(N environmental, M other)`, so a tier that would be FAIL on every run in that environment still says what is worth reading.
+2. `phpstan` — `vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --memory-limit=512M`. On a partial `vendor/` the documented errors (`cli/` classes extending Symfony classes composer never delivered, in files the change did not touch; the same text in a changed file is the change's, since a misspelled superclass prints it too), PHPStan's top-level "cannot be ignored" echo of each of them, and an `#[\Override]` in such a file (its parent is the missing class) are separated from everything else: if they are the only errors the tier is SKIP naming the count, otherwise FAIL as `(N environmental, M other)`, so a tier that would be FAIL on every run in that environment still says what is worth reading.
 3. `phpcs` — PSR12 over the PHP files the change touches, as a **ratchet**: a file may not have more PSR12 errors, nor more warnings, than it had at `HEAD`, and a new file must have none of either. `AGENTS.md` asks for `phpcs --standard=PSR12 .`; CI does not run it and the tree is far from clean (`api/v3` alone carries a few hundred findings), so a tier that failed on any finding would fail on every touch of a legacy file and be switched off. Pre-existing findings are printed, not counted. A renamed file is ratcheted against its original blob (git's rename detection for a staged move, an exact content match for an unstaged plain move); an unstaged move with edits has no findable baseline, so stage it first. Whether phpcs actually analysed a file is read from its report line, not its exit code: the documented exit bitmask does not match what phpcs 3.13 returns, in both directions, and a run with no report is SKIP, never zero findings.
 4. `unit` — `vendor/bin/phpunit --configuration phpunit.ci.xml --exclude-group integration --no-coverage`, which is exactly CI's invocation. Not the strict `phpunit.xml`: that one promotes deprecations to errors, and on a newer local PHP than CI's it reported 16 failures CI never sees. A failure is a failure: if the local PHP minor version differs from the one `php-unit.yml` pins, the FAIL carries a note naming both so the reader can judge whether the failures are deprecation notices from the interpreter, but the verdict is never downgraded to SKIP (the first version did that, and would have hidden a real `$this->fail()` behind "environmental"). CI's false-green guard is mirrored too: an exit-0 run that executed fewer than 600 tests is FAIL, because a collection-time `die()`/`exit(0)` aborts PHPUnit before any test runs and can still exit 0.
 5. `go` — in the script's order:
@@ -119,6 +122,7 @@ Tiers, in order, with the command each wraps:
 9. `actionlint` — `actionlint` over `.github/workflows/`, selected when a workflow changes
 10. `swift` — `cd sdk/ios-attribution && swift build && swift test`, selected when that directory changes
 11. `kotlin` — `gradle -p sdk/android-attribution -Pp202.android=false :core:test` (`P202_GRADLE` names another Gradle), selected when the SDK or the shared vectors change. Gradle exits 0 when no test ran, so fewer than 30 executed tests is FAIL.
+12. `openapi` — `python3 scripts/check-openapi-yaml.py docs/openapi.yaml`, selected when the spec or the script changes: the file parses as YAML, has an `openapi` version and non-empty `paths`, and gives no key twice in one mapping (a loader otherwise keeps the last without a word)
 
 The `--memory-limit` on tier 2 is not decoration. CI installs PHP through
 `setup-php`, which leaves `memory_limit` uncapped; a stock local `php.ini`
@@ -126,16 +130,16 @@ caps it at 128M and PHPStan dies parsing the intl stubs, reporting FAIL for a
 reason that has nothing to do with the change. `scripts/check-code-patterns.sh`
 passes the same 512M for the same reason.
 
-Tiers 11 and 12 are not scripted because they need a live instance and a
+Tiers 13 and 14 are not scripted because they need a live instance and a
 decision about what to exercise. Do them by hand:
 
-11. **Live end-to-end.** Stand up an instance with
+13. **Live end-to-end.** Stand up an instance with
    `tests/fixtures/agent-eval/ci/install-instance.sh`, seed it with
    `tests/fixtures/agent-eval/seed.sh`, then drive the actual path a user
    would take. Reports stay empty until the dataengine cron runs; the seeder
    triggers `202-cronjobs/dej.php` itself. If an instance is already up in
    this session, there is no excuse to skip this.
-12. **Agent eval.** If the change is agent-facing, add a case under
+14. **Agent eval.** If the change is agent-facing, add a case under
    `tests/fixtures/agent-eval/cases/` and run it. Grading is on final state,
    not on transcript wording.
 
