@@ -99,10 +99,11 @@ function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): vo
     // backslash) is taken out to the end. Where a value ends depends on the
     // session's sql_mode: under NO_BACKSLASH_ESCAPES real_escape_string()
     // leaves `x\` as it is, and `'x\', k='s3cr3t'` read with escapes keeps
-    // the second value. Values are escaped by hand either way too, so the
-    // line keeps only what a reading with escapes and one without both leave
-    // in, up to where they part. Possessive, so a long value is not
-    // backtracked through: PCRE gives up past about 20,000 characters.
+    // the second value. This line does not ask which mode the statement was
+    // escaped for, so it keeps only what a reading with escapes and one
+    // without both leave in, up to where they part (after an escaped quote,
+    // nothing). Possessive, so a long value is not backtracked through: PCRE
+    // gives up past about 20,000 characters.
     $escaped = preg_replace('/\'(?:[^\'\\\\]++|\\\\.?)*+(?:\'|\z)|"(?:[^"\\\\]++|\\\\.?)*+(?:"|\z)/s', '?', $sql);
     $literal = $escaped === null ? null : preg_replace('/\'[^\']*+(?:\'|\z)|"[^"]*+(?:"|\z)/', '?', $sql);
     if ($escaped === null || $literal === null) {
