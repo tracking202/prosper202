@@ -90,10 +90,10 @@ final class StoredAddressWritesTest extends TestCase
      */
     private const WRITES = [
         // ── The click path ──────────────────────────────────────────────
-        'tracking202/redirect/rtr.php' => [
+        '202-config/Click/RotatorClickWriter.php' => [
             '202_clicks_advance.ip_id' => [
                 self::STORED,
-                'the rotator\'s click: INDEXES::get_ip_id($db, p202StoredVisitorIp())',
+                'the rotator\'s click: rtr.php resolves it with INDEXES::get_ip_id($db, p202StoredVisitorIp())',
                 ['tracking202/redirect/rtr.php'],
             ],
         ],

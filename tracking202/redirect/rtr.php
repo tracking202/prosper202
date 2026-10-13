@@ -644,94 +644,6 @@ $mysql['click_alp'] = 0;
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
 $mysql['user_id'] = $db->real_escape_string((string)$user_id);
 
-// A rotator re-click (lpr) rewrites the click it found above rather than
-// recording a new one: the REPLACEs below give that click another row, its
-// keyword and its c1-c4. The attribution report rollup has summed that click
-// into its hours and into the hours of any conversion whose journey holds
-// it, so the rewrite and the mark that sends those hours back to exact go in
-// one transaction (AttributionRollup rule 2). A new click needs no mark: its
-// hour is not summed yet.
-$rtrRewritesClick = isset($_GET['lpr']) && $_GET['lpr'] != '';
-if ($rtrRewritesClick) {
-	$db->begin_transaction() or record_mysql_error($db);
-	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) $mysql['user_id'], (int) $mysql['click_id']);
-}
-
-//ok we have the main data, now insert this row
-$click_sql = "REPLACE INTO   202_clicks
-			  SET           	click_id='".$mysql['click_id']."',
-							user_id = '".$mysql['user_id']."',   
-							aff_campaign_id = '".$mysql['aff_campaign_id']."',
-							 landing_page_id = '".$mysql['landing_page_id']."',   
-							ppc_account_id = '".$mysql['ppc_account']."',   
-							click_cpc = '".$mysql['cpc']."',   
-							click_payout = '".$mysql['click_payout']."',   
-							click_alp = '".$mysql['click_alp']."',
-							click_filtered = '".$mysql['click_filtered']."',
-							click_bot = '".$mysql['click_bot']."',
-							click_time = '".$mysql['click_time']."',
-                            rotator_id = '".$mysql['rotator_id']."',
-                            rule_id = '".$mysql['rule_redirect_id']."'"; 
-
-$click_result = $db->query($click_sql) or record_mysql_error($db);   
-
-	//ok we have the main data, now insert this row
-	$click_sql = "REPLACE INTO   202_clicks_spy
-				  SET           	click_id='".$mysql['click_id']."',
-								user_id = '".$mysql['user_id']."',   
-								aff_campaign_id = '".$mysql['aff_campaign_id']."',   
-								ppc_account_id = '".$mysql['ppc_account']."',   
-								click_cpc = '".$mysql['cpc']."',   
-								click_payout = '".$mysql['click_payout']."',   
-								click_filtered = '".$mysql['click_filtered']."',
-								click_bot = '".$mysql['click_bot']."',
-								click_alp = '".$mysql['click_alp']."',
-								click_time = '".$mysql['click_time']."'"; 
-	$click_result = $db->query($click_sql) or record_mysql_error($db);   
-	
-//now we have the click's advance data, now insert this row
-$click_sql = "REPLACE INTO   202_clicks_advance
-			  SET           click_id='".$mysql['click_id']."',
-							text_ad_id='".$mysql['text_ad_id']."',
-							keyword_id='".$mysql['keyword_id']."',
-							ip_id='".$mysql['ip_id']."',
-							country_id='".$mysql['country_id']."',
-							region_id='".$mysql['region_id']."',
-							isp_id='".$mysql['isp_id']."',
-							city_id='".$mysql['city_id']."',
-							platform_id='".$mysql['platform_id']."',
-							browser_id='".$mysql['browser_id']."',
-							device_id='".$mysql['device_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-//insert the tracking data
-$click_sql = "
-	REPLACE INTO
-		202_clicks_tracking
-	SET
-		click_id='".$mysql['click_id']."',
-		c1_id = '".$mysql['c1_id']."',
-		c2_id = '".$mysql['c2_id']."',
-		c3_id = '".$mysql['c3_id']."',
-		c4_id = '".$mysql['c4_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-if ($rtrRewritesClick) {
-	$db->commit() or record_mysql_error($db);
-}
-
-$click_sql = "
-	REPLACE INTO
-		202_clicks_rotator
-	SET
-		click_id='".$mysql['click_id']."',
-		rotator_id='".$mysql['rotator_id']."',
-		rule_id='".$mysql['rule_id']."',
-		rule_redirect_id = '".$mysql['rule_redirect_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-
-//now gather variables for the clicks record db
 //lets determine if cloaking is on
 $cloaking_on = false;
 $mysql['click_id_public'] = '';
@@ -744,15 +656,6 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 } else { 
 	$mysql['click_cloaking'] = 0; 
 }
-
-//ok we have our click recorded table, now lets insert theses
-$click_sql = "REPLACE INTO   202_clicks_record
-			  SET           click_id='".$mysql['click_id']."',
-							click_id_public='".$mysql['click_id_public']."',
-							click_cloaking='".$mysql['click_cloaking']."',
-							click_in='".$mysql['click_in']."',
-							click_out='".$mysql['click_out']."'"; 
-$click_result = $db->query($click_sql) or record_mysql_error($db); 
 
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
@@ -802,18 +705,65 @@ if ($rule['aff_campaign_id'] != null) {
 	}
 }
 
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$click_id);
+// The click's rows, written together (RotatorClickWriter). A rotator
+// re-click (lpr) rewrites the click it found above rather than recording a
+// new one: the REPLACEs give that click another 202_clicks row, its keyword
+// and its c1-c4. The attribution report rollup has summed that click into
+// its hours and into the hours of any conversion whose journey holds it, so
+// the rewrite and the mark that sends those hours back to exact go in the
+// same transaction (AttributionRollup rule 2). A new click needs no mark:
+// its hour is not summed yet.
+$rtrClick = new \Prosper202\Click\ClickRecord();
+$rtrClick->clickId = (int) $click_id;
+$rtrClick->userId = (int) $mysql['user_id'];
+$rtrClick->affCampaignId = (int) $mysql['aff_campaign_id'];
+$rtrClick->landingPageId = (int) $mysql['landing_page_id'];
+$rtrClick->ppcAccountId = (int) $mysql['ppc_account'];
+// '' (no campaign, so no payout) was 0 in the decimal column.
+$rtrClick->clickCpc = $mysql['cpc'] === '' ? '0' : $mysql['cpc'];
+$rtrClick->clickPayout = $mysql['click_payout'] === '' ? '0' : $mysql['click_payout'];
+$rtrClick->clickAlp = (int) $mysql['click_alp'];
+$rtrClick->clickFiltered = (int) $mysql['click_filtered'];
+$rtrClick->clickBot = (int) $mysql['click_bot'];
+$rtrClick->clickTime = (int) $mysql['click_time'];
+$rtrClick->textAdId = (int) $mysql['text_ad_id'];
+$rtrClick->keywordId = (int) $mysql['keyword_id'];
+$rtrClick->ipId = (int) $mysql['ip_id'];
+$rtrClick->countryId = (int) $mysql['country_id'];
+$rtrClick->regionId = (int) $mysql['region_id'];
+$rtrClick->ispId = (int) $mysql['isp_id'];
+$rtrClick->cityId = (int) $mysql['city_id'];
+$rtrClick->platformId = (int) $mysql['platform_id'];
+$rtrClick->browserId = (int) $mysql['browser_id'];
+$rtrClick->deviceId = (int) $mysql['device_id'];
+$rtrClick->c1Id = (int) $mysql['c1_id'];
+$rtrClick->c2Id = (int) $mysql['c2_id'];
+$rtrClick->c3Id = (int) $mysql['c3_id'];
+$rtrClick->c4Id = (int) $mysql['c4_id'];
+$rtrClick->clickIdPublic = (string) $mysql['click_id_public'];
+$rtrClick->clickCloaking = (int) $mysql['click_cloaking'];
+$rtrClick->clickIn = (int) $mysql['click_in'];
+$rtrClick->clickOut = (int) $mysql['click_out'];
+$rtrClick->clickRefererSiteUrlId = (int) $mysql['click_referer_site_url_id'];
+$rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url); 
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
-
-//insert this
-$click_sql = "REPLACE INTO   202_clicks_site
-			  SET           click_id='".$mysql['click_id']."',
-							click_referer_site_url_id='".$mysql['click_referer_site_url_id']."',
-							click_outbound_site_url_id='".$mysql['click_outbound_site_url_id']."',
-							click_redirect_site_url_id='".$mysql['click_redirect_site_url_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);   
+try {
+	(new \Prosper202\Click\RotatorClickWriter(\Prosper202\Repository\LookupRepositoryFactory::connection($db)))->write(
+		$rtrClick,
+		(int) $mysql['rotator_id'],
+		(int) $mysql['rule_id'],
+		(int) $mysql['rule_redirect_id'],
+		isset($_GET['lpr']) && $_GET['lpr'] != '',
+		// Inside the transaction: the placeholders are read back from the
+		// rows just written. A plain closure: it hands the resolved URL out.
+		function () use ($db, &$redirect_site_url, $click_id): int {
+			$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+			return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
+		}
+	);
+} catch (\Throwable $rtrWriteError) {
+	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'] . ': ' . $rtrWriteError->getMessage());
+}
 
 	if ($rule['aff_campaign_id'] != null) {
 		//set the cookie
@@ -822,7 +772,8 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 	// Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
 	// landing page sends, a signed customer id. The rotator writes its click
-	// rows inline, so the click is linked here, once they are stored.
+	// rows itself (RotatorClickWriter), so the click is linked here, once
+	// they are committed.
 	// A rule that points at a bare URL has no campaign and leaves capture on;
 	// a campaign whose setting cannot be read captures nothing.
 	$rtrCampaignAllows = true;

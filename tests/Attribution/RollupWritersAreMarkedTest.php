@@ -67,7 +67,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Attribution/AttributionStore.php' => self::MARKS,
         '202-config/static-endpoint-helpers.php' => self::MARKS,
         '202-config/Ltv/MysqlCustomerRepository.php' => self::MARKS,
-        'tracking202/redirect/rtr.php' => self::MARKS,
+        // rtr.php's click rows, a re-click (?lpr=) marked in their transaction.
+        '202-config/Click/RotatorClickWriter.php' => self::MARKS,
         'tracking202/redirect/off.php' => self::MARKS,
         'tracking202/redirect/offrtr.php' => self::MARKS,
         // The Update CPC write, behind the page and POST /api/v3/clicks/cpc.
@@ -459,7 +460,7 @@ final class RollupWritersAreMarkedTest extends TestCase
     public function testEveryWriterOfASummedTableIsClassified(): void
     {
         $found = self::writers();
-        self::assertArrayHasKey('tracking202/redirect/rtr.php', $found, 'the scan sees the redirect that rewrites clicks');
+        self::assertArrayHasKey('202-config/Click/RotatorClickWriter.php', $found, 'the scan sees the writer that rewrites clicks');
 
         $unclassified = array_diff_key($found, self::WRITERS);
         self::assertSame([], $unclassified, "a file writes a table the report rollup sums and is not classified here:\n"
