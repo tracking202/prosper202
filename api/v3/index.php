@@ -180,6 +180,38 @@ try {
         exit;
     }
 
+    // AI connections (Api\V3\Support\AiConnect, 202-account/connect-ai.php).
+    // GET /connect tells Tracking202's MCP server the install offers them,
+    // before anyone has signed in. POST /connect/token is that server
+    // exchanging a one-time approval for the connection's key, so it has no
+    // key to present yet: the code and its verifier are the credential.
+    // POST /connect/revoke is a connection's key removing itself, and only
+    // itself, whatever its scope. Neither write previews, so ?dry_run is
+    // refused rather than ignored (CLAUDE.md #14).
+    if ($path === '/connect' && $method === 'GET') {
+        Bootstrap::jsonResponse(['data' => ['connect' => 1]]);
+        exit;
+    }
+    if (($path === '/connect/token' || $path === '/connect/revoke') && array_key_exists('dry_run', $queryParams)) {
+        Bootstrap::errorResponse('dry_run is not supported on ' . $path . '; it writes or does nothing', 422);
+        exit;
+    }
+    if ($path === '/connect/token' && $method === 'POST') {
+        \Api\V3\Apps\PublicIntake::rateLimit('connect-token', 30, 60);
+        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, new ServerStateStore()))
+            ->token($payload);
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
+    if ($path === '/connect/revoke' && $method === 'POST') {
+        // Authenticated as every route is (a switched-off user's key is
+        // refused), then the key that authenticated is the one removed.
+        Auth::fromRequest($headers, $db);
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::revoke($db, Auth::bearerKey($headers));
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
+
     // Unauthenticated app schema, fetched by an app build at runtime so a
     // change on the server needs no store resubmission. An app binary cannot
     // hold an API key; the registration is selected by the app token in the

@@ -91,7 +91,7 @@ final class AccountProfileAndKeysTest extends TestCase
 
         $keys = p202_account_api_keys($db, 7);
         self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read']], $keys);
-        self::assertStringContainsString('SELECT api_key, created_at, scope FROM 202_api_keys', $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql);
+        self::assertStringContainsString('SELECT api_key, created_at, scope, label FROM 202_api_keys', $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql);
     }
 
     public function testKeysAreReadWithoutAScopeColumnAsFullAccess(): void

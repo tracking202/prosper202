@@ -322,7 +322,10 @@ function p202_account_api_keys(mysqli $db, int $userId): array
 {
     $hasScope = \Api\V3\Auth::apiKeyScopeColumnExists($db);
     $conn = new \Prosper202\Database\Connection($db);
-    $stmt = $conn->prepareRead('SELECT api_key, created_at' . ($hasScope ? ', scope' : '') . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
+    // label came with 1.9.78, long after scope; a schema without scope has
+    // neither, and this page runs only once the upgrade has run.
+    $stmt = $conn->prepareRead('SELECT api_key, created_at' . ($hasScope ? ', scope, label' : '')
+        . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
     $keys = [];
     foreach ($conn->fetchAll($stmt) as $row) {

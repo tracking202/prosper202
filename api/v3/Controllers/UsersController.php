@@ -541,7 +541,7 @@ class UsersController
     {
         $hasScopeColumn = \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
         $columns = $hasScopeColumn
-            ? 'user_id, api_key, scope, created_at'
+            ? 'user_id, api_key, scope, label, created_at'
             : 'user_id, api_key, created_at';
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);

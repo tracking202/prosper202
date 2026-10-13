@@ -1053,7 +1053,7 @@ echo p202_account_render_flashes($extraFlashes);
 							$keyId = 'api-key-' . $index;
 							?>
 							<div class="mb-3" data-api-key-row>
-								<div class="form-text mt-0 mb-1">Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
+								<div class="form-text mt-0 mb-1"><?php echo (string)($apiKey['label'] ?? '') !== '' ? '<strong>' . $e((string)$apiKey['label']) . '</strong> · ' : ''; ?>Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
 								<div class="p202-code">
 									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>" data-p202-value="<?php echo $e($keyValue); ?>"><?php echo $e($maskKey($keyValue)); ?></pre>
 									<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $keyId; ?>">Reveal</button>

@@ -38,19 +38,7 @@ final readonly class Auth
      */
     public static function fromRequest(array $headers, \mysqli $db): self
     {
-        // Header names are case-insensitive per RFC 9110; normalize instead of
-        // probing a couple of hardcoded casings.
-        $headers = array_change_key_case($headers, CASE_LOWER);
-        $authHeader = $headers['authorization'] ?? '';
-        if (is_array($authHeader)) {
-            $authHeader = $authHeader[0] ?? '';
-        }
-
-        $apiKey = '';
-        if (str_starts_with($authHeader, 'Bearer ')) {
-            $apiKey = trim(substr($authHeader, 7));
-        }
-
+        $apiKey = self::bearerKey($headers);
         if ($apiKey === '') {
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
@@ -94,6 +82,28 @@ final readonly class Auth
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
 
         return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
+    }
+
+    /**
+     * The API key a request bears in `Authorization: Bearer <key>`, or ''.
+     * fromRequest() authenticates this value, and POST /connect/revoke
+     * removes exactly the key that was authenticated, so both read it here.
+     *
+     * @param array<string, mixed> $headers
+     */
+    public static function bearerKey(array $headers): string
+    {
+        // Header names are case-insensitive per RFC 9110; normalize instead of
+        // probing a couple of hardcoded casings.
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        $authHeader = $headers['authorization'] ?? '';
+        if (is_array($authHeader)) {
+            $authHeader = $authHeader[0] ?? '';
+        }
+        if (!is_string($authHeader) || !str_starts_with($authHeader, 'Bearer ')) {
+            return '';
+        }
+        return trim(substr($authHeader, 7));
     }
 
     private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*'], string $apiKeyRef = ''): self
