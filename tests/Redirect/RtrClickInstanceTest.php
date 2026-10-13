@@ -66,26 +66,37 @@ final class RtrClickInstanceTest extends TestCase
             self::$ids['account'] = self::create('ppc-accounts', [
                 'ppc_account_name' => "$run account", 'ppc_network_id' => $source,
             ], 'ppc_account_id');
-            self::$ids['rotator'] = self::create('rotators', [
-                'name' => "$run redirector", 'default_campaign' => self::$ids['campaign'],
-            ], 'id');
-            // Every visitor but one TEST-NET address: whatever address the
-            // instance sees, the click goes through this rule. The answer is
-            // the redirector, with its rules (200).
-            $rotator = self::createRow('rotators/' . self::$ids['rotator'] . '/rules', [
-                'rule_name' => "$run rule",
-                'criteria' => [['type' => 'ip', 'statement' => 'is_not', 'value' => '192.0.2.1']],
-                'redirects' => [
-                    ['redirect_campaign' => self::$ids['campaign'], 'weight' => 100, 'name' => "$run redirect"],
-                ],
-            ], 200);
-            self::$ids['rule'] = (int) ($rotator['rules'][0]['id'] ?? 0);
-            self::$ids['redirect'] = (int) ($rotator['rules'][0]['redirects'][0]['id'] ?? 0);
-            // Distinct, or a swap of the two would read the same.
-            [$rule, $redirect] = [self::$ids['rule'], self::$ids['redirect']];
-            if ($rule <= 0 || $redirect <= 0 || $rule === $redirect) {
-                throw new \RuntimeException('The rule create answered without a distinct rule and redirect id: '
-                    . json_encode($rotator));
+            // The rule and its redirect must have different ids, or a swap of
+            // the two reads the same. Their tables count apart, but a fresh
+            // install starts them level: then a redirect-less rule takes a
+            // rule id, and the redirector is built again.
+            for ($attempt = 1;; $attempt++) {
+                self::$ids['rotator'] = self::create('rotators', [
+                    'name' => "$run redirector $attempt", 'default_campaign' => self::$ids['campaign'],
+                ], 'id');
+                // Every visitor but one TEST-NET address: whatever address the
+                // instance sees, the click goes through this rule. The answer
+                // is the redirector, with its rules (200).
+                $rotator = self::createRow('rotators/' . self::$ids['rotator'] . '/rules', [
+                    'rule_name' => "$run rule",
+                    'criteria' => [['type' => 'ip', 'statement' => 'is_not', 'value' => '192.0.2.1']],
+                    'redirects' => [
+                        ['redirect_campaign' => self::$ids['campaign'], 'weight' => 100, 'name' => "$run redirect"],
+                    ],
+                ], 200);
+                self::$ids['rule'] = (int) ($rotator['rules'][0]['id'] ?? 0);
+                self::$ids['redirect'] = (int) ($rotator['rules'][0]['redirects'][0]['id'] ?? 0);
+                if (self::$ids['rule'] <= 0 || self::$ids['redirect'] <= 0) {
+                    throw new \RuntimeException('The rule create answered without a rule and redirect id: '
+                        . json_encode($rotator));
+                }
+                if (self::$ids['rule'] !== self::$ids['redirect']) {
+                    break;
+                }
+                if ($attempt === 3) {
+                    throw new \RuntimeException('The rule and its redirect kept the same id: ' . self::$ids['rule']);
+                }
+                self::createRow('rotators/' . self::$ids['rotator'] . '/rules', ['rule_name' => "$run spare"], 200);
             }
             $tracker = self::createRow('trackers', [
                 'aff_campaign_id' => 0, 'rotator_id' => self::$ids['rotator'],
