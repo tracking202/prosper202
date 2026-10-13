@@ -36,28 +36,36 @@ function record_mysql_error($dbOrSql, $sql = null): never
         date_default_timezone_set($sessionZone);
     }
 
-    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+        $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id'])) : 0;
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_time'] = time();
 
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($report_sql);
+        // On the connection just rolled back: the global one this used
+        // before may be another, with a transaction of its own still open.
+        if (_mysqli_query($db, $report_sql) === false) {
+            throw new \RuntimeException($db->error);
+        }
+    });
 
     // report error to user and end page
 ?>

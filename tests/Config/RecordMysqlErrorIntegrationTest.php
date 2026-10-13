@@ -18,10 +18,21 @@ use PHPUnit\Framework\TestCase;
  * Each run is a child process (the function is `never` and dies); see
  * fixtures/record-mysql-error-runner.php for how the real body is run.
  *
+ * The error row was written into whatever transaction the caller had open
+ * and discarded with it when the request ended, so the page said "it has
+ * been recorded" over nothing; and a failure while recording it was a fatal
+ * in place of the page (admin pages) or record_mysql_error() calling itself
+ * through _mysqli_query() until memory ran out (click path, tens of
+ * thousands of log lines). The scenarios below are those, each run against
+ * both definitions.
+ *
  * @group integration
  */
 final class RecordMysqlErrorIntegrationTest extends TestCase
 {
+    /** The statement the runner fails, as it asks it. */
+    private const FAILING = 'SELECT nothing FROM p202_no_such_table_for_record_mysql_error';
+
     protected function setUp(): void
     {
         $host = getenv('P202_TEST_DB_HOST');
@@ -46,16 +57,137 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
     /** @dataProvider definitionsAndShapes */
     public function testTheDatabaseErrorIsLoggedAndTheErrorPageShown(string $file, string $shape): void
     {
+        [$stdout, $logged, $all] = self::runScenario($file, $shape, 'page', 1);
+
+        self::assertStringNotContainsString(
+            'could not be converted to string',
+            $all,
+            "a fatal instead of the error page:\n$all"
+        );
+        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        // The database's own words, not a blank: proves the connection that
+        // failed is the one read.
+        self::assertMatchesRegularExpression(
+            "/MySQL error: .*p202_no_such_table_for_record_mysql_error.*doesn't exist/",
+            $logged,
+            "the real error is logged:\n$all"
+        );
+        // The page asks the failed connection nothing more: a read there
+        // fails the same way and throws, a fatal in place of this page. The
+        // first line proves the runner's recording saw the runner's query.
+        self::assertStringContainsString('ASKED FIRST: ' . self::FAILING . "\n", $stdout);
+        self::assertStringNotContainsString(
+            'ASKED BY THE PAGE: ',
+            $stdout,
+            "the error page queried the database that just failed:\n$all"
+        );
+        // What it does do to the connection: end its transaction.
+        self::assertStringContainsString(
+            "ENDED BY THE PAGE: rollback\nENDED BY THE PAGE: autocommit on\n",
+            $stdout,
+            $all
+        );
+        if ($shape === 'db') {
+            self::assertStringContainsString('SQL: (statement not given)', $logged);
+        } else {
+            self::assertStringContainsString('SQL: ' . self::FAILING, $logged);
+        }
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function definitionsAndOpenTransactions(): array
+    {
+        $cases = [];
+        foreach (['functions-tracking202.php', 'connect2.php'] as $file) {
+            foreach (['txn', 'autocommit_off'] as $scenario) {
+                $cases["$file ($scenario)"] = [$file, $scenario];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * Called with the caller's transaction open and a write of its own in
+     * it: the write is rolled back and the error row is written, and kept.
+     *
+     * @dataProvider definitionsAndOpenTransactions
+     */
+    public function testAnOpenTransactionIsRolledBackAndTheErrorRowKept(string $file, string $scenario): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, , $all] = self::runScenario($file, 'db_sql', $scenario, $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        self::assertStringNotContainsString('RECORD FAILED', $stdout, $all);
+        self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, $all);
+
+        $db = self::database();
+        $row = $db->query('SELECT mysql_error_text, mysql_error_sql FROM 202_mysql_errors WHERE user_id = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
+        $rows = $row->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(1, $rows, "the error row is recorded and kept:\n$all");
+        self::assertMatchesRegularExpression(
+            "/p202_no_such_table_for_record_mysql_error.*doesn't exist/",
+            (string) $rows[0]['mysql_error_text']
+        );
+        self::assertSame(self::FAILING, $rows[0]['mysql_error_sql']);
+
+        $probe = $db->query('SELECT COUNT(*) FROM p202_rme_probe WHERE marker = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $probe, $db->error);
+        self::assertSame(0, (int) $probe->fetch_row()[0], "the caller's own write is not committed with it:\n$all");
+        $db->close();
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function definitionsAndFailedRecords(): array
+    {
+        $cases = [];
+        foreach (['functions-tracking202.php', 'connect2.php'] as $file) {
+            foreach (['gone', 'lookup_fails'] as $scenario) {
+                $cases["$file ($scenario)"] = [$file, $scenario];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * The error row cannot be written — the connection is gone, or the
+     * record's own lookup fails — and the page is still shown, with the
+     * failure logged once and no second record_mysql_error() pass.
+     *
+     * @dataProvider definitionsAndFailedRecords
+     */
+    public function testARecordThatFailsStillEndsWithTheErrorPage(string $file, string $scenario): void
+    {
+        [$stdout, $logged, $all] = self::runScenario($file, 'db_sql', $scenario, random_int(1_000_000, 16_000_000));
+
+        self::assertStringNotContainsString('Fatal error', $all);
+        self::assertTheErrorPageEndedTheRequest($stdout, $all);
+        self::assertStringContainsString('MySQL error not recorded in 202_mysql_errors: ', $logged, $all);
+        // The error itself, and on the click path the lookup's own: never
+        // the tens of thousands a recursion writes.
+        self::assertLessThanOrEqual(2, substr_count($logged, 'MySQL error: '), $all);
+    }
+
+    /** @return array{string, string, string} stdout, the error log, and both with stderr */
+    private static function runScenario(string $file, string $shape, string $scenario, int $marker): array
+    {
         $log = tempnam(sys_get_temp_dir(), 'p202-rme-');
         self::assertIsString($log);
         try {
             $cmd = [
                 PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'log_errors=1', '-d', 'error_log=' . $log,
+                '-d', 'memory_limit=128M',
                 __DIR__ . '/fixtures/record-mysql-error-runner.php',
                 __DIR__ . '/../../202-config/' . $file,
                 $shape,
+                $scenario,
             ];
-            $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $env = getenv();
+            $env['P202_RME_MARKER'] = (string) $marker;
+            $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
             self::assertIsResource($proc);
             $stdout = (string) stream_get_contents($pipes[1]);
             $stderr = (string) stream_get_contents($pipes[2]);
@@ -67,34 +199,39 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             @unlink($log);
         }
 
-        $all = $stdout . $stderr . $logged;
-        self::assertStringNotContainsString('could not be converted to string', $all, "a fatal instead of the error page:\n$all");
+        $all = "exit $exit\n" . $stdout . $stderr . substr($logged, 0, 4000);
+        self::assertSame(0, $exit, "the error page exits cleanly:\n$all");
+
+        return [$stdout, $logged, $all];
+    }
+
+    private static function assertTheErrorPageEndedTheRequest(string $stdout, string $all): void
+    {
         self::assertStringContainsString('BEFORE', $stdout, "the runner did not reach the call:\n$all");
         self::assertStringNotContainsString('UNREACHED', $stdout, 'record_mysql_error() must end the request');
-        self::assertSame(0, $exit, "the error page exits cleanly:\n$all");
         // The page as U8 renders it in both definitions: the danger flash,
         // its sentence inside the flash's own body, not merely somewhere.
         self::assertMatchesRegularExpression(
-            '~<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded\.</strong>~',
+            '~<div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i>'
+                . '<div class="p202-flash__body">'
+                . '<strong>A database error has occurred, and it has been recorded\.</strong>~',
             $stdout,
             "the error page is shown:\n$all"
         );
-        // The database's own words, not a blank: proves the connection that
-        // failed is the one read.
-        self::assertMatchesRegularExpression(
-            "/MySQL error: .*p202_no_such_table_for_record_mysql_error.*doesn't exist/",
-            $logged,
-            "the real error is logged:\n$all"
+    }
+
+    private static function database(): \mysqli
+    {
+        mysqli_report(MYSQLI_REPORT_OFF);
+        $db = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
         );
-        // The page asks the failed connection nothing more: a read there
-        // fails the same way and throws, a fatal in place of this page. The
-        // first line proves the runner's recording saw the runner's query.
-        self::assertStringContainsString("ASKED FIRST: SELECT nothing FROM p202_no_such_table_for_record_mysql_error\n", $stdout);
-        self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, "the error page queried the database that just failed:\n$all");
-        if ($shape === 'db') {
-            self::assertStringContainsString('SQL: (statement not given)', $logged);
-        } else {
-            self::assertStringContainsString('SQL: SELECT nothing FROM p202_no_such_table_for_record_mysql_error', $logged);
-        }
+        self::assertSame(0, $db->connect_errno, (string) $db->connect_error);
+
+        return $db;
     }
 }

@@ -36,6 +36,43 @@ if (!function_exists('p202MysqlErrorArgs')) {
     }
 }
 
+if (!function_exists('p202RecordMysqlErrorRow')) {
+    /**
+     * Run record_mysql_error()'s write of the error row ($write: its lookups
+     * and the INSERT into 202_mysql_errors) on the connection that has just
+     * failed, so the error page is shown whatever happens there.
+     *
+     * The caller's transaction (begin_transaction() or autocommit(false)) is
+     * rolled back and autocommit put back on first: a row written inside it
+     * is discarded with it when the request ends.
+     *
+     * A failure while recording is logged, never thrown. On a lost
+     * connection the lookups fail too: an uncaught Error on the admin pages,
+     * and on the click path a second record_mysql_error() from its own
+     * _mysqli_query(), which recursed until memory ran out. A call made while
+     * a row is being recorded throws back to here instead.
+     *
+     * @param callable(): void $write throws when the row is not written
+     */
+    function p202RecordMysqlErrorRow(\mysqli $db, callable $write): void
+    {
+        static $recording = false;
+        if ($recording) {
+            throw new \RuntimeException('a statement run to record it failed as well');
+        }
+        $recording = true;
+
+        try {
+            if (!$db->rollback() || !$db->autocommit(true)) {
+                throw new \RuntimeException('its transaction could not be rolled back: ' . $db->error);
+            }
+            $write();
+        } catch (\Throwable $e) {
+            error_log('MySQL error not recorded in 202_mysql_errors: ' . $e->getMessage());
+        }
+    }
+}
+
 if (!function_exists('p202MysqlErrorStatementText')) {
     /**
      * A statement for the error log. A caller that passed nothing printable

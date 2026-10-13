@@ -2850,52 +2850,38 @@ function record_mysql_error($dbOrSql, $sql = null): never
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
-    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+        $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
+        // A click has no session: 0, as the admin pages' copy writes, where
+        // '' was refused by the column under P202_SQL_STRICT.
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_time'] = time();
 
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($db, $report_sql);
+        if (_mysqli_query($db, $report_sql) === false) {
+            throw new \RuntimeException($db->error);
+        }
+    });
 
-    // email administration of the error
-    $to = $_SERVER['SERVER_ADMIN'];
-    $subject = 'mysql error reported - ' . $site_url;
-    $message = '<b>A mysql error has been reported</b><br/><br/>
-		
-					time: ' . date('r', time()) . '<br/>
-					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
-					
-					user_id: ' . $_SESSION['user_id'] . '<br/>
-					script_url: ' . $site_url . '<br/>
-					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
-					
-					. . . . . . . . <br/><br/>
-												 
-					_mysqli_query: ' . $sql . '<br/><br/>
-					 
-					mysql_error: ' . $clean['mysql_error_text'];
-    $from = $_SERVER['SERVER_ADMIN'];
-    $type = 3; // type 3 is mysql_error
-
-    // send_email($to,$subject,$message,$from,$type);
-
-    // report error to user and end page    
+    // report error to user and end page
 ?>
     <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
