@@ -71,6 +71,9 @@ final class UncheckedGetResultTest extends TestCase
         // said. It throws now (AUTH::resultOf()).
         'api/v3/Controllers/CapabilitiesController.php::loadClickServerKey' =>
             'Fails closed: a key that cannot be read is no key, so the shell capability is denied; /capabilities still answers.',
+        'api/v3/Controllers/CapabilitiesController.php::loadOwnerClickServerKey' =>
+            'Answers null, "unknown", which its caller tells from \'\' (no key on the install): the Go CLI licence gate'
+            . ' treats an unread owner key as unknown and lets the CLI work, never as "not licensed".',
     ];
 
     /** @return array<string, list<int>> file => lines of unchecked get_result()/store_result() */
