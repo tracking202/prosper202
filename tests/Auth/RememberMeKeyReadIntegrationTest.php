@@ -93,6 +93,12 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
 
     private static function runScenario(string $scenario): string
     {
+        return self::runScenarioWithLog($scenario)[0];
+    }
+
+    /** @return array{string, string} stdout, and stderr (where error_log() writes) */
+    private static function runScenarioWithLog(string $scenario): array
+    {
         $env = getenv();
         $env['P202_RMK_USER'] = (string) self::USER;
         $proc = proc_open(
@@ -112,7 +118,7 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         fclose($pipes[2]);
         self::assertSame(0, proc_close($proc), $stdout . $stderr);
 
-        return $stdout;
+        return [$stdout, $stderr];
     }
 
     public function testTheStoredKeyIsReadWhenNothingFails(): void
@@ -156,8 +162,21 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
 
         // The UPDATE that stores a new key matches no row and still answers
         // true: the key it minted was handed out stored nowhere.
-        self::assertSame('THREW There is no user ' . self::USER . " to hold a remember-me key\n", $out);
+        self::assertSame("NO ACCOUNT\n", $out);
         self::assertNull(self::storedKey());
+    }
+
+    public function testACookieNamingNoAccountIsRefusedWithoutALogLine(): void
+    {
+        $db = self::$db;
+        self::assertNotNull($db);
+        self::assertNotFalse($db->query('DELETE FROM 202_users WHERE user_id = ' . self::USER), $db->error);
+
+        [$out, $logged] = self::runScenarioWithLog('cookie_no_account');
+
+        // Anyone can send it: a line per request would be theirs to write.
+        self::assertSame("ANSWERED false\n", $out);
+        self::assertSame('', $logged, 'nothing is written for a cookie anyone can send');
     }
 
     public function testTheCookieCheckSignsNobodyInAndLeavesTheStoredKey(): void

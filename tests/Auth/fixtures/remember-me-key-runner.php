@@ -75,7 +75,7 @@ $GLOBALS['fails'] = match ($scenario) {
     default => '',
 };
 
-if ($scenario === 'cookie_check') {
+if ($scenario === 'cookie_check' || $scenario === 'cookie_no_account') {
     $_SESSION = [];
     $_COOKIE['remember_me'] = $userId . '-somekey-somehash';
     try {
@@ -89,7 +89,7 @@ if ($scenario === 'cookie_check') {
 
 try {
     $key = AUTH::get_user_secret_key($userId);
-    echo 'KEY ', $key, "\n";
+    echo $key === null ? "NO ACCOUNT\n" : 'KEY ' . $key . "\n";
 } catch (\RuntimeException $e) {
     echo 'THREW ', $e->getMessage(), "\n";
 }

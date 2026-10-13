@@ -517,11 +517,16 @@ class AUTH
             [$user_id, $auth_key, $hash] = $parts;
             if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
                 try {
-                    $secret = (string) self::get_user_secret_key($user_id);
+                    $secret = self::get_user_secret_key($user_id);
                 } catch (\RuntimeException $e) {
                     // Not verified, so not signed in; the cookie is kept for
                     // a request that can read the key.
                     error_log('remember-me: ' . $e->getMessage());
+                    return false;
+                }
+                // No such user: anyone can send that cookie, so it is refused
+                // without a log line per request.
+                if ($secret === null) {
                     return false;
                 }
                 $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, $secret);
@@ -581,7 +586,11 @@ class AUTH
         return $randomString;
     }
 
-    public static function get_user_secret_key($user_id)
+    /**
+     * The account's remember-me key, minted and stored on first use; null
+     * when there is no such account. A read or a store that fails throws.
+     */
+    public static function get_user_secret_key($user_id): ?string
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
@@ -603,7 +612,7 @@ class AUTH
         $user_row = $user_result->fetch_assoc();
         // No account: a key minted for it would be stored nowhere.
         if (!is_array($user_row)) {
-            throw new \RuntimeException('There is no user ' . (int) $user_id . ' to hold a remember-me key');
+            return null;
         }
         if (empty($user_row['secret_key'])) {
             $mysql['secret_key'] = self::generate_random_string(48);
@@ -649,9 +658,13 @@ class AUTH
             return;
         }
         try {
-            $secret = (string) self::get_user_secret_key($_SESSION['user_own_id']);
+            $secret = self::get_user_secret_key($_SESSION['user_own_id']);
         } catch (\RuntimeException $e) {
             error_log('remember-me: ' . $e->getMessage());
+            return;
+        }
+        if ($secret === null) {
+            error_log('remember-me: the signed-in user ' . (int) $_SESSION['user_own_id'] . ' has no account row');
             return;
         }
         $hash = hash_hmac('sha256', $_SESSION['user_own_id'] . '-' . $auth_key, $secret);
