@@ -145,9 +145,11 @@ This is the normal path. CI builds and publishes; you only tag.
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
 
-5. **Update the public docs, the same day.** The docs readers find first
-   still describe the previous version until someone changes them. Check each
-   page against the new version's changelog:
+5. **Do a full docs pass, the same day.** The docs readers find first still
+   describe the previous version until someone changes them. Read the new
+   version's changelog, then check **every** guide on the site and **every**
+   page on ReadMe against it, not only the pages below, and fix whatever the
+   release made wrong or out of date. At a minimum, that covers:
    - **prosper.tracking202.com** (repo `tracking202/prosper202-marketing`):
      - `documentation/tutorials-and-guides/upgrading.html`: the "Upgrading to
        <version>" section, covering requirements, what changes for an
@@ -157,11 +159,12 @@ This is the normal path. CI builds and publishes; you only tag.
        and "Latest release <version> (<date, PT>)" on `pro/index.html`.
      - `documentation/cli/data/` (`commands.json` and examples) from the
        release binary, then run `python3 documentation/build.py`.
-     - Any other guide the changelog contradicts. Each guide's meta
-       description is in `GUIDE_DESCRIPTIONS` in `build.py`.
-   - **prosper202.readme.io:** the matching summaries in
-     `marketing202/scripts/readme-io/pages/` (at least
-     `upgrading-prosper202`, `installation` and `prosper202-partner-program`).
+     - Every other guide under `documentation/` (setup steps, tutorials,
+       API, partner pages, runbooks), plus the release facts on the home and
+       Pro pages. Each guide's meta description is in `GUIDE_DESCRIPTIONS` in
+       `build.py`. Then run `build.py --check` and `check-links.py`.
+   - **prosper202.readme.io:** every summary in
+     `marketing202/scripts/readme-io/pages/`, kept in line with its site page.
      Check them with `check_pages.py`, then publish them with
      `readme_io.py push`.
    - **The portal download** updates itself: `p202:sync-release` in
