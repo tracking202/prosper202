@@ -28,7 +28,9 @@ use Prosper202\Report\RollupDirty;
  * The redirect URL is resolved inside the transaction, after the rows are
  * written: its placeholders ([[c1]], [[t202kw]], [[country]]…) are read
  * back from this click's rows (replaceTrackerPlaceholders()), and its site
- * URL id is what 202_clicks_site stores.
+ * URL id is what 202_clicks_site stores. That lookup caches the id of a row
+ * it inserts, so the caller runs write() inside p202WithHeldCacheWrites():
+ * otherwise a rollback leaves the cache naming a row that was never kept.
  */
 final class RotatorClickWriter
 {

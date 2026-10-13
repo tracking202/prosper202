@@ -159,11 +159,31 @@ final class HeldCacheWritesTest extends TestCase
 
         self::assertCount(1, $holds, 'rtr.php holds its cache writes once');
         self::assertCount(1, $writes, 'rtr.php writes its click once');
+
+        // The held work is the write and nothing else: an arrow function
+        // (which cannot hold a try) whose body is the call, so the failure the
+        // writer throws after its rollback reaches the hold, which drops what
+        // it held; caught on the way, the hold would write the rolled-back ids.
         [$open, $close] = $holds[0];
-        self::assertTrue(
-            $writes[0] > $open && $writes[0] < $close,
-            'the write on line ' . $code[$writes[0]]->line . ' runs outside the hold on line ' . $code[$open]->line
+        $line = 'line ' . $code[$open]->line;
+        self::assertSame(
+            ['static', 'fn', '(', ')', '=>', '$rtrWriter', '->', 'write', '('],
+            array_map(static fn (\PhpToken $t): string => $t->text, array_slice($code, $open + 1, 9)),
+            $line . ': the hold\'s argument is static fn () => $rtrWriter->write(…)'
         );
+        self::assertSame($open + 8, $writes[0]);
+        self::assertSame($close - 1, self::closingParen($code, $open + 9), "$line: the write is all the held work");
+
+        $assigned = [];
+        foreach ($code as $i => $t) {
+            if ($t->is(T_VARIABLE) && $t->text === '$rtrWriter' && ($code[$i + 1] ?? null)?->text === '=') {
+                $assigned[] = implode(' ', array_map(
+                    static fn (\PhpToken $t): string => $t->text,
+                    array_slice($code, $i + 2, 3)
+                ));
+            }
+        }
+        self::assertSame(['new \\Prosper202\\Click\\RotatorClickWriter ('], $assigned, 'what $rtrWriter is');
     }
 
     /** @param list<\PhpToken> $code */
