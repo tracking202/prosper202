@@ -190,6 +190,7 @@ final class MessagingTransportAllowlistTest extends TestCase
 
             define('MESSAGING_API_URL', $portal->url() . '/api/v3/messaging');
             require_once __DIR__ . '/../../202-config/Messaging/ChatPassClient.class.php';
+            require_once __DIR__ . '/../../202-config/version.php';
             self::assertSame(['ok' => true], (new \MessagingClient())->track(['install_hash' => 'h'], [], []));
             $identity = ['api_key' => 'k', 'install_hash' => 'h', 'user_id' => 3, 'user_email' => 'dana@acme.test', 'user_name' => 'Dana Lee'];
             $pass = (new \ChatPassClient($portal->url() . '/api/v3/chat/pass'))->request($identity, 'https://track.acme.test/');
@@ -203,9 +204,12 @@ final class MessagingTransportAllowlistTest extends TestCase
             );
             self::assertSame([$portal->url() . '/control'], array_column($proxy->requests(), 'target'), 'neither client went through the proxy');
             self::assertSame(
-                ['identity' => $identity, 'install_url' => 'https://track.acme.test/'],
+                [
+                    'identity' => ['p202_version' => PROSPER202_VERSION] + $identity,
+                    'install_url' => 'https://track.acme.test/',
+                ],
                 json_decode($portal->requests()[1]['body'], true),
-                'the pass request carries the identity block and the install URL'
+                'the pass request carries the identity block, this install\'s version and the install URL'
             );
         } finally {
             $proxy->stop();

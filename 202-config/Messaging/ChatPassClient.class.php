@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 include_once(__DIR__ . '/MessagingClient.class.php');
+require_once __DIR__ . '/../version.php';
 
 /**
  * Asks the portal for a chat pass (POST CHAT_PASS_URL): the
@@ -38,6 +39,9 @@ final class ChatPassClient
     }
 
     /**
+     * The identity goes with this install's version (p202_version), which
+     * the portal keeps beside the install.
+     *
      * @param array{api_key: string, install_hash: string, user_id: int, user_email: string, user_name: string} $identity
      * @param string $installUrl this install's base URL, or '' when unknown
      * @return array{pass: string, chat_url: string, expires_at_s: int}
@@ -46,7 +50,7 @@ final class ChatPassClient
     public function request(array $identity, string $installUrl): array
     {
         $body = json_encode(
-            ['identity' => $identity, 'install_url' => $installUrl],
+            ['identity' => ['p202_version' => PROSPER202_VERSION] + $identity, 'install_url' => $installUrl],
             JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
         );
         if ($body === false) {
