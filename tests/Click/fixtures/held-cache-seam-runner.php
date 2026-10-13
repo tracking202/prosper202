@@ -9,12 +9,16 @@
  * INDEXES, setCache() and _mysqli_query() are global names other suites
  * define for themselves, and connect2.php cannot be loaded alone.
  *
- * argv: <commit | rollback | rollback_unheld> <click id> <host>
+ * argv: <commit | rollback | rollback_unheld | lookup_fails> <click id> <host>
  *   commit           the click is written
  *   rollback         the site row is refused after the lookup, so the click
  *                    and the URL row the lookup inserted are rolled back
  *   rollback_unheld  the same, without the hold: what the test must be able
  *                    to see
+ *   lookup_fails     the lookup's own INSERT into 202_site_urls is refused
+ *                    (a table of this session's shadows it): connect2.php's
+ *                    _mysqli_query() ends at record_mysql_error(), and never
+ *                    answers false for the lookup to read insert_id 0 from
  *
  * Prints JSON: the URL looked up and the id it answered, the cache writes
  * made by the time the lookup returned, every cache write, and the failure.
@@ -88,6 +92,14 @@ $db = new mysqli(
 // Strict, as a MySQL 8 server is: a negative id is refused, not clamped.
 $db->query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
 $GLOBALS['db'] = $db;
+$shadowed = $scenario !== 'lookup_fails' || $db->query(
+    'CREATE TEMPORARY TABLE 202_site_urls (site_url_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,'
+    . ' site_domain_id INT UNSIGNED NOT NULL, site_url_address VARCHAR(8) NOT NULL)'
+);
+if ($shadowed === false) {
+    fwrite(STDERR, 'could not shadow 202_site_urls: ' . $db->error . "\n");
+    exit(5);
+}
 $GLOBALS['whatCache'] = 'memcached';
 $GLOBALS['memcacheWorking'] = true;
 $GLOBALS['memcache'] = $cache = new RecordingCache();
@@ -104,7 +116,8 @@ $click->clickIdPublic = '';
 $click->clickIn = 1;
 $click->clickOut = 1;
 // Refused by its unsigned column: the site row, written after the lookup.
-$click->clickRefererSiteUrlId = $scenario === 'commit' ? 31 : -1;
+// Where the lookup is what fails, nothing else may.
+$click->clickRefererSiteUrlId = in_array($scenario, ['rollback', 'rollback_unheld'], true) ? -1 : 31;
 $click->clickOutboundSiteUrlId = 32;
 
 // rtr.php's $rtrResolveRedirect, over the same calls.

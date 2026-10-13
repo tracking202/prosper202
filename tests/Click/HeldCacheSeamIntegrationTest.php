@@ -104,7 +104,36 @@ final class HeldCacheSeamIntegrationTest extends TestCase
         self::assertContains([$run['url_key'], $run['answered']], $run['cached'], json_encode($run));
     }
 
-    /** @return array{host: string, url: string, answered: int, url_key: string, cached_by_then: ?int, cached: list<array{string, mixed}>, failure: ?string} */
+    /**
+     * The lookup's own INSERT refused: the click path's _mysqli_query() never
+     * answers false, so no click is committed naming a site URL id of 0 (what
+     * insert_id holds after a failed INSERT), and its domain goes too.
+     */
+    public function testAFailedLookupWritesNoClickAndCachesNothing(): void
+    {
+        $clickId = self::FIRST_CLICK + 3;
+        $run = self::write('lookup_fails', $clickId);
+
+        self::assertIsString($run['failure'], json_encode($run));
+        self::assertStringStartsWith(
+            'RuntimeException: record_mysql_error(): INSERT INTO 202_site_urls',
+            $run['failure']
+        );
+        self::assertNull($run['answered'], 'the lookup answered no id');
+        self::assertSame([], $run['cached']);
+        foreach (self::TABLES as $table) {
+            self::assertSame(0, self::rowCount($table, $clickId), $table);
+        }
+        $host = self::$db->real_escape_string($run['host']);
+        $result = self::$db->query("SELECT COUNT(*) FROM 202_site_domains WHERE site_domain_host = '$host'");
+        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
+        self::assertSame(0, (int) $result->fetch_row()[0], 'the domain the lookup inserted went with the rollback');
+    }
+
+    /**
+     * @return array{host: string, url: string, answered: ?int, url_key: string, cached_by_then: ?int,
+     *     cached: list<array{string, mixed}>, failure: ?string}
+     */
     private static function write(string $scenario, int $clickId): array
     {
         self::requireScratch();
