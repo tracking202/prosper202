@@ -1,6 +1,7 @@
 <?php
 
-require_once __DIR__ . '/class-indexes.php';
+// Wrappers over INDEXES, which functions-tracking202.php declares before
+// connect.php loads this file.
 
 if (!function_exists('getIndexesInstance')) {
     function getIndexesInstance()
