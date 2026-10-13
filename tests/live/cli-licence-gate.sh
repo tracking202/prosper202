@@ -320,9 +320,12 @@ if [ -n "${SUB_USER:-}" ] && [ -n "${SUB_KEY:-}" ]; then
     else
         ko "the sub-user should hold no ClickServer key" "has '$sub_has_key'"
     fi
+    # /clicks, not /campaigns: since 1.9.77 /campaigns asks for access_to_setup_section,
+    # which a new user's role lacks, while /clicks is open to every role and is still
+    # behind the licence gate.
     cache write "$K1" 0
-    request "$GO_UA" /campaigns "$SUB_KEY"; expect_refused "sub-user, Go CLI, the owner's key 'not paid'"
-    request "$PHP_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user, PHP CLI, same key"
+    request "$GO_UA" "/clicks?limit=1" "$SUB_KEY"; expect_refused "sub-user, Go CLI, the owner's key 'not paid'"
+    request "$PHP_UA" "/clicks?limit=1" "$SUB_KEY"; expect_allowed "sub-user, PHP CLI, same key"
     request "$GO_UA" /capabilities "$SUB_KEY"
     if [ "$STATUS" = 200 ] && [ "$(printf '%s' "$BODY" | jget data.cli)" = false ]; then
         ok "sub-user, /capabilities reports cli: false from the owner's verdict"
@@ -330,10 +333,10 @@ if [ -n "${SUB_USER:-}" ] && [ -n "${SUB_KEY:-}" ]; then
         ko "sub-user, /capabilities should report cli: false" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
     fi
     cache write "$K1" 1
-    request "$GO_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user, Go CLI, the owner's key 'paid'"
+    request "$GO_UA" "/clicks?limit=1" "$SUB_KEY"; expect_allowed "sub-user, Go CLI, the owner's key 'paid'"
     cache write "$K1" 0
     mysql_q "UPDATE 202_users SET install_hash = '' WHERE user_id = $SUB_USER"
-    request "$GO_UA" /campaigns "$SUB_KEY"; expect_allowed "sub-user with no install_hash: no owner to look up, unknown, allowed"
+    request "$GO_UA" "/clicks?limit=1" "$SUB_KEY"; expect_allowed "sub-user with no install_hash: no owner to look up, unknown, allowed"
     mysql_q "UPDATE 202_users SET install_hash = (SELECT h FROM (SELECT install_hash AS h FROM 202_users WHERE user_id = $USER_ID) t) WHERE user_id = $SUB_USER"
 else
     ko "could not create a sub-user with an API key through the API" "got $STATUS: $(printf '%s' "$BODY" | head -c 300)"
