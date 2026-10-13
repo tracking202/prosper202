@@ -1299,8 +1299,8 @@ side effect of the skipped code (flags, counters, cache writes, the "done"
 mark) and move each one to where the new path still runs it;
 `ClickUpgradeIntegrationTest` holds this one.
 
-Moving a write later is the same skip, seen from whoever read it. Phase 6
-moved `dl.php`'s click rows after the redirect for latency, and the redirect
+Moving a write later is the same skip, seen from whoever read it. A latency
+change moved `dl.php`'s click rows after the redirect, and the redirect
 URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
 `replaceTrackerPlaceholders()`, which reads them back from those rows: on a
 direct link they are blank now (measured: `c1=&kw=` from a click carrying
