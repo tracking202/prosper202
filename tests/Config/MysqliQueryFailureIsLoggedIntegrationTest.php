@@ -57,13 +57,13 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
 
         // Still false to the caller, and true for a statement that worked.
         self::assertStringContainsString("secret FALSE\nescaped FALSE\nunclosed FALSE\nsuccess OK\n", $stdout, $all);
-        self::assertStringContainsString("caller FALSE\nduplicate FALSE\nrefused FALSE\n", $stdout, $all);
+        self::assertStringContainsString("caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\n", $stdout, $all);
 
         $lines = array_values(array_filter(
             explode("\n", $logged),
             static fn (string $l): bool => str_contains($l, 'MySQL query failed')
         ));
-        self::assertCount(6, $lines, "one line for each failure, none for the success:\n$all");
+        self::assertCount(7, $lines, "one line for each failure, none for the success:\n$all");
 
         $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
         self::assertMatchesRegularExpression(
@@ -104,6 +104,13 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             '~\[errno 1366\]: Incorrect integer value: \? (for column `[^\']*` )?at row 1 \| '
                 . preg_quote('INSERT INTO p202_mysqli_query_values (k, n) VALUES (?, ?)', '~') . '$~',
             $lines[5],
+            $all
+        );
+        // The value read as a column name: the message would name it.
+        self::assertMatchesRegularExpression(
+            '~\[errno 1054\]: Unknown column \? \| '
+                . preg_quote('SELECT k FROM p202_mysqli_query_values WHERE k = ?', '~') . '$~',
+            $lines[6],
             $all
         );
         self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");

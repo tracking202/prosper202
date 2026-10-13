@@ -262,8 +262,10 @@ final class SchemaInstaller
     private function disableStrictMode(): void
     {
         $sql = "SET session sql_mode= ''";
+        // Logged and carried on, as PartitionInstaller does: a table the
+        // server's own mode refuses fails the install where it is created.
         if (_mysqli_query($this->connection, $sql) === false) {
-            $this->errors[] = 'Failed to clear sql_mode: ' . $this->connection->error;
+            error_log('SchemaInstaller: clearing sql_mode failed (logged by _mysqli_query()); the install goes on');
         }
     }
 
@@ -274,8 +276,13 @@ final class SchemaInstaller
     {
         // Set collation for IPv6 table
         $sql = "ALTER TABLE `202_ips_v6` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
+        // Logged and carried on: the table's CREATE declares the same, and it
+        // has no character column for a default to apply to.
         if (_mysqli_query($this->connection, $sql) === false) {
-            $this->errors[] = 'Failed to set the collation of 202_ips_v6: ' . $this->connection->error;
+            error_log(
+                'SchemaInstaller: setting the collation of 202_ips_v6 failed (logged by _mysqli_query()); '
+                . 'the install goes on'
+            );
         }
     }
 

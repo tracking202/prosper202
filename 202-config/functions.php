@@ -120,10 +120,11 @@ function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): vo
  */
 function p202FailedQueryMessage(int $errno, string $message): string
 {
-    // Unknown, duplicate or ambiguous database, table, column or key; a
-    // column refused a null, a default, a long or a truncated value; a
-    // foreign key.
-    $namesOnly = [1048, 1049, 1050, 1051, 1052, 1054, 1060, 1061, 1091, 1146, 1265, 1364, 1406, 1451, 1452];
+    // Unknown or duplicate database, table, column or key, an ambiguous
+    // column; a column refused a null, a default, a long or a truncated value;
+    // a foreign key. Not 1054 (unknown column): under ANSI_QUOTES a
+    // double-quoted value is read as a column, and its message repeats it.
+    $namesOnly = [1048, 1049, 1050, 1051, 1052, 1060, 1061, 1091, 1146, 1265, 1364, 1406, 1451, 1452];
     if (in_array($errno, $namesOnly, true)) {
         return $message;
     }

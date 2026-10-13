@@ -61,3 +61,7 @@ echo 'duplicate ', $answer(_mysqli_query($db, $duplicate));
 $setup("SET SESSION sql_mode = 'STRICT_ALL_TABLES'");
 $refused = "INSERT INTO p202_mysqli_query_values (k, n) VALUES ('x', 'O\\'Brien s3cr3t-int')";
 echo 'refused ', $answer(_mysqli_query($db, $refused));
+// Under ANSI_QUOTES a double-quoted value is a column name to the server.
+$setup("SET SESSION sql_mode = 'ANSI_QUOTES'");
+$ansi = 'SELECT k FROM p202_mysqli_query_values WHERE k = "s3cr3t-ansi"';
+echo 'ansi ', $answer(_mysqli_query($db, $ansi));
