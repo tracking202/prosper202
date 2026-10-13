@@ -136,7 +136,14 @@ function p202FailedQueryMessage(int $errno, string $message): string
         return 'Duplicate entry ? for key ' . $m[1];
     }
 
-    return (string) preg_replace('/[\'"].*[\'"]|[\'"].*\z/s', '?', $message);
+    // From the first quote to the last, or to the end when there is one.
+    $first = strcspn($message, '\'"');
+    if ($first === strlen($message)) {
+        return $message;
+    }
+    $last = max((int) strrpos($message, "'"), (int) strrpos($message, '"'));
+
+    return substr($message, 0, $first) . '?' . ($last > $first ? substr($message, $last + 1) : '');
 }
 
 function salt_user_pass($user_pass): string

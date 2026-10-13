@@ -30,16 +30,28 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
     /** Files whose calls resolve to connect2.php's _mysqli_query(), which ends the request on a failure. */
     private const ENDS_THE_REQUEST = ['202-config/connect2.php'];
 
-    /** @var array<string, string> file::function => why a failure there may go unanswered */
+    /**
+     * file::function => [the calls it discards, why a failure there may go
+     * unanswered]. The count is held exactly: a call added beside the one
+     * weighed is not the one whose failure was weighed.
+     *
+     * @var array<string, array{int, string}>
+     */
     private const TOLERATED = [
-        '202-config/functions-auth.php::is_valid_api_key' =>
+        '202-config/functions-auth.php::is_valid_api_key' => [
+            1,
             'Copies the licence key read for the account into the session user\'s row; a failure leaves that row'
             . ' as it was and the next check reads the key where it was found.',
-        '202-config/functions-auth.php::delete_old_auth_hash' =>
+        ],
+        '202-config/functions-auth.php::delete_old_auth_hash' => [
+            1,
             'Housekeeping: the remember-me read refuses an expired key whether or not it was deleted.',
-        '202-config/functions-tracking202.php::createPublisherIds' =>
+        ],
+        '202-config/functions-tracking202.php::createPublisherIds' => [
+            1,
             'Run by the installer and by the 1.9.47 upgrade rung, which is frozen (CLAUDE.md #33): a user left'
             . ' without a publisher id is filled by the next run.',
+        ],
     ];
 
     /** @return array<string, list<string>> file => "line (function)" of each discarded call */
@@ -50,12 +62,21 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
             if (in_array($path, self::ENDS_THE_REQUEST, true)) {
                 continue;
             }
+            $tolerated = [];
             foreach (SourceScan::uncheckedCallStatements($source, [], ['_mysqli_query']) as $line) {
                 $function = self::functionAt($source, $line);
                 if (isset(self::TOLERATED[$path . '::' . $function])) {
+                    $tolerated[$function][] = $line;
                     continue;
                 }
                 $found[$path][] = "$line ($function)";
+            }
+            foreach ($tolerated as $function => $lines) {
+                $listed = self::TOLERATED[$path . '::' . $function][0];
+                if (count($lines) > $listed) {
+                    $found[$path][] = implode(', ', $lines) . " ($function: " . count($lines)
+                        . " discarded, TOLERATED weighs $listed)";
+                }
             }
         }
 
@@ -127,17 +148,17 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
     public function testEveryToleratedCallIsStillThere(): void
     {
         $files = SourceScan::phpFiles();
-        foreach (self::TOLERATED as $id => $why) {
+        foreach (self::TOLERATED as $id => [$count, $why]) {
             [$file, $function] = explode('::', $id);
             $this->assertArrayHasKey($file, $files, "TOLERATED lists $id, whose file is gone");
             $lines = array_filter(
                 SourceScan::uncheckedCallStatements($files[$file], [], ['_mysqli_query']),
                 static fn (int $line): bool => self::functionAt($files[$file], $line) === $function
             );
-            $this->assertNotSame(
-                [],
+            $this->assertCount(
+                $count,
                 $lines,
-                "TOLERATED lists $id ($why), which no longer discards a _mysqli_query(): remove it"
+                "TOLERATED weighs $count discarded _mysqli_query() in $id ($why): remove it, or set the count"
             );
         }
     }
