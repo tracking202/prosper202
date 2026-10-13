@@ -1,0 +1,88 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Config;
+
+use PHPUnit\Framework\TestCase;
+
+/**
+ * The admin pages' _mysqli_query() logs a statement that fails, naming its
+ * caller, and still answers false.
+ *
+ * It answered false and said nothing, and most of its callers read false as
+ * "no rows" or never look: a failed write on those pages left no trace. The
+ * line carries the statement with its quoted values taken out, because some
+ * of these statements carry a secret (the remember-me keys, the licence key).
+ *
+ * Run in a child process; see fixtures/mysqli-query-runner.php.
+ *
+ * @group integration
+ */
+final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        $host = getenv('P202_TEST_DB_HOST');
+        if ($host === false || $host === '') {
+            self::markTestSkipped('No test database configured (set P202_TEST_DB_HOST).');
+        }
+    }
+
+    public function testAFailedStatementIsLoggedWithItsCallerAndWithoutItsValues(): void
+    {
+        $log = tempnam(sys_get_temp_dir(), 'p202-mq-');
+        self::assertIsString($log);
+        try {
+            $proc = proc_open(
+                [
+                    PHP_BINARY, '-d', 'log_errors=1', '-d', 'error_log=' . $log, '-d', 'display_errors=stderr',
+                    __DIR__ . '/fixtures/mysqli-query-runner.php',
+                ],
+                [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes
+            );
+            self::assertIsResource($proc);
+            $stdout = (string) stream_get_contents($pipes[1]);
+            $stderr = (string) stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $exit = proc_close($proc);
+            $logged = (string) file_get_contents($log);
+        } finally {
+            @unlink($log);
+        }
+        $all = "exit $exit\n$stdout$stderr$logged";
+        self::assertSame(0, $exit, $all);
+
+        // Still false to the caller, and true for a statement that worked.
+        self::assertStringContainsString("secret FALSE\nescaped FALSE\nsuccess OK\n", $stdout, $all);
+        self::assertStringContainsString("caller FALSE\n", $stdout, $all);
+
+        $lines = array_values(array_filter(
+            explode("\n", $logged),
+            static fn (string $l): bool => str_contains($l, 'MySQL query failed')
+        ));
+        self::assertCount(3, $lines, "one line for each failure, none for the success:\n$all");
+
+        $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
+        self::assertMatchesRegularExpression(
+            '~MySQL query failed at ' . preg_quote((string) $runner, '~') . ':\d+ \[errno 1146\]: '
+                . 'Table \S+p202_no_such_table_for_mysqli_query\S* doesn\'t exist \| '
+                . preg_quote('UPDATE p202_no_such_table_for_mysqli_query SET secret_key = ? WHERE user_id = ?', '~')
+                . '$~',
+            $lines[0],
+            $all
+        );
+        self::assertStringEndsWith(
+            '| SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ? AND x = ?',
+            $lines[1],
+            $all
+        );
+        self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");
+
+        // The caller's own line: the one-argument form, through the global connection.
+        self::assertSame(1, preg_match('/^line (\d+)$/m', $stdout, $m), $all);
+        self::assertStringContainsString(':' . $m[1] . ' [errno 1146]', $lines[2], $all);
+    }
+}

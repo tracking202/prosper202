@@ -64,23 +64,47 @@ function _die($message): never
  */
 function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
-	// Support both calling conventions:
-	//   _mysqli_query($sql)         — 1 arg, uses global $db
-	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
-	if ($sql === null) {
-		$sql = $db_or_sql;
-		global $db;
-	} else {
-		$db = $db_or_sql;
-	}
+    // Support both calling conventions:
+    //   _mysqli_query($sql)         — 1 arg, uses global $db
+    //   _mysqli_query($db, $sql)    — 2 args, uses provided $db
+    if ($sql === null) {
+        $sql = $db_or_sql;
+        global $db;
+    } else {
+        $db = $db_or_sql;
+    }
 
-	if ($db instanceof \mysqli) {
-		$result = @$db->query($sql);
-	} else {
-		$connection = $db->getConnection();
-		$result = @$connection->query($sql);
-	}
-	return $result;
+    $connection = $db instanceof \mysqli ? $db : $db->getConnection();
+    $result = $connection->query($sql);
+    if ($result === false) {
+        p202LogFailedQuery($connection, (string) $sql, debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0] ?? []);
+    }
+    return $result;
+}
+
+/**
+ * Log a statement _mysqli_query() ran that failed. It answers false, which
+ * most of its callers read as "no rows" or never look at, so this line is
+ * where the failure shows.
+ *
+ * The statement is logged with its quoted values taken out: the line names
+ * the caller and the table, and some of these statements carry a secret
+ * (the remember-me keys, the licence key).
+ *
+ * @param array{file?: string, line?: int} $caller
+ */
+function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
+{
+    $shape = (string) preg_replace('/\'(?:[^\'\\\\]|\\\\.)*\'|"(?:[^"\\\\]|\\\\.)*"/s', '?', $sql);
+    $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
+    error_log(sprintf(
+        'MySQL query failed at %s:%d [errno %d]: %s | %s',
+        $caller['file'] ?? '?',
+        $caller['line'] ?? 0,
+        $connection->errno,
+        $connection->error,
+        mb_strimwidth($shape, 0, 500, '…')
+    ));
 }
 
 function salt_user_pass($user_pass): string
