@@ -95,14 +95,20 @@ function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
  */
 function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
 {
-    $shape = (string) preg_replace('/\'(?:[^\'\\\\]|\\\\.)*\'|"(?:[^"\\\\]|\\\\.)*"/s', '?', $sql);
+    // A quote left open (a malformed statement) is taken out to the end.
+    $shape = (string) preg_replace('/\'(?:[^\'\\\\]|\\\\.)*(?:\'|\z)|"(?:[^"\\\\]|\\\\.)*(?:"|\z)/s', '?', $sql);
     $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
+    // A syntax error quotes the statement from where parsing stopped, values
+    // and all; any other error is logged as MySQL wrote it.
+    $error = $connection->errno === 1064
+        ? (string) preg_replace("/ near '.*' at line (\\d+)\\z/s", ' near … at line $1', $connection->error)
+        : $connection->error;
     error_log(sprintf(
         'MySQL query failed at %s:%d [errno %d]: %s | %s',
         $caller['file'] ?? '?',
         $caller['line'] ?? 0,
         $connection->errno,
-        $connection->error,
+        $error,
         mb_strimwidth($shape, 0, 500, '…')
     ));
 }

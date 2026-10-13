@@ -39,6 +39,8 @@ $escaped = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = 'O\\'
     . ' AND x = "a\\"b s3cr3t-esc2"';
 echo 'secret ', $answer(_mysqli_query($db, $secret));
 echo 'escaped ', $answer(_mysqli_query($escaped));
+$unclosed = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = 's3cr3t-open";
+echo 'unclosed ', $answer(_mysqli_query($db, $unclosed));
 echo 'success ', $answer(_mysqli_query($db, 'SELECT 1'));
 echo 'line ', __LINE__ + 1, "\n";
 echo 'caller ', $answer(_mysqli_query('SELECT * FROM p202_no_such_table_for_mysqli_query'));

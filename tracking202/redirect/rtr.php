@@ -747,8 +747,13 @@ $rtrClick->clickOut = (int) $mysql['click_out'];
 $rtrClick->clickRefererSiteUrlId = (int) $mysql['click_referer_site_url_id'];
 $rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
+// The site URL lookup inside the transaction caches the ids it inserts:
+// held until the rows commit.
+p202HoldCacheWrites();
 try {
-	(new \Prosper202\Click\RotatorClickWriter(\Prosper202\Repository\LookupRepositoryFactory::connection($db)))->write(
+	// Its own Connection on $db: the closure below reads back through $db,
+	// and only a transaction on that same handle shows it the new rows.
+	(new \Prosper202\Click\RotatorClickWriter(new \Prosper202\Database\Connection($db)))->write(
 		$rtrClick,
 		(int) $mysql['rotator_id'],
 		(int) $mysql['rule_id'],
@@ -762,8 +767,10 @@ try {
 		}
 	);
 } catch (\Throwable $rtrWriteError) {
+	p202ReleaseCacheWrites(false);
 	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'] . ': ' . $rtrWriteError->getMessage());
 }
+p202ReleaseCacheWrites(true);
 
 	if ($rule['aff_campaign_id'] != null) {
 		//set the cookie

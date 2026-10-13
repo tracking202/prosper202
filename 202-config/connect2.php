@@ -70,6 +70,11 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    // Held while a transaction is open; see p202HoldCacheWrites().
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
+        return true;
+    }
     // Default expiration time if not provided
     if ($exp === null) {
         $exp = 2592000; // 30 days in seconds
@@ -80,6 +85,32 @@ function setCache($key, $value, $exp = null)
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
+    }
+}
+
+/**
+ * Hold the cache writes made from here on until p202ReleaseCacheWrites().
+ *
+ * The lookups that run inside a click's transaction cache the id of a row
+ * they insert at once (INDEXES::get_site_url_id(), 7 days; its domain, 30),
+ * so a rollback after them left an entry naming no row, and every click to
+ * that URL stored the dangling id until it expired. Held, an entry is
+ * written only once its row is committed, and never when it is not.
+ */
+function p202HoldCacheWrites(): void
+{
+    $GLOBALS['p202HeldCacheWrites'] = [];
+}
+
+/** Write the held entries ($committed) or drop them, and stop holding. */
+function p202ReleaseCacheWrites(bool $committed): void
+{
+    $held = $GLOBALS['p202HeldCacheWrites'] ?? null;
+    $GLOBALS['p202HeldCacheWrites'] = null;
+    if ($committed && is_array($held)) {
+        foreach ($held as [$key, $value, $exp]) {
+            setCache($key, $value, $exp);
+        }
     }
 }
 
