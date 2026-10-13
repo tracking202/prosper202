@@ -95,9 +95,13 @@ function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
  */
 function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
 {
-    // A quote left open (a malformed statement) is taken out to the end.
-    $shape = (string) preg_replace('/\'(?:[^\'\\\\]|\\\\.)*(?:\'|\z)|"(?:[^"\\\\]|\\\\.)*(?:"|\z)/s', '?', $sql);
-    $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
+    // A quote left open (a malformed statement, a value ending in a
+    // backslash) is taken out to the end. Possessive, so a long value is not
+    // backtracked through: PCRE gives up past about 20,000 characters.
+    $shape = preg_replace('/\'(?:[^\'\\\\]++|\\\\.?)*+(?:\'|\z)|"(?:[^"\\\\]++|\\\\.?)*+(?:"|\z)/s', '?', $sql);
+    $shape = $shape === null
+        ? '(a statement of ' . strlen($sql) . ' bytes, not shown: ' . preg_last_error_msg() . ')'
+        : trim((string) preg_replace('/\s+/', ' ', $shape));
     error_log(sprintf(
         'MySQL query failed at %s:%d [errno %d]: %s | %s',
         $caller['file'] ?? '?',

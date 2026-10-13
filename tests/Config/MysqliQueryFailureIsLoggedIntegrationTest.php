@@ -57,13 +57,17 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
 
         // Still false to the caller, and true for a statement that worked.
         self::assertStringContainsString("secret FALSE\nescaped FALSE\nunclosed FALSE\nsuccess OK\n", $stdout, $all);
-        self::assertStringContainsString("caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\n", $stdout, $all);
+        self::assertStringContainsString(
+            "caller FALSE\nduplicate FALSE\nrefused FALSE\nansi FALSE\nlong FALSE\nbackslash FALSE\n",
+            $stdout,
+            $all
+        );
 
         $lines = array_values(array_filter(
             explode("\n", $logged),
             static fn (string $l): bool => str_contains($l, 'MySQL query failed')
         ));
-        self::assertCount(7, $lines, "one line for each failure, none for the success:\n$all");
+        self::assertCount(9, $lines, "one line for each failure, none for the success:\n$all");
 
         $runner = realpath(__DIR__ . '/fixtures/mysqli-query-runner.php');
         self::assertMatchesRegularExpression(
@@ -111,6 +115,19 @@ final class MysqliQueryFailureIsLoggedIntegrationTest extends TestCase
             '~\[errno 1054\]: Unknown column \? \| '
                 . preg_quote('SELECT k FROM p202_mysqli_query_values WHERE k = ?', '~') . '$~',
             $lines[6],
+            $all
+        );
+        // A 200,000-character value is taken out like any other, and a value
+        // left open that ends in a backslash with the rest of the statement.
+        self::assertStringEndsWith(
+            '| UPDATE p202_no_such_table_for_mysqli_query SET v = ? WHERE secret_key = ?',
+            $lines[7],
+            $all
+        );
+        self::assertMatchesRegularExpression(
+            '~\[errno 1064\]: .* \| '
+                . preg_quote('SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = ?', '~') . '$~',
+            $lines[8],
             $all
         );
         self::assertStringNotContainsString('s3cr3t', $logged, "a quoted value reached the log:\n$all");

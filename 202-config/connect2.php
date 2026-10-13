@@ -112,8 +112,14 @@ function p202WithHeldCacheWrites(callable $work): void
     }
     $held = $GLOBALS['p202HeldCacheWrites'];
     $GLOBALS['p202HeldCacheWrites'] = null;
+    // The work is done (its transaction committed): a cache write that fails
+    // now costs a miss, and must not read as the work failing.
     foreach ($held as [$key, $value, $exp]) {
-        setCache($key, $value, $exp);
+        try {
+            setCache($key, $value, $exp);
+        } catch (\Throwable $e) {
+            error_log('A held cache write failed after the work was done: ' . $e->getMessage());
+        }
     }
 }
 

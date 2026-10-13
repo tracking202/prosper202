@@ -65,3 +65,11 @@ echo 'refused ', $answer(_mysqli_query($db, $refused));
 $setup("SET SESSION sql_mode = 'ANSI_QUOTES'");
 $ansi = 'SELECT k FROM p202_mysqli_query_values WHERE k = "s3cr3t-ansi"';
 echo 'ansi ', $answer(_mysqli_query($db, $ansi));
+$setup("SET SESSION sql_mode = ''");
+// A value long enough that a backtracking pattern gives up on it.
+$long = "UPDATE p202_no_such_table_for_mysqli_query SET v = '" . str_repeat('a', 200000) . "'"
+    . " WHERE secret_key = 's3cr3t-long'";
+echo 'long ', $answer(_mysqli_query($db, $long));
+// A quote left open whose value ends in a backslash.
+$backslash = "SELECT 1 FROM p202_no_such_table_for_mysqli_query WHERE name = 's3cr3t-bs\\";
+echo 'backslash ', $answer(_mysqli_query($db, $backslash));

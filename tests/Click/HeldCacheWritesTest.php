@@ -47,6 +47,9 @@ final class HeldCacheWritesTest extends TestCase
         $GLOBALS['memcache'] = new class {
             public function set(string $key, mixed $value, mixed $exp): bool
             {
+                if ($key === 'unreachable') {
+                    throw new \RuntimeException('the cache is unreachable');
+                }
                 HeldCacheWritesTest::$written[] = [$key, $value, $exp];
 
                 return true;
@@ -96,6 +99,30 @@ final class HeldCacheWritesTest extends TestCase
         self::assertSame([], self::$written);
         \p202HeldTest_setCache('url-id-b', 76, 604800);
         self::assertSame([['url-id-b', 76, 604800]], self::$written, 'holding stops with the failure');
+    }
+
+    public function testACacheWriteThatFailsOnceTheWorkIsDoneIsLoggedAndTheRestWritten(): void
+    {
+        $log = tempnam(sys_get_temp_dir(), 'p202-held-');
+        self::assertIsString($log);
+        $previous = ini_set('error_log', $log);
+        try {
+            \p202HeldTest_withHeld(static function (): void {
+                \p202HeldTest_setCache('unreachable', 1, 604800);
+                \p202HeldTest_setCache('url-id-a', 77, 604800);
+            });
+            $logged = (string) file_get_contents($log);
+        } finally {
+            ini_set('error_log', (string) $previous);
+            @unlink($log);
+        }
+
+        // The work is done: the failure is the cache's, not the work's.
+        self::assertSame([['url-id-a', 77, 604800]], self::$written);
+        self::assertStringContainsString(
+            'A held cache write failed after the work was done: the cache is unreachable',
+            $logged
+        );
     }
 
     public function testTheDefaultExpiryIsAppliedWhenAHeldWriteIsReleased(): void
