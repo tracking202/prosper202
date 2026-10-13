@@ -491,6 +491,45 @@ p202 config unset-default report.period
 p202 config set-default output.format table   # json, table, ndjson or csv
 ```
 
+## MCP Server (AI Assistants)
+
+`p202 mcp` serves the CLI to AI apps over the Model Context Protocol, on
+stdin/stdout. The app starts it and calls its tools; each tool is one CLI
+command, with an input schema made from the command's flags and a read-only or
+destructive hint, so the app runs reads and asks before writes.
+
+```bash
+claude mcp add prosper202 -- p202 mcp --read-only    # reads only (start here)
+claude mcp add prosper202 -- p202 --staged mcp       # writes become proposals
+claude mcp add prosper202 -- p202 mcp                # reads and writes
+```
+
+Claude Desktop and Cursor take the same command in their MCP settings:
+
+```json
+{"mcpServers": {"prosper202": {"command": "/path/to/p202", "args": ["mcp", "--read-only"]}}}
+```
+
+- The server keeps the profile that was active when it started (or `--profile`).
+- A write tool runs with `--force` once the app's approval prompt is answered,
+  so do not set the app to always allow the delete tools; deleting a tracker
+  stops its links. Each delete tool takes `dry_run: true` for a preview.
+- With `--staged`, a write returns a change id and changes nothing; you apply
+  it with `p202 change apply <id>`. The assistant is not offered the apply and
+  discard tools.
+- `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
+  '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).
+- An error comes back as the same JSON envelope as below, naming CLI flags
+  (`--aff-campaign-id`); the tool argument is the same name in snake_case.
+
+For claude.ai and other hosted AI apps, Tracking202 runs an MCP server at
+`https://mcp.tracking202.com/mcp`. You add that address as a connector, then
+sign in and approve the connection on your own install (Prosper202 1.9.78 or
+later, on https), choosing read only, propose changes, or read and change. The
+connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
+Account › API keys; remove it there to disconnect. It needs a ClickServer Pro
+licence.
+
 ## Errors
 
 Every failure is reported on **stderr** with a category, the message, and,

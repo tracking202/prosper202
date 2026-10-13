@@ -1208,16 +1208,49 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
 
 ## Tool-use schema hints
 
-If you are defining this CLI as a tool for an LLM, here are recommendations:
+### MCP: use `p202 mcp`
+
+An AI app that speaks MCP (Claude Desktop, Claude Code, Cursor, ...) needs no
+hand-written tool: `p202 mcp` is an MCP server on stdin/stdout whose tools are
+the CLI's commands, one tool per command, each with an input schema generated
+from the command's flags and MCP's read-only/destructive hints, so the app asks
+before a write.
+
+```
+claude mcp add prosper202 -- p202 mcp --read-only    # reads only
+claude mcp add prosper202 -- p202 --staged mcp       # writes become proposals
+claude mcp add prosper202 -- p202 mcp                # reads and writes
+```
+
+- The server uses the profile active when it starts (or `--profile`); every
+  tool call runs one `p202 mcp call <tool>` with the server's `--profile`,
+  `--staged` and `--read-only`, which the model's arguments cannot change.
+- A write tool (deletes included) runs with `--force`: the app's approval of
+  the tool call is the confirmation. Do not set the app to always allow the
+  delete tools; a delete tool's description tells the model to preview with
+  `dry_run: true` first.
+- With `--staged`, `change_apply` and `change_discard` are not offered: the
+  person applies a proposal (`p202 change apply <id>`), not the assistant.
+- `p202 mcp tools` prints the tool list as JSON; `p202 mcp call <tool> --input
+  '<json>'` runs one tool as the app would.
+- For claude.ai and other hosted apps there is Tracking202's hosted MCP server
+  (`https://mcp.tracking202.com/mcp`): the person approves the connection on
+  their own install, signed in as their own user, and chooses read only,
+  propose changes, or read and change. It needs Prosper202 1.9.78 on https.
+
+If you are defining this CLI as a tool for an LLM some other way, here are
+recommendations:
 
 ### Minimum tool definition
 
-A single "execute p202 command" tool is sufficient. The LLM constructs the full command string.
+A single "execute p202 command" tool works, but the host cannot tell a read
+from a delete, so it asks before every call or before none. Prefer the split
+below, or `p202 mcp`.
 
 ```json
 {
   "name": "p202",
-  "description": "Execute a Prosper202 CLI command. Always include --json for parseable output and --force for delete operations.",
+  "description": "Execute a Prosper202 CLI command. Always include --json for parseable output. A delete or other confirmed write needs --force (there is no terminal to answer its question); preview it with --dry-run first.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -1233,13 +1266,14 @@ A single "execute p202 command" tool is sufficient. The LLM constructs the full 
 
 ### Granular tool definitions
 
-For tighter control, define separate tools per operation category:
+For tighter control, define separate tools per operation category, so the
+host can let reads run and ask before writes:
 
 - `p202_list` -- List any resource type
 - `p202_get` -- Get a single resource by ID
 - `p202_create` -- Create a resource with fields
 - `p202_update` -- Update a resource
-- `p202_delete` -- Delete a resource (always include --force)
+- `p202_delete` -- Delete a resource: mark it destructive so the host asks every time; it runs with --force once approved, after a --dry-run preview
 - `p202_report` -- Generate reports
 - `p202_forecast` -- Forecast a metric or all core metrics (read-only)
 - `p202_system` -- System diagnostics
