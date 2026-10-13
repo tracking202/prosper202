@@ -123,7 +123,7 @@ var appInstallGetCmd = &cobra.Command{
 		}
 		if !installUUID.MatchString(args[1]) {
 			return validationError("the install id must be the install_uuid the SDK reported (a lower-case UUID), got %q", args[1]).
-				WithHint("`p202 app install list " + args[0] + "` shows each install's install_uuid.")
+				WithHint("%s", "`p202 app install list "+args[0]+"` shows each install's install_uuid.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -199,7 +199,7 @@ var appInstallSimulateCmd = &cobra.Command{
 		uuid, _ := cmd.Flags().GetString("install-uuid")
 		if uuid != "" && !installUUID.MatchString(uuid) {
 			return validationError("--install-uuid must be a lower-case UUID (8-4-4-4-12 hexadecimal digits), got %q", uuid).
-				WithHint("Leave it out to mint a new one, or reuse one from `p202 app install list " + args[0] + "`.")
+				WithHint("%s", "Leave it out to mint a new one, or reuse one from `p202 app install list "+args[0]+"`.")
 		}
 		delay, _ := cmd.Flags().GetInt("delay")
 		if delay < 0 || delay > 3600 {
@@ -256,7 +256,7 @@ var appInstallSimulateCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(tokenData, &tok); err != nil || tok.Data.Referrer == "" {
 			return withHint(fmt.Errorf("reading the install token for click %s: unexpected response", click),
-				"`p202 app install token "+args[0]+" --click "+click+"` shows what the server answered.")
+				"%s", "`p202 app install token "+args[0]+" --click "+click+"` shows what the server answered.")
 		}
 		t := tok.Data.ClickTime
 		body := map[string]interface{}{

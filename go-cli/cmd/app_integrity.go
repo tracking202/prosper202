@@ -114,7 +114,7 @@ var appIntegrityCredentialSetCmd = &cobra.Command{
 		// here too rather than send it.
 		if api.StagedMode() {
 			return validationError("--staged cannot apply to `app integrity credential set`: the body is a private key, which a staged change would store and show to reviewers").
-				WithHint("Run it without --staged; `p202 app integrity status " + args[0] + "` shows the result.")
+				WithHint("%s", "Run it without --staged; `p202 app integrity status "+args[0]+"` shows the result.")
 		}
 		file, _ := cmd.Flags().GetString("file")
 		key, err := readCredentialFile(file)
@@ -167,7 +167,7 @@ var appIntegrityCredentialClearCmd = &cobra.Command{
 			if errors.As(err, &apiErr) && apiErr.Status == 409 {
 				// Two refusals share the status; the message says which. The
 				// hint covers both so an agent never has to parse it.
-				return withHint(err, "If the mode is observe or require, switch Play Integrity off first (`p202 app update "+args[0]+" --integrity-mode off`). "+
+				return withHint(err, "%s", "If the mode is observe or require, switch Play Integrity off first (`p202 app update "+args[0]+" --integrity-mode off`). "+
 					"If installs are still waiting for a verdict, leave the credential until the worker has settled them (each within 24 hours of arriving; "+
 					"`p202 app integrity status "+args[0]+"` shows installs.by_integrity_state.pending). Or rotate it with `p202 app integrity credential set "+args[0]+" --file <key.json>`.")
 			}

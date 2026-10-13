@@ -107,6 +107,33 @@ func (e *RequestError) Error() string {
 	return fmt.Sprintf("%s error (%s): %v", e.Kind, e.Op, e.Err)
 }
 
+// checkAPIPath refuses a request path that would address something other
+// than what its command built. Commands join literal segments with ids the
+// caller typed (or an AI tool call passed on), so an id holding "?", "#",
+// a backslash, an empty, "." or ".." segment, or a space or control
+// character would move the request to another endpoint or add a query
+// (`change discard chg_1/apply?` applied the change). Ids are numbers, or
+// tokens such as chg_...; none needs any of these. A segment a command
+// percent-escaped itself (url.PathEscape) passes as it is.
+func checkAPIPath(path string) error {
+	trimmed := strings.TrimLeft(path, "/")
+	bad := trimmed == "" || strings.ContainsAny(trimmed, "?#\\")
+	for _, r := range trimmed {
+		if r <= ' ' || r == 0x7f {
+			bad = true
+		}
+	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			bad = true
+		}
+	}
+	if bad {
+		return &RequestError{Kind: "validation", Op: "build_path", Err: fmt.Errorf("%q is not an address this command makes: an id cannot contain /, ?, #, a backslash, a space, or be . or ..; ids are the numbers (or chg_... tokens) the list commands show", path)}
+	}
+	return nil
+}
+
 func (e *RequestError) Unwrap() error {
 	return e.Err
 }
@@ -632,6 +659,9 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 
 // doWith is doLimited through a given HTTP client (PostUpdate's waits longer).
 func (c *Client) doWith(httpClient *http.Client, method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
+	if err := checkAPIPath(path); err != nil {
+		return nil, err
+	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()

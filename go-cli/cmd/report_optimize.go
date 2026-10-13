@@ -621,7 +621,7 @@ func firstTouchOverride(c *api.Client, cmd *cobra.Command) (overrideModel, error
 	}
 	if st := fmt.Sprint(resp.Data["status"]); st != "active" {
 		return overrideModel{}, validationError("--first-touch-model %s is %s; the check needs an active first_touch model", id, st).
-			WithHint("Activate it with `p202 attribution model update " + id + " --status active`, or omit the flag to use the first active First touch model.")
+			WithHint("%s", "Activate it with `p202 attribution model update "+id+" --status active`, or omit the flag to use the first active First touch model.")
 	}
 	return overrideModel{id: id, name: fmt.Sprint(resp.Data["model_name"]), pending: resp.Data["recompute_pending"] == true}, nil
 }

@@ -46,6 +46,9 @@ var rootCmd = &cobra.Command{
 		activeCommandPath = cmd.CommandPath()
 		configpkg.SetActiveOverride(profileName)
 		api.SetStagedMode(stagedWrites)
+		if cmd == mcpCmd || cmd.Parent() == mcpCmd {
+			mcpToolRun = true
+		}
 		if err := resolveOutputMode(parsedOutputFlags()); err != nil {
 			return err
 		}
@@ -82,7 +85,10 @@ const outputHelp = "\n\nOutput: tables for people. When an AI agent runs p202 (a
 
 func Execute() {
 	rootCmd.Long = rootLong + outputHelp + buildAliasHelp()
-	err := unknownSubcommandError(rootCmd, os.Args[1:])
+	err := hostedArgsRefusal(os.Args[1:])
+	if err == nil {
+		err = unknownSubcommandError(rootCmd, os.Args[1:])
+	}
 	if err == nil {
 		err = rootCmd.Execute()
 	}
@@ -276,5 +282,5 @@ func unansweredConfirmationError(cmd *cobra.Command, question string) error {
 		hint = capitalize(strings.Join(ways, "; ")) + "."
 	}
 	return validationError("%q needs a yes, and stdin ended before an answer (no terminal attached?); nothing was done", question).
-		WithHint(hint)
+		WithHint("%s", hint)
 }

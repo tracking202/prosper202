@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.22'   # matches go-cli/go.mod
+          go-version: '1.25'   # matches go-cli/go.mod
           cache-dependency-path: go-cli/go.sum
 
       - name: Check formatting
@@ -72,6 +72,19 @@ jobs:
       - name: go test
         run: go test ./... -count=1
 
+      # The same source built for js/wasm is the hosted MCP relay's engine
+      # (`p202 mcp call` per tool call, inside a Cloudflare Worker). Nobody
+      # builds it locally, so it rots unless CI does: vet it, run the tests
+      # that hold its entry check and tool mapping under Node, and build it.
+      - name: js/wasm vet, tests and build
+        run: |
+          GOOS=js GOARCH=wasm go vet ./...
+          GOOS=js GOARCH=wasm go test -count=1 \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run 'TestHostedRunTakesToolCallsOnly|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
+          GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/p202.wasm" .
+          ls -l "$RUNNER_TEMP/p202.wasm"
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
@@ -81,7 +94,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache-dependency-path: go-cli/go.sum
 
       # Configured in go-cli/.golangci.yml to report dropped errors
