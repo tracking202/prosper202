@@ -4,79 +4,63 @@ declare(strict_types=1);
 
 namespace Prosper202\Repository\Cached;
 
-use Closure;
+use Prosper202\Repository\Cache\CachedIds;
+use Prosper202\Repository\Cache\IdCache;
 use Prosper202\Repository\DeviceRepositoryInterface;
+use Prosper202\Repository\Mysql\MysqlDeviceRepository;
 
-final class CachedDeviceRepository implements DeviceRepositoryInterface
+/** Keys on the name as it is stored, as the location decorator does. */
+final readonly class CachedDeviceRepository implements DeviceRepositoryInterface
 {
-    private const TTL = 2592000;
+    private CachedIds $ids;
 
-    /**
-     * @param Closure(string): mixed $cacheGet  getCache($key)
-     * @param Closure(string, mixed, int): void $cacheSet  setCache($key, $value, $ttl)
-     */
     public function __construct(
         private DeviceRepositoryInterface $inner,
-        private Closure $cacheGet,
-        private Closure $cacheSet,
-        private string $systemHash,
+        IdCache $cache,
+        string $namespace,
     ) {
+        $this->ids = new CachedIds($cache, $namespace);
     }
 
+    #[\Override]
     public function findOrCreateBrowser(string $name): int
     {
         if ($name === '') {
             return 0;
         }
+        $name = MysqlDeviceRepository::storedName($name);
 
-        $key = md5('browser-id' . $name . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateBrowser($name);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'browser-id' . $name,
+            fn (): int => $this->inner->findOrCreateBrowser($name)
+        );
     }
 
+    #[\Override]
     public function findOrCreatePlatform(string $name): int
     {
         if ($name === '') {
             return 0;
         }
+        $name = MysqlDeviceRepository::storedName($name);
 
-        $key = md5('platform-id' . $name . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreatePlatform($name);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'platform-id' . $name,
+            fn (): int => $this->inner->findOrCreatePlatform($name)
+        );
     }
 
+    #[\Override]
     public function findOrCreateDevice(string $name): int
     {
         if ($name === '') {
             return 0;
         }
+        $name = MysqlDeviceRepository::storedName($name);
 
-        $key = md5('device-id' . $name . $this->systemHash);
-
-        $cached = ($this->cacheGet)($key);
-        if ($cached !== false) {
-            return (int) $cached;
-        }
-
-        $id = $this->inner->findOrCreateDevice($name);
-        ($this->cacheSet)($key, $id, self::TTL);
-
-        return $id;
+        return $this->ids->remember(
+            'device-id' . $name,
+            fn (): int => $this->inner->findOrCreateDevice($name)
+        );
     }
 }

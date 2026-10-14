@@ -22,18 +22,7 @@ final class DeviceRepositoryContractTest extends TestCase
 
     private static function buildCached(): CachedDeviceRepository
     {
-        $store = [];
-
-        return new CachedDeviceRepository(
-            new InMemoryDeviceRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store): void {
-                $store[$key] = $value;
-            },
-            'test-hash',
-        );
+        return new CachedDeviceRepository(new InMemoryDeviceRepository(), new ArrayIdCache(), 'test-hash');
     }
 
     /**

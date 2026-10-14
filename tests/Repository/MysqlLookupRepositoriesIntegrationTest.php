@@ -1,0 +1,645 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Repository;
+
+use InvalidArgumentException;
+use mysqli;
+use PHPUnit\Framework\TestCase;
+use Prosper202\Click\StoredAddressIds;
+use Prosper202\Database\Connection;
+use Prosper202\Database\SchemaInstaller;
+use Prosper202\Repository\Cache\MemcacheIdCache;
+use Prosper202\Repository\Cached\CachedLocationRepository;
+use Prosper202\Repository\Cached\CachedTrackingRepository;
+use Prosper202\Repository\LookupRepositoryFactory;
+use Prosper202\Repository\Mysql\MysqlDeviceRepository;
+use Prosper202\Repository\Mysql\MysqlLocationRepository;
+use Prosper202\Repository\Mysql\MysqlTrackingRepository;
+use RuntimeException;
+
+/**
+ * The click path's lookup tables, written and read by the repositories on a
+ * real server, under both session modes the click path runs in
+ * (connect2.php: '' by default, strict with P202_SQL_STRICT). Under the
+ * first a value past its column is cut by the server and an uncut lookup
+ * never finds it again; under the second it is refused.
+ *
+ * Skips unless a scratch database is configured (P202_TEST_DB_HOST,
+ * P202_TEST_DB_PORT, P202_TEST_DB_USER, P202_TEST_DB_PASS, P202_TEST_DB_NAME,
+ * whose name must read as a scratch one); it installs the schema there and
+ * empties the lookup tables before every test.
+ *
+ * @group integration
+ */
+final class MysqlLookupRepositoriesIntegrationTest extends TestCase
+{
+    private const STRICT = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+
+    /** tests/live/guard.sh's rule: the tables here are emptied. */
+    private const SCRATCH = '/(^|[_-])'
+        . '(test|tests|scratch|tmp|temp|ci|eval|evals|fixture|sandbox|w[0-9]+|probe|check)'
+        . '([_-]|$)/';
+
+    private const TABLES = [
+        '202_keywords', '202_tracking_c1', '202_tracking_c2', '202_tracking_c3', '202_tracking_c4',
+        '202_utm_source', '202_utm_medium', '202_utm_campaign', '202_utm_term', '202_utm_content',
+        '202_custom_variables', '202_variable_sets', '202_variable_sets2',
+        '202_locations_country', '202_locations_city', '202_locations_region', '202_locations_isp',
+        '202_ips', '202_ips_v6', '202_site_domains', '202_site_urls',
+        '202_browsers', '202_platforms', '202_device_models',
+    ];
+
+    /** Every character a hand-built statement had to escape. */
+    private const AWKWARD = "it's \"quoted\", back\\slashed, \\' \0 NUL and a\nnewline";
+
+    /** The same characters, short enough for a 50-character column. */
+    private const AWKWARD_NAME = "it's \"q\", back\\slash \\' \0 NUL\nnewline";
+
+    private static ?mysqli $db = null;
+    private static ?Connection $conn = null;
+    private static bool $installed = false;
+
+    public static function tearDownAfterClass(): void
+    {
+        self::$db?->close();
+        self::$db = null;
+        self::$conn = null;
+    }
+
+    protected function setUp(): void
+    {
+        $host = getenv('P202_TEST_DB_HOST');
+        if ($host === false || $host === '') {
+            self::markTestSkipped('No scratch database configured (P202_TEST_DB_HOST).');
+        }
+        $name = (string) getenv('P202_TEST_DB_NAME');
+        if (preg_match(self::SCRATCH, $name) !== 1) {
+            self::fail('Refusing to empty the lookup tables of "' . $name . '": P202_TEST_DB_NAME must name'
+                . ' a scratch database (a name with test, scratch, tmp, ci, … as a word).');
+        }
+        if (self::$db === null) {
+            if (!function_exists('_mysqli_query')) {
+                eval('function _mysqli_query($dbOrSql, $sql = null) '
+                    . '{ return $sql === null ? null : $dbOrSql->query($sql); }');
+            }
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $db = mysqli_connect(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                $name,
+                (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+            );
+            self::assertInstanceOf(mysqli::class, $db);
+            self::$db = $db;
+            self::$conn = new Connection($db);
+        }
+        if (!self::$installed) {
+            self::q("SET SESSION sql_mode = ''");
+            (new SchemaInstaller(self::db()))->install();
+            self::$installed = true;
+        }
+        foreach (self::TABLES as $table) {
+            self::q('TRUNCATE TABLE ' . $table);
+        }
+        LookupRepositoryFactory::reset();
+    }
+
+    /** @return array<string, array{string}> */
+    public static function modes(): array
+    {
+        return ['permissive' => [''], 'strict' => [self::STRICT]];
+    }
+
+    // ── Tracking ────────────────────────────────────────────────────
+
+    /** @dataProvider modes */
+    public function testAKeywordIsStoredAsSentAndFoundAgain(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        $id = $repo->findOrCreateKeyword(self::AWKWARD);
+        self::assertGreaterThan(0, $id);
+        self::assertSame($id, $repo->findOrCreateKeyword(self::AWKWARD));
+        self::assertSame(self::AWKWARD, self::value('SELECT keyword FROM 202_keywords WHERE keyword_id = ' . $id));
+
+        $long = str_repeat('é', 200);
+        $longId = $repo->findOrCreateKeyword($long);
+        self::assertSame($longId, $repo->findOrCreateKeyword($long), 'a keyword past 150 characters is found again');
+        self::assertSame($longId, $repo->findOrCreateKeyword(str_repeat('é', 150)));
+        self::assertSame(
+            str_repeat('é', 150),
+            self::value('SELECT keyword FROM 202_keywords WHERE keyword_id = ' . $longId)
+        );
+
+        self::assertSame(0, $repo->findOrCreateKeyword(''), 'no keyword is no row');
+        self::assertSame(2, self::rowsIn('202_keywords'));
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function cValues(): array
+    {
+        $cases = [];
+        foreach (self::modes() as $label => [$mode]) {
+            foreach (['C1', 'C2', 'C3', 'C4'] as $c) {
+                $cases[$c . ', ' . $label] = [$c, $mode];
+            }
+        }
+
+        return $cases;
+    }
+
+    /** @dataProvider cValues */
+    public function testACValueIsStoredAsSentAndFoundAgain(string $c, string $mode): void
+    {
+        $repo = $this->tracking($mode);
+        $find = static fn (string $v): int => $repo->{'findOrCreate' . $c}($v);
+        $table = '202_tracking_' . strtolower($c);
+        $column = strtolower($c);
+
+        $id = $find(self::AWKWARD);
+        self::assertSame($id, $find(self::AWKWARD));
+        self::assertSame(self::AWKWARD, self::value("SELECT $column FROM $table WHERE {$column}_id = $id"));
+
+        // 350 bytes, the last character split by the cut: dropped whole.
+        $long = str_repeat('x', 349) . 'é' . 'y';
+        $longId = $find($long);
+        self::assertSame($longId, $find($long), 'a value past 350 bytes is found again');
+        self::assertSame($longId, $find(str_repeat('x', 349)));
+        self::assertSame(str_repeat('x', 349), self::value("SELECT $column FROM $table WHERE {$column}_id = $longId"));
+
+        $empty = $find('');
+        self::assertGreaterThan(0, $empty, 'an empty value is a row of its own, as the click path stored it');
+        self::assertSame($empty, $find(''));
+        self::assertSame(3, self::rowsIn($table));
+    }
+
+    /** @dataProvider modes */
+    public function testAUtmValueIsStoredInItsTypesTable(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as $type) {
+            $id = $repo->findOrCreateUtm(self::AWKWARD, $type);
+            self::assertSame($id, $repo->findOrCreateUtm(self::AWKWARD, $type));
+            self::assertSame(self::AWKWARD, self::value("SELECT $type FROM 202_$type WHERE {$type}_id = $id"));
+            $long = $repo->findOrCreateUtm(str_repeat('u', 400), $type);
+            self::assertSame($long, $repo->findOrCreateUtm(str_repeat('u', 400), $type));
+            self::assertSame(2, self::rowsIn('202_' . $type));
+        }
+
+        $this->expectException(RuntimeException::class);
+        $repo->findOrCreateUtm('x', 'utm_nope');
+    }
+
+    /** @dataProvider modes */
+    public function testAVariableIsKeptPerTrafficSourceVariable(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        $id = $repo->findOrCreateVariable(self::AWKWARD, 7);
+        self::assertSame($id, $repo->findOrCreateVariable(self::AWKWARD, 7));
+        self::assertNotSame($id, $repo->findOrCreateVariable(self::AWKWARD, 8));
+        self::assertSame(
+            self::AWKWARD,
+            self::value('SELECT variable FROM 202_custom_variables WHERE custom_variable_id = ' . $id)
+        );
+        $long = $repo->findOrCreateVariable(str_repeat('v', 349) . '€', 7);
+        self::assertSame($long, $repo->findOrCreateVariable(str_repeat('v', 349) . '€', 7));
+        self::assertSame(3, self::rowsIn('202_custom_variables'));
+    }
+
+    /** @dataProvider modes */
+    public function testAVariableSetWritesOneMappingRowPerVariable(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        $set = $repo->findOrCreateVariableSet('3,1,2');
+        self::assertSame($set, $repo->findOrCreateVariableSet('3,1,2'));
+        $other = $repo->findOrCreateVariableSet('1,2');
+        self::assertNotSame($set, $other);
+
+        self::assertSame(
+            [[$set, '1'], [$set, '2'], [$set, '3'], [$other, '1'], [$other, '2']],
+            array_map(
+                static fn (array $r): array => [(int) $r[0], (string) $r[1]],
+                self::rows('SELECT variable_set_id, variables FROM 202_variable_sets2 ORDER BY 1, 2')
+            )
+        );
+        self::assertSame(2, self::rowsIn('202_variable_sets'));
+
+        foreach (['1,,2', '', '1,x', '0', '1, 2', '01,2'] as $malformed) {
+            try {
+                $repo->findOrCreateVariableSet($malformed);
+                self::fail('"' . $malformed . '" was taken as a variable set');
+            } catch (InvalidArgumentException) {
+            }
+        }
+        self::assertSame(2, self::rowsIn('202_variable_sets'), 'a refused set writes nothing');
+        self::assertSame(5, self::rowsIn('202_variable_sets2'));
+    }
+
+    /** @dataProvider modes */
+    public function testACustomVariableIsTheTrackingTableItNames(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        self::assertSame($repo->findOrCreateC2('same'), $repo->findOrCreateCustomVar('c2', 'same'));
+        self::assertSame(1, self::rowsIn('202_tracking_c2'));
+
+        // The name is a table and column name. "c2\n" got past a `$` anchor
+        // and reached the server as `SELECT c2\n_id …`, a column alias.
+        foreach (['c2; DROP TABLE x', "c2\n", 'c2 '] as $name) {
+            try {
+                $repo->findOrCreateCustomVar($name, 'v');
+                self::fail(var_export($name, true) . ' was taken as a custom variable name');
+            } catch (RuntimeException $e) {
+                self::assertStringStartsWith('Invalid custom variable name', $e->getMessage());
+            }
+        }
+    }
+
+    // ── Location ────────────────────────────────────────────────────
+
+    /** @dataProvider modes */
+    public function testACountryIsFoundByItsCode(string $mode): void
+    {
+        $repo = $this->location($mode);
+
+        $id = $repo->findOrCreateCountry("Côte d'Ivoire", 'CI');
+        self::assertSame($id, $repo->findOrCreateCountry('Ivory Coast', 'CI'));
+        self::assertSame(
+            "Côte d'Ivoire",
+            self::value('SELECT country_name FROM 202_locations_country WHERE country_id = ' . $id)
+        );
+
+        $long = $repo->findOrCreateCountry(str_repeat('n', 60), 'USAX');
+        self::assertSame(
+            $long,
+            $repo->findOrCreateCountry(str_repeat('n', 60), 'USAX'),
+            'a code past 3 characters is found again'
+        );
+        self::assertSame(
+            ['USA', str_repeat('n', 50)],
+            array_map('strval', self::rows(
+                'SELECT country_code, country_name FROM 202_locations_country WHERE country_id = ' . $long
+            )[0])
+        );
+        self::assertSame(2, self::rowsIn('202_locations_country'));
+    }
+
+    /** @dataProvider modes */
+    public function testCityRegionAndIspNamesPastTheirColumnAreFoundAgain(string $mode): void
+    {
+        $repo = $this->location($mode);
+        $country = $repo->findOrCreateCountry('Germany', 'DE');
+        $otherCountry = $repo->findOrCreateCountry('Austria', 'AT');
+        $long = str_repeat('é', 49) . '€x';
+
+        foreach (
+            [
+                ['202_locations_city', 'city_name', 'city_id', $repo->findOrCreateCity(...)],
+                ['202_locations_region', 'region_name', 'region_id', $repo->findOrCreateRegion(...)],
+            ] as [$table, $column, $idColumn, $find]
+        ) {
+            $id = $find(self::AWKWARD_NAME, $country);
+            self::assertSame($id, $find(self::AWKWARD_NAME, $country));
+            self::assertNotSame($id, $find(self::AWKWARD_NAME, $otherCountry));
+            self::assertSame(self::AWKWARD_NAME, self::value("SELECT $column FROM $table WHERE $idColumn = $id"));
+            $longId = $find($long, $country);
+            self::assertSame($longId, $find($long, $country), $column . ' past 50 characters is found again');
+            self::assertSame(
+                str_repeat('é', 49) . '€',
+                self::value("SELECT $column FROM $table WHERE $idColumn = $longId")
+            );
+            self::assertSame(3, self::rowsIn($table));
+        }
+
+        $isp = $repo->findOrCreateIsp(self::AWKWARD_NAME);
+        self::assertSame($isp, $repo->findOrCreateIsp(self::AWKWARD_NAME));
+        $longIsp = $repo->findOrCreateIsp($long);
+        self::assertSame($longIsp, $repo->findOrCreateIsp($long));
+        self::assertSame(2, self::rowsIn('202_locations_isp'));
+    }
+
+    /** @dataProvider modes */
+    public function testAnIpv4AddressIsARowByItsText(string $mode): void
+    {
+        $repo = $this->location($mode);
+
+        $id = $repo->findOrCreateIp('203.0.113.9');
+        self::assertSame($id, $repo->findOrCreateIp('203.0.113.9'));
+        self::assertSame('203.0.113.9', self::value('SELECT ip_address FROM 202_ips WHERE ip_id = ' . $id));
+        self::assertGreaterThan(0, $repo->findOrCreateIp('0.0.0.0'), 'AUTH::client_ip()\'s stand-in for none');
+        self::assertSame(0, $repo->findOrCreateIp(''));
+        self::assertSame([$id], StoredAddressIds::of(self::conn(), '203.0.113.9'));
+
+        foreach (['12345', 'not an address', '203.0.113.9 ', '203.0.113.256'] as $notAnAddress) {
+            try {
+                $repo->findOrCreateIp($notAnAddress);
+                self::fail('"' . $notAnAddress . '" was stored as an address');
+            } catch (InvalidArgumentException) {
+            }
+        }
+        self::assertSame(2, self::rowsIn('202_ips'));
+    }
+
+    /**
+     * Packed, these hold a double quote (::22), a backslash (::5c), a
+     * backslash then a letter (::5c41) and trailing NULs (2001:db8::), the
+     * bytes the hand-escaped statement got wrong.
+     *
+     * @dataProvider modes
+     */
+    public function testAnIpv6AddressIsStoredOnceAndFoundAgain(string $mode): void
+    {
+        $repo = $this->location($mode);
+        $addresses = ['2001:db8::22', '2001:db8::5c', '2001:db8::5c41', '2001:db8::', '::1', '2001:db8::27:ff00'];
+
+        $ids = [];
+        foreach ($addresses as $address) {
+            $ids[$address] = $repo->findOrCreateIp($address);
+        }
+        foreach ($addresses as $address) {
+            self::assertSame($ids[$address], $repo->findOrCreateIp($address), $address . ' is found again');
+            self::assertSame([$ids[$address]], StoredAddressIds::of(self::conn(), $address));
+            $v6 = self::value('SELECT 202_ips_v6.ip_id FROM 202_ips_v6 WHERE ip_address = UNHEX(\''
+                . bin2hex((string) inet_pton($address)) . '\')');
+            self::assertSame($v6, self::value('SELECT ip_address FROM 202_ips WHERE ip_id = ' . $ids[$address]));
+        }
+        self::assertCount(count($addresses), array_unique($ids));
+        self::assertSame(count($addresses), self::rowsIn('202_ips_v6'));
+        self::assertSame(count($addresses), self::rowsIn('202_ips'));
+    }
+
+    /**
+     * An IPv6 address's 202_ips row holds its 202_ips_v6 id in decimal. The
+     * join compared that id with every 202_ips.ip_address as a number, and
+     * '1.0.0.5' is 1: once 1.0.0.5 was stored, the address whose v6 row is
+     * 1 was answered with 1.0.0.5's row (the newer of the two).
+     *
+     * @dataProvider modes
+     */
+    public function testAnIpv4RowIsNeverAnIpv6Address(string $mode): void
+    {
+        $repo = $this->location($mode);
+
+        $v6 = $repo->findOrCreateIp('2001:db8::1');
+        self::assertSame('1', self::value('SELECT ip_address FROM 202_ips WHERE ip_id = ' . $v6), 'its v6 row is 1');
+        $v4 = $repo->findOrCreateIp('1.0.0.5');
+
+        self::assertSame($v6, $repo->findOrCreateIp('2001:db8::1'));
+        self::assertSame([$v6], StoredAddressIds::of(self::conn(), '2001:db8::1'));
+        self::assertSame([$v4], StoredAddressIds::of(self::conn(), '1.0.0.5'));
+        self::assertSame(2, self::rowsIn('202_ips'));
+    }
+
+    /** @dataProvider modes */
+    public function testASiteUrlIsFiledUnderItsDomain(string $mode): void
+    {
+        $repo = $this->location($mode);
+
+        $url = 'https://www.example.com/a?b=1&c=' . rawurlencode(self::AWKWARD) . "&d='\"";
+        $id = $repo->findOrCreateSiteUrl($url);
+        self::assertSame($id, $repo->findOrCreateSiteUrl($url));
+        $domain = $repo->findOrCreateSiteDomain($url);
+        self::assertSame(
+            'example.com',
+            self::value('SELECT site_domain_host FROM 202_site_domains WHERE site_domain_id = ' . $domain)
+        );
+        self::assertSame(
+            [$domain, $url],
+            [(int) self::rows('SELECT site_domain_id FROM 202_site_urls WHERE site_url_id = ' . $id)[0][0],
+                self::value('SELECT site_url_address FROM 202_site_urls WHERE site_url_id = ' . $id)]
+        );
+        $sibling = $repo->findOrCreateSiteUrl('http://example.com/other');
+        self::assertNotSame($id, $sibling);
+        self::assertSame($domain, $repo->findOrCreateSiteDomain('http://example.com/other'));
+
+        // No host: filed under domain 0, and found again there.
+        $hostless = $repo->findOrCreateSiteUrl('/just/a/path');
+        self::assertSame($hostless, $repo->findOrCreateSiteUrl('/just/a/path'));
+        self::assertSame('0', self::value('SELECT site_domain_id FROM 202_site_urls WHERE site_url_id = ' . $hostless));
+        self::assertSame(0, $repo->findOrCreateSiteDomain('/just/a/path'));
+
+        self::assertSame(0, $repo->findOrCreateSiteUrl(''));
+        self::assertSame(0, $repo->findOrCreateSiteDomain(''));
+        self::assertSame(3, self::rowsIn('202_site_urls'));
+        self::assertSame(1, self::rowsIn('202_site_domains'));
+    }
+
+    /** @dataProvider modes */
+    public function testADomainPastItsColumnIsFoundAgain(string $mode): void
+    {
+        $repo = $this->location($mode);
+        $host = str_repeat('a', 120) . '.example';
+
+        $domain = $repo->findOrCreateSiteDomain('https://' . $host . '/x');
+        self::assertSame($domain, $repo->findOrCreateSiteDomain('https://' . $host . '/y'));
+        $url = $repo->findOrCreateSiteUrl('https://' . $host . '/x');
+        self::assertSame($url, $repo->findOrCreateSiteUrl('https://' . $host . '/x'));
+        self::assertSame(str_repeat('a', 100), self::value('SELECT site_domain_host FROM 202_site_domains'));
+        self::assertSame(1, self::rowsIn('202_site_domains'));
+        self::assertSame(1, self::rowsIn('202_site_urls'));
+    }
+
+    /**
+     * site_url_address is a TEXT: 65535 bytes.
+     *
+     * @dataProvider modes
+     */
+    public function testASiteUrlPastItsColumnIsFoundAgain(string $mode): void
+    {
+        $repo = $this->location($mode);
+        $url = 'https://example.com/?q=' . str_repeat('q', 65511) . 'é';
+
+        $id = $repo->findOrCreateSiteUrl($url);
+        self::assertSame($id, $repo->findOrCreateSiteUrl($url));
+        self::assertSame(
+            substr($url, 0, 65534),
+            self::value('SELECT site_url_address FROM 202_site_urls WHERE site_url_id = ' . $id),
+            'cut to 65535 bytes, less the character the cut splits'
+        );
+        self::assertSame(1, self::rowsIn('202_site_urls'));
+    }
+
+    // ── Device ──────────────────────────────────────────────────────
+
+    /** @dataProvider modes */
+    public function testDeviceNamesAreStoredAsSentAndFoundAgain(string $mode): void
+    {
+        $repo = new MysqlDeviceRepository($this->connection($mode));
+        $long = str_repeat('d', 49) . '😀x';
+
+        foreach (
+            [
+                ['202_browsers', 'browser_name', 'browser_id', $repo->findOrCreateBrowser(...)],
+                ['202_platforms', 'platform_name', 'platform_id', $repo->findOrCreatePlatform(...)],
+                ['202_device_models', 'device_name', 'device_id', $repo->findOrCreateDevice(...)],
+            ] as [$table, $column, $idColumn, $find]
+        ) {
+            $id = $find(self::AWKWARD_NAME);
+            self::assertSame($id, $find(self::AWKWARD_NAME));
+            self::assertSame(self::AWKWARD_NAME, self::value("SELECT $column FROM $table WHERE $idColumn = $id"));
+            $longId = $find($long);
+            self::assertSame($longId, $find($long), $column . ' past 50 characters is found again');
+            self::assertSame(0, $find(''));
+            self::assertSame(2, self::rowsIn($table));
+        }
+        self::assertSame('1', self::value('SELECT MIN(device_type) FROM 202_device_models'));
+    }
+
+    // ── Cached over MySQL ───────────────────────────────────────────
+
+    public function testTheSecondLookupIsAnsweredByTheCache(): void
+    {
+        $cache = new ArrayIdCache();
+        $tracking = new CachedTrackingRepository($this->tracking(''), $cache, 'ns');
+        $location = new CachedLocationRepository($this->location(''), $cache, 'ns');
+
+        $c1 = $tracking->findOrCreateC1('cached');
+        $ip = $location->findOrCreateIp('2001:db8::9');
+        self::q('TRUNCATE TABLE 202_tracking_c1');
+        self::q('TRUNCATE TABLE 202_ips');
+
+        self::assertSame($c1, $tracking->findOrCreateC1('cached'));
+        self::assertSame($ip, $location->findOrCreateIp('2001:db8::9'));
+        self::assertSame(0, self::rowsIn('202_tracking_c1'), 'the database was not asked');
+        self::assertSame(0, self::rowsIn('202_ips'));
+        self::assertSame([md5('c1-idcachedns'), md5('ip-id2001:db8::9ns')], $cache->writtenKeys());
+    }
+
+    public function testAnEntryThatIsNotAnIdIsLookedUpInTheDatabase(): void
+    {
+        $key = md5('c1-id' . 'v' . 'ns');
+        foreach ([0, '0', '', 'junk', '-4', false] as $entry) {
+            self::q('TRUNCATE TABLE 202_tracking_c1');
+            $store = [$key => $entry];
+            $cache = new MemcacheIdCache(
+                static function (string $k) use (&$store): mixed {
+                    return $store[$k] ?? false;
+                },
+                static function (string $k, int $id, int $ttl) use (&$store): bool {
+                    $store[$k] = $id;
+                    return true;
+                },
+            );
+            $repo = new CachedTrackingRepository($this->tracking(''), $cache, 'ns');
+
+            $id = $repo->findOrCreateC1('v');
+
+            self::assertGreaterThan(0, $id, var_export($entry, true) . ' was answered as the id');
+            self::assertSame($id, (int) self::value("SELECT c1_id FROM 202_tracking_c1 WHERE c1 = 'v'"));
+            self::assertSame($id, $store[$key], 'the found id replaced ' . var_export($entry, true));
+        }
+    }
+
+    public function testNoValueIsNeverCached(): void
+    {
+        $cache = new ArrayIdCache();
+        $location = new CachedLocationRepository($this->location(''), $cache, 'ns');
+        $tracking = new CachedTrackingRepository($this->tracking(''), $cache, 'ns');
+
+        self::assertSame(0, $location->findOrCreateIp(''));
+        self::assertSame(0, $location->findOrCreateSiteUrl(''));
+        self::assertSame(0, $location->findOrCreateSiteDomain('/no/host'));
+        self::assertSame(0, $tracking->findOrCreateKeyword(''));
+        self::assertSame([], $cache->writes);
+    }
+
+    /**
+     * The factory's cache is connect2.php's getCache()/setCache(): a miss
+     * reads the database and writes its id through setCache() for 30 days,
+     * and the next lookup is answered from it.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheFactoryCachesThroughTheBootstrapHelpers(): void
+    {
+        eval('function getCache(string $key, $default = false) {'
+            . ' return $GLOBALS["p202TestCache"][$key] ?? $default; }');
+        eval('function setCache($key, $value, $exp = null) {'
+            . ' $GLOBALS["p202TestCache"][$key] = $value;'
+            . ' $GLOBALS["p202TestCacheWrites"][] = [$key, $value, $exp]; return true; }');
+        eval('function systemHash(): string { return "install-a"; }');
+        $GLOBALS['memcacheWorking'] = true;
+        $GLOBALS['p202TestCache'] = [];
+        $GLOBALS['p202TestCacheWrites'] = [];
+        self::q("SET SESSION sql_mode = ''");
+
+        $tracking = LookupRepositoryFactory::tracking(self::db());
+        $id = $tracking->findOrCreateC1('through the factory');
+        self::q('TRUNCATE TABLE 202_tracking_c1');
+
+        self::assertSame($id, $tracking->findOrCreateC1('through the factory'));
+        self::assertSame(0, self::rowsIn('202_tracking_c1'), 'the second lookup was the cache\'s');
+        self::assertSame(
+            [[md5('c1-id' . 'through the factory' . 'install-a'), $id, 2592000]],
+            $GLOBALS['p202TestCacheWrites']
+        );
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────
+
+    private function connection(string $mode): Connection
+    {
+        self::q("SET SESSION sql_mode = '" . $mode . "'");
+
+        return self::conn();
+    }
+
+    private function tracking(string $mode): MysqlTrackingRepository
+    {
+        return new MysqlTrackingRepository($this->connection($mode));
+    }
+
+    private function location(string $mode): MysqlLocationRepository
+    {
+        return new MysqlLocationRepository($this->connection($mode));
+    }
+
+    private static function db(): mysqli
+    {
+        self::assertNotNull(self::$db);
+
+        return self::$db;
+    }
+
+    private static function conn(): Connection
+    {
+        self::assertNotNull(self::$conn);
+
+        return self::$conn;
+    }
+
+    private static function q(string $sql): void
+    {
+        self::assertTrue(self::db()->query($sql), self::db()->error . ' in ' . $sql);
+    }
+
+    /** @return list<list<mixed>> */
+    private static function rows(string $sql): array
+    {
+        $result = self::db()->query($sql);
+        self::assertInstanceOf(\mysqli_result::class, $result, self::db()->error . ' in ' . $sql);
+
+        return array_values($result->fetch_all(MYSQLI_NUM));
+    }
+
+    private static function value(string $sql): ?string
+    {
+        $rows = self::rows($sql);
+        self::assertCount(1, $rows, $sql);
+        $value = $rows[0][0];
+
+        return $value === null ? null : (string) $value;
+    }
+
+    private static function rowsIn(string $table): int
+    {
+        return (int) self::value('SELECT COUNT(*) FROM ' . $table);
+    }
+}

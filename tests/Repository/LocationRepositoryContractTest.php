@@ -22,18 +22,7 @@ final class LocationRepositoryContractTest extends TestCase
 
     private static function buildCached(): CachedLocationRepository
     {
-        $store = [];
-
-        return new CachedLocationRepository(
-            new InMemoryLocationRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store): void {
-                $store[$key] = $value;
-            },
-            'test-hash',
-        );
+        return new CachedLocationRepository(new InMemoryLocationRepository(), new ArrayIdCache(), 'test-hash');
     }
 
     /**
@@ -129,6 +118,18 @@ final class LocationRepositoryContractTest extends TestCase
     public function testFindOrCreateIpReturnsZeroForEmpty(LocationRepositoryInterface $repo): void
     {
         self::assertSame(0, $repo->findOrCreateIp(''));
+    }
+
+    /**
+     * Not an address is refused, not stored: a string of digits stored as
+     * an IPv4 row's text would read as the IPv6 row of that id.
+     *
+     * @dataProvider implementations
+     */
+    public function testFindOrCreateIpRefusesWhatIsNotAnAddress(LocationRepositoryInterface $repo): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $repo->findOrCreateIp('12345');
     }
 
     /**

@@ -8,18 +8,28 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Repository\Cached\CachedDeviceRepository;
 use Prosper202\Repository\Cached\CachedLocationRepository;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
+use Prosper202\Repository\DeviceRepositoryInterface;
 use Prosper202\Repository\InMemory\InMemoryDeviceRepository;
 use Prosper202\Repository\InMemory\InMemoryLocationRepository;
 use Prosper202\Repository\InMemory\InMemoryTrackingRepository;
+use Prosper202\Repository\NullLocationRepository;
+use Prosper202\Repository\NullTrackingRepository;
+use Prosper202\Repository\TrackingRepositoryInterface;
+use RuntimeException;
 
+/**
+ * The cached repositories read through an IdCache. Their keys are the ones
+ * the click path has always written to memcache, byte for byte, so entries
+ * already there keep answering after an upgrade.
+ */
 final class CachedDecoratorTest extends TestCase
 {
     public function testCacheHitSkipsInner(): void
     {
         $innerCalls = 0;
         $delegate = new InMemoryDeviceRepository();
-        $inner = new class ($innerCalls, $delegate) implements \Prosper202\Repository\DeviceRepositoryInterface {
-            public function __construct(private int &$calls, private \Prosper202\Repository\DeviceRepositoryInterface $delegate)
+        $inner = new class ($innerCalls, $delegate) implements DeviceRepositoryInterface {
+            public function __construct(private int &$calls, private DeviceRepositoryInterface $delegate)
             {
             }
 
@@ -40,17 +50,7 @@ final class CachedDecoratorTest extends TestCase
             }
         };
 
-        $store = [];
-        $cached = new CachedDeviceRepository(
-            $inner,
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store): void {
-                $store[$key] = $value;
-            },
-            'test-hash',
-        );
+        $cached = new CachedDeviceRepository($inner, new ArrayIdCache(), 'test-hash');
 
         $id1 = $cached->findOrCreateBrowser('Chrome');
         self::assertSame(1, $innerCalls, 'First call should hit inner');
@@ -61,117 +61,142 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame($id1, $id2);
     }
 
-    public function testCacheKeyMatchesCountry(): void
+    /** @return iterable<string, array{string, string, list<int|string>, string}> */
+    public static function keys(): iterable
     {
-        $store = [];
-        $setKeys = [];
-
-        $cached = new CachedLocationRepository(
-            new InMemoryLocationRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store, &$setKeys): void {
-                $store[$key] = $value;
-                $setKeys[] = $key;
-            },
-            'fakehash',
-        );
-
-        $cached->findOrCreateCountry('United States', 'US');
-
-        $expectedKey = md5('country-id' . 'US' . 'fakehash');
-        self::assertSame($expectedKey, $setKeys[0]);
+        yield 'keyword' => ['tracking', 'findOrCreateKeyword', ['buy shoes'], 'keyword-idbuy shoes'];
+        yield 'c1' => ['tracking', 'findOrCreateC1', ['a'], 'c1-ida'];
+        yield 'c2' => ['tracking', 'findOrCreateC2', ['a'], 'c2-ida'];
+        yield 'c3' => ['tracking', 'findOrCreateC3', ['a'], 'c3-ida'];
+        yield 'c4' => ['tracking', 'findOrCreateC4', ['a'], 'c4-ida'];
+        yield 'variable' => ['tracking', 'findOrCreateVariable', ['my-value', 42], 'variable-id42|my-value'];
+        yield 'variable set' => ['tracking', 'findOrCreateVariableSet', ['1,2'], 'variable_set1,2'];
+        yield 'custom var' => ['tracking', 'findOrCreateCustomVar', ['sub_id', 'abc123'], 'customvar-sub_id|abc123'];
+        yield 'utm' => ['tracking', 'findOrCreateUtm', ['google', 'utm_source'], 'utm-utm_source|google'];
+        yield 'country' => ['location', 'findOrCreateCountry', ['United States', 'US'], 'country-idUS'];
+        yield 'city' => ['location', 'findOrCreateCity', ['Berlin', 12], 'city-idBerlin|12'];
+        yield 'region' => ['location', 'findOrCreateRegion', ['Bavaria', 12], 'region-idBavaria|12'];
+        yield 'isp' => ['location', 'findOrCreateIsp', ['Comcast'], 'isp-idComcast'];
+        yield 'ip' => ['location', 'findOrCreateIp', ['192.0.2.1'], 'ip-id192.0.2.1'];
+        yield 'domain' => ['location', 'findOrCreateSiteDomain', ['https://www.example.com/a'], 'domain-idexample.com'];
+        yield 'url' => ['location', 'findOrCreateSiteUrl', ['https://example.com/a'], 'url-idhttps://example.com/a'];
+        yield 'browser' => ['device', 'findOrCreateBrowser', ['Chrome'], 'browser-idChrome'];
+        yield 'platform' => ['device', 'findOrCreatePlatform', ['Windows'], 'platform-idWindows'];
+        yield 'device' => ['device', 'findOrCreateDevice', ['Desktop'], 'device-idDesktop'];
     }
 
-    public function testCacheKeyMatchesUtm(): void
-    {
-        $setKeys = [];
-        $store = [];
+    /**
+     * @dataProvider keys
+     * @param list<int|string> $args
+     */
+    public function testTheKeyIsTheOneMemcacheAlreadyHolds(
+        string $kind,
+        string $method,
+        array $args,
+        string $subject
+    ): void {
+        $cache = new ArrayIdCache();
+        $repo = match ($kind) {
+            'tracking' => new CachedTrackingRepository(new InMemoryTrackingRepository(), $cache, 'fakehash'),
+            'location' => new CachedLocationRepository(new InMemoryLocationRepository(), $cache, 'fakehash'),
+            'device' => new CachedDeviceRepository(new InMemoryDeviceRepository(), $cache, 'fakehash'),
+        };
 
-        $cached = new CachedTrackingRepository(
-            new InMemoryTrackingRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store, &$setKeys): void {
-                $store[$key] = $value;
-                $setKeys[] = $key;
-            },
-            'fakehash',
-        );
+        $repo->{$method}(...$args);
 
-        $cached->findOrCreateUtm('google', 'utm_source');
-
-        $expectedKey = md5('utm-' . 'utm_source' . '|' . 'google' . 'fakehash');
-        self::assertSame($expectedKey, $setKeys[0]);
-    }
-
-    public function testCacheKeyMatchesVariable(): void
-    {
-        $setKeys = [];
-        $store = [];
-
-        $cached = new CachedTrackingRepository(
-            new InMemoryTrackingRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store, &$setKeys): void {
-                $store[$key] = $value;
-                $setKeys[] = $key;
-            },
-            'fakehash',
-        );
-
-        $cached->findOrCreateVariable('my-value', 42);
-
-        $expectedKey = md5('variable-id' . '42' . '|' . 'my-value' . 'fakehash');
-        self::assertSame($expectedKey, $setKeys[0]);
-    }
-
-    public function testCacheKeyMatchesCustomVar(): void
-    {
-        $setKeys = [];
-        $store = [];
-
-        $cached = new CachedTrackingRepository(
-            new InMemoryTrackingRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store, &$setKeys): void {
-                $store[$key] = $value;
-                $setKeys[] = $key;
-            },
-            'fakehash',
-        );
-
-        $cached->findOrCreateCustomVar('sub_id', 'abc123');
-
-        $expectedKey = md5('customvar-' . 'sub_id' . '|' . 'abc123' . 'fakehash');
-        self::assertSame($expectedKey, $setKeys[0]);
+        self::assertSame([md5($subject . 'fakehash')], $cache->reads);
+        self::assertSame([md5($subject . 'fakehash')], $cache->writtenKeys());
     }
 
     public function testEmptyValuesSkipCacheAndReturnZero(): void
     {
-        $store = [];
-        $setCalls = 0;
+        $cache = new ArrayIdCache();
+        $device = new CachedDeviceRepository(new InMemoryDeviceRepository(), $cache, 'test-hash');
+        $location = new CachedLocationRepository(new InMemoryLocationRepository(), $cache, 'test-hash');
+        $tracking = new CachedTrackingRepository(new InMemoryTrackingRepository(), $cache, 'test-hash');
 
-        $cached = new CachedDeviceRepository(
-            new InMemoryDeviceRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$setCalls): void {
-                $setCalls++;
-            },
-            'test-hash',
-        );
+        self::assertSame(0, $device->findOrCreateBrowser(''));
+        self::assertSame(0, $device->findOrCreatePlatform(''));
+        self::assertSame(0, $device->findOrCreateDevice(''));
+        self::assertSame(0, $location->findOrCreateIp(''));
+        self::assertSame(0, $location->findOrCreateSiteDomain(''));
+        self::assertSame(0, $location->findOrCreateSiteUrl(''));
+        self::assertSame(0, $tracking->findOrCreateKeyword(''));
+        self::assertSame([], $cache->reads, 'An empty value is no lookup');
+        self::assertSame([], $cache->writes, 'Should not cache zero results');
+    }
 
-        self::assertSame(0, $cached->findOrCreateBrowser(''));
-        self::assertSame(0, $cached->findOrCreatePlatform(''));
-        self::assertSame(0, $cached->findOrCreateDevice(''));
-        self::assertSame(0, $setCalls, 'Should not cache zero results');
+    /** An inner answer of 0 is "no value", never a row: it is answered, not kept. */
+    public function testAZeroFromTheInnerRepositoryIsNotCached(): void
+    {
+        $cache = new ArrayIdCache();
+        $tracking = new CachedTrackingRepository(new NullTrackingRepository(), $cache, 'h');
+        $location = new CachedLocationRepository(new NullLocationRepository(), $cache, 'h');
+
+        self::assertSame(0, $tracking->findOrCreateC1('x'));
+        self::assertSame(0, $tracking->findOrCreateUtm('x', 'utm_source'));
+        self::assertSame(0, $location->findOrCreateCountry('X', 'XX'));
+        self::assertSame(0, $location->findOrCreateIp('192.0.2.1'));
+        self::assertCount(4, $cache->reads);
+        self::assertSame([], $cache->writes);
+    }
+
+    public function testALookupThatThrowsCachesNothing(): void
+    {
+        $cache = new ArrayIdCache();
+        $inner = new class () implements TrackingRepositoryInterface {
+            public function findOrCreateKeyword(string $name): int
+            {
+                throw new RuntimeException('the database refused');
+            }
+
+            public function findOrCreateC1(string $value): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateC2(string $value): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateC3(string $value): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateC4(string $value): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateVariable(string $value, int $ppcVariableId): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateVariableSet(string $variables): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateCustomVar(string $name, string $data): int
+            {
+                return 1;
+            }
+
+            public function findOrCreateUtm(string $value, string $type): int
+            {
+                return 1;
+            }
+        };
+
+        try {
+            (new CachedTrackingRepository($inner, $cache, 'h'))->findOrCreateKeyword('k');
+            self::fail('The inner repository\'s failure was not passed on');
+        } catch (RuntimeException $e) {
+            self::assertSame('the database refused', $e->getMessage());
+        }
+        self::assertSame([], $cache->writes);
     }
 }

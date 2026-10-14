@@ -23,18 +23,7 @@ final class TrackingRepositoryContractTest extends TestCase
 
     private static function buildCached(): CachedTrackingRepository
     {
-        $store = [];
-
-        return new CachedTrackingRepository(
-            new InMemoryTrackingRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store): void {
-                $store[$key] = $value;
-            },
-            'test-hash',
-        );
+        return new CachedTrackingRepository(new InMemoryTrackingRepository(), new ArrayIdCache(), 'test-hash');
     }
 
     /**
@@ -170,6 +159,18 @@ final class TrackingRepositoryContractTest extends TestCase
     {
         $this->expectException(RuntimeException::class);
         $repo->findOrCreateCustomVar('invalid name!', 'data');
+    }
+
+    /**
+     * The name becomes a table and a column name; `$` would let a final
+     * newline through.
+     *
+     * @dataProvider implementations
+     */
+    public function testFindOrCreateCustomVarRejectsATrailingNewline(TrackingRepositoryInterface $repo): void
+    {
+        $this->expectException(RuntimeException::class);
+        $repo->findOrCreateCustomVar("sub_id\n", 'data');
     }
 
     /**
