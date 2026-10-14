@@ -367,7 +367,9 @@ Two amplifiers, both of which turned this from a blip into a breach:
   does it fix the same join elsewhere: Analyze › IPs and the group report
   kept the numeric join until review found them, and on MariaDB no test
   could tell (it happens to compare that join as text).
-  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`.
+  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`, and
+  every comparison of an `ip_id` with an `ip_address` in the tree's SQL,
+  in whatever clause it is written.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
