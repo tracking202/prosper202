@@ -15,6 +15,7 @@ Version 1.9.78
 -- Fixed: A "remember me" cookie naming an account that had no remember-me key yet made the check create and store one before the cookie was verified, for whoever sent it. The check no longer creates a key; signing in with "remember me" still does
 -- Changed: The database error page logs the failed statement and MySQL's message with the values they quote removed, as the signed-in pages' log line does, and the error list (GET /system/errors, p202 system errors) stores them the same way. Errors recorded before this version keep the statement as it was sent
 -- Fixed: A keyword longer than 150 characters was cut by the database as it was stored, so the next click with it found no match and stored it again, once per click; with P202_SQL_STRICT set the click failed. Keywords are now cut to 150 characters before they are looked up and stored. A c1 to c4, UTM or variable value longer than 350 bytes whose cut split a character did the same on redirector links; the cut now leaves the character out whole on every path
+-- Fixed: A redirector rule or default that named another account's campaign or landing page (possible for one saved before ownership was checked) sent visitors to that account's URL, and on a rotating campaign advanced that account's URL rotation. It now names nothing, as a deleted campaign or landing page does
 -- Changed: composer.json now declares the PHP mbstring extension. Installs already needed it (install.sh checks for it); composer install now stops without it
 
 Version 1.9.77

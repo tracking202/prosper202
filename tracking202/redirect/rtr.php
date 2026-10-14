@@ -65,7 +65,9 @@ $rotator_sql = "SELECT  tr.user_id,
 				FROM    202_trackers AS tr
 				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
+                    AND ca.user_id = tr.user_id
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
+                    AND lp.user_id = tr.user_id
 				LEFT JOIN 202_users AS ur ON ur.user_id = tr.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
 				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
@@ -323,7 +325,9 @@ foreach ($rule_row as $rule) {
 		               lp.landing_page_id
 				FROM 202_rotator_rules_redirects AS rur
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
+                    AND ca.user_id = '" . $user_id . "'
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
+                    AND lp.user_id = '" . $user_id . "'
 				WHERE rule_id='".$mysql['rule_id']."'"; 
 		$rule_redirects_row = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
 		$redirects = [];

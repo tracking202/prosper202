@@ -51,7 +51,9 @@ $rotator_sql = "SELECT
 					   lp.landing_page_url
 				FROM 202_rotators AS rt
 				LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = rt.default_campaign
+                    AND ac.user_id = rt.user_id
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
+                    AND lp.user_id = rt.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = rt.user_id
 				WHERE   rt.public_id='".$mysql['rpi']."'"; 
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
@@ -338,7 +340,9 @@ if ($default == false) {
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id	   
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
+                    AND ca.user_id = 2c.user_id
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
+                    AND lp.user_id = 2c.user_id
 				WHERE 2c.click_id='".$mysql['click_id']."'
 				ORDER BY rur.id";
 		// One row per redirect of the rule, chosen by weight with rtr.php's
