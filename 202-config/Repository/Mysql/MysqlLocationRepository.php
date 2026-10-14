@@ -152,12 +152,6 @@ final class MysqlLocationRepository implements LocationRepositoryInterface
         return $this->conn->executeInsert($stmt);
     }
 
-    /**
-     * Not atomic: nothing unique stands behind the address (the table is
-     * partitioned by site_url_id, which every unique key would then have to
-     * include), so concurrent first clicks on one new URL can each insert a
-     * row, as INDEXES::get_site_url_id() can.
-     */
     public function findOrCreateSiteUrl(string $url): int
     {
         if ($url === '') {

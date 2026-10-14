@@ -1,8 +1,6 @@
 <?php
 
 include_once(__DIR__ . '/functions-upgrade.php');
-// p202LogFailedQuery()'s redaction, shared with the click path's error page.
-require_once __DIR__ . '/mysql-error-args.php';
 
 // Add ipAddress function
 function ipAddress($ip_address): stdClass
@@ -66,44 +64,23 @@ function _die($message): never
  */
 function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
 {
-    // Support both calling conventions:
-    //   _mysqli_query($sql)         — 1 arg, uses global $db
-    //   _mysqli_query($db, $sql)    — 2 args, uses provided $db
-    if ($sql === null) {
-        $sql = $db_or_sql;
-        global $db;
-    } else {
-        $db = $db_or_sql;
-    }
+	// Support both calling conventions:
+	//   _mysqli_query($sql)         — 1 arg, uses global $db
+	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
+	if ($sql === null) {
+		$sql = $db_or_sql;
+		global $db;
+	} else {
+		$db = $db_or_sql;
+	}
 
-    $connection = $db instanceof \mysqli ? $db : $db->getConnection();
-    $result = $connection->query($sql);
-    if ($result === false) {
-        p202LogFailedQuery($connection, (string) $sql, debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0] ?? []);
-    }
-    return $result;
-}
-
-/**
- * Log a statement _mysqli_query() ran that failed. It answers false, which
- * most of its callers read as "no rows" or never look at, so this line is
- * where the failure shows.
- *
- * The statement and the server's message are logged with the values they
- * quote taken out (p202RedactedStatement(), p202FailedQueryMessage()).
- *
- * @param array{file?: string, line?: int} $caller
- */
-function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
-{
-    error_log(sprintf(
-        'MySQL query failed at %s:%d [errno %d]: %s | %s',
-        $caller['file'] ?? '?',
-        $caller['line'] ?? 0,
-        $connection->errno,
-        p202FailedQueryMessage($connection->errno, $connection->error),
-        p202RedactedStatement($sql)
-    ));
+	if ($db instanceof \mysqli) {
+		$result = @$db->query($sql);
+	} else {
+		$connection = $db->getConnection();
+		$result = @$connection->query($sql);
+	}
+	return $result;
 }
 
 function salt_user_pass($user_pass): string

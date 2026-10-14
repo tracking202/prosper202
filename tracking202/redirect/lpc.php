@@ -27,8 +27,7 @@ if ($varsParam !== null) {
     $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
 }
 
-$tracker_sql = "SELECT  202_landing_pages.user_id,
-						  aff_campaign_name,
+$tracker_sql = "SELECT  aff_campaign_name,
 						  aff_campaign_rotate,
 						  aff_campaign_url,
 						  aff_campaign_url_2,
@@ -51,12 +50,7 @@ $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 // get the click id
 $mysql['click_id']=$db->real_escape_string((string)(getCookie202('tracking202subid') ?? ''));
 
-$redirect_site_url = replaceTrackerPlaceholders(
-    $db,
-    $redirect_site_url,
-    $mysql['click_id'],
-    (int) $tracker_row['user_id']
-);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
 //set dirty hour
 $de = new DataEngine();

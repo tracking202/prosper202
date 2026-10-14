@@ -205,12 +205,7 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 $de = new DataEngine();
 $data=($de->setDirtyHour($mysql['click_id']));
 
-$redirect_site_url = replaceTrackerPlaceholders(
-    $db,
-    $redirect_site_url,
-    $mysql['click_id'],
-    (int) $tracker_row['user_id']
-);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string) $click_redirect_site_url_id);

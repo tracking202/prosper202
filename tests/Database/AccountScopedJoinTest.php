@@ -331,8 +331,18 @@ final class AccountScopedJoinTest extends TestCase
         'tracking202/redirect/lpc.php' => [
             'USING without user_id | 202_aff_campaigns | 202_landing_pages LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) WHERE landing_page_id_public = \'{0}\'' => self::TRACKING_PATH,
         ],
+        'tracking202/redirect/offrtr.php' => [
+            'no user_id tie | 202_aff_campaigns | ac.aff_campaign_id = rt.default_campaign' => self::TRACKING_PATH,
+            'no user_id tie | 202_landing_pages | lp.landing_page_id = rt.default_lp' => self::TRACKING_PATH,
+            'no user_id tie | 202_aff_campaigns | ca.aff_campaign_id = rur.redirect_campaign' => self::TRACKING_PATH,
+            'no user_id tie | 202_landing_pages | lp.landing_page_id = rur.redirect_lp' => self::TRACKING_PATH,
+        ],
         'tracking202/redirect/rtr.php' => [
             'no user_id tie | 202_rotators | rt.id = tr.rotator_id' => self::TRACKING_PATH,
+            'no user_id tie | 202_aff_campaigns | ca.aff_campaign_id = rt.default_campaign' => self::TRACKING_PATH,
+            'no user_id tie | 202_landing_pages | lp.landing_page_id = rt.default_lp' => self::TRACKING_PATH,
+            'no user_id tie | 202_aff_campaigns | ca.aff_campaign_id = rur.redirect_campaign' => self::TRACKING_PATH,
+            'no user_id tie | 202_landing_pages | lp.landing_page_id = rur.redirect_lp' => self::TRACKING_PATH,
         ],
         'tracking202/static/get_custom_vars.php' => [
             'USING without user_id | 202_ppc_accounts | 202_trackers LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,

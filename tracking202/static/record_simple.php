@@ -74,8 +74,7 @@ $user_sql = "SELECT 		user_timezone,
 							user_keyword_searched_or_bidded,
                             user_pref_referer_data,
                             user_pref_dynamic_bid,
-							maxmind_isp,
-                            user_public_publisher_id
+							maxmind_isp
 			   FROM 		202_users
 				   LEFT JOIN	202_users_pref USING (user_id)
 				   WHERE 		202_users.user_id='" . $mysql['user_id'] . "'";
@@ -434,31 +433,7 @@ if ($cloaking_on === true) {
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-// The click's rows are written below, so its URL's tokens come from the values
-// in hand: read back, they are not there yet.
-$redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
-    'keyword' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword($keyword),
-    't202pubid' => $user_row['user_public_publisher_id'] ?? '',
-    // As stored: a value past the columns' 350 bytes is sent as cut.
-    'c1' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c1),
-    'c2' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c2),
-    'c3' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c3),
-    'c4' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c4),
-    'gclid' => (string) $_GET['gclid'],
-    'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
-    'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),
-    'utm_campaign' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_campaign),
-    'utm_term' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_term),
-    'utm_content' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_content),
-    'country' => $countryName,
-    'country_code' => $countryCode,
-    'region' => $regionName,
-    'city' => $cityName,
-    // As stored: a tracker with no CPC stores 0.00000.
-    'cpc' => number_format((float) $mysql['click_cpc'], 5, '.', ''),
-    'payout' => $tracker_row['aff_campaign_payout'] ?? '',
-    'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
-]);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 $click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
 $mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 

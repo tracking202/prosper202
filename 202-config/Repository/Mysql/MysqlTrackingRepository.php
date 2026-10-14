@@ -11,57 +11,9 @@ use RuntimeException;
 final class MysqlTrackingRepository implements TrackingRepositoryInterface
 {
     private const MAX_VALUE_LENGTH = 350;
-    private const KEYWORD_LENGTH = 150;
 
     public function __construct(private readonly Connection $conn)
     {
-    }
-
-    /**
-     * A c1-c4, UTM or variable value as it is stored: cut to 350 bytes, less
-     * a character the cut splits. A caller that also sends the value on (an
-     * offer URL's token) sends this, so the two agree.
-     */
-    public static function storedValue(string $value): string
-    {
-        if (strlen($value) <= self::MAX_VALUE_LENGTH) {
-            return $value;
-        }
-
-        $cut = preg_replace(
-            '/(?:[\xC0-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF7][\x80-\xBF]{0,2})\z/',
-            '',
-            substr($value, 0, self::MAX_VALUE_LENGTH)
-        );
-        if ($cut === null) {
-            throw new RuntimeException('Cutting a value to its column failed: ' . preg_last_error_msg());
-        }
-
-        return $cut;
-    }
-
-    /**
-     * A keyword as it is stored: its column is a VARCHAR(150), so 150
-     * characters, which the server cut on its own (and refused under a strict
-     * sql_mode) while the lookup asked for the whole value and found nothing.
-     * A byte that starts no whole UTF-8 sequence counts as one and is kept.
-     */
-    public static function storedKeyword(string $keyword): string
-    {
-        if (strlen($keyword) <= self::KEYWORD_LENGTH) {
-            return $keyword;
-        }
-        $whole = preg_match(
-            '/\A(?:[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3}|[\s\S]){0,'
-                . self::KEYWORD_LENGTH . '}/',
-            $keyword,
-            $cut
-        );
-        if ($whole !== 1) {
-            throw new RuntimeException('Cutting a keyword to its column failed: ' . preg_last_error_msg());
-        }
-
-        return $cut[0];
     }
 
     public function findOrCreateKeyword(string $name): int
@@ -69,42 +21,41 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
         if ($name === '') {
             return 0;
         }
-        $name = self::storedKeyword($name);
 
         return $this->findOrCreateSimple('202_keywords', 'keyword_id', 'keyword', $name);
     }
 
     public function findOrCreateC1(string $value): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         return $this->findOrCreateSimple('202_tracking_c1', 'c1_id', 'c1', $value);
     }
 
     public function findOrCreateC2(string $value): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         return $this->findOrCreateSimple('202_tracking_c2', 'c2_id', 'c2', $value);
     }
 
     public function findOrCreateC3(string $value): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         return $this->findOrCreateSimple('202_tracking_c3', 'c3_id', 'c3', $value);
     }
 
     public function findOrCreateC4(string $value): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         return $this->findOrCreateSimple('202_tracking_c4', 'c4_id', 'c4', $value);
     }
 
     public function findOrCreateVariable(string $value, int $ppcVariableId): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         $stmt = $this->conn->prepareRead(
             'SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = ? AND variable = ?'
@@ -164,7 +115,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateCustomVar(string $name, string $data): int
     {
-        $data = self::storedValue($data);
+        $data = substr($data, 0, self::MAX_VALUE_LENGTH);
 
         $allowedPattern = '/^[a-zA-Z0-9_]+$/';
         if (!preg_match($allowedPattern, $name)) {
@@ -179,7 +130,7 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
 
     public function findOrCreateUtm(string $value, string $type): int
     {
-        $value = self::storedValue($value);
+        $value = substr($value, 0, self::MAX_VALUE_LENGTH);
 
         $allowed = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
         if (!in_array($type, $allowed, true)) {

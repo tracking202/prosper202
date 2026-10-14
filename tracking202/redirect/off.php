@@ -158,8 +158,7 @@ if ($pci == '') {
     
     $redirect_site_url = rotateTrackerUrl($db, $aff_campaign_row);
     
-    // The campaign above is the first account's (user_id=1).
-    $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, 1);
+    $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
     $urlvars = getPrePopVars($urlvarslist);
     if (isset($urlvars)) {
         $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
@@ -371,7 +370,7 @@ $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_ou
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $info_row['user_id']);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 
 $click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
