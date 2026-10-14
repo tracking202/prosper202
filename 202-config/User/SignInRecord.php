@@ -30,10 +30,13 @@ final readonly class SignInRecord
     }
 
     /**
-     * The two flags from the survey service's answer (getSurveyData()), or
-     * null for each when there is no answer to read: a failed fetch (null)
-     * or one that says error. Read as "no modal, no perks", both were reset
-     * on every sign-in the service could not answer (measured).
+     * The two flags from the survey service's answer (getSurveyData()): each
+     * is read only from a boolean under its own key, and is null (kept as
+     * stored) otherwise: a failed fetch (null), an error answer, or a body
+     * without it ({} or {"message": ...} from a server error, which the
+     * fetch does not check the status of). Read as "no modal, no perks",
+     * both were reset on every sign-in the service could not answer
+     * (measured).
      *
      * @return array{?int, ?int} modal_status, vip_perks_status
      */
@@ -42,8 +45,10 @@ final readonly class SignInRecord
         if (!is_array($survey) || ($survey['error'] ?? false) === true) {
             return [null, null];
         }
+        $modal = $survey['modal'] ?? null;
+        $perks = $survey['vip_perks'] ?? null;
 
-        return [($survey['modal'] ?? false) === true ? 0 : 1, ($survey['vip_perks'] ?? false) === true ? 1 : 0];
+        return [is_bool($modal) ? ($modal ? 0 : 1) : null, is_bool($perks) ? ($perks ? 1 : 0) : null];
     }
 
     /** @throws \RuntimeException when the address or the user's row is not written */
