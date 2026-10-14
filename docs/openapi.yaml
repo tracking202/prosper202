@@ -3,7 +3,7 @@ info:
   title: Prosper202 API
   version: "3.0"
   description: |
-    REST API for the Prosper202 campaign tracking and marketing analytics platform.
+    REST API for the Prosper202 affiliate tracking platform.
 
     ## Authentication
     All endpoints require a Bearer token except `GET /system/health`, the

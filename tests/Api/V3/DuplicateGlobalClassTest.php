@@ -12,10 +12,11 @@ use Tests\TestCase;
  * PHP will not warn about until it is too late:
  *
  *  - If two declarations ever load in the same request, PHP fatals with
- *    "Cannot redeclare class". Neither INDEXES copy guards itself with
- *    class_exists(); both rely on include paths staying disjoint forever.
- *  - The copies drift. INDEXES::get_country_id() takes ($name, $code) in one
- *    file and ($db, $name, $code) in the other, so a call written for one is
+ *    "Cannot redeclare class". Only one of the three INDEXES copies guards
+ *    itself with class_exists(); the others rely on include paths staying
+ *    disjoint forever.
+ *  - The copies drift. INDEXES::get_country_id() takes ($name, $code) in two
+ *    files and ($db, $name, $code) in the third, so a call written for one is
  *    an ArgumentCountError under the other.
  *  - It blinds static analysis. PHPStan resolves the name to whichever copy
  *    it sees first and then reports every call against the others as an arity
@@ -36,7 +37,7 @@ final class DuplicateGlobalClassTest extends TestCase
         'DB' => 'config file templates; only one is ever included',
         // Tracking (connect2.php) and UI/API (connect.php via
         // functions-tracking202.php) each declare their own, with different
-        // signatures.
+        // signatures; class-indexes.php yields to whichever loaded first.
         'INDEXES' => 'per-bootstrap copies with incompatible signatures',
         // Full and slim dataengine implementations.
         'DataEngine' => 'full and slim implementations',

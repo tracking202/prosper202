@@ -130,7 +130,7 @@ try {
 	$rotators = (new \Tracking202\Report\RotatorBreakdown($db))->rotators($userId, $from, $to, $show);
 } catch (\Prosper202\Database\Exceptions\QueryException $failed) {
 	// The classic page's database error, not an empty report.
-	record_mysql_error($db, 'reading the rotator breakdown', $failed->getMessage());
+	record_mysql_error($db, $failed->getMessage());
 }
 
 $rows = [];

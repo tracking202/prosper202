@@ -378,7 +378,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 	return $html;
 }
 
-			function template_bottom(bool $readsDatabase = true)
+			function template_bottom()
 			{
 				global $version;
 				$base = get_absolute_url();
@@ -420,7 +420,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 				m.parentNode.insertBefore(a, m);
 			})(window, document, 'script', 'https://dna8twue3dlxq.cloudfront.net/js/profitwell.js', 'profitwell');
 			profitwell('auth_token', '574889f9aff2755319487e8819d11658');
-			profitwell('user_email', <?php echo $readsDatabase ? p202DashEmailJson() : '""'; ?>);
+			profitwell('user_email', '<?php echo getDashEmail(); ?>');
 		</script>
 
 
@@ -428,7 +428,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 			window.addEventListener('load', function() {
 				window.setTimeout(function() {
 					if (navigator.sendBeacon) {
-						<?php echo $readsDatabase ? p202CronBeaconStatement() : '/* no cron ping */'; ?>
+						<?php echo p202CronBeaconStatement(); ?>
 					}
 				}, 3000);
 			});

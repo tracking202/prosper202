@@ -229,8 +229,7 @@ $tracker_sql = "SELECT 202_trackers.user_id,
 		                user_keyword_searched_or_bidded,
                         user_pref_referer_data,
                         user_pref_dynamic_bid,
-		                maxmind_isp,
-                        user_public_publisher_id
+		                maxmind_isp 
                         FROM 202_trackers 
                         LEFT JOIN 202_users_pref USING (user_id) 
             LEFT JOIN 202_users USING (user_id) 
@@ -376,7 +375,6 @@ $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
 
 $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get 
-$clickCustom = [];
 //Get C1-C4 IDs
 for ($i = 1; $i <= 4; $i++) {
 	$custom = "c" . $i; //create dynamic variable
@@ -384,7 +382,6 @@ for ($i = 1; $i <= 4; $i++) {
 	// here would store literal backslashes.
 	$custom_val = (string) ($_lGET[$custom] ?? '');
 	$custom_val = str_replace('%20', ' ', $custom_val);
-    $clickCustom[$custom] = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($custom_val);
 	$custom_id = $trackingRepo->findOrCreateCustomVar($custom, $custom_val); //get the id
 	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
 }
@@ -524,36 +521,7 @@ if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 
 // Compute redirect URL (needed before redirect)
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-// The click's rows are written after the redirect, so its URL's tokens come
-// from the values in hand: read back, they are not there yet. The geo lookup,
-// kept off the redirect, runs before it only for a URL that names a place.
-$earlyGeoData = preg_match('/\[\[(country|country_code|region|city)\]\]/i', (string) $redirect_site_url)
-    ? getGeoData($ip_address)
-    : null;
-$redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
-    'keyword' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword($keyword),
-    't202pubid' => $tracker_row['user_public_publisher_id'] ?? '',
-    'c1' => $clickCustom['c1'],
-    'c2' => $clickCustom['c2'],
-    'c3' => $clickCustom['c3'],
-    'c4' => $clickCustom['c4'],
-    'gclid' => (string) ($_GET['gclid'] ?? ''),
-    // As stored: a value past the columns' 350 bytes is sent as cut.
-    'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
-    'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),
-    'utm_campaign' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_campaign),
-    'utm_term' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_term),
-    'utm_content' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_content),
-    'country' => $earlyGeoData['country'] ?? '',
-    'country_code' => $earlyGeoData['country_code'] ?? '',
-    'region' => $earlyGeoData['region'] ?? '',
-    'city' => $earlyGeoData['city'] ?? '',
-    // As stored: a tracker with no CPC stores 0.00000.
-    'cpc' => number_format((float) $mysql['click_cpc'], 5, '.', ''),
-    'cpa' => $tracker_row['click_cpa'] ?? '',
-    'payout' => $tracker_row['aff_campaign_payout'] ?? '',
-    'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
-]);
+$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
 
 $cloaking_site_url = '';
 if ($cloaking_on === true) {
@@ -574,9 +542,9 @@ $clickIdentity = p202ClickIdentity(
 );
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
+$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity): void {
 	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
-    $GeoData = $earlyGeoData ?? getGeoData($ip_address);
+	$GeoData = getGeoData($ip_address);
 	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
 	$mysql['country_id'] = (string) $country_id;
 	$region_id = $locationRepo->findOrCreateRegion($GeoData['region'] ?? '', $country_id);

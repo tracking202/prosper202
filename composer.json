@@ -5,7 +5,6 @@
   "license": "BUSL-1.1",
   "require": {
     "php": ">=8.3",
-    "ext-mbstring": "*",
     "slim/slim": "^3.12",
     "slim/psr7": "^1.6",
     "ua-parser/uap-php": "^3.9",
