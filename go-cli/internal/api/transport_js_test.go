@@ -38,15 +38,21 @@ func TestHostedRequestsRefuseRedirectsAndWaitLess(t *testing.T) {
 	if _, err := nr.RoundTrip(req); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.got.Header.Get(jsFetchRedirect); got != "error" {
-		t.Fatalf("%s = %q, want \"error\"", jsFetchRedirect, got)
+	if got := rec.got.Header.Get(jsFetchRedirect); got != "manual" {
+		t.Fatalf("%s = %q, want \"manual\" (Cloudflare's fetch takes only follow and manual)", jsFetchRedirect, got)
 	}
 	if req.Header.Get(jsFetchRedirect) != "" {
 		t.Fatal("the caller's request was modified; the transport must clone it")
 	}
 
-	slow := &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport}
-	if _, ok := slow.Transport.(noRedirectTransport); !ok {
-		t.Fatal("PostUpdate's client must reuse the no-redirect transport")
+	// fetch hands a redirect back as a response; the client must not follow it.
+	to, _ := http.NewRequest("GET", "https://elsewhere.example/x", nil)
+	for _, client := range []*http.Client{c.http, c.slowClient()} {
+		if client.CheckRedirect == nil || client.CheckRedirect(to, []*http.Request{req}) == nil {
+			t.Fatal("a hosted client must refuse to follow a redirect")
+		}
+		if _, ok := client.Transport.(noRedirectTransport); !ok {
+			t.Fatalf("client transport is %T, want noRedirectTransport", client.Transport)
+		}
 	}
 }

@@ -347,7 +347,7 @@ func newClient(baseURL, apiKey string) *Client {
 		rootURL: rootURL,
 		baseURL: rootURL + "/api/v3",
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: requestTimeout, Transport: platformTransport(nil)},
+		http:    &http.Client{Timeout: requestTimeout, Transport: platformTransport(nil), CheckRedirect: platformCheckRedirect},
 	}
 }
 
@@ -560,8 +560,13 @@ const UpdateWriteTimeout = 15 * time.Minute
 // report's answer lists every line it did not record). A dry run is a read,
 // so --staged never stamps it; the commands refuse --staged for the writes.
 func (c *Client) PostUpdate(path string, params map[string]string, body interface{}) ([]byte, error) {
-	slow := &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport}
-	return c.doWith(slow, "POST", path, params, body, nil, maxDownloadSize, true)
+	return c.doWith(c.slowClient(), "POST", path, params, body, nil, maxDownloadSize, true)
+}
+
+// slowClient is the client's own transport and redirect rule with
+// UpdateWriteTimeout.
+func (c *Client) slowClient() *http.Client {
+	return &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport, CheckRedirect: c.http.CheckRedirect}
 }
 
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
