@@ -19,7 +19,10 @@
 #     account's passes the click on, to the default, from both entry points
 #     (rtr.php sent it to the other account's URL and turned its rotation,
 #     and once the join was tied, to an empty Location; offrtr.php rewrote
-#     the click into that campaign, then into none).
+#     the click into that campaign, then into none);
+#   - lpc.php fills an offer URL's tokens only from a click of the landing
+#     page's own account (the click id is the visitor's cookie, and the read
+#     handed any account's keyword, values, cost and payout to the URL).
 # The rules are told apart by browser (the click's User-Agent), so the pass
 # does not depend on how a redirect reads the visitor's address.
 #
@@ -240,6 +243,8 @@ Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns 
 
 say "a rule whose redirect is another account's campaign passes the click on"
 Q "UPDATE 202_aff_campaigns SET user_id=$OTHER_ACCOUNT WHERE aff_campaign_id=$CA_MOVED"
+# A reused campaign id can find a deleted campaign's rotation row: clear it.
+Q "DELETE FROM 202_rotations WHERE aff_campaign_id=$CA_MOVED"
 eq "$(for _ in 1 2; do rtr "$OPERA"; done | sed 's/[?&].*//' | sort -u | paste -sd' ' -)" "$U/default" \
   "the redirector tracker sends it to the rotator's default, not the other account's URL"
 for _ in 1 2; do offrtr "$OPERA" moved; done
@@ -247,6 +252,27 @@ eq "$(where moved)" "$U/default" "the offer rotator sends it to the default too"
 eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT(c.aff_campaign_id = $CA_MOVED, ' ', cr.rule_id, '/', cr.rule_redirect_id)) FROM 202_clicks c JOIN 202_clicks_rotator cr USING (click_id) WHERE c.click_id IN ($(cut -d' ' -f1 "$OUT/offrtr-moved" | paste -sd, -))")" "0 0/0" \
   "and the click keeps out of that campaign, recorded as the default"
 eq "$(Q "SELECT COUNT(*) FROM 202_rotations WHERE aff_campaign_id=$CA_MOVED")" "0" "and no click turns its rotation"
+# The same for a landing page: the Safari rule's one redirect is LP_RULE.
+Q "UPDATE 202_landing_pages SET user_id=$OTHER_ACCOUNT WHERE landing_page_id=$LP_RULE"
+eq "$(rtr "$SAFARI" | sed 's/[?&].*//')" "$U/default" "a rule's landing page of another account: the redirector sends to the default"
+offrtr "$SAFARI" lp-moved
+eq "$(where lp-moved)" "$U/default" "and so does the offer rotator"
+Q "UPDATE 202_landing_pages SET user_id=1 WHERE landing_page_id=$LP_RULE"
+
+say "lpc.php fills tokens only from its own account's click"
+must "$(api POST /campaigns "{\"aff_campaign_name\":\"$TAG tokens\",\"aff_campaign_url\":\"$U/lpc?kw=[[t202kw]]&p=[[payout]]\",\"aff_campaign_payout\":\"3\",\"aff_network_id\":$NET}")" "campaign with tokens"
+CA_TOKENS=$(field "d['data']['aff_campaign_id']")
+must "$(api POST /landing-pages "{\"landing_page_url\":\"$U/lpc-page\",\"landing_page_nickname\":\"$TAG lpc\",\"aff_campaign_id\":$CA_TOKENS,\"landing_page_type\":0}")" "landing page for lpc.php"
+LPC_LPIP=$(Q "SELECT landing_page_id_public FROM 202_landing_pages WHERE landing_page_id=$(field "d['data']['landing_page_id']")")
+# lpc — the offer URL lpc.php's page hands on (its hidden "q" field), after "lpc?".
+lpc() {
+    curl -sS -b "tracking202subid=$C_ID" "$BASE/tracking202/redirect/lpc.php?lpip=$LPC_LPIP" \
+      | grep -oE 'name="q" value="[^"]*"' | head -1 | sed 's/.*lpc?//; s/"$//; s/&amp;/\&/g'
+}
+eq "$(lpc)" "kw=or-pass&p=3" "this account's click fills its keyword and payout"
+Q "UPDATE 202_clicks SET user_id=$OTHER_ACCOUNT WHERE click_id=$C_ID"
+eq "$(lpc)" "kw=&p=" "another account's click fills nothing"
+Q "UPDATE 202_clicks SET user_id=1 WHERE click_id=$C_ID"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -802,8 +802,13 @@ function replaceClickPlaceholders($url, string $clickId, array $click): string
  * endpoint that has written them (rtr.php inside its writer, a landing page's
  * offer link on its click). One that redirects first hands the values it
  * holds to replaceClickPlaceholders(): read back, they are not there yet.
+ *
+ * $ownerId is the account whose URL this is: the click is read only if it
+ * is that account's. Several callers take the click id from the visitor
+ * (lpc.php from a cookie), and its row carries another account's cost,
+ * payout and values (CLAUDE.md #27).
  */
-function replaceTrackerPlaceholders($db, $url, $click_id = '')
+function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 {
     // The tokens no click row is needed for first, so a URL that asks for
     // nothing else (the common [[subid]]) is filled without the read below.
@@ -863,6 +868,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '')
                 LEFT JOIN `202_users` AS 2u ON (2u.`user_id` = 2c.`user_id`)
 		    WHERE
 				2c.click_id='" . $mysql['click_id'] . "'
+                AND 2c.user_id='" . $ownerId . "'
 		";
     $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
     if ($click_row === false) {

@@ -758,8 +758,8 @@ $rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
-$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id): int {
-	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id): int {
+	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
 	return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
 };
 try {

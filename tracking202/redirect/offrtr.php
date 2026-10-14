@@ -461,7 +461,7 @@ if ($default == false) {
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
@@ -514,7 +514,7 @@ if ($default == false) {
 			} else if (!empty($rule_redirect_row['redirect_lp'])) {
 				// The chosen redirect's landing page (lp joins on rur.redirect_lp),
 				// not the rotator default's, which $rotator_row carries.
-				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id'], (int) $rotator_row['user_id']);
 				header('location: ' . $redirect_site_url);
 				die();
 			} else if(!empty($rule_redirect_row['redirect_url'])) {
@@ -613,7 +613,7 @@ if ($default == false) {
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
@@ -664,7 +664,7 @@ if ($default == false) {
 				}
 
 		} else if (!empty($rotator_row['landing_page_url'])) {
-			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
+			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id'], (int) $rotator_row['user_id']);	
 			header('location: ' . $redirect_site_url);
 			die();
 		} else if(!empty($rotator_row['default_url'])) {

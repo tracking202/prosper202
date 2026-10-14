@@ -20,13 +20,36 @@ final class TrackerPlaceholdersReadTheClickOnlyWhenAskedTest extends TestCase
     /** @return array{url?: string, error_page?: string, reads: int} */
     private static function placeholders(string $url, string $clickId, string $answer = 'row'): array
     {
+        $answer = self::runner($url, $clickId, $answer, '6');
+        unset($answer['read']);
+
+        return $answer;
+    }
+
+    /** @return array<string, mixed> the runner's answer, the statement it read with included */
+    private static function runner(string $url, string $clickId, string $answer, string $owner): array
+    {
         $runner = __DIR__ . '/fixtures/tracker-placeholders-runner.php';
         $output = shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' '
-            . escapeshellarg($url) . ' ' . escapeshellarg($clickId) . ' ' . escapeshellarg($answer) . ' 2>&1');
+            . escapeshellarg($url) . ' ' . escapeshellarg($clickId) . ' ' . escapeshellarg($answer) . ' '
+            . escapeshellarg($owner) . ' 2>&1');
         $answer = json_decode((string) $output, true);
         self::assertIsArray($answer, (string) $output);
 
         return $answer;
+    }
+
+    /**
+     * The click id comes from the visitor (lpc.php reads it from a cookie),
+     * and the row carries the click's cost, payout and values: it is read
+     * only as the account whose URL this is.
+     */
+    public function testTheClickIsReadOnlyAsTheURLsAccount(): void
+    {
+        $answer = self::runner('https://offer.example/go?cpc=[[cpc]]', '4215', 'row', '9');
+
+        self::assertStringContainsString("2c.click_id='4215'", (string) $answer['read']);
+        self::assertStringContainsString("AND 2c.user_id='9'", (string) $answer['read']);
     }
 
     public function testAUrlAskingOnlyForWhatTheRequestHoldsReadsNothing(): void

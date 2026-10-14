@@ -163,8 +163,11 @@ if (!function_exists('p202FailedQueryMessage')) {
         if (in_array($errno, $namesOnly, true)) {
             return $message;
         }
-        if ($errno === 1062 && preg_match("/\\ADuplicate entry '.*' for key ('[^']*')\\z/s", $message, $m) === 1) {
-            return 'Duplicate entry ? for key ' . $m[1];
+        // A caught failure (Connection's) puts its words before the server's
+        // and its errno tag after them; neither quotes anything.
+        $duplicate = "/\\A([^'\"]*)Duplicate entry '.*' for key ('[^']*')( \\[errno 1062\\])?\\z/s";
+        if ($errno === 1062 && preg_match($duplicate, $message, $m) === 1) {
+            return $m[1] . 'Duplicate entry ? for key ' . $m[2] . ($m[3] ?? '');
         }
 
         // From the first quote to the last, or to the end when there is one.
