@@ -1595,8 +1595,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c1 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c1);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1656,8 +1656,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c2 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c2);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1717,8 +1717,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c3 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c3);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1778,8 +1778,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c4 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c4);
 
         if ($memcacheWorking) {
             // get from memcached
