@@ -5742,6 +5742,12 @@ paths:
                       licensed:
                         type: boolean
                         description: Always true; an unlicensed approval answers 402 and no key is made
+                      licence_key_sha256:
+                        type: string
+                        description: >-
+                          SHA-256 (hex) of the ClickServer API key whose licence decides
+                          for this user (theirs, else the install owner's). The MCP server
+                          checks it with the licence service; the key itself is never sent.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant

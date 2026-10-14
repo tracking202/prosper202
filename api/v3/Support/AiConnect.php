@@ -193,8 +193,10 @@ final class AiConnect
     /**
      * POST /connect/token, after ConnectController refused unknown keys.
      * Returns [status, body]. The licence is decided here, before any key
-     * exists, as the install's CLI gate decides it (#201); the answer never
-     * carries the ClickServer key.
+     * exists, as the install's CLI gate decides it (#201). The answer never
+     * carries the ClickServer key: only its SHA-256, which the MCP server
+     * checks with the licence service itself (an edited install could skip
+     * the check here), and which is good for nothing else.
      *
      * @param array<string, mixed> $payload
      * @return array{0: int, 1: array<string, mixed>}
@@ -248,6 +250,13 @@ final class AiConnect
                 . 'https://my.tracking202.com/api/customers/subscriptions/support');
         }
 
+        $licenceKey = CapabilitiesController::licenceKeyFor($db, $userId);
+        if ($licenceKey === null || $licenceKey === '') {
+            // cliAccess() let an unknown through; the MCP server needs the
+            // key's hash to check, so an unreadable key stops here.
+            return $refuse(500, 'server_error', 'The install could not read its ClickServer API key; try again.');
+        }
+
         $label = self::label((string) $grant['client_name']);
         $apiKey = bin2hex(random_bytes(32));
         try {
@@ -267,6 +276,7 @@ final class AiConnect
             'user' => ['user_id' => $userId, 'user_name' => $userName],
             'version' => self::version(),
             'licensed' => true,
+            'licence_key_sha256' => hash('sha256', $licenceKey),
         ]]];
     }
 
