@@ -1624,8 +1624,9 @@ class INDEXES
     // A lookup, then an insert, with no unique key on the address behind them:
     // the install partitions the table by site_url_id, and MySQL requires every
     // unique key of a partitioned table to include that column. So two first
-    // clicks on one new URL can each insert a row; each click names a valid
-    // one, and a report grouped by URL row lists that URL twice.
+    // clicks on one new URL can each insert a row (in a rotator click's
+    // transaction the row stays unseen until that click commits); each click
+    // names a valid one, and a report grouped by URL row lists that URL twice.
     public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
     {
         global $memcacheWorking, $memcache;

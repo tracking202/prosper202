@@ -12,10 +12,12 @@ use PHPUnit\Framework\TestCase;
  * instance) with the admin's REST key in P202_API_KEY.
  *
  * dl.php redirects before it writes the click's rows, so a read-back of them
- * found nothing and every click value came out blank; [[cpc]] was 0 on every
- * path, filled before the click was read, and [[payout]] blank, read under a
- * key nothing set. dl.php fills its tokens from the values in hand and rtr.php
- * reads them back, so one campaign is clicked through both.
+ * found nothing and every click value came out blank, and a simple landing
+ * page's record_simple.php computed its outbound URL the same way; [[cpc]] was
+ * 0 on every path, filled before the click was read, and [[payout]] blank,
+ * read under a key nothing set. dl.php and record_simple.php fill their tokens
+ * from the values in hand and rtr.php reads them back, so one campaign is
+ * clicked through all three.
  *
  * @group integration
  * @group instance
@@ -36,6 +38,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
     private static int $account = 0;
     private static string $direct = '';
     private static string $viaRotator = '';
+    private static string $landingPage = '';
 
     public static function setUpBeforeClass(): void
     {
@@ -67,6 +70,13 @@ final class ClickUrlTokensInstanceTest extends TestCase
             self::$direct = self::tracker(['aff_campaign_id' => $campaign]);
             $rotator = self::create('rotators', ['name' => "$run redirector", 'default_campaign' => $campaign], 'id');
             self::$viaRotator = self::tracker(['aff_campaign_id' => 0, 'rotator_id' => $rotator]);
+            self::$landingPage = (string) (self::createRow('landing-pages', [
+                'landing_page_nickname' => "$run page", 'landing_page_url' => "https://lp.example/$run",
+                'aff_campaign_id' => $campaign, 'landing_page_type' => 0,
+            ])['landing_page_id_public'] ?? '');
+            if (self::$landingPage === '') {
+                throw new \RuntimeException('The landing page create answered without a landing_page_id_public.');
+            }
         } catch (\RuntimeException $e) {
             self::$setupError = $e->getMessage();
         }
@@ -117,6 +127,37 @@ final class ClickUrlTokensInstanceTest extends TestCase
         self::assertSame((string) self::$account, $tokens['sourceid']);
     }
 
+    public function testASimpleLandingPageFillsItsOutboundTokensFromTheClickBeforeItIsWritten(): void
+    {
+        $run = self::$run;
+        // The page's script records the click and answers the outbound link,
+        // which pci.php turns into the offer URL the click was stored with.
+        [$status, $headers, $script] = self::request(
+            self::$base . '/tracking202/static/record_simple.php?' . http_build_query([
+                'lpip' => self::$landingPage, 't202id' => self::$direct, 't202kw' => "kw $run",
+                'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
+                'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
+            ]),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(200, $status, $headers . $script);
+        self::assertSame(1, preg_match('/var outbound = ("[^"\n]*");/', $script, $outbound), $script);
+        [$status, $headers, $body] = self::request((string) json_decode($outbound[1]), [CURLOPT_USERAGENT => self::UA]);
+        self::assertSame(302, $status, $headers . $body);
+        $tokens = self::tokens($headers);
+
+        self::assertSame([
+            't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
+            'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
+            'cpc' => '0.37', 'cpc2' => '0.37000', 'payout' => '2.75', 'sourceid' => (string) self::$account,
+        ], array_diff_key($tokens, array_flip(['subid', 'country', 'country_code', 'region', 'city'])));
+        $click = self::clickRow($tokens['subid']);
+        self::assertSame(
+            [$click['country_name'], $click['country_code'], $click['region_name'], $click['city_name']],
+            [$tokens['country'], $tokens['country_code'], $tokens['region'], $tokens['city']]
+        );
+    }
+
     /**
      * @param array<string, string> $query
      * @return array<string, string> each token's value in the Location answered
@@ -128,6 +169,13 @@ final class ClickUrlTokensInstanceTest extends TestCase
             [CURLOPT_USERAGENT => self::UA]
         );
         self::assertSame(302, $status, $headers . $body);
+
+        return self::tokens($headers);
+    }
+
+    /** @return array<string, string> each token's value in the Location of $headers */
+    private static function tokens(string $headers): array
+    {
         self::assertSame(1, preg_match('/^Location: (.+?)\r?$/mi', $headers, $location), $headers);
         self::assertStringStartsWith('https://offer.example/' . self::$run . '?', $location[1]);
 
