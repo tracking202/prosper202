@@ -164,6 +164,26 @@ final class RotatorClickWriterIntegrationTest extends TestCase
         self::assertSame(0, self::marks($clickId), 'a new click is not summed yet, so it is not marked');
     }
 
+    /**
+     * The public id is a digit, the click id and a digit: on a 32-bit build
+     * it passes PHP_INT_MAX at tens of millions of clicks, and (int) clamped
+     * it, so cl.php?pci= found no click. Past PHP_INT_MAX here is the same
+     * clamp on a 64-bit build.
+     */
+    public function testACloakedClickKeepsItsPublicIdWhole(): void
+    {
+        $clickId = self::FIRST_CLICK + 5;
+        $click = self::click($clickId);
+        $click->clickIdPublic = '18446744073709551615';
+        $click->clickCloaking = 1;
+
+        self::writer()->write($click, 7, 8, 9, false, static fn (): int => 33);
+
+        self::assertColumns('202_clicks_record', $clickId, [
+            'click_id_public' => '18446744073709551615', 'click_cloaking' => '1',
+        ]);
+    }
+
     public function testAFailureWhileResolvingTheRedirectWritesNoRow(): void
     {
         $clickId = self::FIRST_CLICK + 1;
