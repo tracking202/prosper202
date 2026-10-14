@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		AUTH::delete_old_auth_hash();
 
 		// The throttle's address; FILTER::checkUserIP compares clicks with it.
-		$ip_id = (int) INDEXES::get_ip_id($login_ip);
+		$ip_id = \Prosper202\Repository\LookupRepositoryFactory::location($db)->findOrCreateIp($login_ip);
 		$survey_data = getSurveyData($user_row['install_hash']);
 		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
 		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;

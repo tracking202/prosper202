@@ -179,9 +179,6 @@ if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 if ($cloaking_on == true) {
 
 	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/lpc.php?lpip=' . $tracker_row['landing_page_id_public'];
-	$click_cloaking_site_url_id = INDEXES::get_site_url_id($db, $cloaking_site_url);
-	$mysql['click_cloaking_site_url_id'] = $db->real_escape_string((string) $click_cloaking_site_url_id);         
-	
 }
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
@@ -211,9 +208,6 @@ $redirect_site_url = replaceTrackerPlaceholders(
     $mysql['click_id'],
     (int) $tracker_row['user_id']
 );
-
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string) $click_redirect_site_url_id);
 
 
 

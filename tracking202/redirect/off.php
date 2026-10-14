@@ -365,15 +365,16 @@ $update_sql = "
 //delay_sql($db, $update_sql);
 $click_result = $db->query($update_sql) or record_mysql_error($db);
 
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
+$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $info_row['user_id']);
 
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
+$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 $update_sql = "

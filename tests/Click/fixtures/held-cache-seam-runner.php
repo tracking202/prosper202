@@ -3,11 +3,12 @@
 /**
  * Writes one rotator click as rtr.php does: RotatorClickWriter inside
  * p202WithHeldCacheWrites(), its redirect URL filled from the click's own
- * rows and looked up by connect2.php's INDEXES::get_site_url_id(), which
- * caches through connect2.php's setCache(), on the scratch database with a
- * cache that records what reaches it. A process of its own: connect2.php's
- * INDEXES, setCache() and _mysqli_query() are global names other suites
- * define for themselves, and connect2.php cannot be loaded alone.
+ * rows and looked up by LookupRepositoryFactory's location repository, which
+ * caches through connect2.php's getCache() and setCache(), on the scratch
+ * database with a cache that records what reaches it. A process of its own:
+ * connect2.php's setCache(), getCache() and _mysqli_query() are global names
+ * other suites define for themselves, and connect2.php cannot be loaded
+ * alone.
  *
  * argv: <commit | rollback | rollback_unheld | lookup_fails> <click id> <host>
  *   commit           the click is written
@@ -16,9 +17,9 @@
  *   rollback_unheld  the same, without the hold: what the test must be able
  *                    to see
  *   lookup_fails     the lookup's own INSERT into 202_site_urls is refused
- *                    (a table of this session's shadows it): connect2.php's
- *                    _mysqli_query() ends at record_mysql_error(), and never
- *                    answers false for the lookup to read insert_id 0 from
+ *                    (a table of this session's shadows it): the repository
+ *                    throws, and never answers the insert_id 0 a failed
+ *                    INSERT leaves
  *
  * Prints JSON: the URL looked up and the id it answered, the cache writes
  * made by the time the lookup returned, every cache write, and the failure.
@@ -37,40 +38,24 @@ require __DIR__ . '/../../Config/fixtures/lift-function.php';
 $connect2 = __DIR__ . '/../../../202-config/connect2.php';
 foreach (
     [
-        'setCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'systemHash',
+        'setCache', 'getCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'systemHash',
         'replaceTrackerPlaceholders', 'replaceClickPlaceholders', 'p202ClickUrlTokens', 'replaceTokens',
     ] as $name
 ) {
     eval(lift_function($connect2, $name));
 }
-eval(lift_class($connect2, 'INDEXES'));
 // Evaluated, as the integration suites declare their stand-ins.
 eval(<<<'PHP'
     function record_mysql_error($dbOrSql, $sql = null): never
     {
         throw new \RuntimeException('record_mysql_error(): ' . ($sql ?? (is_string($dbOrSql) ? $dbOrSql : '')));
     }
-    final class DB
-    {
-        public static function getInstance(): self
-        {
-            return new self();
-        }
-        public function getConnection(): ?\mysqli
-        {
-            return $GLOBALS['db'] ?? null;
-        }
-    }
-    // A cache that misses every read and records every write.
+    // A cache that records every write. Every read misses: getCache() asks
+    // only a Memcache or a Memcached.
     final class RecordingCache
     {
         /** @var list<array{string, mixed}> */
         public array $written = [];
-
-        public function get(string $key): bool
-        {
-            return false;
-        }
 
         public function set(string $key, mixed $value, mixed $exp): bool
         {
@@ -127,7 +112,8 @@ $cachedByThen = null;
 $ownerId = $click->userId;
 $resolve = function () use ($db, &$url, $clickId, $ownerId, &$answered, &$cachedByThen, $cache): int {
     $url = replaceTrackerPlaceholders($db, $url, $clickId, $ownerId);
-    $answered = (int) INDEXES::get_site_url_id($db, $url);
+    $answered = \Prosper202\Repository\LookupRepositoryFactory::location($db)
+        ->findOrCreateSiteUrl((string) $url);
     $cachedByThen = count($cache->written);
 
     return $answered;

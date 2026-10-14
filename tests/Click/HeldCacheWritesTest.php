@@ -11,12 +11,13 @@ use PHPUnit\Framework\TestCase;
  * commits and dropped when it does not.
  *
  * rtr.php resolves the redirect URL's site URL id inside the transaction,
- * and INDEXES::get_site_url_id() caches the id of a row it inserts at once:
- * a rollback after it left the entry naming no row, and every later click to
- * that URL stored the dangling id for the 7 days the entry lived (measured
- * on a live instance with memcached). The real setCache() and
- * p202WithHeldCacheWrites() are lifted out of connect2.php under other
- * names, so they cannot collide with the setCache() other suites declare.
+ * and the lookup (CachedLocationRepository) caches the id of a row it
+ * inserts at once: a rollback after it left the entry naming no row, and
+ * every later click to that URL stored the dangling id for as long as the
+ * entry lived (measured on a live instance with memcached). The real
+ * setCache() and p202WithHeldCacheWrites() are lifted out of connect2.php
+ * under other names, so they cannot collide with the setCache() other
+ * suites declare.
  */
 final class HeldCacheWritesTest extends TestCase
 {
