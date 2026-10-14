@@ -545,6 +545,7 @@ ajax "$AJAX/generate_tracking_link.php" "$OUT/k-rtr.html" --data-urlencode "toke
   --data-urlencode "tracker_rotator=$ROT" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=10"
 has "$OUT/k-rtr.html" "tracking202/redirect/rtr.php?t202id=" "a redirector tracker answers with its rtr.php link"
 eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "3" "three trackers stored"
+eq "$(Q "SELECT click_cloaking FROM 202_trackers WHERE rotator_id=$ROT")" "-1" "a link posted with no cloaking leaves it to the campaign"
 get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
 KID=$(Q "SELECT tracker_id FROM 202_trackers WHERE rotator_id=$ROT")
 has "$P" "data-tracker-id=\"$KID\"" "the list shows the redirector tracker"
