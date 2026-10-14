@@ -396,6 +396,40 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame(2, self::rowsIn('202_ips'));
     }
 
+    /**
+     * An install upgraded through the 1.9.50 → 1.9.51 rung has the 202_ips_v6
+     * that rung made (functions-upgrade.php), whose location_id has no
+     * default: under a strict sql_mode a row that leaves it out is refused
+     * (1364), and every new IPv6 visitor's click failed with it.
+     */
+    public function testAnIpv6AddressIsStoredInTheTableTheUpgradeMade(): void
+    {
+        // This session's own 202_ips_v6, shadowing the installed one.
+        self::q('CREATE TEMPORARY TABLE `202_ips_v6` ('
+            . ' `ip_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,'
+            . " `ip_address` varbinary(16) NOT NULL DEFAULT '',"
+            . ' `location_id` mediumint(8) unsigned NOT NULL,'
+            . ' PRIMARY KEY (`ip_id`), KEY `ip_address` (`ip_address`), KEY `location_id` (`location_id`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci');
+        try {
+            $repo = $this->location(self::STRICT);
+            self::assertFalse(
+                self::db()->query("INSERT INTO 202_ips_v6 SET ip_address = 'probe'"),
+                'the table under test takes a row with no location_id'
+            );
+            self::assertSame(1364, self::db()->errno);
+
+            $id = $repo->findOrCreateIp('2001:db8::7');
+
+            self::assertSame($id, $repo->findOrCreateIp('2001:db8::7'));
+            self::assertSame([$id], StoredAddressIds::of(self::conn(), '2001:db8::7'));
+            self::assertSame('0', self::value('SELECT location_id FROM 202_ips_v6'));
+            self::assertSame('0', self::value('SELECT location_id FROM 202_ips WHERE ip_id = ' . $id));
+        } finally {
+            self::q('DROP TEMPORARY TABLE `202_ips_v6`');
+        }
+    }
+
     /** @dataProvider modes */
     public function testASiteUrlIsFiledUnderItsDomain(string $mode): void
     {
@@ -508,7 +542,7 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame($ip, $location->findOrCreateIp('2001:db8::9'));
         self::assertSame(0, self::rowsIn('202_tracking_c1'), 'the database was not asked');
         self::assertSame(0, self::rowsIn('202_ips'));
-        self::assertSame([md5('c1-idcachedns'), md5('ip-id2001:db8::9ns')], $cache->writtenKeys());
+        self::assertSame([md5('c1-idcachedns'), md5('ip6-id2001:db8::9ns')], $cache->writtenKeys());
     }
 
     public function testAnEntryThatIsNotAnIdIsLookedUpInTheDatabase(): void

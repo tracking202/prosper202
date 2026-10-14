@@ -85,6 +85,8 @@ final class InMemoryTrackingRepository implements TrackingRepositoryInterface
     #[\Override]
     public function findOrCreateVariableSet(string $variables): int
     {
+        MysqlTrackingRepository::variableIds($variables);
+
         return $this->variableSets[$variables] ??= $this->nextId++;
     }
 

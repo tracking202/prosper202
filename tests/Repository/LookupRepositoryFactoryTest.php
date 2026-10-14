@@ -95,6 +95,7 @@ final class LookupRepositoryFactoryTest extends TestCase
     public function testWithTheBootstrapCacheALookupReadsItFirst(): void
     {
         eval('function getCache(string $key, $default = false) {'
+            . ' $GLOBALS["p202TestCacheReads"][] = $key;'
             . ' return $GLOBALS["p202TestCache"][$key] ?? $default; }');
         eval('function setCache($key, $value, $exp = null) {'
             . ' $GLOBALS["p202TestCacheWrites"][] = [$key, $value, $exp]; return true; }');
@@ -106,6 +107,8 @@ final class LookupRepositoryFactoryTest extends TestCase
             md5('browser-id' . 'Chrome' . 'install-a') => 5,
             md5('c2-id' . 'x' . 'install-b') => 99,
         ];
+        $GLOBALS['p202TestCacheReads'] = [];
+        $GLOBALS['p202TestCacheWrites'] = [];
         $db = mysqli_init();
 
         $tracking = LookupRepositoryFactory::tracking($db);
@@ -119,10 +122,22 @@ final class LookupRepositoryFactoryTest extends TestCase
         self::assertSame(12, $location->findOrCreateCountry('United States', 'US'));
         self::assertSame(5, $device->findOrCreateBrowser('Chrome'));
 
-        // Another install's entry is not this one's: the miss reaches the
-        // database, which this unconnected handle cannot answer.
-        $this->expectException(\Throwable::class);
-        $tracking->findOrCreateC2('x');
+        // Another install's entry is not this one's: the lookup asks only
+        // this install's key, misses, and reaches the database, which this
+        // unconnected handle cannot answer.
+        try {
+            $answer = $tracking->findOrCreateC2('x');
+            self::fail('c2 was answered ' . $answer . ' with no entry of this install\'s and no database');
+        } catch (\Error $e) {
+            self::assertSame('mysqli object is not fully initialized', $e->getMessage());
+        }
+        self::assertSame([
+            md5('c1-id' . 'x' . 'install-a'),
+            md5('country-id' . 'US' . 'install-a'),
+            md5('browser-id' . 'Chrome' . 'install-a'),
+            md5('c2-id' . 'x' . 'install-a'),
+        ], $GLOBALS['p202TestCacheReads']);
+        self::assertSame([], $GLOBALS['p202TestCacheWrites']);
     }
 
     /**

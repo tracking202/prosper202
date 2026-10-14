@@ -20,7 +20,8 @@ use RuntimeException;
 /**
  * The cached repositories read through an IdCache. Their keys are the ones
  * the click path has always written to memcache, byte for byte, so entries
- * already there keep answering after an upgrade.
+ * already there keep answering after an upgrade; an IPv6 address's is the
+ * one exception, since the old lookup's answers for it are not trusted.
  */
 final class CachedDecoratorTest extends TestCase
 {
@@ -106,6 +107,31 @@ final class CachedDecoratorTest extends TestCase
 
         self::assertSame([md5($subject . 'fakehash')], $cache->reads);
         self::assertSame([md5($subject . 'fakehash')], $cache->writtenKeys());
+    }
+
+    /**
+     * The lookup that wrote 'ip-id' entries joined 202_ips_v6 to 202_ips as
+     * numbers, so the entry for 2001:db8::1 (v6 row 1) could hold the row of
+     * the IPv4 visitor 1.0.0.5. An IPv6 address is keyed under 'ip6-id' and
+     * found by the text join; an IPv4 entry was always a text compare and
+     * still answers.
+     */
+    public function testAnIpv6EntryTheOldLookupWroteIsNotServed(): void
+    {
+        $cache = new ArrayIdCache();
+        $cache->ids[md5('ip-id' . '2001:db8::1' . 'h')] = 999;
+        $cache->ids[md5('ip-id' . '192.0.2.1' . 'h')] = 77;
+        $inner = new InMemoryLocationRepository();
+        $cached = new CachedLocationRepository($inner, $cache, 'h');
+
+        $v6 = $cached->findOrCreateIp('2001:db8::1');
+
+        self::assertNotSame(999, $v6, 'the old lookup\'s entry was served');
+        self::assertSame($inner->findOrCreateIp('2001:db8::1'), $v6);
+        self::assertSame([md5('ip6-id' . '2001:db8::1' . 'h')], $cache->reads);
+        self::assertSame([[md5('ip6-id' . '2001:db8::1' . 'h'), $v6]], $cache->writes);
+        self::assertSame($v6, $cached->findOrCreateIp('2001:db8::1'), 'the new entry answers');
+        self::assertSame(77, $cached->findOrCreateIp('192.0.2.1'));
     }
 
     public function testEmptyValuesSkipCacheAndReturnZero(): void

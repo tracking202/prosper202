@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Repository;
 
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
 use Prosper202\Repository\InMemory\InMemoryTrackingRepository;
@@ -138,6 +139,30 @@ final class TrackingRepositoryContractTest extends TestCase
 
         self::assertGreaterThan(0, $id1);
         self::assertSame($id1, $id2);
+    }
+
+    /** @return iterable<string, array{TrackingRepositoryInterface, string}> */
+    public static function malformedVariableSets(): iterable
+    {
+        foreach (['1,,2', '', '1,x', '0', '1, 2', '01,2'] as $malformed) {
+            foreach (self::implementations() as $label => [$repo]) {
+                yield $label . ' "' . $malformed . '"' => [$repo, $malformed];
+            }
+        }
+    }
+
+    /**
+     * What MysqlTrackingRepository refuses (MysqlLookupRepositoriesIntegrationTest
+     * holds it to the same list), so a fake cannot take what the server would not.
+     *
+     * @dataProvider malformedVariableSets
+     */
+    public function testAVariableSetThatIsNotCommaJoinedIdsIsRefused(
+        TrackingRepositoryInterface $repo,
+        string $variables
+    ): void {
+        $this->expectException(InvalidArgumentException::class);
+        $repo->findOrCreateVariableSet($variables);
     }
 
     /**

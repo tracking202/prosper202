@@ -183,8 +183,9 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
      * which never writes the mapping it lacks.
      *
      * @return list<int>
+     * @throws InvalidArgumentException for anything but comma-joined row ids
      */
-    private static function variableIds(string $variables): array
+    public static function variableIds(string $variables): array
     {
         $ids = [];
         foreach (explode(',', $variables) as $part) {

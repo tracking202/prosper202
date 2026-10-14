@@ -58,6 +58,12 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
         return StoredText::bytes($url, self::SITE_URL_BYTES);
     }
 
+    /** An address filed through 202_ips_v6 rather than by its text. */
+    public static function isIpv6(string $address): bool
+    {
+        return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+    }
+
     #[\Override]
     public function findOrCreateCountry(string $name, string $code): int
     {
@@ -133,6 +139,10 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
      * 202_ips_v6 row by its packed bytes, plus a 202_ips row whose
      * ip_address is that row's id written in decimal; the two are joined as
      * text, because compared as numbers the IPv4 row '1.0.0.5' is 1.
+     *
+     * location_id is written, not left to its default: the 1.9.51 rung made
+     * 202_ips_v6.location_id with no default, which a strict sql_mode refuses
+     * to leave out.
      */
     #[\Override]
     public function findOrCreateIp(string $address): int
@@ -145,14 +155,14 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
                 'Not an IP address: "' . $address . '"'
             );
         }
-        if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+        if (!self::isIpv6($address)) {
             return $this->ids->first(
                 'SELECT ip_id FROM 202_ips WHERE ip_address = ?',
                 's',
                 [$address],
                 'ip_id'
             ) ?? $this->ids->insert(
-                'INSERT INTO 202_ips SET ip_address = ?',
+                'INSERT INTO 202_ips SET ip_address = ?, location_id = 0',
                 's',
                 [$address]
             );
@@ -175,13 +185,13 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
         }
 
         $v6Id = $this->ids->insert(
-            'INSERT INTO 202_ips_v6 SET ip_address = ?',
+            'INSERT INTO 202_ips_v6 SET ip_address = ?, location_id = 0',
             's',
             [$packed]
         );
 
         return $this->ids->insert(
-            'INSERT INTO 202_ips SET ip_address = ?',
+            'INSERT INTO 202_ips SET ip_address = ?, location_id = 0',
             's',
             [(string) $v6Id]
         );

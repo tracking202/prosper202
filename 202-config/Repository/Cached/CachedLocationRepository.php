@@ -69,15 +69,21 @@ final readonly class CachedLocationRepository implements LocationRepositoryInter
         );
     }
 
+    /**
+     * An IPv6 address has its own subject: the lookup that wrote 'ip-id'
+     * entries joined 202_ips_v6 to 202_ips as numbers and could answer an
+     * IPv4 visitor's row, so none of its IPv6 entries is trusted.
+     */
     #[\Override]
     public function findOrCreateIp(string $address): int
     {
         if ($address === '') {
             return 0;
         }
+        $subject = MysqlLocationRepository::isIpv6($address) ? 'ip6-id' : 'ip-id';
 
         return $this->ids->remember(
-            'ip-id' . $address,
+            $subject . $address,
             fn (): int => $this->inner->findOrCreateIp($address)
         );
     }

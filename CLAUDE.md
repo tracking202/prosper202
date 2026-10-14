@@ -358,7 +358,12 @@ Two amplifiers, both of which turned this from a blip into a breach:
   partitions `202_site_urls` by its id, and a partitioned table's unique keys
   must include that id), so concurrent first clicks on one new URL can store
   it twice; each click names a valid row. That is left as it is, and written
-  at both lookups.
+  at the lookup. Fixing a lookup does not fix the answers it already cached:
+  the IPv6 address lookup joined `202_ips_v6` to `202_ips` as numbers and
+  could answer an IPv4 visitor's row, and the corrected join kept the old
+  key, so every wrong id the old code had cached was still served for its 30
+  days (found by review, reproduced). When a lookup's answer changes, change
+  its key subject (`ip6-id`), and pin the old key unserved in a test.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
