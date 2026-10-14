@@ -157,6 +157,22 @@ final class AiConnectTest extends TestCase
         self::assertSame(100, mb_strlen(AiConnect::label(str_repeat('é', 120))));
     }
 
+    /**
+     * The licence service finds a key by its hash as it finds a key: case and
+     * surrounding spaces aside. A key typed into the install in another case
+     * than the portal shows must hash the same, or a payer is refused.
+     */
+    public function testTheLicenceKeyHashIgnoresCaseAndSurroundingSpace(): void
+    {
+        $portal = 'Ab3dEf9GhIjKlMnOpQrStUvWxYz0123456789aBcDeFgHiJkLmNoPqRsTuVw';
+        $expected = hash('sha256', strtolower($portal));
+        $typings = [$portal, strtolower($portal), strtoupper($portal), "  $portal\n", "\t" . strtoupper($portal) . ' '];
+        foreach ($typings as $typed) {
+            self::assertSame($expected, AiConnect::licenceKeyHash($typed), var_export($typed, true));
+        }
+        self::assertNotSame($expected, AiConnect::licenceKeyHash(substr($portal, 1)));
+    }
+
     /** @return array{0: int, 1: array<string, mixed>} */
     private static function exchange(array $payload): array
     {

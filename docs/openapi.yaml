@@ -5746,8 +5746,10 @@ paths:
                         type: string
                         description: >-
                           SHA-256 (hex) of the ClickServer API key whose licence decides
-                          for this user (theirs, else the install owner's). The MCP server
-                          checks it with the licence service; the key itself is never sent.
+                          for this user (theirs, else the install owner's), trimmed and
+                          lowercased first, as the licence service compares keys. The MCP
+                          server checks it with the licence service; the key itself is
+                          never sent.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant

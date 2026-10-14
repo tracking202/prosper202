@@ -165,6 +165,16 @@ final class AiConnect
         return self::ACCESS_SCOPES[$access] ?? null;
     }
 
+    /**
+     * The licence key as the MCP server sends it to the licence service:
+     * SHA-256 of the key trimmed and lowercased, because the service's lookup
+     * by key ignores case and surrounding spaces and a lookup by hash cannot.
+     */
+    public static function licenceKeyHash(string $key): string
+    {
+        return hash('sha256', strtolower(trim($key)));
+    }
+
     /** The key's label in Account › API keys. */
     public static function label(string $clientName): string
     {
@@ -194,7 +204,7 @@ final class AiConnect
      * POST /connect/token, after ConnectController refused unknown keys.
      * Returns [status, body]. The licence is decided here, before any key
      * exists, as the install's CLI gate decides it (#201). The answer never
-     * carries the ClickServer key: only its SHA-256, which the MCP server
+     * carries the ClickServer key: only its hash (licenceKeyHash()), which the MCP server
      * checks with the licence service itself (an edited install could skip
      * the check here), and which is good for nothing else.
      *
@@ -276,7 +286,7 @@ final class AiConnect
             'user' => ['user_id' => $userId, 'user_name' => $userName],
             'version' => self::version(),
             'licensed' => true,
-            'licence_key_sha256' => hash('sha256', $licenceKey),
+            'licence_key_sha256' => self::licenceKeyHash($licenceKey),
         ]]];
     }
 
