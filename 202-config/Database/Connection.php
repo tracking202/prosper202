@@ -197,10 +197,32 @@ final class Connection
         $this->execute($stmt);
         $result = $this->resultSet($stmt);
         $row = $result->fetch_assoc();
+        if ($row === false) {
+            $this->fetchFailed($stmt, $result);
+        }
         $result->free();
         $stmt->close();
 
-        return $row ?? null;
+        return $row;
+    }
+
+    /**
+     * fetch_assoc() answers null for "no more rows" and false for a fetch
+     * that failed, which must not read as the end of the rows.
+     *
+     * @param mysqli_stmt $stmt
+     * @throws QueryException always
+     */
+    private function fetchFailed(object $stmt, mysqli_result $result): never
+    {
+        try {
+            $error = $stmt->error;
+        } catch (\Error) {
+            $error = '';
+        }
+        $result->free();
+        $stmt->close();
+        throw new QueryException('MySQL fetch failed: ' . ($error !== '' ? $error : '(unknown)'));
     }
 
     /**
@@ -243,7 +265,10 @@ final class Connection
         $this->execute($stmt);
         $result = $this->resultSet($stmt);
         $rows = [];
-        while ($row = $result->fetch_assoc()) {
+        while (($row = $result->fetch_assoc()) !== null) {
+            if ($row === false) {
+                $this->fetchFailed($stmt, $result);
+            }
             $rows[] = $row;
         }
         $result->free();
