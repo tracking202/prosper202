@@ -44,7 +44,7 @@ final class GroupedReportRegistry
             'ip' => new GroupedReportDefinition(
                 labelSelect: 'IFNULL(' . $inet6Ntoa . '(2i6.ip_address),2i.ip_address) as ip_address',
                 joins: ' LEFT JOIN 202_ips AS 2i on (2st.ip_id = 2i.ip_id)'
-                    . ' LEFT JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci) ',
+                    . IpAddressSql::join('2i', '2i6'),
                 groupBy: 'ip_address',
             ),
             'country' => new GroupedReportDefinition(

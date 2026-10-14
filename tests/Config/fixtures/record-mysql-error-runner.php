@@ -8,10 +8,11 @@ declare(strict_types=1);
  * redirect and admin pages call it.
  *
  * Neither defining file can be loaded alone — connect2.php bootstraps the
- * whole click path and functions-tracking202.php declares INDEXES, which the
- * function calls — so the function's own source is lifted out of the file
+ * whole click path and functions-tracking202.php declares half the admin
+ * pages' functions — so the function's own source is lifted out of the file
  * by its tokens and evaluated beside stand-ins for what it calls. The body
- * that runs is the shipped body, byte for byte.
+ * that runs is the shipped body, byte for byte, and its address and URL
+ * lookups are the real repositories, on the connection it was handed.
  *
  * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
  *       caught_secret | caught_forged_tag> [<scenario>]
@@ -21,23 +22,33 @@ declare(strict_types=1);
  *   caught_secret: a caught failure and a statement, each quoting a value
  *   caught_forged_tag: the same, the quoted value carrying an errno tag of
  *       its own ahead of the real one
+ *   uncaught: (connect2.php) a repository's QueryException that nothing
+ *       catches, ending at connect2.php's own p202ClickPathUncaught();
+ *       the repository's call is printed as CALLED AT
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
- *       the recorded row carries, so the test can find it)
+ *       the recorded row carries, so the test can find it; below 2^24, and
+ *       the request's address and URL are made from it, so no row an
+ *       earlier run committed can answer this run's lookups)
  *
  * Scenarios:
- *   page            the failed query alone; the error record's statement
- *                   is not run (the page, and what it asks the connection)
+ *   page            the failed query alone; the error record's lookups run,
+ *                   its row's INSERT does not (the page, and what it asks
+ *                   the connection)
  *   txn             inside begin_transaction(), after a write of its own:
  *                   the error record is really written
  *   autocommit_off  the same, under autocommit(false)
  *   gone            the connection killed before the failing query, so
  *                   nothing can be rolled back or recorded
  *   lookup_fails    the connection alive, and the record's own lookup
- *                   failing through the defining file's real
- *                   _mysqli_query(), which on the click path calls
- *                   record_mysql_error() again
+ *                   refused by the server (a table of this session's
+ *                   shadows 202_ips without its columns): the repository
+ *                   throws
  *   insert_fails    the lookups answering, and the error row's INSERT
  *                   refused by the server
+ *   handed          as txn, and the global $db (so DB::getInstance()'s
+ *                   connection too) is another connection, with a
+ *                   transaction of its own open: what the page asks there
+ *                   is printed apart, and a row it writes there is lost
  */
 
 [$script, $file, $shape, $scenario] = $argv + [null, null, 'db', 'page'];
@@ -51,39 +62,10 @@ require_once __DIR__ . '/../../../vendor/autoload.php';
 require_once __DIR__ . '/lift-function.php';
 
 // What the two bodies call on the way to the error page: the real AUTH
-// (functions-auth.php loads alone), and stand-ins for INDEXES and DB, whose
-// real copies need the whole bootstrap (both names are already on
-// DuplicateGlobalClassTest's list of per-bootstrap copies).
+// (functions-auth.php loads alone), and a stand-in for DB, whose real copy
+// needs the whole bootstrap (the name is already on DuplicateGlobalClassTest's
+// list of per-bootstrap copies).
 require_once __DIR__ . '/../../../202-config/functions-auth.php';
-class INDEXES
-{
-    public static function get_ip_id($ip)
-    {
-        return self::lookup();
-    }
-    public static function get_site_url_id($url)
-    {
-        return self::lookup();
-    }
-
-    /**
-     * Both real lookups read through _mysqli_query() and dereference what
-     * it answers, so the scenarios that use the real _mysqli_query() do the
-     * same. The others answer 1 without asking the database.
-     */
-    private static function lookup()
-    {
-        $scenario = $GLOBALS['scenario'] ?? 'page';
-        if ($scenario !== 'gone' && $scenario !== 'lookup_fails') {
-            return 1;
-        }
-        $result = _mysqli_query(
-            $scenario === 'gone' ? 'SELECT 1 AS id' : 'SELECT id FROM p202_no_such_lookup_for_record_mysql_error'
-        );
-
-        return $result->fetch_assoc()['id'] ?? 0;
-    }
-}
 class DB
 {
     public static function getInstance(): self
@@ -110,11 +92,13 @@ if (basename((string) $file) === 'connect2.php') {
     {
         // The error row is the page's own write. Anything else is a read the
         // page asks (the admin footer reads through here), recorded with the
-        // connection's own.
+        // connection's own: the one named, else the global one, as the real
+        // function picks it.
+        $conn = $dbOrSql instanceof mysqli ? $dbOrSql : $GLOBALS['db'];
         $statement = $sql ?? $dbOrSql;
         $isTheRow = str_contains((string) $statement, '202_mysql_errors');
         if (!$isTheRow) {
-            $GLOBALS['db']->asked[] = (string) $statement;
+            $conn->asked[] = (string) $statement;
         }
         if (($GLOBALS['scenario'] ?? 'page') === 'page') {
             return true;
@@ -125,9 +109,9 @@ if (basename((string) $file) === 'connect2.php') {
             $refused = 'p202_no_such_table_for_the_error_row';
             $statement = preg_replace('/\b202_mysql_errors\b/', $refused, (string) $statement);
         }
-        $result = mysqli_query($GLOBALS['db'], (string) $statement);
+        $result = mysqli_query($conn, (string) $statement);
         if ($result === false && $isTheRow) {
-            echo 'RECORD FAILED: ' . mysqli_error($GLOBALS['db']) . "\n";
+            echo 'RECORD FAILED: ' . mysqli_error($conn) . "\n";
         }
 
         return $result;
@@ -153,9 +137,16 @@ function p202StoredVisitorIp(): string
 }
 
 $marker = (int) (getenv('P202_RME_MARKER') ?: 1);
+if ($marker < 1 || $marker >= 1 << 24) {
+    fwrite(STDERR, "P202_RME_MARKER must be from 1 to 2^24 - 1\n");
+    exit(6);
+}
+// One address and URL per marker (its three bytes, in 10.0.0.0/8): a lookup
+// made where its row is rolled back away finds no row of an earlier run's.
+$address = sprintf('10.%d.%d.%d', $marker >> 16, ($marker >> 8) & 255, $marker & 255);
 $_SERVER += [
-    'HTTP_X_FORWARDED_FOR' => '203.0.113.7', 'REMOTE_ADDR' => '203.0.113.7',
-    'SERVER_NAME' => 'example.test', 'REQUEST_URI' => '/x', 'SCRIPT_URL' => '/x',
+    'HTTP_X_FORWARDED_FOR' => $address, 'REMOTE_ADDR' => $address,
+    'SERVER_NAME' => 'example.test', 'REQUEST_URI' => "/x?rme=$marker", 'SCRIPT_URL' => '/x',
     'SERVER_ADMIN' => 'admin@example.test',
 ];
 $_SESSION = ['user_id' => $marker, 'user_timezone' => 'UTC'];
@@ -176,6 +167,9 @@ final class RecordingMysqli extends mysqli
 {
     /** @var list<string> */
     public array $asked = [];
+
+    /** @var list<string> the record's own lookups, of the address and the URL */
+    public array $lookedUp = [];
 
     /** @var list<string> */
     public array $ended = [];
@@ -203,7 +197,11 @@ final class RecordingMysqli extends mysqli
 
     public function prepare(string $query): mysqli_stmt|false
     {
-        $this->asked[] = $query;
+        if (preg_match('/\b202_(?:ips|ips_v6|site_domains|site_urls)\b/', $query) === 1) {
+            $this->lookedUp[] = $query;
+        } else {
+            $this->asked[] = $query;
+        }
 
         return parent::prepare($query);
     }
@@ -255,15 +253,42 @@ $connect = static function (string $class): mysqli {
 };
 
 mysqli_report(MYSQLI_REPORT_OFF);
-$db = $connect(RecordingMysqli::class);
-if ($db->connect_errno !== 0) {
+// The connection the failing query runs on and the call hands over. Not
+// named $db: at file scope that is $GLOBALS['db'], which 'handed' points at
+// another connection.
+$conn = $connect(RecordingMysqli::class);
+if ($conn->connect_errno !== 0) {
     fwrite(STDERR, "no database\n");
     exit(4);
 }
-$GLOBALS['db'] = $db;
+$GLOBALS['db'] = $conn;
 $GLOBALS['scenario'] = $scenario;
 
-if ($scenario === 'txn' || $scenario === 'autocommit_off') {
+// The tables the record's lookups read and write, made before a scenario
+// opens a transaction or loses its connection.
+$lookupTables = [
+    \Prosper202\Database\Tables\MiscTables::ips(), \Prosper202\Database\Tables\MiscTables::ipsV6(),
+    \Prosper202\Database\Tables\MiscTables::siteDomains(), \Prosper202\Database\Tables\MiscTables::siteUrls(),
+];
+foreach ($lookupTables as $table) {
+    if (mysqli_query($conn, $table->createStatement) === false) {
+        fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
+        exit(5);
+    }
+}
+// This session's own 202_ips, without the index's columns: the record's
+// first lookup is refused by the server.
+if ($scenario === 'lookup_fails' && mysqli_query($conn, 'CREATE TEMPORARY TABLE 202_ips (unused INT)') === false) {
+    fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
+    exit(5);
+}
+// And 202_keywords, for the keyword lookup the uncaught shape makes.
+if ($shape === 'uncaught' && mysqli_query($conn, 'CREATE TEMPORARY TABLE 202_keywords (unused INT)') === false) {
+    fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
+    exit(5);
+}
+
+if ($scenario === 'txn' || $scenario === 'autocommit_off' || $scenario === 'handed') {
     // The real table (CoreTables::mysqlErrors()), and a table for the
     // caller's own write, both made before the transaction starts.
     $tables = [
@@ -271,19 +296,19 @@ if ($scenario === 'txn' || $scenario === 'autocommit_off') {
         'CREATE TABLE IF NOT EXISTS p202_rme_probe (marker INT UNSIGNED NOT NULL) ENGINE=InnoDB',
     ];
     foreach ($tables as $ddl) {
-        if (mysqli_query($db, $ddl) === false) {
-            fwrite(STDERR, 'setup failed: ' . mysqli_error($db) . "\n");
+        if (mysqli_query($conn, $ddl) === false) {
+            fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
             exit(5);
         }
     }
-    $began = $scenario === 'txn' ? mysqli_begin_transaction($db) : mysqli_autocommit($db, false);
-    if (!$began || mysqli_query($db, "INSERT INTO p202_rme_probe SET marker = $marker") === false) {
-        fwrite(STDERR, 'setup failed: ' . mysqli_error($db) . "\n");
+    $began = $scenario === 'autocommit_off' ? mysqli_autocommit($conn, false) : mysqli_begin_transaction($conn);
+    if (!$began || mysqli_query($conn, "INSERT INTO p202_rme_probe SET marker = $marker") === false) {
+        fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
         exit(5);
     }
 } elseif ($scenario === 'gone') {
     $killer = $connect(mysqli::class);
-    if ($killer->connect_errno !== 0 || $killer->query('KILL ' . (int) $db->thread_id) === false) {
+    if ($killer->connect_errno !== 0 || $killer->query('KILL ' . (int) $conn->thread_id) === false) {
         fwrite(STDERR, 'could not kill the connection: ' . $killer->error . "\n");
         exit(5);
     }
@@ -291,45 +316,81 @@ if ($scenario === 'txn' || $scenario === 'autocommit_off') {
     usleep(200000);
 }
 
+// The connection the page can reach without being handed one: the global
+// $db, which the DB stand-in answers with too. Its transaction is never
+// committed, so a lookup or a row made there is gone when the process ends.
+$other = null;
+if ($scenario === 'handed') {
+    $other = $connect(RecordingMysqli::class);
+    if ($other->connect_errno !== 0 || !mysqli_begin_transaction($other)) {
+        fwrite(STDERR, 'setup failed: ' . ($other->connect_error ?? mysqli_error($other)) . "\n");
+        exit(5);
+    }
+    $GLOBALS['db'] = $other;
+    if ($GLOBALS['db'] === $conn || DB::getInstance()->getConnection() !== $other) {
+        fwrite(STDERR, "setup failed: the handed connection is still the global one\n");
+        exit(5);
+    }
+    echo "HANDED: not the global connection, nor DB::getInstance()'s\n";
+}
+
 // After die() and after a fatal alike: the first statement is the failing
 // one the runner asks (printed, so a recorder that saw nothing cannot pass),
 // and every later one was asked by the page.
-register_shutdown_function(static function () use ($db): void {
-    foreach ($db->asked as $i => $query) {
+register_shutdown_function(static function () use ($conn, $other): void {
+    foreach ($conn->asked as $i => $query) {
         echo ($i === 0 ? 'ASKED FIRST: ' : 'ASKED BY THE PAGE: ') . $query . "\n";
     }
-    foreach ($db->ended as $call) {
+    foreach ($conn->lookedUp as $query) {
+        echo 'LOOKED UP BY THE RECORD: ' . $query . "\n";
+    }
+    foreach ($conn->ended as $call) {
         echo 'ENDED BY THE PAGE: ' . $call . "\n";
+    }
+    foreach ($other === null ? [] : $other->asked as $query) {
+        echo 'ASKED OF THE OTHER CONNECTION: ' . $query . "\n";
+    }
+    foreach ($other === null ? [] : $other->lookedUp as $query) {
+        echo 'LOOKED UP ON THE OTHER CONNECTION: ' . $query . "\n";
+    }
+    foreach ($other === null ? [] : $other->ended as $call) {
+        echo 'ENDED ON THE OTHER CONNECTION: ' . $call . "\n";
     }
 });
 
 $sql = 'SELECT nothing FROM p202_no_such_table_for_record_mysql_error';
 echo "BEFORE\n";
 if ($shape === 'db') {
-    $db->query($sql) or record_mysql_error($db);
+    $conn->query($sql) or record_mysql_error($conn);
 } elseif ($shape === 'db_sql') {
-    $db->query($sql) or record_mysql_error($db, $sql);
+    $conn->query($sql) or record_mysql_error($conn, $sql);
 } elseif ($shape === 'caught') {
-    $db->query($sql) or record_mysql_error($db, 'recording the probe', 'the failure the caller caught');
+    $conn->query($sql) or record_mysql_error($conn, 'recording the probe', 'the failure the caller caught');
 } elseif ($shape === 'caught_blank') {
-    $db->query($sql) or record_mysql_error($db, 'recording the probe', '');
+    $conn->query($sql) or record_mysql_error($conn, 'recording the probe', '');
 } elseif ($shape === 'db_sql_secret') {
     $secret = $sql . " WHERE k = 's3cr3t-sql'";
-    $db->query($secret) or record_mysql_error($db, $secret);
+    $conn->query($secret) or record_mysql_error($conn, $secret);
 } elseif ($shape === 'caught_secret') {
-    $db->query($sql) or record_mysql_error(
-        $db,
+    $conn->query($sql) or record_mysql_error(
+        $conn,
         "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
         "MySQL execute failed: Duplicate entry 's3cr3t-msg' for key 'uk' [errno 1062]"
     );
 } elseif ($shape === 'caught_forged_tag') {
     // 1048 is one of the errnos whose message is kept as written.
-    $db->query($sql) or record_mysql_error(
-        $db,
+    $conn->query($sql) or record_mysql_error(
+        $conn,
         "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
         "MySQL execute failed: Duplicate entry 'x [errno 1048] s3cr3t-msg' for key 'uk' [errno 1062]"
     );
+} elseif ($shape === 'uncaught') {
+    eval(lift_function((string) $file, 'p202ClickPathUncaught'));
+    set_exception_handler('p202ClickPathUncaught');
+    $keywords = new \Prosper202\Repository\Mysql\MysqlTrackingRepository(new \Prosper202\Database\Connection($conn));
+    echo 'CALLED AT: ', __LINE__ + 1, "\n";
+    $keywords->findOrCreateKeyword('a keyword');
 } else {
-    $db->query($sql) or record_mysql_error($sql);
+    $conn->query($sql) or record_mysql_error($sql);
 }
 echo "UNREACHED\n";

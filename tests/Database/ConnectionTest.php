@@ -133,6 +133,25 @@ final class ConnectionTest extends TestCase
         $conn->fetchOne($stmt);
     }
 
+    public function testFetchOneThrowsWhenTheRowFetchFails(): void
+    {
+        // fetch_assoc() answers null for no row and false for a fetch that
+        // failed; the false used to surface as a TypeError from ?array.
+        $result = $this->createMock(mysqli_result::class);
+        $result->method('fetch_assoc')->willReturn(false);
+        $result->expects($this->once())->method('free');
+
+        $stmt = $this->createMock(mysqli_stmt::class);
+        $stmt->method('execute')->willReturn(true);
+        $stmt->method('get_result')->willReturn($result);
+        $stmt->expects($this->once())->method('close');
+
+        $conn = new Connection($this->createFakeMysqli());
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('MySQL fetch failed');
+        $conn->fetchOne($stmt);
+    }
+
     // ── FetchAll ─────────────────────────────────────────────────────
 
     public function testFetchAllReturnsAllRowsAndClosesStatement(): void
@@ -157,6 +176,25 @@ final class ConnectionTest extends TestCase
 
         $conn = new Connection($this->createFakeMysqli());
         $this->assertSame($rows, $conn->fetchAll($stmt));
+    }
+
+    public function testFetchAllThrowsWhenARowFetchFailsPartWay(): void
+    {
+        // A false mid-way used to end the loop, so the rows read before it
+        // were answered as all of them.
+        $result = $this->createMock(mysqli_result::class);
+        $result->method('fetch_assoc')->willReturnOnConsecutiveCalls(['id' => 1], false, null);
+        $result->expects($this->once())->method('free');
+
+        $stmt = $this->createMock(mysqli_stmt::class);
+        $stmt->method('execute')->willReturn(true);
+        $stmt->method('get_result')->willReturn($result);
+        $stmt->expects($this->once())->method('close');
+
+        $conn = new Connection($this->createFakeMysqli());
+        $this->expectException(QueryException::class);
+        $this->expectExceptionMessage('MySQL fetch failed');
+        $conn->fetchAll($stmt);
     }
 
     public function testFetchAllThrowsWhenGetResultReturnsFalse(): void

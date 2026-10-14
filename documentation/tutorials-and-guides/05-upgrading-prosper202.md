@@ -4,6 +4,8 @@
 
 Upgrading your Prosper202 software is extremely easy, but **back up your database and your 202-config.php file first, every time.** An upgrade changes the database in place and there is no downgrade: restoring the database backup taken before the upgrade is the only way back. Putting the old files back is not a rollback — from 1.9.76, the previous version's code can no longer record conversions against an upgraded database.
 
+After restoring a database, restart memcached (or flush it) before taking traffic. Tracking links cache the ids of the rows they look up for 30 days, and a row the backup does not hold may be named by a cached id that the restored database gives to another value.
+
 Take a full `mysqldump` of the Prosper202 database (or your host's database snapshot) after the site stops taking traffic and before you start. The upgrade page and the **1-Click Upgrade** page (from the new-version notice under the header) both say so above their button.
 
 **READ**: Version 1.8.x and higher uses a different 202-config.php file.

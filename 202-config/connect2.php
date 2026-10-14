@@ -10,6 +10,39 @@ if (!file_exists(__DIR__ . '/version.php')) {
 require_once(__DIR__ . '/version.php');
 require_once(__DIR__ . '/mysql-error-args.php');
 
+/**
+ * What the click path answers for a throw nothing caught: a 500, unless a
+ * redirect is already queued. dl.php records its click after setting
+ * Location, and where the server has no fastcgi_finish_request() nothing has
+ * been sent yet: a failure there loses the click, and must not lose the
+ * visitor too. The lookups and the click writers report a database failure
+ * as a QueryException, which ends at record_mysql_error() as a failed query
+ * does, recorded with the line outside the database layer that reached it
+ * (every failure there is thrown from the same few lines of Connection).
+ * Anything else is logged, with nothing about it shown.
+ */
+function p202ClickPathUncaught(\Throwable $e): void
+{
+    $status = http_response_code();
+    if (!headers_sent() && !(is_int($status) && $status >= 300 && $status < 400)) {
+        http_response_code(500);
+    }
+    if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
+        [$file, $line] = [$e->getFile(), $e->getLine()];
+        foreach ($e->getTrace() as $frame) {
+            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database|Repository)[/\\\\]~', $file) !== 1) {
+                break;
+            }
+            if (isset($frame['file'], $frame['line'])) {
+                [$file, $line] = [$frame['file'], $frame['line']];
+            }
+        }
+        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . basename($file) . ':' . $line, $e->getMessage());
+    }
+    error_log('Uncaught on the click path: ' . $e);
+}
+set_exception_handler('p202ClickPathUncaught');
+
 $_GET = array_change_key_case($_GET, CASE_LOWER);
 //fix for nginx with no server name set
 if ($_SERVER['SERVER_NAME'] == '_') {
@@ -93,7 +126,7 @@ function setCache($key, $value, $exp = null)
  * dropped when it throws (and the throw passed on).
  *
  * The lookups that run inside a click's transaction cache the id of a row
- * they insert at once (INDEXES::get_site_url_id(), 7 days; its domain, 30),
+ * they insert at once (the site URL's, through CachedLocationRepository),
  * so a rollback after them left an entry naming no row, and every click to
  * that URL stored the dangling id until it expired. Run the transaction as
  * $work and an entry is written only once its row is committed.
@@ -988,13 +1021,15 @@ class PLATFORMS
         $ua = $detect->getUserAgent();
 
         if ($memcacheWorking) {
-            $key = md5("user-agent" . $ua . systemHash());
+            // Not "user-agent": entries under that subject name a device
+            // model found by its name alone, of whatever type clicked first.
+            $key = md5("user-agent-typed" . $ua . systemHash());
             $device_info = $memcache->get($key);
 
-            // A miss as well: an entry from before ua_device_family existed
-            // (ClickBotDetector would parse the agent again), and one from
-            // before the address verdict left the parse (no ua_only), which
-            // may hold another visitor's type 4.
+            // A miss as well: an entry without ua_device_family
+            // (ClickBotDetector would parse the agent again), or without
+            // ua_only, the mark of a parse with no address verdict in it
+            // (another visitor's type 4).
             if (! is_array($device_info)
                 || ! array_key_exists('ua_device_family', $device_info)
                 || ! array_key_exists('ua_only', $device_info)
@@ -1024,7 +1059,10 @@ class PLATFORMS
             return $device_info;
         }
 
-        [$device_info['device'], $device_info['type']] = PLATFORMS::deviceModel($db, 'Bot', '4');
+        $bot = \Prosper202\Repository\DeviceType::Bot;
+        $device_info['device'] = \Prosper202\Repository\LookupRepositoryFactory::device($db)
+            ->findOrCreateDevice('Bot', $bot);
+        $device_info['type'] = (string) $bot->value;
 
         return $device_info;
     }
@@ -1041,107 +1079,30 @@ class PLATFORMS
         // Before the rewrite to Desktop/Bot below; ClickBotDetector reads it.
         $uaDeviceFamily = (string) $result->device->family;
 
-        // Initialize type with default value
-        $type = "1"; // Default to Desktop
-        
-        // If is not mobile or tablet
-        if (! $detect->isMobile() && ! $detect->isTablet()) {
-
-            switch ($result->device->family) {
-                // Is Bot
-                case 'Bot':
-                    $type = "4";
-                    $result->device->family = "Bot";
-                    break;
-                // Is Desktop
-                case 'Other':
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-                // Default case for any other desktop device
-                default:
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-            }
+        $device = $uaDeviceFamily;
+        if ($detect->isTablet()) {
+            $type = \Prosper202\Repository\DeviceType::Tablet;
+        } elseif ($detect->isMobile()) {
+            $type = \Prosper202\Repository\DeviceType::Mobile;
+        } elseif ($uaDeviceFamily === 'Bot') {
+            $type = \Prosper202\Repository\DeviceType::Bot;
         } else {
-            // If tablet
-            if ($detect->isTablet()) {
-                $type = "3";
-                // If mobile
-            } else {
-                $type = "2";
-            }
+            $type = \Prosper202\Repository\DeviceType::Desktop;
+            $device = 'Desktop';
         }
 
-        // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string((string)$result->ua->family);
-        $mysql['platform'] = $db->real_escape_string((string)$result->os->family);
+        $devices = \Prosper202\Repository\LookupRepositoryFactory::device($db);
 
-
-
-        // Get browser ID
-        $browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='" . $mysql['browser'] . "'";
-        $browser_result = _mysqli_query($db, $browser_sql);
-        $browser_row = $browser_result->fetch_assoc();
-        if ($browser_row) {
-            $browser_id = $browser_row['browser_id'];
-        } else {
-            $browser_sql = "INSERT INTO 202_browsers SET browser_name='" . $mysql['browser'] . "'";
-            $browser_result = _mysqli_query($db, $browser_sql);
-            $browser_id = $db->insert_id;
-        }
-
-        // Get platform ID
-        $platform_sql = "SELECT platform_id FROM 202_platforms WHERE platform_name='" . $mysql['platform'] . "'";
-        $platform_result = _mysqli_query($db, $platform_sql);
-        $platform_row = $platform_result->fetch_assoc();
-        if ($platform_row) {
-            $platform_id = $platform_row['platform_id'];
-        } else {
-            $platform_sql = "INSERT INTO 202_platforms SET platform_name='" . $mysql['platform'] . "'";
-            $platform_result = _mysqli_query($db, $platform_sql);
-            $platform_id = $db->insert_id;
-        }
-
-        [$device_id, $device_type] = PLATFORMS::deviceModel($db, (string) $result->device->family, (string) $type);
-
-        $data = [
-            'browser' => $browser_id,
-            'platform' => $platform_id,
-            'device' => $device_id,
-            'type' => $device_type,
+        return [
+            'browser' => $devices->findOrCreateBrowser((string) $result->ua->family),
+            'platform' => $devices->findOrCreatePlatform((string) $result->os->family),
+            'device' => $devices->findOrCreateDevice($device, $type),
+            'type' => (string) $type->value,
             'ua_device_family' => $uaDeviceFamily,
             // Marks an entry with no address verdict in it; get_device_info()
             // treats a cached entry without it as a miss.
             'ua_only' => true,
         ];
-
-        return $data;
-    }
-
-    /**
-     * The 202_device_models id and device_type for $name, inserted with $type
-     * when the model is new.
-     *
-     * @return array{0: mixed, 1: mixed}
-     */
-    private static function deviceModel($db, string $name, string $type): array
-    {
-        $mysql['device'] = $db->real_escape_string($name);
-        $mysql['device_type'] = $db->real_escape_string($type);
-
-        $device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='" . $mysql['device'] . "'";
-        $device_result = _mysqli_query($db, $device_sql);
-        $device_row = $device_result->fetch_assoc();
-        if ($device_row) {
-            return [$device_row['device_id'], $device_row['device_type']];
-        }
-
-        $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device'] . "', device_type='" . $mysql['device_type'] . "'";
-        _mysqli_query($db, $device_sql);
-
-        return [$db->insert_id, $type];
     }
 
     /**
@@ -1243,1081 +1204,6 @@ class PLATFORMS
         $wildcard_decimal = 2 ** (32 - (int)$netmask) - 1;
         $netmask_decimal = ~$wildcard_decimal;
         return (($ip_decimal & $netmask_decimal) == ($range_decimal & $netmask_decimal));
-    }
-}
-
-class INDEXES
-{
-
-    // this returns the location_country_id, when a Country Code is given
-    public static function get_country_id($db, $country_name, $country_code)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['country_name'] = $db->real_escape_string($country_name);
-        $mysql['country_code'] = $db->real_escape_string($country_code);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("country-id" . $country_name . systemHash()));
-
-            if ($getID) {
-                $country_id = $getID;
-                return $country_id;
-            } else {
-
-                $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-                $country_result = _mysqli_query($db, $country_sql);
-                $country_row = $country_result->fetch_assoc();
-                if ($country_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $country_id = $country_row['country_id'];
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                    $country_result = _mysqli_query($db, $country_sql); // ($ip_sql);
-                    $country_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                }
-            }
-        } else {
-
-            $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-
-            $country_result = _mysqli_query($db, $country_sql);
-            $country_row = $country_result->fetch_assoc();
-            if ($country_row) {
-                // if this country already exists, return the location_country_id for it.
-                $country_id = $country_row['country_id'];
-
-                return $country_id;
-            } else {
-                // else if this doesn't exist, insert the new countryrow, and return the_id for this new row we found
-                $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                $country_result = _mysqli_query($db, $country_sql); // ($ip_sql);
-                $country_id = $db->insert_id;
-
-                return $country_id;
-            }
-        }
-    }
-
-    // this returns the location_city_id, when a City name is given
-    public static function get_city_id($db, $city_name, $country_id)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['city_name'] = $db->real_escape_string($city_name);
-        $mysql['country_id'] = $db->real_escape_string($country_id);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("city-id" . $city_name . $country_id . systemHash()));
-
-            if ($getID) {
-                $city_id = $getID;
-                return $city_id;
-            } else {
-
-                $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-                $city_result = _mysqli_query($db, $city_sql);
-                $city_row = $city_result->fetch_assoc();
-                if ($city_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $city_id = $city_row['city_id'];
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                    $city_result = _mysqli_query($db, $city_sql); // ($ip_sql);
-                    $city_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                }
-            }
-        } else {
-
-            $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-            $city_result = _mysqli_query($db, $city_sql);
-            $city_row = $city_result->fetch_assoc();
-            if ($city_row) {
-                // if this country already exists, return the location_country_id for it.
-                $city_id = $city_row['city_id'];
-
-                return $city_id;
-            } else {
-                // else if this doesn't exist, insert the new cityrow, and return the_id for this new row we found
-                $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                $city_result = _mysqli_query($db, $city_sql); // ($ip_sql);
-                $city_id = $db->insert_id;
-
-                return $city_id;
-            }
-        }
-    }
-
-    // this returns the location_region_id, when a Region name is given
-    public static function get_region_id($db, $region_name, $country_id)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['region_name'] = $db->real_escape_string($region_name);
-        $mysql['country_id'] = $db->real_escape_string($country_id);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("region-id" . $region_name . $country_id . systemHash()));
-
-            if ($getID) {
-                $region_id = $getID;
-                return $region_id;
-            } else {
-
-                $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-                $region_result = _mysqli_query($db, $region_sql);
-                $region_row = $region_result->fetch_assoc();
-                if ($region_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $region_id = $region_row['region_id'];
-                    // add to memcached
-                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
-                    return $region_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                    $region_result = _mysqli_query($db, $region_sql); // ($ip_sql);
-                    $region_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
-                    return $region_id;
-                }
-            }
-        } else {
-
-            $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-            $region_result = _mysqli_query($db, $region_sql);
-            $region_row = $region_result->fetch_assoc();
-            if ($region_row) {
-                // if this country already exists, return the location_country_id for it.
-                $region_id = $region_row['region_id'];
-
-                return $region_id;
-            } else {
-                // else if this doesn't exist, insert the new cityrow, and return the_id for this new row we found
-                $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                $region_result = _mysqli_query($db, $region_sql); // ($ip_sql);
-                $region_id = $db->insert_id;
-
-                return $region_id;
-            }
-        }
-    }
-
-    // this returns the isp_id, when a isp name is given
-    public static function get_isp_id($db, $isp)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['isp'] = $db->real_escape_string($isp);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("isp-id" . $isp . systemHash()));
-
-            if ($getID) {
-                $isp_id = $getID;
-                return $isp_id;
-            } else {
-
-                $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($db, $isp_sql);
-                $isp_row = $isp_result->fetch_assoc();
-                if ($isp_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $isp_id = $isp_row['isp_id'];
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                    $isp_result = _mysqli_query($db, $isp_sql); // ($isp_sql);
-                    $isp_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                }
-            }
-        } else {
-
-            $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-            $isp_result = _mysqli_query($db, $isp_sql);
-            $isp_row = $isp_result->fetch_assoc();
-            if ($isp_row) {
-                // if this isp already exists, return the isp_id for it.
-                $isp_id = $isp_row['isp_id'];
-
-                return $isp_id;
-            } else {
-                // else if this doesn't exist, insert the new isp row, and return the_id for this new row we found
-                $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($db, $isp_sql); // ($isp_sql);
-                $isp_id = $db->insert_id;
-
-                return $isp_id;
-            }
-        }
-    }
-
-    // this returns the ip_id, when a ip_address is given
-    public static function get_ip_id($arg1, $arg2 = null)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($arg1 instanceof mysqli) {
-            $db = $arg1;
-            $ip = $arg2;
-        } else {
-            global $db;
-            $ip = $arg1;
-        }
-
-        if (!$db) {
-            return null;
-        }
-
-        // Handle both string and object input
-        if (is_string($ip)) {
-            $ip_address = $ip;
-            $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
-            $ip_object = new stdClass();
-            $ip_object->address = $ip_address;
-            $ip_object->type = $ip_type;
-        } else {
-            $ip_address = $ip->address ?? '';
-            $ip_type = $ip->type ?? 'ipv4';
-            $ip_object = $ip;
-        }
-
-        $mysql['ip_address'] = $db->real_escape_string($ip_address);
-
-        if ($ip_type == 'ipv6') {
-            $mysql['ip_address'] = $db->real_escape_string(inet6_aton($mysql['ip_address'])); //encode ipv6 for db insert
-        }
-
-        if ($ip_type === 'ipv6') {
-            $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address=("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
-        } else {
-            $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
-        }
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 7 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("ip-id" . $mysql['ip_address'] . systemHash()));
-
-            if ($getID) {
-                $ip_id = $getID;
-            } else {
-
-                $ip_result = _mysqli_query($db, $ip_sql);
-                $ip_row = $ip_result->fetch_assoc();
-                if ($ip_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $ip_id = $ip_row['ip_id'];
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                } else {
-                    //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip_object);
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                }
-            }
-        } else {
-            $ip_result = _mysqli_query($db, $ip_sql);
-            $ip_row = $ip_result->fetch_assoc();
-            if ($ip_row !== null && $ip_row['ip_id']) {
-                // if this ip already exists, return the ip_id for it.
-                $ip_id = $ip_row['ip_id'];
-            } else {
-                $ip_id = INDEXES::insert_ip($db, $ip_object);
-            }
-        }
-
-        //return the ip_id
-        return $ip_id;
-    }
-
-    public static function insert_ip($db, $ip)
-    {
-
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
-
-        //e
-        if ($ip->type == 'ipv6') {
-            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode ipv6 for db insert
-        }
-
-        if ($ip->type === 'ipv6') {
-            //insert the ipv6 ip address and get the ipv6_id
-            $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address=("' . $mysql['ip_address'] . '")';
-            // $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address='.$inet6_aton.'("'.$mysql['ip_address'].'")';
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ipv6_id = $db->insert_id;
-
-            //insert the ipv6_id as the ipv4 address for referencing later on
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $ipv6_id . "', location_id='0'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        } else {
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $mysql['ip_address'] . "', location_id='0'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        }
-    }
-    // this returns the site_domain_id, when a site_url_address is given
-    public static function get_site_domain_id($db, $site_url_address)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Handle null or empty site_url_address
-        if ($site_url_address === null || $site_url_address === '') {
-            $site_url_address = '';
-        }
-
-        $parsed_url = @parse_url(trim((string) $db->real_escape_string((string)$site_url_address)));
-
-        if (isset($parsed_url)) {
-            if (isset($parsed_url['host'])) {
-                $site_domain_host = trim($parsed_url['host']);
-            } else {
-                $site_domain_host = explode('/', $parsed_url['path'], 2);
-                $site_domain_host = trim(array_shift($site_domain_host));
-                //$site_domain_host = trim();
-            }
-            $site_domain_host = str_replace('www.', '', $site_domain_host);
-        } else {
-            $site_domain_host = '';
-            $site_domain_host = '';
-        }
-
-        $mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
-
-        // if a cached key is found for this lpip, redirect to that url
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("domain-id" . $site_domain_host . systemHash()));
-
-            if ($getID) {
-                $site_domain_id = $getID;
-                return $site_domain_id;
-            } else {
-
-                $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($db, $site_domain_sql);
-                $site_domain_row = $site_domain_result->fetch_assoc();
-                if ($site_domain_row) {
-                    // if this site_domain_id already exists, return the site_domain_id for it.
-                    $site_domain_id = $site_domain_row['site_domain_id'];
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                    $site_domain_result = _mysqli_query($db, $site_domain_sql); // ($site_domain_sql);
-                    $site_domain_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                }
-            }
-        } else {
-
-            $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-            $site_domain_result = _mysqli_query($db, $site_domain_sql);
-            $site_domain_row = $site_domain_result->fetch_assoc();
-            if ($site_domain_row) {
-                // if this site_domain_id already exists, return the site_domain_id for it.
-                $site_domain_id = $site_domain_row['site_domain_id'];
-                // add to memcached
-                return $site_domain_id;
-            } else {
-                // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($db, $site_domain_sql); // ($site_domain_sql);
-                $site_domain_id = $db->insert_id;
-                return $site_domain_id;
-            }
-        }
-    }
-
-    // this returns the site_url_id, when a site_url_address is given.
-    // A lookup, then an insert, with no unique key on the address behind them:
-    // the install partitions the table by site_url_id, and MySQL requires every
-    // unique key of a partitioned table to include that column. So two first
-    // clicks on one new URL can each insert a row (in a rotator click's
-    // transaction the row stays unseen until that click commits); each click
-    // names a valid one, and a report grouped by URL row lists that URL twice.
-    public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec
-
-        if ($site_url_address === null) {
-            $site_url_address = $dbOrSiteUrl;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrSiteUrl;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-        
-        // Handle null or empty site_url_address
-        if ($site_url_address === null || $site_url_address === '') {
-            $site_url_address = '';
-        }
-        
-        $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
-
-        $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
-        $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
-
-        if ($memcacheWorking) {
-            $time = 604800; // 7 days in sec
-            // get from memcached
-            $getURL = $memcache->get(md5("url-id" . $site_url_address . systemHash()));
-            if ($getURL) {
-                return $getURL;
-            } else {
-
-                $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-                $site_url_result = _mysqli_query($db, $site_url_sql);
-                $site_url_row = $site_url_result->fetch_assoc();
-                if ($site_url_row) {
-                    // if this site_url_id already exists, return the site_url_id for it.
-                    $site_url_id = $site_url_row['site_url_id'];
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                } else {
-
-                    $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                    $site_url_result = _mysqli_query($db, $site_url_sql); // ($site_url_sql);
-                    $site_url_id = $db->insert_id;
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                }
-            }
-        } else {
-
-            $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-            $site_url_result = _mysqli_query($db, $site_url_sql);
-            $site_url_row = $site_url_result->fetch_assoc();
-
-            if ($site_url_row) {
-                // if this site_url_id already exists, return the site_url_id for it.
-                $site_url_id = $site_url_row['site_url_id'];
-                return $site_url_id;
-            } else {
-
-                $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                $site_url_result = _mysqli_query($db, $site_url_sql); // ($site_url_sql);
-                $site_url_id = $db->insert_id;
-                return $site_url_id;
-            }
-        }
-    }
-
-    // this returns the keyword_id
-    public static function get_utm_id($dbOrUtmVar, $utm_var_or_type, $utm_type = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($utm_type === null) {
-            $utm_var = $dbOrUtmVar;
-            $utm_type = $utm_var_or_type;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrUtmVar;
-            $utm_var = $utm_var_or_type;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $utm_var = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $utm_var);
-
-        $mysql['utm_var'] = $db->real_escape_string($utm_var);
-        $mysql['utm_type'] = $db->real_escape_string($utm_type);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getUtm = $memcache->get(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()));
-            if ($getUtm) {
-                return $getUtm;
-            } else {
-
-                $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                $utm_result = _mysqli_query($db, $utm_sql);
-                $utm_row = $utm_result->fetch_assoc();
-                if ($utm_row) {
-                    // if this already exists, return the id for it
-                    $utm_id_name = $mysql['utm_type'] . "_id";
-                    $utm_id = $utm_row[$utm_id_name];
-                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
-                    return $utm_id;
-                } else {
-
-                    $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                    $utm_result = _mysqli_query($db, $utm_sql);
-                    $utm_id = $db->insert_id;
-                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
-                    return $utm_id;
-                }
-            }
-        } else {
-
-            $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-            $utm_result = _mysqli_query($db, $utm_sql);
-            $utm_row = $utm_result->fetch_assoc();
-            if ($utm_row) {
-                // if this already exists, return the id for it
-                $utm_id_name = $mysql['utm_type'] . "_id";
-                $utm_id = $utm_row[$utm_id_name];
-                return $utm_id;
-            } else {
-
-                $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                $utm_result = _mysqli_query($db, $utm_sql);
-                $utm_id = $db->insert_id;
-                return $utm_id;
-            }
-        }
-    }
-
-    public static function get_variable_id($dbOrVariable, $variableOrPpcVariableId, $ppc_variable_id = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($ppc_variable_id === null) {
-            $variable = $dbOrVariable;
-            $ppc_variable_id = $variableOrPpcVariableId;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrVariable;
-            $variable = $variableOrPpcVariableId;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $variable = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $variable);
-
-        $mysql['var'] = $db->real_escape_string($variable);
-        $mysql['ppc_variable_id'] = $db->real_escape_string($ppc_variable_id);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $var_id = $memcache->get(md5($mysql['ppc_variable_id'] . $mysql['var'] . systemHash()));
-            if (!$var_id) {
-
-                $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_row = $var_result->fetch_assoc();
-                if ($var_row) {
-                    // if this already exists, return the id for it
-                    $var_id = $var_row['custom_variable_id'];
-                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
-                } else {
-
-                    $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
-                    $var_result = _mysqli_query($db, $var_sql);
-                    $var_id = $db->insert_id;
-                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
-                }
-            }
-        } else {
-
-            $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
-            $var_result = _mysqli_query($db, $var_sql);
-            $var_row = $var_result->fetch_assoc();
-
-            if ($var_row) {
-                // if this already exists, return the id for it
-                $var_id = $var_row['custom_variable_id'];
-            } else {
-
-                $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_id = $db->insert_id;
-            }
-        }
-
-        return $var_id;
-    }
-
-    public static function get_variable_set_id($dbOrVariables, $variables = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($variables === null) {
-            $variables = $dbOrVariables;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrVariables;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        $mysql['variables'] = $db->real_escape_string($variables);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getSet = $memcache->get(md5('variable_set' . $variables . systemHash()));
-            if ($getSet) {
-                return $getSet;
-            } else {
-                $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_row = $var_result->fetch_assoc();
-                if ($var_row) {
-                    // if this already exists, return the id for it
-                    $var_id = $var_row['variable_set_id'];
-                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
-                    return $var_id;
-                } else {
-
-                    $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
-                    $var_result = _mysqli_query($db, $var_sql);
-                    $var_id = $db->insert_id;
-                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
-
-                    $var_sets = explode(",", (string) $mysql['variables']);
-                    $row = ''; // Initialize $row
-                    foreach ($var_sets as $var) {
-                        $row .= "(" .  $var_id . "," . $var . "),";
-                    }
-                    $row = "insert into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-
-                    _mysqli_query($db, $row);
-                    return $var_id;
-                }
-            }
-        } else {
-            $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
-            $var_result = _mysqli_query($db, $var_sql);
-            $var_row = $var_result->fetch_assoc();
-
-            if ($var_row) {
-
-                // if this already exists, return the id for it
-                $var_id = $var_row['variable_set_id'];
-                return $var_id;
-            } else {
-                $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_id = $db->insert_id;
-                $var_sets = explode(",", (string) $mysql['variables']);
-                $row = ''; // Initialize $row
-                foreach ($var_sets as $var) {
-                    $row .= "(" .  $var_id . "," . $var . "),";
-                }
-
-                $row = "insert into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-
-                _mysqli_query($db, $row);
-                return $var_id;
-            }
-        }
-    }
-
-    // this returns the keyword_id
-    public static function get_keyword_id($dbOrKeyword, $keyword = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec
-
-        if ($keyword === null) {
-            $keyword = $dbOrKeyword;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrKeyword;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-        // Cut as the column holds it, so the lookup finds the row it stores.
-        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
-
-        $mysql['keyword'] = $db->real_escape_string($keyword);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getKeyword = $memcache->get(md5("keyword-id" . $keyword . systemHash()));
-            if ($getKeyword) {
-                return $getKeyword;
-            } else {
-
-                $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($db, $keyword_sql);
-                $keyword_row = $keyword_result->fetch_assoc();
-                if ($keyword_row) {
-                    // if this already exists, return the id for it
-                    $keyword_id = $keyword_row['keyword_id'];
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, $time);
-                    return $keyword_id;
-                } else {
-
-                    $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                    $keyword_result = _mysqli_query($db, $keyword_sql); // ($keyword_sql);
-                    $keyword_id = $db->insert_id;
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, $time);
-                    return $keyword_id;
-                }
-            }
-        } else {
-
-            $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-            $keyword_result = _mysqli_query($db, $keyword_sql);
-            $keyword_row = $keyword_result->fetch_assoc();
-            if ($keyword_row) {
-                // if this already exists, return the id for it
-                $keyword_id = $keyword_row['keyword_id'];
-                return $keyword_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($db, $keyword_sql); // ($keyword_sql);
-                $keyword_id = $db->insert_id;
-                return $keyword_id;
-            }
-        }
-    }
-
-    // this returns the c1 id
-    public static function get_custom_var_id($dbOrCustomVarName, $custom_var_name_or_data, $custom_var_data = null)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($custom_var_data === null) {
-            $custom_var_name = $dbOrCustomVarName;
-            $custom_var_data = $custom_var_name_or_data;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrCustomVarName;
-            $custom_var_name = $custom_var_name_or_data;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $custom_var_data = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $custom_var_data);
-        $mysql[$custom_var_name] = $db->real_escape_string($custom_var_data);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getcustomvar = $memcache->get(md5($custom_var_name . "-id" . $custom_var_data . systemHash()));
-            if ($getcustomvar) {
-                return $getcustomvar;
-            } else {
-
-                $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                $custom_result = _mysqli_query($db, $custom_sql);
-                $custom_row = $custom_result->fetch_assoc();
-                if ($custom_row) {
-                    // if this already exists, return the id for it
-                    $custom_id = $custom_row[$custom_var_name . "_id"];
-                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id);
-                    return $custom_id;
-                } else {
-
-                    $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                    $custom_result = _mysqli_query($db, $custom_sql); // ($c1_sql);
-                    $custom_id = $db->insert_id;
-                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id);
-                    return $custom_id;
-                }
-            }
-        } else {
-
-            $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-
-            $custom_result = _mysqli_query($db, $custom_sql);
-            $custom_row = $custom_result->fetch_assoc();
-
-            if ($custom_row) {
-                // if this already exists, return the id for it
-                $custom_id = $custom_row[$custom_var_name . "_id"];
-                return $custom_id;
-            } else {
-                // else if this id doesn't exist, insert the row and grab the id for it
-                $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                $custom_result = _mysqli_query($db, $custom_sql);
-                $custom_id = $db->insert_id;
-                return $custom_id;
-            }
-        }
-    }
-
-    // this returns the c1 id
-    public static function get_c1_id($db, $c1)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $c1 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c1);
-
-        $mysql['c1'] = $db->real_escape_string($c1);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc1 = $memcache->get(md5("c1-id" . $c1 . systemHash()));
-            if ($getc1) {
-                return $getc1;
-            } else {
-
-                $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($db, $c1_sql);
-                $c1_row = $c1_result->fetch_assoc();
-                if ($c1_row) {
-                    // if this already exists, return the id for it
-                    $c1_id = $c1_row['c1_id'];
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id);
-                    return $c1_id;
-                } else {
-
-                    $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                    $c1_result = _mysqli_query($db, $c1_sql); // ($c1_sql);
-                    $c1_id = $db->insert_id;
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id);
-                    return $c1_id;
-                }
-            }
-        } else {
-
-            $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-            $c1_result = _mysqli_query($db, $c1_sql);
-            $c1_row = $c1_result->fetch_assoc();
-            if ($c1_row) {
-                // if this already exists, return the id for it
-                $c1_id = $c1_row['c1_id'];
-                return $c1_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($db, $c1_sql); // ($c1_sql);
-                $c1_id = $db->insert_id;
-                return $c1_id;
-            }
-        }
-    }
-
-    // this returns the c2 id
-    public static function get_c2_id($db, $c2)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $c2 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c2);
-
-        $mysql['c2'] = $db->real_escape_string($c2);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc2 = $memcache->get(md5("c2-id" . $c2 . systemHash()));
-            if ($getc2) {
-                return $getc2;
-            } else {
-
-                $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($db, $c2_sql);
-                $c2_row = $c2_result->fetch_assoc();
-                if ($c2_row) {
-                    // if this already exists, return the id for it
-                    $c2_id = $c2_row['c2_id'];
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id);
-                    return $c2_id;
-                } else {
-
-                    $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                    $c2_result = _mysqli_query($db, $c2_sql); // ($c2_sql);
-                    $c2_id = $db->insert_id;
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id);
-                    return $c2_id;
-                }
-            }
-        } else {
-
-            $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-            $c2_result = _mysqli_query($db, $c2_sql);
-            $c2_row = $c2_result->fetch_assoc();
-            if ($c2_row) {
-                // if this already exists, return the id for it
-                $c2_id = $c2_row['c2_id'];
-                return $c2_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($db, $c2_sql); // ($c2_sql);
-                $c2_id = $db->insert_id;
-                return $c2_id;
-            }
-        }
-    }
-
-    // this returns the c3 id
-    public static function get_c3_id($db, $c3)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $c3 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c3);
-
-        $mysql['c3'] = $db->real_escape_string($c3);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc3 = $memcache->get(md5("c3-id" . $c3 . systemHash()));
-            if ($getc3) {
-                return $getc3;
-            } else {
-
-                $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($db, $c3_sql);
-                $c3_row = $c3_result->fetch_assoc();
-                if ($c3_row) {
-                    // if this already exists, return the id for it
-                    $c3_id = $c3_row['c3_id'];
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id);
-                    return $c3_id;
-                } else {
-
-                    $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                    $c3_result = _mysqli_query($db, $c3_sql); // ($c3_sql);
-                    $c3_id = $db->insert_id;
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id);
-                    return $c3_id;
-                }
-            }
-        } else {
-
-            $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-            $c3_result = _mysqli_query($db, $c3_sql);
-            $c3_row = $c3_result->fetch_assoc();
-            if ($c3_row) {
-                // if this already exists, return the id for it
-                $c3_id = $c3_row['c3_id'];
-                return $c3_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($db, $c3_sql); // ($c3_sql);
-                $c3_id = $db->insert_id;
-                return $c3_id;
-            }
-        }
-    }
-
-    // this returns the c4 id
-    public static function get_c4_id($db, $c4)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Cut as the repository stores it, so the lookup finds the row it stores.
-        $c4 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c4);
-
-        $mysql['c4'] = $db->real_escape_string($c4);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc4 = $memcache->get(md5("c4-id" . $c4 . systemHash()));
-            if ($getc4) {
-                return $getc4;
-            } else {
-
-                $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($db, $c4_sql);
-                $c4_row = $c4_result->fetch_assoc();
-                if ($c4_row) {
-                    // if this already exists, return the id for it
-                    $c4_id = $c4_row['c4_id'];
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id);
-                    return $c4_id;
-                } else {
-
-                    $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                    $c4_result = _mysqli_query($db, $c4_sql); // ($c4_sql);
-                    $c4_id = $db->insert_id;
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id);
-                    return $c4_id;
-                }
-            }
-        } else {
-
-            $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-            $c4_result = _mysqli_query($db, $c4_sql);
-            $c4_row = $c4_result->fetch_assoc();
-            if ($c4_row) {
-                // if this already exists, return the id for it
-                $c4_id = $c4_row['c4_id'];
-                return $c4_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($db, $c4_sql); // ($c4_sql);
-                $c4_id = $db->insert_id;
-                return $c4_id;
-            }
-        }
     }
 }
 
@@ -2706,10 +1592,23 @@ function getIspData($ip)
     return "Unknown ISP/Carrier";
 }
 
+/**
+ * The namespace of every cache key: the host, and the install the ids and
+ * rows a key names belong to. Its directory is shared by no other install on
+ * the server and is known in every scope; its database also tells a
+ * reinstall into a new one apart. The other copy (connect2.php /
+ * functions-tracking202.php, one directory) is the same function.
+ */
 function systemHash(): string
 {
-    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
-    return $hash;
+    $install = [__DIR__];
+    foreach (['dbhost', 'dbname'] as $setting) {
+        $value = $GLOBALS[$setting] ?? '';
+        $install[] = is_string($value) ? $value : '';
+    }
+
+    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
+        . "\0" . implode("\0", $install));
 }
 
 function setPCIdCookie($click_id_public)
@@ -2867,12 +1766,13 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
     // Rolled back first, and never a fatal in place of the page; see
     // p202RecordMysqlErrorRow().
     $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
-        $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
-        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
-
-        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-        $site_id = INDEXES::get_site_url_id($site_url);
-        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
+        // On the connection the row is written to, which has just been
+        // rolled back: a lookup that fails throws back to the recorder.
+        $locations = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+        $mysql['ip_id'] = (string) $locations->findOrCreateIp(p202StoredVisitorIp());
+        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
+            \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
+        );
 
         // A click has no session: 0, as the admin pages' copy writes, where
         // '' was refused by the column under P202_SQL_STRICT.
@@ -3687,43 +2587,6 @@ function insertFbclid($mysql)
     }
 }
 
-function insertClicksVariable($mysql, $tracker_row)
-{
-    global $db;
-    $custom_var_ids = [];
-
-    $ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-    $parameters = explode(',', (string) $tracker_row['parameters']);
-
-    foreach ($parameters as $key => $value) {
-        if (isset($_GET[$value])) {
-            $variable = $db->real_escape_string($_GET[$value]);
-            if (isset($variable) && $variable != '') {
-                $variable = str_replace('%20', ' ', $variable);
-                $variable_id = INDEXES::get_variable_id($variable, $ppc_variable_ids[$key]);
-                $custom_var_ids[] = $variable_id;
-            }
-        }
-        /* this was causing a bug
-        else{
-            $custom_var_ids[] = '';
-        }*/
-    }
-
-    $total_vars = count($custom_var_ids);
-
-    if ($total_vars > 0) {
-
-        $variables = implode(",", $custom_var_ids);
-        $variable_set_id = INDEXES::get_variable_set_id($variables);
-
-        $mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
-
-        $var_sql = "INSERT IGNORE INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-        return $var_result = $db->query($var_sql) or record_mysql_error($db);
-    }
-}
-
 function insertClicksSite($mysql)
 {
     global $db;
@@ -3966,124 +2829,6 @@ function is_prefetch(): bool
     // back to exact-match matching (which missed "Purpose: prefetch;prerender"
     // and let speculative hits double-count).
     return p202IsSpeculativeRequest();
-}
-
-function getUTMParams(&$mysql)
-{
-    global $db;
-    //utm_source
-    $utm_source = $db->real_escape_string($_GET['utm_source']);
-    if (isset($utm_source) && $utm_source != '') {
-        $utm_source = str_replace('%20', ' ', $utm_source);
-        $utm_source_id = INDEXES::get_utm_id($utm_source, 'utm_source');
-    } else {
-        $utm_source_id = 0;
-    }
-    $mysql['utm_source_id'] = $db->real_escape_string($utm_source_id);
-    $mysql['utm_source'] = $db->real_escape_string($utm_source);
-
-    //utm_medium
-    $utm_medium = $db->real_escape_string($_GET['utm_medium']);
-    if (isset($utm_medium) && $utm_medium != '') {
-        $utm_medium = str_replace('%20', ' ', $utm_medium);
-        $utm_medium_id = INDEXES::get_utm_id($utm_medium, 'utm_medium');
-    } else {
-        $utm_medium_id = 0;
-    }
-    $mysql['utm_medium_id'] = $db->real_escape_string($utm_medium_id);
-    $mysql['utm_medium'] = $db->real_escape_string($utm_medium);
-
-    //utm_campaign
-    $utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
-    if (isset($utm_campaign) && $utm_campaign != '') {
-        $utm_campaign = str_replace('%20', ' ', $utm_campaign);
-        $utm_campaign_id = INDEXES::get_utm_id($utm_campaign, 'utm_campaign');
-    } else {
-        $utm_campaign_id = 0;
-    }
-    $mysql['utm_campaign_id'] = $db->real_escape_string($utm_campaign_id);
-    $mysql['utm_campaign'] = $db->real_escape_string($utm_campaign);
-
-    //utm_term
-    $utm_term = $db->real_escape_string($_GET['utm_term']);
-    if (isset($utm_term) && $utm_term != '') {
-        $utm_term = str_replace('%20', ' ', $utm_term);
-        $utm_term_id = INDEXES::get_utm_id($utm_term, 'utm_term');
-    } else {
-        $utm_term_id = 0;
-    }
-    $mysql['utm_term_id'] = $db->real_escape_string($utm_term_id);
-    $mysql['utm_term'] = $db->real_escape_string($utm_term);
-
-    //utm_content
-    $utm_content = $db->real_escape_string($_GET['utm_content']);
-    if (isset($utm_content) && $utm_content != '') {
-        $utm_content = str_replace('%20', ' ', $utm_content);
-        $utm_content_id = INDEXES::get_utm_id($utm_content, 'utm_content');
-    } else {
-        $utm_content_id = 0;
-    }
-    $mysql['utm_content_id'] = $db->real_escape_string($utm_content_id);
-    $mysql['utm_content'] = $db->real_escape_string($utm_content);
-}
-
-function getCVars(&$mysql)
-{
-
-    global $db;
-
-    $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get 
-
-    //Get C1-C4 IDs
-    for ($i = 1; $i <= 4; $i++) {
-        $custom = "c" . $i; //create dynamic variable
-        $custom_val = $db->real_escape_string($_lGET[$custom]); // get the value
-
-        if (isset($custom_val) && $custom_val != '') { //if there's a value get an id
-            $custom_val = str_replace(' ', '+', $custom_val);
-            $custom_id = INDEXES::get_custom_var_id($custom, $custom_val); //get the id
-            $mysql[$custom . '_id'] = $db->real_escape_string($custom_id); //save it
-            $mysql[$custom] = $db->real_escape_string($custom_val); //save it
-        } else {
-            $mysql[$custom . '_id'] = '0';
-        }
-    }
-}
-
-function getReferer(&$mysql)
-{
-    global $db;
-
-    // Parse the referer URL query string
-    $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
-    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
-    $referer_query = []; // Initialize $referer_query as an empty array
-    @parse_str($referer_url_query, $referer_query);
-
-    // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
-    if ($mysql['user_pref_referer_data'] == 't202ref') {
-        if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
-            $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
-            $click_referer_site_url_id = INDEXES::get_site_url_id($_GET['t202ref']);
-        } else { //if not found revert to what we usually do
-            if (isset($referer_query['url'])) {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
-            } else {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
-            }
-        }
-    } else { //user wants the real referer first
-
-        // now lets get variables for clicks site
-        // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-        if (isset($referer_query['url'])) {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
-        } else {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
-        }
-    }
-
-    $mysql['click_referer_site_url_id'] = $db->real_escape_string($click_referer_site_url_id);
 }
 
 function getForeignPayout($currency, $payout_currency, $payout)

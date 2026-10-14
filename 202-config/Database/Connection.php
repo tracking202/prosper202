@@ -19,6 +19,14 @@ use Throwable;
  */
 final class Connection
 {
+    /**
+     * Transactions open through transaction(), per connection: one handle is
+     * wrapped by many Connections.
+     *
+     * @var \WeakMap<mysqli, int>|null
+     */
+    private static ?\WeakMap $open = null;
+
     private readonly mysqli $read;
 
     /**
@@ -197,10 +205,32 @@ final class Connection
         $this->execute($stmt);
         $result = $this->resultSet($stmt);
         $row = $result->fetch_assoc();
+        if ($row === false) {
+            $this->fetchFailed($stmt, $result);
+        }
         $result->free();
         $stmt->close();
 
-        return $row ?? null;
+        return $row;
+    }
+
+    /**
+     * fetch_assoc() answers null for "no more rows" and false for a fetch
+     * that failed, which must not read as the end of the rows.
+     *
+     * @param mysqli_stmt $stmt
+     * @throws QueryException always
+     */
+    private function fetchFailed(object $stmt, mysqli_result $result): never
+    {
+        try {
+            $error = $stmt->error;
+        } catch (\Error) {
+            $error = '';
+        }
+        $result->free();
+        $stmt->close();
+        throw new QueryException('MySQL fetch failed: ' . ($error !== '' ? $error : '(unknown)'));
     }
 
     /**
@@ -243,7 +273,10 @@ final class Connection
         $this->execute($stmt);
         $result = $this->resultSet($stmt);
         $rows = [];
-        while ($row = $result->fetch_assoc()) {
+        while (($row = $result->fetch_assoc()) !== null) {
+            if ($row === false) {
+                $this->fetchFailed($stmt, $result);
+            }
             $rows[] = $row;
         }
         $result->free();
@@ -329,6 +362,8 @@ final class Connection
             }
             throw new QueryException('Unable to begin transaction: ' . $error);
         }
+        $open = self::$open ??= new \WeakMap();
+        $open[$this->write] = ($open[$this->write] ?? 0) + 1;
 
         try {
             $result = $fn();
@@ -353,6 +388,48 @@ final class Connection
         } catch (Throwable $e) {
             $this->write->rollback();
             throw $e;
+        } finally {
+            $depth = ($open[$this->write] ?? 0) - 1;
+            if ($depth > 0) {
+                $open[$this->write] = $depth;
+            } else {
+                unset($open[$this->write]);
+            }
+        }
+    }
+
+    /**
+     * transaction(), refused when this connection already has one open
+     * through transaction(): begin_transaction() inside it would commit it
+     * (CLAUDE.md #13), and its rollback would then undo nothing. One opened
+     * with begin_transaction() or autocommit(false) directly is not seen.
+     *
+     * @template T
+     * @param callable(): T $fn
+     * @return T
+     * @throws \LogicException inside another transaction, before anything is written
+     */
+    public function outermostTransaction(callable $fn): mixed
+    {
+        if ((self::$open[$this->write] ?? 0) > 0) {
+            throw new \LogicException(
+                'A transaction was asked for inside another on the same connection;'
+                    . ' beginning it would commit the outer one'
+            );
+        }
+
+        return $this->transaction($fn);
+    }
+
+    /**
+     * The transactions open on $connection were ended without transaction():
+     * the database error page rolls back its caller's before it records, and
+     * its own lookups then run outside any.
+     */
+    public static function transactionsEnded(mysqli $connection): void
+    {
+        if (self::$open !== null) {
+            unset(self::$open[$connection]);
         }
     }
 

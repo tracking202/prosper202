@@ -153,7 +153,7 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "searched":
 		#try to get the searched keyword
-		if (!empty($referer_query['q'])) {
+		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') {
 			$keyword = $referer_query['q'];
 		} elseif (!empty($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
@@ -194,8 +194,8 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
-	if (isset($_GET[$t202var])) {
-		$keyword = (string) $_GET[$t202var];
+	if (is_string($_GET[$t202var] ?? null)) {
+		$keyword = $_GET[$t202var];
 	}
 }
 
@@ -319,11 +319,11 @@ $mysql['click_out'] = 0;
 // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
 $_referer_site_url = '';
 if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
-	if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
+	if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') { //check for t202ref value
 		$mysql['t202ref'] = $db->real_escape_string((string)$_GET['t202ref']);
 		$_referer_site_url = (string) $_GET['t202ref'];
 	} else { //if not found revert to what we usually do
-		if (!empty($referer_query['url'])) {
+		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 			$_referer_site_url = (string) $referer_query['url'];
 		} else {
 			$_referer_site_url = (string) ($_GET['referer'] ?? '');
@@ -333,7 +333,7 @@ if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
 
 	// now lets get variables for clicks site
 	// so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-	if (!empty($referer_query['url'])) {
+	if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 		$_referer_site_url = (string) $referer_query['url'];
 	} else {
 		$_referer_site_url = (string) ($_GET['referer'] ?? '');

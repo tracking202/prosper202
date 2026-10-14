@@ -150,7 +150,7 @@ final class ReportDepthIntegrationTest extends TestCase
         $i['ip4'] = self::insert("INSERT INTO 202_ips SET ip_address = '203.0.113.210'");
         $packed = (string) inet_pton('2001:db8::5601');
         $i['v6'] = self::insert('INSERT INTO 202_ips_v6 SET ip_address = ' . self::str($packed));
-        // MysqlLocationRepository::insertIp: the 202_ips row of an IPv6
+        // MysqlLocationRepository::findOrCreateIp: the 202_ips row of an IPv6
         // address holds its 202_ips_v6 row's id.
         $i['ip6'] = self::insert('INSERT INTO 202_ips SET ip_address = ' . self::str((string) $i['v6']));
         // An IPv4 address that, compared as a number, reads as that id.
@@ -333,14 +333,10 @@ final class ReportDepthIntegrationTest extends TestCase
                 $label = (string) array_values($r)[0];
                 $page_rows[$label] = [(int) $r['clicks'], (int) $r['leads'], (float) $r['income'], (float) $r['cost']];
             }
-            // The IP page joins 202_ips_v6 on `ip_id = ip_address COLLATE …`,
-            // a number compared with text, so whether "<v6 id>.0.1.1" is the
-            // v6 row depends on the server's evaluation (the plain comparison
-            // is true on MariaDB 10.11; the page's join did not match there),
-            // and the page names a dangling reference by the raw id. Those rows
-            // are left out of the comparison here; the test above pins the
-            // API's answer for them.
-            $skip = $dimension === 'ip' ? ['(null)', self::$ids['v6'] . '.0.1.1', '2001:db8::5601'] : [];
+            // The IP page names a reference whose v6 row is gone by its raw
+            // id, where the API names it null; the test above pins the API's
+            // answer for it.
+            $skip = $dimension === 'ip' ? ['(null)'] : [];
             $api = $this->rows($dimension);
             self::assertNotSame([], $api, $dimension);
             foreach ($api as $name => $figures) {

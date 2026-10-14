@@ -8,7 +8,7 @@ namespace Prosper202\DataEngine;
  * A click's IP address as text, over a 202_ips row.
  *
  * An IPv6 address is a 202_ips row whose ip_address holds the id of its
- * 202_ips_v6 row (MysqlLocationRepository::insertIp), the packed address
+ * 202_ips_v6 row (MysqlLocationRepository::findOrCreateIp), the packed address
  * there. Read raw, the Visitors list showed an IPv6 visitor's address as
  * that id ("1"). Only an all-digit ip_address is such a reference, compared
  * as a number: a text comparison with the v6 id is left to the server, and

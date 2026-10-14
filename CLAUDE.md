@@ -358,7 +358,26 @@ Two amplifiers, both of which turned this from a blip into a breach:
   partitions `202_site_urls` by its id, and a partitioned table's unique keys
   must include that id), so concurrent first clicks on one new URL can store
   it twice; each click names a valid row. That is left as it is, and written
-  at both lookups.
+  at the lookup. Fixing a lookup does not fix the answers it already cached:
+  the IPv6 address lookup joined `202_ips_v6` to `202_ips` as numbers and
+  could answer an IPv4 visitor's row, and the corrected join kept the old
+  key, so every wrong id the old code had cached was still served for its 30
+  days (found by review, reproduced). When a lookup's answer changes, change
+  its key subject (`ip6-id`), and pin the old key unserved in a test. Nor
+  does it fix the same join elsewhere: Analyze › IPs and the group report
+  kept the numeric join until review found them, and on MariaDB no test
+  could tell (it happens to compare that join as text).
+  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`, and
+  every comparison of an `ip_id` with an `ip_address` in the tree's SQL,
+  in whatever clause it is written.
+  A cache's namespace is a claim about whose values it holds:
+  `systemHash()` was the host and address, while every value it names is a
+  database's, so two installs on one host sharing a memcached read each
+  other's tracker rows and lookup ids. It names the install now, by its
+  directory and its database; the first fix named the database alone, and
+  fell back to the shared namespace wherever the database settings were not
+  in scope (found by review) — a fallback is a namespace too
+  (`SystemHashNamesTheDatabaseTest`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -548,6 +567,14 @@ PRIMARY key to declare `COLLATE utf8mb4_bin` or to be listed with the
 reason folding is right — and a column's collation lives in the upgrade
 too, not only the table definition (the reconciler compares names and
 nullability, not collations).
+
+The width is a transform too, and its unit is part of it. The c1-c4, UTM
+and variable values were cut at 350 bytes before every lookup, for
+VARCHAR(350) columns, which count characters: a value of 88 emoji lost its
+end, and two values sharing their first 350 bytes were one row (found by
+review; the column, measured, takes 350 four-byte characters).
+`StoredCutsMatchTheirColumnsTest` holds each cut to its column's width in
+its column's unit, characters for a VARCHAR and bytes for a TEXT.
 
 This differs from #15: there the discriminator was *inside* the lookup
 path, so no lookup could see it change. Here the mapping itself is

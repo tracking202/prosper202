@@ -6,6 +6,7 @@ namespace Tests\Http;
 
 use PHPUnit\Framework\TestCase;
 use Tests\Support\AddressWriteScan;
+use Tests\Support\RuntimeWriteTables;
 use Tests\Support\SourceScan;
 
 /**
@@ -73,7 +74,6 @@ final class StoredAddressWritesTest extends TestCase
 
     private const HELPER_CALL = '/\bp202StoredVisitorIp\(\)|\bStoredVisitorIp::forAccount\(/';
 
-    private const INDEX_INSERT = 'INDEXES::insert_ip(): the address get_ip_id() was handed';
     private const DATAENGINE = 'the dataengine\'s rows, copied from the stored clicks (ip_id included: DERIVED)';
 
     /**
@@ -92,7 +92,7 @@ final class StoredAddressWritesTest extends TestCase
         '202-config/Click/RotatorClickWriter.php' => [
             '202_clicks_advance.ip_id' => [
                 self::STORED,
-                'the rotator\'s click: rtr.php resolves it with INDEXES::get_ip_id($db, p202StoredVisitorIp())',
+                'the rotator\'s click: rtr.php resolves it with findOrCreateIp(p202StoredVisitorIp())',
                 ['tracking202/redirect/rtr.php'],
             ],
         ],
@@ -111,15 +111,13 @@ final class StoredAddressWritesTest extends TestCase
                 self::DERIVED,
                 'insertClicksAdvance() has no caller; a caller would hand it the click path\'s $mysql[\'ip_id\']',
             ],
-            '202_ips.ip_address' => [self::INDEX, self::INDEX_INSERT],
-            '202_ips_v6.ip_address' => [self::INDEX, self::INDEX_INSERT],
             '202_last_ips.ip_id' => [
                 self::DERIVED,
                 'FILTER::checkLastIps(): the click\'s stored ip_id, masked under privacy',
             ],
             '202_mysql_errors.ip_id' => [
                 self::STORED,
-                'the click path\'s error log: INDEXES::get_ip_id(p202StoredVisitorIp())',
+                'the click path\'s error log: findOrCreateIp(p202StoredVisitorIp())',
                 ['202-config/connect2.php'],
             ],
         ],
@@ -128,8 +126,6 @@ final class StoredAddressWritesTest extends TestCase
             '202_ips_v6.ip_address' => [self::INDEX, 'findOrCreateIp(): the address it was handed'],
         ],
         '202-config/functions-tracking202.php' => [
-            '202_ips.ip_address' => [self::INDEX, self::INDEX_INSERT . ' (connect.php\'s copy)'],
-            '202_ips_v6.ip_address' => [self::INDEX, self::INDEX_INSERT . ' (connect.php\'s copy)'],
             '202_mysql_errors.ip_id' => [
                 self::OPERATOR,
                 'record_mysql_error() on connect.php\'s pages: the signed-in pages, the sign-in page and the cron'
@@ -426,8 +422,8 @@ final class StoredAddressWritesTest extends TestCase
                 }
             }
         }
-        $reach['api/v3/Controller.php'] = self::controllerTables();
-        $reach['202-config/Crud/MysqlCrudRepository.php'] = self::tableConfigTables();
+        $reach['api/v3/Controller.php'] = RuntimeWriteTables::controllers();
+        $reach['202-config/Crud/MysqlCrudRepository.php'] = RuntimeWriteTables::tableConfigs();
         self::assertGreaterThanOrEqual(8, count($reach['api/v3/Controller.php']), 'every CRUD controller is read');
         $configs = $reach['202-config/Crud/MysqlCrudRepository.php'];
         self::assertGreaterThanOrEqual(5, count($configs), 'every TableConfig is read');
@@ -449,44 +445,6 @@ final class StoredAddressWritesTest extends TestCase
                 self::assertArrayNotHasKey($table, $columns, "$file can write $table, which has an address column");
             }
         }
-    }
-
-    /** @return list<string> */
-    private static function controllerTables(): array
-    {
-        $tables = [];
-        foreach (glob(SourceScan::repoRoot() . '/api/v3/Controllers/*Controller.php') ?: [] as $path) {
-            $class = 'Api\\V3\\Controllers\\' . basename($path, '.php');
-            if (!class_exists($class) || !is_subclass_of($class, \Api\V3\Controller::class)) {
-                continue;
-            }
-            $reflection = new \ReflectionClass($class);
-            if ($reflection->isAbstract()) {
-                continue;
-            }
-            $method = $reflection->getMethod('tableName');
-            $tables[] = (string) $method->invoke($reflection->newInstanceWithoutConstructor());
-        }
-
-        return $tables;
-    }
-
-    /** @return list<string> */
-    private static function tableConfigTables(): array
-    {
-        $tables = [];
-        $class = new \ReflectionClass(\Prosper202\Crud\TableConfig::class);
-        $methods = $class->getMethods(\ReflectionMethod::IS_STATIC);
-        foreach ($methods as $method) {
-            if ($method->isPublic() && $method->getNumberOfRequiredParameters() === 0) {
-                $config = $method->invoke(null);
-                if ($config instanceof \Prosper202\Crud\TableConfig) {
-                    $tables[] = $config->table;
-                }
-            }
-        }
-
-        return $tables;
     }
 
     /**

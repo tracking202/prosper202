@@ -8,8 +8,9 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * A rotator click's redirect lookup, through the code rtr.php runs: the
- * writer's transaction, connect2.php's real INDEXES::get_site_url_id() and
- * setCache(), and p202WithHeldCacheWrites() around them, on a real database.
+ * writer's transaction, the location repository LookupRepositoryFactory
+ * builds over connect2.php's real getCache() and setCache(), and
+ * p202WithHeldCacheWrites() around them, on a real database.
  *
  * The lookup inserts the redirect URL's row and caches its id at once, inside
  * the click's transaction. HeldCacheWritesTest runs the hold alone, and the
@@ -74,7 +75,9 @@ final class HeldCacheSeamIntegrationTest extends TestCase
             $run['cached'],
             'the URL id is cached once committed'
         );
-        self::assertCount(2, $run['cached'], 'the URL id and its domain id: ' . json_encode($run['cached']));
+        // The URL's id alone: the domain the repository looks up for the
+        // URL's row is read and written through the uncached repository.
+        self::assertCount(1, $run['cached'], 'the URL id only: ' . json_encode($run['cached']));
         self::assertSame(1, self::rowCount('202_clicks_site', $clickId));
     }
 
@@ -105,9 +108,9 @@ final class HeldCacheSeamIntegrationTest extends TestCase
     }
 
     /**
-     * The lookup's own INSERT refused: the click path's _mysqli_query() never
-     * answers false, so no click is committed naming a site URL id of 0 (what
-     * insert_id holds after a failed INSERT), and its domain goes too.
+     * The lookup's own INSERT refused: the repository throws, so no click is
+     * committed naming a site URL id of 0 (what insert_id holds after a
+     * failed INSERT), and its domain goes too.
      */
     public function testAFailedLookupWritesNoClickAndCachesNothing(): void
     {
@@ -116,9 +119,10 @@ final class HeldCacheSeamIntegrationTest extends TestCase
 
         self::assertIsString($run['failure'], json_encode($run));
         self::assertStringStartsWith(
-            'RuntimeException: record_mysql_error(): INSERT INTO 202_site_urls',
+            'Prosper202\\Database\\Exceptions\\QueryException: MySQL execute failed: ',
             $run['failure']
         );
+        self::assertStringContainsString("'site_url_address'", $run['failure'], 'the URL row is what was refused');
         self::assertNull($run['answered'], 'the lookup answered no id');
         self::assertSame([], $run['cached']);
         foreach (self::TABLES as $table) {

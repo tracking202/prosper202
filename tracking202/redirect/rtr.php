@@ -464,93 +464,98 @@ if ($referer_url_query !== '') {
     @parse_str($referer_url_query, $referer_query);
 }
 
-$keyword = $db->real_escape_string((string)($_GET['t202kw'] ?? ''));
+$keyword = (string)($_GET['t202kw'] ?? '');
 
 switch ($keyword_type) {
 
 	case "bidded":
 	      #try to get the bidded keyword first
 		if (isset($_GET['OVKEY']) && $_GET['OVKEY'] != '') { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVKEY']);   
+			$keyword = (string)$_GET['OVKEY'];   
 		}  elseif (isset($_GET['t202kw']) && $_GET['t202kw'] != '') { 
-			$keyword = $db->real_escape_string((string)$_GET['t202kw']);  
+			$keyword = (string)$_GET['t202kw'];  
 		} elseif (isset($_GET['target_passthrough']) && $_GET['target_passthrough'] != '') { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);   
+			$keyword = (string)$_GET['target_passthrough'];   
 		} else { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)($_GET['keyword'] ?? ''));   
+			$keyword = (string)($_GET['keyword'] ?? '');   
 		} 
 		break;
 		case "searched":
 		#try to get the searched keyword
-		if (isset($referer_query['q']) && $referer_query['q'] != '') { 
-			$keyword = $db->real_escape_string($referer_query['q']);
+		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') { // a referer's q[]= is not a keyword
+			$keyword = $referer_query['q'];
 		} elseif (isset($_GET['OVRAW']) && $_GET['OVRAW'] != '') { //if this is a Y! keyword
-			$keyword = $db->real_escape_string((string)$_GET['OVRAW']);   
+			$keyword = (string)$_GET['OVRAW'];   
 		} elseif (isset($_GET['target_passthrough']) && $_GET['target_passthrough'] != '') { //if this is a mediatraffic! keyword
-			$keyword = $db->real_escape_string((string)$_GET['target_passthrough']);   
+			$keyword = (string)$_GET['target_passthrough'];   
 		} elseif (isset($_GET['keyword']) && $_GET['keyword'] != '') { //if this is a zango, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['keyword']);   
+			$keyword = (string)$_GET['keyword'];   
 		} elseif (isset($_GET['search_word']) && $_GET['search_word'] != '') { //if this is a eniro, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['search_word']);   
+			$keyword = (string)$_GET['search_word'];   
 		} elseif (isset($_GET['query']) && $_GET['query'] != '') { //if this is a naver, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['query']);   
+			$keyword = (string)$_GET['query'];   
 		} elseif (isset($_GET['encquery']) && $_GET['encquery'] != '') { //if this is a aol, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['encquery']);   
+			$keyword = (string)$_GET['encquery'];   
 		} elseif (isset($_GET['terms']) && $_GET['terms'] != '') { //if this is a about.com, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['terms']);   
+			$keyword = (string)$_GET['terms'];   
 		} elseif (isset($_GET['rdata']) && $_GET['rdata'] != '') { //if this is a viola, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['rdata']);   
+			$keyword = (string)$_GET['rdata'];   
 		} elseif (isset($_GET['qs']) && $_GET['qs'] != '') { //if this is a virgilio, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qs']);   
+			$keyword = (string)$_GET['qs'];   
 		} elseif (isset($_GET['wd']) && $_GET['wd'] != '') { //if this is a baidu, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['wd']);   
+			$keyword = (string)$_GET['wd'];   
 		} elseif (isset($_GET['text']) && $_GET['text'] != '') { //if this is a yandex, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['text']);   
+			$keyword = (string)$_GET['text'];   
 		} elseif (isset($_GET['szukaj']) && $_GET['szukaj'] != '') { //if this is a wp.pl, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['szukaj']);   
+			$keyword = (string)$_GET['szukaj'];   
 		} elseif (isset($_GET['qt']) && $_GET['qt'] != '') { //if this is a O*net, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['qt']);   
+			$keyword = (string)$_GET['qt'];   
 		} elseif (isset($_GET['k']) && $_GET['k'] != '') { //if this is a yam, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['k']);   
+			$keyword = (string)$_GET['k'];   
 		} elseif (isset($_GET['words']) && $_GET['words'] != '') { //if this is a Rambler, or more keyword
-			$keyword = $db->real_escape_string((string)$_GET['words']);   
+			$keyword = (string)$_GET['words'];   
 		} else { 
-			$keyword = $db->real_escape_string((string)($_GET['t202kw'] ?? ''));
+			$keyword = (string)($_GET['t202kw'] ?? '');
 		}
 		break;
 }
 
-if (str_starts_with((string) $keyword, 't202var_')) {
-	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
+if (str_starts_with($keyword, 't202var_')) {
+	$t202var = substr($keyword, strpos($keyword, "_") + 1);
 
-	if (isset($_GET[$t202var])) {
+	if (is_string($_GET[$t202var] ?? null)) {
 		$keyword = $_GET[$t202var];
 	}
 }
 
+// Raw values: the repositories bind them as parameters, so a value escaped
+// here would be stored with its backslashes.
+$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+
 $keyword = str_replace('%20',' ',$keyword);      
-$keyword_id = INDEXES::get_keyword_id($db, $keyword); 
-$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id); 		  
+$keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
+$mysql['keyword_id'] = (string) $keyword_id;
 
-$c1 = $db->real_escape_string((string)($_GET['c1'] ?? ''));
+$c1 = (string)($_GET['c1'] ?? '');
 $c1 = str_replace('%20',' ',$c1);  
-$c1_id = INDEXES::get_c1_id($db, $c1); 
-$mysql['c1_id'] = $db->real_escape_string((string)$c1_id);
+$c1_id = $trackingRepo->findOrCreateC1($c1);
+$mysql['c1_id'] = (string) $c1_id;
 
-$c2 = $db->real_escape_string((string)($_GET['c2'] ?? ''));
+$c2 = (string)($_GET['c2'] ?? '');
 $c2 = str_replace('%20',' ',$c2);
-$c2_id = INDEXES::get_c2_id($db, $c2);
-$mysql['c2_id'] = $db->real_escape_string((string)$c2_id);
+$c2_id = $trackingRepo->findOrCreateC2($c2);
+$mysql['c2_id'] = (string) $c2_id;
 
-$c3 = $db->real_escape_string((string)($_GET['c3'] ?? ''));
+$c3 = (string)($_GET['c3'] ?? '');
 $c3 = str_replace('%20',' ',$c3);  
-$c3_id = INDEXES::get_c3_id($db, $c3); 
-$mysql['c3_id'] = $db->real_escape_string((string)$c3_id);
+$c3_id = $trackingRepo->findOrCreateC3($c3);
+$mysql['c3_id'] = (string) $c3_id;
 
-$c4 = $db->real_escape_string((string)($_GET['c4'] ?? ''));
+$c4 = (string)($_GET['c4'] ?? '');
 $c4 = str_replace('%20',' ',$c4);
-$c4_id = INDEXES::get_c4_id($db, $c4);
-$mysql['c4_id'] = $db->real_escape_string((string)$c4_id);
+$c4_id = $trackingRepo->findOrCreateC4($c4);
+$mysql['c4_id'] = (string) $c4_id;
 
 $mysql['platform_id'] = $db->real_escape_string((string)($device_id['platform'] ?? ''));
 $mysql['browser_id'] = $db->real_escape_string((string)($device_id['browser'] ?? ''));
@@ -566,25 +571,25 @@ $mysql['click_in'] = 1;
 $mysql['click_out'] = 1; 
 
 // Stored masked under the owner's privacy setting (p202StoredVisitorIp).
-$ip_id = INDEXES::get_ip_id($db, p202StoredVisitorIp());
-$mysql['ip_id'] = $db->real_escape_string((string)$ip_id);
+$ip_id = $locationRepo->findOrCreateIp(p202StoredVisitorIp());
+$mysql['ip_id'] = (string) $ip_id;
 
-$countryName = $GeoData['country'] ?? '';
-$countryCode = $GeoData['country_code'] ?? '';
-$country_id = INDEXES::get_country_id($db, $countryName, $countryCode);
-$mysql['country_id'] = $db->real_escape_string((string)$country_id);
+$countryName = (string) ($GeoData['country'] ?? '');
+$countryCode = (string) ($GeoData['country_code'] ?? '');
+$country_id = $locationRepo->findOrCreateCountry($countryName, $countryCode);
+$mysql['country_id'] = (string) $country_id;
 
-$regionName = $GeoData['region'] ?? '';
-$region_id = INDEXES::get_region_id($db, $regionName, $country_id);
-$mysql['region_id'] = $db->real_escape_string((string)$region_id);
+$regionName = (string) ($GeoData['region'] ?? '');
+$region_id = $locationRepo->findOrCreateRegion($regionName, $country_id);
+$mysql['region_id'] = (string) $region_id;
 
-$cityName = $GeoData['city'] ?? '';
-$city_id = INDEXES::get_city_id($db, $cityName, $country_id);
-$mysql['city_id'] = $db->real_escape_string((string)$city_id);
+$cityName = (string) ($GeoData['city'] ?? '');
+$city_id = $locationRepo->findOrCreateCity($cityName, $country_id);
+$mysql['city_id'] = (string) $city_id;
 
 if ($IspData != null) {
-	$isp_id = INDEXES::get_isp_id($db, $IspData);
-	$mysql['isp_id'] = $db->real_escape_string((string)$isp_id);
+	$isp_id = $locationRepo->findOrCreateIsp((string) $IspData);
+	$mysql['isp_id'] = (string) $isp_id;
 }
 
 if ($clickIsBot) {
@@ -616,9 +621,8 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 		// ?lpr= flow got a malformed public id and an empty {clickid}.
 		$click_id = (int)$click_row1['click_id'];
 		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
-		$keyword = $db->real_escape_string($keyword);
-		$keyword_id = $db->real_escape_string((string)$click_row1['keyword_id']);
-		$mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
+		$keyword_id = (int) $click_row1['keyword_id'];
+		$mysql['keyword_id'] = (string) $keyword_id;
 	} else {
 		// No prior click matched this IP/user inside the window. Fall back to a
 		// fresh click id instead of writing 202_clicks* rows keyed on an empty
@@ -633,7 +637,6 @@ if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
 		$click_id = $db->insert_id;
 		\Prosper202\Click\RecordedClicks::note((int) $click_id);
 		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
-		$keyword = $db->real_escape_string($keyword);
 		// Leave $mysql['keyword_id'] as resolved above — this path still has a
 		// real keyword; zeroing it here dropped it from the Keywords report.
 	}
@@ -668,17 +671,17 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
-if (!empty($referer_query['url'])) { 
-    $click_referer_site_url_id = INDEXES::get_site_url_id($db, $referer_query['url']);
+if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
+    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 } else {
-    $click_referer_site_url_id = INDEXES::get_site_url_id($db, $_SERVER['HTTP_REFERER'] ?? '');
+    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
 }
 
-$mysql['click_referer_site_url_id'] = $db->real_escape_string((string)$click_referer_site_url_id); 
+$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url); 
-$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id); 
+$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
 if ($cloaking_on == true) {
 	// The request's own scheme, host and port, and the install directory.
@@ -758,9 +761,9 @@ $rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
-$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id): int {
+$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id, $locationRepo): int {
 	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
-	return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
+	return $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
 };
 try {
 	// Its own Connection on $db: the resolver reads back through $db, and
@@ -873,14 +876,12 @@ try {
 					if ($t202ctx_lp_id > 0) {
 						$t202ctx_claims['lp'] = $t202ctx_lp_id;
 					}
-					// stripslashes undoes the real_escape_string applied for
-					// the SQL writes above — the token carries the plain text.
-					if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && is_scalar($keyword) && (string)$keyword !== '') {
-						$t202ctx_claims['kw'] = stripslashes((string)$keyword);
+					if ((string)($t202ctx_pref['lpo_ctx_kw'] ?? '1') !== '0' && $keyword !== '') {
+						$t202ctx_claims['kw'] = $keyword;
 					}
 					foreach (['c1' => $c1, 'c2' => $c2, 'c3' => $c3, 'c4' => $c4] as $t202ctx_ck => $t202ctx_cv) {
-						if ((string)$t202ctx_cv !== '') {
-							$t202ctx_claims[$t202ctx_ck] = stripslashes((string)$t202ctx_cv);
+						if ($t202ctx_cv !== '') {
+							$t202ctx_claims[$t202ctx_ck] = $t202ctx_cv;
 						}
 					}
 					if ((string)$countryCode !== '') {

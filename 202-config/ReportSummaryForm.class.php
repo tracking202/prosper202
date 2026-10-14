@@ -910,7 +910,7 @@ class ReportSummaryForm extends ReportBasicForm
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_IP)) {
 			$info_sql .= "LEFT OUTER JOIN 202_ips AS 2i ON (2c.ip_id = 2i.ip_id)";
-			$info_sql .= "LEFT OUTER JOIN 202_ips_v6 AS 2i6 ON (2i6.ip_id = 2i.ip_address COLLATE utf8mb4_general_ci)";
+			$info_sql .= \Prosper202\DataEngine\IpAddressSql::join('2i', '2i6');
 		}
 
 		if ($this->isDetailIdSelected(ReportBasicForm::DETAIL_LEVEL_UTM_CAMPAIGN)) {

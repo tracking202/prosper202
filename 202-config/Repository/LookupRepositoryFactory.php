@@ -6,131 +6,94 @@ namespace Prosper202\Repository;
 
 use mysqli;
 use Prosper202\Database\Connection;
-use Prosper202\Repository\Cached\CachedDeviceRepository;
-use Prosper202\Repository\Cached\CachedLocationRepository;
-use Prosper202\Repository\Cached\CachedTrackingRepository;
-use Prosper202\Repository\Mysql\MysqlDeviceRepository;
-use Prosper202\Repository\Mysql\MysqlLocationRepository;
-use Prosper202\Repository\Mysql\MysqlTrackingRepository;
+use Prosper202\Repository\Cache\IdCache;
+use Prosper202\Repository\Cache\MemcacheIdCache;
+use WeakMap;
 
+/**
+ * The click scripts' way to the lookup repositories: one bundle per mysqli,
+ * built on its first use. Keyed by the connection object itself, so a
+ * second connection gets its own repositories rather than the first one's,
+ * and a connection freed and replaced cannot inherit its predecessor's.
+ *
+ * This is the edge where the bootstrap's globals are read: whether memcache
+ * answered (connect2.php's $memcacheWorking, with its getCache()/setCache()),
+ * and the install's cache namespace (systemHash()).
+ */
 final class LookupRepositoryFactory
 {
-    private static ?Connection $conn = null;
-    private static ?LocationRepositoryInterface $location = null;
-    private static ?DeviceRepositoryInterface $device = null;
-    private static ?TrackingRepositoryInterface $tracking = null;
+    /** @var WeakMap<mysqli, LookupRepositories>|null */
+    private static ?WeakMap $bundles = null;
+
+    private function __construct()
+    {
+    }
 
     public static function connection(mysqli $db): Connection
     {
-        return self::$conn ??= new Connection($db);
+        return self::bundle($db)->connection;
     }
 
     public static function location(mysqli $db): LocationRepositoryInterface
     {
-        return self::$location ??= self::buildLocation($db);
+        return self::bundle($db)->location;
     }
 
     public static function device(mysqli $db): DeviceRepositoryInterface
     {
-        return self::$device ??= self::buildDevice($db);
+        return self::bundle($db)->device;
     }
 
     public static function tracking(mysqli $db): TrackingRepositoryInterface
     {
-        return self::$tracking ??= self::buildTracking($db);
+        return self::bundle($db)->tracking;
     }
 
     public static function reset(): void
     {
-        self::$conn = null;
-        self::$location = null;
-        self::$device = null;
-        self::$tracking = null;
+        self::$bundles = null;
     }
 
-    private static function buildLocation(mysqli $db): LocationRepositoryInterface
+    private static function bundle(mysqli $db): LookupRepositories
     {
-        $conn = self::connection($db);
-        $mysql = new MysqlLocationRepository($conn);
+        /** @var WeakMap<mysqli, LookupRepositories> $bundles */
+        $bundles = self::$bundles ??= new WeakMap();
 
-        if (!self::isCacheAvailable()) {
-            return $mysql;
+        return $bundles[$db] ??= self::build(new Connection($db));
+    }
+
+    private static function build(Connection $connection): LookupRepositories
+    {
+        $cache = self::bootstrapCache();
+        if ($cache === null) {
+            return LookupRepositories::uncached($connection);
         }
 
-        return new CachedLocationRepository(
-            $mysql,
-            self::cacheGetFn(),
-            self::cacheSetFn(),
-            self::systemHash(),
+        return LookupRepositories::cached($connection, $cache, \systemHash());
+    }
+
+    /**
+     * Memcache through the bootstrap's own helpers, when it answered. Only
+     * connect2.php defines getCache(), so the signed-in pages' bootstrap
+     * (connect.php) reads the database every time, as it always has. No
+     * systemHash() is no cache: an entry needs the install's namespace, and
+     * one shared by every install would answer another install's ids.
+     */
+    private static function bootstrapCache(): ?IdCache
+    {
+        if (
+            !function_exists('getCache')
+            || !function_exists('setCache')
+            || !function_exists('systemHash')
+            || ($GLOBALS['memcacheWorking'] ?? false) !== true
+        ) {
+            return null;
+        }
+
+        return new MemcacheIdCache(
+            static fn (string $key): mixed => \getCache($key),
+            static fn (string $key, int $id, int $ttl): mixed
+                => \setCache($key, $id, $ttl),
         );
-    }
-
-    private static function buildDevice(mysqli $db): DeviceRepositoryInterface
-    {
-        $conn = self::connection($db);
-        $mysql = new MysqlDeviceRepository($conn);
-
-        if (!self::isCacheAvailable()) {
-            return $mysql;
-        }
-
-        return new CachedDeviceRepository(
-            $mysql,
-            self::cacheGetFn(),
-            self::cacheSetFn(),
-            self::systemHash(),
-        );
-    }
-
-    private static function buildTracking(mysqli $db): TrackingRepositoryInterface
-    {
-        $conn = self::connection($db);
-        $mysql = new MysqlTrackingRepository($conn);
-
-        if (!self::isCacheAvailable()) {
-            return $mysql;
-        }
-
-        return new CachedTrackingRepository(
-            $mysql,
-            self::cacheGetFn(),
-            self::cacheSetFn(),
-            self::systemHash(),
-        );
-    }
-
-    private static function isCacheAvailable(): bool
-    {
-        if (function_exists('getCache') && function_exists('setCache')) {
-            global $memcacheWorking;
-            return !empty($memcacheWorking);
-        }
-
-        return false;
-    }
-
-    private static function systemHash(): string
-    {
-        if (function_exists('systemHash')) {
-            return systemHash();
-        }
-
-        return '';
-    }
-
-    /** @return \Closure(string): mixed */
-    private static function cacheGetFn(): \Closure
-    {
-        return static function (string $key): mixed {
-            return getCache($key); // @phpstan-ignore function.notFound
-        };
-    }
-
-    /** @return \Closure(string, mixed, int): void */
-    private static function cacheSetFn(): \Closure
-    {
-        return static function (string $key, mixed $value, int $ttl): void {
-            setCache($key, $value, $ttl); // @phpstan-ignore function.notFound
-        };
     }
 }

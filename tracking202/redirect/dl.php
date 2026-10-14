@@ -325,7 +325,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 		break;
 	case "searched":
 		#try to get the searched keyword
-		if (isset($referer_query['q'])) {
+		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') { // a referer's q[]= is not a keyword
 			$keyword = $referer_query['q'];
 		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
@@ -366,7 +366,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
-	if (isset($_GET[$t202var])) {
+	if (is_string($_GET[$t202var] ?? null)) {
 		$keyword = $_GET[$t202var];
 	}
 }
@@ -607,17 +607,17 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 
 	// Compute site URLs
 	if ($tracker_row['user_pref_referer_data'] == 't202ref') {
-		if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
+		if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
 		} else {
-			if (isset($referer_query['url'])) {
+			if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 			} else {
 				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 			}
 		}
 	} else {
-		if (isset($referer_query['url'])) {
+		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 		} else {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
