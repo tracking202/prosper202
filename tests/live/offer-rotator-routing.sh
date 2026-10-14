@@ -14,7 +14,15 @@
 #     first row's redirect whatever the visitor got);
 #   - a rule whose redirects are all weighted 0 sends to its first one from
 #     both entry points (the shared chooser returned no redirect, so rtr.php
-#     answered an empty page).
+#     answered an empty page);
+#   - a rule whose redirect names a campaign that is not the rotator's
+#     account's passes the click on, to the default, from both entry points
+#     (rtr.php sent it to the other account's URL and turned its rotation,
+#     and once the join was tied, to an empty Location; offrtr.php rewrote
+#     the click into that campaign, then into none);
+#   - lpc.php fills an offer URL's tokens only from a click of the landing
+#     page's own account (the click id is the visitor's cookie, and the read
+#     handed any account's keyword, values, cost and payout to the URL).
 # The rules are told apart by browser (the click's User-Agent), so the pass
 # does not depend on how a redirect reads the visitor's address.
 #
@@ -69,6 +77,7 @@ CHROME='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, lik
 SAFARI='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
 EDGE='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
 OTHER='or-pass-probe/1.0'
+OPERA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0'
 
 TAG="or-pass $(date +%s)"
 U="https://example.com/or-$(date +%s)"
@@ -95,6 +104,11 @@ must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG weighted\",\"split
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG even\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Chrome\"}],\"redirects\":[{\"redirect_url\":\"$U/one\",\"weight\":50,\"name\":\"one\"},{\"redirect_url\":\"$U/two\",\"weight\":50,\"name\":\"two\"}]}")" "even rule"
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG lp\",\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Safari\"}],\"redirects\":[{\"redirect_lp\":$LP_RULE,\"weight\":100,\"name\":\"lp\"}]}")" "landing page rule"
 must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG unweighted\",\"splittest\":1,\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Edge\"}],\"redirects\":[{\"redirect_url\":\"$U/first\",\"weight\":0,\"name\":\"first\"},{\"redirect_url\":\"$U/second\",\"weight\":0,\"name\":\"second\"}]}")" "unweighted rule"
+# Opera: one redirect, to a rotating campaign that moves to another account
+# below (as a rule saved before ownership was checked could name one).
+must "$(api POST /campaigns "{\"aff_campaign_name\":\"$TAG moved\",\"aff_campaign_url\":\"$U/moved\",\"aff_campaign_url_2\":\"$U/moved-2\",\"aff_campaign_rotate\":1,\"aff_campaign_payout\":\"5\",\"aff_network_id\":$NET}")" "campaign that moves"
+CA_MOVED=$(field "d['data']['aff_campaign_id']")
+must "$(api POST "/rotators/$RT/rules" "{\"rule_name\":\"$TAG moved\",\"criteria\":[{\"type\":\"browser\",\"statement\":\"is\",\"value\":\"Opera\"}],\"redirects\":[{\"redirect_campaign\":$CA_MOVED,\"weight\":100,\"name\":\"moved\"}]}")" "rule to the campaign that moves"
 RPI=$(Q "SELECT public_id FROM 202_rotators WHERE id=$RT")
 # redirect NAME — the id of this rotator's redirect of that name.
 redirect() { Q "SELECT rr.id FROM 202_rotator_rules_redirects rr JOIN 202_rotator_rules r ON r.id = rr.rule_id WHERE r.rotator_id=$RT AND rr.name='$1'"; }
@@ -226,6 +240,39 @@ eq "$(Q "SELECT CONCAT(c.aff_campaign_id, '/', c.click_payout, ' ', c.rotator_id
 curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" "$BASE/tracking202/redirect/off.php?acip=$ACIP&pci=$C_PCI"
 eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$C_ID")" "1" "its own account's offer takes it"
 Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA"
+
+say "a rule whose redirect is another account's campaign passes the click on"
+Q "UPDATE 202_aff_campaigns SET user_id=$OTHER_ACCOUNT WHERE aff_campaign_id=$CA_MOVED"
+# A reused campaign id can find a deleted campaign's rotation row: clear it.
+Q "DELETE FROM 202_rotations WHERE aff_campaign_id=$CA_MOVED"
+eq "$(for _ in 1 2; do rtr "$OPERA"; done | sed 's/[?&].*//' | sort -u | paste -sd' ' -)" "$U/default" \
+  "the redirector tracker sends it to the rotator's default, not the other account's URL"
+for _ in 1 2; do offrtr "$OPERA" moved; done
+eq "$(where moved)" "$U/default" "the offer rotator sends it to the default too"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT(c.aff_campaign_id = $CA_MOVED, ' ', cr.rule_id, '/', cr.rule_redirect_id)) FROM 202_clicks c JOIN 202_clicks_rotator cr USING (click_id) WHERE c.click_id IN ($(cut -d' ' -f1 "$OUT/offrtr-moved" | paste -sd, -))")" "0 0/0" \
+  "and the click keeps out of that campaign, recorded as the default"
+eq "$(Q "SELECT COUNT(*) FROM 202_rotations WHERE aff_campaign_id=$CA_MOVED")" "0" "and no click turns its rotation"
+# The same for a landing page: the Safari rule's one redirect is LP_RULE.
+Q "UPDATE 202_landing_pages SET user_id=$OTHER_ACCOUNT WHERE landing_page_id=$LP_RULE"
+eq "$(rtr "$SAFARI" | sed 's/[?&].*//')" "$U/default" "a rule's landing page of another account: the redirector sends to the default"
+offrtr "$SAFARI" lp-moved
+eq "$(where lp-moved)" "$U/default" "and so does the offer rotator"
+Q "UPDATE 202_landing_pages SET user_id=1 WHERE landing_page_id=$LP_RULE"
+
+say "lpc.php fills tokens only from its own account's click"
+must "$(api POST /campaigns "{\"aff_campaign_name\":\"$TAG tokens\",\"aff_campaign_url\":\"$U/lpc?kw=[[t202kw]]&p=[[payout]]\",\"aff_campaign_payout\":\"3\",\"aff_network_id\":$NET}")" "campaign with tokens"
+CA_TOKENS=$(field "d['data']['aff_campaign_id']")
+must "$(api POST /landing-pages "{\"landing_page_url\":\"$U/lpc-page\",\"landing_page_nickname\":\"$TAG lpc\",\"aff_campaign_id\":$CA_TOKENS,\"landing_page_type\":0}")" "landing page for lpc.php"
+LPC_LPIP=$(Q "SELECT landing_page_id_public FROM 202_landing_pages WHERE landing_page_id=$(field "d['data']['landing_page_id']")")
+# lpc — the offer URL lpc.php's page hands on (its hidden "q" field), after "lpc?".
+lpc() {
+    curl -sS -b "tracking202subid=$C_ID" "$BASE/tracking202/redirect/lpc.php?lpip=$LPC_LPIP" \
+      | grep -oE 'name="q" value="[^"]*"' | head -1 | sed 's/.*lpc?//; s/"$//; s/&amp;/\&/g'
+}
+eq "$(lpc)" "kw=or-pass&p=3" "this account's click fills its keyword and payout"
+Q "UPDATE 202_clicks SET user_id=$OTHER_ACCOUNT WHERE click_id=$C_ID"
+eq "$(lpc)" "kw=&p=" "another account's click fills nothing"
+Q "UPDATE 202_clicks SET user_id=1 WHERE click_id=$C_ID"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

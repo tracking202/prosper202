@@ -70,6 +70,11 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    // Held while a transaction is open; see p202WithHeldCacheWrites().
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
+        return true;
+    }
     // Default expiration time if not provided
     if ($exp === null) {
         $exp = 2592000; // 30 days in seconds
@@ -80,6 +85,41 @@ function setCache($key, $value, $exp = null)
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
+    }
+}
+
+/**
+ * Run $work with the cache writes it makes held: written once it returns,
+ * dropped when it throws (and the throw passed on).
+ *
+ * The lookups that run inside a click's transaction cache the id of a row
+ * they insert at once (INDEXES::get_site_url_id(), 7 days; its domain, 30),
+ * so a rollback after them left an entry naming no row, and every click to
+ * that URL stored the dangling id until it expired. Run the transaction as
+ * $work and an entry is written only once its row is committed.
+ */
+function p202WithHeldCacheWrites(callable $work): void
+{
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
+    }
+    $GLOBALS['p202HeldCacheWrites'] = [];
+    try {
+        $work();
+    } catch (\Throwable $e) {
+        $GLOBALS['p202HeldCacheWrites'] = null;
+        throw $e;
+    }
+    $held = $GLOBALS['p202HeldCacheWrites'];
+    $GLOBALS['p202HeldCacheWrites'] = null;
+    // The work is done (its transaction committed): a cache write that fails
+    // now costs a miss, and must not read as the work failing.
+    foreach ($held as [$key, $value, $exp]) {
+        try {
+            setCache($key, $value, $exp);
+        } catch (\Throwable $e) {
+            error_log('A held cache write failed after the work was done: ' . $e->getMessage());
+        }
     }
 }
 
@@ -626,6 +666,30 @@ class FILTER
     }
 }
 
+
+
+/**
+ * Whether a rotator rule's redirect row can take a click, in rtr.php and
+ * offrtr.php alike. One naming a campaign or landing page that the joins,
+ * tied to the account, did not find (deleted, or another account's: CLAUDE.md
+ * #27) names nothing, and so does a row with no destination at all.
+ *
+ * @param array<string, mixed> $redirect a redirect row and its joins
+ *
+ * @return bool whether it names a destination of the account's
+ */
+function p202RuleRedirectIsUsable(array $redirect): bool
+{
+    if (!empty($redirect['redirect_campaign'])) {
+        return !empty($redirect['aff_campaign_id']);
+    }
+    if (!empty($redirect['redirect_lp'])) {
+        return !empty($redirect['landing_page_id']);
+    }
+
+    return !empty($redirect['redirect_url'])
+        || ($redirect['auto_monetizer'] ?? null) != null;
+}
 function rotateTrackerUrl($db, $tracker_row)
 {
 
@@ -663,91 +727,101 @@ function rotateTrackerUrl($db, $tracker_row)
     return $url;
 }
 
-function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = [])
+/**
+ * The URL tokens of one click, from the values it is recorded with: what
+ * replaceTrackerPlaceholders() reads back from the click's rows, or what an
+ * endpoint that redirects before writing them holds (dl.php,
+ * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
+ *
+ * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
+ *     msclkid, fbclid, utm_source, utm_medium, utm_campaign, utm_term,
+ *     utm_content, country, country_code, region, city, cpc, cpa, payout,
+ *     ppc_account_id
+ * @return array<string, scalar|null>
+ */
+function p202ClickUrlTokens(string $clickId, array $click): array
 {
-
-    // get the tracker placeholder values
-    $mysql['click_id'] = $db->real_escape_string($click_id);
-    //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
-    $tokens = [
-        "subid" => $mysql['click_id'],
-        "t202kw" => $mysql['keyword'],
-        "t202pubid" => $mysql['t202pubid'],
-        "c1" => $mysql['c1'],
-        "c2" => $mysql['c2'],
-        "c3" => $mysql['c3'],
-        "c4" => $mysql['c4'],
-        "gclid" => $mysql['gclid'],
-        "msclkid" => $mysql['msclkid'],
-        "fbclid" => $mysql['fbclid'],
-        "utm_source" => $mysql['utm_source'],
-        "utm_medium" => $mysql['utm_medium'],
-        "utm_campaign" => $mysql['utm_campaign'],
-        "utm_term" => $mysql['utm_term'],
-        "utm_content" => $mysql['utm_content'],
-        "country" => $mysql['country'],
-        "country_code" => $mysql['country_code'],
-        "region" => $mysql['region'],
-        "city" => $mysql['city'],
-        "cpc" => round((float) $mysql['click_cpc'], 2),
-        "cpc2" => $mysql['click_cpc'],
-        "timestamp" => time(),
-        "payout" => $mysql['click_payout'],
-        "random" => mt_rand(1000000, 9999999),
-        "referer" => $mysql['referer'],
-        "sourceid" => $mysql['ppc_account']
-    ];
-
-    $url = (replaceTokens($url, $tokens));
-
-
-    return $url;
-}
-
-function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
-{
-
-    // get the tracker placeholder values
-
-    //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
-
-    if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
-        $tokens = @[
-            "subid" => $mysql['click_id'],
-            "t202kw" => $mysql['keyword'],
-            "t202pubid" => $mysql['public_pub_id'],
-            "c1" => $mysql['c1'],
-            "c2" => $mysql['c2'],
-            "c3" => $mysql['c3'],
-            "c4" => $mysql['c4'],
-            "gclid" => $mysql['gclid'],
-            "msclkid" => $mysql['msclkid'],
-            "fbclid" => $mysql['fbclid'],
-            "utm_source" => $mysql['utm_source'],
-            "utm_medium" => $mysql['utm_medium'],
-            "utm_campaign" => $mysql['utm_campaign'],
-            "utm_term" => $mysql['utm_term'],
-            "utm_content" => $mysql['utm_content'],
-            "country" => $mysql['country'],
-            "country_code" => $mysql['country_code'],
-            "region" => $mysql['region'],
-            "city" => $mysql['city'],
-            "cpc" => round((float) $mysql['click_cpc'], 2),
-            "cpc2" => $mysql['click_cpc'],
-            'cpa' => round((float) $mysql['click_cpa'], 2),
-            "timestamp" => time(),
-            "payout" => $mysql['click_payout'],
-            "random" => mt_rand(1000000, 9999999),
-            "referer" => $mysql['referer'],
-            "sourceid" => $mysql['ppc_account']
-        ];
-        $url = (replaceTokens($url, $tokens));
+    $text = static fn (string $key): string => (string) ($click[$key] ?? '');
+    $account = $text('ppc_account_id');
+    // A click with no CPA (click_cpa is NULL: not a CPA tracker) has none, and
+    // no click read back has no CPC either: round() would make each a 0 that
+    // reads as one. A stored click always has a CPC, 0 when it has no cost.
+    $cpc = $text('cpc') === '' ? '' : round((float) $text('cpc'), 2);
+    $cpa = $text('cpa') === '' ? '' : round((float) $text('cpa'), 2);
+    // The campaign's payout (2 places) and the click's (5) as one number.
+    $payout = $text('payout');
+    if (is_numeric($payout) && str_contains($payout, '.')) {
+        $payout = rtrim(rtrim($payout, '0'), '.');
     }
 
+    return [
+        'subid' => $clickId,
+        't202kw' => $text('keyword'),
+        't202pubid' => $text('t202pubid'),
+        'c1' => $text('c1'),
+        'c2' => $text('c2'),
+        'c3' => $text('c3'),
+        'c4' => $text('c4'),
+        'gclid' => $text('gclid'),
+        'msclkid' => $text('msclkid'),
+        'fbclid' => $text('fbclid'),
+        'utm_source' => $text('utm_source'),
+        'utm_medium' => $text('utm_medium'),
+        'utm_campaign' => $text('utm_campaign'),
+        'utm_term' => $text('utm_term'),
+        'utm_content' => $text('utm_content'),
+        'country' => $text('country'),
+        'country_code' => $text('country_code'),
+        'region' => $text('region'),
+        'city' => $text('city'),
+        'cpc' => $cpc,
+        'cpc2' => $text('cpc'),
+        'cpa' => $cpa,
+        'timestamp' => time(),
+        'payout' => $payout,
+        'random' => mt_rand(1000000, 9999999),
+        // Encoded here and again by replaceTokens(), as it always has been.
+        'referer' => urlencode((string) ($_SERVER['HTTP_REFERER'] ?? '')),
+        'sourceid' => $account === '0' ? '' : $account,
+    ];
+}
 
-    if (preg_match('/\[\[(.*)\]\]/', (string) $url)) {
-        $click_sql = "
+/**
+ * Fill a URL's [[tokens]] from one click's values (p202ClickUrlTokens()); a
+ * token they leave empty, or one no click has, comes out empty.
+ *
+ * @param array<string, scalar|null> $click
+ */
+function replaceClickPlaceholders($url, string $clickId, array $click): string
+{
+    return replaceTokens($url, p202ClickUrlTokens($clickId, $click), 1);
+}
+
+/**
+ * Fill a URL's [[tokens]] from the click's rows, read back by its id: for an
+ * endpoint that has written them (rtr.php inside its writer, a landing page's
+ * offer link on its click). One that redirects first hands the values it
+ * holds to replaceClickPlaceholders(): read back, they are not there yet.
+ *
+ * $ownerId is the account whose URL this is: the click is read only if it
+ * is that account's. Several callers take the click id from the visitor
+ * (lpc.php from a cookie), and its row carries another account's cost,
+ * payout and values (CLAUDE.md #27).
+ */
+function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
+{
+    // The tokens no click row is needed for first, so a URL that asks for
+    // nothing else (the common [[subid]]) is filled without the read below.
+    $url = replaceTokens($url, array_intersect_key(
+        p202ClickUrlTokens((string) $click_id, []),
+        array_flip(['subid', 'timestamp', 'random', 'referer'])
+    ));
+    if (!preg_match('/\[\[(.*)\]\]/', (string) $url)) {
+        return $url;
+    }
+
+    $mysql['click_id'] = $db->real_escape_string((string) $click_id);
+    $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
                 2tc2.c2, 
@@ -794,110 +868,41 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
                 LEFT JOIN `202_users` AS 2u ON (2u.`user_id` = 2c.`user_id`)
 		    WHERE
 				2c.click_id='" . $mysql['click_id'] . "'
+                AND 2c.user_id='" . $ownerId . "'
 		";
-
-        $click_result = _mysqli_query($db, $click_sql);
-        $click_row = $click_result->fetch_assoc();
-
-        // Check if click_row exists before processing
-        if ($click_row) {
-            $mysql['t202kw'] = $db->real_escape_string((string)($click_row['keyword'] ?? ''));
-            $mysql['t202pubid'] = $db->real_escape_string((string)($click_row['user_public_publisher_id'] ?? ''));
-            $mysql['c1'] = $db->real_escape_string((string)($click_row['c1'] ?? ''));
-            $mysql['c2'] = $db->real_escape_string((string)($click_row['c2'] ?? ''));
-            $mysql['c3'] = $db->real_escape_string((string)($click_row['c3'] ?? ''));
-            $mysql['c4'] = $db->real_escape_string((string)($click_row['c4'] ?? ''));
-            $mysql['gclid'] = $db->real_escape_string((string)($click_row['gclid'] ?? ''));
-            $mysql['msclkid'] = $db->real_escape_string((string)($click_row['msclkid'] ?? ''));
-            $mysql['fbclid'] = $db->real_escape_string((string)($click_row['fbclid'] ?? ''));
-            $mysql['utm_source'] = $db->real_escape_string((string)($click_row['utm_source'] ?? ''));
-            $mysql['utm_medium'] = $db->real_escape_string((string)($click_row['utm_medium'] ?? ''));
-            $mysql['utm_campaign'] = $db->real_escape_string((string)($click_row['utm_campaign'] ?? ''));
-            $mysql['utm_term'] = $db->real_escape_string((string)($click_row['utm_term'] ?? ''));
-            $mysql['utm_content'] = $db->real_escape_string((string)($click_row['utm_content'] ?? ''));
-            $mysql['payout'] = $db->real_escape_string((string)($click_row['click_payout'] ?? ''));
-            $mysql['cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['cpa'] = $db->real_escape_string((string)($click_row['click_cpa'] ?? ''));
-            $mysql['click_cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['country'] = $db->real_escape_string((string)($click_row['country_name'] ?? ''));
-            $mysql['country_code'] = $db->real_escape_string((string)($click_row['country_code'] ?? ''));
-            $mysql['region'] = $db->real_escape_string((string)($click_row['region_name'] ?? ''));
-            $mysql['city'] = $db->real_escape_string((string)($click_row['city_name'] ?? ''));
-        } else {
-            // Initialize all fields with empty strings if no click data found
-            $mysql['t202kw'] = '';
-            $mysql['t202pubid'] = '';
-            $mysql['c1'] = '';
-            $mysql['c2'] = '';
-            $mysql['c3'] = '';
-            $mysql['c4'] = '';
-            $mysql['gclid'] = '';
-            $mysql['msclkid'] = '';
-            $mysql['fbclid'] = '';
-            $mysql['utm_source'] = '';
-            $mysql['utm_medium'] = '';
-            $mysql['utm_campaign'] = '';
-            $mysql['utm_term'] = '';
-            $mysql['utm_content'] = '';
-            $mysql['payout'] = '';
-            $mysql['cpc'] = '';
-            $mysql['cpa'] = '';
-            $mysql['click_cpc'] = '';
-            $mysql['country'] = '';
-            $mysql['country_code'] = '';
-            $mysql['region'] = '';
-            $mysql['city'] = '';
-        }
-        $mysql['referer'] = urlencode((string) $db->real_escape_string($_SERVER['HTTP_REFERER'] ?? ''));
-        if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
-            $mysql['ppc_account'] = '';
-        } else {
-            $mysql['ppc_account'] = $db->real_escape_string($click_row['ppc_account_id']);
-        }
-
-        //prepare $mysql to make sure none of the keys are unset
-
-        $_202keys = ['click_id', 't202kw', 't202pubid', 'c1', 'c2', 'c3', 'c4', 'gclid', 'msclkid', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc', 'cpa', 'click_payout', 'referer', 'ppc_account'];
-
-        foreach ($_202keys as $key) {
-            if (!isset($mysql[$key])) {
-                $mysql[$key] = '';
-            }
-        }
-
-        $tokens = [
-            "subid" => $mysql['click_id'],
-            "t202kw" => $mysql['t202kw'],
-            "t202pubid" => $mysql['t202pubid'],
-            "c1" => $mysql['c1'],
-            "c2" => $mysql['c2'],
-            "c3" => $mysql['c3'],
-            "c4" => $mysql['c4'],
-            "gclid" => $mysql['gclid'],
-            "msclkid" => $mysql['msclkid'],
-            "fbclid" => $mysql['fbclid'],
-            "utm_source" => $mysql['utm_source'],
-            "utm_medium" => $mysql['utm_medium'],
-            "utm_campaign" => $mysql['utm_campaign'],
-            "utm_term" => $mysql['utm_term'],
-            "utm_content" => $mysql['utm_content'],
-            "country" => $mysql['country'],
-            "country_code" => $mysql['country_code'],
-            "region" => $mysql['region'],
-            "city" => $mysql['city'],
-            "cpc" => round((float) $mysql['cpc'], 2),
-            "cpc2" => $mysql['cpc'],
-            "cpa" => round((float) $mysql['cpa'], 2),
-            // "timestamp" => time(), don't change the time it was already set
-            "payout" => $mysql['click_payout'],
-            "random" => mt_rand(1000000, 9999999),
-            "referer" => $mysql['referer'],
-            "sourceid" => $mysql['ppc_account']
-        ];
-
-        $url = (replaceTokens($url, $tokens, 1)); //call replace tokens and allow it to fill all unset tokens with blanks
+    $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
+    if ($click_row === false) {
+        // As a failed query here already does: recorded, and the error page.
+        record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
     }
-    return $url;
+    // No such click (a page reading an earlier one by a subid it was sent):
+    // its tokens are blank, as they always were.
+    $click_row ??= [];
+
+    return replaceClickPlaceholders($url, (string) $click_id, [
+        'keyword' => $click_row['keyword'] ?? null,
+        't202pubid' => $click_row['user_public_publisher_id'] ?? null,
+        'c1' => $click_row['c1'] ?? null,
+        'c2' => $click_row['c2'] ?? null,
+        'c3' => $click_row['c3'] ?? null,
+        'c4' => $click_row['c4'] ?? null,
+        'gclid' => $click_row['gclid'] ?? null,
+        'msclkid' => $click_row['msclkid'] ?? null,
+        'fbclid' => $click_row['fbclid'] ?? null,
+        'utm_source' => $click_row['utm_source'] ?? null,
+        'utm_medium' => $click_row['utm_medium'] ?? null,
+        'utm_campaign' => $click_row['utm_campaign'] ?? null,
+        'utm_term' => $click_row['utm_term'] ?? null,
+        'utm_content' => $click_row['utm_content'] ?? null,
+        'country' => $click_row['country_name'] ?? null,
+        'country_code' => $click_row['country_code'] ?? null,
+        'region' => $click_row['region_name'] ?? null,
+        'city' => $click_row['city_name'] ?? null,
+        'cpc' => $click_row['click_cpc'] ?? null,
+        'cpa' => $click_row['click_cpa'] ?? null,
+        'payout' => $click_row['click_payout'] ?? null,
+        'ppc_account_id' => $click_row['ppc_account_id'] ?? null,
+    ]);
 }
 
 function setClickIdCookie($click_id, $campaign_id = 0)
@@ -1663,7 +1668,13 @@ class INDEXES
         }
     }
 
-    // this returns the site_url_id, when a site_url_address is given
+    // this returns the site_url_id, when a site_url_address is given.
+    // A lookup, then an insert, with no unique key on the address behind them:
+    // the install partitions the table by site_url_id, and MySQL requires every
+    // unique key of a partitioned table to include that column. So two first
+    // clicks on one new URL can each insert a row (in a rotator click's
+    // transaction the row stays unseen until that click commits); each click
+    // names a valid one, and a report grouped by URL row lists that URL twice.
     public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
     {
         global $memcacheWorking, $memcache;
@@ -1760,8 +1771,8 @@ class INDEXES
             return 0;
         }
 
-        // only grab the first 350 characters of the utm variable
-        $utm_var = substr((string) $utm_var, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $utm_var = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $utm_var);
 
         $mysql['utm_var'] = $db->real_escape_string($utm_var);
         $mysql['utm_type'] = $db->real_escape_string($utm_type);
@@ -1833,8 +1844,8 @@ class INDEXES
             return 0;
         }
 
-        // only grab the first 350 characters of the variable
-        $variable = substr((string) $variable, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $variable = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $variable);
 
         $mysql['var'] = $db->real_escape_string($variable);
         $mysql['ppc_variable_id'] = $db->real_escape_string($ppc_variable_id);
@@ -1979,8 +1990,8 @@ class INDEXES
         if (!$db instanceof \mysqli) {
             return 0;
         }
-        // only grab the first 255 characters of keyword
-        // $keyword = substr($keyword, 0, 255);
+        // Cut as the column holds it, so the lookup finds the row it stores.
+        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
 
         $mysql['keyword'] = $db->real_escape_string($keyword);
 
@@ -2048,8 +2059,8 @@ class INDEXES
             return 0;
         }
 
-        // only grab the first 350 charactesr of custom_var
-        $custom_var_data = substr((string) $custom_var_data, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $custom_var_data = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $custom_var_data);
         $mysql[$custom_var_name] = $db->real_escape_string($custom_var_data);
 
         if ($memcacheWorking) {
@@ -2102,8 +2113,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c1 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c1);
 
         $mysql['c1'] = $db->real_escape_string($c1);
 
@@ -2155,8 +2166,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c2 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c2);
 
         $mysql['c2'] = $db->real_escape_string($c2);
 
@@ -2208,8 +2219,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c3 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c3);
 
         $mysql['c3'] = $db->real_escape_string($c3);
 
@@ -2261,8 +2272,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c4 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c4);
 
         $mysql['c4'] = $db->real_escape_string($c4);
 
@@ -2820,7 +2831,11 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     return $redirect_site_url;
 }
 
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     global $server_row;
 
@@ -2838,66 +2853,54 @@ function record_mysql_error($dbOrSql, $sql = null): never
     }
 
     if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
+        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
         echo 'Database error. The webmaster has been notified.';
         die();
     }
 
-    // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
+    // The server's message and the statement, without the values they
+    // quote: they are logged, and listed in Account › Settings.
+    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
 
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
+        $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        // A click has no session: 0, as the admin pages' copy writes, where
+        // '' was refused by the column under P202_SQL_STRICT.
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
+        $mysql['mysql_error_time'] = time();
 
-    $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
-
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($db, $report_sql);
+        // Not through _mysqli_query(), which on this path calls this page
+        // again instead of answering false. The server's words about the
+        // statement would repeat what it records: its errno says enough.
+        if ($db->query($report_sql) === false) {
+            throw new \RuntimeException('the server refused the row [errno ' . $db->errno . ']');
+        }
+    });
 
-    // email administration of the error
-    $to = $_SERVER['SERVER_ADMIN'];
-    $subject = 'mysql error reported - ' . $site_url;
-    $message = '<b>A mysql error has been reported</b><br/><br/>
-		
-					time: ' . date('r', time()) . '<br/>
-					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
-					
-					user_id: ' . $_SESSION['user_id'] . '<br/>
-					script_url: ' . $site_url . '<br/>
-					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
-					
-					. . . . . . . . <br/><br/>
-												 
-					_mysqli_query: ' . $sql . '<br/><br/>
-					 
-					mysql_error: ' . $clean['mysql_error_text'];
-    $from = $_SERVER['SERVER_ADMIN'];
-    $type = 3; // type 3 is mysql_error
-
-    // send_email($to,$subject,$message,$from,$type);
-
-    // report error to user and end page    
+    // report error to user and end page
 ?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php

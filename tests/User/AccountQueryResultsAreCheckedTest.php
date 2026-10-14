@@ -44,14 +44,15 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
             $relative = substr($file->getPathname(), strlen($root) + 1);
             $tokens = array_values(array_filter(\PhpToken::tokenize((string) file_get_contents($file->getPathname())), static fn (\PhpToken $t): bool => !$t->isIgnorable()));
             foreach ($tokens as $i => $token) {
-                if (!$token->is(T_STRING) || !in_array($token->text, self::QUERY_CALLS, true) || ($tokens[$i + 1]->text ?? '') !== '(') {
+                $name = \Tests\Support\SourceScan::callableName($token->id, $token->text);
+                if (!in_array($name, self::QUERY_CALLS, true) || ($tokens[$i + 1]->text ?? '') !== '(') {
                     continue;
                 }
                 // The start of the call expression: `$x->query(` or `query(`.
                 $start = $i;
-                if (in_array($tokens[$i - 1]->text ?? '', ['->', '?->'], true) && ($tokens[$i - 2] ?? null)?->is(T_VARIABLE)) {
+                if ($token->is(T_STRING) && in_array($tokens[$i - 1]->text ?? '', ['->', '?->'], true) && ($tokens[$i - 2] ?? null)?->is(T_VARIABLE)) {
                     $start = $i - 2;
-                } elseif ($token->text !== '_mysqli_query') {
+                } elseif ($name !== '_mysqli_query') {
                     continue; // a method on something else, or a declaration
                 }
                 if (($tokens[$i - 1] ?? null)?->is(T_FUNCTION)) {
