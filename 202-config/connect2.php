@@ -1048,7 +1048,10 @@ class PLATFORMS
             return $device_info;
         }
 
-        [$device_info['device'], $device_info['type']] = PLATFORMS::deviceModel($db, 'Bot', '4');
+        $bot = \Prosper202\Repository\DeviceType::Bot;
+        $device_info['device'] = \Prosper202\Repository\LookupRepositoryFactory::device($db)
+            ->findOrCreateDevice('Bot', $bot);
+        $device_info['type'] = (string) $bot->value;
 
         return $device_info;
     }
@@ -1065,107 +1068,30 @@ class PLATFORMS
         // Before the rewrite to Desktop/Bot below; ClickBotDetector reads it.
         $uaDeviceFamily = (string) $result->device->family;
 
-        // Initialize type with default value
-        $type = "1"; // Default to Desktop
-        
-        // If is not mobile or tablet
-        if (! $detect->isMobile() && ! $detect->isTablet()) {
-
-            switch ($result->device->family) {
-                // Is Bot
-                case 'Bot':
-                    $type = "4";
-                    $result->device->family = "Bot";
-                    break;
-                // Is Desktop
-                case 'Other':
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-                // Default case for any other desktop device
-                default:
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-            }
+        $device = $uaDeviceFamily;
+        if ($detect->isTablet()) {
+            $type = \Prosper202\Repository\DeviceType::Tablet;
+        } elseif ($detect->isMobile()) {
+            $type = \Prosper202\Repository\DeviceType::Mobile;
+        } elseif ($uaDeviceFamily === 'Bot') {
+            $type = \Prosper202\Repository\DeviceType::Bot;
         } else {
-            // If tablet
-            if ($detect->isTablet()) {
-                $type = "3";
-                // If mobile
-            } else {
-                $type = "2";
-            }
+            $type = \Prosper202\Repository\DeviceType::Desktop;
+            $device = 'Desktop';
         }
 
-        // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string((string)$result->ua->family);
-        $mysql['platform'] = $db->real_escape_string((string)$result->os->family);
+        $devices = \Prosper202\Repository\LookupRepositoryFactory::device($db);
 
-
-
-        // Get browser ID
-        $browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='" . $mysql['browser'] . "'";
-        $browser_result = _mysqli_query($db, $browser_sql);
-        $browser_row = $browser_result->fetch_assoc();
-        if ($browser_row) {
-            $browser_id = $browser_row['browser_id'];
-        } else {
-            $browser_sql = "INSERT INTO 202_browsers SET browser_name='" . $mysql['browser'] . "'";
-            $browser_result = _mysqli_query($db, $browser_sql);
-            $browser_id = $db->insert_id;
-        }
-
-        // Get platform ID
-        $platform_sql = "SELECT platform_id FROM 202_platforms WHERE platform_name='" . $mysql['platform'] . "'";
-        $platform_result = _mysqli_query($db, $platform_sql);
-        $platform_row = $platform_result->fetch_assoc();
-        if ($platform_row) {
-            $platform_id = $platform_row['platform_id'];
-        } else {
-            $platform_sql = "INSERT INTO 202_platforms SET platform_name='" . $mysql['platform'] . "'";
-            $platform_result = _mysqli_query($db, $platform_sql);
-            $platform_id = $db->insert_id;
-        }
-
-        [$device_id, $device_type] = PLATFORMS::deviceModel($db, (string) $result->device->family, (string) $type);
-
-        $data = [
-            'browser' => $browser_id,
-            'platform' => $platform_id,
-            'device' => $device_id,
-            'type' => $device_type,
+        return [
+            'browser' => $devices->findOrCreateBrowser((string) $result->ua->family),
+            'platform' => $devices->findOrCreatePlatform((string) $result->os->family),
+            'device' => $devices->findOrCreateDevice($device, $type),
+            'type' => (string) $type->value,
             'ua_device_family' => $uaDeviceFamily,
             // Marks an entry with no address verdict in it; get_device_info()
             // treats a cached entry without it as a miss.
             'ua_only' => true,
         ];
-
-        return $data;
-    }
-
-    /**
-     * The 202_device_models id and device_type for $name, inserted with $type
-     * when the model is new.
-     *
-     * @return array{0: mixed, 1: mixed}
-     */
-    private static function deviceModel($db, string $name, string $type): array
-    {
-        $mysql['device'] = $db->real_escape_string($name);
-        $mysql['device_type'] = $db->real_escape_string($type);
-
-        $device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='" . $mysql['device'] . "'";
-        $device_result = _mysqli_query($db, $device_sql);
-        $device_row = $device_result->fetch_assoc();
-        if ($device_row) {
-            return [$device_row['device_id'], $device_row['device_type']];
-        }
-
-        $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device'] . "', device_type='" . $mysql['device_type'] . "'";
-        _mysqli_query($db, $device_sql);
-
-        return [$db->insert_id, $type];
     }
 
     /**

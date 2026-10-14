@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Repository\InMemory;
 
 use Prosper202\Repository\DeviceRepositoryInterface;
+use Prosper202\Repository\DeviceType;
 use Prosper202\Repository\Mysql\MysqlDeviceRepository;
 
 final class InMemoryDeviceRepository implements DeviceRepositoryInterface
@@ -13,7 +14,7 @@ final class InMemoryDeviceRepository implements DeviceRepositoryInterface
     private array $browsers = [];
     /** @var array<string, int> */
     private array $platforms = [];
-    /** @var array<string, int> */
+    /** @var array<int, array<string, int>> type => name => id */
     private array $devices = [];
     private int $nextId = 1;
 
@@ -42,7 +43,7 @@ final class InMemoryDeviceRepository implements DeviceRepositoryInterface
     }
 
     #[\Override]
-    public function findOrCreateDevice(string $name): int
+    public function findOrCreateDevice(string $name, DeviceType $type): int
     {
         if ($name === '') {
             return 0;
@@ -50,6 +51,6 @@ final class InMemoryDeviceRepository implements DeviceRepositoryInterface
 
         $name = MysqlDeviceRepository::storedName($name);
 
-        return $this->devices[$name] ??= $this->nextId++;
+        return $this->devices[$type->value][$name] ??= $this->nextId++;
     }
 }

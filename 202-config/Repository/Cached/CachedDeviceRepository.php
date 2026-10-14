@@ -7,6 +7,7 @@ namespace Prosper202\Repository\Cached;
 use Prosper202\Repository\Cache\CachedIds;
 use Prosper202\Repository\Cache\IdCache;
 use Prosper202\Repository\DeviceRepositoryInterface;
+use Prosper202\Repository\DeviceType;
 use Prosper202\Repository\Mysql\MysqlDeviceRepository;
 
 /** Keys on the name as it is stored, as the location decorator does. */
@@ -50,8 +51,9 @@ final readonly class CachedDeviceRepository implements DeviceRepositoryInterface
         );
     }
 
+    /** The type is last and all digits, so the key reads back one way. */
     #[\Override]
-    public function findOrCreateDevice(string $name): int
+    public function findOrCreateDevice(string $name, DeviceType $type): int
     {
         if ($name === '') {
             return 0;
@@ -59,8 +61,8 @@ final readonly class CachedDeviceRepository implements DeviceRepositoryInterface
         $name = MysqlDeviceRepository::storedName($name);
 
         return $this->ids->remember(
-            'device-id' . $name,
-            fn (): int => $this->inner->findOrCreateDevice($name)
+            'device-id' . $name . '|' . $type->value,
+            fn (): int => $this->inner->findOrCreateDevice($name, $type)
         );
     }
 }

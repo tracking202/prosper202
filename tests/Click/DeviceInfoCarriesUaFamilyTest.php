@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace Tests\Click;
 
+use mysqli;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickBotDetector;
+use Prosper202\Repository\DeviceType;
+use Prosper202\Repository\InMemory\InMemoryDeviceRepository;
+use Tests\Support\DeviceRepositoryStandIn;
 
 /**
  * The "Spider" signal reaches ClickBotDetector through
  * PLATFORMS::get_device_info(), from the ua-parser result it already computed
  * and caches per user agent. This runs the real PLATFORMS class, extracted
- * from connect2.php (which cannot be included in a test), against stub
- * database and cache functions, in its own process so the stubs cannot
- * collide with the real ones another test loads.
+ * from connect2.php (which cannot be included in a test), against a stub
+ * cache and an in-memory device repository, in its own process so the stubs
+ * cannot collide with the real ones another test loads.
  *
  * @runTestsInSeparateProcesses
  * @preserveGlobalState disabled
@@ -23,6 +27,9 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     private const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
     private const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
         . '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+
+    private static InMemoryDeviceRepository $devices;
+    private static mysqli $db;
 
     protected function setUp(): void
     {
@@ -37,16 +44,14 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
             'class PLATFORMS not found in connect2.php'
         );
 
-        // Stubs for what PLATFORMS calls: no row is ever found, so every
-        // lookup takes its insert path; setCache records what it was given.
+        // Stubs for what PLATFORMS calls: setCache records what it was given.
         eval(<<<'PHP'
             function systemHash(): string { return 'test'; }
             function setCache($key, $value, $exp = null) { $GLOBALS['cacheWrites'][$key] = $value; return true; }
-            function _mysqli_query($db, $sql) {
-                return new class { public function fetch_assoc() { return null; } };
-            }
             PHP);
         eval('use UAParser\Parser; ' . lift_class($connect2, 'PLATFORMS'));
+        self::$devices = new InMemoryDeviceRepository();
+        self::$db = DeviceRepositoryStandIn::connectionFor(self::$devices);
 
         $ip = new \stdClass();
         $ip->address = '203.0.113.7'; // in no range botCheck() lists
@@ -63,6 +68,9 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
         // The raw family, not the "Desktop" the device name is rewritten to.
         self::assertSame('Spider', $bot['ua_device_family']);
         self::assertSame('Other', $human['ua_device_family']);
+        $desktop = self::$devices->findOrCreateDevice('Desktop', DeviceType::Desktop);
+        self::assertSame([$desktop, '1'], [$bot['device'], $bot['type']]);
+        self::assertSame([$desktop, '1'], [$human['device'], $human['type']]);
         self::assertTrue(ClickBotDetector::isBot(self::GOOGLEBOT, $bot));
         self::assertFalse(ClickBotDetector::isBot(self::CHROME, $human));
     }
@@ -94,22 +102,9 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
         self::assertSame([], $GLOBALS['cacheWrites']);
     }
 
-    private static function db(): object
+    private static function db(): mysqli
     {
-        // __call, because mysqli's method name is not a PSR-12 one to declare.
-        return new class {
-            public int $insert_id = 9;
-
-            /** @param list<mixed> $args */
-            public function __call(string $name, array $args): string
-            {
-                if ($name !== 'real_escape_string') {
-                    throw new \BadMethodCallException($name);
-                }
-
-                return addslashes((string) $args[0]);
-            }
-        };
+        return self::$db;
     }
 
     /** @param array<string, mixed> $entries */

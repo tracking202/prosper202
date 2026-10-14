@@ -11,8 +11,10 @@ use Prosper202\Click\StoredAddressIds;
 use Prosper202\Database\Connection;
 use Prosper202\Database\SchemaInstaller;
 use Prosper202\Repository\Cache\MemcacheIdCache;
+use Prosper202\Repository\Cached\CachedDeviceRepository;
 use Prosper202\Repository\Cached\CachedLocationRepository;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
+use Prosper202\Repository\DeviceType;
 use Prosper202\Repository\LookupRepositoryFactory;
 use Prosper202\Repository\Mysql\MysqlDeviceRepository;
 use Prosper202\Repository\Mysql\MysqlLocationRepository;
@@ -511,7 +513,10 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
             [
                 ['202_browsers', 'browser_name', 'browser_id', $repo->findOrCreateBrowser(...)],
                 ['202_platforms', 'platform_name', 'platform_id', $repo->findOrCreatePlatform(...)],
-                ['202_device_models', 'device_name', 'device_id', $repo->findOrCreateDevice(...)],
+                [
+                    '202_device_models', 'device_name', 'device_id',
+                    static fn (string $name): int => $repo->findOrCreateDevice($name, DeviceType::Tablet),
+                ],
             ] as [$table, $column, $idColumn, $find]
         ) {
             $id = $find(self::AWKWARD_NAME);
@@ -519,10 +524,56 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
             self::assertSame(self::AWKWARD_NAME, self::value("SELECT $column FROM $table WHERE $idColumn = $id"));
             $longId = $find($long);
             self::assertSame($longId, $find($long), $column . ' past 50 characters is found again');
+            self::assertSame(
+                str_repeat('d', 49) . '😀',
+                self::value("SELECT $column FROM $table WHERE $idColumn = $longId")
+            );
             self::assertSame(0, $find(''));
             self::assertSame(2, self::rowsIn($table));
         }
-        self::assertSame('1', self::value('SELECT MIN(device_type) FROM 202_device_models'));
+        self::assertSame([['3'], ['3']], self::rows('SELECT device_type FROM 202_device_models'));
+    }
+
+    /**
+     * A device model is its name and its type: Chrome on Android names every
+     * phone and every tablet "K". Rows written before 1.9.78 hold one type
+     * per name (the model was found by its name alone), and each is found by
+     * the type it holds.
+     *
+     * @dataProvider modes
+     */
+    public function testADeviceModelIsOneRowPerType(string $mode): void
+    {
+        $repo = new MysqlDeviceRepository($this->connection($mode));
+        self::q("INSERT INTO 202_device_models SET device_name = 'K', device_type = 2");
+        $existing = (int) self::db()->insert_id;
+
+        self::assertSame($existing, $repo->findOrCreateDevice('K', DeviceType::Mobile));
+        $tablet = $repo->findOrCreateDevice('K', DeviceType::Tablet);
+        self::assertNotSame($existing, $tablet);
+        self::assertSame($tablet, $repo->findOrCreateDevice('K', DeviceType::Tablet));
+
+        $ids = [];
+        foreach (DeviceType::cases() as $type) {
+            $ids[] = $repo->findOrCreateDevice('Each', $type);
+        }
+        self::assertSame($ids, array_values(array_unique($ids)));
+
+        $long = str_repeat('Model', 16);
+        $phone = $repo->findOrCreateDevice($long, DeviceType::Mobile);
+        self::assertSame($phone, $repo->findOrCreateDevice($long, DeviceType::Mobile));
+        $longTablet = $repo->findOrCreateDevice($long, DeviceType::Tablet);
+        self::assertSame($longTablet, $repo->findOrCreateDevice($long, DeviceType::Tablet));
+
+        $cut = substr($long, 0, 50);
+        self::assertSame(
+            [
+                ['K', '2'], ['K', '3'],
+                ['Each', '1'], ['Each', '2'], ['Each', '3'], ['Each', '4'],
+                [$cut, '2'], [$cut, '3'],
+            ],
+            self::rows('SELECT device_name, device_type FROM 202_device_models ORDER BY device_id')
+        );
     }
 
     // ── Cached over MySQL ───────────────────────────────────────────
@@ -543,6 +594,22 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame(0, self::rowsIn('202_tracking_c1'), 'the database was not asked');
         self::assertSame(0, self::rowsIn('202_ips'));
         self::assertSame([md5('c1-idcachedns'), md5('ip6-id2001:db8::9ns')], $cache->writtenKeys());
+    }
+
+    public function testACachedDeviceModelAnswersOnlyForItsType(): void
+    {
+        $cache = new ArrayIdCache();
+        $devices = new CachedDeviceRepository(new MysqlDeviceRepository($this->connection('')), $cache, 'ns');
+
+        $phone = $devices->findOrCreateDevice('K', DeviceType::Mobile);
+        $tablet = $devices->findOrCreateDevice('K', DeviceType::Tablet);
+        self::q('TRUNCATE TABLE 202_device_models');
+
+        self::assertNotSame($phone, $tablet);
+        self::assertSame($phone, $devices->findOrCreateDevice('K', DeviceType::Mobile));
+        self::assertSame($tablet, $devices->findOrCreateDevice('K', DeviceType::Tablet));
+        self::assertSame(0, self::rowsIn('202_device_models'), 'the database was not asked');
+        self::assertSame([md5('device-idK|2ns'), md5('device-idK|3ns')], $cache->writtenKeys());
     }
 
     public function testAnEntryThatIsNotAnIdIsLookedUpInTheDatabase(): void
@@ -614,6 +681,53 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
             [[md5('c1-id' . 'through the factory' . 'install-a'), $id, 2592000]],
             $GLOBALS['p202TestCacheWrites']
         );
+    }
+
+    /**
+     * connect2.php's PLATFORMS takes its ids from the factory's repository,
+     * on the click path's own connection: a phone and a tablet that name one
+     * model are each their type, and a model name past its column is one
+     * row, where it was a new row on every click.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testPlatformsStoresEachClicksModelThroughTheFactory(): void
+    {
+        $root = dirname(__DIR__, 2);
+        require_once $root . '/202-config/DeviceDetect.php';
+        require_once $root . '/tests/Config/fixtures/lift-function.php';
+        eval('use UAParser\Parser; ' . lift_class($root . '/202-config/connect2.php', 'PLATFORMS'));
+        self::q("SET SESSION sql_mode = ''");
+        $agent = static fn (string $model, string $mobile): string => 'Mozilla/5.0 (Linux; Android 10; ' . $model
+            . ') AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 ' . $mobile . 'Safari/537.36';
+        $long = str_repeat('Model', 16);
+
+        $parsed = [];
+        foreach (
+            [$agent('K', 'Mobile '), $agent('K', ''), $agent('K', 'Mobile '), $agent($long . ' Build/TP1A', 'Mobile '),
+                $agent($long . ' Build/TP1A', 'Mobile ')] as $ua
+        ) {
+            $info = \PLATFORMS::parseUserAgentInfo(self::db(), (new \DeviceDetect())->setUserAgent($ua));
+            $parsed[] = [$info['browser'], $info['platform'], $info['device'], $info['type']];
+        }
+
+        self::assertSame([
+            [1, 1, 1, '2'],
+            [2, 1, 2, '3'],
+            [1, 1, 1, '2'],
+            [1, 1, 3, '2'],
+            [1, 1, 3, '2'],
+        ], $parsed);
+        self::assertSame(
+            [['1', 'K', '2'], ['2', 'K', '3'], ['3', substr($long, 0, 50), '2']],
+            self::rows('SELECT device_id, device_name, device_type FROM 202_device_models ORDER BY device_id')
+        );
+        self::assertSame(
+            [['1', 'Chrome Mobile'], ['2', 'Chrome']],
+            self::rows('SELECT browser_id, browser_name FROM 202_browsers ORDER BY browser_id')
+        );
+        self::assertSame([['1', 'Android']], self::rows('SELECT platform_id, platform_name FROM 202_platforms'));
     }
 
     // ── Helpers ─────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ final class NullDeviceRepository implements DeviceRepositoryInterface
     }
 
     #[\Override]
-    public function findOrCreateDevice(string $name): int
+    public function findOrCreateDevice(string $name, DeviceType $type): int
     {
         return 0;
     }

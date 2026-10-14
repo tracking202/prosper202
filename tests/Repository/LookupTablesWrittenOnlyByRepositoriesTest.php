@@ -11,16 +11,20 @@ use Tests\Support\SourceScan;
 
 /**
  * The lookup tables a click's ids point into — keywords, c1-c4, the UTM
- * values, the tracking variables and their sets, the locations, addresses
- * and site URLs — are written by the repositories in
- * 202-config/Repository/Mysql/ and nothing else in the served tree.
+ * values, the tracking variables and their sets, the locations, addresses,
+ * site URLs, browsers, platforms and device models — are written by the
+ * repositories in 202-config/Repository/Mysql/ and nothing else in the
+ * served tree.
  *
  * Three implementations wrote them (connect2.php's INDEXES, connect.php's
  * INDEXES and the repositories), and the copies drifted apart: one stored a
  * quote with the backslash it had escaped twice, one sent an IPv6 address's
  * packed bytes into its SQL unescaped (a 0x22 byte broke the statement, a
  * 0x5c corrupted the address, so every click from it made a new row), one
- * cut a value where the others did not. Each fix landed in one copy.
+ * cut a value where the others did not. Each fix landed in one copy. The
+ * device tables had two (connect2.php's PLATFORMS and the repository), and
+ * neither stored what the other did: one never cut a name, the other gave
+ * every device model type 1.
  *
  * Read from the strings as PHP assembles them (AssembledStrings): every
  * INSERT or REPLACE into one of these tables outside the repositories fails,
@@ -46,6 +50,7 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
         '202_custom_variables', '202_variable_sets', '202_variable_sets2',
         '202_locations_country', '202_locations_city', '202_locations_region', '202_locations_isp',
         '202_ips', '202_ips_v6', '202_site_domains', '202_site_urls',
+        '202_browsers', '202_platforms', '202_device_models',
     ];
 
     /** @var array<string, array<string, string>> file => lookup table => why */
@@ -53,6 +58,8 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
         '202-config/functions-upgrade.php' => [
             '202_variable_sets2' => 'the 1.9.30-era upgrade rungs that filled the set map from 202_variable_sets'
                 . ' when the table was added: a tagged version\'s step is frozen (CLAUDE.md #33)',
+            '202_browsers' => 'the 1.1.2 to 1.2.0 rung\'s seed of three browser ids: frozen (CLAUDE.md #33)',
+            '202_platforms' => 'the 1.6.2 to 1.7 rung\'s seed of the Mobile and Tablet platforms: frozen',
         ],
     ];
 
@@ -82,7 +89,7 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
     ];
 
     /** How many writes (sites, tables) the two lists hold. Lower it when one goes. */
-    private const CEILING = 5;
+    private const CEILING = 7;
 
     /** How much of an unread INSERT's text names it in UNREAD_WRITERS, in bytes (a part unread is one). */
     private const SITE_BYTES = 60;
@@ -126,9 +133,9 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
 
         self::assertSame([], $problems, "A lookup table is written outside the repositories:\n  "
             . implode("\n  ", $problems)
-            . "\nLook the id up through LookupRepositoryFactory::location(\$db) or ::tracking(\$db)"
-            . " (findOrCreate*()). A write whose table is built at runtime is listed in UNREAD_WRITERS,"
-            . ' by its text, with the tables it can reach (testTheUnreadWritesReachNoLookupTable).');
+            . "\nLook the id up through LookupRepositoryFactory::location(\$db), ::tracking(\$db)"
+            . " or ::device(\$db) (findOrCreate*()). A write whose table is built at runtime is listed in"
+            . ' UNREAD_WRITERS, by its text, with the tables it can reach (testTheUnreadWritesReachNoLookupTable).');
 
         foreach (self::OTHER_WRITERS as $path => $tables) {
             foreach (array_keys($tables) as $table) {

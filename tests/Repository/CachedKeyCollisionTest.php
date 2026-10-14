@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Tests\Repository;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Repository\Cached\CachedDeviceRepository;
 use Prosper202\Repository\Cached\CachedLocationRepository;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
+use Prosper202\Repository\DeviceType;
+use Prosper202\Repository\InMemory\InMemoryDeviceRepository;
 use Prosper202\Repository\InMemory\InMemoryLocationRepository;
 use Prosper202\Repository\InMemory\InMemoryTrackingRepository;
 
@@ -34,6 +37,27 @@ final class CachedKeyCollisionTest extends TestCase
 
         self::assertCount(2, $cache->writes);
         self::assertNotSame($cache->writes[0][0], $cache->writes[1][0]);
+    }
+
+    /** A phone's model id must not answer for a tablet of the same name. */
+    public function testDeviceKeyKeepsEachTypeApart(): void
+    {
+        $cache = new ArrayIdCache();
+        $cached = new CachedDeviceRepository(new InMemoryDeviceRepository(), $cache, 'fakehash');
+
+        $phone = $cached->findOrCreateDevice('K', DeviceType::Mobile);
+        $tablet = $cached->findOrCreateDevice('K', DeviceType::Tablet);
+        $named = $cached->findOrCreateDevice('K|2', DeviceType::Tablet);
+
+        self::assertNotSame($phone, $tablet);
+        self::assertNotSame($tablet, $named);
+        self::assertSame([
+            md5('device-idK|2fakehash'),
+            md5('device-idK|3fakehash'),
+            md5('device-idK|2|3fakehash'),
+        ], $cache->writtenKeys());
+        self::assertSame($tablet, $cached->findOrCreateDevice('K', DeviceType::Tablet));
+        self::assertCount(3, $cache->writes, 'the second tablet lookup was the cache\'s');
     }
 
     public function testVariableKeyUsesDelimiterToPreventCollisions(): void

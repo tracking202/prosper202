@@ -9,6 +9,7 @@ use Prosper202\Repository\Cached\CachedDeviceRepository;
 use Prosper202\Repository\Cached\CachedLocationRepository;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
 use Prosper202\Repository\DeviceRepositoryInterface;
+use Prosper202\Repository\DeviceType;
 use Prosper202\Repository\InMemory\InMemoryDeviceRepository;
 use Prosper202\Repository\InMemory\InMemoryLocationRepository;
 use Prosper202\Repository\InMemory\InMemoryTrackingRepository;
@@ -21,7 +22,9 @@ use RuntimeException;
  * The cached repositories read through an IdCache. Their keys are the ones
  * the click path has always written to memcache, byte for byte, so entries
  * already there keep answering after an upgrade; an IPv6 address's is the
- * one exception, since the old lookup's answers for it are not trusted.
+ * one exception, since the old lookup's answers for it are not trusted. The
+ * device keys were never written before 1.9.78 (the click path cached only
+ * a whole agent's parse), and a device model's carries its type.
  */
 final class CachedDecoratorTest extends TestCase
 {
@@ -45,9 +48,9 @@ final class CachedDecoratorTest extends TestCase
                 return $this->delegate->findOrCreatePlatform($name);
             }
 
-            public function findOrCreateDevice(string $name): int
+            public function findOrCreateDevice(string $name, DeviceType $type): int
             {
-                return $this->delegate->findOrCreateDevice($name);
+                return $this->delegate->findOrCreateDevice($name, $type);
             }
         };
 
@@ -62,7 +65,7 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame($id1, $id2);
     }
 
-    /** @return iterable<string, array{string, string, list<int|string>, string}> */
+    /** @return iterable<string, array{string, string, list<int|string|DeviceType>, string}> */
     public static function keys(): iterable
     {
         yield 'keyword' => ['tracking', 'findOrCreateKeyword', ['buy shoes'], 'keyword-idbuy shoes'];
@@ -83,12 +86,12 @@ final class CachedDecoratorTest extends TestCase
         yield 'url' => ['location', 'findOrCreateSiteUrl', ['https://example.com/a'], 'url-idhttps://example.com/a'];
         yield 'browser' => ['device', 'findOrCreateBrowser', ['Chrome'], 'browser-idChrome'];
         yield 'platform' => ['device', 'findOrCreatePlatform', ['Windows'], 'platform-idWindows'];
-        yield 'device' => ['device', 'findOrCreateDevice', ['Desktop'], 'device-idDesktop'];
+        yield 'device' => ['device', 'findOrCreateDevice', ['Desktop', DeviceType::Desktop], 'device-idDesktop|1'];
     }
 
     /**
      * @dataProvider keys
-     * @param list<int|string> $args
+     * @param list<int|string|DeviceType> $args
      */
     public function testTheKeyIsTheOneMemcacheAlreadyHolds(
         string $kind,
@@ -143,7 +146,7 @@ final class CachedDecoratorTest extends TestCase
 
         self::assertSame(0, $device->findOrCreateBrowser(''));
         self::assertSame(0, $device->findOrCreatePlatform(''));
-        self::assertSame(0, $device->findOrCreateDevice(''));
+        self::assertSame(0, $device->findOrCreateDevice('', DeviceType::Mobile));
         self::assertSame(0, $location->findOrCreateIp(''));
         self::assertSame(0, $location->findOrCreateSiteDomain(''));
         self::assertSame(0, $location->findOrCreateSiteUrl(''));

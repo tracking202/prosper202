@@ -6,6 +6,7 @@ namespace Prosper202\Repository\Mysql;
 
 use Prosper202\Database\Connection;
 use Prosper202\Repository\DeviceRepositoryInterface;
+use Prosper202\Repository\DeviceType;
 use Prosper202\Repository\StoredText;
 
 final readonly class MysqlDeviceRepository implements DeviceRepositoryInterface
@@ -67,13 +68,11 @@ final readonly class MysqlDeviceRepository implements DeviceRepositoryInterface
 
     /**
      * The catalog is 202_device_models (202_devices is created by no install
-     * path). device_type is NOT NULL with no default and must be a seeded
-     * type, or the model drops out of every `device_type = N` filter for
-     * good; 1 (Desktop) is connect2.php's fallback for an unrecognised
-     * device, and this interface carries no type.
+     * path). The reports count a click by its model's type, so the type is
+     * part of what is looked up.
      */
     #[\Override]
-    public function findOrCreateDevice(string $name): int
+    public function findOrCreateDevice(string $name, DeviceType $type): int
     {
         if ($name === '') {
             return 0;
@@ -81,14 +80,15 @@ final readonly class MysqlDeviceRepository implements DeviceRepositoryInterface
         $name = self::storedName($name);
 
         return $this->ids->first(
-            'SELECT device_id FROM 202_device_models WHERE device_name = ?',
-            's',
-            [$name],
+            'SELECT device_id FROM 202_device_models'
+                . ' WHERE device_name = ? AND device_type = ?',
+            'si',
+            [$name, $type->value],
             'device_id'
         ) ?? $this->ids->insert(
-            'INSERT INTO 202_device_models SET device_name = ?, device_type = 1',
-            's',
-            [$name]
+            'INSERT INTO 202_device_models SET device_name = ?, device_type = ?',
+            'si',
+            [$name, $type->value]
         );
     }
 }
