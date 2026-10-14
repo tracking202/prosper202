@@ -207,8 +207,8 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	// begin_transaction() is checked because under this bootstrap's
 	// mysqli_report(MYSQLI_REPORT_STRICT) a failure returns false rather than
 	// throwing; ignoring it would run everything below in autocommit with the
-	// rollback() calls undoing nothing. record_mysql_error() is declared
-	// `never` -- it logs mysqli_error($db) and exits -- so nothing follows it.
+	// rollbacks undoing nothing. record_mysql_error($db, ...) reads the error,
+	// then rolls back and exits (it is `never`): nothing follows it.
 	if (!$db->begin_transaction()) {
 		record_mysql_error('begin_transaction() for tracker creation');
 	}
@@ -216,8 +216,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
 		$drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
 		if (!$db->query($drop_tracker)) {
-			$db->rollback();
-			record_mysql_error($drop_tracker);
+			record_mysql_error($db, $drop_tracker);
 		}
 	}
 
@@ -234,8 +233,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 								`tracker_time`='".$mysql['tracker_time']."'";
 	$tracker_result = $db->query($tracker_sql);
 	if (!$tracker_result) {
-		$db->rollback();
-		record_mysql_error($tracker_sql);
+		record_mysql_error($db, $tracker_sql);
 		die('Error creating tracker');
 	}
 
@@ -251,8 +249,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 		try {
 			$tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage($db, (int) $tracker_row['tracker_id']);
 		} catch (\RuntimeException $e) {
-			$db->rollback();
-			record_mysql_error('choosing a free tracker public id: ' . $e->getMessage());
+			record_mysql_error($db, 'choosing a free tracker public id', $e->getMessage());
 		}
 		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
 	}
@@ -264,20 +261,12 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 					WHERE		`tracker_id`='".$mysql['tracker_id']."'";
 	$tracker_result = $db->query($tracker_sql);
 	if (!$tracker_result) {
-		$db->rollback();
-		record_mysql_error($tracker_sql);
+		record_mysql_error($db, $tracker_sql);
 		die('Error setting tracker ID');
 	}
 
 	if (!$db->commit()) {
-		// Capture the cause before rollback() overwrites mysqli_error($db), and
-		// roll back BEFORE record_mysql_error(): that helper INSERTs into
-		// 202_mysql_errors on this same connection, and a still-open failed
-		// transaction would swallow that row along with everything else.
-		$commitError = $db->error;
-		$db->rollback();
-		error_log('generate_tracking_link: commit failed: ' . $commitError);
-		record_mysql_error('commit() for tracker creation: ' . $commitError);
+		record_mysql_error($db, 'commit() for tracker creation');
 	}
 
 	$parsed_url = [];

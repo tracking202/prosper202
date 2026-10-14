@@ -5,7 +5,11 @@ use UAParser\Parser;
 require_once __DIR__ . '/mysql-error-args.php';
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -22,7 +26,7 @@ function record_mysql_error($dbOrSql, $sql = null): never
     global $server_row;
 
     // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
+    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
@@ -36,37 +40,49 @@ function record_mysql_error($dbOrSql, $sql = null): never
         date_default_timezone_set($sessionZone);
     }
 
-    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+        $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id'])) : 0;
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_time'] = time();
 
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($report_sql);
+        // On the connection just rolled back: the global one this used
+        // before may be another, with a transaction of its own still open.
+        // The statement it failed on carries what it records: the server's
+        // words are left to _mysqli_query()'s own line, if it logs one.
+        if (_mysqli_query($db, $report_sql) === false) {
+            throw new \RuntimeException('the server refused the row');
+        }
+    });
 
     // report error to user and end page
 ?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php
 
-    template_bottom();
+    // Without the footer's reads (the dash email, the cron ping's tracking
+    // domain): they would ask the database that has just failed.
+    template_bottom(false);
     die();
 }
 
@@ -2830,6 +2846,12 @@ function getDashEmail(): string|bool
     //get the main users dash email and api key from the db
     $sql = "SELECT user_dash_email,p202_customer_api_key FROM 202_users WHERE user_id ='" . $_SESSION['user_id'] . "'";
     $user_result = _mysqli_query($sql);
+    // Every signed-in page's footer reads this: a failed read (logged by
+    // _mysqli_query()) leaves the address unknown rather than the page cut
+    // off by a fatal.
+    if (!$user_result instanceof \mysqli_result) {
+        return false;
+    }
     $user_row = $user_result->fetch_assoc();
 
     if ($user_row === null) {

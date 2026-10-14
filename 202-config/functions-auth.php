@@ -516,7 +516,20 @@ class AUTH
             }
             [$user_id, $auth_key, $hash] = $parts;
             if (!empty($user_id) && !empty($auth_key) && !empty($hash)) {
-                $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, (string) self::get_user_secret_key($user_id));
+                try {
+                    $secret = self::get_user_secret_key($user_id);
+                } catch (\RuntimeException $e) {
+                    // Not verified, so not signed in; the cookie is kept for
+                    // a request that can read the key.
+                    error_log('remember-me: ' . $e->getMessage());
+                    return false;
+                }
+                // No such user: anyone can send that cookie, so it is refused
+                // without a log line per request.
+                if ($secret === null) {
+                    return false;
+                }
+                $expected = hash_hmac('sha256', $user_id . '-' . $auth_key, $secret);
                 if (!hash_equals($expected, (string) $hash)) {
                     return false;
                 }
@@ -573,7 +586,11 @@ class AUTH
         return $randomString;
     }
 
-    public static function get_user_secret_key($user_id)
+    /**
+     * The account's remember-me key, minted and stored on first use; null
+     * when there is no such account. A read or a store that fails throws.
+     */
+    public static function get_user_secret_key($user_id): ?string
     {
         $database = DB::getInstance();
         $db = $database->getConnection();
@@ -587,8 +604,21 @@ class AUTH
 				user_id = "' . $mysql['user_id'] . '"
 		';
         $user_result = _mysqli_query($sql);
-        // Guard against a false return from a failed query before fetch_assoc().
-        $user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+        // A failed read is not "no key": minting one then replaced the
+        // stored key and signed every remember-me cookie of the account out.
+        if (!$user_result instanceof mysqli_result) {
+            throw new \RuntimeException('Reading the remember-me key of user ' . (int) $user_id . ' failed (logged by _mysqli_query())');
+        }
+        $user_row = $user_result->fetch_assoc();
+        // No account: a key minted for it would be stored nowhere.
+        if ($user_row === null) {
+            return null;
+        }
+        if (!is_array($user_row)) {
+            throw new \RuntimeException(
+                'Reading the remember-me key of user ' . (int) $user_id . ' failed: its row could not be fetched'
+            );
+        }
         if (empty($user_row['secret_key'])) {
             $mysql['secret_key'] = self::generate_random_string(48);
             $sql = '
@@ -599,7 +629,10 @@ class AUTH
 				WHERE
 					user_id = "' . $mysql['user_id'] . '"
 			';
-            _mysqli_query($sql);
+            // A key that was not stored signs a cookie nothing can verify.
+            if (_mysqli_query($sql) === false) {
+                throw new \RuntimeException('Storing the remember-me key of user ' . (int) $user_id . ' failed (logged by _mysqli_query())');
+            }
             return $mysql['secret_key'];
         } else {
             return $user_row['secret_key'];
@@ -612,8 +645,7 @@ class AUTH
         $database = DB::getInstance();
         $db = $database->getConnection();
 // Clean up expired auth keys
-        $cleanup_sql = 'DELETE FROM 202_auth_keys WHERE expires < UNIX_TIMESTAMP()';
-        _mysqli_query($cleanup_sql);
+        self::delete_old_auth_hash();
         $mysql = [
             'user_id' => $db->real_escape_string((string)$_SESSION['user_own_id']),
             'auth_key' => $db->real_escape_string($auth_key)
@@ -625,8 +657,22 @@ class AUTH
 					user_id = "' . $mysql['user_id'] . '",
 					expires = "' . (time() + (self::LOGOUT_DAYS * 24 * 60 * 60)) . '"
 				';
-        _mysqli_query($sql);
-        $hash = hash_hmac('sha256', $_SESSION['user_own_id'] . '-' . $auth_key, (string) self::get_user_secret_key($_SESSION['user_own_id']));
+        // The sign-in stands without it; a cookie whose key was not stored
+        // (or cannot be signed) would be refused on every later visit.
+        if (_mysqli_query($sql) === false) {
+            return;
+        }
+        try {
+            $secret = self::get_user_secret_key($_SESSION['user_own_id']);
+        } catch (\RuntimeException $e) {
+            error_log('remember-me: ' . $e->getMessage());
+            return;
+        }
+        if ($secret === null) {
+            error_log('remember-me: the signed-in user ' . (int) $_SESSION['user_own_id'] . ' has no account row');
+            return;
+        }
+        $hash = hash_hmac('sha256', $_SESSION['user_own_id'] . '-' . $auth_key, $secret);
         $expire = strtotime('+' . self::LOGOUT_DAYS . ' days');
         // Use the canonical HTTPS check so the cookie's Secure flag isn't dropped
         // behind proxies that signal TLS via X-Forwarded-SSL/Port or REQUEST_SCHEME.

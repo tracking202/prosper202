@@ -70,6 +70,11 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 function setCache($key, $value, $exp = null)
 {
     global $whatCache, $memcache;
+    // Held while a transaction is open; see p202WithHeldCacheWrites().
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
+        return true;
+    }
     // Default expiration time if not provided
     if ($exp === null) {
         $exp = 2592000; // 30 days in seconds
@@ -80,6 +85,41 @@ function setCache($key, $value, $exp = null)
 
         case 'memcached':
             return $memcache->set($key, $value, $exp);
+    }
+}
+
+/**
+ * Run $work with the cache writes it makes held: written once it returns,
+ * dropped when it throws (and the throw passed on).
+ *
+ * The lookups that run inside a click's transaction cache the id of a row
+ * they insert at once (INDEXES::get_site_url_id(), 7 days; its domain, 30),
+ * so a rollback after them left an entry naming no row, and every click to
+ * that URL stored the dangling id until it expired. Run the transaction as
+ * $work and an entry is written only once its row is committed.
+ */
+function p202WithHeldCacheWrites(callable $work): void
+{
+    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
+        throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
+    }
+    $GLOBALS['p202HeldCacheWrites'] = [];
+    try {
+        $work();
+    } catch (\Throwable $e) {
+        $GLOBALS['p202HeldCacheWrites'] = null;
+        throw $e;
+    }
+    $held = $GLOBALS['p202HeldCacheWrites'];
+    $GLOBALS['p202HeldCacheWrites'] = null;
+    // The work is done (its transaction committed): a cache write that fails
+    // now costs a miss, and must not read as the work failing.
+    foreach ($held as [$key, $value, $exp]) {
+        try {
+            setCache($key, $value, $exp);
+        } catch (\Throwable $e) {
+            error_log('A held cache write failed after the work was done: ' . $e->getMessage());
+        }
     }
 }
 
@@ -2820,7 +2860,11 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     return $redirect_site_url;
 }
 
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     global $server_row;
 
@@ -2844,60 +2888,49 @@ function record_mysql_error($dbOrSql, $sql = null): never
     }
 
     // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
+    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
 
     // log the error server-side only
     error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
 
 
-    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+        $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
+        // A click has no session: 0, as the admin pages' copy writes, where
+        // '' was refused by the column under P202_SQL_STRICT.
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_time'] = time();
 
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($db, $report_sql);
+        // Not through _mysqli_query(), which on this path calls this page
+        // again instead of answering false. The server's words about the
+        // statement would repeat what it records: its errno says enough.
+        if ($db->query($report_sql) === false) {
+            throw new \RuntimeException('the server refused the row [errno ' . $db->errno . ']');
+        }
+    });
 
-    // email administration of the error
-    $to = $_SERVER['SERVER_ADMIN'];
-    $subject = 'mysql error reported - ' . $site_url;
-    $message = '<b>A mysql error has been reported</b><br/><br/>
-		
-					time: ' . date('r', time()) . '<br/>
-					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
-					
-					user_id: ' . $_SESSION['user_id'] . '<br/>
-					script_url: ' . $site_url . '<br/>
-					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
-					
-					. . . . . . . . <br/><br/>
-												 
-					_mysqli_query: ' . $sql . '<br/><br/>
-					 
-					mysql_error: ' . $clean['mysql_error_text'];
-    $from = $_SERVER['SERVER_ADMIN'];
-    $type = 3; // type 3 is mysql_error
-
-    // send_email($to,$subject,$message,$from,$type);
-
-    // report error to user and end page    
+    // report error to user and end page
 ?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php

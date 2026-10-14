@@ -45,9 +45,8 @@ parameters:
     # installed — a missing dev dependency would otherwise bury the custom
     # rule findings this job exists to surface.
     ignoreErrors:
-        # Three files declare a global `class INDEXES` with incompatible
-        # signatures (202-config/class-indexes.php, functions-tracking202.php,
-        # connect2.php). Each execution path loads exactly one and every call
+        # Two files declare a global `class INDEXES` with incompatible
+        # signatures (202-config/functions-tracking202.php, connect2.php). Each execution path loads exactly one and every call
         # site matches the copy its own path loads, but PHPStan cannot know
         # which — and which copy it picks varies by environment: locally it
         # resolves the static copy and reports arity errors, on CI it resolves

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
+Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics platform (clicks, conversions, attribution, app measurement, customer LTV) with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
 
 ## Branches: every version has its own, and master takes only finished versions
 - **All work for a new version is pull-requested into the branch named for
@@ -55,6 +55,25 @@ use for `null` (keep the zone the session took at sign-in), so a database
 error had every report page count "today" in a stale zone with nothing said,
 while the test listed it as graceful. A fallback that reads like an answer is
 the silent case again; it throws now.
+
+The admin pages' `_mysqli_query()` was the same false with nothing said at
+all: an `@` (which silenced nothing; the report modes this app sets raise no
+warning for a failed query) and a bare `return`. A call standing alone as a
+statement lost the failure outright: the remember-me sign-in stored no key
+and set its cookie anyway, and a failed read of the account's secret was
+read as "no secret", so a new one was minted over the stored one and every
+remembered browser of the account was signed out. It logs every failure now
+(`p202LogFailedQuery()`: the caller, MySQL's errno and words, the statement
+with its quoted values taken out, since some carry a secret — and MySQL's
+words too, which repeat a value as sent, its quotes unescaped: `Duplicate
+entry 'O'Brien' for key …`, so redacting the statement alone left the value
+in the line, found by review; and where a quoted value ends depends on the
+session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
+read with escapes the next value was kept — so the line keeps only what a
+reading with escapes and one without both leave in), and
+`MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
+away. It cannot see a result that is assigned and never tested, which is
+what the 240 calls that assign one leave to the next sweep.
 
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
@@ -282,6 +301,14 @@ so `StaticSqlSchemaTest` could not see the statement either. SQL that
 reaches a server only through a builder needs one run against a real
 server before it ships (`ListTimeFiltersIntegrationTest`).
 
+A stand-in for a function with two copies has to answer as the copy it
+stands in for. The error page's runner gave both `record_mysql_error()`s a
+`_mysqli_query()` that answered false, which connect2.php's never does (it
+calls the error page again): the test held a "the server refused the row"
+branch that cannot run on the click path, where a refused row re-entered
+the page and logged the server's words about it. The runner now gives each
+definition its own file's `_mysqli_query()` wherever the answer matters.
+
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
 PHP, Go, and eval suites were all green while nothing exercised staged
@@ -320,7 +347,13 @@ Two amplifiers, both of which turned this from a blip into a breach:
   ask what the cached value costs if it is *wrong*, not just what it saves
   when right. (Cache on the object, not `spl_object_id()`: ids are reused
   after free, so a reconnect can inherit a freed connection's answer. A
-  `WeakMap` keyed by the connection cannot.)
+  `WeakMap` keyed by the connection cannot.) A cache is outside the
+  transaction too: moving `rtr.php`'s click writes into one put the site URL
+  lookup inside it, and that lookup caches the id of a row it inserts at
+  once, so a rollback left memcached naming a row that no longer existed and
+  every later click to the URL stored the dangling id for 7 days (found by
+  the adversarial review, reproduced live). Writes made inside a transaction
+  wait for its commit (`p202WithHeldCacheWrites()`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -744,7 +777,12 @@ final token something else, `Other\name` is another function — and an
 unqualified name is the global one only in a file that declares no
 namespace and imports no function, which both tests now assert (a `use
 function Other\version_compare;` at the top of the ladder rebound the
-downgrade guard's comparison with every check green). And bounding the
+downgrade guard's comparison with every check green). The other direction
+is as silent: PHP 8 reads `\name` as one token (`T_NAME_FULLY_QUALIFIED`),
+not `T_STRING`, and names functions and methods without regard to case, so
+the discarded-result floor never saw `\_mysqli_query($sql);` or
+`_MYSQLI_QUERY($sql);`; `SourceScan::callableName()` reads every spelling
+of a global call, for each scan that names one. And bounding the
 guard call was not reading it: `install_csrf_ok($expected, $submitted)`
 was shown to decide the work and executed on token pairs, and never asked
 what the page hands it — `install_csrf_ok($_POST['token'],
@@ -949,7 +987,41 @@ error was never recorded. CI's fresh database found it; locally the suite
 passed because a reused database still had the table. An error path must not
 ask the failing dependency again, and its test should not depend on whether
 the dependency happens to be healthy: the runner now records every statement
-the page asks the connection, and the page may ask none.
+the page asks the connection, and the page may ask none. That held for the
+body and not for the page: the runner stubbed the admin footer, which reads
+the account's dash email and the cron ping's tracking domain, and the dash
+email read called `fetch_assoc()` on the false a lost connection answers —
+a fatal after the alert, found by tracing a review question. The error page
+draws the footer without its reads (`template_bottom(false)`), and the
+runner draws the real one.
+
+The error page's own write is the same question asked of the connection's
+state. `record_mysql_error()` inserted its row on the connection that had
+just failed, inside whatever transaction the caller had open, and die()
+ended the request: the row went with the rollback at disconnect, and the
+page told the operator the error "has been recorded" over nothing (measured
+under `begin_transaction()` and `autocommit(false)`, both definitions).
+And the row's lookups went through `_mysqli_query()`, whose click-path copy
+calls `record_mysql_error()` when a statement fails: on a dead connection
+the error page recursed through itself until memory ran out, writing tens
+of thousands of log lines in one request. An error path ends the caller's transaction before it
+writes anything of its own, and anything it calls that can fail lands back
+in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
+`autocommit_off`, `gone` and `lookup_fails` scenarios). The fix first kept
+the page's "it has been recorded" for the case where recording failed
+(found by review): the page's sentence is a status line too, and it
+follows what the recorder answers. And the page read the error from the
+connection, which a caller that has rolled back has already cleared: the
+rotator writer's failure was filed with a blank error and its message in the
+statement column (Get Links and the redirector breakdown did the same). A
+caller that caught the failure names it (`record_mysql_error()`'s third
+argument). Two of Get Links' five calls were fixed and three found a round
+later; `ErrorPageAfterRollbackNamesTheFailureTest` now holds every call made
+after a rollback, or in a catch block (a rollback made inside a call, as
+`Connection::transaction()` makes one, is not there to scan), to naming the
+failure. Its first draft read only the files that say "rollback", so the
+redirector breakdown, which only catches, passed a planted two-argument
+call: a scan's file filter is a claim about where the construct can be.
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
@@ -1226,6 +1298,16 @@ an early return, a fast path, a branch on a new result type — list every
 side effect of the skipped code (flags, counters, cache writes, the "done"
 mark) and move each one to where the new path still runs it;
 `ClickUpgradeIntegrationTest` holds this one.
+
+Moving a write later is the same skip, seen from whoever read it. A latency
+change moved `dl.php`'s click rows after the redirect, and the redirect
+URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
+`replaceTrackerPlaceholders()`, which reads them back from those rows: on a
+direct link they are blank now (measured: `c1=&kw=` from a click carrying
+`c1=hello`), while `rtr.php`, whose rows were still written first, filled
+them. Before moving a write, find every reader of what it writes in the same
+request; `RotatorClickWriter` resolves the rotator's URL inside the click's
+transaction, after the rows, for that reason.
 
 ### 33. A tagged version's upgrade step is frozen
 `upgrade_needed()` compares the stored version with the code's, and the
@@ -1721,7 +1803,11 @@ where a check quietly fails to check what it appears to.
   effect is satisfied by every failure there is; a refusal has to be
   asserted positively — the status the page answers with and the sentence
   the guard itself writes — and the sibling cases already did, one screen
-  up.
+  up. A scenario that expects a failure is the same trap: the error page's
+  `lookup_fails` runs passed on `Call to undefined function` (the runner
+  had not lifted the logger its real `_mysqli_query()` calls), which the
+  recorder's catch logged as the failure to record the scenario expected.
+  Assert which failure.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*

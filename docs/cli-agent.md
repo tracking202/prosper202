@@ -1249,7 +1249,7 @@ For tighter control, define separate tools per operation category:
 If embedding this CLI as a tool for an LLM agent, include this in the system prompt:
 
 ```
-You have access to the Prosper202 CLI (p202) for managing an affiliate tracking platform.
+You have access to the Prosper202 CLI (p202) for managing a self-hosted campaign tracking and marketing analytics platform.
 
 Rules:
 - Always append --json to get structured output
