@@ -147,6 +147,8 @@ final class ClickUrlTokensInstanceTest extends TestCase
         $tokens = self::click('tracking202/redirect/dl.php', self::$cpaTracker, []);
 
         self::assertSame('1.25', $tokens['cpa']);
+        // It has no CPC, which the click stores as 0.
+        self::assertSame(['cpc' => '0', 'cpc2' => '0.00000'], array_intersect_key($tokens, ['cpc' => 1, 'cpc2' => 1]));
     }
 
     public function testASimpleLandingPageFillsItsOutboundTokensFromTheClickBeforeItIsWritten(): void

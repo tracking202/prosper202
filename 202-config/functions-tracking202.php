@@ -303,7 +303,13 @@ function p202DashEmailJson(): string
             | JSON_INVALID_UTF8_SUBSTITUTE
     );
 
-    return $json === false ? '""' : $json;
+    if ($json === false) {
+        error_log('The dash email could not be written into the footer script: ' . json_last_error_msg());
+
+        return '""';
+    }
+
+    return $json;
 }
 
 /**

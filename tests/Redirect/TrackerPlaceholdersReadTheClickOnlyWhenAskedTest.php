@@ -17,7 +17,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class TrackerPlaceholdersReadTheClickOnlyWhenAskedTest extends TestCase
 {
-    /** @return array{url?: string, error?: string, reads: int} */
+    /** @return array{url?: string, error_page?: string, reads: int} */
     private static function placeholders(string $url, string $clickId, string $answer = 'row'): array
     {
         $runner = __DIR__ . '/fixtures/tracker-placeholders-runner.php';
@@ -51,20 +51,30 @@ final class TrackerPlaceholdersReadTheClickOnlyWhenAskedTest extends TestCase
         self::assertSame('https://offer.example/go?s=4215&c1=from-the-row&cpc=0.37&src=6', $answer['url']);
     }
 
-    /** A page reading an earlier click by a subid it was sent: no such click, blank tokens. */
+    /**
+     * A page reading an earlier click by a subid it was sent: no such click,
+     * blank tokens, its cost among them (round() made that a 0).
+     */
     public function testNoSuchClickLeavesItsTokensBlank(): void
     {
-        $answer = self::placeholders('https://offer.example/go?s=[[subid]]&c1=[[c1]]', '4215', 'none');
+        $answer = self::placeholders(
+            'https://offer.example/go?s=[[subid]]&c1=[[c1]]&cpc=[[cpc]]&cpc2=[[cpc2]]&cpa=[[cpa]]&p=[[payout]]',
+            '4215',
+            'none'
+        );
 
-        self::assertSame(['url' => 'https://offer.example/go?s=4215&c1=', 'reads' => 1], $answer);
+        self::assertSame(['url' => 'https://offer.example/go?s=4215&c1=&cpc=&cpc2=&cpa=&p=', 'reads' => 1], $answer);
     }
 
-    /** A read that fails is not "no such click": it was, and every token read blank. */
-    public function testAFailedReadIsAnError(): void
+    /**
+     * A read that fails is not "no such click": it was, and every token read
+     * blank. It goes to the error page, as a failed query here does.
+     */
+    public function testAFailedReadGoesToTheErrorPage(): void
     {
         $answer = self::placeholders('https://offer.example/go?s=[[subid]]&c1=[[c1]]', '4215', 'fails');
 
-        self::assertSame(['error' => 'Reading click 4215 for its URL tokens failed', 'reads' => 1], $answer);
+        self::assertSame(['error_page' => 'Reading click 4215 for its URL tokens failed', 'reads' => 1], $answer);
     }
 
     public function testAUrlWithNoTokenReadsNothing(): void

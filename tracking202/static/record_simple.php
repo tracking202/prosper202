@@ -454,7 +454,8 @@ $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $clic
     'country_code' => $countryCode,
     'region' => $regionName,
     'city' => $cityName,
-    'cpc' => $mysql['click_cpc'],
+    // As stored: a tracker with no CPC stores 0.00000.
+    'cpc' => number_format((float) $mysql['click_cpc'], 5, '.', ''),
     'payout' => $tracker_row['aff_campaign_payout'] ?? '',
     'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
 ]);

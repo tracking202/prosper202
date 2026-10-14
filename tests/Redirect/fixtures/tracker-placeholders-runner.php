@@ -7,7 +7,7 @@
  *
  * argv: <url> <click id> [<the read's answer: row | none | fails>]
  * stdout: {"url": the filled URL, "reads": statements run}, or
- *         {"error": the message thrown, "reads": …}
+ *         {"error_page": the failure the error page was handed, "reads": …}
  */
 
 declare(strict_types=1);
@@ -41,6 +41,12 @@ $db = eval(<<<'PHP'
         };
     }
 
+    function record_mysql_error($db, $sql = null, ?string $error = null): never
+    {
+        echo json_encode(['error_page' => $error, 'reads' => $GLOBALS['reads']], JSON_THROW_ON_ERROR);
+        exit;
+    }
+
     function p202ProvenInstallToken($clickId): string
     {
         return 'token-' . $clickId;
@@ -54,9 +60,4 @@ $db = eval(<<<'PHP'
     };
     PHP);
 
-try {
-    $out = ['url' => replaceTrackerPlaceholders($db, $url, $clickId)];
-} catch (\RuntimeException $e) {
-    $out = ['error' => $e->getMessage()];
-}
-echo json_encode($out + ['reads' => $reads], JSON_THROW_ON_ERROR);
+echo json_encode(['url' => replaceTrackerPlaceholders($db, $url, $clickId), 'reads' => $reads], JSON_THROW_ON_ERROR);

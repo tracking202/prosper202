@@ -28,11 +28,16 @@ final class MysqlTrackingRepository implements TrackingRepositoryInterface
             return $value;
         }
 
-        return (string) preg_replace(
+        $cut = preg_replace(
             '/(?:[\xC0-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF7][\x80-\xBF]{0,2})\z/',
             '',
             substr($value, 0, self::MAX_VALUE_LENGTH)
         );
+        if ($cut === null) {
+            throw new RuntimeException('Cutting a value to its column failed: ' . preg_last_error_msg());
+        }
+
+        return $cut;
     }
 
     /**

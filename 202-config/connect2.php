@@ -720,8 +720,9 @@ function p202ClickUrlTokens(string $clickId, array $click): array
     $text = static fn (string $key): string => (string) ($click[$key] ?? '');
     $account = $text('ppc_account_id');
     // A click with no CPA (click_cpa is NULL: not a CPA tracker) has none, and
-    // round() would make that a 0 that reads as one. Every click stores a
-    // CPC, 0 when it has no cost, so [[cpc]] stays a number.
+    // no click read back has no CPC either: round() would make each a 0 that
+    // reads as one. A stored click always has a CPC, 0 when it has no cost.
+    $cpc = $text('cpc') === '' ? '' : round((float) $text('cpc'), 2);
     $cpa = $text('cpa') === '' ? '' : round((float) $text('cpa'), 2);
     // The campaign's payout (2 places) and the click's (5) as one number.
     $payout = $text('payout');
@@ -749,7 +750,7 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'country_code' => $text('country_code'),
         'region' => $text('region'),
         'city' => $text('city'),
-        'cpc' => round((float) $text('cpc'), 2),
+        'cpc' => $cpc,
         'cpc2' => $text('cpc'),
         'cpa' => $cpa,
         'timestamp' => time(),
@@ -841,7 +842,8 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '')
 		";
     $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
     if ($click_row === false) {
-        throw new \RuntimeException('Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
+        // As a failed query here already does: recorded, and the error page.
+        record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
     }
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
