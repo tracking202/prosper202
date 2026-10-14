@@ -86,32 +86,10 @@ if ($usedCachedRedirect == true) {
             // No click is recorded: the install token expands empty (plan §5.1).
             $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
             
-            // c1 sring replace for cached redirect
-            if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-            } else {
-                $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-            }
-            
-            // c2 sring replace for cached redirect
-            if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-            } else {
-                $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-            }
-            
-            // c3 sring replace for cached redirect
-            if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-            } else {
-                $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-            }
-            
-            // c4 sring replace for cached redirect
-            if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-            } else {
-                $new_url = str_replace("[[c4]]", "p202c4", $new_url);
+            // c1-c4 as sent, or p202<name> for one not sent: a list (c1[]=x) is none
+            foreach (['c1', 'c2', 'c3', 'c4'] as $token) {
+                $sent = \Prosper202\Click\ClickRequest::text($_GET, $token);
+                $new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
             }
             
             $urlvars = getPrePopVars($urlvarslist);
