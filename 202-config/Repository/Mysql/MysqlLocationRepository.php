@@ -149,9 +149,10 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
      * from the address would add another. Not atomic against another click:
      * nothing unique stands behind either address column, so concurrent
      * first clicks from one new address can each insert a pair; each click
-     * names a pair that is found again. Its callers look the address up
-     * outside any transaction of theirs (the error pages end the caller's
-     * first), which a nested begin would commit.
+     * names a pair that is found again. A nested begin would commit the
+     * caller's transaction, so inside one opened by Connection::transaction()
+     * this refuses (outermostTransaction()); the callers look the address up
+     * outside any (the error pages end the caller's first).
      */
     #[\Override]
     public function findOrCreateIp(string $address): int
@@ -193,7 +194,7 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
             return $found;
         }
 
-        return $this->conn->transaction(function () use ($packed): int {
+        return $this->conn->outermostTransaction(function () use ($packed): int {
             $v6Id = $this->ids->insert(
                 'INSERT INTO 202_ips_v6 SET ip_address = ?, location_id = 0',
                 's',

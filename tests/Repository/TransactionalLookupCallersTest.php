@@ -10,18 +10,19 @@ use Tests\Support\SourceScan;
 /**
  * Two lookups write more than one row and open a transaction for it:
  * findOrCreateIp() for an IPv6 address and findOrCreateVariableSet().
- * Connection::transaction() has no depth guard yet, and mysqli's
- * begin_transaction() inside an open transaction commits it (CLAUDE.md #13),
- * so a caller inside its own transaction would have its partial writes
- * committed and its rollback undo nothing. Every call outside the
+ * mysqli's begin_transaction() inside an open transaction commits it
+ * (CLAUDE.md #13), so a caller inside its own transaction would have its
+ * partial writes committed and its rollback undo nothing. Inside one opened
+ * by Connection::transaction() the lookups refuse at run time
+ * (outermostTransaction()); one opened with begin_transaction() or
+ * autocommit(false) directly they cannot see. So every call outside the
  * repositories is listed with what puts it outside a transaction; a new one
  * is read for that before it is listed, and a removed one leaves the list.
  *
  * Read from tokens: `->name(` and `?->name(`, in any case. It counts calls
- * per file and does not read where they sit: a listed call moved into a
- * transaction in the same file keeps its count and passes, which only a
- * depth guard in Connection::transaction() will refuse. Not seen either: a
- * call through a variable method name or call_user_func().
+ * per file and does not read where they sit: a listed call moved into a raw
+ * transaction in the same file keeps its count and passes. Not seen either:
+ * a call through a variable method name or call_user_func().
  */
 final class TransactionalLookupCallersTest extends TestCase
 {

@@ -44,7 +44,7 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
 {
     private const HOME = '202-config/Repository/Mysql/';
 
-    private const LOOKUP_TABLES = [
+    public const LOOKUP_TABLES = [
         '202_keywords', '202_tracking_c1', '202_tracking_c2', '202_tracking_c3', '202_tracking_c4',
         '202_utm_source', '202_utm_medium', '202_utm_campaign', '202_utm_term', '202_utm_content',
         '202_custom_variables', '202_variable_sets', '202_variable_sets2',

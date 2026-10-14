@@ -1593,21 +1593,22 @@ function getIspData($ip)
 }
 
 /**
- * The namespace of every cache key. The ids and rows a key names belong to a
- * database, so the database is part of it: two installs on one host and
- * address, sharing a memcached, are two namespaces. The other copy
- * (connect2.php / functions-tracking202.php) is the same function.
+ * The namespace of every cache key: the host, and the install the ids and
+ * rows a key names belong to. Its directory is shared by no other install on
+ * the server and is known in every scope; its database also tells a
+ * reinstall into a new one apart. The other copy (connect2.php /
+ * functions-tracking202.php, one directory) is the same function.
  */
 function systemHash(): string
 {
-    $database = [];
+    $install = [__DIR__];
     foreach (['dbhost', 'dbname'] as $setting) {
         $value = $GLOBALS[$setting] ?? '';
-        $database[] = is_string($value) ? $value : '';
+        $install[] = is_string($value) ? $value : '';
     }
 
     return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
-        . "\0" . implode("\0", $database));
+        . "\0" . implode("\0", $install));
 }
 
 function setPCIdCookie($click_id_public)

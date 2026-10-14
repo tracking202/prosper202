@@ -337,6 +337,70 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * A lookup that opens a transaction, asked inside one the caller opened
+     * with Connection::transaction(), refuses before it begins: a nested
+     * begin would have committed the caller's write, and the caller's
+     * rollback undone nothing.
+     */
+    public function testALookupThatOpensATransactionRefusesInsideAnother(): void
+    {
+        self::q('CREATE TEMPORARY TABLE p202_caller_write (n INT) ENGINE=InnoDB');
+        $lookups = [
+            'an IPv6 address' => fn (): int => $this->location('')->findOrCreateIp('2001:db8::7b'),
+            'a variable set' => fn (): int => $this->tracking('')->findOrCreateVariableSet('4,5'),
+        ];
+        foreach ($lookups as $what => $lookup) {
+            try {
+                self::conn()->transaction(static function () use ($lookup): void {
+                    self::q('INSERT INTO p202_caller_write SET n = 1');
+                    $lookup();
+                });
+                self::fail("$what was looked up inside the caller's transaction");
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('inside another', $e->getMessage(), $what);
+            }
+            self::assertSame(0, self::rowsIn('p202_caller_write'), "$what: the caller's write was committed");
+        }
+        self::assertSame(0, self::rowsIn('202_ips_v6'));
+        self::assertSame(0, self::rowsIn('202_variable_sets'));
+
+        self::assertGreaterThan(0, $lookups['an IPv6 address'](), 'outside any transaction it runs');
+        self::assertGreaterThan(0, $lookups['a variable set']());
+    }
+
+    /**
+     * The database error page rolls back its caller's transaction before it
+     * records, so its own lookups run outside any: an IPv6 visitor's address
+     * is still stored when the failure happened inside
+     * Connection::transaction(). Its own process: the recorder runs once.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testTheErrorPagesLookupsRunAfterItEndedTheCallersTransaction(): void
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/mysql-error-args.php';
+        self::q('CREATE TEMPORARY TABLE p202_caller_write (n INT) ENGINE=InnoDB');
+        $db = self::db();
+        $id = 0;
+        try {
+            self::conn()->transaction(static function () use ($db, &$id): void {
+                self::q('INSERT INTO p202_caller_write SET n = 1');
+                $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, &$id): void {
+                    $id = (new MysqlLocationRepository(new Connection($db)))->findOrCreateIp('2001:db8::7c');
+                });
+                self::assertTrue($recorded, 'the record\'s lookup ran');
+                throw new \DomainException('the page ends the request here');
+            });
+        } catch (\DomainException) {
+        }
+
+        self::assertGreaterThan(0, $id);
+        self::assertSame(1, self::rowsIn('202_ips_v6'));
+        self::assertSame(0, self::rowsIn('p202_caller_write'), 'the page rolled the caller\'s write back');
+    }
+
     /** A value only the key's 191-character prefix refuses is found by no select: the refusal stands. */
     public function testAValueOnlyTheKeysPrefixRefusesIsStillRefused(): void
     {

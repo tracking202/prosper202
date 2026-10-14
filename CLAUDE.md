@@ -373,7 +373,10 @@ Two amplifiers, both of which turned this from a blip into a breach:
   A cache's namespace is a claim about whose values it holds:
   `systemHash()` was the host and address, while every value it names is a
   database's, so two installs on one host sharing a memcached read each
-  other's tracker rows and lookup ids. It names the database now
+  other's tracker rows and lookup ids. It names the install now, by its
+  directory and its database; the first fix named the database alone, and
+  fell back to the shared namespace wherever the database settings were not
+  in scope (found by review) — a fallback is a namespace too
   (`SystemHashNamesTheDatabaseTest`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about

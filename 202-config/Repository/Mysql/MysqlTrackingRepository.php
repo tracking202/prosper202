@@ -123,8 +123,9 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
      * set also gets one 202_variable_sets2 row per id, which the custom
      * variable report joins on; without them the set is in no report, and a
      * later lookup finds the set and writes none. So the set and its rows
-     * are one transaction. Its callers look a click's values up before the
-     * click's own transaction, which a nested begin would commit.
+     * are one transaction, which refuses to begin inside one opened by
+     * Connection::transaction() (a nested begin would commit it): the
+     * callers look a click's values up before the click's own.
      */
     #[\Override]
     public function findOrCreateVariableSet(string $variables): int
@@ -141,7 +142,7 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
             return $found;
         }
 
-        return $this->conn->transaction(function () use ($variables, $ids): int {
+        return $this->conn->outermostTransaction(function () use ($variables, $ids): int {
             $setId = $this->ids->insert(
                 'INSERT INTO 202_variable_sets SET variables = ?',
                 's',

@@ -70,6 +70,11 @@ if (!function_exists('p202RecordMysqlErrorRow')) {
             if (!$db->rollback() || !$db->autocommit(true)) {
                 throw new \RuntimeException('its transaction could not be rolled back: ' . $db->error);
             }
+            // A lookup that opens a transaction of its own refuses to inside
+            // another (Connection::outermostTransaction()): there is none now.
+            if (class_exists(\Prosper202\Database\Connection::class)) {
+                \Prosper202\Database\Connection::transactionsEnded($db);
+            }
             $write();
         } catch (\Throwable $e) {
             error_log('MySQL error not recorded in 202_mysql_errors: ' . $e->getMessage());
