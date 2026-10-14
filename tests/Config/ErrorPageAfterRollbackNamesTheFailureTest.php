@@ -15,9 +15,11 @@ use Tests\Support\SourceScan;
  * block or one around it, before it) names the failure it caught, as its
  * third argument; so does a call in a catch block, whatever its try did,
  * because a rollback made inside a call (Connection::transaction() rolls
- * back before it rethrows) names nothing a scan can see. A helper that rolls
- * back and answers false instead of throwing is not seen either: a call after
- * it, outside a catch, is the author's to name.
+ * back before it rethrows) names nothing a scan can see. A third argument
+ * that is a literal null, false or empty string names nothing either: the
+ * page reads it as "read the connection", which the rollback has cleared.
+ * A helper that rolls back and answers false instead of throwing is not
+ * seen: a call after it, outside a catch, is the author's to name.
  */
 final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
 {
@@ -37,7 +39,8 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
             if (!$isCall) {
                 continue;
             }
-            if (self::argumentCount($tokens, $i + 1) < 3 && self::errorMayBeCleared($tokens, $i)) {
+            $failure = self::argument($tokens, $i + 1, 2);
+            if (($failure === null || self::namesNothing($failure)) && self::errorMayBeCleared($tokens, $i)) {
                 $found[] = "$path:{$token->line}";
             }
         }
@@ -45,26 +48,64 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
         return $found;
     }
 
-    /** @param list<\PhpToken> $tokens */
-    private static function argumentCount(array $tokens, int $open): int
+    /**
+     * The tokens of the call's argument at $index (0 for the first), or null
+     * when the call has no such argument.
+     *
+     * @param list<\PhpToken> $tokens
+     * @return list<\PhpToken>|null
+     */
+    private static function argument(array $tokens, int $open, int $index): ?array
     {
         $depth = 0;
-        $commas = 0;
+        $n = 0;
+        $argument = [];
         for ($j = $open; $j < count($tokens); $j++) {
-            $text = $tokens[$j]->text;
-            if (in_array($text, ['(', '[', '{'], true) || $tokens[$j]->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
+            $token = $tokens[$j];
+            $opens = in_array($token->text, ['(', '[', '{'], true)
+                || $token->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES]);
+            if ($opens) {
                 $depth++;
-            } elseif (in_array($text, [')', ']', '}'], true)) {
+                if ($depth === 1) {
+                    continue;
+                }
+            } elseif (in_array($token->text, [')', ']', '}'], true)) {
                 $depth--;
                 if ($depth === 0) {
-                    return $j === $open + 1 ? 0 : $commas + 1;
+                    return $n === $index && $argument !== [] ? $argument : null;
                 }
-            } elseif ($depth === 1 && $text === ',') {
-                $commas++;
+            } elseif ($depth === 1 && $token->text === ',') {
+                if ($n === $index) {
+                    return $argument;
+                }
+                $n++;
+                continue;
+            }
+            if ($n === $index) {
+                $argument[] = $token;
             }
         }
 
-        return $commas + 1;
+        return null;
+    }
+
+    /**
+     * Whether an argument is a literal that names no failure: null, false or
+     * an empty string, parenthesized or passed by name.
+     *
+     * @param list<\PhpToken> $argument
+     */
+    private static function namesNothing(array $argument): bool
+    {
+        if (count($argument) >= 2 && $argument[0]->is(T_STRING) && $argument[1]->text === ':') {
+            $argument = array_slice($argument, 2);
+        }
+        while (count($argument) >= 2 && $argument[0]->text === '(' && end($argument)->text === ')') {
+            $argument = array_slice($argument, 1, -1);
+        }
+
+        return count($argument) === 1
+            && in_array(strtolower($argument[0]->text), ['null', 'false', "''", '""'], true);
     }
 
     /**
@@ -146,6 +187,21 @@ final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
             'rollback, then the page' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$sql);\n", [3]],
             'with the connection' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql);\n", [3]],
             'the failure named' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$sql, null, \$failed);\n", []],
+            'a null failure' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql, null);\n", [3]],
+            'an empty failure' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql, '');\n", [3]],
+            'a parenthesized null failure' => [
+                "<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql, (NULL));\n",
+                [3],
+            ],
+            'a false failure by name' => [
+                "<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql, error: false);\n",
+                [3],
+            ],
+            'a trailing comma' => ["<?php\n\$db->rollback();\nrecord_mysql_error(\$db, \$sql,);\n", [3]],
+            'a failure built from the exception' => [
+                "<?php\ntry {\nf();\n} catch (E \$e) {\nrecord_mysql_error(\$db, \$s, 'x: ' . \$e->getMessage());\n}\n",
+                [],
+            ],
             'in an if around the rollback' => [
                 "<?php\nif (!\$ok) {\n\$db->rollback();\nif (\$x) {\nrecord_mysql_error(\$sql);\n}\n}\n",
                 [5],
