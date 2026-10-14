@@ -14,10 +14,12 @@ use Prosper202\Repository\PositiveId;
  * transaction is open (p202WithHeldCacheWrites()).
  *
  * One lifetime, 30 days, for every subject, where INDEXES gave a site URL 7.
- * No lookup row is ever deleted, so a cached id goes stale only when the
- * insert that made it is rolled back, and the one lookup made inside a
- * caller's transaction (rtr.php's redirect URL) holds its writes until the
- * commit.
+ * No served code deletes a lookup row (the only ones that ever did are old,
+ * frozen upgrade steps that truncated 202_browsers and 202_platforms), so a
+ * cached id goes stale only when the insert that made it is rolled back, and
+ * the one lookup made inside a caller's transaction (rtr.php's redirect URL)
+ * holds its writes until the commit. Code that deletes lookup rows has to
+ * make the entries naming them unreachable too (a new key subject).
  */
 final readonly class MemcacheIdCache implements IdCache
 {
