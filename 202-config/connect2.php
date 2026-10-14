@@ -666,6 +666,30 @@ class FILTER
     }
 }
 
+
+
+/**
+ * Whether a rotator rule's redirect row can take a click, in rtr.php and
+ * offrtr.php alike. One naming a campaign or landing page that the joins,
+ * tied to the account, did not find (deleted, or another account's: CLAUDE.md
+ * #27) names nothing, and so does a row with no destination at all.
+ *
+ * @param array<string, mixed> $redirect a redirect row and its joins
+ *
+ * @return bool whether it names a destination of the account's
+ */
+function p202RuleRedirectIsUsable(array $redirect): bool
+{
+    if (!empty($redirect['redirect_campaign'])) {
+        return !empty($redirect['aff_campaign_id']);
+    }
+    if (!empty($redirect['redirect_lp'])) {
+        return !empty($redirect['landing_page_id']);
+    }
+
+    return !empty($redirect['redirect_url'])
+        || ($redirect['auto_monetizer'] ?? null) != null;
+}
 function rotateTrackerUrl($db, $tracker_row)
 {
 
