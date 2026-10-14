@@ -126,26 +126,76 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, $all);
 
         $db = self::database();
-        $row = $db->query(
-            'SELECT e.mysql_error_text, e.mysql_error_sql, i.ip_address, u.site_url_address FROM 202_mysql_errors e'
-            . ' LEFT JOIN 202_ips i ON i.ip_id = e.ip_id LEFT JOIN 202_site_urls u ON u.site_url_id = e.site_id'
-            . ' WHERE e.user_id = ' . $marker
-        );
-        self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
-        $rows = $row->fetch_all(MYSQLI_ASSOC);
+        $rows = self::errorRows($db, $marker);
         self::assertCount(1, $rows, "the error row is recorded and kept:\n$all");
         self::assertMatchesRegularExpression(
             "/p202_no_such_table_for_record_mysql_error.*doesn't exist/",
             (string) $rows[0]['mysql_error_text']
         );
         self::assertSame(self::FAILING, $rows[0]['mysql_error_sql']);
-        // The request's address and URL, resolved by the record's lookups.
-        self::assertSame('203.0.113.7', $rows[0]['ip_address'], $all);
-        self::assertSame('http://example.test/x', $rows[0]['site_url_address'], $all);
+        // The request's address and URL, resolved by the record's lookups
+        // after the rollback: this run's own, which no earlier run's row
+        // can answer for, so a lookup rolled back with the caller's write
+        // leaves the row naming nothing whichever runs first.
+        self::assertSame(self::requestAddress($marker), $rows[0]['ip_address'], $all);
+        self::assertSame(self::requestUrl($marker), $rows[0]['site_url_address'], $all);
 
-        $probe = $db->query('SELECT COUNT(*) FROM p202_rme_probe WHERE marker = ' . $marker);
-        self::assertInstanceOf(\mysqli_result::class, $probe, $db->error);
-        self::assertSame(0, (int) $probe->fetch_row()[0], "the caller's own write is not committed with it:\n$all");
+        self::assertSame(0, self::probeRows($db, $marker), "the caller's own write is not committed with it:\n$all");
+        $db->close();
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function definitionsAndShapesHandingAConnection(): array
+    {
+        $cases = [];
+        foreach (['functions-tracking202.php', 'connect2.php'] as $file) {
+            foreach (['db', 'db_sql', 'caught'] as $shape) {
+                $cases["$file ($shape)"] = [$file, $shape];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * Handed a connection that is not the global one (nor DB::getInstance()'s,
+     * which holds a transaction of its own open): the record's lookups, its
+     * rollback and its row are all on the connection it was handed, and the
+     * other is asked nothing. Everywhere else the two are one object, so a
+     * body that looked up through the global passed there.
+     *
+     * @dataProvider definitionsAndShapesHandingAConnection
+     */
+    public function testTheRecordIsMadeOnTheConnectionItWasHanded(string $file, string $shape): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, , $all] = self::runScenario($file, $shape, 'handed', $marker);
+
+        self::assertStringContainsString("HANDED: not the global connection, nor DB::getInstance()'s\n", $stdout, $all);
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        self::assertStringNotContainsString('RECORD FAILED', $stdout, $all);
+        self::assertStringContainsString('ASKED FIRST: ' . self::FAILING . "\n", $stdout, $all);
+        self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, $all);
+        // The address's lookup and the URL's, each on the handed connection.
+        self::assertMatchesRegularExpression('/^LOOKED UP BY THE RECORD: .*\b202_ips\b/m', $stdout, $all);
+        self::assertMatchesRegularExpression('/^LOOKED UP BY THE RECORD: .*\b202_site_urls\b/m', $stdout, $all);
+        self::assertStringContainsString(
+            "ENDED BY THE PAGE: rollback\nENDED BY THE PAGE: autocommit on\n",
+            $stdout,
+            $all
+        );
+        self::assertStringNotContainsString(
+            ' THE OTHER CONNECTION: ',
+            $stdout,
+            "the page used another connection:\n$all"
+        );
+
+        $db = self::database();
+        $rows = self::errorRows($db, $marker);
+        self::assertCount(1, $rows, "the error row is written on the handed connection, and kept:\n$all");
+        self::assertSame(self::requestAddress($marker), $rows[0]['ip_address'], $all);
+        self::assertSame(self::requestUrl($marker), $rows[0]['site_url_address'], $all);
+        self::assertSame(0, self::probeRows($db, $marker), "the caller's own write is not committed with it:\n$all");
         $db->close();
     }
 
@@ -382,6 +432,44 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             $stdout,
             "the error page is shown:\n$all"
         );
+    }
+
+    /** The address the runner's request comes from: one per marker (P202_RME_MARKER). */
+    private static function requestAddress(int $marker): string
+    {
+        return sprintf('10.%d.%d.%d', $marker >> 16, ($marker >> 8) & 255, $marker & 255);
+    }
+
+    /** The URL the runner's request was made to: one per marker. */
+    private static function requestUrl(int $marker): string
+    {
+        return 'http://example.test/x?rme=' . $marker;
+    }
+
+    /**
+     * The error rows a run recorded, with the address and URL their ids name.
+     *
+     * @return list<array<string, ?string>>
+     */
+    private static function errorRows(\mysqli $db, int $marker): array
+    {
+        $result = $db->query(
+            'SELECT e.mysql_error_text, e.mysql_error_sql, i.ip_address, u.site_url_address FROM 202_mysql_errors e'
+            . ' LEFT JOIN 202_ips i ON i.ip_id = e.ip_id LEFT JOIN 202_site_urls u ON u.site_url_id = e.site_id'
+            . ' WHERE e.user_id = ' . $marker
+        );
+        self::assertInstanceOf(\mysqli_result::class, $result, $db->error);
+
+        return $result->fetch_all(MYSQLI_ASSOC);
+    }
+
+    /** How many of the caller's own writes a run left committed. */
+    private static function probeRows(\mysqli $db, int $marker): int
+    {
+        $probe = $db->query('SELECT COUNT(*) FROM p202_rme_probe WHERE marker = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $probe, $db->error);
+
+        return (int) $probe->fetch_row()[0];
     }
 
     private static function database(): \mysqli

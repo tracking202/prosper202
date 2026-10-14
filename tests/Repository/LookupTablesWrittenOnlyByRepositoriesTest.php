@@ -25,11 +25,16 @@ use Tests\Support\SourceScan;
  * Read from the strings as PHP assembles them (AssembledStrings): every
  * INSERT or REPLACE into one of these tables outside the repositories fails,
  * unless OTHER_WRITERS lists it with why; and a write whose table the scan
- * cannot read is listed in UNREAD_WRITERS with the tables it can reach, none
- * of them a lookup table, rather than taken to write none (CLAUDE.md #20).
- * Both lists only shrink. What this cannot see: a write that is not an SQL
- * string in PHP, and an UPDATE or DELETE of these tables (neither makes a
- * row an id can point to).
+ * cannot read (a name built at runtime, wholly or in part) is listed in
+ * UNREAD_WRITERS site by site, with the tables it can reach, none of them a
+ * lookup table, rather than taken to write none (CLAUDE.md #20). Listing a
+ * file vouched for every such write in it, so a second one there passed
+ * unseen: each listed site answers for one INSERT, and another in the same
+ * file fails as one anywhere else. Both lists only shrink. What this cannot
+ * see: a write that is not an SQL string in PHP, an INSERT into a table it
+ * cannot read that does not begin its string (that reads as prose, "could
+ * not insert into " . $table), and an UPDATE or DELETE of these tables
+ * (neither makes a row an id can point to).
  */
 final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
 {
@@ -51,35 +56,59 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
         ],
     ];
 
-    /** @var array<string, string> file => what decides its table */
+    /**
+     * file => each INSERT there whose table the scan cannot read, by its
+     * text (siteText()) => what decides its table. One entry answers for
+     * one INSERT: a second with the same text needs a second entry, which
+     * a key cannot hold, so it fails.
+     *
+     * @var array<string, array<string, string>>
+     */
     private const UNREAD_WRITERS = [
-        '202-config/DataEngine/ClickRollupSql.php' => 'insertSelect(): the rollup table its caller names',
-        '202-config/class-dataengine.php' => 'doSummary(): 202_dataengine or 202_dataengine_new',
-        'api/v3/Controller.php' => 'the table each CRUD controller names in tableName()',
-        '202-config/Crud/MysqlCrudRepository.php' => 'the table its TableConfig names',
+        '202-config/DataEngine/ClickRollupSql.php' => [
+            'insert into …(…) SELECT … FROM 202_clicks AS 2c LEFT OUTER'
+                => 'insertSelect(): the rollup table its caller names',
+        ],
+        '202-config/class-dataengine.php' => [
+            'INSERT INTO … (…,encode) VALUES … ON DUPLICATE KEY UPDATE'
+                => 'doSummary(): 202_dataengine or 202_dataengine_new',
+        ],
+        'api/v3/Controller.php' => [
+            'INSERT INTO %s (%s) VALUES (%s)' => 'the table each CRUD controller names in tableName()',
+        ],
+        '202-config/Crud/MysqlCrudRepository.php' => [
+            'INSERT INTO … (…) VALUES (…)' => 'the table its TableConfig names',
+        ],
     ];
 
-    /** How many writers the two lists hold. Lower it when one goes. */
+    /** How many writes (sites, tables) the two lists hold. Lower it when one goes. */
     private const CEILING = 5;
 
+    /** How much of an unread INSERT's text names it in UNREAD_WRITERS, in bytes (a part unread is one). */
+    private const SITE_BYTES = 60;
+
+    /**
+     * The keyword and the table after it, past a database name: a run of
+     * name characters, unread parts (AssembledStrings::UNREAD) and sprintf()
+     * conversions, so a name built in part at runtime ("202_tracking_c" .
+     * $i, "202_utm_{$k}") is read whole and reads as unread, not as the
+     * prefix it starts with.
+     */
     private const INSERT = '/\b(?:INSERT|REPLACE)\b(?:\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE))*'
-        . '(?:\s+INTO)?\s*(?:`?(202_\w+)`?|`?(\x00|%(?:\d+\$)?s)`?)/i';
+        . '(?:\s+INTO)?\s*(?:`?[\w\x00]+`?\.)?`?((?:[\w\x00]|%(?:\d+\$)?s)+)/i';
 
     public function testOnlyTheRepositoriesInsertIntoTheLookupTables(): void
     {
         $problems = [];
         $seen = [];
+        $unread = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
             if (str_starts_with($path, self::HOME)) {
                 continue;
             }
-            foreach (self::inserts($source) as [$line, $table]) {
+            foreach (self::inserts($source) as [$line, $table, $site]) {
                 if ($table === '?') {
-                    if (isset(self::UNREAD_WRITERS[$path])) {
-                        $seen[$path]['?'] = true;
-                    } else {
-                        $problems[] = "$path:$line inserts into a table the scan cannot read";
-                    }
+                    $unread[$path][] = [$line, $site];
                     continue;
                 }
                 if (!in_array($table, self::LOOKUP_TABLES, true)) {
@@ -92,24 +121,20 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
                 $problems[] = "$path:$line inserts into $table";
             }
         }
+        [$unreadProblems, $stale] = self::unreadSites($unread, self::UNREAD_WRITERS);
+        $problems = array_merge($problems, $unreadProblems);
 
         self::assertSame([], $problems, "A lookup table is written outside the repositories:\n  "
             . implode("\n  ", $problems)
             . "\nLook the id up through LookupRepositoryFactory::location(\$db) or ::tracking(\$db)"
-            . " (findOrCreate*()). A write whose table is built at runtime is listed in UNREAD_WRITERS"
-            . ' with the tables it can reach.');
+            . " (findOrCreate*()). A write whose table is built at runtime is listed in UNREAD_WRITERS,"
+            . ' by its text, with the tables it can reach (testTheUnreadWritesReachNoLookupTable).');
 
-        $stale = [];
         foreach (self::OTHER_WRITERS as $path => $tables) {
             foreach (array_keys($tables) as $table) {
                 if (!isset($seen[$path][$table])) {
                     $stale[] = "$path  $table";
                 }
-            }
-        }
-        foreach (array_keys(self::UNREAD_WRITERS) as $path) {
-            if (!isset($seen[$path]['?'])) {
-                $stale[] = "$path  (unread table)";
             }
         }
         self::assertSame(
@@ -121,7 +146,10 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
 
     public function testTheListsOnlyShrink(): void
     {
-        $count = count(self::UNREAD_WRITERS);
+        $count = 0;
+        foreach (self::UNREAD_WRITERS as $sites) {
+            $count += count($sites);
+        }
         foreach (self::OTHER_WRITERS as $tables) {
             $count += count($tables);
         }
@@ -193,6 +221,21 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
         yield 'a table interpolated' => ['<?php $db->query("INSERT INTO {$t} SET a = 1");', ['?']];
         yield 'a table by sprintf' => ["<?php \$q = sprintf('INSERT INTO %s (a) VALUES (?)', \$t);", ['?']];
         yield 'another table' => ['<?php $q = "INSERT INTO 202_clicks SET click_id = 1";', ['202_clicks']];
+        // A name finished at runtime is not the prefix it starts with, which
+        // read as another table (202_tracking_c, 202_utm_) or as no INSERT.
+        yield 'a prefix, joined' => ['<?php $db->query("INSERT INTO 202_tracking_c" . $i . " SET c1 = 1");', ['?']];
+        yield 'a prefix, interpolated' => ['<?php $db->query("INSERT INTO 202_utm_{$k} SET a = 1");', ['?']];
+        yield 'a prefix, backticked' => ['<?php $db->query("INSERT INTO `202_tracking_c$i` SET a = 1");', ['?']];
+        yield 'the bare prefix' => ['<?php $db->query("INSERT INTO 202_" . $t . " SET a = 1");', ['?']];
+        yield 'a name and a suffix' => ['<?php $db->query("INSERT INTO 202_keywords" . $s . " SET a = 1");', ['?']];
+        yield 'a name, then its columns' => ['<?php $q = "INSERT INTO 202_keywords(keyword) VALUES (?)";', [
+            '202_keywords',
+        ]];
+        yield 'a database\'s table' => ['<?php $q = "INSERT INTO `p202`.`202_ips` SET ip_address = ?";', ['202_ips']];
+        yield 'a table of a database named at runtime' => [
+            '<?php $q = "INSERT INTO {$name}.202_site_urls SET a = 1";',
+            ['202_site_urls'],
+        ];
     }
 
     /**
@@ -220,12 +263,128 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
         self::assertSame([], self::inserts($source));
     }
 
+    /** @return iterable<string, array{string, string}> source, the text its one unread INSERT is listed by */
+    public static function unreadSiteTexts(): iterable
+    {
+        yield 'interpolated, over lines' => [
+            "<?php \$q = \"INSERT  INTO\n  {\$t} SET a = 1\";",
+            'INSERT INTO … SET a = 1',
+        ];
+        yield 'joined' => [
+            "<?php \$q = 'INSERT INTO ' . \$t . ' (' . \$c . ') VALUES (?)';",
+            'INSERT INTO … (…) VALUES (?)',
+        ];
+        yield 'sprintf' => [
+            "<?php \$q = sprintf('INSERT INTO %s (a) VALUES (%s)', \$t, \$v);",
+            'INSERT INTO %s (a) VALUES (%s)',
+        ];
+        yield 'cut' => [
+            "<?php \$q = 'INSERT INTO ' . \$t . ' (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q) VALUES (?)';",
+            'INSERT INTO … (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o,',
+        ];
+    }
+
+    /** @dataProvider unreadSiteTexts */
+    public function testAnUnreadInsertIsListedByItsText(string $source, string $site): void
+    {
+        self::assertSame([[1, '?', $site]], self::inserts($source));
+    }
+
     /**
-     * Each INSERT or REPLACE in a source: its line and its table, lower-cased,
-     * or '?' when the scan cannot read it. A table the scan cannot read after
-     * a keyword inside a string is prose ("could not insert " . $what).
+     * @return iterable<string, array{array<string, list<array{int, string}>>, list<string>, list<string>}>
+     *         found, the problems, the listed sites not found
+     */
+    public static function unreadSiteMatches(): iterable
+    {
+        yield 'the listed one' => [['a.php' => [[3, 'INSERT INTO … SET x = 1']]], [], []];
+        yield 'a second, with the same text' => [
+            ['a.php' => [[3, 'INSERT INTO … SET x = 1'], [9, 'INSERT INTO … SET x = 1']]],
+            ['a.php:9 inserts into a table the scan cannot read: INSERT INTO … SET x = 1'
+                . ' (UNREAD_WRITERS lists 1 such INSERT in a.php; the scan finds 2)'],
+            [],
+        ];
+        yield 'a second, with another text' => [
+            ['a.php' => [[3, 'INSERT INTO … SET x = 1'], [9, 'INSERT INTO … SET y = 2']]],
+            ['a.php:9 inserts into a table the scan cannot read: INSERT INTO … SET y = 2'
+                . ' (UNREAD_WRITERS lists 1 such INSERT in a.php; the scan finds 2)'],
+            [],
+        ];
+        yield 'the listed one changed' => [
+            ['a.php' => [[3, 'INSERT INTO … SET y = 2']]],
+            ['a.php:3 inserts into a table the scan cannot read: INSERT INTO … SET y = 2'
+                . ' (UNREAD_WRITERS lists 1 such INSERT in a.php; the scan finds 1)'],
+            ['a.php  INSERT INTO … SET x = 1'],
+        ];
+        yield 'another file' => [
+            ['a.php' => [[3, 'INSERT INTO … SET x = 1']], 'b.php' => [[4, 'INSERT INTO … SET x = 1']]],
+            ['b.php:4 inserts into a table the scan cannot read: INSERT INTO … SET x = 1'],
+            [],
+        ];
+        yield 'gone' => [[], [], ['a.php  INSERT INTO … SET x = 1']];
+    }
+
+    /**
+     * Against one listed site, `INSERT INTO … SET x = 1` in a.php.
      *
-     * @return list<array{int, string}>
+     * @dataProvider unreadSiteMatches
+     * @param array<string, list<array{int, string}>> $found
+     * @param list<string> $problems
+     * @param list<string> $stale
+     */
+    public function testEachListedSiteAnswersForOneInsert(array $found, array $problems, array $stale): void
+    {
+        self::assertSame(
+            [$problems, $stale],
+            self::unreadSites($found, ['a.php' => ['INSERT INTO … SET x = 1' => 'why']])
+        );
+    }
+
+    /**
+     * The unread INSERTs found that UNREAD_WRITERS does not answer for, and
+     * the sites it lists that were not found. Each listed site answers for
+     * one INSERT in its file, in the order found.
+     *
+     * @param array<string, list<array{int, string}>> $found path => [line, site text]
+     * @param array<string, array<string, string>> $listed UNREAD_WRITERS' shape
+     * @return array{list<string>, list<string>}
+     */
+    private static function unreadSites(array $found, array $listed): array
+    {
+        $problems = [];
+        foreach ($found as $path => $sites) {
+            $left = $listed[$path] ?? [];
+            foreach ($sites as [$line, $site]) {
+                if (array_key_exists($site, $left)) {
+                    unset($left[$site]);
+                    continue;
+                }
+                $problems[] = "$path:$line inserts into a table the scan cannot read: $site" . (isset($listed[$path])
+                    ? ' (UNREAD_WRITERS lists ' . count($listed[$path]) . " such INSERT in $path;"
+                        . ' the scan finds ' . count($sites) . ')'
+                    : '');
+            }
+        }
+        $stale = [];
+        foreach ($listed as $path => $sites) {
+            $foundHere = array_column($found[$path] ?? [], 1);
+            foreach (array_keys($sites) as $site) {
+                if (!in_array($site, $foundHere, true)) {
+                    $stale[] = "$path  $site";
+                }
+            }
+        }
+
+        return [$problems, $stale];
+    }
+
+    /**
+     * Each INSERT or REPLACE in a source: its line, its table, lower-cased,
+     * or '?' when the scan cannot read it, and for '?' the text it is listed
+     * by (siteText()). A table the scan cannot read after a keyword inside a
+     * string is prose ("could not insert " . $what); a name that is not a
+     * 202_ table (`insert into the …`) is not one of these.
+     *
+     * @return list<array{int, string, string}>
      */
     private static function inserts(string $source): array
     {
@@ -235,15 +394,32 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
                 continue;
             }
             foreach ($ms as $m) {
-                $named = ($m[1][1] ?? -1) >= 0 && $m[1][0] !== '';
-                if ($named) {
-                    $out[] = [$line, strtolower($m[1][0])];
+                $table = $m[1][0];
+                if (strpbrk($table, AssembledStrings::UNREAD . '%') === false) {
+                    if (preg_match('/^202_\w+$/i', $table) === 1) {
+                        $out[] = [$line, strtolower($table), ''];
+                    }
                 } elseif (preg_match('/^\s*$/', substr($text, 0, $m[0][1])) === 1) {
-                    $out[] = [$line, '?'];
+                    $out[] = [$line, '?', self::siteText(substr($text, $m[0][1]))];
                 }
             }
         }
 
         return $out;
+    }
+
+    /**
+     * An unread INSERT as UNREAD_WRITERS lists it: from its keyword, white
+     * space folded, cut after the last whole word within SITE_BYTES, each
+     * part the scan cannot read as `…`.
+     */
+    private static function siteText(string $statement): string
+    {
+        $folded = trim((string) preg_replace('/\s+/', ' ', $statement));
+        if (strlen($folded) > self::SITE_BYTES) {
+            $folded = (string) preg_replace('/ \S*$/', '', substr($folded, 0, self::SITE_BYTES + 1));
+        }
+
+        return str_replace(AssembledStrings::UNREAD, '…', $folded);
     }
 }
