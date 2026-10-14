@@ -115,15 +115,18 @@ final class RotatorClickWriter
                 [$click->clickId, $rotatorId, $ruleId, $ruleRedirectId]
             );
 
-            // An uncloaked click has no public id: 0, as the '' it was
-            // written as became under the app's empty sql_mode.
+            // The public id stays a string, as MysqlClickRepository binds it: a
+            // digit, the click id and a digit, it leaves a 32-bit PHP's int
+            // range at tens of millions of clicks, where (int) clamps it and
+            // cl.php?pci= finds no click. An uncloaked click has none: 0, as
+            // the '' it was written as became under the app's empty sql_mode.
             $this->replace(
                 'REPLACE INTO 202_clicks_record SET
                     click_id = ?, click_id_public = ?, click_cloaking = ?, click_in = ?, click_out = ?',
-                'iiiii',
+                'isiii',
                 [
-                    $click->clickId, (int) $click->clickIdPublic, $click->clickCloaking,
-                    $click->clickIn, $click->clickOut,
+                    $click->clickId, $click->clickIdPublic === '' ? '0' : $click->clickIdPublic,
+                    $click->clickCloaking, $click->clickIn, $click->clickOut,
                 ]
             );
 
