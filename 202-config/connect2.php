@@ -11,18 +11,24 @@ require_once(__DIR__ . '/version.php');
 require_once(__DIR__ . '/mysql-error-args.php');
 
 /**
- * What the click path answers for a throw nothing caught: a 500. The lookups
- * and the click writers report a database failure as a QueryException, which
- * ends at record_mysql_error() as a failed query does: the error page, and
- * the failure recorded. Anything else is logged, with nothing about it shown.
+ * What the click path answers for a throw nothing caught: a 500, unless a
+ * redirect is already queued. dl.php records its click after setting
+ * Location, and where the server has no fastcgi_finish_request() nothing has
+ * been sent yet: a failure there loses the click, and must not lose the
+ * visitor too. The lookups and the click writers report a database failure
+ * as a QueryException, which ends at record_mysql_error() as a failed query
+ * does, recorded with where it was thrown. Anything else is logged, with
+ * nothing about it shown.
  */
 function p202ClickPathUncaught(\Throwable $e): void
 {
-    if (!headers_sent()) {
+    $status = http_response_code();
+    if (!headers_sent() && !(is_int($status) && $status >= 300 && $status < 400)) {
         http_response_code(500);
     }
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
-        record_mysql_error($GLOBALS['db'] ?? null, null, $e->getMessage());
+        $where = 'uncaught at ' . basename($e->getFile()) . ':' . $e->getLine();
+        record_mysql_error($GLOBALS['db'] ?? null, $where, $e->getMessage());
     }
     error_log('Uncaught on the click path: ' . $e);
 }

@@ -28,13 +28,32 @@ final class ClickPathUncaughtTest extends TestCase
     {
         [$stdout, $stderr, $logged] = self::runHandler('query');
 
-        self::assertStringContainsString(
-            'RECORDED: {"the click path connection":true,"sql":null,"error":"MySQL execute failed:'
-                . ' Data too long for column \'site_url_address\' at row 1 [errno 1406]"}',
+        self::assertMatchesRegularExpression(
+            '/^RECORDED: \\{"the click path connection":true,'
+                . '"sql":"uncaught at click-path-uncaught-runner\\.php:\\d+","error":"MySQL execute failed:'
+                . ' Data too long for column \'site_url_address\' at row 1 \\[errno 1406\\]"\\}$/m',
             $stdout,
-            $stdout . $stderr . $logged
+            'recorded with its message and where it was thrown: ' . $stdout . $stderr . $logged
         );
         self::assertStringContainsString("STATUS: 500\n", $stdout, 'the request answers 500');
+        self::assertSame('', $stderr);
+    }
+
+    /**
+     * dl.php sets Location and then records the click; where the server has
+     * no fastcgi_finish_request() nothing is sent yet. A failure there loses
+     * the click, and the visitor still goes to the offer.
+     */
+    public function testAQueuedRedirectStandsWhenTheClickFailsAfterIt(): void
+    {
+        [$stdout, $stderr, $logged] = self::runHandler('query_after_redirect');
+        self::assertStringContainsString('RECORDED: ', $stdout, 'the database failure is still recorded');
+        self::assertStringContainsString("STATUS: 302\n", $stdout, 'the redirect stands: ' . $stdout . $logged);
+        self::assertSame('', $stderr);
+
+        [$stdout, $stderr, $logged] = self::runHandler('other_after_redirect');
+        self::assertSame("STATUS: 302\n", $stdout, 'the redirect stands: ' . $logged);
+        self::assertStringContainsString('Uncaught on the click path: RuntimeException: ', $logged);
         self::assertSame('', $stderr);
     }
 
@@ -62,8 +81,9 @@ final class ClickPathUncaughtTest extends TestCase
     }
 
     /**
-     * Registered once, outside any function, so it holds from the moment
-     * connect2.php is loaded, whichever endpoint loaded it.
+     * Registered once, outside any function, and before the bootstrap first
+     * reaches the database, so it holds from the moment connect2.php is
+     * loaded, whichever endpoint loaded it.
      */
     public function testConnect2RegistersTheHandlerAtItsTopLevel(): void
     {
@@ -73,13 +93,19 @@ final class ClickPathUncaughtTest extends TestCase
             static fn (\PhpToken $t): bool => !$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])
         ));
         $registrations = [];
+        $registeredAt = null;
+        $firstDatabase = null;
         $depth = 0;
         foreach ($code as $i => $t) {
+            if ($firstDatabase === null && $t->is(T_STRING) && $t->text === 'getInstance') {
+                $firstDatabase = $i;
+            }
             if ($t->text === '{' || $t->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
                 $depth++;
             } elseif ($t->text === '}') {
                 $depth--;
             } elseif ($t->is(T_STRING) && strcasecmp($t->text, 'set_exception_handler') === 0) {
+                $registeredAt ??= $i;
                 $registrations[] = [
                     $depth,
                     implode('', array_map(static fn (\PhpToken $x): string => $x->text, array_slice($code, $i, 5))),
@@ -88,6 +114,8 @@ final class ClickPathUncaughtTest extends TestCase
         }
 
         self::assertSame([[0, "set_exception_handler('p202ClickPathUncaught');"]], $registrations);
+        self::assertNotNull($firstDatabase, 'connect2.php reaches DB::getInstance()');
+        self::assertLessThan($firstDatabase, $registeredAt, 'registered before the first database call');
     }
 
     /** @return array{string, string, string} stdout, stderr, the error log */
