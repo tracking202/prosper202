@@ -90,6 +90,7 @@ return [
         'phpstan-baseline.neon',
         'phpstan-legacy-stubs.php',
         'phpstan.neon.dist',
+        'phpstan-strict.neon',
         'phpunit.ci.xml',
         'phpunit.xml',
         'scripts',              // lint and pattern-check scripts
