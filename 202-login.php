@@ -115,6 +115,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
+	if (empty($error) && $user_row) { // before the attempt is logged, so a refusal here logs as failed
+		AUTH::delete_old_auth_hash();
+
+		$survey_data = getSurveyData($user_row['install_hash']);
+		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
+		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;
+
+		try {
+			SignInRecord::on($db)->record((int) $user_row['user_id'], $login_ip, $modal_status, $vip_perks_status);
+		} catch (\Throwable $exception) {
+			$error['user'] = 'We were unable to process your login. Please try again later.';
+			prosper_log('login', 'Sign-in of user_id ' . (int) $user_row['user_id'] . ' not recorded: ' . $exception->getMessage());
+		}
+	}
+
 	// Don't record throttled/CSRF-rejected attempts: no credentials were checked,
 	// and logging them would extend the rolling window and keep a legitimate user
 	// locked out indefinitely.
@@ -147,21 +162,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$login_log_stmt->close();
 	} elseif ($should_log_attempt) {
 		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
-	}
-
-	if (empty($error) && $user_row) {
-		AUTH::delete_old_auth_hash();
-
-		$survey_data = getSurveyData($user_row['install_hash']);
-		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
-		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;
-
-		try {
-			SignInRecord::on($db)->record((int) $user_row['user_id'], $login_ip, $modal_status, $vip_perks_status);
-		} catch (\Throwable $exception) {
-			$error['user'] = 'We were unable to process your login. Please try again later.';
-			prosper_log('login', 'Sign-in of user_id ' . (int) $user_row['user_id'] . ' not recorded: ' . $exception->getMessage());
-		}
 	}
 
 	if (empty($error) && $user_row) {
