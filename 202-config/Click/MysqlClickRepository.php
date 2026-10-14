@@ -123,10 +123,13 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             // back to exact (AttributionRollup rule 2).
             RollupDirty::click($this->conn, $click->userId, $click->clickId);
             $this->writeClickRows($click);
+            // The redirector records no text ad: the click's is kept unless the re-click brings one.
             $this->write(
                 'INSERT INTO 202_clicks_advance (click_id, text_ad_id, keyword_id, ip_id, country_id, region_id,'
                     . ' isp_id, city_id, platform_id, browser_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                    . ' ON DUPLICATE KEY UPDATE text_ad_id = VALUES(text_ad_id), keyword_id = VALUES(keyword_id),'
+                    . ' ON DUPLICATE KEY UPDATE'
+                    . ' text_ad_id = IF(VALUES(text_ad_id) = 0, text_ad_id, VALUES(text_ad_id)),'
+                    . ' keyword_id = VALUES(keyword_id),'
                     . ' ip_id = VALUES(ip_id), country_id = VALUES(country_id), region_id = VALUES(region_id),'
                     . ' isp_id = VALUES(isp_id), city_id = VALUES(city_id), platform_id = VALUES(platform_id),'
                     . ' browser_id = VALUES(browser_id), device_id = VALUES(device_id)',

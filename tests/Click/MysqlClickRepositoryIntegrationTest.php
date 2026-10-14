@@ -360,7 +360,8 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
      * A re-click of a landing page click: a second 202_clicks row at the new
      * time, the redirector's columns rewritten, and the customer a
      * conversion set, the reviewed flag, the public id its pci.php links
-     * carry and its landing and cloaking URLs kept. The redirect is resolved
+     * carry, its landing and cloaking URLs and its text ad (the redirector
+     * records none) kept. The redirect is resolved
      * from the rewritten rows, before the site row takes its answer.
      */
     public function testAReClickRewritesWhatTheRedirectorSetsAndKeepsTheRest(): void
@@ -369,6 +370,7 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
         self::repo()->recordClick(self::landingPageClick($clickId));
         self::q("UPDATE 202_clicks_tracking SET customer_id = 4242 WHERE click_id = $clickId");
         self::q("UPDATE 202_clicks_record SET click_reviewed = 1 WHERE click_id = $clickId");
+        self::q("UPDATE 202_clicks_advance SET text_ad_id = 33 WHERE click_id = $clickId");
         $at = time() + 60;
         $seenInside = null;
         $resolve = function () use ($clickId, &$seenInside): int {
@@ -404,7 +406,7 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
             'click_cpc' => '0.75', 'click_payout' => '1.25',
         ], "AND click_time = $at");
         self::assertColumns('202_clicks_advance', $clickId, [
-            'text_ad_id' => '0', 'keyword_id' => '6', 'ip_id' => '23', 'country_id' => '22', 'region_id' => '24',
+            'text_ad_id' => '33', 'keyword_id' => '6', 'ip_id' => '23', 'country_id' => '22', 'region_id' => '24',
             'isp_id' => '29', 'city_id' => '25', 'platform_id' => '26', 'browser_id' => '27', 'device_id' => '28',
         ]);
         self::assertColumns('202_clicks_tracking', $clickId, [

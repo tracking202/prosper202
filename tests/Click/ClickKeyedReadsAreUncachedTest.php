@@ -16,10 +16,11 @@ use Tests\Support\SourceScan;
  * (measured with memcached running), and off.php and offrtr.php rewrite the
  * rows they read. Each entry was per click, so it saved nothing but a reload.
  *
- * Read by the scan below: the SQL a call is handed (its variable's last
- * assignment above the call with every `.=` after it, or the string itself)
- * names a click's id when it holds click_id_public, `click_id =` or
- * `click_id IN`; such a call passes
+ * Read by the scan below: the SQL a call is handed (every assignment and
+ * `.=` of its variable above the call in the file, since a branch may have
+ * chosen any of them, or the string itself) names a click's id when one of
+ * them holds click_id_public, `click_id =` or `click_id IN`; such a call
+ * passes
  * 0, caching off. A cached call whose SQL the scan cannot find is refused by
  * name.
  */
@@ -83,8 +84,18 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
                 . "\$r = foreach_memcache_mysql_fetch_assoc(\$db, \$sql);",
             [[2, true, true]],
         ];
-        yield 'the last assignment counts' => [
+        yield 'an earlier assignment counts' => [
             "<?php \$sql = 'SELECT a FROM t WHERE click_id = 5';\n\$sql = 'SELECT b FROM u';\n"
+                . "\$r = memcache_mysql_fetch_assoc(\$db, \$sql);",
+            [[3, true, true]],
+        ];
+        yield 'either branch' => [
+            "<?php if (\$p) { \$sql = 'SELECT a FROM t WHERE click_id_public = 5'; }\n"
+                . "else { \$sql = 'SELECT a FROM t WHERE x = 1'; }\n\$r = memcache_mysql_fetch_assoc(\$db, \$sql);",
+            [[3, true, true]],
+        ];
+        yield 'no assignment of another variable' => [
+            "<?php \$other = 'SELECT a FROM t WHERE click_id = 5';\n\$sql = 'SELECT b FROM u';\n"
                 . "\$r = memcache_mysql_fetch_assoc(\$db, \$sql);",
             [[3, false, true]],
         ];
@@ -166,7 +177,7 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
             $cached = $caching === null || array_map(static fn (\PhpToken $a): string => $a->text, $caching) !== ['0'];
             $text = null;
             if (count($sql) === 1 && $sql[0]->is(T_VARIABLE)) {
-                $text = self::lastAssignment($code, $i, $sql[0]->text);
+                $text = self::assignments($code, $i, $sql[0]->text);
             } elseif ($sql !== [] && $sql[0]->is([T_CONSTANT_ENCAPSED_STRING, T_START_HEREDOC, '"'])) {
                 $text = implode(' ', array_map(static fn (\PhpToken $a): string => $a->text, $sql));
             }
@@ -210,34 +221,34 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
     }
 
     /**
-     * The source of $variable's last plain assignment above $before and of
-     * every `.=` after it, each to its statement's end; null when there is no
-     * plain assignment (appends alone are not the whole statement).
+     * The source of every assignment and `.=` of $variable above $before in
+     * the file, each to its statement's end; null when there is no plain
+     * assignment (appends alone are not the whole statement). Which one
+     * reaches the call is a question of branches the scan does not follow,
+     * so all of them are read: the loud direction.
      *
      * @param list<\PhpToken> $code
      */
-    private static function lastAssignment(array $code, int $before, string $variable): ?string
+    private static function assignments(array $code, int $before, string $variable): ?string
     {
         $sources = [];
+        $plain = false;
         for ($j = $before - 1; $j >= 0; $j--) {
             $operator = $code[$j + 1] ?? null;
             if (!$code[$j]->is(T_VARIABLE) || $code[$j]->text !== $variable || $operator === null) {
                 continue;
             }
-            $plain = $operator->text === '=';
-            if (!$plain && !$operator->is(T_CONCAT_EQUAL)) {
+            if ($operator->text !== '=' && !$operator->is(T_CONCAT_EQUAL)) {
                 continue;
             }
+            $plain = $plain || $operator->text === '=';
             $parts = [];
             for ($k = $j + 2, $n = count($code); $k < $n && $code[$k]->text !== ';'; $k++) {
                 $parts[] = $code[$k]->text;
             }
-            array_unshift($sources, implode(' ', $parts));
-            if ($plain) {
-                return implode(' ', $sources);
-            }
+            $sources[] = implode(' ', $parts);
         }
 
-        return null;
+        return $plain ? implode(' ', $sources) : null;
     }
 }
