@@ -370,6 +370,11 @@ Two amplifiers, both of which turned this from a blip into a breach:
   `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`, and
   every comparison of an `ip_id` with an `ip_address` in the tree's SQL,
   in whatever clause it is written.
+  A cache's namespace is a claim about whose values it holds:
+  `systemHash()` was the host and address, while every value it names is a
+  database's, so two installs on one host sharing a memcached read each
+  other's tracker rows and lookup ids. It names the database now
+  (`SystemHashNamesTheDatabaseTest`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not

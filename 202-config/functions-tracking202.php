@@ -1317,10 +1317,22 @@ function api_key_validate($key)
     return $result;
 }
 
+/**
+ * The namespace of every cache key. The ids and rows a key names belong to a
+ * database, so the database is part of it: two installs on one host and
+ * address, sharing a memcached, are two namespaces. The other copy
+ * (connect2.php / functions-tracking202.php) is the same function.
+ */
 function systemHash(): string
 {
-    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
-    return $hash;
+    $database = [];
+    foreach (['dbhost', 'dbname'] as $setting) {
+        $value = $GLOBALS[$setting] ?? '';
+        $database[] = is_string($value) ? $value : '';
+    }
+
+    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
+        . "\0" . implode("\0", $database));
 }
 
 function getBrowserIcon($name)

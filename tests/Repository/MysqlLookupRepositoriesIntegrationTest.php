@@ -88,16 +88,8 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
                     . '{ return $sql === null ? null : $dbOrSql->query($sql); }');
             }
             mysqli_report(MYSQLI_REPORT_STRICT);
-            $db = mysqli_connect(
-                $host,
-                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
-                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
-                $name,
-                (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
-            );
-            self::assertInstanceOf(mysqli::class, $db);
-            self::$db = $db;
-            self::$conn = new Connection($db);
+            self::$db = self::connect();
+            self::$conn = new Connection(self::$db);
         }
         if (!self::$installed) {
             self::q("SET SESSION sql_mode = ''");
@@ -296,6 +288,71 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
             } catch (RuntimeException $e) {
                 self::assertStringStartsWith('Invalid custom variable name', $e->getMessage());
             }
+        }
+    }
+
+    /** @return array<string, array{int}> */
+    public static function reporting(): array
+    {
+        return [
+            'a failed execute answers false' => [MYSQLI_REPORT_STRICT],
+            'a failed execute throws' => [MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT],
+        ];
+    }
+
+    /**
+     * Installs upgraded through 1.4.1 hold UNIQUE KEY (c1(191)). Two first
+     * clicks with one new value both miss, and the later insert is refused as
+     * a duplicate: it reads the earlier click's row, where it was a 500 and
+     * no redirect. The read connection holds a snapshot from before that row,
+     * as a racing request, or a replica behind the primary, sees the table.
+     *
+     * @dataProvider reporting
+     */
+    public function testAFirstClickThatLosesTheRaceForAValueReadsTheWinnersRow(int $reporting): void
+    {
+        self::q('ALTER TABLE 202_tracking_c1 ADD UNIQUE KEY c1_upgraded (c1(191))');
+        $snapshot = self::connect();
+        try {
+            self::assertTrue($snapshot->query('START TRANSACTION WITH CONSISTENT SNAPSHOT'));
+            self::q("INSERT INTO 202_tracking_c1 SET c1 = 'launch'");
+            $winner = (int) self::value("SELECT c1_id FROM 202_tracking_c1 WHERE c1 = 'launch'");
+            $seen = $snapshot->query("SELECT COUNT(*) FROM 202_tracking_c1 WHERE c1 = 'launch'");
+            self::assertInstanceOf(\mysqli_result::class, $seen);
+            self::assertSame([['0']], array_map(
+                static fn (array $r): array => array_map('strval', $r),
+                $seen->fetch_all(MYSQLI_NUM)
+            ), 'the read connection does not see the other click\'s row');
+
+            mysqli_report($reporting);
+            $id = (new MysqlTrackingRepository(new Connection(self::db(), $snapshot)))->findOrCreateC1('launch');
+            mysqli_report(MYSQLI_REPORT_STRICT);
+
+            self::assertSame($winner, $id);
+            self::assertSame(1, self::rowsIn('202_tracking_c1'));
+        } finally {
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $snapshot->close();
+            self::q('ALTER TABLE 202_tracking_c1 DROP KEY c1_upgraded');
+        }
+    }
+
+    /** A value only the key's 191-character prefix refuses is found by no select: the refusal stands. */
+    public function testAValueOnlyTheKeysPrefixRefusesIsStillRefused(): void
+    {
+        self::q('ALTER TABLE 202_tracking_c1 ADD UNIQUE KEY c1_upgraded (c1(191))');
+        try {
+            $repo = $this->tracking('');
+            $repo->findOrCreateC1(str_repeat('p', 191) . '1');
+            try {
+                $repo->findOrCreateC1(str_repeat('p', 191) . '2');
+                self::fail('a value the unique key refused was answered');
+            } catch (QueryException $e) {
+                self::assertStringContainsString('[errno 1062]', $e->getMessage());
+            }
+            self::assertSame(1, self::rowsIn('202_tracking_c1'));
+        } finally {
+            self::q('ALTER TABLE 202_tracking_c1 DROP KEY c1_upgraded');
         }
     }
 
@@ -819,6 +876,20 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
     private function location(string $mode): MysqlLocationRepository
     {
         return new MysqlLocationRepository($this->connection($mode));
+    }
+
+    private static function connect(): mysqli
+    {
+        $db = mysqli_connect(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) getenv('P202_TEST_DB_NAME'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::assertInstanceOf(mysqli::class, $db);
+
+        return $db;
     }
 
     private static function db(): mysqli

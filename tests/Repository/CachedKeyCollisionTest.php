@@ -72,6 +72,37 @@ final class CachedKeyCollisionTest extends TestCase
         self::assertNotSame($cache->writes[0][0], $cache->writes[1][0]);
     }
 
+    /** A name holding the key's `|` would share another name's entry, and be answered unread. */
+    public function testACustomVariableNameIsReadBeforeItIsKeyed(): void
+    {
+        $cache = new ArrayIdCache();
+        $cached = new CachedTrackingRepository(new InMemoryTrackingRepository(), $cache, 'fakehash');
+        $cached->findOrCreateCustomVar('c1', 'x|y');
+
+        try {
+            $cached->findOrCreateCustomVar('c1|x', 'y');
+            self::fail('a name the repository refuses was answered from the cache');
+        } catch (\RuntimeException $e) {
+            self::assertStringStartsWith('Invalid custom variable name', $e->getMessage());
+        }
+        self::assertCount(1, $cache->reads, 'the cache was not asked');
+    }
+
+    public function testAUtmTypeIsReadBeforeItIsKeyed(): void
+    {
+        $cache = new ArrayIdCache();
+        $cached = new CachedTrackingRepository(new InMemoryTrackingRepository(), $cache, 'fakehash');
+        $cached->findOrCreateUtm('x|y', 'utm_source');
+
+        try {
+            $cached->findOrCreateUtm('y', 'utm_source|x');
+            self::fail('a type the repository refuses was answered from the cache');
+        } catch (\RuntimeException $e) {
+            self::assertStringStartsWith('Invalid UTM type', $e->getMessage());
+        }
+        self::assertCount(1, $cache->reads, 'the cache was not asked');
+    }
+
     public function testLongTrackingValueUsesTruncatedKey(): void
     {
         $cache = new ArrayIdCache();

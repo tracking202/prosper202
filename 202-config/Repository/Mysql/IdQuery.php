@@ -29,7 +29,47 @@ final readonly class IdQuery
         array $values,
         string $column
     ): ?int {
-        $stmt = $this->conn->prepareRead($sql);
+        return $this->idOf($this->conn->prepareRead($sql), $sql, $types, $values, $column);
+    }
+
+    /**
+     * The id of the row $select finds, or of the row $insert makes from the
+     * same values. An insert refused as a duplicate means a unique key holds
+     * a row the select did not see (another request inserted it first, or a
+     * replica had not caught up): it is read again from the primary. Still
+     * not found (a key on part of the value), the refusal stands.
+     *
+     * @param list<int|string> $values
+     */
+    public function firstOrInsert(
+        string $select,
+        string $insert,
+        string $types,
+        array $values,
+        string $column
+    ): int {
+        $found = $this->first($select, $types, $values, $column);
+        if ($found !== null) {
+            return $found;
+        }
+        try {
+            return $this->insert($insert, $types, $values);
+        } catch (\RuntimeException $refused) {
+            if (!Connection::isMysqlError($refused, 1062, 'Duplicate entry')) {
+                throw $refused;
+            }
+
+            return $this->idOf($this->conn->prepareWrite($select), $select, $types, $values, $column)
+                ?? throw $refused;
+        }
+    }
+
+    /**
+     * @param \mysqli_stmt $stmt
+     * @param list<int|string> $values
+     */
+    private function idOf(object $stmt, string $sql, string $types, array $values, string $column): ?int
+    {
         $this->conn->bind($stmt, $types, $values);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {

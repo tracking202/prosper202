@@ -162,21 +162,13 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
     #[\Override]
     public function findOrCreateCustomVar(string $name, string $data): int
     {
-        // \z, not $: $ also matches before a final newline, which then
-        // reached the table and column names.
-        if (preg_match('/\A[a-zA-Z0-9_]+\z/', $name) !== 1) {
-            throw new RuntimeException('Invalid custom variable name: ' . $name);
-        }
-
-        return $this->findOrCreateValue($name, self::storedValue($data));
+        return $this->findOrCreateValue(self::customVarName($name), self::storedValue($data));
     }
 
     #[\Override]
     public function findOrCreateUtm(string $value, string $type): int
     {
-        if (!in_array($type, self::UTM_TYPES, true)) {
-            throw new RuntimeException('Invalid UTM type: ' . $type);
-        }
+        $type = self::utmType($type);
 
         return $this->findOrCreateDynamic(
             '202_' . $type,
@@ -184,6 +176,38 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
             $type,
             self::storedValue($value)
         );
+    }
+
+    /**
+     * A custom variable's name, which names its table and column: refused
+     * unless it is letters, digits and underscores. The cache keys on it
+     * before any lookup, so it is read there too.
+     *
+     * @throws RuntimeException for any other name
+     */
+    public static function customVarName(string $name): string
+    {
+        // \z, not $: $ also matches before a final newline, which then
+        // reached the table and column names.
+        if (preg_match('/\A[a-zA-Z0-9_]+\z/', $name) !== 1) {
+            throw new RuntimeException('Invalid custom variable name: ' . $name);
+        }
+
+        return $name;
+    }
+
+    /**
+     * A UTM type, which names its table: one of the five.
+     *
+     * @throws RuntimeException for any other type
+     */
+    public static function utmType(string $type): string
+    {
+        if (!in_array($type, self::UTM_TYPES, true)) {
+            throw new RuntimeException('Invalid UTM type: ' . $type);
+        }
+
+        return $type;
     }
 
     /**
@@ -223,21 +247,24 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
         );
     }
 
+    /**
+     * Installs upgraded through 1.4.1 carry UNIQUE KEY (c(191)) on
+     * 202_tracking_c1-c4, so a first click that loses the race for a new
+     * value to another is refused as a duplicate: firstOrInsert() reads the
+     * winner's row.
+     */
     private function findOrCreateDynamic(
         string $table,
         string $idColumn,
         string $valueColumn,
         string $value
     ): int {
-        return $this->ids->first(
+        return $this->ids->firstOrInsert(
             "SELECT {$idColumn} FROM {$table} WHERE {$valueColumn} = ?",
+            "INSERT INTO {$table} SET {$valueColumn} = ?",
             's',
             [$value],
             $idColumn
-        ) ?? $this->ids->insert(
-            "INSERT INTO {$table} SET {$valueColumn} = ?",
-            's',
-            [$value]
         );
     }
 }

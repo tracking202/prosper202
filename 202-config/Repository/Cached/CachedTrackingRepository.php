@@ -106,6 +106,9 @@ final readonly class CachedTrackingRepository implements TrackingRepositoryInter
     #[\Override]
     public function findOrCreateCustomVar(string $name, string $data): int
     {
+        // Read before it is keyed: a name holding the key's `|` would share
+        // another name's entry and be answered without being read.
+        $name = MysqlTrackingRepository::customVarName($name);
         $data = MysqlTrackingRepository::storedValue($data);
 
         return $this->ids->remember(
@@ -117,6 +120,7 @@ final readonly class CachedTrackingRepository implements TrackingRepositoryInter
     #[\Override]
     public function findOrCreateUtm(string $value, string $type): int
     {
+        $type = MysqlTrackingRepository::utmType($type);
         $value = MysqlTrackingRepository::storedValue($value);
 
         return $this->ids->remember(
