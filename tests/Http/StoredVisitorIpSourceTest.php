@@ -51,10 +51,6 @@ final class StoredVisitorIpSourceTest extends TestCase
                 . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
                 . ' has no privacy state',
         ],
-        '202-login.php' => [
-            '$login_ip' => 'the signed-in user\'s own address, an operator\'s record kept as it arrived:'
-                . ' the click filter compares a click\'s arrived address with it (FILTER::checkUserIP)',
-        ],
         '202-config/functions-tracking202.php' => [
             '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() on connect.php\'s pages:'
                 . ' the signed-in pages, the sign-in page and the cron jobs, and ClickBank\'s server;'
@@ -63,6 +59,12 @@ final class StoredVisitorIpSourceTest extends TestCase
         '202-config/static-endpoint-helpers.php' => [
             '(string)($opts[\'ip\']??\'\')' => 'p202RecordLegacyConversion() handing its own \'ip\''
                 . ' to p202RecordConversion(): checked at its callers',
+        ],
+        '202-config/User/SignInRecord.php' => [
+            '$address' => 'record() handing its argument on: its one caller, 202-login.php, passes $login_ip,'
+                . ' the signed-in user\'s own address, an operator\'s record kept as it arrived: the click filter'
+                . ' compares a click\'s arrived address with it (FILTER::checkUserIP)'
+                . ' (testTheSignInRecordsTheAddressItSignedInFrom)',
         ],
         '202-config/Repository/Cached/CachedLocationRepository.php' => [
             '$address' => 'the caching decorator handing its argument to the repository it wraps:'
@@ -108,6 +110,26 @@ final class StoredVisitorIpSourceTest extends TestCase
             }
         }
         self::assertSame([], $stale, "Listed sites the scan no longer finds; drop them:\n  " . implode("\n  ", $stale));
+    }
+
+    /** SignInRecord::record()'s address is listed for its one caller, which hands it the sign-in's own. */
+    public function testTheSignInRecordsTheAddressItSignedInFrom(): void
+    {
+        $callers = [];
+        foreach (SourceScan::phpFiles() as $path => $source) {
+            if (stripos($source, 'SignInRecord') !== false && $path !== '202-config/User/SignInRecord.php') {
+                $callers[] = $path;
+            }
+        }
+        self::assertSame(['202-login.php'], $callers, 'SignInRecord has one caller');
+
+        $source = (string) file_get_contents(SourceScan::repoRoot() . '/202-login.php');
+        $records = array_values(array_filter(
+            CallArgs::calls($source, ['record']),
+            static fn (array $call): bool => $call['operator'] === '->'
+        ));
+        self::assertCount(1, $records, 'one ->record() call');
+        self::assertSame('$login_ip', CallArgs::text($records[0]['args'][1] ?? []), 'the second argument');
     }
 
     public function testTheClickFilterIsCalledWithTheArgumentsItTakes(): void

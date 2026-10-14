@@ -176,10 +176,12 @@ final class StoredAddressWritesTest extends TestCase
                 self::OPERATOR,
                 'the login audit log: the address of whoever tried to sign in, the throttle\'s key',
             ],
+        ],
+        '202-config/User/SignInRecord.php' => [
             '202_users.user_last_login_ip_id' => [
                 self::OPERATOR,
-                'the signed-in user\'s address, as it arrived: FILTER::checkUserIP compares the click\'s address'
-                    . ' before the mask with it',
+                'the signed-in user\'s address, as it arrived (202-login.php, its one caller):'
+                    . ' FILTER::checkUserIP compares the click\'s address before the mask with it',
             ],
         ],
         '202-config/functions-report-prefs.php' => [

@@ -11,6 +11,7 @@ parameters:
     paths:
         - 202-config/Repository
         - 202-config/Click/StoredAddressIds.php
+        - 202-config/User/SignInRecord.php
     # The click bootstrap's getCache(), setCache() and systemHash(), which
     # LookupRepositoryFactory calls: read for their signatures, not analysed.
     scanFiles:

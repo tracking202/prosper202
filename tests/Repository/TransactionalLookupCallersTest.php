@@ -30,8 +30,8 @@ final class TransactionalLookupCallersTest extends TestCase
 
     /** file => [method => calls], each outside any transaction for the reason given */
     private const CALLERS = [
-        // The sign-in opens no transaction.
-        '202-login.php' => ['findorcreateip' => 1],
+        // The sign-in (202-login.php, its one caller), which opens no transaction.
+        '202-config/User/SignInRecord.php' => ['findorcreateip' => 1],
         // The error pages, after p202RecordMysqlErrorRow() ended the caller's transaction.
         '202-config/connect2.php' => ['findorcreateip' => 1],
         '202-config/functions-tracking202.php' => ['findorcreateip' => 1],
