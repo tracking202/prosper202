@@ -426,6 +426,31 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame(2, self::rowsIn('202_ips'));
     }
 
+    /** @dataProvider modes */
+    public function testAnIpv6AddressWhoseAddressRowIsRefusedIsNotKept(string $mode): void
+    {
+        $repo = $this->location($mode);
+
+        // This session's own 202_ips, with no id of its own to give: the
+        // address row's INSERT is refused (strict) or makes no row id.
+        self::q('CREATE TEMPORARY TABLE 202_ips'
+            . ' (ip_id INT UNSIGNED NOT NULL, ip_address VARCHAR(45) NOT NULL, location_id INT NOT NULL DEFAULT 0)');
+        try {
+            try {
+                $repo->findOrCreateIp('2001:db8::77');
+                self::fail('an IPv6 address whose 202_ips row could not be written was answered');
+            } catch (QueryException) {
+            }
+        } finally {
+            self::q('DROP TEMPORARY TABLE 202_ips');
+        }
+        self::assertSame(0, self::rowsIn('202_ips_v6'), 'the 202_ips_v6 row went with its address row');
+
+        $id = $repo->findOrCreateIp('2001:db8::77');
+        self::assertSame($id, $repo->findOrCreateIp('2001:db8::77'));
+        self::assertSame(1, self::rowsIn('202_ips_v6'));
+    }
+
     /**
      * An install upgraded through the 1.9.50 → 1.9.51 rung has the 202_ips_v6
      * that rung made (functions-upgrade.php), whose location_id has no

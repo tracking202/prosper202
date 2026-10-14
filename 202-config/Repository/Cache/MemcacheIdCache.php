@@ -12,6 +12,12 @@ use Prosper202\Repository\PositiveId;
  * The bootstrap's getCache()/setCache(), handed in as closures so a cache
  * write still goes through setCache() and is held while a click's
  * transaction is open (p202WithHeldCacheWrites()).
+ *
+ * One lifetime, 30 days, for every subject, where INDEXES gave a site URL 7.
+ * No lookup row is ever deleted, so a cached id goes stale only when the
+ * insert that made it is rolled back, and the one lookup made inside a
+ * caller's transaction (rtr.php's redirect URL) holds its writes until the
+ * commit.
  */
 final readonly class MemcacheIdCache implements IdCache
 {

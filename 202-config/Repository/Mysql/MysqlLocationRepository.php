@@ -28,7 +28,7 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
 
     private IdQuery $ids;
 
-    public function __construct(Connection $conn)
+    public function __construct(private Connection $conn)
     {
         $this->ids = new IdQuery($conn);
     }
@@ -143,6 +143,12 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
      * location_id is written, not left to its default: the 1.9.51 rung made
      * 202_ips_v6.location_id with no default, which a strict sql_mode refuses
      * to leave out.
+     *
+     * A new IPv6 address's two rows are one transaction: a 202_ips_v6 row
+     * whose 202_ips row was refused is found by no lookup, so every click
+     * from the address would add another. Its callers look the address up
+     * outside any transaction of theirs (the error pages end the caller's
+     * first), which a nested begin would commit.
      */
     #[\Override]
     public function findOrCreateIp(string $address): int
@@ -184,17 +190,19 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
             return $found;
         }
 
-        $v6Id = $this->ids->insert(
-            'INSERT INTO 202_ips_v6 SET ip_address = ?, location_id = 0',
-            's',
-            [$packed]
-        );
+        return $this->conn->transaction(function () use ($packed): int {
+            $v6Id = $this->ids->insert(
+                'INSERT INTO 202_ips_v6 SET ip_address = ?, location_id = 0',
+                's',
+                [$packed]
+            );
 
-        return $this->ids->insert(
-            'INSERT INTO 202_ips SET ip_address = ?, location_id = 0',
-            's',
-            [(string) $v6Id]
-        );
+            return $this->ids->insert(
+                'INSERT INTO 202_ips SET ip_address = ?, location_id = 0',
+                's',
+                [(string) $v6Id]
+            );
+        });
     }
 
     #[\Override]
