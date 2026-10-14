@@ -17,8 +17,9 @@ use Tests\Support\SourceScan;
  * rows they read. Each entry was per click, so it saved nothing but a reload.
  *
  * Read by the scan below: the SQL a call is handed (its variable's last
- * assignment above the call, or the string itself) names a click's id when
- * it holds click_id_public or `click_id =`/`click_id='`; such a call passes
+ * assignment above the call with every `.=` after it, or the string itself)
+ * names a click's id when it holds click_id_public, `click_id =` or
+ * `click_id IN`; such a call passes
  * 0, caching off. A cached call whose SQL the scan cannot find is refused by
  * name.
  */
@@ -105,6 +106,21 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
             "<?php \$sql = 'SELECT a WHERE click_id_public = 1';\n\$r = memcache_mysql_fetch_assoc(\$sql, 0);",
             [[2, true, false]],
         ];
+        yield 'appended to' => [
+            "<?php \$sql = 'SELECT a FROM t';\n\$sql .= ' WHERE click_id = 5';\n"
+                . "\$r = memcache_mysql_fetch_assoc(\$db, \$sql);",
+            [[3, true, true]],
+        ];
+        yield 'by a list of ids' => [
+            "<?php \$sql = 'SELECT a FROM t WHERE click_id IN (1, 2)';\n"
+                . "\$r = memcache_mysql_fetch_assoc(\$db, \$sql);",
+            [[2, true, true]],
+        ];
+        yield 'appended to a start the scan cannot find' => [
+            "<?php function f(\$db, \$sql) {\n\$sql .= ' WHERE a = 1';\n"
+                . "return memcache_mysql_fetch_assoc(\$db, \$sql); }",
+            [[3, null, true]],
+        ];
         yield 'caching off by a variable' => [
             "<?php \$sql = 'SELECT a WHERE click_id = 1';\n\$r = memcache_mysql_fetch_assoc(\$db, \$sql, \$off);",
             [[2, true, true]],
@@ -154,7 +170,7 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
             } elseif ($sql !== [] && $sql[0]->is([T_CONSTANT_ENCAPSED_STRING, T_START_HEREDOC, '"'])) {
                 $text = implode(' ', array_map(static fn (\PhpToken $a): string => $a->text, $sql));
             }
-            $keyed = $text === null ? null : preg_match('/click_id_public|\bclick_id\s*=/i', $text) === 1;
+            $keyed = $text === null ? null : preg_match('/click_id_public|\bclick_id\s*(?:=|IN\b)/i', $text) === 1;
             $out[] = [$t->line, $keyed, $cached];
         }
 
@@ -194,21 +210,31 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
     }
 
     /**
-     * The source of $variable's last plain assignment above $before, to its
-     * statement's end; null when there is none.
+     * The source of $variable's last plain assignment above $before and of
+     * every `.=` after it, each to its statement's end; null when there is no
+     * plain assignment (appends alone are not the whole statement).
      *
      * @param list<\PhpToken> $code
      */
     private static function lastAssignment(array $code, int $before, string $variable): ?string
     {
+        $sources = [];
         for ($j = $before - 1; $j >= 0; $j--) {
-            if ($code[$j]->is(T_VARIABLE) && $code[$j]->text === $variable && ($code[$j + 1] ?? null)?->text === '=') {
-                $parts = [];
-                for ($k = $j + 2, $n = count($code); $k < $n && $code[$k]->text !== ';'; $k++) {
-                    $parts[] = $code[$k]->text;
-                }
-
-                return implode(' ', $parts);
+            $operator = $code[$j + 1] ?? null;
+            if (!$code[$j]->is(T_VARIABLE) || $code[$j]->text !== $variable || $operator === null) {
+                continue;
+            }
+            $plain = $operator->text === '=';
+            if (!$plain && !$operator->is(T_CONCAT_EQUAL)) {
+                continue;
+            }
+            $parts = [];
+            for ($k = $j + 2, $n = count($code); $k < $n && $code[$k]->text !== ';'; $k++) {
+                $parts[] = $code[$k]->text;
+            }
+            array_unshift($sources, implode(' ', $parts));
+            if ($plain) {
+                return implode(' ', $sources);
             }
         }
 
