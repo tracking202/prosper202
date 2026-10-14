@@ -69,23 +69,22 @@ final class LookupRepositoryFactory
             return LookupRepositories::uncached($connection);
         }
 
-        return LookupRepositories::cached(
-            $connection,
-            $cache,
-            function_exists('systemHash') ? \systemHash() : ''
-        );
+        return LookupRepositories::cached($connection, $cache, \systemHash());
     }
 
     /**
      * Memcache through the bootstrap's own helpers, when it answered. Only
      * connect2.php defines getCache(), so the signed-in pages' bootstrap
-     * (connect.php) reads the database every time, as it always has.
+     * (connect.php) reads the database every time, as it always has. No
+     * systemHash() is no cache: an entry needs the install's namespace, and
+     * one shared by every install would answer another install's ids.
      */
     private static function bootstrapCache(): ?IdCache
     {
         if (
             !function_exists('getCache')
             || !function_exists('setCache')
+            || !function_exists('systemHash')
             || ($GLOBALS['memcacheWorking'] ?? false) !== true
         ) {
             return null;

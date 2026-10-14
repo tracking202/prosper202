@@ -163,6 +163,25 @@ final class LookupRepositoryFactoryTest extends TestCase
     }
 
     /**
+     * The install's namespace is systemHash(); without it an entry would be
+     * keyed for every install alike, so there is no cache.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testWithoutTheInstallsNamespaceThereIsNoCache(): void
+    {
+        self::assertFalse(function_exists('systemHash'), 'this process has no systemHash()');
+        eval('function getCache(string $key, $default = false) { return 77; }');
+        eval('function setCache($key, $value, $exp = null) { return true; }');
+        $GLOBALS['memcacheWorking'] = true;
+
+        self::assertInstanceOf(MysqlTrackingRepository::class, LookupRepositoryFactory::tracking(mysqli_init()));
+        self::assertInstanceOf(MysqlLocationRepository::class, LookupRepositoryFactory::location(mysqli_init()));
+        self::assertInstanceOf(MysqlDeviceRepository::class, LookupRepositoryFactory::device(mysqli_init()));
+    }
+
+    /**
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */

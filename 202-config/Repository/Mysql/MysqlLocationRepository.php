@@ -146,7 +146,10 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
      *
      * A new IPv6 address's two rows are one transaction: a 202_ips_v6 row
      * whose 202_ips row was refused is found by no lookup, so every click
-     * from the address would add another. Its callers look the address up
+     * from the address would add another. Not atomic against another click:
+     * nothing unique stands behind either address column, so concurrent
+     * first clicks from one new address can each insert a pair; each click
+     * names a pair that is found again. Its callers look the address up
      * outside any transaction of theirs (the error pages end the caller's
      * first), which a nested begin would commit.
      */
