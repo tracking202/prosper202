@@ -780,6 +780,12 @@ function replaceClickPlaceholders($url, string $clickId, array $click): string
  */
 function replaceTrackerPlaceholders($db, $url, $click_id = '')
 {
+    // The tokens no click row is needed for first, so a URL that asks for
+    // nothing else (the common [[subid]]) is filled without the read below.
+    $url = replaceTokens($url, array_intersect_key(
+        p202ClickUrlTokens((string) $click_id, []),
+        array_flip(['subid', 'timestamp', 'random', 'referer'])
+    ));
     if (!preg_match('/\[\[(.*)\]\]/', (string) $url)) {
         return $url;
     }
