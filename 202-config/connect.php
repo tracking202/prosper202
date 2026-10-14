@@ -302,7 +302,6 @@ include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
 include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
 include_once(CONFIG_PATH . '/functions-db.php');
-include_once(CONFIG_PATH . '/functions-indexes.php');
 include_once(CONFIG_PATH . '/functions-icons.php');
 include_once(CONFIG_PATH . '/functions-api.php');
 include_once(CONFIG_PATH . '/functions-utils.php');

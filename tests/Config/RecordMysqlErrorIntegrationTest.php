@@ -82,6 +82,8 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             $stdout,
             "the error page queried the database that just failed:\n$all"
         );
+        // Its record's own lookups are the repositories', on that connection.
+        self::assertStringContainsString('LOOKED UP BY THE RECORD: ', $stdout, $all);
         // What it does do to the connection: end its transaction.
         self::assertStringContainsString(
             "ENDED BY THE PAGE: rollback\nENDED BY THE PAGE: autocommit on\n",
@@ -124,7 +126,11 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertStringNotContainsString('ASKED BY THE PAGE: ', $stdout, $all);
 
         $db = self::database();
-        $row = $db->query('SELECT mysql_error_text, mysql_error_sql FROM 202_mysql_errors WHERE user_id = ' . $marker);
+        $row = $db->query(
+            'SELECT e.mysql_error_text, e.mysql_error_sql, i.ip_address, u.site_url_address FROM 202_mysql_errors e'
+            . ' LEFT JOIN 202_ips i ON i.ip_id = e.ip_id LEFT JOIN 202_site_urls u ON u.site_url_id = e.site_id'
+            . ' WHERE e.user_id = ' . $marker
+        );
         self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
         $rows = $row->fetch_all(MYSQLI_ASSOC);
         self::assertCount(1, $rows, "the error row is recorded and kept:\n$all");
@@ -133,6 +139,9 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             (string) $rows[0]['mysql_error_text']
         );
         self::assertSame(self::FAILING, $rows[0]['mysql_error_sql']);
+        // The request's address and URL, resolved by the record's lookups.
+        self::assertSame('203.0.113.7', $rows[0]['ip_address'], $all);
+        self::assertSame('http://example.test/x', $rows[0]['site_url_address'], $all);
 
         $probe = $db->query('SELECT COUNT(*) FROM p202_rme_probe WHERE marker = ' . $marker);
         self::assertInstanceOf(\mysqli_result::class, $probe, $db->error);
@@ -279,21 +288,14 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertStringNotContainsString('Fatal error', $all);
         self::assertTheErrorPageEndedTheRequest($stdout, $all, false);
         // Which failure: a lost connection's transaction cannot be rolled
-        // back; a failed lookup is logged by the admin copy's _mysqli_query(),
-        // which answers false, and on the click path calls
-        // record_mysql_error() again, which throws back.
-        $why = match (true) {
-            $scenario === 'gone' => 'its transaction could not be rolled back: ',
-            $file === 'connect2.php' => 'a statement run to record it failed as well',
-            default => 'Call to a member function fetch_assoc() on false',
-        };
+        // back; a refused lookup throws from the repository, in both copies.
+        $why = $scenario === 'gone'
+            ? 'its transaction could not be rolled back: '
+            : "Failed to prepare MySQL statement: Unknown column 'ip_id'";
         self::assertStringContainsString('MySQL error not recorded in 202_mysql_errors: ' . $why, $logged, $all);
-        if ($scenario === 'lookup_fails' && $file !== 'connect2.php') {
-            self::assertStringContainsString('MySQL query failed at ', $logged, $all);
-        }
-        // The error itself, and on the click path the lookup's own: never
-        // the tens of thousands a recursion writes.
-        self::assertLessThanOrEqual(2, substr_count($logged, 'MySQL error: '), $all);
+        // The error itself, once: the lookup's failure is not a second pass
+        // through record_mysql_error(), let alone the thousands a recursion writes.
+        self::assertSame(1, substr_count($logged, 'MySQL error: '), $all);
     }
 
     /** @return array<string, array{string}> */

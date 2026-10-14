@@ -31,11 +31,13 @@ final class DeviceInfoAddressVerdictTest extends TestCase
         $root = dirname(__DIR__, 2);
         require_once $root . '/202-config/DeviceDetect.php';
 
-        $src = (string) file_get_contents($root . '/202-config/connect2.php');
-        $start = strpos($src, "\nclass PLATFORMS\n");
-        $end = strpos($src, "\nclass INDEXES\n");
-        self::assertIsInt($start, 'class PLATFORMS not found in connect2.php');
-        self::assertIsInt($end);
+        require_once __DIR__ . '/../Config/fixtures/lift-function.php';
+        $connect2 = $root . '/202-config/connect2.php';
+        self::assertMatchesRegularExpression(
+            '/^class PLATFORMS$/m',
+            (string) file_get_contents($connect2),
+            'class PLATFORMS not found in connect2.php'
+        );
 
         // No row is ever found, so every lookup inserts; an inserted device
         // model's id says which model it was, so a test can tell Bot from Desktop.
@@ -51,7 +53,7 @@ final class DeviceInfoAddressVerdictTest extends TestCase
                 return new class { public function fetch_assoc() { return null; } };
             }
             PHP);
-        eval('use UAParser\Parser; ' . substr($src, $start, $end - $start));
+        eval('use UAParser\Parser; ' . lift_class($connect2, 'PLATFORMS'));
 
         $GLOBALS['cacheStore'] = [];
         $GLOBALS['cacheWrites'] = [];

@@ -8,10 +8,11 @@ declare(strict_types=1);
  * redirect and admin pages call it.
  *
  * Neither defining file can be loaded alone — connect2.php bootstraps the
- * whole click path and functions-tracking202.php declares INDEXES, which the
- * function calls — so the function's own source is lifted out of the file
+ * whole click path and functions-tracking202.php declares half the admin
+ * pages' functions — so the function's own source is lifted out of the file
  * by its tokens and evaluated beside stand-ins for what it calls. The body
- * that runs is the shipped body, byte for byte.
+ * that runs is the shipped body, byte for byte, and its address and URL
+ * lookups are the real repositories, on the connection it was handed.
  *
  * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
  *       caught_secret | caught_forged_tag> [<scenario>]
@@ -25,17 +26,18 @@ declare(strict_types=1);
  *       the recorded row carries, so the test can find it)
  *
  * Scenarios:
- *   page            the failed query alone; the error record's statement
- *                   is not run (the page, and what it asks the connection)
+ *   page            the failed query alone; the error record's lookups run,
+ *                   its row's INSERT does not (the page, and what it asks
+ *                   the connection)
  *   txn             inside begin_transaction(), after a write of its own:
  *                   the error record is really written
  *   autocommit_off  the same, under autocommit(false)
  *   gone            the connection killed before the failing query, so
  *                   nothing can be rolled back or recorded
  *   lookup_fails    the connection alive, and the record's own lookup
- *                   failing through the defining file's real
- *                   _mysqli_query(), which on the click path calls
- *                   record_mysql_error() again
+ *                   refused by the server (a table of this session's
+ *                   shadows 202_ips without its columns): the repository
+ *                   throws
  *   insert_fails    the lookups answering, and the error row's INSERT
  *                   refused by the server
  */
@@ -51,39 +53,10 @@ require_once __DIR__ . '/../../../vendor/autoload.php';
 require_once __DIR__ . '/lift-function.php';
 
 // What the two bodies call on the way to the error page: the real AUTH
-// (functions-auth.php loads alone), and stand-ins for INDEXES and DB, whose
-// real copies need the whole bootstrap (both names are already on
-// DuplicateGlobalClassTest's list of per-bootstrap copies).
+// (functions-auth.php loads alone), and a stand-in for DB, whose real copy
+// needs the whole bootstrap (the name is already on DuplicateGlobalClassTest's
+// list of per-bootstrap copies).
 require_once __DIR__ . '/../../../202-config/functions-auth.php';
-class INDEXES
-{
-    public static function get_ip_id($ip)
-    {
-        return self::lookup();
-    }
-    public static function get_site_url_id($url)
-    {
-        return self::lookup();
-    }
-
-    /**
-     * Both real lookups read through _mysqli_query() and dereference what
-     * it answers, so the scenarios that use the real _mysqli_query() do the
-     * same. The others answer 1 without asking the database.
-     */
-    private static function lookup()
-    {
-        $scenario = $GLOBALS['scenario'] ?? 'page';
-        if ($scenario !== 'gone' && $scenario !== 'lookup_fails') {
-            return 1;
-        }
-        $result = _mysqli_query(
-            $scenario === 'gone' ? 'SELECT 1 AS id' : 'SELECT id FROM p202_no_such_lookup_for_record_mysql_error'
-        );
-
-        return $result->fetch_assoc()['id'] ?? 0;
-    }
-}
 class DB
 {
     public static function getInstance(): self
@@ -177,6 +150,9 @@ final class RecordingMysqli extends mysqli
     /** @var list<string> */
     public array $asked = [];
 
+    /** @var list<string> the record's own lookups, of the address and the URL */
+    public array $lookedUp = [];
+
     /** @var list<string> */
     public array $ended = [];
 
@@ -203,7 +179,11 @@ final class RecordingMysqli extends mysqli
 
     public function prepare(string $query): mysqli_stmt|false
     {
-        $this->asked[] = $query;
+        if (preg_match('/\b202_(?:ips|ips_v6|site_domains|site_urls)\b/', $query) === 1) {
+            $this->lookedUp[] = $query;
+        } else {
+            $this->asked[] = $query;
+        }
 
         return parent::prepare($query);
     }
@@ -263,6 +243,25 @@ if ($db->connect_errno !== 0) {
 $GLOBALS['db'] = $db;
 $GLOBALS['scenario'] = $scenario;
 
+// The tables the record's lookups read and write, made before a scenario
+// opens a transaction or loses its connection.
+$lookupTables = [
+    \Prosper202\Database\Tables\MiscTables::ips(), \Prosper202\Database\Tables\MiscTables::ipsV6(),
+    \Prosper202\Database\Tables\MiscTables::siteDomains(), \Prosper202\Database\Tables\MiscTables::siteUrls(),
+];
+foreach ($lookupTables as $table) {
+    if (mysqli_query($db, $table->createStatement) === false) {
+        fwrite(STDERR, 'setup failed: ' . mysqli_error($db) . "\n");
+        exit(5);
+    }
+}
+// This session's own 202_ips, without the index's columns: the record's
+// first lookup is refused by the server.
+if ($scenario === 'lookup_fails' && mysqli_query($db, 'CREATE TEMPORARY TABLE 202_ips (unused INT)') === false) {
+    fwrite(STDERR, 'setup failed: ' . mysqli_error($db) . "\n");
+    exit(5);
+}
+
 if ($scenario === 'txn' || $scenario === 'autocommit_off') {
     // The real table (CoreTables::mysqlErrors()), and a table for the
     // caller's own write, both made before the transaction starts.
@@ -297,6 +296,9 @@ if ($scenario === 'txn' || $scenario === 'autocommit_off') {
 register_shutdown_function(static function () use ($db): void {
     foreach ($db->asked as $i => $query) {
         echo ($i === 0 ? 'ASKED FIRST: ' : 'ASKED BY THE PAGE: ') . $query . "\n";
+    }
+    foreach ($db->lookedUp as $query) {
+        echo 'LOOKED UP BY THE RECORD: ' . $query . "\n";
     }
     foreach ($db->ended as $call) {
         echo 'ENDED BY THE PAGE: ' . $call . "\n";
