@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Api\V3\Support;
 
+use Api\V3\Auth;
+use Api\V3\AuthException;
 use Api\V3\Controllers\CapabilitiesController;
 use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
@@ -226,6 +228,14 @@ final class AiConnect
             return $refuse(400, 'invalid_request', 'code_verifier must be 43 to 128 characters of A-Z, a-z, 0-9 '
                 . 'and -._~ (RFC 7636).');
         }
+        // Asked before the code is used up, so a database that cannot answer
+        // refuses with the code still good. label came with 1.9.78, whose
+        // files can land before its upgrade runs.
+        try {
+            $withLabel = Auth::apiKeyLabelColumnExists($db);
+        } catch (AuthException $e) {
+            return $refuse(500, 'server_error', 'The install could not read its API key table; try again.');
+        }
         // Consumed whatever happens next: a code works once.
         $grant = $store->consumeConnectCode(hash('sha256', $code));
         if ($grant === null) {
@@ -270,10 +280,17 @@ final class AiConnect
         $label = self::label((string) $grant['client_name']);
         $apiKey = bin2hex(random_bytes(32));
         try {
-            $stmt = $conn->prepareWrite(
-                'INSERT INTO 202_api_keys (user_id, api_key, scope, label, created_at) VALUES (?, ?, ?, ?, ?)'
-            );
-            $conn->bind($stmt, 'isssi', [$userId, $apiKey, $scope, $label, time()]);
+            if ($withLabel) {
+                $stmt = $conn->prepareWrite(
+                    'INSERT INTO 202_api_keys (user_id, api_key, scope, label, created_at) VALUES (?, ?, ?, ?, ?)'
+                );
+                $conn->bind($stmt, 'isssi', [$userId, $apiKey, $scope, $label, time()]);
+            } else {
+                $stmt = $conn->prepareWrite(
+                    'INSERT INTO 202_api_keys (user_id, api_key, scope, created_at) VALUES (?, ?, ?, ?)'
+                );
+                $conn->bind($stmt, 'issi', [$userId, $apiKey, $scope, time()]);
+            }
             $conn->executeInsert($stmt);
         } catch (QueryException $e) {
             error_log('p202: AI connect: ' . $e->getMessage());

@@ -9,6 +9,7 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AiConnect;
 use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\FakeMysqliConnection;
 
 /**
  * The install's side of connecting an AI app: what the approval page takes,
@@ -176,8 +177,28 @@ final class AiConnectTest extends TestCase
     /** @return array{0: int, 1: array<string, mixed>} */
     private static function exchange(array $payload): array
     {
-        // Every case here is refused before the database is asked anything.
-        return AiConnect::exchange(mysqli_init(), new ServerStateStore(), $payload);
+        // Every case here is refused before the database is asked anything
+        // but whether 202_api_keys has its label column.
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
+        return AiConnect::exchange($db, new ServerStateStore(), $payload);
+    }
+
+    /** A database that cannot say whether it has the label column refuses
+     * with the code still good: nothing was used up. */
+    public function testADatabaseThatCannotAnswerLeavesTheCodeUnspent(): void
+    {
+        $verifier = str_repeat('v', 50);
+        $code = AiConnect::approve(new ServerStateStore(), 7, 'read', self::challenge($verifier), 'Claude');
+        $broken = new FakeMysqliConnection();
+        $broken->whenQueryContainsResultFails("SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
+        $payload = ['code' => $code, 'code_verifier' => $verifier];
+        [$status, $body] = AiConnect::exchange($broken, new ServerStateStore(), $payload);
+        self::assertSame([500, 'server_error'], [$status, $body['code']]);
+
+        // The code was not consumed: a wrong verifier now reaches the check.
+        [$status, $body] = self::exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
+        self::assertStringContainsString('verifier does not match', $body['message']);
     }
 
     private static function challenge(string $verifier): string

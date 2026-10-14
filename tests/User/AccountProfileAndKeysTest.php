@@ -87,23 +87,54 @@ final class AccountProfileAndKeysTest extends TestCase
     {
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", [['Field' => 'label']]);
+        $row = ['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read', 'label' => 'AI: Claude via mcp.tracking202.com'];
+        $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [$row]);
+
+        $keys = p202_account_api_keys($db, 7);
+        self::assertSame([$row], $keys);
+        $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
+        self::assertStringContainsString('SELECT api_key, created_at, scope, label FROM 202_api_keys', $select);
+    }
+
+    /**
+     * 1.9.78's files can be served before its upgrade has added the label
+     * column (the API is not sent to the upgrade page): the list still reads.
+     */
+    public function testKeysAreReadWithoutALabelColumnBeforeTheUpgradeRuns(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", []);
         $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read']]);
 
         $keys = p202_account_api_keys($db, 7);
-        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read']], $keys);
-        self::assertStringContainsString('SELECT api_key, created_at, scope, label FROM 202_api_keys', $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql);
+        $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
+        self::assertStringContainsString('SELECT api_key, created_at, scope FROM 202_api_keys', $select);
+        self::assertStringNotContainsString('label', $select, 'no column the install does not have');
+        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => 'reports:read', 'label' => null]], $keys);
+    }
+
+    public function testALabelProbeThatCannotTellIsAnErrorNotAnAnswer(): void
+    {
+        $db = new FakeMysqliConnection();
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", [['Field' => 'scope']]);
+        $db->whenQueryContainsResultFails("SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
+        $this->expectException(\Throwable::class);
+        p202_account_api_keys($db, 7);
     }
 
     public function testKeysAreReadWithoutAScopeColumnAsFullAccess(): void
     {
         $db = new FakeMysqliConnection();
         $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'", []);
+        $db->whenQueryContainsReturnRows("SHOW COLUMNS FROM 202_api_keys LIKE 'label'", []);
         $db->whenQueryContainsReturnRows('FROM 202_api_keys WHERE user_id', [['api_key' => 'k1', 'created_at' => 5]]);
 
         $keys = p202_account_api_keys($db, 7);
         $select = $db->statementsContaining('FROM 202_api_keys WHERE user_id')[0]->sql;
         self::assertStringNotContainsString('scope', $select, 'the list does not name a column the install does not have');
-        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => null]], $keys);
+        self::assertSame([['api_key' => 'k1', 'created_at' => 5, 'scope' => null, 'label' => null]], $keys);
         self::assertSame(['*'], \Api\V3\Auth::parseScopes((string) ($keys[0]['scope'] ?? '')), 'which the page reads as full access, as the API grants it');
     }
 

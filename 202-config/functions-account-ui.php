@@ -321,15 +321,17 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
 function p202_account_api_keys(mysqli $db, int $userId): array
 {
     $hasScope = \Api\V3\Auth::apiKeyScopeColumnExists($db);
+    // label came with 1.9.78; the files can land before its upgrade runs.
+    $hasLabel = \Api\V3\Auth::apiKeyLabelColumnExists($db);
     $conn = new \Prosper202\Database\Connection($db);
-    // label came with 1.9.78, long after scope; a schema without scope has
-    // neither, and this page runs only once the upgrade has run.
-    $stmt = $conn->prepareRead('SELECT api_key, created_at' . ($hasScope ? ', scope, label' : '')
+    $columns = 'api_key, created_at' . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '');
+    $stmt = $conn->prepareRead('SELECT ' . $columns
         . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
     $keys = [];
     foreach ($conn->fetchAll($stmt) as $row) {
         $row['scope'] = $hasScope ? ($row['scope'] ?? null) : null;
+        $row['label'] = $hasLabel ? ($row['label'] ?? null) : null;
         $keys[] = $row;
     }
     return $keys;

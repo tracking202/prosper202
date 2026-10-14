@@ -197,9 +197,23 @@ try {
         exit;
     }
     if ($path === '/connect/token' && $method === 'POST') {
-        \Api\V3\Apps\PublicIntake::rateLimit('connect-token', 30, 60);
-        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, new ServerStateStore()))
+        // Only failed exchanges are counted, per address: every MCP server
+        // call can arrive from one shared address (a proxy, Cloudflare's
+        // Worker egress), so counting every exchange let junk requests turn
+        // real ones away. A good exchange is a 256-bit one-time code plus its
+        // verifier, so it is never refused; a failure past the limit is
+        // answered 429.
+        $connectStore = new ServerStateStore();
+        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, $connectStore))
             ->token($payload);
+        if ($connectStatus >= 400) {
+            $retryAfter = $connectStore->softIpRateLimit('connect-token-failed', 30, 60);
+            if ($retryAfter !== null) {
+                header('Retry-After: ' . $retryAfter);
+                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+                exit;
+            }
+        }
         Bootstrap::jsonResponse($connectBody, $connectStatus);
         exit;
     }
