@@ -13,8 +13,12 @@ use RuntimeException;
 
 final readonly class MysqlTrackingRepository implements TrackingRepositoryInterface
 {
-    /** The c1-c4, UTM and variable columns, in bytes (they hold 350 characters). */
-    public const VALUE_BYTES = 350;
+    /**
+     * The c1-c4, UTM and variable columns: VARCHAR(350), which counts
+     * characters. Cut at 350 bytes, a value of 88 four-byte characters lost
+     * the rest, and two values sharing their first 350 bytes were one row.
+     */
+    public const VALUE_CHARS = 350;
 
     public const KEYWORD_CHARS = 150;
 
@@ -39,7 +43,7 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
      */
     public static function storedValue(string $value): string
     {
-        return StoredText::bytes($value, self::VALUE_BYTES);
+        return StoredText::chars($value, self::VALUE_CHARS);
     }
 
     /**

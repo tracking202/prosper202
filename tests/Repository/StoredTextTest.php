@@ -73,8 +73,8 @@ final class StoredTextTest extends TestCase
         $value = str_repeat('x', 349) . 'é' . 'y';
         $keyword = str_repeat('é', 200);
 
-        self::assertSame(StoredText::bytes($value, 350), MysqlTrackingRepository::storedValue($value));
-        self::assertSame(str_repeat('x', 349), MysqlTrackingRepository::storedValue($value));
+        self::assertSame(StoredText::chars($value, 350), MysqlTrackingRepository::storedValue($value));
+        self::assertSame(str_repeat('x', 349) . 'é', MysqlTrackingRepository::storedValue($value));
         self::assertSame(StoredText::chars($keyword, 150), MysqlTrackingRepository::storedKeyword($keyword));
         self::assertSame(str_repeat('é', 150), MysqlTrackingRepository::storedKeyword($keyword));
     }

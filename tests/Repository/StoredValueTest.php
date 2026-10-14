@@ -1,9 +1,9 @@
 <?php
 
 /**
- * A c1-c4, UTM or variable value is stored cut to its columns' 350 bytes,
- * less a character the cut splits, and a keyword to its column's 150
- * characters; dl.php and record_simple.php send an offer URL's tokens through
+ * A c1-c4, UTM or variable value is stored cut to its columns' 350
+ * characters, and a keyword to its column's 150 characters (a VARCHAR counts
+ * characters: cut at 350 bytes, 200 emoji kept 87); dl.php and record_simple.php send an offer URL's tokens through
  * the same cuts, so the URL carries what is stored.
  */
 
@@ -22,14 +22,13 @@ final class StoredValueTest extends TestCase
     {
         return [
             'short' => ['O\'Brien', 'O\'Brien'],
-            'exactly 350 bytes' => [str_repeat('x', 350), str_repeat('x', 350)],
-            'past 350 bytes' => [str_repeat('x', 400), str_repeat('x', 350)],
-            'a two-byte character split' => [str_repeat('x', 349) . 'é' . 'y', str_repeat('x', 349)],
-            'a three-byte character split after one byte' => [str_repeat('x', 349) . '€', str_repeat('x', 349)],
-            'a three-byte character split after two' => [str_repeat('x', 348) . '€', str_repeat('x', 348)],
-            'a four-byte character split after three' => [str_repeat('x', 347) . '😀', str_repeat('x', 347)],
-            'a character ending at the cut' => [str_repeat('x', 348) . 'é' . 'y', str_repeat('x', 348) . 'é'],
-            'every byte a two-byte character' => [str_repeat('é', 200), str_repeat('é', 175)],
+            'exactly 350 characters' => [str_repeat('x', 350), str_repeat('x', 350)],
+            'past 350 characters' => [str_repeat('x', 400), str_repeat('x', 350)],
+            '200 four-byte characters, kept whole' => [str_repeat('😀', 200), str_repeat('😀', 200)],
+            '350 four-byte characters, kept whole' => [str_repeat('😀', 350), str_repeat('😀', 350)],
+            'past 350 four-byte characters' => [str_repeat('😀', 351), str_repeat('😀', 350)],
+            'a two-byte character at the edge' => [str_repeat('x', 349) . 'é' . 'y', str_repeat('x', 349) . 'é'],
+            'a three-byte character past the edge' => [str_repeat('x', 350) . '€', str_repeat('x', 350)],
         ];
     }
 
@@ -65,11 +64,12 @@ final class StoredValueTest extends TestCase
     public function testTheInMemoryRepositoryCutsTheSameWay(): void
     {
         $repo = new InMemoryTrackingRepository();
-        $value = str_repeat('x', 349) . 'é';
+        $value = str_repeat('é', 350) . 'x';
 
-        self::assertSame($repo->findOrCreateC1(str_repeat('x', 349)), $repo->findOrCreateC1($value));
+        self::assertSame($repo->findOrCreateC1(str_repeat('é', 350)), $repo->findOrCreateC1($value));
+        self::assertNotSame($repo->findOrCreateC1(str_repeat('é', 349) . 'x'), $repo->findOrCreateC1($value));
         self::assertSame(
-            $repo->findOrCreateUtm(str_repeat('x', 349), 'utm_source'),
+            $repo->findOrCreateUtm(str_repeat('é', 350), 'utm_source'),
             $repo->findOrCreateUtm($value, 'utm_source')
         );
         self::assertSame(

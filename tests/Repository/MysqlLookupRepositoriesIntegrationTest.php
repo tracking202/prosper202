@@ -166,17 +166,25 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame($id, $find(self::AWKWARD));
         self::assertSame(self::AWKWARD, self::value("SELECT $column FROM $table WHERE {$column}_id = $id"));
 
-        // 350 bytes, the last character split by the cut: dropped whole.
+        // 351 characters: the column keeps 350, the last a two-byte one.
         $long = str_repeat('x', 349) . 'é' . 'y';
         $longId = $find($long);
-        self::assertSame($longId, $find($long), 'a value past 350 bytes is found again');
-        self::assertSame($longId, $find(str_repeat('x', 349)));
-        self::assertSame(str_repeat('x', 349), self::value("SELECT $column FROM $table WHERE {$column}_id = $longId"));
+        self::assertSame($longId, $find($long), 'a value past 350 characters is found again');
+        self::assertSame($longId, $find(str_repeat('x', 349) . 'é'));
+        self::assertSame(
+            str_repeat('x', 349) . 'é',
+            self::value("SELECT $column FROM $table WHERE {$column}_id = $longId")
+        );
+        // 350 four-byte characters fit the column; one fewer is another value.
+        $emoji = $find(str_repeat('😀', 350));
+        self::assertSame($emoji, $find(str_repeat('😀', 350) . 'x'));
+        self::assertNotSame($emoji, $find(str_repeat('😀', 349) . 'x'));
+        self::assertSame(str_repeat('😀', 350), self::value("SELECT $column FROM $table WHERE {$column}_id = $emoji"));
 
         $empty = $find('');
         self::assertGreaterThan(0, $empty, 'an empty value is a row of its own, as the click path stored it');
         self::assertSame($empty, $find(''));
-        self::assertSame(3, self::rowsIn($table));
+        self::assertSame(5, self::rowsIn($table));
     }
 
     /** @dataProvider modes */

@@ -558,6 +558,14 @@ reason folding is right — and a column's collation lives in the upgrade
 too, not only the table definition (the reconciler compares names and
 nullability, not collations).
 
+The width is a transform too, and its unit is part of it. The c1-c4, UTM
+and variable values were cut at 350 bytes before every lookup, for
+VARCHAR(350) columns, which count characters: a value of 88 emoji lost its
+end, and two values sharing their first 350 bytes were one row (found by
+review; the column, measured, takes 350 four-byte characters).
+`StoredCutsMatchTheirColumnsTest` holds each cut to its column's width in
+its column's unit, characters for a VARCHAR and bytes for a TEXT.
+
 This differs from #15: there the discriminator was *inside* the lookup
 path, so no lookup could see it change. Here the mapping itself is
 many-to-one, so two things that should differ never get the chance to.

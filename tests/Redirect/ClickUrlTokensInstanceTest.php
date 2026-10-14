@@ -174,7 +174,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
 
     /**
      * A keyword past its column's 150 characters, or a c1 or UTM value past
-     * its 350 bytes (less a character the cut would split), is stored cut,
+     * its 350 (a VARCHAR counts characters, not bytes), is stored cut,
      * and the offer URL carries it as stored. A
      * redirector fills its URL from the stored click, so its keyword and c1
      * are what was stored (it records no UTM values); the direct link and the
@@ -185,13 +185,13 @@ final class ClickUrlTokensInstanceTest extends TestCase
     {
         $long = [
             't202kw' => self::$run . str_repeat('k', 200),
-            // 'é' takes bytes 350 and 351: the cut leaves it out whole.
+            // A two-byte character inside the first 350: kept, as one.
             'c1' => self::$run . str_repeat('c', 338) . 'é' . str_repeat('c', 50),
             'utm_source' => self::$run . str_repeat('u', 400),
         ];
         $stored = [
             't202kw' => substr($long['t202kw'], 0, 150),
-            'c1' => substr($long['c1'], 0, 349),
+            'c1' => mb_substr($long['c1'], 0, 350),
             'utm_source' => substr($long['utm_source'], 0, 350),
         ];
 
