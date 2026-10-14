@@ -39,7 +39,7 @@ final class TransactionalLookupCallersTest extends TestCase
         'tracking202/redirect/dl.php' => ['findorcreateip' => 1, 'findorcreatevariableset' => 1],
         'tracking202/static/record_adv.php' => ['findorcreateip' => 1, 'findorcreatevariableset' => 1],
         'tracking202/static/record_simple.php' => ['findorcreateip' => 1, 'findorcreatevariableset' => 1],
-        // Before RotatorClickWriter::write() opens the click's transaction.
+        // Before recordClick() or recordReClick() opens the click's transaction.
         'tracking202/redirect/rtr.php' => ['findorcreateip' => 1],
     ];
 

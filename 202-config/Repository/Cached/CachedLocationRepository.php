@@ -115,4 +115,10 @@ final readonly class CachedLocationRepository implements LocationRepositoryInter
             fn (): int => $this->inner->findOrCreateSiteUrl($url)
         );
     }
+
+    #[\Override]
+    public function findOrCreateClickSiteUrl(string $url): int
+    {
+        return $this->inner->findOrCreateClickSiteUrl($url);
+    }
 }

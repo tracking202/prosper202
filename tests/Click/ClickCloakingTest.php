@@ -38,6 +38,10 @@ final class ClickCloakingTest extends TestCase
         yield 'the link turns it off' => [['click_cloaking' => '0', 'aff_campaign_cloaking' => '1'], false, 0];
         yield 'integers, as the API hands them' => [['click_cloaking' => 0, 'aff_campaign_cloaking' => 1], false, 0];
         yield 'no campaign setting either' => [[], false, -1];
+        // The TINYINT takes what Get Links was posted: off, as isOn() reads it,
+        // and kept as 0, which a click holds.
+        yield 'a value the form never offers' => [['click_cloaking' => '2', 'aff_campaign_cloaking' => '1'], false, 0];
+        yield 'a negative one' => [['click_cloaking' => '-2', 'aff_campaign_cloaking' => '1'], false, 0];
     }
 
     /**

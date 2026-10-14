@@ -214,7 +214,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/connect2.php' => [
             'no user_id tie | 202_trackers | `2trk`.tracker_id_public = `2cpa`.tracker_id_public' => self::CLICK_TRACKER,
-            'USING without user_id | 202_clicks | ) LEFT JOIN 202_clicks USING ( click_id ) WHERE gclid = \'{0}\'' => self::SAME_CLICK,
         ],
         '202-config/functions-auth.php' => [
             'comma join | 202_users | SELECT * FROM 202_auth_keys `2a` , 202_users `2u` WHERE `2a`.expires > UNIX_TIMESTAMP' => self::AUTH_KEY,
@@ -309,13 +308,6 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/Tracker/MysqlTrackerRepository.php' => [
             'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
             'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        '202-config/connect2.php' => [
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id #2' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN 202_landing_pages USING ( landing_page_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_landing_pages | ) LEFT JOIN 202_landing_pages USING ( landing_page_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
         ],
         'tracking202/redirect/cl.php' => [
             'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,

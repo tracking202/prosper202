@@ -12,8 +12,8 @@ use PHPUnit\Framework\TestCase;
  * the admin's REST key in P202_API_KEY, which builds the redirector, its rule
  * and the tracker clicked, and reads the click back.
  *
- * rtr.php hands RotatorClickWriter a ClickRecord built field by field from
- * the values it gathered, and the rotator, rule and redirect ids beside it;
+ * rtr.php builds its ClickRecord from the values it gathered, the rotator,
+ * rule and redirect ids among them (ClickRecordBuilder::forRedirector());
  * the writer's own test builds its record directly. So a field mapped to the
  * wrong one in rtr.php (the rule and its redirect swapped, the keyword lost)
  * is seen only by a click: one through a rule (the default stores neither

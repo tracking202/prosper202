@@ -12,11 +12,13 @@ use PHPUnit\Framework\TestCase;
  * builds over connect2.php's real getCache() and setCache(), and
  * p202WithHeldCacheWrites() around them, on a real database.
  *
- * The lookup inserts the redirect URL's row and caches its id at once, inside
- * the click's transaction. HeldCacheWritesTest runs the hold alone, and the
- * token test in it pins rtr.php's call; this runs the lookup's own writes
- * through it, so a cache write the lookup makes some other way, or a hold
- * that lets one through, fails here (CI's instance runs no memcached).
+ * The redirect URL carries the click's subid, so rtr.php looks it up in the
+ * database alone (findOrCreateClickSiteUrl()): no cache entry is written for
+ * it, committed or not. The hold stays around the write for any cached
+ * lookup made there, and the runner's cached lookup (findOrCreateSiteUrl())
+ * shows it at work: written once committed, dropped with a rollback.
+ * HeldCacheWritesTest runs the hold alone, and the token test in it pins
+ * rtr.php's call (CI's instance runs no memcached).
  *
  * Run in a child process; see fixtures/held-cache-seam-runner.php.
  *
@@ -61,10 +63,39 @@ final class HeldCacheSeamIntegrationTest extends TestCase
         self::q("DELETE FROM 202_site_domains WHERE site_domain_host LIKE 'held-%.example'");
     }
 
+    public function testAClicksOwnUrlIsStoredAndNotCached(): void
+    {
+        $clickId = self::FIRST_CLICK + 4;
+        $run = self::write('commit', $clickId);
+
+        self::assertNull($run['failure'], json_encode($run));
+        self::assertSame("https://{$run['host']}/offer?s=$clickId", $run['url'], 'the URL filled from the click');
+        self::assertSame($run['url'], self::urlOf($run['answered']), 'the id answered names the URL');
+        self::assertSame([], $run['cached'], 'no entry for a URL no other click has');
+        self::assertSame(1, self::rowCount('202_clicks_site', $clickId));
+    }
+
+    /** Held or not, a rolled-back click's own URL leaves no entry behind. */
+    public function testARolledBackClicksOwnUrlLeavesNothingCached(): void
+    {
+        foreach (['rollback' => 5, 'rollback_unheld' => 6] as $scenario => $offset) {
+            $run = self::write($scenario, self::FIRST_CLICK + $offset);
+
+            self::assertIsString($run['failure'], $scenario);
+            self::assertStringContainsString(
+                'click_referer_site_url_id',
+                $run['failure'],
+                "$scenario: the shadowed site row"
+            );
+            self::assertNull(self::urlOf($run['answered']), "$scenario: the URL row went with the rollback");
+            self::assertSame([], $run['cached'], $scenario);
+        }
+    }
+
     public function testACommittedClickCachesItsLookupAfterTheCommit(): void
     {
         $clickId = self::FIRST_CLICK;
-        $run = self::write('commit', $clickId);
+        $run = self::write('commit', $clickId, 'cached');
 
         self::assertNull($run['failure'], json_encode($run));
         self::assertSame("https://{$run['host']}/offer?s=$clickId", $run['url'], 'the URL filled from the click');
@@ -84,7 +115,7 @@ final class HeldCacheSeamIntegrationTest extends TestCase
     public function testARolledBackClickCachesNothing(): void
     {
         $clickId = self::FIRST_CLICK + 1;
-        $run = self::write('rollback', $clickId);
+        $run = self::write('rollback', $clickId, 'cached');
 
         self::assertIsString($run['failure'], 'the refused site row reaches the caller');
         self::assertStringContainsString('click_referer_site_url_id', $run['failure']);
@@ -100,7 +131,7 @@ final class HeldCacheSeamIntegrationTest extends TestCase
      */
     public function testWithoutTheHoldTheCacheNamesARowThatIsGone(): void
     {
-        $run = self::write('rollback_unheld', self::FIRST_CLICK + 2);
+        $run = self::write('rollback_unheld', self::FIRST_CLICK + 2, 'cached');
 
         self::assertIsString($run['failure']);
         self::assertNull(self::urlOf($run['answered']));
@@ -138,7 +169,7 @@ final class HeldCacheSeamIntegrationTest extends TestCase
      * @return array{host: string, url: string, answered: ?int, url_key: string, cached_by_then: ?int,
      *     cached: list<array{string, mixed}>, failure: ?string}
      */
-    private static function write(string $scenario, int $clickId): array
+    private static function write(string $scenario, int $clickId, string $lookup = 'click'): array
     {
         self::requireScratch();
         // A host of its own each run, so the lookup inserts its rows rather
@@ -147,7 +178,7 @@ final class HeldCacheSeamIntegrationTest extends TestCase
         $proc = proc_open(
             [
                 PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'log_errors=0',
-                __DIR__ . '/fixtures/held-cache-seam-runner.php', $scenario, (string) $clickId, $host,
+                __DIR__ . '/fixtures/held-cache-seam-runner.php', $scenario, (string) $clickId, $host, $lookup,
             ],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Writes one rotator click as rtr.php does: RotatorClickWriter inside
+ * Writes one rotator click as rtr.php does: MysqlClickRepository inside
  * p202WithHeldCacheWrites(), its redirect URL filled from the click's own
  * rows and looked up by LookupRepositoryFactory's location repository, which
  * caches through connect2.php's getCache() and setCache(), on the scratch
@@ -10,16 +10,21 @@
  * other suites define for themselves, and connect2.php cannot be loaded
  * alone.
  *
- * argv: <commit | rollback | rollback_unheld | lookup_fails> <click id> <host>
+ * argv: <commit | rollback | rollback_unheld | lookup_fails> <click id> <host> [<click | cached>]
  *   commit           the click is written
- *   rollback         the site row is refused after the lookup, so the click
- *                    and the URL row the lookup inserted are rolled back
+ *   rollback         the site row is refused after the lookup (a table of
+ *                    this session's without its columns shadows
+ *                    202_clicks_site), so the click and the URL row the
+ *                    lookup inserted are rolled back
  *   rollback_unheld  the same, without the hold: what the test must be able
  *                    to see
  *   lookup_fails     the lookup's own INSERT into 202_site_urls is refused
  *                    (a table of this session's shadows it): the repository
  *                    throws, and never answers the insert_id 0 a failed
  *                    INSERT leaves
+ *
+ * The lookup is rtr.php's, findOrCreateClickSiteUrl() (click), or the
+ * cached findOrCreateSiteUrl() (cached), which shows the hold at work.
  *
  * Prints JSON: the URL looked up and the id it answered, the cache writes
  * made by the time the lookup returned, every cache write, and the failure.
@@ -29,7 +34,7 @@
 
 declare(strict_types=1);
 
-[, $scenario, $clickId, $host] = $argv + [null, 'commit', '0', 'held.example'];
+[, $scenario, $clickId, $host, $lookup] = $argv + [null, 'commit', '0', 'held.example', 'click'];
 $clickId = (int) $clickId;
 
 require __DIR__ . '/../../../vendor/autoload.php';
@@ -77,12 +82,19 @@ $db = new mysqli(
 // Strict, as a MySQL 8 server is: a negative id is refused, not clamped.
 $db->query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
 $GLOBALS['db'] = $db;
-$shadowed = $scenario !== 'lookup_fails' || $db->query(
-    'CREATE TEMPORARY TABLE 202_site_urls (site_url_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,'
-    . ' site_domain_id INT UNSIGNED NOT NULL, site_url_address VARCHAR(8) NOT NULL)'
-);
+$shadowed = match ($scenario) {
+    'lookup_fails' => $db->query(
+        'CREATE TEMPORARY TABLE 202_site_urls (site_url_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,'
+        . ' site_domain_id INT UNSIGNED NOT NULL, site_url_address VARCHAR(8) NOT NULL)'
+    ),
+    // Where the lookup is what fails, nothing else may.
+    'rollback', 'rollback_unheld' => $db->query(
+        'CREATE TEMPORARY TABLE 202_clicks_site (click_id BIGINT UNSIGNED NOT NULL)'
+    ),
+    default => true,
+};
 if ($shadowed === false) {
-    fwrite(STDERR, 'could not shadow 202_site_urls: ' . $db->error . "\n");
+    fwrite(STDERR, 'could not shadow a table: ' . $db->error . "\n");
     exit(5);
 }
 $GLOBALS['whatCache'] = 'memcached';
@@ -90,42 +102,42 @@ $GLOBALS['memcacheWorking'] = true;
 $GLOBALS['memcache'] = $cache = new RecordingCache();
 $_SERVER['HTTP_HOST'] = 'tracking.example';
 
-$click = new \Prosper202\Click\ClickRecord();
-$click->clickId = $clickId;
-$click->userId = 990302;
-$click->ppcAccountId = 3;
-$click->clickCpc = '0.25';
-$click->clickPayout = '0';
-$click->clickTime = time();
-$click->clickIdPublic = '';
-$click->clickIn = 1;
-$click->clickOut = 1;
-// Refused by its unsigned column: the site row, written after the lookup.
-// Where the lookup is what fails, nothing else may.
-$click->clickRefererSiteUrlId = in_array($scenario, ['rollback', 'rollback_unheld'], true) ? -1 : 31;
-$click->clickOutboundSiteUrlId = 32;
+$click = new \Prosper202\Click\ClickRecord(
+    clickId: $clickId,
+    userId: 990302,
+    clickTime: time(),
+    ppcAccountId: 3,
+    clickCpc: '0.25',
+    recordsCampaignRows: false,
+    clickOut: 1,
+    clickRefererSiteUrlId: 31,
+    clickOutboundSiteUrlId: 32,
+    rotator: new \Prosper202\Click\RotatorRoute(7, 8, 9),
+);
 
 // rtr.php's $rtrResolveRedirect, over the same calls.
 $url = "https://$host/offer?s=[[subid]]";
 $answered = null;
 $cachedByThen = null;
 $ownerId = $click->userId;
-$resolve = function () use ($db, &$url, $clickId, $ownerId, &$answered, &$cachedByThen, $cache): int {
+$resolve = function () use ($db, &$url, $clickId, $ownerId, &$answered, &$cachedByThen, $cache, $lookup): int {
     $url = replaceTrackerPlaceholders($db, $url, $clickId, $ownerId);
-    $answered = \Prosper202\Repository\LookupRepositoryFactory::location($db)
-        ->findOrCreateSiteUrl((string) $url);
+    $locations = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+    $answered = $lookup === 'cached'
+        ? $locations->findOrCreateSiteUrl((string) $url)
+        : $locations->findOrCreateClickSiteUrl((string) $url);
     $cachedByThen = count($cache->written);
 
     return $answered;
 };
 
-$writer = new \Prosper202\Click\RotatorClickWriter(new \Prosper202\Database\Connection($db));
+$clickRepo = new \Prosper202\Click\MysqlClickRepository(new \Prosper202\Database\Connection($db));
 $failure = null;
 try {
     if ($scenario === 'rollback_unheld') {
-        $writer->write($click, 7, 8, 9, false, $resolve);
+        $clickRepo->recordClick($click, $resolve);
     } else {
-        p202WithHeldCacheWrites(static fn () => $writer->write($click, 7, 8, 9, false, $resolve));
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($click, $resolve));
     }
 } catch (\Throwable $e) {
     $failure = get_class($e) . ': ' . $e->getMessage();

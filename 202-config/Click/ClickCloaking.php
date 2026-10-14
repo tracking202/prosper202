@@ -27,8 +27,10 @@ final class ClickCloaking
 
     /**
      * The tracker's setting on a row that may have none: -1 when the row has
-     * no click_cloaking (no tracker) or it is NULL, otherwise the stored
-     * value — 0 stays 0, "off for this link".
+     * no click_cloaking (no tracker) or it is NULL, 1 and -1 as stored, and
+     * anything else 0, "off for this link", as isOn() has always read it: the
+     * TINYINT column holds whatever Get Links was posted, and record_adv.php
+     * stores this on the click, which takes -1, 0 or 1 (ClickRecord).
      *
      * record_adv.php stores this on the click for off.php to decide with, and
      * stored -1 for 0 as well (`!$row['click_cloaking']`), so a link set to
@@ -39,8 +41,15 @@ final class ClickCloaking
     public static function trackerSetting(array $row): int
     {
         $value = $row['click_cloaking'] ?? null;
+        if ($value === null) {
+            return self::CAMPAIGN_DECIDES;
+        }
 
-        return $value === null ? self::CAMPAIGN_DECIDES : (int) $value;
+        return match ((int) $value) {
+            1 => 1,
+            self::CAMPAIGN_DECIDES => self::CAMPAIGN_DECIDES,
+            default => 0,
+        };
     }
 
     /**

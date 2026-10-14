@@ -266,7 +266,8 @@ $info_sql = "
 // random digits, into that account's campaign (CLAUDE.md #27). Another
 // account's campaign now names no row, the unknown-pair path below.
 
-$info_row = memcache_mysql_fetch_assoc($db, $info_sql);
+// Not cached: one click's row, which this page and a rotator re-click rewrite.
+$info_row = memcache_mysql_fetch_assoc($db, $info_sql, 0);
 
 // Guard BEFORE dereferencing: the public click id / campaign combo may not
 // exist (expired, mistyped, or a DB hiccup). Never crash the redirect — fall
@@ -367,6 +368,7 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+// Cached: go.php?acip=… reaches here with the same URL for every click.
 $click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
@@ -374,7 +376,7 @@ $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $info_row['user_id']);
 
-$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
+$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 $update_sql = "

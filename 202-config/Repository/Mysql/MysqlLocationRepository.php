@@ -258,6 +258,12 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
         );
     }
 
+    #[\Override]
+    public function findOrCreateClickSiteUrl(string $url): int
+    {
+        return $this->findOrCreateSiteUrl($url);
+    }
+
     public static function extractDomainHost(string $url): string
     {
         $url = trim($url);

@@ -89,28 +89,17 @@ final class StoredAddressWritesTest extends TestCase
      */
     private const WRITES = [
         // ── The click path ──────────────────────────────────────────────
-        '202-config/Click/RotatorClickWriter.php' => [
-            '202_clicks_advance.ip_id' => [
-                self::STORED,
-                'the rotator\'s click: rtr.php resolves it with findOrCreateIp(p202StoredVisitorIp())',
-                ['tracking202/redirect/rtr.php'],
-            ],
-        ],
         '202-config/Click/MysqlClickRepository.php' => [
             '202_clicks_advance.ip_id' => [
                 self::STORED,
                 'the ip_id its callers resolve with findOrCreateIp(p202StoredVisitorIp())',
                 [
                     'tracking202/redirect/dl.php', 'tracking202/static/record_simple.php',
-                    'tracking202/static/record_adv.php',
+                    'tracking202/static/record_adv.php', 'tracking202/redirect/rtr.php',
                 ],
             ],
         ],
         '202-config/connect2.php' => [
-            '202_clicks_advance.ip_id' => [
-                self::DERIVED,
-                'insertClicksAdvance() has no caller; a caller would hand it the click path\'s $mysql[\'ip_id\']',
-            ],
             '202_last_ips.ip_id' => [
                 self::DERIVED,
                 'FILTER::checkLastIps(): the click\'s stored ip_id, masked under privacy',

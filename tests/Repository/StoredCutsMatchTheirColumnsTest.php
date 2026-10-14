@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Repository;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\ClickRecord;
 use Prosper202\Repository\Mysql\MysqlDeviceRepository;
 use Prosper202\Repository\Mysql\MysqlLocationRepository;
 use Prosper202\Repository\Mysql\MysqlTrackingRepository;
@@ -23,6 +24,7 @@ final class StoredCutsMatchTheirColumnsTest extends TestCase
         '202-config/Repository/Mysql/MysqlTrackingRepository.php',
         '202-config/Repository/Mysql/MysqlLocationRepository.php',
         '202-config/Repository/Mysql/MysqlDeviceRepository.php',
+        '202-config/Click/ClickRecord.php',
     ];
 
     /** cut constant => [unit, table.column it stores] */
@@ -43,6 +45,7 @@ final class StoredCutsMatchTheirColumnsTest extends TestCase
         MysqlDeviceRepository::class . '::NAME_CHARS' => ['chars', [
             '202_browsers.browser_name', '202_platforms.platform_name', '202_device_models.device_name',
         ]],
+        ClickRecord::class . '::GCLID_CHARS' => ['chars', ['202_google.gclid']],
     ];
 
     public function testEachCutIsItsColumnsWidthInItsColumnsUnit(): void
@@ -76,7 +79,7 @@ final class StoredCutsMatchTheirColumnsTest extends TestCase
                 "$file: a StoredText cut whose width is not a *_CHARS or *_BYTES constant"
             );
         }
-        self::assertGreaterThanOrEqual(7, $seen);
+        self::assertGreaterThanOrEqual(8, $seen);
     }
 
     /** @return array{string, int} the unit and width a column's type stores */
