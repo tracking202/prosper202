@@ -8,12 +8,15 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * A URL that carries one click's id or public id — the offer URL with its
- * subid, a cl.php or pci.php link — is looked up with
+ * subid, a cl.php or pci.php link, off.php?acip=…&pci=… — is looked up with
  * findOrCreateClickSiteUrl(), which leaves the cache alone: through
- * findOrCreateSiteUrl() every click wrote an entry nothing read again. The
- * URLs a click shares with others (its referer, its landing page, the link
- * it followed: off.php's is go.php?acip=… for every click) keep the cached
- * lookup.
+ * findOrCreateSiteUrl() every click wrote an entry, kept 30 days, that
+ * nothing read again. The URLs no click's id is in (the referer, the landing
+ * page, the link a click script was reached by: go.php?acip=…,
+ * offrtr.php?rpi=…, a tracker's dl.php or rtr.php link) keep the cached
+ * lookup. Whether those repeat is the link's doing (a traffic source's gclid
+ * differs per click); where they do, the cache saves both of the lookup's
+ * SELECTs.
  *
  * Which URL a call is handed is a judgement the scan cannot make, so each
  * click script's lookups are listed whole, in order, by method and argument
@@ -34,16 +37,19 @@ final class ClickSiteUrlsAreUncachedTest extends TestCase
             [self::SHARED, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
             [self::SHARED, "\$referer_query [ 'url' ]"],
             [self::SHARED, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
-            // dl.php?t202id=…: the link, the same for every click on it
+            // dl.php?t202id=…: the link the click was reached by, before it had an id
             [self::SHARED, '$outbound_site_url'],
             [self::CLICK, '$cloaking_site_url'],
             [self::CLICK, '$redirect_site_url'],
         ],
         'tracking202/redirect/off.php' => [
+            // off.php?acip=…&pci=<the click's public id>, and go.php?acip=…
+            [self::CLICK, '$outbound_site_url'],
             [self::SHARED, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
         ],
         'tracking202/redirect/offrtr.php' => [
+            // offrtr.php?rpi=… or go.php?rpi=…: no click's id
             [self::SHARED, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
             [self::SHARED, '$outbound_site_url'],

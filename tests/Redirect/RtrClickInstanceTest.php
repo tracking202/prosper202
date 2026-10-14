@@ -227,6 +227,129 @@ final class RtrClickInstanceTest extends TestCase
     }
 
     /**
+     * rtr.php?lpr= rewrites the visitor's last click rather than recording
+     * another (LastClickFromAddress: the latest by address, whichever link
+     * made it). Here the visitor's last click is an uncloaked one, with no
+     * public id (stored as 0), and the re-clicks go through a cloaked
+     * redirector: the first is handed a public id of its own, the next keeps
+     * it, and every visit is the one click, with its first keyword and the
+     * latest visit's values. The writer's own test hands recordReClick() a
+     * record it built; this is rtr.php's wiring of it, read back through
+     * cl.php (the offer URL the click now holds) and GET /clicks/{id}.
+     * 202_clicks has no key on click_id, so each visit is a row of its own
+     * there (as REPLACE made it), and which visit's campaign GET /clicks
+     * shows is its query's choice: not asserted.
+     */
+    public function testAReClickRewritesTheVisitorsLastClick(): void
+    {
+        $run = self::$run;
+        $campaign = self::create('campaigns', [
+            'aff_campaign_name' => "$run cloaked",
+            'aff_campaign_url' => "https://offer.example/$run/cloaked?s=[[subid]]&kw=[[t202kw]]&c1=[[c1]]&end",
+            'aff_campaign_cloaking' => 1,
+            'aff_campaign_payout' => '1', 'aff_network_id' => self::$ids['network'],
+        ], 'aff_campaign_id');
+        $rotator = self::create('rotators', ['name' => "$run cloaked redirector"], 'id');
+        self::createRow("rotators/$rotator/rules", [
+            'rule_name' => "$run cloaked rule",
+            'criteria' => [['type' => 'ip', 'statement' => 'is_not', 'value' => '192.0.2.1']],
+            'redirects' => [['redirect_campaign' => $campaign, 'weight' => 100, 'name' => "$run cloaked"]],
+        ], 200);
+        $tracker = (string) (self::createRow('trackers', [
+            'aff_campaign_id' => 0, 'rotator_id' => $rotator,
+            'ppc_account_id' => self::$ids['account'], 'click_cpc' => '0.1',
+        ])['tracker_id_public'] ?? '');
+        self::assertNotSame('', $tracker, 'the tracker create answered a tracker_id_public');
+
+        [$status, $headers, $body] = self::request(
+            self::$base . '/tracking202/redirect/rtr.php?' . http_build_query([
+                't202id' => self::$tracker, 't202kw' => "kw-$run", 'c1' => "first-$run",
+            ]),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(302, $status, $headers . $body);
+        self::assertSame(
+            1,
+            preg_match('~^Location: https://offer\.example/' . $run . '\?s=([1-9][0-9]*)&~mi', $headers, $plain),
+            'the uncloaked first visit goes to the offer: ' . $headers
+        );
+        $clickId = (int) $plain[1];
+
+        $second = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "x-$run", 'c1' => "second-$run"]);
+        $third = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "y-$run", 'c1' => "third-$run"]);
+
+        self::assertSame(
+            [$clickId, "kw-$run", "second-$run", $clickId, $second['pci'], "kw-$run", "third-$run"],
+            [
+                $second['click'], $second['kw'], $second['c1'],
+                $third['click'], $third['pci'], $third['kw'], $third['c1'],
+            ],
+            'each re-click is the first click, with its keyword, the visit\'s c1, and the public id handed out first'
+        );
+
+        [$status, , $answer] = self::request(self::$base . '/api/v3/clicks/' . $clickId, [
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key],
+        ]);
+        self::assertSame(200, $status, $answer);
+        $click = json_decode($answer, true)['data'] ?? null;
+        self::assertIsArray($click, $answer);
+        $actual = [];
+        foreach (['click_id_public', 'rotator_id', 'click_cloaking', 'keyword', 'c1'] as $field) {
+            $actual[$field] = array_key_exists($field, $click) ? $click[$field] : '(not served)';
+        }
+        self::assertSame([
+            'click_id_public' => (int) $second['pci'],
+            'rotator_id' => $rotator,
+            'click_cloaking' => 1,
+            'keyword' => "kw-$run",
+            'c1' => "third-$run",
+        ], $actual, $answer);
+        self::assertStringContainsString(
+            "c1=third-$run",
+            (string) ($click['outbound'] ?? ''),
+            'the latest visit\'s link'
+        );
+    }
+
+    /**
+     * A click through a cloaked rule: rtr.php answers its cl.php link, and
+     * cl.php the offer URL the click holds, whose subid is the click's id.
+     *
+     * @param array<string, string> $query
+     * @return array{pci: string, click: int, kw: string, c1: string}
+     */
+    private static function cloakedClick(array $query): array
+    {
+        [$status, $headers, $body] = self::request(
+            self::$base . '/tracking202/redirect/rtr.php?' . http_build_query($query),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(302, $status, $headers . $body);
+        self::assertSame(
+            1,
+            preg_match('~^Location: \S+/tracking202/redirect/cl\.php\?pci=([1-9][0-9]*)\b~mi', $headers, $pci),
+            'a cloaked click is sent to its cl.php link: ' . $headers
+        );
+        [$status, , $page] = self::request(self::$base . '/tracking202/redirect/cl.php?pci=' . $pci[1]);
+        self::assertSame(200, $status, $page);
+        self::assertSame(
+            1,
+            preg_match(
+                '~url=https://offer\.example/' . self::$run
+                    . '/cloaked\?s=([1-9][0-9]*)&amp;kw=([^&]*)&amp;c1=([^&]*)&amp;end~',
+                $page,
+                $offer
+            ),
+            'cl.php forwards to the offer URL the click holds: ' . $page
+        );
+
+        return [
+            'pci' => $pci[1], 'click' => (int) $offer[1],
+            'kw' => urldecode($offer[2]), 'c1' => urldecode($offer[3]),
+        ];
+    }
+
+    /**
      * @param array<int, mixed> $options
      * @return array{0: int, 1: string, 2: string} status, headers, body
      */

@@ -368,8 +368,11 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-// Cached: go.php?acip=… reaches here with the same URL for every click.
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+// Get LP Code's PHP redirect names the click (&pci=, as go.php's 202v does), a
+// new URL every click; its go.php?acip= link is the same for all of them.
+$click_outbound_site_url_id = \Prosper202\Click\ClickRequest::string($_GET, 'pci') !== ''
+    ? $locationRepo->findOrCreateClickSiteUrl($outbound_site_url)
+    : $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
