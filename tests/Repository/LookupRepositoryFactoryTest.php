@@ -56,6 +56,28 @@ final class LookupRepositoryFactoryTest extends TestCase
         self::assertSame(LookupRepositoryFactory::device($db), LookupRepositoryFactory::device($db));
     }
 
+    /**
+     * A bundle holds its own connection (Connection keeps the mysqli), so
+     * the entry is a cycle through its key: PHP's collector frees it once
+     * nothing else holds the connection, and a long-running process does
+     * not keep every connection it ever had.
+     */
+    public function testAFreedConnectionsBundleIsFreedToo(): void
+    {
+        $bundles = new \ReflectionProperty(LookupRepositoryFactory::class, 'bundles');
+        $db = mysqli_init();
+        LookupRepositoryFactory::location($db);
+        $kept = mysqli_init();
+        LookupRepositoryFactory::location($kept);
+        self::assertCount(2, $bundles->getValue());
+
+        unset($db);
+        gc_collect_cycles();
+
+        self::assertCount(1, $bundles->getValue(), 'the freed connection\'s bundle is gone');
+        self::assertSame($kept, LookupRepositoryFactory::connection($kept)->writeConnection());
+    }
+
     public function testResetBuildsAfresh(): void
     {
         $db = mysqli_init();
