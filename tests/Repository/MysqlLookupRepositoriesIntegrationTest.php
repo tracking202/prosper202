@@ -713,8 +713,19 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
      */
     public function testTheFactoryCachesThroughTheBootstrapHelpers(): void
     {
-        eval('function getCache(string $key, $default = false) {'
-            . ' return $GLOBALS["p202TestCache"][$key] ?? $default; }');
+        $root = dirname(__DIR__, 2);
+        require_once $root . '/tests/Config/fixtures/lift-function.php';
+        // connect2.php's own getCache(), which asks only a Memcache or a
+        // Memcached: one that answers an id as the string memcache hands back.
+        eval(lift_function($root . '/202-config/connect2.php', 'getCache'));
+        $GLOBALS['memcache'] = new class () extends \Memcached {
+            public function get(string $key, ?callable $cache_cb = null, int $get_flags = 0): mixed
+            {
+                $value = $GLOBALS['p202TestCache'][$key] ?? false;
+
+                return is_int($value) ? (string) $value : $value;
+            }
+        };
         eval('function setCache($key, $value, $exp = null) {'
             . ' $GLOBALS["p202TestCache"][$key] = $value;'
             . ' $GLOBALS["p202TestCacheWrites"][] = [$key, $value, $exp]; return true; }');

@@ -153,7 +153,7 @@ switch ($user_row['user_keyword_searched_or_bidded'] ?? '') {
 
 	case "searched":
 		#try to get the searched keyword
-		if (is_string($referer_query['q'] ?? null) && !empty($referer_query['q'])) {
+		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') {
 			$keyword = $referer_query['q'];
 		} elseif (!empty($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];

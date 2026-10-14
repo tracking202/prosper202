@@ -325,7 +325,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 		break;
 	case "searched":
 		#try to get the searched keyword
-		if (is_string($referer_query['q'] ?? null)) { // a referer's q[]= is not a keyword
+		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') { // a referer's q[]= is not a keyword
 			$keyword = $referer_query['q'];
 		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
