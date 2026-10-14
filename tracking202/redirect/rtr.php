@@ -65,7 +65,9 @@ $rotator_sql = "SELECT  tr.user_id,
 				FROM    202_trackers AS tr
 				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
+                    AND ca.user_id = tr.user_id
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
+                    AND lp.user_id = tr.user_id
 				LEFT JOIN 202_users AS ur ON ur.user_id = tr.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
 				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
@@ -323,16 +325,21 @@ foreach ($rule_row as $rule) {
 		               lp.landing_page_id
 				FROM 202_rotator_rules_redirects AS rur
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
+                    AND ca.user_id = '" . $user_id . "'
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
+                    AND lp.user_id = '" . $user_id . "'
 				WHERE rule_id='".$mysql['rule_id']."'"; 
 		$rule_redirects_row = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
 		$redirects = [];
 		$redirect_values = [];
 
 		foreach ($rule_redirects_row as $rule_redirect_row) {
+            if (!p202RuleRedirectIsUsable($rule_redirect_row)) {
+                continue;
+            }
 			
 			if (!empty($rule_redirect_row['redirect_campaign'])) {
-				$redirects[] = ['rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'campaign', 'aff_campaign_url' => $rule_redirect_row['aff_campaign_url'], 'aff_campaign_url_2' => $rule_redirect_row['aff_campaign_url_2'], 'aff_campaign_url_3' => $rule_redirect_row['aff_campaign_url_3'], 'aff_campaign_url_4' => $rule_redirect_row['aff_campaign_url_4'], 'aff_campaign_url_5' => $rule_redirect_row['aff_campaign_url_5'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']];
+				$redirects[] = ['rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'campaign', 'aff_campaign_rotate' => $rule_redirect_row['aff_campaign_rotate'], 'aff_campaign_url' => $rule_redirect_row['aff_campaign_url'], 'aff_campaign_url_2' => $rule_redirect_row['aff_campaign_url_2'], 'aff_campaign_url_3' => $rule_redirect_row['aff_campaign_url_3'], 'aff_campaign_url_4' => $rule_redirect_row['aff_campaign_url_4'], 'aff_campaign_url_5' => $rule_redirect_row['aff_campaign_url_5'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']];
 			} else if(!empty($rule_redirect_row['redirect_url'])) {
 				$redirects[] = ['rule_id' => $mysql['rule_id'], 'redirect_id' => $rule_redirect_row['id'], 'type' => 'url', 'redirect_url' => $rule_redirect_row['redirect_url'], 'weight' => $rule_redirect_row['weight'], 'aff_campaign_id' => $rule_redirect_row['aff_campaign_id'], 'aff_campaign_payout' => $rule_redirect_row['aff_campaign_payout'], 'aff_campaign_cloaking' => $rule_redirect_row['aff_campaign_cloaking']];
 			} else if (!empty($rule_redirect_row['redirect_lp'])) {
@@ -342,7 +349,7 @@ foreach ($rule_row as $rule) {
 			}
 		}
 
-		if (count($rule_redirects_row) > 1) {
+		if (count($redirects) > 1) {
 			$redirect_array = $redirects[getSplitTestValue($redirects)];
 		} elseif (!empty($redirects)) {
 			$redirect_array = $redirects[0];
@@ -350,7 +357,9 @@ foreach ($rule_row as $rule) {
 			$redirect_array = null;
 		}
 
-		$default = false;
+        // A rule left with no redirect passes the click on, as one that did
+        // not match does: to a later rule, or to the rotator's default.
+        $default = $redirect_array === null;
 		if ($redirect_array !== null) {
 			$redirect = redirect_process($db, $redirect_array, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
 			p202NoStore();
@@ -749,8 +758,8 @@ $rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
 
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
-$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id): int {
-	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+$rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id): int {
+	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
 	return (int) INDEXES::get_site_url_id($db, $redirect_site_url);
 };
 try {

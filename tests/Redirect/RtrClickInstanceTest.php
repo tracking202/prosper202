@@ -56,7 +56,11 @@ final class RtrClickInstanceTest extends TestCase
 
         $run = self::$run = 'rtr' . bin2hex(random_bytes(4));
         try {
-            $network = self::create('aff-networks', ['aff_network_name' => "$run network"], 'aff_network_id');
+            $network = self::$ids['network'] = self::create(
+                'aff-networks',
+                ['aff_network_name' => "$run network"],
+                'aff_network_id'
+            );
             self::$ids['campaign'] = self::create('campaigns', [
                 'aff_campaign_name' => "$run campaign",
                 'aff_campaign_url' => "https://offer.example/$run?s=[[subid]]&kw=[[t202kw]]&c1=[[c1]]&c4=[[c4]]",
@@ -175,6 +179,51 @@ final class RtrClickInstanceTest extends TestCase
         }
         self::assertSame($expected, $actual, $answer);
         self::assertEqualsWithDelta(time(), $click['click_time'], 300, 'the click is stamped now');
+    }
+
+    /**
+     * A rule's campaign is rotated as the redirector's default is: rtr.php
+     * built each rule redirect without the campaign's aff_campaign_rotate, so
+     * every click went to its first URL (and logged an undefined key).
+     */
+    public function testARuleToARotatingCampaignSendsItsUrlsInTurn(): void
+    {
+        $run = self::$run;
+        $campaign = self::create('campaigns', [
+            'aff_campaign_name' => "$run rotating",
+            'aff_campaign_url' => "https://offer.example/$run/first?s=[[subid]]",
+            'aff_campaign_url_2' => "https://offer.example/$run/second?s=[[subid]]",
+            'aff_campaign_rotate' => 1,
+            'aff_campaign_payout' => '1', 'aff_network_id' => self::$ids['network'],
+        ], 'aff_campaign_id');
+        $rotator = self::create('rotators', ['name' => "$run rotating redirector"], 'id');
+        self::createRow("rotators/$rotator/rules", [
+            'rule_name' => "$run rotating rule",
+            'criteria' => [['type' => 'ip', 'statement' => 'is_not', 'value' => '192.0.2.1']],
+            'redirects' => [['redirect_campaign' => $campaign, 'weight' => 100, 'name' => "$run rotating"]],
+        ], 200);
+        $tracker = (string) (self::createRow('trackers', [
+            'aff_campaign_id' => 0, 'rotator_id' => $rotator,
+            'ppc_account_id' => self::$ids['account'], 'click_cpc' => '0.1',
+        ])['tracker_id_public'] ?? '');
+        self::assertNotSame('', $tracker, 'the tracker create answered a tracker_id_public');
+
+        $sent = [];
+        foreach ([1, 2] as $click) {
+            [$status, $headers, $body] = self::request(
+                self::$base . '/tracking202/redirect/rtr.php?t202id=' . rawurlencode($tracker),
+                [CURLOPT_USERAGENT => self::UA]
+            );
+            self::assertSame(302, $status, "click $click: " . $headers . $body);
+            self::assertSame(1, preg_match('/^Location: (.+?)\r?$/mi', $headers, $location), $headers);
+            $sent[] = (string) preg_replace('/\?.*/', '', $location[1]);
+        }
+
+        self::assertSame(
+            ["https://offer.example/$run/first", "https://offer.example/$run/second"],
+            $sent,
+            'two clicks through the rule go to the campaign\'s two URLs in turn'
+        );
     }
 
     /**

@@ -1,6 +1,8 @@
 <?php
 
 include_once(__DIR__ . '/functions-upgrade.php');
+// p202LogFailedQuery()'s redaction, shared with the click path's error page.
+require_once __DIR__ . '/mysql-error-args.php';
 
 // Add ipAddress function
 function ipAddress($ip_address): stdClass
@@ -88,81 +90,20 @@ function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
  * where the failure shows.
  *
  * The statement and the server's message are logged with the values they
- * quote taken out: the line names the caller and the table, and some of
- * these statements carry a secret (the remember-me keys, the licence key).
+ * quote taken out (p202RedactedStatement(), p202FailedQueryMessage()).
  *
  * @param array{file?: string, line?: int} $caller
  */
 function p202LogFailedQuery(\mysqli $connection, string $sql, array $caller): void
 {
-    // Cut to whole bytes, then off a character the cut split: no mbstring
-    // here, on every failed query (the polyfill has no mb_strcut()).
-    $cut = static fn (string $text, int $bytes): string => (string) preg_replace(
-        '/(?:[\xC0-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF7][\x80-\xBF]{0,2})\z/',
-        '',
-        substr($text, 0, $bytes)
-    );
-    // A quote left open (a malformed statement, a value ending in a
-    // backslash) is taken out to the end. Where a value ends depends on the
-    // session's sql_mode: under NO_BACKSLASH_ESCAPES real_escape_string()
-    // leaves `x\` as it is, and `'x\', k='s3cr3t'` read with escapes keeps
-    // the second value. This line does not ask which mode the statement was
-    // escaped for, so it keeps only what a reading with escapes and one
-    // without both leave in, up to where they part (after an escaped quote,
-    // nothing). Possessive, so a long value is not backtracked through: PCRE
-    // gives up past about 20,000 characters.
-    $escaped = preg_replace('/\'(?:[^\'\\\\]++|\\\\.?)*+(?:\'|\z)|"(?:[^"\\\\]++|\\\\.?)*+(?:"|\z)/s', '?', $sql);
-    $literal = $escaped === null ? null : preg_replace('/\'[^\']*+(?:\'|\z)|"[^"]*+(?:"|\z)/', '?', $sql);
-    if ($escaped === null || $literal === null) {
-        $shape = '(a statement of ' . strlen($sql) . ' bytes, not shown: ' . preg_last_error_msg() . ')';
-    } else {
-        $shape = $escaped === $literal
-            ? $escaped
-            : $cut($escaped, strspn($escaped ^ $literal, "\0")) . '…';
-        $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
-    }
     error_log(sprintf(
         'MySQL query failed at %s:%d [errno %d]: %s | %s',
         $caller['file'] ?? '?',
         $caller['line'] ?? 0,
         $connection->errno,
         p202FailedQueryMessage($connection->errno, $connection->error),
-        strlen($shape) > 500 ? $cut($shape, 497) . '…' : $shape
+        p202RedactedStatement($sql)
     ));
-}
-
-/**
- * The server's message for a failed statement, without the values it quotes.
- *
- * Many messages repeat a value from the statement as sent, its own quotes
- * unescaped: 1062 `Duplicate entry 'O'Brien' for key 'uk'`, 1366 and 1292
- * under a strict sql_mode, 1064's quote of the statement from where parsing
- * stopped. So everything from the first quote to the last is taken out,
- * except in the messages known to quote nothing but names, and a duplicate
- * entry keeps the name of its key.
- */
-function p202FailedQueryMessage(int $errno, string $message): string
-{
-    // Unknown or duplicate database, table, column or key, an ambiguous
-    // column; a column refused a null, a default, a long or a truncated value;
-    // a foreign key. Not 1054 (unknown column): under ANSI_QUOTES a
-    // double-quoted value is read as a column, and its message repeats it.
-    $namesOnly = [1048, 1049, 1050, 1051, 1052, 1060, 1061, 1091, 1146, 1265, 1364, 1406, 1451, 1452];
-    if (in_array($errno, $namesOnly, true)) {
-        return $message;
-    }
-    if ($errno === 1062 && preg_match("/\\ADuplicate entry '.*' for key ('[^']*')\\z/s", $message, $m) === 1) {
-        return 'Duplicate entry ? for key ' . $m[1];
-    }
-
-    // From the first quote to the last, or to the end when there is one.
-    $first = strcspn($message, '\'"');
-    if ($first === strlen($message)) {
-        return $message;
-    }
-    $last = max((int) strrpos($message, "'"), (int) strrpos($message, '"'));
-
-    return substr($message, 0, $first) . '?' . ($last > $first ? substr($message, $last + 1) : '');
 }
 
 function salt_user_pass($user_pass): string

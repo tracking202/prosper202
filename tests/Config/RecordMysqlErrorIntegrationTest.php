@@ -169,6 +169,66 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         $db->close();
     }
 
+    /** @return array<string, array{string, string, string, string}> */
+    public static function secretsByDefinition(): array
+    {
+        $cases = [];
+        foreach (['functions-tracking202.php', 'connect2.php'] as $file) {
+            $cases["$file (the failing statement)"] = [
+                $file, 'db_sql_secret',
+                self::FAILING . ' WHERE k = ?',
+                "/^Table '[^']+\\.p202_no_such_table_for_record_mysql_error' doesn't exist\\z/",
+            ];
+            $cases["$file (a caught failure)"] = [
+                $file, 'caught_secret',
+                'UPDATE p202_probe SET k = ? WHERE id = 1',
+                "/^MySQL execute failed: Duplicate entry \\? for key 'uk' \\[errno 1062\\]\\z/",
+            ];
+            // A visitor's value inside the server's words, carrying a tag
+            // that names an errno kept as written: the tag read is the last.
+            $cases["$file (a caught failure quoting a forged errno tag)"] = [
+                $file, 'caught_forged_tag',
+                'UPDATE p202_probe SET k = ? WHERE id = 1',
+                "/^MySQL execute failed: Duplicate entry \\? for key 'uk' \\[errno 1062\\]\\z/",
+            ];
+        }
+
+        return $cases;
+    }
+
+    /**
+     * The page's log line and its row hold the statement and the server's
+     * words without the values they quote, as _mysqli_query()'s line does:
+     * both had them as sent, and the row is listed to every admin.
+     *
+     * @dataProvider secretsByDefinition
+     */
+    public function testTheValuesAFailureQuotesAreNeitherLoggedNorStored(
+        string $file,
+        string $shape,
+        string $statement,
+        string $message
+    ): void {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, $logged, $all] = self::runScenario($file, $shape, 'txn', $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        $db = self::database();
+        $row = $db->query('SELECT mysql_error_text, mysql_error_sql FROM 202_mysql_errors WHERE user_id = ' . $marker);
+        self::assertInstanceOf(\mysqli_result::class, $row, $db->error);
+        $rows = $row->fetch_all(MYSQLI_ASSOC);
+        self::assertCount(1, $rows, $all);
+        self::assertSame($statement, $rows[0]['mysql_error_sql'], $all);
+        self::assertMatchesRegularExpression($message, (string) $rows[0]['mysql_error_text'], $all);
+        self::assertStringContainsString(
+            'MySQL error: ' . $rows[0]['mysql_error_text'] . ' | SQL: ' . $statement,
+            $logged,
+            $all
+        );
+        self::assertStringNotContainsString('s3cr3t', $logged . json_encode($rows), $all);
+        $db->close();
+    }
+
     /**
      * An empty caught failure names nothing: the connection's own error is
      * recorded, as when no failure is given.

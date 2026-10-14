@@ -18,18 +18,17 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
         $db = $database->getConnection();
     }
     if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
+        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
         echo 'Database error. The webmaster has been notified.';
         die();
     }
 
     global $server_row;
 
-    // record the mysql error
-    $clean['mysql_error_text'] = $error !== null && $error !== '' ? $error : mysqli_error($db);
-
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
+    // The server's message and the statement, without the values they
+    // quote: they are logged, and listed in Account › Settings.
+    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
 
     // The session's zone, for the footer's clock; this page counts nothing in
     // it. AUTH::set_timezone() would read the account's zone from the
@@ -42,7 +41,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 
     // Rolled back first, and never a fatal in place of the page; see
     // p202RecordMysqlErrorRow().
-    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $sql, $clean): void {
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
         $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
         $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
@@ -54,7 +53,7 @@ function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
             ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
             : 0;
         $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-        $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
         $mysql['mysql_error_time'] = time();
 
         $report_sql = "INSERT     INTO  202_mysql_errors
@@ -289,6 +288,28 @@ function p202TrackingBaseUrl(): string
 function getTrackingDomain(): string
 {
     return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+}
+
+/**
+ * The account's dash email as a JavaScript string, for the footer's support
+ * widget: written between quotes as stored, an address with a ' ended the
+ * string and broke the script.
+ */
+function p202DashEmailJson(): string
+{
+    $json = json_encode(
+        (string) getDashEmail(),
+        JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if ($json === false) {
+        error_log('The dash email could not be written into the footer script: ' . json_last_error_msg());
+
+        return '""';
+    }
+
+    return $json;
 }
 
 /**
@@ -1514,8 +1535,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 255 charactesr of keyword
-        // $keyword = substr($keyword, 0, 255);
+        // Cut as the column holds it, so the lookup finds the row it stores.
+        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1574,8 +1595,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c1 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c1);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1635,8 +1656,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c2 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c2);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1696,8 +1717,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c3 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c3);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1757,8 +1778,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c4 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c4);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -2854,7 +2875,7 @@ function getDashEmail(): string|bool
     }
     $user_row = $user_result->fetch_assoc();
 
-    if ($user_row === null) {
+    if (!is_array($user_row)) {
         return false;
     }
 
@@ -2870,7 +2891,8 @@ function getDashEmail(): string|bool
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
                 $user_result = _mysqli_query($sql);
-                return ($mysql['email']);
+                // The address, not its copy escaped for the statement above.
+                return (string) $dashEmail['email'];
             }
         }
     }

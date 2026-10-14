@@ -420,7 +420,7 @@ function p202_chrome_header(array $navigation, ?object $userObj, array $userData
 				m.parentNode.insertBefore(a, m);
 			})(window, document, 'script', 'https://dna8twue3dlxq.cloudfront.net/js/profitwell.js', 'profitwell');
 			profitwell('auth_token', '574889f9aff2755319487e8819d11658');
-			profitwell('user_email', '<?php echo $readsDatabase ? getDashEmail() : ''; ?>');
+			profitwell('user_email', <?php echo $readsDatabase ? p202DashEmailJson() : '""'; ?>);
 		</script>
 
 

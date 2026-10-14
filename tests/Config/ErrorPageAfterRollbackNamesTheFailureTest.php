@@ -18,6 +18,8 @@ use Tests\Support\SourceScan;
  * back before it rethrows) names nothing a scan can see. A third argument
  * that is a literal null, false or empty string names nothing either: the
  * page reads it as "read the connection", which the rollback has cleared.
+ * A helper that rolls back and answers false instead of throwing is not
+ * seen: a call after it, outside a catch, is the author's to name.
  */
 final class ErrorPageAfterRollbackNamesTheFailureTest extends TestCase
 {

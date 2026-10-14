@@ -38,7 +38,7 @@ $connect2 = __DIR__ . '/../../../202-config/connect2.php';
 foreach (
     [
         'setCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'systemHash',
-        'replaceTrackerPlaceholders', 'replaceTokens',
+        'replaceTrackerPlaceholders', 'replaceClickPlaceholders', 'p202ClickUrlTokens', 'replaceTokens',
     ] as $name
 ) {
     eval(lift_function($connect2, $name));
@@ -124,8 +124,9 @@ $click->clickOutboundSiteUrlId = 32;
 $url = "https://$host/offer?s=[[subid]]";
 $answered = null;
 $cachedByThen = null;
-$resolve = function () use ($db, &$url, $clickId, &$answered, &$cachedByThen, $cache): int {
-    $url = replaceTrackerPlaceholders($db, $url, $clickId);
+$ownerId = $click->userId;
+$resolve = function () use ($db, &$url, $clickId, $ownerId, &$answered, &$cachedByThen, $cache): int {
+    $url = replaceTrackerPlaceholders($db, $url, $clickId, $ownerId);
     $answered = (int) INDEXES::get_site_url_id($db, $url);
     $cachedByThen = count($cache->written);
 

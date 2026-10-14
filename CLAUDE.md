@@ -353,7 +353,12 @@ Two amplifiers, both of which turned this from a blip into a breach:
   once, so a rollback left memcached naming a row that no longer existed and
   every later click to the URL stored the dangling id for 7 days (found by
   the adversarial review, reproduced live). Writes made inside a transaction
-  wait for its commit (`p202WithHeldCacheWrites()`).
+  wait for its commit (`p202WithHeldCacheWrites()`). The same lookup is a
+  SELECT and then an INSERT with no unique key behind it (the install
+  partitions `202_site_urls` by its id, and a partitioned table's unique keys
+  must include that id), so concurrent first clicks on one new URL can store
+  it twice; each click names a valid row. That is left as it is, and written
+  at both lookups.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -1307,7 +1312,14 @@ direct link they are blank now (measured: `c1=&kw=` from a click carrying
 `c1=hello`), while `rtr.php`, whose rows were still written first, filled
 them. Before moving a write, find every reader of what it writes in the same
 request; `RotatorClickWriter` resolves the rotator's URL inside the click's
-transaction, after the rows, for that reason.
+transaction, after the rows, for that reason. An endpoint that redirects
+before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
+values it holds (`replaceClickPlaceholders()`), and the read-back is for one
+whose rows are written. The read-back's first pass had the opposite fault:
+it filled tokens before reading the click, from values no caller passed, and
+`round((float) null, 2)` is a 0 that reads like a cost, so `[[cpc]]` was 0 on
+every path while `[[cpc2]]`, left for the second pass, was right
+(`ClickUrlTokensInstanceTest`).
 
 ### 33. A tagged version's upgrade step is frozen
 `upgrade_needed()` compares the stored version with the code's, and the

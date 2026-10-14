@@ -12,6 +12,8 @@
  *   fetch_fails     the SELECT answers, and fetching its row answers false
  *   cookie_check    remember_me_on_logged_out() with a cookie for the user,
  *                   the SELECT of the secret key failing
+ *   cookie_no_account, cookie_no_key
+ *                   the same cookie check with nothing failing
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RMK_USER (the user id)
  *
  * Prints what the call answered (KEY <key>, THREW <message>, ANSWERED <x>).
@@ -29,7 +31,7 @@ $functions = __DIR__ . '/../../../202-config/functions.php';
 $real = lift_function($functions, '_mysqli_query');
 eval(str_replace('function _mysqli_query(', 'function p202_real_mysqli_query(', $real));
 eval(lift_function($functions, 'p202LogFailedQuery'));
-eval(lift_function($functions, 'p202FailedQueryMessage'));
+require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
 
 // The real _mysqli_query(), with the statement this scenario fails replaced
 // by one the server refuses; and the DB singleton connect.php's config
@@ -92,7 +94,7 @@ $GLOBALS['fails'] = match ($scenario) {
 };
 $GLOBALS['fetchFails'] = $scenario === 'fetch_fails';
 
-if ($scenario === 'cookie_check' || $scenario === 'cookie_no_account') {
+if (in_array($scenario, ['cookie_check', 'cookie_no_account', 'cookie_no_key'], true)) {
     $_SESSION = [];
     $_COOKIE['remember_me'] = $userId . '-somekey-somehash';
     try {

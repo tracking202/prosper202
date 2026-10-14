@@ -193,6 +193,22 @@ final class RememberMeKeyReadIntegrationTest extends TestCase
         self::assertSame('', $logged, 'nothing is written for a cookie anyone can send');
     }
 
+    /**
+     * A cookie is signed only with a key already stored, so for an account
+     * with none it cannot verify; the check minted and stored one anyway,
+     * before verifying anything, for whoever sent the cookie.
+     */
+    public function testACookieForAnAccountWithNoKeyMintsNone(): void
+    {
+        self::account(null);
+
+        [$out, $logged] = self::runScenarioWithLog('cookie_no_key');
+
+        self::assertSame("ANSWERED false\n", $out);
+        self::assertSame('', $logged);
+        self::assertNull(self::storedKey(), 'the cookie check stored a key for an account that had none');
+    }
+
     public function testTheCookieCheckSignsNobodyInAndLeavesTheStoredKey(): void
     {
         self::account(self::STORED);
