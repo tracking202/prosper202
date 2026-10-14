@@ -152,21 +152,10 @@ final class ClickUrlTokensInstanceTest extends TestCase
     public function testASimpleLandingPageFillsItsOutboundTokensFromTheClickBeforeItIsWritten(): void
     {
         $run = self::$run;
-        // The page's script records the click and answers the outbound link,
-        // which pci.php turns into the offer URL the click was stored with.
-        [$status, $headers, $script] = self::request(
-            self::$base . '/tracking202/static/record_simple.php?' . http_build_query([
-                'lpip' => self::$landingPage, 't202id' => self::$direct, 't202kw' => "kw $run",
-                'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
-                'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
-            ]),
-            [CURLOPT_USERAGENT => self::UA]
-        );
-        self::assertSame(200, $status, $headers . $script);
-        self::assertSame(1, preg_match('/var outbound = ("[^"\n]*");/', $script, $outbound), $script);
-        [$status, $headers, $body] = self::request((string) json_decode($outbound[1]), [CURLOPT_USERAGENT => self::UA]);
-        self::assertSame(302, $status, $headers . $body);
-        $tokens = self::tokens($headers);
+        $tokens = self::simpleLandingPage([
+            't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
+            'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
+        ]);
 
         self::assertSame([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
@@ -179,6 +168,71 @@ final class ClickUrlTokensInstanceTest extends TestCase
             [$click['country_name'], $click['country_code'], $click['region_name'], $click['city_name']],
             [$tokens['country'], $tokens['country_code'], $tokens['region'], $tokens['city']]
         );
+    }
+
+    /**
+     * A keyword past its column's 150 characters, or a c1 or UTM value past
+     * its 350 bytes, is stored cut, and the offer URL carries it as stored. A
+     * redirector fills its URL from the stored click, so its keyword and c1
+     * are what was stored (it records no UTM values); the direct link and the
+     * simple landing page fill theirs before the click is written, through
+     * the cut the repository stores with.
+     */
+    public function testAValuePastItsColumnIsSentAsItIsStored(): void
+    {
+        $long = [
+            't202kw' => self::$run . str_repeat('k', 200),
+            'c1' => self::$run . str_repeat('c', 400),
+            'utm_source' => self::$run . str_repeat('u', 400),
+        ];
+        $stored = [
+            't202kw' => substr($long['t202kw'], 0, 150),
+            'c1' => substr($long['c1'], 0, 350),
+            'utm_source' => substr($long['utm_source'], 0, 350),
+        ];
+
+        $rtr = 'tracking202/redirect/rtr.php';
+        $paths = [
+            'redirector' => static fn (): array => self::click($rtr, self::$viaRotator, $long),
+            'direct link' => static fn (): array => self::click('tracking202/redirect/dl.php', self::$direct, $long),
+            'simple landing page' => static fn (): array => self::simpleLandingPage($long),
+        ];
+        $keywordIds = [];
+        foreach ($paths as $path => $click) {
+            $tokens = $click();
+            $sent = $path === 'redirector' ? array_diff_key($stored, ['utm_source' => 1]) : $stored;
+            self::assertSame($sent, array_intersect_key($tokens, $sent), $path);
+            // The keyword the click names is the one the URL carried, and the
+            // lookup finds it again: cut by the server alone, the whole value
+            // matched no row, and every such click stored the keyword anew.
+            $click = self::clickRow($tokens['subid']);
+            self::assertSame($stored['t202kw'], $click['keyword'], $path);
+            $keywordIds[] = (string) $click['keyword_id'];
+        }
+        self::assertCount(1, array_unique($keywordIds), 'one keyword row: ' . implode(', ', $keywordIds));
+    }
+
+    /**
+     * The page's script records the click and answers the outbound link,
+     * which pci.php turns into the offer URL the click was stored with.
+     *
+     * @param array<string, string> $query
+     * @return array<string, string> each token's value in the offer URL
+     */
+    private static function simpleLandingPage(array $query): array
+    {
+        [$status, $headers, $script] = self::request(
+            self::$base . '/tracking202/static/record_simple.php?' . http_build_query([
+                'lpip' => self::$landingPage, 't202id' => self::$direct,
+            ] + $query),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(200, $status, $headers . $script);
+        self::assertSame(1, preg_match('/var outbound = ("[^"\n]*");/', $script, $outbound), $script);
+        [$status, $headers, $body] = self::request((string) json_decode($outbound[1]), [CURLOPT_USERAGENT => self::UA]);
+        self::assertSame(302, $status, $headers . $body);
+
+        return self::tokens($headers);
     }
 
     /**

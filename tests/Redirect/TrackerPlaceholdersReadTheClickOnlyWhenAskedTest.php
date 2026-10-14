@@ -17,12 +17,12 @@ use PHPUnit\Framework\TestCase;
  */
 final class TrackerPlaceholdersReadTheClickOnlyWhenAskedTest extends TestCase
 {
-    /** @return array{url: string, reads: int} */
-    private static function placeholders(string $url, string $clickId): array
+    /** @return array{url?: string, error?: string, reads: int} */
+    private static function placeholders(string $url, string $clickId, string $answer = 'row'): array
     {
         $runner = __DIR__ . '/fixtures/tracker-placeholders-runner.php';
         $output = shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' '
-            . escapeshellarg($url) . ' ' . escapeshellarg($clickId) . ' 2>&1');
+            . escapeshellarg($url) . ' ' . escapeshellarg($clickId) . ' ' . escapeshellarg($answer) . ' 2>&1');
         $answer = json_decode((string) $output, true);
         self::assertIsArray($answer, (string) $output);
 
@@ -49,6 +49,22 @@ final class TrackerPlaceholdersReadTheClickOnlyWhenAskedTest extends TestCase
 
         self::assertSame(1, $answer['reads']);
         self::assertSame('https://offer.example/go?s=4215&c1=from-the-row&cpc=0.37&src=6', $answer['url']);
+    }
+
+    /** A page reading an earlier click by a subid it was sent: no such click, blank tokens. */
+    public function testNoSuchClickLeavesItsTokensBlank(): void
+    {
+        $answer = self::placeholders('https://offer.example/go?s=[[subid]]&c1=[[c1]]', '4215', 'none');
+
+        self::assertSame(['url' => 'https://offer.example/go?s=4215&c1=', 'reads' => 1], $answer);
+    }
+
+    /** A read that fails is not "no such click": it was, and every token read blank. */
+    public function testAFailedReadIsAnError(): void
+    {
+        $answer = self::placeholders('https://offer.example/go?s=[[subid]]&c1=[[c1]]', '4215', 'fails');
+
+        self::assertSame(['error' => 'Reading click 4215 for its URL tokens failed', 'reads' => 1], $answer);
     }
 
     public function testAUrlWithNoTokenReadsNothing(): void

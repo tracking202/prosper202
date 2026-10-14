@@ -1529,8 +1529,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 255 charactesr of keyword
-        // $keyword = substr($keyword, 0, 255);
+        // Cut as the column holds it, so the lookup finds the row it stores.
+        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -2869,7 +2869,7 @@ function getDashEmail(): string|bool
     }
     $user_row = $user_result->fetch_assoc();
 
-    if ($user_row === null) {
+    if (!is_array($user_row)) {
         return false;
     }
 
@@ -2885,7 +2885,8 @@ function getDashEmail(): string|bool
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
                 $user_result = _mysqli_query($sql);
-                return ($mysql['email']);
+                // The address, not its copy escaped for the statement above.
+                return (string) $dashEmail['email'];
             }
         }
     }

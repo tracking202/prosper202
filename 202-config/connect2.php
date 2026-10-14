@@ -839,7 +839,13 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '')
 		    WHERE
 				2c.click_id='" . $mysql['click_id'] . "'
 		";
-    $click_row = _mysqli_query($db, $click_sql)->fetch_assoc() ?: [];
+    $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
+    if ($click_row === false) {
+        throw new \RuntimeException('Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
+    }
+    // No such click (a page reading an earlier one by a subid it was sent):
+    // its tokens are blank, as they always were.
+    $click_row ??= [];
 
     return replaceClickPlaceholders($url, (string) $click_id, [
         'keyword' => $click_row['keyword'] ?? null,
@@ -1952,8 +1958,8 @@ class INDEXES
         if (!$db instanceof \mysqli) {
             return 0;
         }
-        // only grab the first 255 characters of keyword
-        // $keyword = substr($keyword, 0, 255);
+        // Cut as the column holds it, so the lookup finds the row it stores.
+        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
 
         $mysql['keyword'] = $db->real_escape_string($keyword);
 

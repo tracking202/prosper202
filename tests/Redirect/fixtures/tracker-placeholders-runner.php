@@ -5,13 +5,14 @@
  * of the bootstrap, against a stand-in _mysqli_query() that counts the
  * click reads and answers one row.
  *
- * argv: <url> <click id>
- * stdout: {"url": the filled URL, "reads": statements run}
+ * argv: <url> <click id> [<the read's answer: row | none | fails>]
+ * stdout: {"url": the filled URL, "reads": statements run}, or
+ *         {"error": the message thrown, "reads": …}
  */
 
 declare(strict_types=1);
 
-[, $url, $clickId] = $argv + [null, '', '0'];
+[, $url, $clickId, $answer] = $argv + [null, '', '0', 'row'];
 
 require __DIR__ . '/../../../vendor/autoload.php';
 require __DIR__ . '/../../Config/fixtures/lift-function.php';
@@ -29,9 +30,13 @@ $db = eval(<<<'PHP'
         $GLOBALS['reads']++;
 
         return new class {
-            public function fetch_assoc(): array
+            public function fetch_assoc(): array|null|false
             {
-                return ['c1' => 'from-the-row', 'click_cpc' => '0.37000', 'ppc_account_id' => '6'];
+                return match ($GLOBALS['answer']) {
+                    'none' => null,
+                    'fails' => false,
+                    default => ['c1' => 'from-the-row', 'click_cpc' => '0.37000', 'ppc_account_id' => '6'],
+                };
             }
         };
     }
@@ -49,4 +54,9 @@ $db = eval(<<<'PHP'
     };
     PHP);
 
-echo json_encode(['url' => replaceTrackerPlaceholders($db, $url, $clickId), 'reads' => $reads], JSON_THROW_ON_ERROR);
+try {
+    $out = ['url' => replaceTrackerPlaceholders($db, $url, $clickId)];
+} catch (\RuntimeException $e) {
+    $out = ['error' => $e->getMessage()];
+}
+echo json_encode($out + ['reads' => $reads], JSON_THROW_ON_ERROR);
