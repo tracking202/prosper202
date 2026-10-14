@@ -17,8 +17,11 @@ use Tests\Support\SourceScan;
  * repositories is listed with what puts it outside a transaction; a new one
  * is read for that before it is listed, and a removed one leaves the list.
  *
- * Read from tokens: `->name(` and `?->name(`, in any case. Not seen: a call
- * through a variable method name or call_user_func().
+ * Read from tokens: `->name(` and `?->name(`, in any case. It counts calls
+ * per file and does not read where they sit: a listed call moved into a
+ * transaction in the same file keeps its count and passes, which only a
+ * depth guard in Connection::transaction() will refuse. Not seen either: a
+ * call through a variable method name or call_user_func().
  */
 final class TransactionalLookupCallersTest extends TestCase
 {
