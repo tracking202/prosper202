@@ -347,7 +347,7 @@ func newClient(baseURL, apiKey string) *Client {
 		rootURL: rootURL,
 		baseURL: rootURL + "/api/v3",
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: requestTimeout, Transport: platformTransport(nil)},
 	}
 }
 

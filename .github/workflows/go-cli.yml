@@ -82,6 +82,9 @@ jobs:
           GOOS=js GOARCH=wasm go test -count=1 \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
             -run 'TestHostedRunTakesToolCallsOnly|TestMCPToolArgv|TestMCPCatalogBuilds|TestMCPToolPositionalsMatchCommands' ./cmd/
+          GOOS=js GOARCH=wasm go test -count=1 \
+            -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            -run 'TestHostedRequestsRefuseRedirectsAndWaitLess' ./internal/api/
           GOOS=js GOARCH=wasm go build -o "$RUNNER_TEMP/p202.wasm" .
           ls -l "$RUNNER_TEMP/p202.wasm"
 
