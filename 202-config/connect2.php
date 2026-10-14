@@ -17,8 +17,9 @@ require_once(__DIR__ . '/mysql-error-args.php');
  * been sent yet: a failure there loses the click, and must not lose the
  * visitor too. The lookups and the click writers report a database failure
  * as a QueryException, which ends at record_mysql_error() as a failed query
- * does, recorded with where it was thrown. Anything else is logged, with
- * nothing about it shown.
+ * does, recorded with the line outside the database layer that reached it
+ * (every failure there is thrown from the same few lines of Connection).
+ * Anything else is logged, with nothing about it shown.
  */
 function p202ClickPathUncaught(\Throwable $e): void
 {
@@ -27,8 +28,16 @@ function p202ClickPathUncaught(\Throwable $e): void
         http_response_code(500);
     }
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
-        $where = 'uncaught at ' . basename($e->getFile()) . ':' . $e->getLine();
-        record_mysql_error($GLOBALS['db'] ?? null, $where, $e->getMessage());
+        [$file, $line] = [$e->getFile(), $e->getLine()];
+        foreach ($e->getTrace() as $frame) {
+            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database|Repository)[/\\\\]~', $file) !== 1) {
+                break;
+            }
+            if (isset($frame['file'], $frame['line'])) {
+                [$file, $line] = [$frame['file'], $frame['line']];
+            }
+        }
+        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . basename($file) . ':' . $line, $e->getMessage());
     }
     error_log('Uncaught on the click path: ' . $e);
 }

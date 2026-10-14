@@ -9,6 +9,7 @@ use mysqli;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\StoredAddressIds;
 use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\Database\SchemaInstaller;
 use Prosper202\Repository\Cache\MemcacheIdCache;
 use Prosper202\Repository\Cached\CachedDeviceRepository;
@@ -241,6 +242,33 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         }
         self::assertSame(2, self::rowsIn('202_variable_sets'), 'a refused set writes nothing');
         self::assertSame(5, self::rowsIn('202_variable_sets2'));
+    }
+
+    /** @dataProvider modes */
+    public function testAVariableSetWhoseMappingIsRefusedIsNotKept(string $mode): void
+    {
+        $repo = $this->tracking($mode);
+
+        self::q('RENAME TABLE 202_variable_sets2 TO 202_variable_sets2_away');
+        try {
+            try {
+                $repo->findOrCreateVariableSet('4,5');
+                self::fail('a set whose mapping rows could not be written was answered');
+            } catch (QueryException) {
+            }
+        } finally {
+            self::q('RENAME TABLE 202_variable_sets2_away TO 202_variable_sets2');
+        }
+        self::assertSame(0, self::rowsIn('202_variable_sets'), 'the set row went with its mappings');
+
+        $set = $repo->findOrCreateVariableSet('4,5');
+        self::assertSame(
+            [[$set, '4'], [$set, '5']],
+            array_map(
+                static fn (array $r): array => [(int) $r[0], (string) $r[1]],
+                self::rows('SELECT variable_set_id, variables FROM 202_variable_sets2 ORDER BY 1, 2')
+            )
+        );
     }
 
     /** @dataProvider modes */

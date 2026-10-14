@@ -363,7 +363,11 @@ Two amplifiers, both of which turned this from a blip into a breach:
   could answer an IPv4 visitor's row, and the corrected join kept the old
   key, so every wrong id the old code had cached was still served for its 30
   days (found by review, reproduced). When a lookup's answer changes, change
-  its key subject (`ip6-id`), and pin the old key unserved in a test.
+  its key subject (`ip6-id`), and pin the old key unserved in a test. Nor
+  does it fix the same join elsewhere: Analyze › IPs and the group report
+  kept the numeric join until review found them, and on MariaDB no test
+  could tell (it happens to compare that join as text).
+  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not

@@ -5,8 +5,10 @@
  * the exception handler, in a process of its own: the handler ends the
  * request, and record_mysql_error() (a stand-in here) ends it in exit.
  *
- * argv: <query | other | other_after_output | query_after_redirect | other_after_redirect>
+ * argv: <query | query_in_repository | other | other_after_output | query_after_redirect | other_after_redirect>
  *   query                 a QueryException, as the repositories throw one
+ *   query_in_repository   one thrown inside a real repository call, whose
+ *                         call here is printed at shutdown as CALLED AT
  *   other                 any other throw, its message a detail not to show
  *   other_after_output    the same once the page has sent its headers
  *   query_after_redirect  a QueryException once Location is set and nothing
@@ -43,10 +45,30 @@ $db = (new ReflectionClass(mysqli::class))->newInstanceWithoutConstructor();
 
 register_shutdown_function(static function (): void {
     echo 'STATUS: ', var_export(http_response_code(), true), "\n";
+    if (isset($GLOBALS['calledAt'])) {
+        echo 'CALLED AT: ', $GLOBALS['calledAt'], "\n";
+    }
 });
 
 set_exception_handler('p202ClickPathUncaught');
 
+if ($scenario === 'query_in_repository') {
+    $refusing = new class () extends mysqli {
+        public function __construct()
+        {
+        }
+
+        public function prepare(string $query): mysqli_stmt|false
+        {
+            return false;
+        }
+    };
+    $keywords = new \Prosper202\Repository\Mysql\MysqlTrackingRepository(
+        new \Prosper202\Database\Connection($refusing)
+    );
+    $calledAt = __LINE__ + 1;
+    $keywords->findOrCreateKeyword('a keyword');
+}
 if (str_ends_with($scenario, '_after_redirect')) {
     header('Location: https://offer.example/');
 }

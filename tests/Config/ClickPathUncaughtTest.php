@@ -40,6 +40,27 @@ final class ClickPathUncaughtTest extends TestCase
     }
 
     /**
+     * Every database failure is thrown from the same few lines of
+     * Connection; the record names the line that called into the database
+     * layer, which says which lookup or write failed.
+     */
+    public function testTheRecordNamesTheLineThatReachedTheDatabaseLayer(): void
+    {
+        [$stdout, $stderr, $logged] = self::runHandler('query_in_repository');
+
+        self::assertMatchesRegularExpression('/^CALLED AT: (\d+)$/m', $stdout, $stdout . $logged);
+        preg_match('/^CALLED AT: (\d+)$/m', $stdout, $called);
+        self::assertStringContainsString(
+            '"sql":"uncaught at click-path-uncaught-runner.php:' . $called[1]
+                . '","error":"Failed to prepare MySQL statement',
+            $stdout,
+            $stdout . $stderr . $logged
+        );
+        self::assertStringContainsString("STATUS: 500\n", $stdout);
+        self::assertSame('', $stderr);
+    }
+
+    /**
      * dl.php sets Location and then records the click; where the server has
      * no fastcgi_finish_request() nothing is sent yet. A failure there loses
      * the click, and the visitor still goes to the offer.

@@ -28,7 +28,7 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
 
     private IdQuery $ids;
 
-    public function __construct(Connection $conn)
+    public function __construct(private Connection $conn)
     {
         $this->ids = new IdQuery($conn);
     }
@@ -117,7 +117,10 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
     /**
      * $variables is the comma-joined custom variable ids of one click. A new
      * set also gets one 202_variable_sets2 row per id, which the custom
-     * variable report joins on; without them the set is in no report.
+     * variable report joins on; without them the set is in no report, and a
+     * later lookup finds the set and writes none. So the set and its rows
+     * are one transaction. Its callers look a click's values up before the
+     * click's own transaction, which a nested begin would commit.
      */
     #[\Override]
     public function findOrCreateVariableSet(string $variables): int
@@ -134,20 +137,22 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
             return $found;
         }
 
-        $setId = $this->ids->insert(
-            'INSERT INTO 202_variable_sets SET variables = ?',
-            's',
-            [$variables]
-        );
-        foreach ($ids as $variableId) {
-            $this->ids->insertRow(
-                'INSERT INTO 202_variable_sets2 (variable_set_id, variables) VALUES (?, ?)',
-                'is',
-                [$setId, (string) $variableId]
+        return $this->conn->transaction(function () use ($variables, $ids): int {
+            $setId = $this->ids->insert(
+                'INSERT INTO 202_variable_sets SET variables = ?',
+                's',
+                [$variables]
             );
-        }
+            foreach ($ids as $variableId) {
+                $this->ids->insertRow(
+                    'INSERT INTO 202_variable_sets2 (variable_set_id, variables) VALUES (?, ?)',
+                    'is',
+                    [$setId, (string) $variableId]
+                );
+            }
 
-        return $setId;
+            return $setId;
+        });
     }
 
     #[\Override]
@@ -178,9 +183,7 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
     }
 
     /**
-     * Every id in a variable set, checked before anything is written: a set
-     * row written and then refused would be found by every later lookup,
-     * which never writes the mapping it lacks.
+     * Every id in a variable set, refused before anything is written.
      *
      * @return list<int>
      * @throws InvalidArgumentException for anything but comma-joined row ids
