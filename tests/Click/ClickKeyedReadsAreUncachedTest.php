@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Tests\Click;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\SourceScan;
 
 /**
- * A click script's read of one click's row, by its id or its public id, is
- * not cached. memcache_mysql_fetch_assoc() keeps a row three minutes under
+ * A read of one click's row, by its id or its public id, is not cached,
+ * anywhere in the served tree. memcache_mysql_fetch_assoc() keeps a row three minutes under
  * its SQL, and a click's row changes under it: a redirector re-click keeps
  * the click's public id and rewrites where it goes, so cl.php sent the
  * visitor to the offer before while the click recorded the new one
@@ -18,7 +19,8 @@ use PHPUnit\Framework\TestCase;
  * Read by the scan below: the SQL a call is handed (its variable's last
  * assignment above the call, or the string itself) names a click's id when
  * it holds click_id_public or `click_id =`/`click_id='`; such a call passes
- * 0, caching off. A call whose SQL the scan cannot find is refused by name.
+ * 0, caching off. A cached call whose SQL the scan cannot find is refused by
+ * name.
  */
 final class ClickKeyedReadsAreUncachedTest extends TestCase
 {
@@ -32,14 +34,15 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
 
     public function testEveryReadOfOneClickIsUncached(): void
     {
-        $root = dirname(__DIR__, 2);
         $found = [];
         $problems = [];
-        foreach (glob("$root/tracking202/{redirect,static}/*.php", GLOB_BRACE) ?: [] as $path) {
-            $file = substr($path, strlen($root) + 1);
-            foreach (self::reads((string) file_get_contents($path)) as [$line, $keyed, $cached]) {
+        // The whole served tree: a page that acts on a click is not always a click script.
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            foreach (self::reads($source) as [$line, $keyed, $cached]) {
                 if ($keyed === null) {
-                    $problems[] = "$file:$line: a cached read whose SQL the scan cannot find";
+                    if ($cached) {
+                        $problems[] = "$file:$line: a cached read whose SQL the scan cannot find";
+                    }
                     continue;
                 }
                 if (!$keyed) {
