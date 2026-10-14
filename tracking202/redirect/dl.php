@@ -607,17 +607,17 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 
 	// Compute site URLs
 	if ($tracker_row['user_pref_referer_data'] == 't202ref') {
-		if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
+		if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
 		} else {
-			if (isset($referer_query['url'])) {
+			if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 			} else {
 				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 			}
 		}
 	} else {
-		if (isset($referer_query['url'])) {
+		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 		} else {
 			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');

@@ -671,7 +671,7 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
-if (!empty($referer_query['url']) && is_string($referer_query['url'])) {
+if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
     $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
 } else {
     $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
