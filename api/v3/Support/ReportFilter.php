@@ -321,7 +321,7 @@ final class ReportFilter
         if ($ip !== null) {
             if ($ip['v6']) {
                 // An IPv6 address is a 202_ips row whose ip_address holds the
-                // id of its 202_ips_v6 row (MysqlLocationRepository::insertIp).
+                // id of its 202_ips_v6 row (MysqlLocationRepository::findOrCreateIp).
                 // Only an all-digit ip_address is such a reference: compared
                 // with a number, the text '2.0.1.1' reads as 2 (SELECT
                 // 2 = '2.0.1.1' is 1 on MariaDB 10.11), so it is never left

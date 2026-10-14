@@ -1021,13 +1021,15 @@ class PLATFORMS
         $ua = $detect->getUserAgent();
 
         if ($memcacheWorking) {
-            $key = md5("user-agent" . $ua . systemHash());
+            // Not "user-agent": entries under that subject name a device
+            // model found by its name alone, of whatever type clicked first.
+            $key = md5("user-agent-typed" . $ua . systemHash());
             $device_info = $memcache->get($key);
 
-            // A miss as well: an entry from before ua_device_family existed
-            // (ClickBotDetector would parse the agent again), and one from
-            // before the address verdict left the parse (no ua_only), which
-            // may hold another visitor's type 4.
+            // A miss as well: an entry without ua_device_family
+            // (ClickBotDetector would parse the agent again), or without
+            // ua_only, the mark of a parse with no address verdict in it
+            // (another visitor's type 4).
             if (! is_array($device_info)
                 || ! array_key_exists('ua_device_family', $device_info)
                 || ! array_key_exists('ua_only', $device_info)

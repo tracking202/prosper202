@@ -150,7 +150,7 @@ final class ReportDepthIntegrationTest extends TestCase
         $i['ip4'] = self::insert("INSERT INTO 202_ips SET ip_address = '203.0.113.210'");
         $packed = (string) inet_pton('2001:db8::5601');
         $i['v6'] = self::insert('INSERT INTO 202_ips_v6 SET ip_address = ' . self::str($packed));
-        // MysqlLocationRepository::insertIp: the 202_ips row of an IPv6
+        // MysqlLocationRepository::findOrCreateIp: the 202_ips row of an IPv6
         // address holds its 202_ips_v6 row's id.
         $i['ip6'] = self::insert('INSERT INTO 202_ips SET ip_address = ' . self::str((string) $i['v6']));
         // An IPv4 address that, compared as a number, reads as that id.

@@ -79,7 +79,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     {
         $GLOBALS['memcacheWorking'] = true;
         $stale = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1'];
-        $GLOBALS['memcache'] = self::cache([md5('user-agent' . self::GOOGLEBOT . 'test') => $stale]);
+        $GLOBALS['memcache'] = self::cache([md5('user-agent-typed' . self::GOOGLEBOT . 'test') => $stale]);
 
         $info = \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::GOOGLEBOT);
 
@@ -88,7 +88,7 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
             $info['ua_device_family'] ?? null,
             'an entry cached before the family existed was served as is'
         );
-        $key = md5('user-agent' . self::GOOGLEBOT . 'test');
+        $key = md5('user-agent-typed' . self::GOOGLEBOT . 'test');
         self::assertSame($info, $GLOBALS['cacheWrites'][$key] ?? null, 'the re-parsed entry replaces it');
     }
 
@@ -96,10 +96,30 @@ final class DeviceInfoCarriesUaFamilyTest extends TestCase
     {
         $GLOBALS['memcacheWorking'] = true;
         $cached = ['browser' => 1, 'platform' => 2, 'device' => 3, 'type' => '1', 'ua_device_family' => 'Other', 'ua_only' => true];
-        $GLOBALS['memcache'] = self::cache([md5('user-agent' . self::CHROME . 'test') => $cached]);
+        $GLOBALS['memcache'] = self::cache([md5('user-agent-typed' . self::CHROME . 'test') => $cached]);
 
         self::assertSame($cached, \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME));
         self::assertSame([], $GLOBALS['cacheWrites']);
+    }
+
+    /**
+     * An entry under the subject before device models were kept per type
+     * names the model of whatever type clicked first; it is not served.
+     */
+    public function testAnEntryUnderTheOldSubjectIsNotServed(): void
+    {
+        $GLOBALS['memcacheWorking'] = true;
+        $old = [
+            'browser' => 901, 'platform' => 902, 'device' => 903, 'type' => '1',
+            'ua_device_family' => 'Other', 'ua_only' => true,
+        ];
+        $GLOBALS['memcache'] = self::cache([md5('user-agent' . self::CHROME . 'test') => $old]);
+
+        $info = \PLATFORMS::get_device_info(self::db(), new \DeviceDetect(), self::CHROME);
+
+        self::assertNotSame($old, $info);
+        self::assertSame(self::$devices->findOrCreateDevice('Desktop', DeviceType::Desktop), $info['device']);
+        self::assertSame($info, $GLOBALS['cacheWrites'][md5('user-agent-typed' . self::CHROME . 'test')] ?? null);
     }
 
     private static function db(): mysqli

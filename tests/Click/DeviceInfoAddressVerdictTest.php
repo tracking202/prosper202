@@ -154,7 +154,7 @@ final class DeviceInfoAddressVerdictTest extends TestCase
 
     private static function key(): string
     {
-        return md5('user-agent' . self::CHROME . 'test');
+        return md5('user-agent-typed' . self::CHROME . 'test');
     }
 
     /** The Bot model is type 4 and the Desktop one type 1, as PLATFORMS stores them. */

@@ -22,6 +22,9 @@ declare(strict_types=1);
  *   caught_secret: a caught failure and a statement, each quoting a value
  *   caught_forged_tag: the same, the quoted value carrying an errno tag of
  *       its own ahead of the real one
+ *   uncaught: (connect2.php) a repository's QueryException that nothing
+ *       catches, ending at connect2.php's own p202ClickPathUncaught();
+ *       the repository's call is printed as CALLED AT
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it; below 2^24, and
  *       the request's address and URL are made from it, so no row an
@@ -279,6 +282,11 @@ if ($scenario === 'lookup_fails' && mysqli_query($conn, 'CREATE TEMPORARY TABLE 
     fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
     exit(5);
 }
+// And 202_keywords, for the keyword lookup the uncaught shape makes.
+if ($shape === 'uncaught' && mysqli_query($conn, 'CREATE TEMPORARY TABLE 202_keywords (unused INT)') === false) {
+    fwrite(STDERR, 'setup failed: ' . mysqli_error($conn) . "\n");
+    exit(5);
+}
 
 if ($scenario === 'txn' || $scenario === 'autocommit_off' || $scenario === 'handed') {
     // The real table (CoreTables::mysqlErrors()), and a table for the
@@ -376,6 +384,12 @@ if ($shape === 'db') {
         "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
         "MySQL execute failed: Duplicate entry 'x [errno 1048] s3cr3t-msg' for key 'uk' [errno 1062]"
     );
+} elseif ($shape === 'uncaught') {
+    eval(lift_function((string) $file, 'p202ClickPathUncaught'));
+    set_exception_handler('p202ClickPathUncaught');
+    $keywords = new \Prosper202\Repository\Mysql\MysqlTrackingRepository(new \Prosper202\Database\Connection($conn));
+    echo 'CALLED AT: ', __LINE__ + 1, "\n";
+    $keywords->findOrCreateKeyword('a keyword');
 } else {
     $conn->query($sql) or record_mysql_error($sql);
 }

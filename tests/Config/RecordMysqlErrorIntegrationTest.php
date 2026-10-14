@@ -228,6 +228,33 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         $db->close();
     }
 
+    /**
+     * A repository's failure that nothing on the click path caught, through
+     * connect2.php's own handler into the real page: recorded under the line
+     * that called the repository, with the repository's words, and with the
+     * caller's transaction ended first as for any failed query.
+     */
+    public function testAnUncaughtRepositoryFailureReachesThePageThroughTheHandler(): void
+    {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, $logged, $all] = self::runScenario('connect2.php', 'uncaught', 'txn', $marker);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        self::assertSame(1, preg_match('/^CALLED AT: (\d+)$/m', $stdout, $called), $all);
+        $db = self::database();
+        $rows = self::errorRows($db, $marker);
+        self::assertCount(1, $rows, $all);
+        $where = 'uncaught at record-mysql-error-runner.php:' . $called[1];
+        self::assertSame($where, $rows[0]['mysql_error_sql'], $all);
+        $error = (string) $rows[0]['mysql_error_text'];
+        self::assertStringStartsWith('Failed to prepare MySQL statement: ', $error, $all);
+        self::assertStringContainsString('[errno 1054]', $error, $all);
+        self::assertSame(self::requestAddress($marker), $rows[0]['ip_address'], $all);
+        self::assertSame(self::requestUrl($marker), $rows[0]['site_url_address'], $all);
+        self::assertSame(0, self::probeRows($db, $marker), "the caller's own write is not committed with it:\n$all");
+        $db->close();
+    }
+
     /** @return array<string, array{string, string, string, string}> */
     public static function secretsByDefinition(): array
     {

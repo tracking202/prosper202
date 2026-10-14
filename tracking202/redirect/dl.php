@@ -325,7 +325,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 		break;
 	case "searched":
 		#try to get the searched keyword
-		if (isset($referer_query['q'])) {
+		if (is_string($referer_query['q'] ?? null)) { // a referer's q[]= is not a keyword
 			$keyword = $referer_query['q'];
 		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
 			$keyword = (string)$_GET['OVRAW'];
@@ -366,7 +366,7 @@ switch ($tracker_row['user_keyword_searched_or_bidded']) {
 if (str_starts_with((string) $keyword, 't202var_')) {
 	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
 
-	if (isset($_GET[$t202var])) {
+	if (is_string($_GET[$t202var] ?? null)) {
 		$keyword = $_GET[$t202var];
 	}
 }
