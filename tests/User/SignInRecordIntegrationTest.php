@@ -85,6 +85,18 @@ final class SignInRecordIntegrationTest extends TestCase
         self::assertSame('198.51.100.7', self::addressOf((int) self::row()['user_last_login_ip_id']));
     }
 
+    /** A survey that could not be read (null) leaves both flags as stored. */
+    public function testFlagsNotReadStayAsStored(): void
+    {
+        $record = self::record();
+        $record->record(self::USER, '198.51.100.6', 1, 1);
+        $record->record(self::USER, '198.51.100.5', null, null);
+
+        $row = self::row();
+        self::assertSame(['1', '1'], [$row['modal_status'], $row['vip_perks_status']]);
+        self::assertSame('198.51.100.5', self::addressOf((int) $row['user_last_login_ip_id']), 'the address still is');
+    }
+
     public function testARefusedUpdateThrowsAndLeavesTheUserAsItWas(): void
     {
         self::q('DROP TRIGGER IF EXISTS p202_refuse_sign_in');

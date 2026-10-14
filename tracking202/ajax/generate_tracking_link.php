@@ -53,7 +53,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified
 	if (isset($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
-		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = 'This tracking link is not attached to any cloaking preference, are you sure you want to do this?'; }
+		if(!isset($_POST['click_cloaking'])) { $error['click_cloaking'] = 'This tracking link is not attached to any cloaking preference, are you sure you want to do this?'; }
 	}
 
 

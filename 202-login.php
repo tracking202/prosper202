@@ -118,9 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (empty($error) && $user_row) { // before the attempt is logged, so a refusal here logs as failed
 		AUTH::delete_old_auth_hash();
 
-		$survey_data = getSurveyData($user_row['install_hash']);
-		$modal_status = ($survey_data['modal'] ?? false) ? 0 : 1;
-		$vip_perks_status = ($survey_data['vip_perks'] ?? false) ? 1 : 0;
+		[$modal_status, $vip_perks_status] = SignInRecord::surveyFlags(getSurveyData($user_row['install_hash']));
 
 		try {
 			SignInRecord::on($db)->record((int) $user_row['user_id'], $login_ip, $modal_status, $vip_perks_status);

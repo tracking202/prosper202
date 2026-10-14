@@ -535,8 +535,9 @@ has "$OUT/k-dl.html" "p202-code" "in the v2 code box"
 eq "$(Q "SELECT CONCAT(aff_campaign_id,'|',text_ad_id,'|',ppc_account_id,'|',click_cpc,'|',landing_page_id) FROM 202_trackers")" "$CAMP|$AD|$ACC|0.25000|0" "the tracker row holds what was posted"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-lp.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=landingpage" \
-  --data-urlencode "landing_page_id=$LP" --data-urlencode "click_cloaking=-1" --data-urlencode "cost_type=cpa" --data-urlencode "cpa_dollars=3" --data-urlencode "cpa_cents=00"
+  --data-urlencode "landing_page_id=$LP" --data-urlencode "click_cloaking=0" --data-urlencode "cost_type=cpa" --data-urlencode "cpa_dollars=3" --data-urlencode "cpa_cents=00"
 has "$OUT/k-lp.html" "lp.example/quiz" "a landing-page tracker answers with the landing page URL"
+hasnt "$OUT/k-lp.html" "not attached to any cloaking preference" "cloaking off for the link is a preference, not a missing one"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-lpmissing.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=landingpage" --data-urlencode "landing_page_id=0"
 has "$OUT/k-lpmissing.html" "You have not selected a landing page to use." "a landing-page tracker with no page is refused in words"
