@@ -719,6 +719,10 @@ function p202ClickUrlTokens(string $clickId, array $click): array
 {
     $text = static fn (string $key): string => (string) ($click[$key] ?? '');
     $account = $text('ppc_account_id');
+    // A click with no CPA (click_cpa is NULL: not a CPA tracker) has none, and
+    // round() would make that a 0 that reads as one. Every click stores a
+    // CPC, 0 when it has no cost, so [[cpc]] stays a number.
+    $cpa = $text('cpa') === '' ? '' : round((float) $text('cpa'), 2);
     // The campaign's payout (2 places) and the click's (5) as one number.
     $payout = $text('payout');
     if (is_numeric($payout) && str_contains($payout, '.')) {
@@ -747,7 +751,7 @@ function p202ClickUrlTokens(string $clickId, array $click): array
         'city' => $text('city'),
         'cpc' => round((float) $text('cpc'), 2),
         'cpc2' => $text('cpc'),
-        'cpa' => round((float) $text('cpa'), 2),
+        'cpa' => $cpa,
         'timestamp' => time(),
         'payout' => $payout,
         'random' => mt_rand(1000000, 9999999),

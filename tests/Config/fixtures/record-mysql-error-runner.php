@@ -14,11 +14,13 @@ declare(strict_types=1);
  * that runs is the shipped body, byte for byte.
  *
  * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
- *       caught_secret> [<scenario>]
+ *       caught_secret | caught_forged_tag> [<scenario>]
  *   caught: ($db, what was being done, the failure the caller caught)
  *   caught_blank: the same with an empty failure
  *   db_sql_secret: ($db, $sql), the failing statement quoting a value
  *   caught_secret: a caught failure and a statement, each quoting a value
+ *   caught_forged_tag: the same, the quoted value carrying an errno tag of
+ *       its own ahead of the real one
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it)
  *
@@ -319,6 +321,13 @@ if ($shape === 'db') {
         $db,
         "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
         "MySQL execute failed: Duplicate entry 's3cr3t-msg' for key 'uk' [errno 1062]"
+    );
+} elseif ($shape === 'caught_forged_tag') {
+    // 1048 is one of the errnos whose message is kept as written.
+    $db->query($sql) or record_mysql_error(
+        $db,
+        "UPDATE p202_probe SET k = 's3cr3t-sql' WHERE id = 1",
+        "MySQL execute failed: Duplicate entry 'x [errno 1048] s3cr3t-msg' for key 'uk' [errno 1062]"
     );
 } else {
     $db->query($sql) or record_mysql_error($sql);

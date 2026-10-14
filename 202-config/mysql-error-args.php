@@ -190,7 +190,11 @@ if (!function_exists('p202MysqlErrorRecorded')) {
     function p202MysqlErrorRecorded(\mysqli $db, string $sql, ?string $error): array
     {
         if ($error !== null && $error !== '') {
-            $errno = preg_match('/\[errno (\d+)\]/', $error, $m) === 1 ? (int) $m[1] : 0;
+            // The tag Connection appends, so the last thing in the message:
+            // the server's words before it can quote a visitor's value, and
+            // a tag inside that value naming an errno kept as written would
+            // keep the value too. No tag there redacts everything quoted.
+            $errno = preg_match('/ \[errno (\d+)\]\z/', $error, $m) === 1 ? (int) $m[1] : 0;
             $message = $error;
         } else {
             $errno = mysqli_errno($db);

@@ -28,7 +28,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
         . 'Chrome/120.0 Safari/537.36';
     private const TOKENS = [
         'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'utm_source', 'utm_term',
-        'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'payout', 'sourceid',
+        'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout', 'sourceid',
     ];
 
     private static string $base = '';
@@ -39,6 +39,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
     private static string $direct = '';
     private static string $viaRotator = '';
     private static string $landingPage = '';
+    private static string $cpaTracker = '';
 
     public static function setUpBeforeClass(): void
     {
@@ -70,6 +71,12 @@ final class ClickUrlTokensInstanceTest extends TestCase
             self::$direct = self::tracker(['aff_campaign_id' => $campaign]);
             $rotator = self::create('rotators', ['name' => "$run redirector", 'default_campaign' => $campaign], 'id');
             self::$viaRotator = self::tracker(['aff_campaign_id' => 0, 'rotator_id' => $rotator]);
+            self::$cpaTracker = (string) (self::createRow('trackers', [
+                'aff_campaign_id' => $campaign, 'ppc_account_id' => self::$account, 'click_cpa' => '1.25',
+            ])['tracker_id_public'] ?? '');
+            if (self::$cpaTracker === '') {
+                throw new \RuntimeException('The CPA tracker create answered without a tracker_id_public.');
+            }
             self::$landingPage = (string) (self::createRow('landing-pages', [
                 'landing_page_nickname' => "$run page", 'landing_page_url' => "https://lp.example/$run",
                 'aff_campaign_id' => $campaign, 'landing_page_type' => 0,
@@ -101,7 +108,8 @@ final class ClickUrlTokensInstanceTest extends TestCase
         self::assertSame([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
             'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
-            'cpc' => '0.37', 'cpc2' => '0.37000', 'payout' => '2.75', 'sourceid' => (string) self::$account,
+            'cpc' => '0.37', 'cpc2' => '0.37000', 'cpa' => '', 'payout' => '2.75',
+            'sourceid' => (string) self::$account,
         ], array_diff_key($tokens, array_flip(['subid', 'country', 'country_code', 'region', 'city'])));
 
         // The geo tokens are what the click was stored with.
@@ -121,10 +129,24 @@ final class ClickUrlTokensInstanceTest extends TestCase
         ]);
 
         self::assertSame(
-            ['t202kw' => "kw $run", 'c1' => "c1 $run", 'cpc' => '0.37', 'cpc2' => '0.37000', 'payout' => '2.75'],
-            array_intersect_key($tokens, array_flip(['t202kw', 'c1', 'cpc', 'cpc2', 'payout']))
+            [
+                't202kw' => "kw $run", 'c1' => "c1 $run", 'cpc' => '0.37', 'cpc2' => '0.37000', 'cpa' => '',
+                'payout' => '2.75',
+            ],
+            array_intersect_key($tokens, array_flip(['t202kw', 'c1', 'cpc', 'cpc2', 'cpa', 'payout']))
         );
         self::assertSame((string) self::$account, $tokens['sourceid']);
+    }
+
+    /**
+     * [[cpa]] is the tracker's CPA, and blank where it has none (the cases
+     * above): round() made a missing one a 0 that read as a cost.
+     */
+    public function testACpaTrackerFillsItsCpa(): void
+    {
+        $tokens = self::click('tracking202/redirect/dl.php', self::$cpaTracker, []);
+
+        self::assertSame('1.25', $tokens['cpa']);
     }
 
     public function testASimpleLandingPageFillsItsOutboundTokensFromTheClickBeforeItIsWritten(): void
@@ -149,7 +171,8 @@ final class ClickUrlTokensInstanceTest extends TestCase
         self::assertSame([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
             'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
-            'cpc' => '0.37', 'cpc2' => '0.37000', 'payout' => '2.75', 'sourceid' => (string) self::$account,
+            'cpc' => '0.37', 'cpc2' => '0.37000', 'cpa' => '', 'payout' => '2.75',
+            'sourceid' => (string) self::$account,
         ], array_diff_key($tokens, array_flip(['subid', 'country', 'country_code', 'region', 'city'])));
         $click = self::clickRow($tokens['subid']);
         self::assertSame(

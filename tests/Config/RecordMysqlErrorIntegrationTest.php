@@ -184,6 +184,13 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
                 'UPDATE p202_probe SET k = ? WHERE id = 1',
                 '/^MySQL execute failed: Duplicate entry \\? \\[errno 1062\\]\\z/',
             ];
+            // A visitor's value inside the server's words, carrying a tag
+            // that names an errno kept as written: the tag read is the last.
+            $cases["$file (a caught failure quoting a forged errno tag)"] = [
+                $file, 'caught_forged_tag',
+                'UPDATE p202_probe SET k = ? WHERE id = 1',
+                '/^MySQL execute failed: Duplicate entry \\? \\[errno 1062\\]\\z/',
+            ];
         }
 
         return $cases;
