@@ -64,6 +64,11 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if(empty($_POST['ppc_account_id'])) { $error['ppc_account_id'] = 'This tracking link is not attached to any traffic source account, are you sure you want to do this?'; }
 	if((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) { $error['cpc'] = 'This tracking link does not have its CPC set, are you sure you want to do this?'; }
 
+// The form offers these three, as the API takes; the click path reads any other as the campaign's.
+if (!in_array($_POST['click_cloaking'] ?? '0', ['-1', '0', '1'], true)) {
+    die(p202_flash('bad', 'Choose the cloaking for this link: as the campaign sets it, off, or on.'));
+}
+
 	//if they do a landing page, make sure they have one
 	if (!empty($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') {
 		if (empty($_POST['landing_page_id'])) {

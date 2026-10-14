@@ -38,10 +38,13 @@ final class ClickCloakingTest extends TestCase
         yield 'the link turns it off' => [['click_cloaking' => '0', 'aff_campaign_cloaking' => '1'], false, 0];
         yield 'integers, as the API hands them' => [['click_cloaking' => 0, 'aff_campaign_cloaking' => 1], false, 0];
         yield 'no campaign setting either' => [[], false, -1];
-        // The TINYINT takes what Get Links was posted: off, as isOn() reads it,
-        // and kept as 0, which a click holds.
-        yield 'a value the form never offers' => [['click_cloaking' => '2', 'aff_campaign_cloaking' => '1'], false, 0];
-        yield 'a negative one' => [['click_cloaking' => '-2', 'aff_campaign_cloaking' => '1'], false, 0];
+        // A value the form never offers (an earlier Get Links stored a
+        // hand-built post): the campaign decides, the form's default, where
+        // it read as off and showed the offer of a campaign that cloaks.
+        yield 'a value the form never offers' => [['click_cloaking' => '2', 'aff_campaign_cloaking' => '1'], true, -1];
+        yield 'a negative one' => [['click_cloaking' => '-2', 'aff_campaign_cloaking' => '1'], true, -1];
+        yield 'one the campaign leaves off' => [['click_cloaking' => '2', 'aff_campaign_cloaking' => '0'], false, -1];
+        yield 'not a number' => [['click_cloaking' => 'on', 'aff_campaign_cloaking' => '1'], true, -1];
     }
 
     /**
@@ -57,14 +60,16 @@ final class ClickCloakingTest extends TestCase
     /**
      * The condition dl.php, lp.php, off.php and record_simple.php each spelled
      * out, run on every row a present key can hold: the helper answers the
-     * same, so moving the four onto it changed no click that had a tracker.
+     * same, so moving the four onto it changed no click that had a tracker
+     * set to one of the form's three values (a value it never offers now
+     * reads as the campaign's: rows() above).
      */
     public function testItAnswersAsTheHandWrittenConditionDidWheneverTheKeyIsThere(): void
     {
         $old = static fn (array $r): bool => ($r['click_cloaking'] == 1)
             || (($r['click_cloaking'] == -1) && ($r['aff_campaign_cloaking'] == 1))
             || ((!isset($r['click_cloaking'])) && ($r['aff_campaign_cloaking'] == 1));
-        foreach ([null, '-1', '0', '1', '2', -1, 0, 1] as $tracker) {
+        foreach ([null, '-1', '0', '1', -1, 0, 1] as $tracker) {
             foreach (['0', '1', 0, 1] as $campaign) {
                 $row = ['click_cloaking' => $tracker, 'aff_campaign_cloaking' => $campaign];
                 self::assertSame($old($row), ClickCloaking::isOn($row), var_export($row, true));

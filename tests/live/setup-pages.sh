@@ -518,6 +518,12 @@ done
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-csrf.html" --data-urlencode "token=wrong" --data-urlencode "tracker_type=0"
 eq "$LAST_CODE" "403" "generating without the token is refused"
 eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "0" "and writes nothing"
+# The click path reads a cloaking value the form never offers as the campaign's.
+ajax "$AJAX/generate_tracking_link.php" "$OUT/k-cloak.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
+  --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=directlink" \
+  --data-urlencode "click_cloaking=2" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=25"
+has "$OUT/k-cloak.html" "Choose the cloaking for this link: as the campaign sets it, off, or on." "a cloaking value the form never offers is refused in words"
+eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "0" "and writes nothing"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-dl.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=directlink" \
   --data-urlencode "landing_page_id=0" --data-urlencode "text_ad_id=$AD" --data-urlencode "click_cloaking=-1" \

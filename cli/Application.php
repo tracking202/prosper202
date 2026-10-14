@@ -224,7 +224,7 @@ class Application extends ConsoleApplication
                     'rotator_id' => 'Rotator ID',
                     'click_cpc' => 'Cost per click',
                     'click_cpa' => 'Cost per action',
-                    'click_cloaking' => 'Enable cloaking (0|1)',
+                    'click_cloaking' => 'Cloaking: -1 the campaign\'s setting (the default), 0 off, 1 on',
                 ],
                 'required' => ['aff_campaign_id'],
                 'listParams' => [

@@ -93,7 +93,7 @@ row.
 | `user_daily_email` | hour `00`-`23` in your time zone, or `""` for never | Personal settings |
 | `user_keyword_searched_or_bidded` | `searched`, `bidded` | Personal settings |
 | `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
-| `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter) | Personal settings |
+| `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter: a bid from 0 to 99.99, or the tracker's CPC for any other) | Personal settings |
 | `user_pref_privacy` | `disabled`, `eu`, `all` (see [Privacy](#privacy-user_pref_privacy) below) | Personal settings |
 | `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
 | `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
