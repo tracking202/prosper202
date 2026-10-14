@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
+Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics platform (clicks, conversions, attribution, app measurement, customer LTV) with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
 
 ## Branches: every version has its own, and master takes only finished versions
 - **All work for a new version is pull-requested into the branch named for
