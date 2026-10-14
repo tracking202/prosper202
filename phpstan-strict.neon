@@ -1,0 +1,19 @@
+# PHPStan at its strictest, over the code held to the modern-PHP standard.
+#
+# phpstan.neon.dist runs the repo's custom rules over the whole tree at
+# level 0 with a baseline; this one runs PHPStan's own checks at level max
+# over the files listed here, with no baseline and nothing ignored, so a
+# finding in them fails CI rather than joining a list. A file is added here
+# once it passes.
+parameters:
+    level: max
+    phpVersion: 80300
+    paths:
+        - 202-config/Repository
+        - 202-config/Click/StoredAddressIds.php
+    # The click bootstrap's getCache(), setCache() and systemHash(), which
+    # LookupRepositoryFactory calls: read for their signatures, not analysed.
+    scanFiles:
+        - 202-config/connect2.php
+    checkMissingOverrideMethodAttribute: true
+    reportUnmatchedIgnoredErrors: true
