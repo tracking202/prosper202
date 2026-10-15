@@ -27,6 +27,9 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
     /** A campaign the trigger below refuses a tracker on. */
     private const REFUSED_CAMPAIGN = 990082;
     private const NETWORK = 990081;
+    /** Another account, with a link of its own. */
+    private const OTHER = 990083;
+    private const THEIR_LINK = 99008399;
 
     private static string $sessions = '';
 
@@ -133,6 +136,74 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertSame($before, self::trackers(), 'the DELETE rolled back with the failed INSERT');
     }
 
+    /** @return iterable<string, array{string}> the link's public id as a format, `%d` */
+    public static function idsThatNameNoLink(): iterable
+    {
+        // MySQL compared each as a number, and read it as the link's own id.
+        yield 'letters after the id' => ['%dabc'];
+        yield 'a zero before the id' => ['0%d'];
+        yield 'a sign before the id' => ['+%d'];
+        yield 'a space before the id' => [' %d'];
+        yield 'a decimal point' => ['%d.0'];
+        yield 'an exponent' => ['%de0'];
+        // Each made a new link in the edited one's place; the last said the
+        // edited one was updated.
+        yield 'none' => [''];
+        yield 'zero' => ['0'];
+        yield 'an id no link has' => ['999999999'];
+    }
+
+    /**
+     * An edit names its link by public id, read exactly: compared as text,
+     * the id with anything MySQL drops from a number named the link, which
+     * was deleted and written again with what the form sent. Anything that
+     * is not one of the account's links is refused, and nothing is written.
+     *
+     * @dataProvider idsThatNameNoLink
+     */
+    public function testAnEditOfAnythingButOneOfTheAccountsLinksIsRefused(string $format): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $before = self::trackers();
+        self::assertCount(1, $before);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => sprintf($format, (int) $before[0]['tracker_id_public']),
+        ]);
+
+        self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
+        self::assertStringNotContainsString('t202id=', $out, 'no link for an edit that was refused');
+        self::assertSame($before, self::trackers(), 'nothing was deleted, replaced or added');
+    }
+
+    /**
+     * Another account's link, named by its own public id written exactly, is
+     * not one of this account's: the edit is refused and neither account's
+     * links change.
+     */
+    public function testAnEditOfAnotherAccountsLinkIsRefused(): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $mine = self::trackers();
+        self::assertCount(1, $mine);
+        $theirs = self::trackers(self::OTHER);
+        self::assertSame((string) self::THEIR_LINK, $theirs[0]['tracker_id_public'] ?? null);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => (string) self::THEIR_LINK,
+        ]);
+
+        self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
+        self::assertSame($theirs, self::trackers(self::OTHER), 'the other account\'s link is not deleted or replaced');
+        self::assertSame($mine, self::trackers(), 'and this account\'s are as they were');
+    }
+
     private static function cleanUp(): void
     {
         $tables = [
@@ -140,7 +211,7 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
             '202_trackers', '202_mysql_errors',
         ];
         foreach ($tables as $table) {
-            self::q("DELETE FROM $table WHERE user_id = " . self::USER);
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER . ')');
         }
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::ROLE);
@@ -171,6 +242,18 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
             'aff_network_id' => self::NETWORK, 'user_id' => $u,
             'aff_network_name' => 'Category', 'aff_network_time' => $t,
         ]);
+        $o = self::OTHER;
+        self::user($o);
+        self::row('202_aff_campaigns', [
+            'aff_campaign_id' => $o, 'user_id' => $o, 'aff_network_id' => 0,
+            'aff_campaign_name' => 'Their Offer', 'aff_campaign_url' => 'https://their.example/',
+            'aff_campaign_payout' => 1, 'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => $t,
+        ]);
+        self::row('202_trackers', [
+            'tracker_id' => $o, 'user_id' => $o, 'tracker_id_public' => self::THEIR_LINK, 'aff_campaign_id' => $o,
+            'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0, 'rotator_id' => 0,
+            'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t,
+        ]);
         foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN] as $campaign) {
             self::row('202_aff_campaigns', [
                 'aff_campaign_id' => $campaign, 'user_id' => $u, 'aff_network_id' => self::NETWORK,
@@ -180,12 +263,12 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         }
     }
 
-    /** @return list<array<string, string>> the account's trackers */
-    private static function trackers(): array
+    /** @return list<array<string, string>> the account's trackers, or another account's */
+    private static function trackers(int $user = self::USER): array
     {
         $found = self::requireScratch()->query('SELECT tracker_id, tracker_id_public, aff_campaign_id, click_cloaking'
             . ' FROM 202_trackers'
-            . ' WHERE user_id = ' . self::USER . ' ORDER BY tracker_id');
+            . ' WHERE user_id = ' . $user . ' ORDER BY tracker_id');
         self::assertInstanceOf(\mysqli_result::class, $found);
 
         return array_map(static fn (array $r): array => array_map('strval', $r), $found->fetch_all(MYSQLI_ASSOC));

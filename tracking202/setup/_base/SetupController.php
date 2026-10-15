@@ -102,7 +102,10 @@ abstract class SetupController
                     WHERE 2u.user_id = '" . $userId . "'";
         
         $userResults = $db->query($userSql);
-        $this->userData = $userResults->fetch_assoc();
+        if ($userResults === false) {
+            record_mysql_error($userSql);
+        }
+        $this->userData = p202FetchRow($userResults, $userSql) ?? [];
     }
     
     /**

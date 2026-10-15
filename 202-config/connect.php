@@ -316,7 +316,6 @@ include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-include_once(CONFIG_PATH . '/class-filterengine.php');
 
 include_once(CONFIG_PATH . '/functions-tracking202api.php');
 include_once(CONFIG_PATH . '/l10n.php');

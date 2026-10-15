@@ -10,26 +10,22 @@ use Tests\TestCase;
 /**
  * No `_mysqli_query()` is a statement on its own, its answer thrown away.
  *
- * The admin pages' _mysqli_query() (202-config/functions.php) answers false
- * when a statement fails, and until 1.9.78 it said nothing else, so a write
- * whose call stood alone failed without a trace: the remember-me sign-in
- * stored no key and still set its cookie, which every later visit refused,
- * and a failed read of the remember-me secret minted a new one over the
- * stored key, signing every remembered browser of the account out. It logs
- * each failure now (p202LogFailedQuery()), and this holds every caller to
- * looking at what it answers (CLAUDE.md #1).
+ * _mysqli_query() (functions-shared.php, on every page and on the click
+ * path) answers false when a statement fails, and until 1.9.78 the admin
+ * pages' copy said nothing else, so a write whose call stood alone failed
+ * without a trace: the remember-me sign-in stored no key and still set its
+ * cookie, which every later visit refused, and a failed read of the
+ * remember-me secret minted a new one over the stored key, signing every
+ * remembered browser of the account out. It logs each failure now
+ * (p202LogFailedQuery()), and this holds every caller to looking at what it
+ * answers (CLAUDE.md #1).
  *
- * connect2.php's own _mysqli_query() ends the request on a failure
- * (record_mysql_error()), so a call in that file needs no check of its own.
  * A call whose failure is harmless is listed in TOLERATED, by function, with
- * why; the list only shrinks. This floor sees the discarded statement only:
- * a result assigned and then never tested is not seen.
+ * why; the list only shrinks. A result that is assigned or tested is
+ * MysqliQueryResultIsTestedTest's.
  */
 final class MysqliQueryResultIsNotDiscardedTest extends TestCase
 {
-    /** Files whose calls resolve to connect2.php's _mysqli_query(), which ends the request on a failure. */
-    private const ENDS_THE_REQUEST = ['202-config/connect2.php'];
-
     /**
      * file::function => [the calls it discards, why a failure there may go
      * unanswered]. The count is held exactly: a call added beside the one
@@ -47,6 +43,11 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
             1,
             'Housekeeping: the remember-me read refuses an expired key whether or not it was deleted.',
         ],
+        '202-config/functions-tracking202.php::getDashEmail' => [
+            1,
+            'Keeps the address the service answered so the next page need not ask for it: a failure leaves it to'
+            . ' be asked for again, and this page has the address either way.',
+        ],
         '202-config/functions-tracking202.php::createPublisherIds' => [
             1,
             'Run by the installer and by the 1.9.47 upgrade rung, which is frozen (CLAUDE.md #33): a user left'
@@ -59,9 +60,6 @@ final class MysqliQueryResultIsNotDiscardedTest extends TestCase
     {
         $found = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (in_array($path, self::ENDS_THE_REQUEST, true)) {
-                continue;
-            }
             $tolerated = [];
             foreach (SourceScan::uncheckedCallStatements($source, [], ['_mysqli_query']) as $line) {
                 $function = self::functionAt($source, $line);

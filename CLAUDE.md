@@ -72,8 +72,30 @@ session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
 read with escapes the next value was kept — so the line keeps only what a
 reading with escapes and one without both leave in), and
 `MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
-away. It cannot see a result that is assigned and never tested, which is
-what the 240 calls that assign one leave to the next sweep.
+away. The next sweep read the other 81: 12 used the answer before any
+test or never read it (a failed ownership check was `->num_rows` on false,
+an \Error; a refused write set `$add_success = true`), and 17 tested it
+only to fold the failure into an answer (a failed preferences read showed
+AutoCron and MaxMind as off; a failed reset-key lookup said "no key was
+found"). `MysqliQueryResultIsTestedTest` now holds every result to a test
+for failure in the next condition that refuses there — throws, a call
+declared `never`, the legacy API's database error, the page's
+`$error[...]` — and lists each fold that remains, with the answer it gives
+and why. A bare `return` or `continue` in the failure branch is a fold: it
+hands the failure on as an answer. So is `if (_mysqli_query($sql)) { … }`
+with no `else`, which the first draft counted as tested because the call
+sat in the condition (found by review): the redirector removal nested three
+of them, and a refused second delete stopped it half way with nothing said.
+A call in a condition is tested only where the branch its false takes
+refuses (#21: naming a thing is not being guarded by it). And a refusal
+that only says so — `$error[...]`, a 'bad' flash — carries on past the
+if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
+the false it had just reported (found by review): such a branch counts
+only when nothing reads the result on the path it goes on to, after the
+if or from the top of a loop around it (#22). The test itself has to run
+whenever the assignment did: the first draft took the first appearance in
+source order, so a test inside one branch of an `if`, or in an `elseif`,
+vouched for the other branch's use of the false (found by review).
 
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died
@@ -1148,8 +1170,9 @@ cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
 where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
 another account's offer URL (found by review, measured on the old code).
 `PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
-quoted value anywhere on the click path, and `ClickPathReads` answers nothing
-for an id below 1 without asking.
+quoted value anywhere in the served tree (the setup pages and the WordPress
+plugin's calls had six more: `12abc` opened, rewrote or made a page on record
+12), and `ClickPathReads` answers nothing for an id below 1 without asking.
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
@@ -1181,6 +1204,15 @@ with the ones beside it. The same form computed the day's midnight with
 to PHP, so India and Ireland were cut hours off, and any day across a DST
 change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
 $day, $zone)`.
+
+The same re-click is the other half of this: a click id names one row per
+visit, so a read of "the click" that takes no order takes whichever visit
+the database returns first, usually the first (a re-click's offer URL
+carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
+`SingleClickReadsNameTheirVisitTest` holds every read of one click's
+`202_clicks` row to it or to a listed reason; the conversion, pixel, goal
+and install reads are listed until it is decided which visit a conversion
+credits. Only `click_id` and `user_id` are the same on every visit's row.
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a

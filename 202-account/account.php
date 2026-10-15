@@ -41,7 +41,10 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -92,18 +95,16 @@ if (isset($_POST['add_rest_api_key'])) {
 	$newKey = $postedKey !== '' ? $postedKey : bin2hex(random_bytes(32));
 	$keyUserId = (int)$_SESSION['user_id'];
 	$keyCreated = time();
-	$key_stmt = $db->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-	if ($key_stmt === false) {
-		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->bind_param('isi', $keyUserId, $newKey, $keyCreated);
-	if (!$key_stmt->execute()) {
-		$key_stmt->close();
-		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->close();
+    try {
+        $keyConn = new \Prosper202\Database\Connection($db);
+        $key_stmt = $keyConn->prepareWrite('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
+        $keyConn->bind($key_stmt, 'isi', [$keyUserId, $newKey, $keyCreated]);
+        $keyConn->execute($key_stmt);
+        $key_stmt->close();
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
 
 	if ($slack)
 		$slack->push('user_added_app_api_key', ['user' => $username]);
@@ -120,19 +121,15 @@ if (isset($_POST['remove_rest_api_key'])) {
 	$keyUserId = (int)$_SESSION['user_id'];
 	$removeKey = (string)($_POST['rest_api_key'] ?? '');
 	// scope to owner
-	$key_stmt = $db->prepare('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
-	if ($key_stmt === false) {
-		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->bind_param('si', $removeKey, $keyUserId);
-	if (!$key_stmt->execute()) {
-		$key_stmt->close();
-		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$removed = $key_stmt->affected_rows;
-	$key_stmt->close();
+    try {
+        $keyConn = new \Prosper202\Database\Connection($db);
+        $key_stmt = $keyConn->prepareWrite('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
+        $keyConn->bind($key_stmt, 'si', [$removeKey, $keyUserId]);
+        $removed = $keyConn->executeUpdate($key_stmt);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
 
 	if ($removed < 1) {
 		p202_account_flash('warn', 'That API key was not found on this account; nothing was revoked.');
@@ -215,7 +212,10 @@ if (!$canPersonal) {
 }
 
 $user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
@@ -677,21 +677,17 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
 		$passErrors['user_pass'] = 'You must enter your current password.';
 	} else {
-		$verify_stmt = $db->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
 		$stored = null;
 		$verified = false;
-		if ($verify_stmt) {
-			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
-			$verify_stmt->bind_param('i', $current_user_id);
-			if ($verify_stmt->execute()) {
-				$result = $verify_stmt->get_result();
-				if ($result !== false) {
-					$stored = $result->fetch_assoc();
-					$verified = true;
-				}
-			}
-			$verify_stmt->close();
-		}
+        try {
+            $passConn = new \Prosper202\Database\Connection($db);
+            $verify_stmt = $passConn->prepareWrite('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+            $passConn->bind($verify_stmt, 'i', [(int) ($_SESSION['user_own_id'] ?? 0)]);
+            $stored = $passConn->fetchOne($verify_stmt);
+            $verified = true;
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+            // Said below; not counted as a wrong password.
+        }
 		if (!$verified) {
 			// Could not read the stored hash: say so, and do not count it as
 			// a wrong password (it is not one).
@@ -726,16 +722,19 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	//if no user_pass errors
 	if (!$passErrors) {
 		$new_hash = hash_user_pass($newPass);
-		$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
 		$passSaved = false;
-		if ($update_stmt) {
-			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
-			$update_stmt->bind_param('si', $new_hash, $current_user_id);
-			$passSaved = $update_stmt->execute();
-			$update_stmt->close();
-		}
+        $passError = '';
+        try {
+            $passConn = new \Prosper202\Database\Connection($db);
+            $update_stmt = $passConn->prepareWrite('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
+            $passConn->bind($update_stmt, 'si', [$new_hash, (int) ($_SESSION['user_own_id'] ?? 0)]);
+            $passConn->executeUpdate($update_stmt);
+            $passSaved = true;
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            $passError = p202FailedQueryMessage(0, $e->getMessage());
+        }
 		if (!$passSaved) {
-			prosper_log('account', 'Failed to update password: ' . $db->error);
+            prosper_log('account', 'Failed to update password: ' . $passError);
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
 		} else {
 			p202_account_flash('ok', 'Your password is changed.');
@@ -750,7 +749,10 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 /** The stored value, or what the person typed on a refused submit. */

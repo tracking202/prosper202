@@ -18,7 +18,11 @@ if ($submitted_key === '') {
 } else {
 	$user_sql = "SELECT * FROM 202_users WHERE user_pass_key='" . $mysql['user_pass_key'] . "'";
 	$user_result = _mysqli_query($db, $user_sql);
-	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+    if ($user_result === false) {
+        // Read as no row, a good key was answered "no key was found".
+        record_mysql_error($db, $user_sql);
+    }
+    $user_row = p202FetchRow($user_result, $user_sql);
 }
 
 if (!$user_row) {

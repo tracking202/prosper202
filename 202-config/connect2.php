@@ -753,8 +753,8 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         return replaceClickPlaceholders($url, (string) $click_id, []);
     }
     $mysql['click_id'] = (string) $tokenClickId;
-    // The click's latest visit: a re-click adds a row.
-    $latestVisit = \Prosper202\Click\LatestVisit::of($mysql['click_id']);
+    // The click's latest visit: a re-click adds a row. Named in the statement
+    // itself, so SingleClickReadsNameTheirVisitTest can see it.
     $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
@@ -778,7 +778,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 		        2lc.country_code,
 		        2lr.region_name,
                 2u.user_public_publisher_id,
-		        2lc2.city_name FROM " . $latestVisit . " AS 2c 
+		        2lc2.city_name FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c 
             	LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`) 
             	LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2ct.click_id = 2c.click_id) 
             	LEFT OUTER JOIN 202_tracking_c1 AS 2tc1 ON (2ct.c1_id = 2tc1.c1_id) 
@@ -807,10 +807,14 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 		";
     // _mysqli_query() answers false for a failed statement, and the fetch
     // false for a failed read: either is recorded, and the error page.
+    $failed = 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed';
     $click_result = _mysqli_query($db, $click_sql);
-    $click_row = $click_result === false ? false : $click_result->fetch_assoc();
+    if ($click_result === false) {
+        record_mysql_error($db, $click_sql, $failed);
+    }
+    $click_row = $click_result->fetch_assoc();
     if ($click_row === false) {
-        record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
+        record_mysql_error($db, $click_sql, $failed);
     }
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
@@ -1631,23 +1635,6 @@ function setDirtyHour($mysql)
 function isSSL(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || intval($_SERVER['SERVER_PORT']) == intval(getservbyname('https', 'tcp'));
-}
-
-function getPayout(&$mysql)
-{
-    global $db;
-
-    $sql = "
-    SELECT 
-        2c.click_payout
-    FROM `202_clicks` AS 2c    
-    WHERE 2c.`click_id` = {$mysql['click_id']}
-    LIMIT 1";
-
-    $sql_result = $db->query($sql);
-    $sql_row = $sql_result->fetch_assoc();
-
-    $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
 }
 
 /** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */

@@ -30,7 +30,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 $rotateUrlCampaignsSql = "SELECT * FROM 202_aff_campaigns WHERE user_id = '" . $mysql['user_id'] . "' AND aff_campaign_deleted = 0 AND aff_campaign_rotate = 1";
 $rotateUrlCampaignsResults = $db->query($rotateUrlCampaignsSql);
@@ -59,25 +62,11 @@ if ($goalPost) {
 	if (!AUTH::check_csrf_token()) {
 		$goalErrors['goal'] = 'Invalid or expired form token. Please reload the page and try again.';
 	} else {
-		$goalOwnerStmt = $db->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
-		$goalOwner = null;
-		if ($goalOwnerStmt !== false) {
-			$goalSessionUser = (int) $_SESSION['user_id'];
-			$goalOwnerStmt->bind_param('ii', $goalCampaignId, $goalSessionUser);
-			if (!$goalOwnerStmt->execute()) {
-				$goalOwnerStmt->close();
-				throw new \RuntimeException('aff_campaigns: the campaign owner lookup failed');
-			}
-			$goalOwnerResult = $goalOwnerStmt->get_result();
-			if ($goalOwnerResult === false) {
-				$goalOwnerStmt->close();
-				throw new \RuntimeException('aff_campaigns: the campaign owner lookup returned no result');
-			}
-			$goalOwner = $goalOwnerResult->fetch_assoc();
-			$goalOwnerStmt->close();
-		} else {
-			throw new \RuntimeException('aff_campaigns: the campaign owner lookup could not be prepared');
-		}
+        // A failed read throws (QueryException), and the page's handler records it.
+        $goalOwnerConn = new \Prosper202\Database\Connection($db);
+        $goalOwnerStmt = $goalOwnerConn->prepareWrite('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
+        $goalOwnerConn->bind($goalOwnerStmt, 'ii', [$goalCampaignId, (int) $_SESSION['user_id']]);
+        $goalOwner = $goalOwnerConn->fetchOne($goalOwnerStmt);
 		if ($goalOwner === null) {
 			$goalErrors['goal'] = 'Goals belong to a campaign of yours: open the campaign to edit its goals.';
 		} elseif ($goalAction === 'save') {

@@ -16,7 +16,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
@@ -127,6 +130,63 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 		die(p202_flash('bad', 'That campaign belongs to a different category.'));
 	}
 
+    // The link an edit replaces, by its public id read exactly and compared as
+    // a number: compared as text, `12abc` named link 12, which was deleted and
+    // written again from this form. An edit of anything but one of this
+    // account's links is refused; it made a new link and said the edited one
+    // was updated.
+    $get_tracker_result = null;
+    $get_tracker_row = null;
+    if (isset($_POST['edit_tracker']) && $_POST['edit_tracker']) {
+        $editTrackerId = \Prosper202\Click\PublicId::parse($_POST['tracker_id'] ?? null);
+        if ($editTrackerId === null) {
+            die(p202_flash('bad', 'That tracking link is not one of yours, or it was removed.'));
+        }
+        // The tracker's names, for the Slack notices below: each only when
+        // it is the tracker's own account's (CLAUDE.md #27). A tracker saved
+        // before 229df10 can name another account's campaign, source or
+        // redirector; that name is not this account's to announce.
+        $get_tracker_sql = "SELECT
+							tracker_id, 
+							tracker_id_public,
+							202_trackers.aff_campaign_id,
+							text_ad_id,
+							ppc_account_id,
+							aff_network_name,
+							aff_campaign_name,
+							landing_page_nickname,
+							202_trackers.landing_page_id,
+							rotator_id,
+							text_ad_name,
+							ppc_network_name,
+							ppc_account_name,
+							click_cloaking,
+							click_cpc,
+							click_cpa,
+							name 
+							FROM 202_trackers
+							LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id)
+							LEFT JOIN 202_aff_networks USING (aff_network_id, user_id)
+							LEFT JOIN 202_text_ads USING (text_ad_id, user_id)
+							LEFT JOIN 202_ppc_accounts USING (ppc_account_id, user_id)
+							LEFT JOIN 202_ppc_networks USING (ppc_network_id, user_id)
+							LEFT JOIN 202_landing_pages ON (202_trackers.landing_page_id = 202_landing_pages.landing_page_id AND 202_landing_pages.user_id = 202_trackers.user_id) 
+							LEFT JOIN 202_rotators ON (202_trackers.rotator_id = 202_rotators.id AND 202_rotators.user_id = 202_trackers.user_id)
+							WHERE 202_trackers.tracker_id_public = " . $editTrackerId . " AND 202_trackers.user_id = '".$mysql['user_id']."'";
+
+        $get_tracker_result = $db->query($get_tracker_sql);
+        if (!$get_tracker_result) {
+            record_mysql_error($get_tracker_sql);
+        }
+        $get_tracker_row = $get_tracker_result->fetch_assoc();
+        if ($get_tracker_row === false) {
+            record_mysql_error($get_tracker_sql);
+        }
+        if ($get_tracker_row === null) {
+            die(p202_flash('bad', 'That tracking link is not one of yours, or it was removed.'));
+        }
+    }
+
 //echo the warnings: the link is still made
 	foreach (['text_ad_id', 'ppc_network_id', 'ppc_account_id', 'cpc', 'click_cloaking', 'cloaking_url'] as $warning) {
 		if (isset($error[$warning])) {
@@ -160,48 +220,6 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	$mysql['landing_page_id'] = $db->real_escape_string((string)($landing_page_row['landing_page_id'] ?? '0'));
 	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? '0'));
 	$mysql['tracker_time'] = time();
-	
-
-	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id']) {
-		$mysql['tracker_id_public'] = $db->real_escape_string((string)$_POST['tracker_id']);
-		// The tracker's names, for the Slack notices below: each only when
-		// it is the tracker's own account's (CLAUDE.md #27). A tracker saved
-		// before 229df10 can name another account's campaign, source or
-		// redirector; that name is not this account's to announce.
-		$get_tracker_sql = "SELECT
-							tracker_id, 
-							tracker_id_public,
-							202_trackers.aff_campaign_id,
-							text_ad_id,
-							ppc_account_id,
-							aff_network_name,
-							aff_campaign_name,
-							landing_page_nickname,
-							202_trackers.landing_page_id,
-							rotator_id,
-							text_ad_name,
-							ppc_network_name,
-							ppc_account_name,
-							click_cloaking,
-							click_cpc,
-							click_cpa,
-							name 
-							FROM 202_trackers
-							LEFT JOIN 202_aff_campaigns USING (aff_campaign_id, user_id)
-							LEFT JOIN 202_aff_networks USING (aff_network_id, user_id)
-							LEFT JOIN 202_text_ads USING (text_ad_id, user_id)
-							LEFT JOIN 202_ppc_accounts USING (ppc_account_id, user_id)
-							LEFT JOIN 202_ppc_networks USING (ppc_network_id, user_id)
-							LEFT JOIN 202_landing_pages ON (202_trackers.landing_page_id = 202_landing_pages.landing_page_id AND 202_landing_pages.user_id = 202_trackers.user_id) 
-							LEFT JOIN 202_rotators ON (202_trackers.rotator_id = 202_rotators.id AND 202_rotators.user_id = 202_trackers.user_id)
-							WHERE 202_trackers.tracker_id_public = '".$mysql['tracker_id_public']."' AND 202_trackers.user_id = '".$mysql['user_id']."'";
-		
-		$get_tracker_result = $db->query($get_tracker_sql);
-		if (!$get_tracker_result) {
-			record_mysql_error($get_tracker_sql);
-		}
-		$get_tracker_row = $get_tracker_result->fetch_assoc();
-	}
 
     // The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
     // implemented as delete-then-recreate, and with the DELETE outside the
@@ -213,10 +231,8 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     // the transaction back and exits (it is `never`); a failed begin or commit is
     // Connection's QueryException, caught below, after its rollback.
 
-    // Set only for a cost type and for an edit, respectively.
+    // Set only for a cost type.
     $cost_sql ??= '';
-    $get_tracker_result ??= null;
-    $get_tracker_row ??= null;
     try {
         $trackerConn = new \Prosper202\Database\Connection($db);
         [$tracker_row, $tracker_id_public] = $trackerConn->transaction(static function () use (
