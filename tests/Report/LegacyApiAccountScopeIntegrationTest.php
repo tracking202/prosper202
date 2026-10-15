@@ -84,13 +84,17 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
     {
         $clicks = implode(', ', [self::OWN_CLICK, self::FOREIGN_CLICK, self::BARE_CLICK]);
         foreach ([self::USER, self::OTHER] as $user) {
-            foreach (['202_users_pref', '202_users', '202_aff_campaigns', '202_landing_pages', '202_text_ads', '202_clicks'] as $table) {
+            foreach (['202_users_pref', '202_users', '202_aff_campaigns', '202_aff_networks', '202_landing_pages', '202_text_ads', '202_clicks'] as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
         foreach (['202_clicks_advance', '202_clicks_record', '202_clicks_site'] as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
+        $places = implode(', ', [self::USER, self::OTHER]);
+        self::q("DELETE FROM 202_locations_country WHERE country_id IN ($places)");
+        self::q("DELETE FROM 202_locations_city WHERE city_id IN ($places)");
+        self::q("DELETE FROM 202_locations_isp WHERE isp_id IN ($places)");
     }
 
     private static function seed(): void
@@ -110,12 +114,24 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
             self::row('202_landing_pages', ['landing_page_id' => $id, 'landing_page_id_public' => $id, 'user_id' => $user, 'aff_campaign_id' => $campaign,
                 'landing_page_nickname' => "$who Page", 'landing_page_url' => 'https://page.example/' . $id, 'landing_page_time' => $t]);
         }
-        // A's clicks: on its own ad and page, on OTHER's, and on neither.
+        foreach ([[self::USER, 'My Network'], [self::OTHER, 'Their Network']] as [$user, $network]) {
+            self::row('202_aff_networks', [
+                'aff_network_id' => $user, 'user_id' => $user, 'aff_network_name' => $network, 'aff_network_time' => $t,
+            ]);
+        }
+        // Two places, so each location report has more than one row.
+        foreach ([[self::USER, 'Here'], [self::OTHER, 'There']] as [$place, $at]) {
+            self::row('202_locations_country', ['country_id' => $place, 'country_code' => 'ZZ', 'country_name' => $at]);
+            self::row('202_locations_city', ['city_id' => $place, 'main_country_id' => $place, 'city_name' => $at]);
+            self::row('202_locations_isp', ['isp_id' => $place, 'isp_name' => "$at ISP"]);
+        }
+        // A's clicks: on its own ad and page, on OTHER's, and on neither;
+        // from here, there, and nowhere.
         foreach ([[self::OWN_CLICK, self::USER], [self::FOREIGN_CLICK, self::OTHER], [self::BARE_CLICK, 0]] as [$click, $named]) {
             self::row('202_clicks', ['click_id' => $click, 'user_id' => self::USER, 'aff_campaign_id' => $named, 'ppc_account_id' => 0,
                 'landing_page_id' => $named, 'click_cpc' => 0.1, 'click_payout' => 0, 'click_time' => $t]);
-            self::row('202_clicks_advance', ['click_id' => $click, 'text_ad_id' => $named, 'ip_id' => 0, 'country_id' => 0, 'region_id' => 0,
-                'city_id' => 0, 'platform_id' => 0, 'browser_id' => 0, 'device_id' => 0]);
+            self::row('202_clicks_advance', ['click_id' => $click, 'text_ad_id' => $named, 'ip_id' => 0, 'country_id' => $named, 'region_id' => 0,
+                'city_id' => $named, 'platform_id' => 0, 'browser_id' => 0, 'device_id' => 0, 'isp_id' => $named]);
             self::row('202_clicks_record', ['click_id' => $click, 'click_id_public' => $click, 'click_out' => 1]);
         }
     }
@@ -198,6 +214,61 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
             ['msg' => 'Database error', 'error' => true, 'status' => 500],
             self::read("api-$version:refused", true)
         );
+    }
+
+    /** @return iterable<string, array{string, string, string, list<string|null>}> */
+    public static function locationReports(): iterable
+    {
+        foreach (['v1', 'v2'] as $version) {
+            yield "$version countries" => [$version, 'countries', 'country_name', [null, 'Here', 'There']];
+            yield "$version cities" => [$version, 'cities', 'city_name', [null, 'Here', 'There']];
+            // The carriers report leaves out clicks with no ISP.
+            yield "$version carriers" => [$version, 'carriers', 'isp_name', ['Here ISP', 'There ISP']];
+        }
+    }
+
+    /**
+     * Each row of a location report, named as the report was asked for. The
+     * row loop renamed the report's table to its answer's name, so the second
+     * row's statement joined nothing (a 500); a report with no rows answered
+     * under the table's name (locations_isp).
+     *
+     * @dataProvider locationReports
+     * @param list<string|null> $names
+     */
+    public function testALocationReportAnswersEveryRowUnderItsOwnName(
+        string $version,
+        string $report,
+        string $column,
+        array $names
+    ): void {
+        $result = self::read("api-$version:$report");
+        self::assertArrayHasKey($report, $result, json_encode($result));
+        $found = array_column($result[$report], $column);
+        sort($found);
+        self::assertSame($names, $found, json_encode($result));
+        self::assertEquals(count($names), $result['totals']['clicks'] ?? null);
+    }
+
+    /**
+     * A campaign filter, through runReports() as each endpoint calls it: v2
+     * hands the user id as an int, which the campaign lookup refused (a 500).
+     *
+     * @dataProvider versions
+     */
+    public function testACampaignFilterAnswersOnBothVersions(string $version): void
+    {
+        $report = self::read("api-$version:cid=" . self::USER);
+        self::assertSame(['My Ad'], array_column($report['text_ads'] ?? [], 'text_ad_name'), json_encode($report));
+        self::assertEquals(1, $report['totals']['clicks'] ?? null);
+    }
+
+    /** v2's categories, as categories/index.php asks for them (an int user id, which was a 500). */
+    public function testV2ListsTheAccountsCategories(): void
+    {
+        $listed = self::read('api-v2:categories');
+        $names = array_column($listed['categories'] ?? [], 'category_name');
+        self::assertSame(['My Network'], $names, json_encode($listed));
     }
 
     public function testTheWordPressFeedNamesNoOtherAccountsCampaign(): void

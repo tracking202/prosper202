@@ -67,7 +67,8 @@ function showCategories($db, $vars, $user = null): void {
 
 function listCategories($db,$user): void {
     $cat = ['categories' => []];
-    $mysql['user_id'] = $db->real_escape_string($user);
+    // categories/index.php hands the user id as an int.
+    $mysql['user_id'] = $db->real_escape_string((string) $user);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
     $aff_network_result = $db->query($aff_network_sql) or die();
   //  echo $aff_network_sql;

@@ -68,15 +68,18 @@ function runReports($db, $vars, $user, $timezone, string $version): array
             }
         }
 
-        if ($vars['date_from'] != null || $vars['date_to'] != null) {
-            if (!validateDate($vars['date_from']) || !validateDate($vars['date_to'])) {
+        // Either date may be left out; both out is today.
+        $dateFromSent = $vars['date_from'] ?? null;
+        $dateToSent = $vars['date_to'] ?? null;
+        if ($dateFromSent != null || $dateToSent != null) {
+            if (!validateDate($dateFromSent) || !validateDate($dateToSent)) {
                 $data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
                 $json = json_encode($data, JSON_UNESCAPED_SLASHES);
                 print_r(pretty_json($json));
                 die();
             }
 
-            $timestamps = getTimestamp($vars['date_from'], $vars['date_to']);
+            $timestamps = getTimestamp($dateFromSent, $dateToSent);
             $date_from = $timestamps['from'];
             $date_to = $timestamps['to'];
         } else {
@@ -476,18 +479,6 @@ function reportQuery(
                 }
             }
 
-            if ($type == "locations_country") {
-                $type = "countries";
-            }
-
-            if ($type == "locations_city") {
-                $type = "cities";
-            }
-
-            if ($type == "locations_isp") {
-                $type = "carriers";
-            }
-
             if ($type == "landing_pages") {
                 if (!$report_row['landing_page_nickname']) {
                     $report_row[$name] = "[direct link]";
@@ -530,16 +521,24 @@ function reportQuery(
     } else {
         $totals = [];
     }
-    if ($type == 'wtkeywords') {
-        $type = 'keywords';
-    }
-    return ["date_range" => $date, $type => $data, "totals" => $totals];
+    // Named as the report was asked for, here and not in the row loop:
+    // every row's statement reads $type as the table to join.
+    $key = match ($type) {
+        'locations_country' => 'countries',
+        'locations_city' => 'cities',
+        'locations_isp' => 'carriers',
+        'wtkeywords' => 'keywords',
+        default => $type,
+    };
+
+    return ["date_range" => $date, $key => $data, "totals" => $totals];
 }
 
 function getCampaignID($db, $campaign, $user): bool
 {
-    $mysql['user_id'] = $db->real_escape_string($user);
-    $mysql['campaign_id'] = $db->real_escape_string($campaign);
+    // v2 hands the user id as an int, and cid can arrive as a list (cid[]=1).
+    $mysql['user_id'] = $db->real_escape_string((string) $user);
+    $mysql['campaign_id'] = $db->real_escape_string(is_scalar($campaign) ? (string) $campaign : '');
     $key_sql = "SELECT 	*
 				FROM   	`202_aff_campaigns` 
 				WHERE  	`user_id`='" . $mysql['user_id'] . "' AND `aff_campaign_id`='" . $mysql['campaign_id'] . "'";
@@ -557,6 +556,10 @@ function getCampaignID($db, $campaign, $user): bool
 
 function validateDate($date, $format = 'm/d/Y'): bool
 {
+    // A date not sent (date_from without date_to) or sent as a list.
+    if (!is_string($date)) {
+        return false;
+    }
     $d = DateTime::createFromFormat($format, $date);
     return $d && $d->format($format) == $date;
 }
