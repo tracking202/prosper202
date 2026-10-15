@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
-// Goes on when the database is out of reach: it answers without the database.
-$p202OutageFallback = true;
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 require_once substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php';
 
@@ -34,9 +32,6 @@ if ($varsParam !== null) {
 // account's. The row carries the campaign's id, which a rotating campaign's
 // URL rotation is kept under: without it every such campaign turned one
 // shared rotation.
-if (!$db instanceof \mysqli) {
-    die();
-}
 try {
     $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->landingPageOffer($landingId);
 } catch (\Throwable $lpcReadError) {

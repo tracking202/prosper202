@@ -23,17 +23,15 @@ final class OutageFallbackIsDeclaredTest extends TestCase
 
     /** file => what it does without the database */
     private const FALLBACK = [
-        'tracking202/redirect/dl.php' => 'the URL it keeps for an outage, or the unavailable page',
-        'tracking202/redirect/rtr.php' => 'the URL it keeps for an outage, or an error page',
-        'tracking202/redirect/lp.php' => 'the URL it keeps for an outage',
-        'tracking202/redirect/off.php' => 'the URL it keeps for an outage',
-        'tracking202/redirect/cl.php' => 'its page without the click\'s row',
-        'tracking202/redirect/lpc.php' => 'its no-connection answer',
+        'tracking202/redirect/dl.php' => 'the URL it keeps for an outage, or its 503 page',
+        'tracking202/redirect/rtr.php' => 'the URL it keeps for an outage, or p202Unavailable()',
+        'tracking202/redirect/lp.php' => 'the URL it keeps for an outage, or p202Unavailable()',
+        'tracking202/redirect/off.php' => 'the URL it keeps for an outage, or p202Unavailable()',
         'tracking202/redirect/cl2.php' => 'never reads the database',
         'tracking202/redirect/go.php' => 'sets no click cookie; lp.php and off.php fall back, offrtr.php asks',
-        'api/v1/reports/index.php' => 'the API\'s JSON error',
-        'api/v2/reports/index.php' => 'the API\'s JSON error',
-        'api/v2/categories/index.php' => 'the API\'s JSON error',
+        'api/v1/reports/index.php' => 'the API\'s JSON error, under a 503',
+        'api/v2/reports/index.php' => 'the API\'s JSON error, under a 503',
+        'api/v2/categories/index.php' => 'the API\'s JSON error, under a 503',
     ];
 
     public function testEveryScriptThatGoesOnWithoutTheDatabaseIsListed(): void

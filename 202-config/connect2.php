@@ -75,22 +75,30 @@ try {
 }
 
 /**
- * End the request, with the outage said in its status, when the bootstrap
- * could not connect. A script that answers without the database (it keeps a
- * URL for an outage, or never needs one) sets $p202OutageFallback = true
- * before loading this file; every other one would only reach code that needs
- * it. A script another may load after this file ran calls it itself
- * (offrtr.php, through go.php).
+ * The answer to a request the database is needed for and out of reach: the
+ * outage in the status, so a client or a monitor never reads it as served.
  */
-function p202RequireDatabase(?\mysqli $db): void
+function p202Unavailable(): never
 {
-    if ($db instanceof \mysqli) {
-        return;
-    }
     http_response_code(503);
     header('Retry-After: 60');
     header('Cache-Control: no-store');
     die('Service temporarily unavailable');
+}
+
+/**
+ * End the request with p202Unavailable() when the bootstrap could not
+ * connect. A script that answers without the database (it keeps a URL for an
+ * outage, or never needs one) sets $p202OutageFallback = true before loading
+ * this file; every other one would only reach code that needs it. A script
+ * another may load after this file ran calls it itself (offrtr.php, through
+ * go.php).
+ */
+function p202RequireDatabase(?\mysqli $db): void
+{
+    if (!$db instanceof \mysqli) {
+        p202Unavailable();
+    }
 }
 
 // Read where the script set it: this file's scope is the including script's.

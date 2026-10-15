@@ -11,7 +11,9 @@ $data = [];
 
 if ($_SERVER['REQUEST_METHOD'] === "GET") {
     if (!isset($db)) {
-        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 500];
+        // The outage in the status too: a client reads that before the body.
+        http_response_code(503);
+        $data = ['msg' => 'Database connection is unavailable', 'error' => true, 'status' => 503];
     } else {
         $data = getStats($db, $_GET);
     }

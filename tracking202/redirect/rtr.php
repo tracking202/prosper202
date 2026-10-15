@@ -37,7 +37,7 @@ if ($usedCachedRedirect==true) {
 			}
 		}
 
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+	p202Unavailable();
 }
 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');

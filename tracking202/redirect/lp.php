@@ -65,7 +65,7 @@ if ($usedCachedRedirect==true) {
 			}
 		}
 	
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+	p202Unavailable();
 }
 
 // The landing page's id exactly: compared as text, MySQL read 1e3 as 1000.

@@ -73,7 +73,7 @@ if ($usedCachedRedirect == true) {
         }
     }
     
-    die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+    p202Unavailable();
 }
 
 // The offer the link names, any account's: its account is the one whose
