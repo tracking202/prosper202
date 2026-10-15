@@ -425,7 +425,9 @@ final readonly class ClickPathReads
      * Where a cloaked click goes (cl.php), by its public id: the URL it was
      * sent to, its campaign's name when the campaign is the click's
      * account's, and that account's cloak referer setting. Not cached: a
-     * rotator re-click keeps the public id and changes the URL.
+     * rotator re-click keeps the public id and changes the URL. Of a
+     * re-click's rows, the latest; of two in one second, the one on the
+     * route the click holds now, as GET /clicks/{id} reads it.
      *
      * @return Row|null
      */
@@ -445,8 +447,9 @@ final readonly class ClickPathReads
                LEFT JOIN 202_aff_campaigns AS ac
                       ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                LEFT JOIN 202_users_pref AS up ON up.user_id = c.user_id
+               LEFT JOIN 202_clicks_rotator AS cro ON cro.click_id = c.click_id
               WHERE cr.click_id_public = ?
-              ORDER BY c.click_time DESC
+              ORDER BY c.click_time DESC, (c.rotator_id = cro.rotator_id AND c.rule_id = cro.rule_redirect_id) DESC
               LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$clickPublicId]);

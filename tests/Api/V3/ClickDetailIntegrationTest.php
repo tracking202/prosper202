@@ -67,7 +67,8 @@ final class ClickDetailIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        foreach (['202_clicks', '202_clicks_advance', '202_clicks_record', '202_clicks_site'] as $table) {
+        $tables = ['202_clicks', '202_clicks_advance', '202_clicks_record', '202_clicks_site', '202_clicks_rotator'];
+        foreach ($tables as $table) {
             self::$db->query("DELETE FROM $table WHERE click_id IN (960001, 960002)");
         }
         foreach ([self::USER, self::OTHER] as $u) {
@@ -129,6 +130,36 @@ final class ClickDetailIntegrationTest extends TestCase
 
         $row = (new ClicksController(self::$db, self::USER))->get(960001)['data'];
         self::assertSame(0.5, $row['click_cpc'], 'the latest of the click\'s rows');
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function insertionOrders(): iterable
+    {
+        yield 'the current visit stored first' => [true];
+        yield 'the current visit stored second' => [false];
+    }
+
+    /**
+     * Two visits in one second share their time, and 202_clicks has nothing
+     * else to order them by: the one on the route the click holds now is it.
+     *
+     * @dataProvider insertionOrders
+     */
+    public function testOfTwoVisitsInOneSecondTheOneOnTheClicksRouteIsTheClick(bool $currentFirst): void
+    {
+        $visit = static fn (string $cpc, int $redirect): string => 'INSERT INTO 202_clicks SET click_id = 960001,'
+            . ' user_id = ' . self::USER . ", aff_campaign_id = 0, ppc_account_id = 0, click_cpc = $cpc,"
+            . " click_time = UNIX_TIMESTAMP() + 60, rotator_id = 5, rule_id = $redirect";
+        $current = $visit('0.5', 12);
+        $earlier = $visit('0.25', 11);
+        foreach ($currentFirst ? [$current, $earlier] : [$earlier, $current] as $sql) {
+            self::q($sql);
+        }
+        self::q('INSERT INTO 202_clicks_rotator SET click_id = 960001, rotator_id = 5, rule_id = 3,'
+            . ' rule_redirect_id = 12');
+
+        $row = (new ClicksController(self::$db, self::USER))->get(960001)['data'];
+        self::assertSame(0.5, $row['click_cpc'], 'the visit on the click\'s route, rule redirect 12');
     }
 
     public function testANameComesOnlyFromTheClicksOwnAccount(): void

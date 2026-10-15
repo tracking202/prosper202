@@ -349,6 +349,47 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertNull(self::reads()->cloakedClick(1));
     }
 
+    /** @return iterable<string, array{bool}> */
+    public static function insertionOrders(): iterable
+    {
+        yield 'the current visit stored first' => [true];
+        yield 'the current visit stored second' => [false];
+    }
+
+    /**
+     * Two visits of a re-clicked click in one second share their time: the
+     * one on the route the click holds now is the click as it is now.
+     *
+     * @dataProvider insertionOrders
+     */
+    public function testOfTwoVisitsInOneSecondTheOneOnTheClicksRouteIsTheClick(bool $currentFirst): void
+    {
+        $click = self::FIRST_CLICK + 5;
+        foreach (['202_clicks', '202_clicks_record', '202_clicks_site', '202_clicks_rotator'] as $table) {
+            self::q("DELETE FROM $table WHERE click_id = $click");
+        }
+        $rotator = self::$id['ownRotator'];
+        $visit = static fn (int $campaign, int $redirect): string => 'INSERT INTO 202_clicks'
+            . ' (click_id, user_id, aff_campaign_id, ppc_account_id, click_cpc, click_time, rotator_id, rule_id)'
+            . " VALUES ($click, " . self::OWNER . ", $campaign, 0, 0, 5000, $rotator, $redirect)";
+        $current = $visit(self::$id['ownCampaign'], 12);
+        $earlier = $visit(0, 11);
+        foreach ($currentFirst ? [$current, $earlier] : [$earlier, $current] as $sql) {
+            self::q($sql);
+        }
+        self::q("INSERT INTO 202_clicks_rotator SET click_id = $click, rotator_id = $rotator, rule_id = 3,"
+            . ' rule_redirect_id = 12');
+        self::q("INSERT INTO 202_clicks_record SET click_id = $click, click_id_public = 7{$click}7,"
+            . ' click_cloaking = 1');
+        $siteUrl = self::insert("INSERT INTO 202_site_urls SET site_domain_id = 0,"
+            . " site_url_address = 'https://cloaked.example/same-second'");
+        self::q("INSERT INTO 202_clicks_site SET click_id = $click, click_redirect_site_url_id = $siteUrl");
+
+        $row = self::reads()->cloakedClick((int) "7{$click}7");
+        self::assertText($row);
+        self::assertSame('own offer', $row['aff_campaign_name'], 'the visit on the click\'s route, rule redirect 12');
+    }
+
     public function testALandingPageIsReadByItsPublicId(): void
     {
         $row = self::reads()->landingPage(self::PUBLIC + 3);
