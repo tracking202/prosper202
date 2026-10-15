@@ -41,7 +41,13 @@ require __DIR__ . '/../../../202-config/mysql-error-args.php';
 require __DIR__ . '/../../Config/fixtures/lift-function.php';
 
 $shared = __DIR__ . '/../../../202-config/functions-shared.php';
-foreach (['setCache', 'getCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'p202LogFailedQuery', 'p202Mysqli', 'systemHash'] as $name) {
+// rtr.php's bootstrap: the lookup factory caches on the click path alone.
+define('P202_CLICK_PATH', true);
+$lifted = [
+    'p202OnTheClickPath', 'setCache', 'getCache', 'p202WithHeldCacheWrites',
+    '_mysqli_query', 'p202LogFailedQuery', 'p202Mysqli', 'systemHash',
+];
+foreach ($lifted as $name) {
     eval(lift_function($shared, $name));
 }
 $connect2 = __DIR__ . '/../../../202-config/connect2.php';

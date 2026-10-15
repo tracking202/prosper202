@@ -10,6 +10,12 @@ require __DIR__ . '/harness-functions.php';
 
 $p202Harness = json_decode((string) getenv('P202_HARNESS'), true, 512, JSON_THROW_ON_ERROR);
 
+// connect2.php's constant, and the shipped p202OnTheClickPath() that reads
+// it: the lookup factory caches on the click path alone.
+define('P202_CLICK_PATH', true);
+require $p202Harness['repo'] . '/tests/Config/fixtures/lift-function.php';
+eval(lift_function($p202Harness['repo'] . '/202-config/functions-shared.php', 'p202OnTheClickPath'));
+
 spl_autoload_register(static function (string $class) use ($p202Harness): void {
     if (str_starts_with($class, 'Prosper202\\')) {
         $file = $p202Harness['repo'] . '/202-config/' . str_replace('\\', '/', substr($class, 11)) . '.php';

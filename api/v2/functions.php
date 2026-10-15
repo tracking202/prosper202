@@ -76,10 +76,18 @@ function listCategories($db,$user): void {
     // categories/index.php hands the user id as an int.
     $mysql['user_id'] = $db->real_escape_string((string) $user);
     $aff_network_sql = "SELECT * FROM `202_aff_networks` WHERE `user_id`='".$mysql['user_id']."' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC";
-    $aff_network_result = $db->query($aff_network_sql) or die();
-  //  echo $aff_network_sql;
-    while ($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) {
-    
+    // `or die()` answered an empty 200, which a client reads as no categories.
+    $aff_network_result = $db->query($aff_network_sql);
+    if ($aff_network_result === false) {
+        print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+        return;
+    }
+    while (($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) !== null) {
+        if ($aff_network_row === false) {
+            print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+            return;
+        }
+
         $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
         $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
     $cat['categories'][]=['category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']];    

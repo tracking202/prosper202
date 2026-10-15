@@ -304,6 +304,8 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
             // MySQL reads 990081abc as 990081, the account's own campaign.
             yield "$version, the account's id with letters after it" => [$version, 'cid=' . self::USER . 'abc'];
             yield "$version, a list" => [$version, 'cid%5B%5D=' . self::USER];
+            // MySQL reads 0990081 as 990081 too.
+            yield "$version, the account's id with a zero before it" => [$version, 'cid=0' . self::USER];
         }
     }
 
@@ -318,6 +320,82 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         $said = self::output("api-$version:report?$query");
         self::assertStringNotContainsString('RETURNED ', $said, 'answered a report');
         self::assertStringContainsString('"Campaign not found"', $said);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function listedCustomVariables(): iterable
+    {
+        foreach (['v1', 'v2'] as $version) {
+            foreach (['c1', 'c2', 'c3', 'c4'] as $variable) {
+                yield "$version $variable" => [$version, $variable];
+            }
+        }
+    }
+
+    /**
+     * A list is no value to filter by, and is refused: it read as no filter,
+     * and the report answered every click as though filtered.
+     *
+     * @dataProvider listedCustomVariables
+     */
+    public function testAListedCustomVariableIsRefused(string $version, string $variable): void
+    {
+        $said = self::output("api-$version:report?{$variable}%5B%5D=0");
+        self::assertStringNotContainsString('RETURNED ', $said, 'answered a report');
+        self::assertStringContainsString("\"$variable takes one value\"", $said);
+    }
+
+    /**
+     * The WordPress plugin reads `error: '0'` as saved. An UPDATE the server
+     * refused answered that too, and a failed read was a fatal on the false.
+     */
+    public function testTheWordPressPluginsCallsAnswerAFailedStatementAsTheDatabaseError(): void
+    {
+        $page = self::USER + 3;
+        self::row('202_landing_pages', [
+            'landing_page_id' => $page, 'landing_page_id_public' => $page, 'user_id' => self::USER,
+            'aff_campaign_id' => self::USER, 'landing_page_nickname' => 'My Plugin Page',
+            'landing_page_url' => 'https://page.example/wp', 'landing_page_time' => self::$now,
+        ]);
+        $update = 'api-v1:wp?type=wp_update_lp&page_type=alp&page_title=Saved'
+            . '&page_url=https%3A%2F%2Fpage.example%2Fsaved&lp_pid=' . $page;
+        self::assertSame(['error' => '0'], self::read($update, true));
+        $saved = self::$db->query("SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = $page");
+        self::assertSame('[WP] Saved', $saved instanceof \mysqli_result ? ($saved->fetch_row()[0] ?? null) : null);
+
+        $databaseError = ['msg' => 'Database error', 'error' => true, 'status' => 500];
+        self::withoutTable('202_landing_pages', function () use ($update, $databaseError): void {
+            self::assertSame($databaseError, self::read($update, true), 'wp_update_lp');
+            self::assertSame(
+                $databaseError,
+                self::read('api-v1:wp?type=wp_create_lp&page_type=alp&page_title=New'
+                    . '&page_url=https%3A%2F%2Fpage.example%2Fnew', true),
+                'wp_create_lp'
+            );
+            self::assertSame($databaseError, self::read('api-v1:wp?type=get_data_for_wp', true), 'get_data_for_wp');
+        });
+    }
+
+    /** v2's categories with the statement refused: `or die()` answered an empty 200. */
+    public function testV2CategoriesAnswerAFailedStatementAsTheDatabaseError(): void
+    {
+        self::withoutTable('202_aff_networks', function (): void {
+            self::assertSame(
+                ['msg' => 'Database error', 'error' => true, 'status' => 500],
+                self::read('api-v2:categories', true)
+            );
+        });
+    }
+
+    /** $table renamed away while $run runs, so every statement naming it is refused. */
+    private static function withoutTable(string $table, callable $run): void
+    {
+        self::q("RENAME TABLE `$table` TO `{$table}_away`");
+        try {
+            $run();
+        } finally {
+            self::q("RENAME TABLE `{$table}_away` TO `$table`");
+        }
     }
 
     /** v2's categories, as categories/index.php asks for them (an int user id, which was a 500). */

@@ -25,9 +25,12 @@ declare(strict_types=1);
  *                   for text_ads on that campaign, `report?<query>` is
  *                   runReports() for text_ads with the query's parameters as
  *                   sent (a refusal prints the API's JSON and ends, with no
- *                   RETURNED line), and v2's `categories`
- *                   its listCategories(), each handed the user id as its
- *                   endpoint hands it (v1 a string, v2 an int)
+ *                   RETURNED line), v1's `wp?<query>` is the WordPress
+ *                   plugin's call its `type` names (get_data_for_wp,
+ *                   wp_create_lp, wp_update_lp) with the query as $_GET,
+ *                   and v2's `categories` its listCategories(), each handed
+ *                   the user id as its endpoint hands it (v1 a string, v2
+ *                   an int)
  *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
  *                   the 202_dirty_hours rows it left (RollupRefreshIntegrationTest)
  *   click-upgrade   the cron job's DataEngine::processClickUpgrade(), and
@@ -160,7 +163,7 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
-    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|report\?[^\s]*)$/D', $reader, $m) === 1) {
+    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|(?:report|wp)\?[^\s]*)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
         // them, through the version's own functions.php (the report helpers
         // are api/legacy/functions.php's, which it loads). Loaded as they
@@ -193,6 +196,13 @@ try {
                 'date_from' => gmdate('m/d/Y', $from),
                 'date_to' => gmdate('m/d/Y', $to),
             ] + $sent, $m[1] === 'v1' ? (string) $userId : $userId, 'UTC', $m[1]);
+        } elseif (str_starts_with($m[2], 'wp?') && $m[1] === 'v1') {
+            parse_str(substr($m[2], 3), $_GET);
+            $result = match ($_GET['type'] ?? '') {
+                'get_data_for_wp' => getDataForWP($db, (string) $userId),
+                'wp_create_lp' => wpCreateLp($db, (string) $userId),
+                'wp_update_lp' => wpUpdateLp($db, (string) $userId),
+            };
         } elseif (str_starts_with($m[2], 'cid=')) {
             $result = runReports($db, [
                 'type' => 'text_ads',

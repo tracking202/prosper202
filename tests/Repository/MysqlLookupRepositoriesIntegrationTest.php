@@ -833,9 +833,9 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
     }
 
     /**
-     * The factory's cache is connect2.php's getCache()/setCache(): a miss
-     * reads the database and writes its id through setCache() for 30 days,
-     * and the next lookup is answered from it.
+     * The factory's cache, on the click path, is getCache()/setCache()
+     * (functions-shared.php): a miss reads the database and writes its id
+     * through setCache() for 30 days, and the next lookup is answered from it.
      *
      * @runInSeparateProcess
      * @preserveGlobalState disabled
@@ -844,6 +844,8 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         require_once $root . '/tests/Config/fixtures/lift-function.php';
+        define('P202_CLICK_PATH', true);
+        eval(lift_function($root . '/202-config/functions-shared.php', 'p202OnTheClickPath'));
         // The real getCache() (functions-shared.php), which asks only a
         // Memcache or a Memcached: one that answers an id as the string
         // memcache hands back.

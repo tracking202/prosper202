@@ -45,6 +45,15 @@ function runReports($db, $vars, $user, $timezone, string $version): array
     };
 
     if (in_array($vars['type'], $report_types)) {
+        // A list (c1[]=x) is no value to filter by: refused, not read as none.
+        foreach (['c1', 'c2', 'c3', 'c4'] as $variable) {
+            if (isset($vars[$variable]) && !is_scalar($vars[$variable])) {
+                $refused = ['msg' => "$variable takes one value", 'error' => true, 'status' => 400];
+                print_r(pretty_json(json_encode($refused, JSON_UNESCAPED_SLASHES)));
+                die();
+            }
+        }
+
         if (isset($vars['c1'])) {
             $c1 = $vars['c1'];
         }
@@ -64,11 +73,11 @@ function runReports($db, $vars, $user, $timezone, string $version): array
 
         // No cid, an empty one or 0 is every campaign. Anything else is one
         // of the account's campaigns by its id exactly: `> 0` let -1 through
-        // as every campaign, and MySQL read 12abc as campaign 12.
+        // as every campaign, and MySQL read 12abc and 012 as campaign 12.
         $cidSent = $vars['cid'] ?? null;
         $cidText = is_scalar($cidSent) ? (string) $cidSent : null;
         if ($cidSent !== null && $cidText !== '' && $cidText !== '0') {
-            if ($cidText === null || !ctype_digit($cidText)) {
+            if ($cidText === null || !ctype_digit($cidText) || $cidText[0] === '0') {
                 $notFound = ['msg' => 'Campaign not found', 'error' => true, 'status' => 404];
                 print_r(pretty_json(json_encode($notFound, JSON_UNESCAPED_SLASHES)));
                 die();

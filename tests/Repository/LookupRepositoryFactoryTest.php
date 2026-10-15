@@ -89,15 +89,17 @@ final class LookupRepositoryFactoryTest extends TestCase
     }
 
     /**
-     * Without connect2.php's getCache() (connect.php's pages) nothing is cached.
+     * Both bootstraps load getCache(), setCache() and systemHash()
+     * (functions-shared.php), and off the click path (connect.php's pages,
+     * the API, the cron jobs) nothing is cached, memcache answering or not.
      *
      * @runInSeparateProcess
      * @preserveGlobalState disabled
      */
-    public function testWithoutTheBootstrapCacheTheRepositoriesReadTheDatabase(): void
+    public function testOffTheClickPathTheRepositoriesReadTheDatabase(): void
     {
-        self::assertFalse(function_exists('getCache'), 'this process has no bootstrap cache');
-        eval('function setCache($key, $value, $exp = null) { return true; }');
+        self::onTheClickPath(false);
+        self::bootstrapCache();
         $GLOBALS['memcacheWorking'] = true;
         $db = mysqli_init();
 
@@ -107,7 +109,7 @@ final class LookupRepositoryFactoryTest extends TestCase
     }
 
     /**
-     * With connect2.php's helpers and a working memcache, a lookup reads
+     * On the click path, with a working memcache, a lookup reads
      * getCache() under the install's namespace: the entry answers with no
      * database (the mysqli here is not connected, so a miss would throw).
      *
@@ -116,12 +118,8 @@ final class LookupRepositoryFactoryTest extends TestCase
      */
     public function testWithTheBootstrapCacheALookupReadsItFirst(): void
     {
-        eval('function getCache(string $key, $default = false) {'
-            . ' $GLOBALS["p202TestCacheReads"][] = $key;'
-            . ' return $GLOBALS["p202TestCache"][$key] ?? $default; }');
-        eval('function setCache($key, $value, $exp = null) {'
-            . ' $GLOBALS["p202TestCacheWrites"][] = [$key, $value, $exp]; return true; }');
-        eval('function systemHash(): string { return "install-a"; }');
+        self::onTheClickPath(true);
+        self::bootstrapCache();
         $GLOBALS['memcacheWorking'] = true;
         $GLOBALS['p202TestCache'] = [
             md5('c1-id' . 'x' . 'install-a') => '77',
@@ -171,9 +169,8 @@ final class LookupRepositoryFactoryTest extends TestCase
      */
     public function testWithoutTheInstallsNamespaceThereIsNoCache(): void
     {
-        self::assertFalse(function_exists('systemHash'), 'this process has no systemHash()');
-        eval('function getCache(string $key, $default = false) { return 77; }');
-        eval('function setCache($key, $value, $exp = null) { return true; }');
+        self::onTheClickPath(true);
+        self::bootstrapCache(withNamespace: false);
         $GLOBALS['memcacheWorking'] = true;
 
         self::assertInstanceOf(MysqlTrackingRepository::class, LookupRepositoryFactory::tracking(mysqli_init()));
@@ -187,10 +184,37 @@ final class LookupRepositoryFactoryTest extends TestCase
      */
     public function testMemcacheThatDidNotAnswerIsNotUsed(): void
     {
-        eval('function getCache(string $key, $default = false) { return 1; }');
-        eval('function setCache($key, $value, $exp = null) { return true; }');
+        self::onTheClickPath(true);
+        self::bootstrapCache();
         $GLOBALS['memcacheWorking'] = false;
 
         self::assertInstanceOf(MysqlTrackingRepository::class, LookupRepositoryFactory::tracking(mysqli_init()));
+    }
+
+    /** connect2.php's constant, and the shipped p202OnTheClickPath() that reads it. */
+    private static function onTheClickPath(bool $clickPath): void
+    {
+        if ($clickPath) {
+            define('P202_CLICK_PATH', true);
+        }
+        require_once __DIR__ . '/../Config/fixtures/lift-function.php';
+        eval(lift_function(__DIR__ . '/../../202-config/functions-shared.php', 'p202OnTheClickPath'));
+    }
+
+    /**
+     * Memcache's stand-ins: getCache() records each key it is asked and
+     * answers $GLOBALS['p202TestCache'], setCache() records each write.
+     */
+    private static function bootstrapCache(bool $withNamespace = true): void
+    {
+        self::assertFalse(function_exists('getCache'), 'this process has no bootstrap cache yet');
+        eval('function getCache(string $key, $default = false) {'
+            . ' $GLOBALS["p202TestCacheReads"][] = $key;'
+            . ' return $GLOBALS["p202TestCache"][$key] ?? $default; }');
+        eval('function setCache($key, $value, $exp = null) {'
+            . ' $GLOBALS["p202TestCacheWrites"][] = [$key, $value, $exp]; return true; }');
+        if ($withNamespace) {
+            eval('function systemHash(): string { return "install-a"; }');
+        }
     }
 }
