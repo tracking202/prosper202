@@ -133,9 +133,15 @@ function wpCreateLp($db, $user): array {
             }
             $insert_id = $db->insert_id;
         } else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
-            $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
+            // The campaign by its public id read exactly, compared as a
+            // number: as text, `12abc` named campaign 12. Anything else names
+            // no campaign, as another account's does.
+            $affCampaignIdPublic = \Prosper202\Click\PublicId::parse($_GET['slp_page_campaign']);
+            if ($affCampaignIdPublic === null) {
+                return ['error' => '1'];
+            }
 
-            $sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
+            $sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = " . $affCampaignIdPublic . " AND user_id = '".$mysql['user_id']."'";
             $result = $db->query($sql);
             if ($result === false) {
                 return legacy_api_database_error($db);
@@ -191,7 +197,13 @@ function wpUpdateLp($db, $user): array {
         $title = '[WP] '.$title;
         $mysql['landing_page_nickname'] = $db->real_escape_string($title);
         $mysql['landing_page_url'] = $db->real_escape_string((string)$_GET['page_url']);
-        $mysql['landing_page_id_public'] = $db->real_escape_string((string)$_GET['lp_pid']);
+        // The page by its public id read exactly, compared as a number: as
+        // text, `12abc` named page 12, and that page was rewritten. Anything
+        // else names no page, and is the plugin's error.
+        $landingPageIdPublic = \Prosper202\Click\PublicId::parse($_GET['lp_pid']);
+        if ($landingPageIdPublic === null) {
+            return ['error' => '1'];
+        }
         $mysql['user_id'] = $db->real_escape_string($user);
 
         if ($_GET['page_type'] == 'alp') {
@@ -202,7 +214,7 @@ function wpUpdateLp($db, $user): array {
 					landing_page_url = '".$mysql['landing_page_url']."',
 					landing_page_type = '1',
 					user_id = '".$mysql['user_id']."'
-					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
+					WHERE landing_page_id_public = " . $landingPageIdPublic . " AND user_id = '".$mysql['user_id']."'";
             // The plugin reads '0' as saved, so a failed UPDATE is the database error.
             if ($db->query($sql) === false) {
                 return legacy_api_database_error($db);
@@ -213,9 +225,13 @@ function wpUpdateLp($db, $user): array {
 
             return ['error' => '0'];
         } else if ($_GET['page_type'] == 'slp' && isset($_GET['slp_page_campaign'])) {
-            $mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['slp_page_campaign']);
+            // Read as wpCreateLp() reads it.
+            $affCampaignIdPublic = \Prosper202\Click\PublicId::parse($_GET['slp_page_campaign']);
+            if ($affCampaignIdPublic === null) {
+                return ['error' => '1'];
+            }
 
-            $sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = '".$mysql['aff_campaign_id_public']."' AND user_id = '".$mysql['user_id']."'";
+            $sql = "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public = " . $affCampaignIdPublic . " AND user_id = '".$mysql['user_id']."'";
             $result = $db->query($sql);
             if ($result === false) {
                 return legacy_api_database_error($db);
@@ -232,7 +248,7 @@ function wpUpdateLp($db, $user): array {
 					landing_page_url = '".$mysql['landing_page_url']."',
 					landing_page_type = '0',
 					user_id = '".$mysql['user_id']."'
-					WHERE landing_page_id_public = '".$mysql['landing_page_id_public']."' AND user_id = '".$mysql['user_id']."'";
+					WHERE landing_page_id_public = " . $landingPageIdPublic . " AND user_id = '".$mysql['user_id']."'";
                 if ($db->query($sql) === false) {
                     return legacy_api_database_error($db);
                 }

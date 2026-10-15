@@ -29,11 +29,10 @@ use PHPUnit\Framework\TestCase;
  * campaign filed under B's source and category. Each page runs as A in a
  * process of its own (fixtures/page-runner.php), as the web server runs it.
  *
- * Not here: Get Links' edit form reads its tracker id through filter_input(),
- * which a command-line run cannot supply, and the endpoints whose foreign
- * names went only into Slack notices (generate_tracking_link.php,
- * get_landing_code.php, ajax/rotator.php). tests/live/account-scoped-pages.sh
- * drives both over HTTP, with the notices captured.
+ * Not here: the endpoints whose foreign names went only into Slack notices
+ * (generate_tracking_link.php, get_landing_code.php, ajax/rotator.php).
+ * tests/live/account-scoped-pages.sh drives them over HTTP, with the notices
+ * captured.
  *
  * Needs a 202-config.php (connect.php exits without one) and P202_TEST_DB_*.
  *
@@ -175,6 +174,8 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
             'landing_page_url' => 'https://mine.example:8443/lp?x=1#top', 'landing_page_time' => $t]);
         self::row('202_trackers', ['tracker_id' => $a + 20, 'user_id' => $a, 'tracker_id_public' => self::LINK_ON_MINE, 'aff_campaign_id' => 0,
             'text_ad_id' => 0, 'ppc_account_id' => $a, 'landing_page_id' => $a, 'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t]);
+        // A redirector of A's own: something to link to, so Get Links shows its form.
+        self::row('202_rotators', ['id' => $a, 'public_id' => $a, 'user_id' => $a, 'name' => 'My Rotator']);
     }
 
     /**
@@ -244,6 +245,42 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         $link = 'https://mine.example:8443/lp?x=1&t202id=' . self::LINK_ON_MINE . '&myvar={mine}&t202kw=#top';
         self::assertSame(\Api\V3\Controllers\TrackersController::buildLandingPageUrl('https://mine.example:8443/lp?x=1#top', self::LINK_ON_MINE, '&myvar={mine}&t202kw='), $link);
         self::assertStringContainsString('data-p202-copy="' . htmlspecialchars($link, ENT_QUOTES) . '"', $out, 'the link to copy');
+    }
+
+    public function testGetLinksOpensTheAccountsLinkToEdit(): void
+    {
+        $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => (string) self::LINK_ON_MINE]);
+        self::assertStringContainsString('Edit tracking link', $out);
+        self::assertStringContainsString('name="tracker_id" value="' . self::LINK_ON_MINE . '"', $out);
+    }
+
+    /** @return iterable<string, array{string}> the link's public id as a format, `%d` */
+    public static function idsThatNameNoLink(): iterable
+    {
+        // The sanitizing read kept a sign and a dash and dropped letters and
+        // spaces, and MySQL read what was left as a number: the first five
+        // opened the link.
+        yield 'letters after the id' => ['%dabc'];
+        yield 'a zero before the id' => ['0%d'];
+        yield 'a sign before the id' => ['+%d'];
+        yield 'a dash after the id' => ['%d-1'];
+        yield 'a space before the id' => [' %d'];
+        yield 'a decimal point' => ['%d.0'];
+        yield 'zero' => ['0'];
+    }
+
+    /**
+     * Get Links opens a link to edit by its public id read exactly: anything
+     * else opens no link, as one that is not the account's opens none.
+     *
+     * @dataProvider idsThatNameNoLink
+     */
+    public function testGetLinksOpensNoLinkForAnythingButItsPublicId(string $format): void
+    {
+        $id = sprintf($format, self::LINK_ON_MINE);
+        $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => $id]);
+        self::assertStringContainsString('Get a tracking link', $out);
+        self::assertStringNotContainsString('name="edit_tracker"', $out, 'no link was opened to edit');
     }
 
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void

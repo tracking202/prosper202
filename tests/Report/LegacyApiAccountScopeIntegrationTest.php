@@ -111,7 +111,7 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         }
         foreach ([[self::USER, self::USER, self::USER, 'My'], [self::OTHER, self::OTHER, self::OTHER, 'Their'], [self::STRAY, self::USER, self::OTHER, 'My Stray']] as [$id, $user, $campaign, $who]) {
             if ($id !== self::STRAY) {
-                self::row('202_aff_campaigns', ['aff_campaign_id' => $id, 'user_id' => $user, 'aff_network_id' => 0, 'aff_campaign_name' => "$who Offer",
+                self::row('202_aff_campaigns', ['aff_campaign_id' => $id, 'aff_campaign_id_public' => $id, 'user_id' => $user, 'aff_network_id' => 0, 'aff_campaign_name' => "$who Offer",
                     'aff_campaign_url' => 'https://offer.example/' . $id, 'aff_campaign_payout' => 5, 'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => $t]);
                 self::row('202_text_ads', ['text_ad_id' => $id, 'user_id' => $user, 'aff_campaign_id' => $id, 'landing_page_id' => 0, 'text_ad_name' => "$who Ad",
                     'text_ad_headline' => 'h', 'text_ad_description' => 'd', 'text_ad_display_url' => 'u', 'text_ad_time' => $t]);
@@ -378,6 +378,82 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
             );
             self::assertSame($databaseError, self::read('api-v1:wp?type=get_data_for_wp', true), 'get_data_for_wp');
         });
+    }
+
+    /** @return iterable<string, array{string}> a public id as a format, `%d` */
+    public static function publicIdsThatNameNothing(): iterable
+    {
+        // MySQL compared each as a number, and read it as the id itself.
+        yield 'letters after the id' => ['%dabc'];
+        yield 'a zero before the id' => ['0%d'];
+        yield 'a sign before the id' => ['%%2B%d'];
+        yield 'a space before the id' => ['%%20%d'];
+        yield 'a decimal point' => ['%d.0'];
+        yield 'an exponent' => ['%de0'];
+        // The text `Array`, which named nothing, and the update of nothing
+        // answered saved.
+        yield 'a list' => ['%%5B%%5D=%d'];
+    }
+
+    /**
+     * The WordPress plugin names a landing page (lp_pid) and a campaign
+     * (slp_page_campaign) by public id, read exactly: compared as text, the
+     * id with anything MySQL drops from a number named the record, and the
+     * page was rewritten or made on it. Anything else is the plugin's
+     * `error: '1'`, as a campaign that is not the account's is, and nothing
+     * is written.
+     *
+     * @dataProvider publicIdsThatNameNothing
+     */
+    public function testTheWordPressPluginsCallsReadAPublicIdExactly(string $format): void
+    {
+        $page = self::USER + 4;
+        self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $page");
+        self::row('202_landing_pages', [
+            'landing_page_id' => $page, 'landing_page_id_public' => $page, 'user_id' => self::USER,
+            'aff_campaign_id' => self::USER, 'landing_page_nickname' => 'My Exact Page',
+            'landing_page_url' => 'https://page.example/exact', 'landing_page_time' => self::$now,
+        ]);
+        $pages = static function (): array {
+            $found = self::$db->query('SELECT landing_page_id, landing_page_nickname, landing_page_type,'
+                . ' aff_campaign_id FROM 202_landing_pages WHERE user_id = ' . self::USER
+                . ' ORDER BY landing_page_id');
+            self::assertInstanceOf(\mysqli_result::class, $found);
+
+            return $found->fetch_all(MYSQLI_ASSOC);
+        };
+        $before = $pages();
+        $title = '&page_title=Changed&page_url=https%3A%2F%2Fpage.example%2Fchanged';
+        $exactPage = '&lp_pid=' . $page;
+        $exactCampaign = '&slp_page_campaign=' . self::USER;
+        $badPage = '&lp_pid=' . sprintf($format, $page);
+        $badCampaign = '&slp_page_campaign=' . sprintf($format, self::USER);
+        if (str_starts_with($format, '%%5B')) {
+            $badPage = '&lp_pid' . sprintf($format, $page);
+            $badCampaign = '&slp_page_campaign' . sprintf($format, self::USER);
+        }
+
+        // Each names one thing wrongly and everything else exactly.
+        $calls = [
+            'wp_update_lp alp' => 'type=wp_update_lp&page_type=alp' . $title . $badPage,
+            'wp_update_lp slp, the page' => 'type=wp_update_lp&page_type=slp' . $title . $badPage . $exactCampaign,
+            'wp_update_lp slp, the campaign' => 'type=wp_update_lp&page_type=slp' . $title . $exactPage . $badCampaign,
+            'wp_create_lp slp' => 'type=wp_create_lp&page_type=slp' . $title . $badCampaign,
+        ];
+        foreach ($calls as $call => $query) {
+            self::assertSame(['error' => '1'], self::read("api-v1:wp?$query", true), $call);
+            self::assertSame($before, $pages(), "$call wrote nothing");
+        }
+
+        // The exact ids name the page and the campaign.
+        self::assertSame(
+            ['error' => '0'],
+            self::read('api-v1:wp?type=wp_update_lp&page_type=slp' . $title . $exactPage . $exactCampaign, true)
+        );
+        $changed = self::$db->query("SELECT landing_page_nickname FROM 202_landing_pages"
+            . " WHERE landing_page_id = $page");
+        self::assertInstanceOf(\mysqli_result::class, $changed);
+        self::assertSame('[WP] Changed', $changed->fetch_row()[0] ?? null);
     }
 
     /** The key check each endpoint makes first, with nothing failing. */

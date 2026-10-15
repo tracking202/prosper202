@@ -133,6 +133,49 @@ final class TrackerLinkTransactionIntegrationTest extends TestCase
         self::assertSame($before, self::trackers(), 'the DELETE rolled back with the failed INSERT');
     }
 
+    /** @return iterable<string, array{string}> the link's public id as a format, `%d` */
+    public static function idsThatNameNoLink(): iterable
+    {
+        // MySQL compared each as a number, and read it as the link's own id.
+        yield 'letters after the id' => ['%dabc'];
+        yield 'a zero before the id' => ['0%d'];
+        yield 'a sign before the id' => ['+%d'];
+        yield 'a space before the id' => [' %d'];
+        yield 'a decimal point' => ['%d.0'];
+        yield 'an exponent' => ['%de0'];
+        // Each made a new link in the edited one's place; the last said the
+        // edited one was updated.
+        yield 'none' => [''];
+        yield 'zero' => ['0'];
+        yield 'an id no link has' => ['999999999'];
+    }
+
+    /**
+     * An edit names its link by public id, read exactly: compared as text,
+     * the id with anything MySQL drops from a number named the link, which
+     * was deleted and written again with what the form sent. Anything that
+     * is not one of the account's links is refused, and nothing is written.
+     *
+     * @dataProvider idsThatNameNoLink
+     */
+    public function testAnEditOfAnythingButOneOfTheAccountsLinksIsRefused(string $format): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $before = self::trackers();
+        self::assertCount(1, $before);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => sprintf($format, (int) $before[0]['tracker_id_public']),
+        ]);
+
+        self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
+        self::assertStringNotContainsString('t202id=', $out, 'no link for an edit that was refused');
+        self::assertSame($before, self::trackers(), 'nothing was deleted, replaced or added');
+    }
+
     private static function cleanUp(): void
     {
         $tables = [

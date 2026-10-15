@@ -18,15 +18,18 @@ if (!$userObj->hasPermission("access_to_setup_section")) {
 }
 
 $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-$editTrackerId = filter_input(INPUT_GET, 'edit_tracker_id', FILTER_SANITIZE_NUMBER_INT);
-$mysql['tracker_id_public'] = $db->real_escape_string((string)($editTrackerId ?? ''));
-$showEdit = !empty($editTrackerId);
+// The link to edit, by its public id read exactly, compared as a number: the
+// sanitizing read kept a sign and a dash and dropped letters, and MySQL cast
+// what was left, so `12abc`, `+12` and `12-1` opened link 12. Anything else
+// opens no link, as one that is not this account's does.
+$editTrackerId = \Prosper202\Click\PublicId::parse($_GET['edit_tracker_id'] ?? null);
+$showEdit = $editTrackerId !== null;
 if ($showEdit) {
 	$edit_tracker_sql = "SELECT * FROM 202_trackers AS 2tr
 						 LEFT JOIN 202_landing_pages AS 2lp ON (2tr.landing_page_id = 2lp.landing_page_id AND 2lp.user_id = 2tr.user_id)
 						 LEFT JOIN 202_aff_campaigns AS 2ac ON (2tr.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2tr.user_id)
-						 LEFT JOIN 202_ppc_accounts AS 2pa ON (2tr.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2tr.user_id) 
-						 WHERE 2tr.user_id = '" . $mysql['user_id'] . "' AND (2ac.aff_campaign_deleted='0' OR 2tr.aff_campaign_id = 0 OR 2ac.aff_campaign_id IS NULL) AND 2tr.tracker_id_public = '" . $mysql['tracker_id_public'] . "'";
+						 LEFT JOIN 202_ppc_accounts AS 2pa ON (2tr.ppc_account_id = 2pa.ppc_account_id AND 2pa.user_id = 2tr.user_id)
+						 WHERE 2tr.user_id = '" . $mysql['user_id'] . "' AND (2ac.aff_campaign_deleted='0' OR 2tr.aff_campaign_id = 0 OR 2ac.aff_campaign_id IS NULL) AND 2tr.tracker_id_public = " . $editTrackerId;
 	// An advanced-landing-page or redirector link has no campaign, so the
 	// campaign join is empty for it; before U4 the deleted-campaign filter
 	// above excluded exactly those links, and they could not be edited.
@@ -39,7 +42,12 @@ if ($showEdit) {
 	// stand in the tracker's own ids for those fields.
 
 	$edit_tracker_result = $db->query($edit_tracker_sql) or record_mysql_error($db, $edit_tracker_sql);
-	$edit_tracker_row = $edit_tracker_result->fetch_assoc() ?? [];
+    $edit_tracker_row = $edit_tracker_result->fetch_assoc();
+    if ($edit_tracker_row === false) {
+        // A failed fetch, not "no such link".
+        record_mysql_error($db, $edit_tracker_sql);
+    }
+    $edit_tracker_row ??= [];
 
 	if ($edit_tracker_row === []) {
 		$showEdit = false;
