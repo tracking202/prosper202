@@ -12,7 +12,7 @@ if (isset($_GET['getProgress'])) {
 		http_response_code(500);
 		die('The account could not be read.');
 	}
-	$user_row = $user_results->fetch_assoc();
+	$user_row = p202FetchRow($user_results, $user_sql);
 	if ($user_row === null) {
 		http_response_code(404);
 		die('The account could not be found.');

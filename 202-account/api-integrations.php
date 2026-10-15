@@ -152,7 +152,7 @@ $user_results = $db->query($user_sql);
 if (!$user_results) {
 	record_mysql_error($user_sql);
 }
-$user_row = $user_results->fetch_assoc() ?: [];
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'] ?? '';
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
@@ -193,7 +193,7 @@ $user_result = $db->query($user_sql);
 if (!$user_result) {
 	record_mysql_error($user_sql);
 }
-$user_row = $user_result->fetch_assoc() ?: [];
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $cb_verified = $user_row['cb_verified'];
 

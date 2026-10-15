@@ -227,16 +227,54 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         $this->assertSame($expected, $declared, 'a call read as a refusal must be declared once, returning never');
     }
 
-    public function testTheScanReadsTheTree(): void
+    /**
+     * The scan reads every call the text holds: a call it does not see is
+     * reported nowhere, so each file's count of sites is held to a count
+     * taken from the text by another means.
+     */
+    public function testTheScanReadsEveryCallInTheTree(): void
     {
         $calls = 0;
-        foreach (SourceScan::phpFiles() as $source) {
-            if (stripos($source, '_mysqli_query') !== false) {
-                $calls += count(self::sitesIn($source));
+        $unread = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            if (stripos($source, '_mysqli_query') === false) {
+                continue;
             }
+            $read = count(self::sitesIn($source));
+            $written = self::callsWritten($source);
+            if ($read !== $written) {
+                $unread[] = "$file: the scan read $read calls, the text holds $written";
+            }
+            $calls += $read;
         }
-        // 81 when this was written; a scan that stopped finding calls passes everything.
+        $this->assertSame([], $unread, 'the scan did not read every _mysqli_query() call');
+        // 81 when this was written; a walk that found no files passes the rest.
         $this->assertGreaterThan(60, $calls, 'the scan found too few _mysqli_query() calls to be reading the tree');
+    }
+
+    public function testTheTextCountIsTheCallsWritten(): void
+    {
+        $this->assertSame(4, self::callsWritten("<?php\n_mysqli_query(\$a); \\_MYSQLI_QUERY (\$b);\n"
+            . "if (\$r = _mysqli_query(\$c)) {}\n?><p>_mysqli_query(x)</p><?php\n"
+            . "// _mysqli_query(\$d)\n\$s = '_mysqli_query(';\n\$o->_mysqli_query(\$e); X::_mysqli_query(\$f);\n"
+            . "function _mysqli_query(\$g) {}\nreturn rows(_mysqli_query(\$h));\n"));
+    }
+
+    /**
+     * The `_mysqli_query(` calls in a source, from its text: outside
+     * comments, strings and markup, less a method of that name and the
+     * function's own definition.
+     */
+    private static function callsWritten(string $source): int
+    {
+        $code = '';
+        foreach (PhpToken::tokenize($source) as $token) {
+            $notCode = [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE, T_INLINE_HTML];
+            $code .= $token->is($notCode) ? ' ' : $token->text;
+        }
+
+        return (int) preg_match_all('/(?<![\w$>:\\\\])\\\\?_mysqli_query\s*\(/i', $code)
+            - (int) preg_match_all('/\bfunction\s+&?\s*_mysqli_query\s*\(/i', $code);
     }
 
     /** @return iterable<string, array{string, string}> code inside a function => kind */

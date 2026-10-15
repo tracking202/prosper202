@@ -16,7 +16,8 @@ use Tests\TestCase;
  * `object`, as the real method does. Every spelling of the call is planted:
  * a nullsafe call, and another case and the procedural functions, which the
  * rule did not see; and every receiver that may be a statement, an untyped
- * one and prepare()'s `mysqli_stmt|false`, which it passed over. A class of
+ * one and prepare()'s `mysqli_stmt|false`, which it passed over, chained
+ * onto prepare() or read from an array as well as held. A class of
  * its own with an `execute()` is not a statement. Lines ending in
  * `// REPORT` must be reported; no other line may be.
  *
@@ -70,6 +71,9 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
                 $untyped->execute();                                                            // REPORT
                 $prepared = $db->prepare('SELECT 1');
                 $prepared->bind_param('i', $untyped);                                           // REPORT
+                $db->prepare('SELECT 2')->execute();                                            // REPORT
+                $untyped->prepare('SELECT 3')->execute();                                       // REPORT
+                $untyped['stmt']->execute();                                                    // REPORT
                 (new Job())->execute();
             }
         }
@@ -176,7 +180,7 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
                 $expected[] = $index + 1;
             }
         }
-        $this->assertCount(13, $expected, 'the fixture lost some of its planted defects');
+        $this->assertCount(16, $expected, 'the fixture lost some of its planted defects');
 
         $found = $this->reportedIn($dir);
         $this->assertCount(1, $found, 'findings outside the fixture: ' . var_export($found, true));

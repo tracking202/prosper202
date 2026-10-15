@@ -935,9 +935,11 @@ function get_user_data_feedback($user_id)
 
     // Every signed-in page's header reads this: a failed read throws, and the
     // page's handler shows the recorded error page.
-    $result = _mysqli_query($sql);
+    $result = _mysqli_query($db, $sql);
     if ($result === false) {
-        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed | ' . p202RedactedStatement($sql));
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
     }
     $row = p202FetchRow($result, $sql);
 

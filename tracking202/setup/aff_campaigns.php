@@ -30,7 +30,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 $rotateUrlCampaignsSql = "SELECT * FROM 202_aff_campaigns WHERE user_id = '" . $mysql['user_id'] . "' AND aff_campaign_deleted = 0 AND aff_campaign_rotate = 1";
 $rotateUrlCampaignsResults = $db->query($rotateUrlCampaignsSql);
