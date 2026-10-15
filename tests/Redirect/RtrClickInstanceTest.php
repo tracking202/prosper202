@@ -326,6 +326,25 @@ final class RtrClickInstanceTest extends TestCase
             (string) ($click['outbound'] ?? ''),
             'the latest visit\'s link'
         );
+
+        // An advanced landing page's two exits read the click by its id as
+        // well: off.php (its offer, by acip and pci) and offrtr.php (its
+        // redirector, by rpi and the click cookie) each send the visitor on
+        // with the latest visit's values. Last: each records the click's exit,
+        // which rewrites the outbound link read above.
+        $latest = '~/cloaked\?s=' . $clickId . '&amp;kw=kw-' . $run
+            . '&amp;c1=third-' . $run . '&amp;cpc=0\.1&amp;end~';
+        $acip = self::read("campaigns/$campaign")['aff_campaign_id_public'] ?? '';
+        [$status, $headers, $page] = self::request(
+            self::$base . '/tracking202/redirect/off.php?acip=' . $acip . '&pci=' . $second['pci']
+        );
+        self::assertSame(1, preg_match($latest, $page), "off.php: the latest visit's link: $status $headers$page");
+        $rpi = self::read("rotators/$rotator")['public_id'] ?? '';
+        [$status, $headers, $page] = self::request(
+            self::$base . '/tracking202/redirect/offrtr.php?rpi=' . $rpi,
+            [CURLOPT_COOKIE => 'tracking202subid=' . $clickId, CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(1, preg_match($latest, $page), "offrtr.php: the latest visit's link: $status $headers$page");
     }
 
     /**
@@ -404,6 +423,20 @@ final class RtrClickInstanceTest extends TestCase
         $decoded = json_decode($response, true);
         if ($status !== $answers || !is_array($decoded) || !is_array($decoded['data'] ?? null)) {
             throw new \RuntimeException("POST /$resource answered $status: " . substr($response, 0, 300));
+        }
+
+        return $decoded['data'];
+    }
+
+    /** @return array<string, mixed> the record GET /api/v3/{$resource} answers */
+    private static function read(string $resource): array
+    {
+        [$status, , $response] = self::request(self::$base . '/api/v3/' . $resource, [
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key],
+        ]);
+        $decoded = json_decode($response, true);
+        if ($status !== 200 || !is_array($decoded) || !is_array($decoded['data'] ?? null)) {
+            throw new \RuntimeException("GET /$resource answered $status: " . substr($response, 0, 300));
         }
 
         return $decoded['data'];
