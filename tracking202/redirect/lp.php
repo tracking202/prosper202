@@ -136,23 +136,9 @@ $mysql['click_time'] = time();
 
 $mysql['landing_page_id'] = $db->real_escape_string((string) $tracker_row['landing_page_id']);
 
-//now gather variables for the clicks record db
-//click_id is needed to build click_id_public below, so resolve it first
-$click_id = getCookie202('tracking202subid_a_'.$tracker_row['aff_campaign_id']) ?? '';
-//lets determine if cloaking is on
-$cloaking_on = false;
 // The tracker's setting, or the campaign's when the landing page was reached
 // without one or it leaves the decision to the campaign (ClickCloaking).
-if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
-	$cloaking_on = true;
-	$mysql['click_cloaking'] = 1;
-	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-	$click_id_public = random_int(1,9) . $click_id . random_int(1,9);
-	$mysql['click_id_public'] = $db->real_escape_string($click_id_public);
-} else {
-	$mysql['click_cloaking'] = 0;
-}
-
+$cloaking_on = \Prosper202\Click\ClickCloaking::isOn($tracker_row);
 
 if ($cloaking_on == true) {
 
@@ -161,24 +147,36 @@ if ($cloaking_on == true) {
 
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
-$mysql['click_id'] = $db->real_escape_string($click_id);
-$mysql['click_out'] = 1;
-
-
-$update_sql = "
-	UPDATE
-		202_clicks_record
-	SET
-		click_out='".$mysql['click_out']."',
-		click_cloaking='".$mysql['click_cloaking']."'
-	WHERE
-		click_id='".$mysql['click_id']."'";
-$click_result = $db->query($update_sql) or record_mysql_error($db);
-//delay_sql($db, $update_sql);
-
-//set dirty hour
-$de = new DataEngine();
-$data=($de->setDirtyHour($mysql['click_id']));
+// The visitor's click on the landing page's campaign, by its cookie, marked as
+// leaving for the offer only when it is the landing page's account's: the
+// cookie is the visitor's to set, and named any account's click. Another
+// account's click, or none, is no click here, as a missing cookie always was.
+$lpClickId = \Prosper202\Click\ClickId::parse(
+    getCookie202('tracking202subid_a_' . $tracker_row['aff_campaign_id'])
+);
+if ($lpClickId !== null) {
+    $lpRecorded = false;
+    try {
+        $lpClicks = new \Prosper202\Click\MysqlClickRepository(
+            \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+        );
+        $lpRecorded = $lpClicks->recordExit(
+            new \Prosper202\Click\ClickExit((int) $tracker_row['user_id'], $lpClickId, cloaking: $cloaking_on ? 1 : 0)
+        );
+    } catch (\Throwable $lpWriteError) {
+        record_mysql_error(
+            $db,
+            'recording click ' . $lpClickId . ' leaving its landing page',
+            $lpWriteError->getMessage()
+        );
+    }
+    if ($lpRecorded) {
+        (new DataEngine())->setDirtyHour((string) $lpClickId);
+    } else {
+        $lpClickId = null;
+    }
+}
+$mysql['click_id'] = $lpClickId === null ? '' : (string) $lpClickId;
 
 $redirect_site_url = replaceTrackerPlaceholders(
     $db,

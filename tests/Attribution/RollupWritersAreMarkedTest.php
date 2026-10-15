@@ -67,10 +67,9 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Attribution/AttributionStore.php' => self::MARKS,
         '202-config/static-endpoint-helpers.php' => self::MARKS,
         '202-config/Ltv/MysqlCustomerRepository.php' => self::MARKS,
-        // Every path's click rows; rtr.php's re-click (?lpr=) marked in their transaction.
+        // Every path's click rows; rtr.php's re-click (?lpr=) marked in their transaction,
+        // and a click leaving its landing page for an offer (off.php, offrtr.php).
         '202-config/Click/MysqlClickRepository.php' => self::MARKS,
-        'tracking202/redirect/off.php' => self::MARKS,
-        'tracking202/redirect/offrtr.php' => self::MARKS,
         // The Update CPC write, behind the page and POST /api/v3/clicks/cpc.
         '202-config/Update/CpcUpdate.php' => self::MARKS,
         // Click-data retention: both of the cron job's deletions.

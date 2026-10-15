@@ -282,16 +282,6 @@ final class AccountScopedJoinTest extends TestCase
         'tracking202/ajax/ltv_products.php' => [
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id' => self::EVENT_LINES,
         ],
-        'tracking202/redirect/off.php' => [
-            'no user_id tie | 202_clicks | fc.click_id = `2cr`.click_id' => self::SAME_CLICK,
-            'no user_id tie | 202_clicks_spy | `2c`.click_id = `2cs`.click_id' => self::SAME_CLICK,
-        ],
-        'tracking202/redirect/offrtr.php' => [
-            'no user_id tie | 202_clicks | fc.click_id = `2c`.click_id' => self::SAME_CLICK,
-            'no user_id tie | 202_clicks_spy | `2c`.click_id = `2cs`.click_id' => self::SAME_CLICK,
-            'no user_id tie | 202_clicks | fc.click_id = `2c`.click_id #2' => self::SAME_CLICK,
-            'no user_id tie | 202_clicks_spy | `2c`.click_id = `2cs`.click_id #2' => self::SAME_CLICK,
-        ],
     ];
 
     /**
