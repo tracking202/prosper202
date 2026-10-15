@@ -18,7 +18,9 @@ declare(strict_types=1);
  *                   p202_overview_filter_lists()
  *   api-v1:<report> / api-v2:<report>
  *                   the legacy API's reportQuery() for text_ads or
- *                   landing_pages, and v1's getDataForWP() (get_data_for_wp)
+ *                   landing_pages, and v1's getDataForWP() (get_data_for_wp);
+ *                   `refused` is the keywords report grouped by a column
+ *                   no table has, a statement the server refuses
  *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
  *                   the 202_dirty_hours rows it left (RollupRefreshIntegrationTest)
  *   click-upgrade   the cron job's DataEngine::processClickUpgrade(), and
@@ -45,8 +47,7 @@ $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 
 /**
  * connect.php inside a function: see report-read-failure-runner.php. The
- * legacy API boots as its endpoints do, on connect2.php, beside which its
- * functions file declares helpers connect.php's own files also declare.
+ * legacy API boots as its endpoints do, on connect2.php.
  */
 function boot_app(string $root, bool $legacyApi): void
 {
@@ -152,10 +153,11 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
-    } elseif (preg_match('/^api-(v1|v2):(text_ads|landing_pages|get_data_for_wp)$/D', $reader, $m) === 1) {
+    } elseif (preg_match('/^api-(v1|v2):(text_ads|landing_pages|get_data_for_wp|refused)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
-        // them. v1 and v2 declare the same functions: one version per
-        // process. Loaded as they ship, strict types and all: this runner
+        // them, through the version's own functions.php (the report helpers
+        // are api/legacy/functions.php's, which it loads). Loaded as they
+        // ship, strict types and all: this runner
         // used to strip the declare, because every report request was a
         // TypeError under it (real_escape_string() handed the window's
         // timestamps and the unasked cid/c1-c4), and so it could not see
@@ -165,6 +167,7 @@ try {
             'text_ads' => reportQuery($db, 'text_ads', 'text_ad_id', 'text_ad_name', (string) $userId, $from, $to),
             'landing_pages' => reportQuery($db, 'landing_pages', 'landing_page_id', 'landing_page', (string) $userId, $from, $to),
             'get_data_for_wp' => getDataForWP($db, (string) $userId),
+            'refused' => reportQuery($db, 'keywords', 'no_such_column', 'keyword', (string) $userId, $from, $to),
         };
     } else {
         throw new InvalidArgumentException("no reader named '$reader'");

@@ -121,7 +121,7 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
     }
 
     /** What a reader returned, as the runner printed it. */
-    private static function read(string $reader): array
+    private static function read(string $reader, bool $errorExpected = false): array
     {
         self::requireScratch();
         $env = [
@@ -145,7 +145,9 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         self::assertStringStartsWith('RETURNED ', $out, $out . $err);
         $result = json_decode(substr(trim($out), 9), true);
         self::assertIsArray($result, $out);
-        self::assertArrayNotHasKey('error', $result, "$reader answered an error: " . json_encode($result));
+        if (!$errorExpected) {
+            self::assertArrayNotHasKey('error', $result, "$reader answered an error: " . json_encode($result));
+        }
 
         return $result;
     }
@@ -181,6 +183,21 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         self::assertNamesNothingOfTheOtherAccount($report, "$version landing_pages");
         self::assertEquals(3, $report['totals']['clicks'] ?? null, "$version: every click is counted: " . json_encode($report));
         self::assertContains('My Page', array_column($report['landing_pages'] ?? [], 'landing_page'));
+    }
+
+    /**
+     * A statement the server refuses is answered as the API's error, on both
+     * versions: v2's copy of reportQuery() went through _mysqli_query(), which
+     * on the click bootstrap printed the HTML error page into the JSON answer.
+     *
+     * @dataProvider versions
+     */
+    public function testARefusedReportStatementIsAnsweredAsTheApisError(string $version): void
+    {
+        self::assertSame(
+            ['msg' => 'Database error', 'error' => true, 'status' => 500],
+            self::read("api-$version:refused", true)
+        );
     }
 
     public function testTheWordPressFeedNamesNoOtherAccountsCampaign(): void

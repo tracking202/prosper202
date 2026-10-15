@@ -7,11 +7,11 @@ namespace Tests\Report;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The legacy report API's ratios (api/v1 and api/v2 functions.php,
- * legacy_api_ratio()): a zero or missing divisor is 0, not the
- * DivisionByZeroError that `@round($a / $b)` threw on PHP 8 for a row with no
- * clicks or no cost. Each version runs in a process of its own: they declare
- * the same functions.
+ * The legacy report API's ratios (legacy_api_ratio(), api/legacy/functions.php):
+ * a zero or missing divisor is 0, not the DivisionByZeroError that
+ * `@round($a / $b)` threw on PHP 8 for a row with no clicks or no cost. Each
+ * version's functions.php is loaded alone, in a process of its own, as its
+ * endpoint loads it, so each is shown to bring the helper in.
  */
 final class LegacyApiRatioTest extends TestCase
 {
@@ -32,5 +32,18 @@ final class LegacyApiRatioTest extends TestCase
         $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -d display_errors=stderr -r ' . escapeshellarg($script) . ' 2>&1');
 
         self::assertSame('[0,0,0,25,143,3.95,-50]', trim((string) $out), "$version: " . $out);
+    }
+
+    /** Each version declared its own copy of the helpers, so loading both was a fatal redeclare. */
+    public function testBothVersionsLoadInOneProcess(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $script = 'declare(strict_types=1); require ' . var_export($root . '/api/v1/functions.php', true) . ';'
+            . ' require ' . var_export($root . '/api/v2/functions.php', true) . ';'
+            . ' echo function_exists("getStats") && function_exists("getAuth") ? "both" : "missing";';
+        $php = escapeshellarg(PHP_BINARY);
+        $out = shell_exec($php . ' -d display_errors=stderr -r ' . escapeshellarg($script) . ' 2>&1');
+
+        self::assertSame('both', trim((string) $out), (string) $out);
     }
 }

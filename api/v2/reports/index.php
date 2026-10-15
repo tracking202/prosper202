@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $data = getAuth($db, $_GET);
         if (($data['msg'] ?? '') === 'Authorized') {
             $timezone = (string) ($data['user_timezone'] ?? 'UTC');
-            $data = runReports($db, $_GET, (int) ($data['user_id'] ?? 0), $timezone);
+            $data = runReports($db, $_GET, (int) ($data['user_id'] ?? 0), $timezone, 'v2');
         }
     }
 
