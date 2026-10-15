@@ -1192,6 +1192,15 @@ to PHP, so India and Ireland were cut hours off, and any day across a DST
 change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
 $day, $zone)`.
 
+The same re-click is the other half of this: a click id names one row per
+visit, so a read of "the click" that takes no order takes whichever visit
+the database returns first, usually the first (a re-click's offer URL
+carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
+`SingleClickReadsNameTheirVisitTest` holds every read of one click's
+`202_clicks` row to it or to a listed reason; the conversion, pixel, goal
+and install reads are listed until it is decided which visit a conversion
+credits. Only `click_id` and `user_id` are the same on every visit's row.
+
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
 conversion takes its click's campaign id; a landing page names a campaign, a
