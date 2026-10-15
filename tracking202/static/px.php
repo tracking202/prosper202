@@ -48,7 +48,7 @@ $click_id = 0;
 if ($cookie !== '') {
 	$click_id = p202ParseClickId($cookie) ?? 0;
 	if ($click_id === 0) {
-		error_log('px: refusing malformed tracking202subid cookie for acip ' . $mysql['aff_campaign_id_public']);
+		error_log('px: refusing malformed tracking202subid cookie for acip ' . $pxCampaignId);
 		exit;
 	}
 } else {

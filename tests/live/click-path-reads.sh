@@ -26,7 +26,7 @@
 #   - lpc.php and off.php without a click turned no campaign's own URL
 #     rotation;
 #   - a public id with trailing letters (lpip=123abc) named record 123, on
-#     record_simple.php, record.php, record_adv.php and pb.php;
+#     record_simple.php, record.php, record_adv.php, pb.php and px.php;
 #   - a click public id of 0, a click stored without one, named every such
 #     click: pci.php marked one as gone, cl.php sent the visitor to one's URL.
 #
@@ -242,6 +242,12 @@ curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=${ACIP}abc&subid=${i
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${id:-0}'")" "0" "pb.php?acip=${ACIP}abc names no campaign"
 curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=${id:-0}"
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${id:-0}'")" "1" "while acip=$ACIP converts the click"
+get "/tracking202/static/record_simple.php?lpip=$LPS&t202kw=cpr" >/dev/null
+pxid=$(grep -oE 'var subid =[^;]*' "$OUT/page" | grep -oE '[0-9]+' | head -1)
+curl -sS -o /dev/null -b "tracking202subid=${pxid:-0}" "$BASE/tracking202/static/px.php?acip=${ACIP}abc"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${pxid:-0}'")" "0" "px.php?acip=${ACIP}abc names no campaign"
+curl -sS -o /dev/null -b "tracking202subid=${pxid:-0}" "$BASE/tracking202/static/px.php?acip=$ACIP"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${pxid:-0}'")" "1" "while acip=$ACIP converts the cookie's click"
 
 say "a public id of 0 names no click"
 # A click without cloaking is stored with public id 0, its "none".
