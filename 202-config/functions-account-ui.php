@@ -124,6 +124,26 @@ function p202_account_invalid(array $errors, string $field): string
 }
 
 /**
+ * Account › Settings' pill for a sign-in attempt, from its stored
+ * login_success: a right password the sign-in could not complete is neither
+ * passed nor failed (the throttle does not count it), and a value no version
+ * writes is shown as it is.
+ */
+function p202_account_sign_in_attempt_pill(mixed $stored): string
+{
+    $outcome = \Prosper202\User\SignInOutcome::fromStored($stored);
+    $shown = is_scalar($stored) ? (string) $stored : get_debug_type($stored);
+
+    return match ($outcome) {
+        \Prosper202\User\SignInOutcome::Passed => '<span class="p202-pill p202-pill--good">Passed</span>',
+        \Prosper202\User\SignInOutcome::Failed => '<span class="p202-pill p202-pill--bad">Failed</span>',
+        \Prosper202\User\SignInOutcome::NotCompleted => '<span class="p202-pill p202-pill--warn"'
+            . ' title="The password was right; a database failure stopped the sign-in">Not completed</span>',
+        null => '<span class="p202-pill">Unknown (' . htmlspecialchars($shown, ENT_QUOTES, 'UTF-8') . ')</span>',
+    };
+}
+
+/**
  * Save the profile form: the account row and the preferences row, in one
  * transaction.
  *

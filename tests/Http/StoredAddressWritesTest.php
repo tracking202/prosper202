@@ -156,10 +156,11 @@ final class StoredAddressWritesTest extends TestCase
             ],
         ],
         // ── Sign-in and the operator's own records ──────────────────────
-        '202-login.php' => [
+        '202-config/User/SignInLog.php' => [
             '202_users_log.ip_address' => [
                 self::OPERATOR,
-                'the login audit log: the address of whoever tried to sign in, the throttle\'s key',
+                'the login audit log (202-login.php, its one caller): the address of whoever tried to sign in,'
+                    . ' the throttle\'s key',
             ],
         ],
         '202-config/User/SignInRecord.php' => [
@@ -309,7 +310,7 @@ final class StoredAddressWritesTest extends TestCase
     {
         $found = self::found();
         self::assertArrayHasKey('api/v3/Apps/Android/InstallIntake.php', $found, 'the scan sees the Android intake');
-        self::assertArrayHasKey('202-login.php', $found, 'and the sign-in');
+        self::assertArrayHasKey('202-config/User/SignInLog.php', $found, 'and the sign-in log');
 
         $undecided = [];
         foreach ($found as $file => $writes) {

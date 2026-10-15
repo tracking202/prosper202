@@ -340,13 +340,20 @@ final class AccountAdministrationIntegrationTest extends TestCase
         try {
             $log = $this->admin()->loginLog(['limit' => '2']);
             self::assertSame(2, $log['meta']['limit']);
+            self::assertNull($log['meta']['status'], 'no status asked: every attempt');
             self::assertSame(
                 [
-                    ['login_id' => $second, 'user_name' => 'admin-it-new', 'ip_address' => '198.51.100.8', 'login_time' => 1000000100, 'login_success' => true],
-                    ['login_id' => $first, 'user_name' => 'admin-it-old', 'ip_address' => '198.51.100.7', 'login_time' => 1000000000, 'login_success' => false],
+                    [
+                        'login_id' => $second, 'user_name' => 'admin-it-new', 'ip_address' => '198.51.100.8',
+                        'login_time' => 1000000100, 'login_success' => true, 'status' => 'passed',
+                    ],
+                    [
+                        'login_id' => $first, 'user_name' => 'admin-it-old', 'ip_address' => '198.51.100.7',
+                        'login_time' => 1000000000, 'login_success' => false, 'status' => 'failed',
+                    ],
                 ],
                 $log['data'],
-                'newest first, and only who, when, where and whether it passed'
+                'newest first, and only who, when, where and how it ended'
             );
             self::assertStringNotContainsString('plaintext-from-an-old-install', (string) json_encode($this->admin()->loginLog([])));
             self::assertSame(50, $this->admin()->loginLog([])['meta']['limit'], 'the page shows 50');
@@ -356,6 +363,52 @@ final class AccountAdministrationIntegrationTest extends TestCase
             self::refused(ValidationException::class, fn () => $this->admin()->loginLog(['since' => '1']), 'since');
         } finally {
             self::q("DELETE FROM 202_users_log WHERE login_id IN ($first, $second)");
+        }
+    }
+
+    /**
+     * A right password whose sign-in could not be completed (login_success
+     * 2) is its own status, not a pass and not a failure, and ?status=
+     * selects each outcome alone; a value no version writes is unknown and
+     * no status selects it.
+     */
+    public function testTheLoginLogTellsANotCompletedSignInApart(): void
+    {
+        $ids = [];
+        foreach (['failed' => 0, 'passed' => 1, 'not_completed' => 2, 'unknown' => 7] as $name => $stored) {
+            $ids[$name] = self::q("INSERT INTO 202_users_log SET user_name = 'admin-it-$name', user_pass = '[filtered]',"
+                . " ip_address = '198.51.100.9', login_time = 1000000200, login_success = $stored, login_error = '',"
+                . " login_server = '', login_session = ''");
+        }
+        try {
+            $byId = array_column($this->admin()->loginLog(['limit' => '4'])['data'], null, 'login_id');
+            foreach ($ids as $name => $id) {
+                self::assertSame($name, $byId[$id]['status'] ?? null, "login_id $id ($name)");
+                self::assertSame($name === 'passed', $byId[$id]['login_success'], "$name: true for a pass alone");
+            }
+
+            foreach (['failed', 'passed', 'not_completed'] as $status) {
+                $only = $this->admin()->loginLog(['status' => $status, 'limit' => '500']);
+                self::assertSame($status, $only['meta']['status']);
+                $listed = array_column($only['data'], 'login_id');
+                self::assertSame(
+                    [$status],
+                    array_values(array_unique(array_column($only['data'], 'status'))),
+                    "status=$status lists that outcome alone"
+                );
+                self::assertContains($ids[$status], $listed, "status=$status finds its row");
+                self::assertNotContains($ids['unknown'], $listed, "status=$status leaves out a value no version writes");
+            }
+
+            foreach (['not-completed', 'NOT_COMPLETED', 'success', 'unknown', '2', '', ['not_completed']] as $bad) {
+                self::refused(
+                    ValidationException::class,
+                    fn () => $this->admin()->loginLog(['status' => $bad]),
+                    'status'
+                );
+            }
+        } finally {
+            self::q('DELETE FROM 202_users_log WHERE login_id IN (' . implode(',', $ids) . ')');
         }
     }
 
