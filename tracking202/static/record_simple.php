@@ -36,35 +36,20 @@ $_GET += [
 	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
+// The landing page and its campaign, when the campaign is the page's account's.
 $landing_page_id_public = ClickRequest::string($_GET, 'lpip');
-$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
+$rsLandingPageId = \Prosper202\Click\PublicId::parse($landing_page_id_public);
+$rsReads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+$tracker_row = null;
+if ($rsLandingPageId !== null) {
+    try {
+        $tracker_row = $rsReads->landingPageOffer($rsLandingPageId);
+    } catch (\Throwable $rsReadError) {
+        record_mysql_error($db, 'reading landing page ' . $rsLandingPageId, $rsReadError->getMessage());
+    }
+}
 
-$mod_sql = "SHOW COLUMNS FROM 202_landing_pages like  'leave_behind_page_url'";
-$mod_row = memcache_mysql_fetch_assoc($db, $mod_sql);
-
-$tracker_sql = "SELECT 202_landing_pages.user_id,
-						202_landing_pages.landing_page_id,";
-
-if ($mod_row)
-	$tracker_sql .= "202_landing_pages.leave_behind_page_url,";
-
-$tracker_sql .= "202_landing_pages.aff_campaign_id,
-						202_aff_campaigns.aff_campaign_url,
-						202_aff_campaigns.aff_campaign_url_2,
-						202_aff_campaigns.aff_campaign_url_3,
-						202_aff_campaigns.aff_campaign_url_4,
-						202_aff_campaigns.aff_campaign_url_5,
-						202_aff_campaigns.aff_campaign_payout,
-						202_aff_campaigns.aff_campaign_cloaking,
-						202_aff_campaigns.aff_campaign_rotate,
-						202_aff_campaigns.identity_signals
-				FROM    202_landing_pages, 202_aff_campaigns
-				WHERE   202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'
-					AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
-
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	die();
 }
 
@@ -88,25 +73,20 @@ $user_row = memcache_mysql_fetch_assoc($db, $user_sql);
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string) ($user_row['user_pref_dynamic_bid'] ?? '0'));
 AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 
-$t202id = ClickRequest::string($_GET, 't202id');
-if ($t202id !== '') {
-	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
+// The tracker the visit names, when it is the landing page's account's: its
+// text ad, traffic source and cost were copied into this account's click.
+$rsTrackerId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 't202id'));
+if ($rsTrackerId !== null) {
+    try {
+        $tracker_row2 = $rsReads->accountTracker((int) $tracker_row['user_id'], $rsTrackerId);
+    } catch (\Throwable $rsReadError) {
+        record_mysql_error($db, 'reading tracker ' . $rsTrackerId, $rsReadError->getMessage());
+    }
 
-	$tracker_sql2 = "SELECT 2tr.text_ad_id,
-							2tr.ppc_account_id,
-							2tr.click_cpc,
-							2tr.click_cloaking,
-							2cv.ppc_variable_ids,
-							2cv.parameters
-					FROM    202_trackers AS 2tr
-					LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
-					LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-					WHERE   2tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
-
-	if ($tracker_row2) {
-		$tracker_row = array_merge($tracker_row, $tracker_row2);
+    if ($tracker_row2 !== null) {
+        $tracker_row = array_merge($tracker_row, array_intersect_key($tracker_row2, array_flip([
+            'text_ad_id', 'ppc_account_id', 'click_cpc', 'click_cloaking', 'ppc_variable_ids', 'parameters',
+        ])));
 	}
 }
 

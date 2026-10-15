@@ -746,7 +746,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
             'SELECT c.user_id, c.aff_campaign_id, c.click_lead, c.click_time, c.click_payout, t.click_cpa
              FROM 202_clicks AS c
              LEFT JOIN 202_cpa_trackers AS cp ON cp.click_id = c.click_id
-             LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public
+             LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public AND t.user_id = c.user_id
              WHERE c.click_id = ?
              LIMIT 1'
         );

@@ -147,44 +147,21 @@ if ($usedCachedRedirect == true) {
 	);
 }
 
-//grab tracker data
-$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
-$tracker_sql = "SELECT 202_trackers.user_id,
-						202_trackers.aff_campaign_id,
-						text_ad_id,
-						ppc_account_id,
-						click_cpc,
-						click_cpa,
-						click_cloaking,
-						aff_campaign_rotate,
-						aff_campaign_url,
-						aff_campaign_url_2,
-						aff_campaign_url_3,
-						aff_campaign_url_4,
-						aff_campaign_url_5,
-						aff_campaign_payout,
-						aff_campaign_cloaking,
-						202_aff_campaigns.identity_signals,
-						2cv.ppc_variable_ids,
-						2cv.parameters,
-                        user_timezone, 
-		                user_keyword_searched_or_bidded,
-                        user_pref_referer_data,
-                        user_pref_dynamic_bid,
-		                maxmind_isp,
-                        user_public_publisher_id
-                        FROM 202_trackers 
-                        LEFT JOIN 202_users_pref USING (user_id) 
-            LEFT JOIN 202_users USING (user_id) 
-    			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)					                 
-				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The tracker, with its campaign, text ad and traffic source when each is the
+// tracker's account's: one of another account's, named by an id the
+// tracker kept, was copied into this account's click.
+$dlTrackerId = \Prosper202\Click\PublicId::parse($t202id);
+$tracker_row = null;
+if ($dlTrackerId !== null) {
+    try {
+        $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->tracker($dlTrackerId);
+    } catch (\Throwable $dlReadError) {
+        record_mysql_error($db, 'reading tracker ' . $dlTrackerId, $dlReadError->getMessage());
+    }
+}
 
 // Check if tracker exists BEFORE using its data
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	renderErrorPage(
 		404,
 		'Tracking Link Not Found',
@@ -213,6 +190,7 @@ if ($memcacheWorking) {
 
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? '0'));
+$mysql['tracker_id_public'] = (string) $dlTrackerId;
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);

@@ -34,7 +34,12 @@ if ($offrtrClickId === null) {
     die();
 }
 $mysql['click_id'] = (string) $offrtrClickId;
-$mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
+// The rotator's public id exactly: compared as text, MySQL read 12abc as 12.
+$offrtrRotatorId = \Prosper202\Click\PublicId::parse($rpi);
+if ($offrtrRotatorId === null) {
+    die();
+}
+$mysql['rpi'] = (string) $offrtrRotatorId;
 
 $rotator_sql = "SELECT
 					   rt.id,

@@ -116,6 +116,21 @@ final class ClickDetailIntegrationTest extends TestCase
         self::assertSame('203.0.113.9', $listed[960001]['ip_address'] ?? null);
     }
 
+    public function testAReClickedClickIsItsLatestVisit(): void
+    {
+        $mine = (int) self::$db->query('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE user_id = ' . self::USER)
+            ->fetch_row()[0];
+        // The redirector's second row for the click, at the later visit, as
+        // MysqlClickRepository::recordReClick() writes it.
+        self::q('INSERT INTO 202_clicks SET click_id = 960001, user_id = ' . self::USER . ", aff_campaign_id = $mine,"
+            . ' ppc_account_id = 0, click_cpc = 0.5, click_time = UNIX_TIMESTAMP() + 60');
+        self::q('INSERT INTO 202_clicks SET click_id = 960001, user_id = ' . self::USER . ", aff_campaign_id = $mine,"
+            . ' ppc_account_id = 0, click_cpc = 0.25, click_time = UNIX_TIMESTAMP() - 3600');
+
+        $row = (new ClicksController(self::$db, self::USER))->get(960001)['data'];
+        self::assertSame(0.5, $row['click_cpc'], 'the latest of the click\'s rows');
+    }
+
     public function testANameComesOnlyFromTheClicksOwnAccount(): void
     {
         $row = (new ClicksController(self::$db, self::USER))->get(960002)['data'];

@@ -56,9 +56,6 @@ if(!$mysql['click_id']){
 // integer click_id for safe SQL interpolation
 $clickId = (int) $mysql['click_id'];
 
-$site_urls=" LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
-                     LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id) ";
-
 //get c1-c4 values etc
 $cvar_sql ="
 SELECT 
@@ -97,7 +94,10 @@ LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
 LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
 LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
 LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
-LEFT JOIN `202_trackers` AS 2trc ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public`)".$site_urls."
+LEFT JOIN `202_trackers` AS 2trc
+    ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
+LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
+LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
 WHERE 2c.`click_id` = {$clickId}
 LIMIT 1";
 

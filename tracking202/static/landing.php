@@ -71,32 +71,32 @@ $t202ClientParamMap = [
 $t202CustomVars = [];
 $t202id = $_GET['t202id'] ?? '';
 $lpip = $_GET['lpip'] ?? '';
-$cv_sql = '';
-if ($t202id !== '') {
-    $mysql_t202id = $db->real_escape_string((string)$t202id);
-    $cv_sql = "SELECT 2cv.parameters
-        FROM 202_trackers
-        LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-        LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-        WHERE tracker_id_public = '".$mysql_t202id."'";
-} elseif ($lpip !== '') {
-    $mysql_lpip = $db->real_escape_string((string)$lpip);
-    $cv_sql = "SELECT 2cv.parameters
-        FROM 202_landing_pages AS lp
-        JOIN 202_trackers AS tr ON tr.aff_campaign_id = lp.aff_campaign_id
-        LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-        LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-        WHERE lp.landing_page_id_public = '".$mysql_lpip."'
-        LIMIT 1";
-}
-if ($cv_sql !== '') {
-    $cv_result = $db->query($cv_sql);
-    if ($cv_result && $cv_result->num_rows > 0) {
-        $cv_row = $cv_result->fetch_assoc();
+$t202TrackerId = \Prosper202\Click\PublicId::parse($t202id);
+$t202LandingPageId = \Prosper202\Click\PublicId::parse($lpip);
+try {
+    $t202Reads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+    // The traffic source's variables: the named tracker's (on a named page,
+    // only when it is the page's account's), or for a page reached without
+    // one, a tracker of the page's campaign of the page's account. Each
+    // source only when it is the tracker's account's.
+    if ($t202id !== '') {
+        if ($t202TrackerId === null) {
+            $cv_row = null;
+        } elseif ($t202LandingPageId !== null) {
+            $cv_row = $t202Reads->landingPageVisitVariables($t202LandingPageId, $t202TrackerId);
+        } else {
+            $cv_row = $t202Reads->tracker($t202TrackerId);
+        }
+    } else {
+        $cv_row = $t202LandingPageId === null ? null : $t202Reads->landingPageTrackerVariables($t202LandingPageId);
+    }
+    if ($cv_row !== null) {
         // The source's variable names (TrackerVariables: NULL or none is no
         // variables; a variable named "0" is one).
         $t202CustomVars = array_column(\Prosper202\Click\TrackerVariables::pairs($cv_row), 0);
     }
+} catch (\Throwable $cvError) {
+    error_log('landing.php: could not read the traffic source variables: ' . $cvError->getMessage());
 }
 
 // Whether this page's campaign lets identity signals be captured: the same
@@ -107,19 +107,10 @@ if ($cv_sql !== '') {
 // campaign later. A setting that cannot be read turns capture off (CLAUDE.md
 // #11); a page with no campaign at all leaves it on, as record.php does.
 $p202CampaignCapture = false;
-if ($lpip !== '') {
+if ($t202LandingPageId !== null) {
     try {
-        $identityConn = \Prosper202\Repository\LookupRepositoryFactory::connection($db);
-        $identityStmt = $identityConn->prepareRead(
-            'SELECT lp.landing_page_type, lpc.identity_signals AS lp_setting, trc.identity_signals AS tracker_setting, tr.aff_campaign_id AS tracker_campaign
-             FROM 202_landing_pages AS lp
-             LEFT JOIN 202_aff_campaigns AS lpc ON lpc.aff_campaign_id = lp.aff_campaign_id
-             LEFT JOIN 202_trackers AS tr ON tr.tracker_id_public = ?
-             LEFT JOIN 202_aff_campaigns AS trc ON trc.aff_campaign_id = tr.aff_campaign_id
-             WHERE lp.landing_page_id_public = ? LIMIT 1'
-        );
-        $identityConn->bind($identityStmt, 'ss', [(string) $t202id, (string) $lpip]);
-        $identityRow = $identityConn->fetchOne($identityStmt);
+        $identityRow = \Prosper202\Repository\LookupRepositoryFactory::reads($db)
+            ->landingPageCapture($t202LandingPageId, $t202TrackerId);
         if ($identityRow !== null) {
             $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1
                 ? \Prosper202\Identity\RequestSignals::campaignAllows(
@@ -128,7 +119,8 @@ if ($lpip !== '') {
                 : \Prosper202\Identity\RequestSignals::campaignAllows($identityRow['lp_setting'] ?? '0');
         }
     } catch (\Throwable $identityError) {
-        error_log('landing.php: could not read the campaign identity setting for lpip ' . $lpip . ': ' . $identityError->getMessage());
+        error_log('landing.php: could not read the campaign identity setting for lpip '
+            . $t202LandingPageId . ': ' . $identityError->getMessage());
         $p202CampaignCapture = false;
     }
 }
