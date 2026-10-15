@@ -27,9 +27,11 @@ final class Connection
 {
     /**
      * The connections a transaction() is open on. One handle is wrapped by
-     * many Connections, so it is kept per handle, not per wrapper.
+     * many Connections, so it is kept per handle, not per wrapper. The value
+     * is true for an open transaction, or why the handle may still hold
+     * writes nobody will commit or roll back (a rollback that failed).
      *
-     * @var \WeakMap<mysqli, true>|null
+     * @var \WeakMap<mysqli, true|string>|null
      */
     private static ?\WeakMap $open = null;
 
@@ -334,8 +336,9 @@ final class Connection
      *
      * A rollback that fails leaves the transaction's writes pending on the
      * handle, so that is thrown (with the callback's throwable as previous)
-     * and the handle stays marked: a later transaction() is refused rather
-     * than beginning, which would commit them.
+     * and the handle stays marked with why: a later transaction() is refused
+     * rather than beginning, which would commit them, and joinTransaction()
+     * rather than adding to them.
      *
      * @template T
      * @param callable(): T $fn
@@ -346,6 +349,7 @@ final class Connection
      */
     public function transaction(callable $fn): mixed
     {
+        $this->refuseAfterFailedRollback();
         if ($this->inTransaction()) {
             throw new LogicException(
                 'A transaction was asked for inside another on the same connection; beginning it would'
@@ -375,6 +379,7 @@ final class Connection
             }
             if (!$rolledBack) {
                 $failed = $this->boundaryFailed('Unable to roll back transaction after "' . $e->getMessage() . '"');
+                $open[$this->write] = $failed->getMessage();
                 throw new QueryException($failed->getMessage(), $failed->getCode(), $e);
             }
             throw $e;
@@ -398,6 +403,7 @@ final class Connection
      */
     public function joinTransaction(callable $fn): mixed
     {
+        $this->refuseAfterFailedRollback();
         if (!$this->inTransaction()) {
             throw new LogicException(
                 'Work meant for the caller\'s transaction was run outside one; each of its statements would'
@@ -412,6 +418,21 @@ final class Connection
     public function inTransaction(): bool
     {
         return self::$open !== null && isset(self::$open[$this->write]);
+    }
+
+    /**
+     * Neither begin a transaction nor join one on a handle whose rollback
+     * failed: its writes may still be pending, and a begin would commit them.
+     */
+    private function refuseAfterFailedRollback(): void
+    {
+        $why = self::$open[$this->write] ?? true;
+        if (is_string($why)) {
+            throw new LogicException(
+                'A rollback on this connection failed (' . $why . '), so its writes may still be pending;'
+                    . ' no transaction is begun or joined on it until the error page ends them.'
+            );
+        }
     }
 
     /**

@@ -292,13 +292,26 @@ final class ConnectionTest extends TestCase
         }
 
         // The writes may still be pending on the handle: beginning another
-        // transaction there would commit them.
+        // transaction there would commit them, and joining would add to them.
+        // Both refusals say why, not that a transaction is open.
         $this->assertTrue($conn->inTransaction());
         try {
             $conn->transaction(fn () => 'next');
             $this->fail('A transaction began over a rollback that failed');
-        } catch (\LogicException) {
+        } catch (\LogicException $refused) {
             $this->assertSame(1, $write->begins);
+            $this->assertStringContainsString('A rollback on this connection failed', $refused->getMessage());
+            $this->assertStringContainsString('after "boom"', $refused->getMessage());
+        }
+        $joined = false;
+        try {
+            (new Connection($write))->joinTransaction(function () use (&$joined): void {
+                $joined = true;
+            });
+            $this->fail('Work joined a transaction whose rollback failed');
+        } catch (\LogicException $refused) {
+            $this->assertFalse($joined);
+            $this->assertStringContainsString('A rollback on this connection failed', $refused->getMessage());
         }
 
         // The error page ends it its own way, and says so.
