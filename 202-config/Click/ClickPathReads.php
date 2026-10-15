@@ -449,7 +449,7 @@ final readonly class ClickPathReads
                LEFT JOIN 202_users_pref AS up ON up.user_id = c.user_id
                LEFT JOIN 202_clicks_rotator AS cro ON cro.click_id = c.click_id
               WHERE cr.click_id_public = ?
-              ORDER BY c.click_time DESC, (c.rotator_id = cro.rotator_id AND c.rule_id = cro.rule_redirect_id) DESC
+              ' . LatestVisit::orderBy('c', 'cro') . '
               LIMIT 1'
         );
         $this->conn->bind($stmt, 'i', [$clickPublicId]);

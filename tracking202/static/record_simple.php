@@ -383,8 +383,16 @@ $clickIdentity = p202ClickIdentity(
 	// cross-site script request links by the page's p202lpid instead.
 	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
 );
-// Every row in one transaction (MysqlClickRepository)
-$clickRepo->recordClick(\Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity));
+// Every row in one transaction (MysqlClickRepository), its cache writes held
+// until it commits; a failure is the error page, as rtr.php's is.
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$rsClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+try {
+    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($rsClick));
+} catch (\Throwable $rsWriteError) {
+    record_mysql_error($db, 'recording click ' . $click_id, $rsWriteError->getMessage());
+}
 
 //update the click summary table if this is a 'real click'
 #if ($click_filtered == 0) {

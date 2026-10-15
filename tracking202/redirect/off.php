@@ -22,6 +22,8 @@ elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null
 
 if (! is_numeric($acip))
     die();
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -71,7 +73,7 @@ if ($usedCachedRedirect == true) {
         }
     }
     
-    die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+    p202Unavailable();
 }
 
 // The offer the link names, any account's: its account is the one whose
@@ -238,10 +240,13 @@ $info_sql = "
 		202_clicks_record AS 2cr
 		LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)
 		LEFT JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2cr.click_id)
+		LEFT JOIN 202_clicks_rotator AS cro ON (cro.click_id = 2cr.click_id)
 	WHERE
 		2ac.aff_campaign_id_public=" . (int) $offOfferId . "
 		AND 2cr.click_id_public=" . (int) $offPciId . "
 		AND 2ac.user_id = 2c.user_id
+	" . \Prosper202\Click\LatestVisit::orderBy('2c', 'cro') . "
+	LIMIT 1
 ";
 // The offer and the click are named separately (an advanced landing page
 // lets the visitor choose among the account's offers, so the campaign may

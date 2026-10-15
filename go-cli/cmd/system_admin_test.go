@@ -22,6 +22,9 @@ func TestSystemReadsSendTheirRequest(t *testing.T) {
 		{[]string{"system", "info"}, "/system/info", ""},
 		{[]string{"system", "login-log"}, "/system/login-log", ""},
 		{[]string{"system", "login-log", "--limit", "200"}, "/system/login-log", "limit=200"},
+		{[]string{"system", "login-log", "--status", "not_completed"}, "/system/login-log", "status=not_completed"},
+		{[]string{"system", "login-log", "--status", "failed", "--limit", "20"}, "/system/login-log", "limit=20&status=failed"},
+		{[]string{"system", "login-log", "--status", "passed"}, "/system/login-log", "status=passed"},
 		{[]string{"system", "metrics"}, "/system/metrics", ""},
 		{[]string{"system", "retention", "show"}, "/system/retention", ""},
 		{[]string{"system", "isp-lookup", "show"}, "/system/isp-lookup", ""},
@@ -47,6 +50,81 @@ func TestSystemLoginLogRefusesABadLimitBeforeAnyRequest(t *testing.T) {
 		if !strings.Contains(hintFor(err), "--limit 100") || len(*seen) != 0 {
 			t.Errorf("--limit %s: hint %q, sent %+v", v, hintFor(err), *seen)
 		}
+	}
+}
+
+// --status takes the API's three words exactly and refuses anything else,
+// naming them, before any request: a status the server would ignore or read
+// another way would list attempts the agent did not ask for.
+func TestSystemLoginLogRefusesABadStatusBeforeAnyRequest(t *testing.T) {
+	seen := updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":[]}` })
+	_, _, err := executeCommand("system", "login-log", "--status", "")
+	assertValidationError(t, err) // every empty flag value is refused before any request
+	if len(*seen) != 0 {
+		t.Errorf("--status \"\": sent %+v", *seen)
+	}
+	for _, v := range []string{"not-completed", "NOT_COMPLETED", "success", "unknown", "fail", "2"} {
+		seen := updateServer(t, func(updateRequest) (int, string) { return 200, `{"data":[]}` })
+		_, _, err := executeCommand("system", "login-log", "--status", v)
+		assertValidationError(t, err)
+		if code := exitCodeForError(err); code != 1 {
+			t.Errorf("--status %q: exit %d, want 1", v, code)
+		}
+		if msg := err.Error(); !strings.Contains(msg, "passed, failed, not_completed") {
+			t.Errorf("--status %q: the message should list the statuses, got %q", v, msg)
+		}
+		if !strings.Contains(hintFor(err), "--status not_completed") || len(*seen) != 0 {
+			t.Errorf("--status %q: hint %q, sent %+v", v, hintFor(err), *seen)
+		}
+	}
+}
+
+// A server from before 1.9.78 refuses ?status= as an unknown parameter; the
+// hint says to run without it, and the 422 stays a validation failure.
+func TestSystemLoginLogStatusOnAnOlderServerSaysToDropIt(t *testing.T) {
+	updateServer(t, func(updateRequest) (int, string) {
+		return 422, `{"error":true,"message":"Unknown parameter(s): status","status":422,"field_errors":{"status":"is not accepted here (accepted: limit)"}}`
+	})
+	_, _, err := executeCommand("system", "login-log", "--status", "failed")
+	if err == nil {
+		t.Fatal("a 422 should fail the command")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if !strings.Contains(hintFor(err), "predates --status") {
+		t.Errorf("hint %q should say the server predates --status", hintFor(err))
+	}
+
+	updateServer(t, func(updateRequest) (int, string) {
+		return 422, `{"error":true,"message":"Invalid status","status":422,"field_errors":{"status":"must be one of failed, passed, not_completed"}}`
+	})
+	_, _, err = executeCommand("system", "login-log", "--status", "failed")
+	if strings.Contains(hintFor(err), "predates --status") {
+		t.Errorf("a status the server read and refused is not an old server: hint %q", hintFor(err))
+	}
+}
+
+// The rows render the server's status as sent, so a sign-in not completed
+// reads as such in a table and under --json, and login_success stays a
+// boolean.
+func TestSystemLoginLogShowsANotCompletedSignIn(t *testing.T) {
+	body := `{"data":[{"login_id":3,"user_name":"ana","ip_address":"198.51.100.7","login_time":1792039194,"login_success":false,"status":"not_completed"},` +
+		`{"login_id":2,"user_name":"ana","ip_address":"198.51.100.7","login_time":1792039100,"login_success":false,"status":"failed"}],"meta":{"limit":50,"status":null}}`
+	updateServer(t, func(updateRequest) (int, string) { return 200, body })
+	stdout, _, err := executeCommand("system", "login-log", "--table")
+	if err != nil {
+		t.Fatalf("system login-log: %v", err)
+	}
+	if !strings.Contains(stdout, "not_completed") || !strings.Contains(stdout, "failed") {
+		t.Errorf("the table should show each row's status, got:\n%s", stdout)
+	}
+	stdout, _, err = executeCommand("system", "login-log", "--json")
+	if err != nil {
+		t.Fatalf("system login-log --json: %v", err)
+	}
+	if !strings.Contains(stdout, `"status": "not_completed"`) || !strings.Contains(stdout, `"login_success": false`) {
+		t.Errorf("--json should carry the answer as sent, got:\n%s", stdout)
 	}
 }
 

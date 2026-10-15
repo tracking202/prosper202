@@ -14,14 +14,15 @@ use PHPUnit\Framework\TestCase;
  * two installs on one host sharing a memcached read each other's entries: a
  * landing-page click on one could be filed under the other's tracker row for
  * the same public id, and any click take the other database's keyword or c1
- * id. The install is part of it now, in both copies, which agree: its
- * directory, known in every scope, and its database. With no database
+ * id. The install is part of it now, in the one copy both bootstraps load
+ * (functions-shared.php): its directory, known in every scope, and its
+ * database. With no database
  * settings in scope the directory still tells two installs apart, so no
  * scope falls back to the namespace two installs shared.
  */
 final class SystemHashNamesTheDatabaseTest extends TestCase
 {
-    private const COPIES = ['202-config/connect2.php', '202-config/functions-tracking202.php'];
+    private const SHARED = '202-config/functions-shared.php';
 
     /** @var array<string, mixed> */
     private array $saved = [];
@@ -47,18 +48,13 @@ final class SystemHashNamesTheDatabaseTest extends TestCase
         $_SERVER = $this->saved['server'];
     }
 
-    public function testBothCopiesAreOneFunction(): void
+    public function testTheOneCopyNamesTheInstall(): void
     {
-        $root = dirname(__DIR__, 2);
-        [$first, $second] = array_map(
-            static fn (string $file): string => lift_function($root . '/' . $file, 'systemHash'),
-            self::COPIES
-        );
+        $source = lift_function(dirname(__DIR__, 2) . '/' . self::SHARED, 'systemHash');
 
-        self::assertStringContainsString('dbname', $first);
-        self::assertStringContainsString('__DIR__', $first);
-        self::assertSame($first, $second, 'the admin pages write keys the click path reads');
-        self::assertSame(dirname(self::COPIES[0]), dirname(self::COPIES[1]), 'one directory, one __DIR__');
+        self::assertStringContainsString('dbname', $source);
+        self::assertStringContainsString('__DIR__', $source);
+        self::assertSame('202-config', basename(dirname(self::SHARED)), 'the directory the bootstraps are in');
     }
 
     public function testTwoDatabasesOnOneHostAreTwoNamespaces(): void
@@ -99,12 +95,12 @@ final class SystemHashNamesTheDatabaseTest extends TestCase
         self::assertSame($a, self::copy('/var/www/install-a/202-config')());
     }
 
-    /** connect2.php's copy as it runs from $directory, under a name no test has declared. */
+    /** The shared copy as it runs from $directory, under a name no test has declared. */
     private static function copy(string $directory = '/var/www/p202/202-config'): \Closure
     {
         $name = 'p202SystemHashUnderTest_' . md5($directory);
         if (!function_exists($name)) {
-            $source = lift_function(dirname(__DIR__, 2) . '/' . self::COPIES[0], 'systemHash');
+            $source = lift_function(dirname(__DIR__, 2) . '/' . self::SHARED, 'systemHash');
             $source = str_replace('__DIR__', var_export($directory, true), $source);
             eval(str_replace('function systemHash(', 'function ' . $name . '(', $source));
         }

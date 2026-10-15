@@ -70,6 +70,12 @@ final class AccountScopedJoinTest extends TestCase
     // that makes it so; when that writer changes, so must the entry.
 
     private const SAME_CLICK = 'one click\'s own rows, joined on the click\'s id: they are written with the click, by the same redirect, so they are its account\'s';
+    private const LATEST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
+        . ' latest visit: the derived table stands where the statement read `202_clicks` as its driving row, and'
+        . ' the click\'s owner is what its callers check (p202ClickOwner() returns it, offrtr.php compares it with'
+        . ' the redirector\'s)';
+    private const OFFER_CLICK = 'tied in its WHERE (`2ac.user_id = 2c.user_id`, the offer\'s account), which the'
+        . ' scan cannot read past the latest-visit ORDER BY appended to it';
     private const SAME_CLICK_CONVERSIONS = 'conversions of one click (`x.click_id = row.click_id`, or a reversal of the row): a conversion is recorded only on its own account\'s click (MysqlConversionRepository::recordLocked() locks `click_id = ? AND user_id = ?`), so every row of a click is that click\'s account\'s';
     private const JOURNEY_TOUCH = 'a credit\'s or journey\'s click: every touch is the conversion\'s own click (recorded only on the account\'s own click) or one JourneyBuilder read from the account\'s own visitor rows (`cv.user_id = ?`), and credits are computed only from journeys';
     private const VISITOR_CLICK = 'the click of the account\'s own visitor row (`cv.user_id = ?`): 202_clicks_visitor is keyed by click_id and written for the click with the click\'s owner (IdentityGraph::attachClick())';
@@ -147,6 +153,10 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/Click/ClickRetention.php' => [
             'no user_id tie | 202_clicks | n.click_id = c.click_id AND n.click_time >= ?' => self::RETENTION_SKIP,
+        ],
+        '202-config/Click/LatestVisit.php' => [
+            'condition built at runtime | 202_clicks | lv.click_id = {{$clickId}}'
+                . ' {self::orderBy(\'lv\', \'lvr\')}' => self::LATEST_VISIT,
         ],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [
             'alias built at runtime | 202_conversion_logs | $t' => self::SAME_CLICK_CONVERSIONS,
@@ -269,6 +279,9 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'tracking202/ajax/ltv_products.php' => [
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id' => self::EVENT_LINES,
+        ],
+        'tracking202/redirect/off.php' => [
+            'no user_id tie | 202_clicks | `2c`.click_id = `2cr`.click_id' => self::OFFER_CLICK,
         ],
         'tracking202/static/gpb.php' => [
             'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,

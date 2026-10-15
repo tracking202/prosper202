@@ -12,6 +12,8 @@ $t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 
@@ -22,9 +24,6 @@ include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 if (p202IsSpeculativeRequest()) {
 	p202DeclineSpeculativeRequest();
 }
-
-$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 // Enable processing to continue even if the client disconnects.
 // This is necessary to ensure that critical operations, such as database updates
@@ -146,6 +145,10 @@ if ($usedCachedRedirect == true) {
 		'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>'
 	);
 }
+
+// After the outage fallback above: with no connection there is nothing to build them on.
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 // The tracker, with its campaign, text ad and traffic source when each is the
 // tracker's account's: one of another account's, named by an id the
@@ -423,7 +426,7 @@ $clickIdentity = p202ClickIdentity(
 );
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
+$computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
 	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
     $GeoData = $earlyGeoData ?? getGeoData($ip_address);
 	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
@@ -487,8 +490,17 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl($redirect_site_url);
 	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
-	// Every row in one transaction (MysqlClickRepository)
-	$clickRepo->recordClick(\Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity));
+    // Every row in one transaction (MysqlClickRepository), its cache writes
+    // held until it commits; a failure is recorded, as rtr.php's is, and a
+    // redirect already queued stands (record_mysql_error()).
+    // Built outside the try: a record the builder refuses is a bug, not a
+    // database failure, and the uncaught handler logs it as one.
+    $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($dlClick));
+    } catch (\Throwable $dlWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $dlWriteError->getMessage());
+    }
 };
 
 $urlvars = getPrePopVars($_GET);

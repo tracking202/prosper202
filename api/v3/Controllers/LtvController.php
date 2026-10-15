@@ -243,7 +243,7 @@ class LtvController
             // One transaction: a failed event insert rolls the (possibly
             // fresh) customer/alias back with it.
             [$eventId, $customerId] = $this->conn->transaction(function () use ($payload, $eventName, $eventValue, $now): array {
-                $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
+                $customerId = $this->resolveCustomerFromPayload($payload, $now);
                 $engagement = new \Prosper202\Ltv\MysqlEngagementRepository($this->conn);
                 $eventId = $engagement->recordEvent(
                     $this->userId,
@@ -616,7 +616,7 @@ class LtvController
                     // later step rejects the payload (e.g. a malformed line
                     // item), the new customer/alias rolls back with it instead
                     // of surviving as an orphan zero-revenue record.
-                    $customerId = $this->resolveCustomerFromPayload($payload, $now, true);
+                    $customerId = $this->resolveCustomerFromPayload($payload, $now);
                     $event = $this->customers->insertRevenueEvent($this->userId, $customerId, [
                         'event_type' => $eventType,
                         'amount' => $amount,
@@ -1773,9 +1773,13 @@ class LtvController
     }
 
     /**
+     * The customer a revenue or engagement body names, created when it is new,
+     * inside the caller's transaction so a failed write rolls a fresh
+     * customer/alias back with it.
+     *
      * @param array<string, mixed> $payload
      */
-    private function resolveCustomerFromPayload(array $payload, int $now, bool $inTransaction = false): int
+    private function resolveCustomerFromPayload(array $payload, int $now): int
     {
         $explicitId = QueryInt::param($payload, 'customer_id', 0, 1, PHP_INT_MAX, 'an LTV customer id (see `p202 ltv customers`)');
         if ($explicitId > 0) {
@@ -1800,10 +1804,7 @@ class LtvController
 
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($this->userId, $refType, $ref, $crm, null, $now);
 
-        // Callers already inside a transaction (revenue/engagement ingest)
-        // pass true so identity creation rolls back with the rest of their
-        // write — Connection::transaction does not nest.
-        return $inTransaction ? $resolve() : $this->conn->transaction($resolve);
+        return $this->conn->joinTransaction($resolve);
     }
 
     private function requireCustomer(int $customerId): void

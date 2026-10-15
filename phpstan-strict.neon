@@ -17,15 +17,19 @@ parameters:
         - 202-config/Click/ClickRepositoryInterface.php
         - 202-config/Click/ClickRequest.php
         - 202-config/Click/DynamicBid.php
+        - 202-config/Click/LatestVisit.php
         - 202-config/Click/MysqlClickRepository.php
         - 202-config/Click/OfferRoute.php
         - 202-config/Click/PublicId.php
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
+        - 202-config/Database/Connection.php
+        - 202-config/User/InstallAccount.php
         - 202-config/User/SignInRecord.php
-    # The click bootstrap's getCache(), setCache() and systemHash(), which
-    # LookupRepositoryFactory calls: read for their signatures, not analysed.
+        - tracking202/Report/ReportFiltersDidNotFit.php
+    # getCache(), setCache() and systemHash(), which LookupRepositoryFactory
+    # calls: read for their signatures, not analysed.
     scanFiles:
-        - 202-config/connect2.php
+        - 202-config/functions-shared.php
     checkMissingOverrideMethodAttribute: true
     reportUnmatchedIgnoredErrors: true

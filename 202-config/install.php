@@ -176,136 +176,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 		// Build the schema, then create the user / preference / role rows atomically
 		// so a mid-way failure can't leave a half-built account behind.
-		$inTransaction = false;
 		try {
 			// DDL implicitly commits, so all table creation/seeding must happen
-			// before we open our transaction.
+			// before the account's transaction (InstallAccount::create()).
 			$installer->install_databases();
 
-			if (!$db->begin_transaction()) {
-				throw new \RuntimeException('Failed to start transaction: ' . $db->error, (int) $db->errno);
-			}
-			$inTransaction = true;
-
-			// user_dash_email is NOT NULL with no default; set it to the account email
-			// so the INSERT is valid regardless of the session sql_mode (strict mode
-			// would otherwise reject the row, and non-strict would store an empty string).
-			$stmt = $prepare(
-				"INSERT IGNORE INTO 202_users
-					SET user_email=?, user_dash_email=?, user_name=?, user_pass=?, user_timezone=?,
-						user_time_register=?, install_hash=?, user_hash=?, p202_customer_api_key=?"
-			);
-			$stmt->bind_param(
-				'sssssisss',
-				$user_email,
-				$user_email,
-				$user_name,
-				$user_pass,
-				$user_timezone,
-				$user_time_register,
-				$hash,
-				$user_hash,
-				$user_api
-			);
-			if (!$stmt->execute()) {
-				// Capture the real driver errno (STRICT-only report mode means
-				// execute() returns false instead of throwing) so the catch below
-				// can tell a transient failure from a permanent one.
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user: ' . $stmtError, $errno);
-			}
-			$user_id = (int) $db->insert_id;
-			// Whether THIS request created the user, vs. INSERT IGNORE finding an
-			// existing row in the lookup below. Only a newly-created account gets a
-			// default chart: 202_charts has no unique key, so inserting one for an
-			// already-existing user (e.g. two concurrent same-username installs) would
-			// duplicate it. The pref/role rows are INSERT IGNORE, so they're already safe.
-			$user_created = $user_id > 0;
-			$stmt->close();
-
-			// INSERT IGNORE yields insert_id 0 when the row already exists;
-			// look up the existing id so the rest of setup can proceed.
-			if ($user_id === 0) {
-				$stmt = $prepare("SELECT user_id FROM 202_users WHERE user_name=? LIMIT 1");
-				$stmt->bind_param('s', $user_name);
-				if (!$stmt->execute()) {
-					$errno = (int) $stmt->errno;
-					$stmtError = $stmt->error;
-					$stmt->close();
-					throw new \RuntimeException('Failed to look up user: ' . $stmtError, $errno);
-				}
-				$lookup = $stmt->get_result();
-				if ($lookup && $row = $lookup->fetch_assoc()) {
-					$user_id = (int) $row['user_id'];
-				}
-				$stmt->close();
-			}
-
-			if ($user_id <= 0) {
-				throw new \RuntimeException('Could not determine a valid user_id');
-			}
-
-			$stmt = $prepare("INSERT IGNORE INTO 202_users_pref SET user_id=?");
-			$stmt->bind_param('i', $user_id);
-			if (!$stmt->execute()) {
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user preferences: ' . $stmtError, $errno);
-			}
-			$stmt->close();
-
-			$stmt = $prepare("INSERT IGNORE INTO `202_user_role` (`user_id`, `role_id`) VALUES (?, 1)");
-			$stmt->bind_param('i', $user_id);
-			if (!$stmt->execute()) {
-				$errno = (int) $stmt->errno;
-				$stmtError = $stmt->error;
-				$stmt->close();
-				throw new \RuntimeException('Failed to insert user role: ' . $stmtError, $errno);
-			}
-			$stmt->close();
-
-			// The account's default attribution model, in the same
-			// transaction as the account: the same statement the upgrade
-			// rung and user creation run (plan §6.4), so a fresh install
-			// and an upgraded one start with the same model.
-			\Prosper202\Attribution\DefaultModel::ensureFor(new \Prosper202\Database\Connection($db), $user_id);
-
-			if ($user_created) {
-				// Default dashboard chart for the new account, keyed on the committed
-				// $user_id. A rolled-back retry consumes the AUTO_INCREMENT id, so the
-				// account isn't necessarily user 1; account_overview.php joins charts on
-				// the user's own id, so a hard-coded id would leave the account chartless.
-				$chart_data = 'a:3:{i:0;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:6:"clicks";}i:1;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:9:"click_out";}i:2;a:2:{s:11:"campaign_id";s:1:"0";s:10:"value_type";s:5:"leads";}}';
-				$chart_range = 'days';
-				$stmt = $prepare("INSERT INTO `202_charts` (`user_id`, `data`, `chart_time_range`) VALUES (?, ?, ?)");
-				$stmt->bind_param('iss', $user_id, $chart_data, $chart_range);
-				if (!$stmt->execute()) {
-					$errno = (int) $stmt->errno;
-					$stmtError = $stmt->error;
-					$stmt->close();
-					throw new \RuntimeException('Failed to insert default chart: ' . $stmtError, $errno);
-				}
-				$stmt->close();
-			}
-
-			if (!$db->commit()) {
-				throw new \RuntimeException('Failed to commit transaction: ' . $db->error, (int) $db->errno);
-			}
-			$inTransaction = false;
+			$user_id = \Prosper202\User\InstallAccount::create(new \Prosper202\Database\Connection($db), [
+				'email' => $user_email,
+				'name' => $user_name,
+				'pass_hash' => $user_pass,
+				'timezone' => $user_timezone,
+				'registered' => $user_time_register,
+				'install_hash' => $hash,
+				'user_hash' => $user_hash,
+				'customer_key' => $user_api,
+			]);
 		} catch (\Throwable $e) {
-			if ($inTransaction) {
-				$db->rollback();
-			}
 			$user_id = 0;
 			error_log('Prosper202 install: account creation failed: ' . $e->getMessage());
 
 			// Transient DB conditions are worth an automatic retry; anything else
 			// gets an actionable message pointing at the manual fallbacks.
-			$transientCodes = [1205 /* lock wait timeout */, 1213 /* deadlock */, 2006 /* server gone away */, 2013 /* lost connection */];
-			if (in_array((int) $e->getCode(), $transientCodes, true)) {
+			if (\Prosper202\User\InstallAccount::isTransient($e)) {
 				$retryable = true;
 				$error['general'] = '<div class="error">The database was briefly unavailable while creating your account. This is usually temporary — please try again.</div>';
 			} else {

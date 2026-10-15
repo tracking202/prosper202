@@ -12,6 +12,7 @@ use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
+use Prosper202\User\SignInOutcome;
 
 /**
  * Account › Settings (202-account/administration.php) and the endpoint URLs
@@ -195,18 +196,25 @@ final class AdministrationController
 
     /**
      * Sign-in attempts, newest first: who, when, from which address, and
-     * whether it passed. Only those columns: the table also holds the
-     * attempt's serialized request and, on old installs, the password typed
-     * (202-login.php stores "[filtered]" now; rows from before it did not).
+     * how it ended (status: passed, failed, or not_completed for a right
+     * password whose sign-in a database failure stopped, which the throttle
+     * does not count; login_success is true for passed alone). Only those
+     * columns: the table also holds the attempt's serialized request and, on
+     * old installs, the password typed (202-login.php stores "[filtered]"
+     * now; rows from before it did not).
      *
-     * @param array<string, mixed> $params limit: 1-500, default 50 (what the page shows)
+     * @param array<string, mixed> $params limit: 1-500, default 50 (what the page shows);
+     *                                     status: one outcome's attempts only
      * @return array<string, mixed>
      */
     public function loginLog(array $params): array
     {
-        $unknown = array_diff(array_map('strval', array_keys($params)), ['limit']);
+        $unknown = array_diff(array_map('strval', array_keys($params)), ['limit', 'status']);
         if ($unknown !== []) {
-            throw new ValidationException('Unknown parameter(s): ' . implode(', ', $unknown), array_fill_keys($unknown, 'is not accepted here (accepted: limit)'));
+            throw new ValidationException(
+                'Unknown parameter(s): ' . implode(', ', $unknown),
+                array_fill_keys($unknown, 'is not accepted here (accepted: limit, status)')
+            );
         }
         $limit = self::LOGIN_LOG_DEFAULT;
         if (array_key_exists('limit', $params)) {
@@ -216,23 +224,39 @@ final class AdministrationController
             }
             $limit = (int) $raw;
         }
+        $only = null;
+        if (array_key_exists('status', $params)) {
+            $only = SignInOutcome::fromStatus($params['status']);
+            if ($only === null) {
+                throw new ValidationException(
+                    'Invalid status',
+                    ['status' => 'must be one of ' . implode(', ', SignInOutcome::statuses())]
+                );
+            }
+        }
 
         $rows = $this->guard(fn (): array => $this->all(
             'SELECT login_id, user_name, ip_address, login_time, login_success
-             FROM 202_users_log ORDER BY login_id DESC LIMIT ?',
+             FROM 202_users_log' . ($only === null ? '' : ' WHERE ' . $only->sqlCondition()) . '
+             ORDER BY login_id DESC LIMIT ?',
             'i',
             [$limit]
         ));
 
         return [
-            'data' => array_map(static fn (array $row): array => [
-                'login_id' => (int) $row['login_id'],
-                'user_name' => (string) $row['user_name'],
-                'ip_address' => (string) $row['ip_address'],
-                'login_time' => (int) $row['login_time'],
-                'login_success' => (int) $row['login_success'] !== 0,
-            ], $rows),
-            'meta' => ['limit' => $limit],
+            'data' => array_map(static function (array $row): array {
+                $outcome = SignInOutcome::fromStored($row['login_success']);
+
+                return [
+                    'login_id' => (int) $row['login_id'],
+                    'user_name' => (string) $row['user_name'],
+                    'ip_address' => (string) $row['ip_address'],
+                    'login_time' => (int) $row['login_time'],
+                    'login_success' => $outcome === SignInOutcome::Passed,
+                    'status' => $outcome?->status() ?? SignInOutcome::UNKNOWN_STATUS,
+                ];
+            }, $rows),
+            'meta' => ['limit' => $limit, 'status' => $only?->status()],
         ];
     }
 

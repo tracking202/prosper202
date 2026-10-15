@@ -569,7 +569,7 @@ echo p202_account_render_flashes($extra);
 					</div>
 				<?php } else { ?>
 					<div class="p202-table-wrap">
-						<table class="table p202-table">
+						<table class="table p202-table" id="sign-in-attempts">
 							<thead><tr><th>Time</th><th>Username</th><th>IP address</th><th>Attempt</th></tr></thead>
 							<tbody>
 								<?php while ($user_log_row = $user_log_result->fetch_assoc()) {
@@ -578,7 +578,7 @@ echo p202_account_render_flashes($extra);
 										<td class="text-nowrap"><?php echo $e(date('M d, y \a\t g:ia', (int) $user_log_row['login_time'])); ?></td>
 										<td><?php echo $e($user_log_row['user_name']); ?></td>
 										<td><?php echo $e($ip); ?> · <a target="_blank" rel="noopener" href="https://whois.arin.net/ui/query.do?q=<?php echo rawurlencode($ip); ?>">ARIN</a> · <a target="_blank" rel="noopener" href="https://apps.db.ripe.net/search/query.html?searchtext=<?php echo rawurlencode($ip); ?>&amp;sources=RIPE_NCC">RIPE</a></td>
-										<td><?php echo $user_log_row['login_success'] == 0 ? '<span class="p202-pill p202-pill--bad">Failed</span>' : '<span class="p202-pill p202-pill--good">Passed</span>'; ?></td>
+										<td><?php echo p202_account_sign_in_attempt_pill($user_log_row['login_success']); ?></td>
 									</tr>
 								<?php } ?>
 							</tbody>

@@ -206,9 +206,9 @@ class CampaignsController extends Controller
         // The links alone: the base refuses a payload with no writable field,
         // so they are their own UPDATE — with the base's preconditions
         // (ownership, If-Match) and its change record. No transaction of its
-        // own: bulk-upsert already wraps this call in one, and mysqli's
-        // begin_transaction() inside it would commit the outer (CLAUDE.md
-        // #13).
+        // own: bulk-upsert already wraps this call in one, inside which
+        // Connection::transaction() refuses to begin (a nested begin commits
+        // the outer, CLAUDE.md #13).
         $current = $this->get($id);
         $this->assertIfMatchSatisfied((array)$current['data']);
         // The column names come from linksIn(), never from the request.

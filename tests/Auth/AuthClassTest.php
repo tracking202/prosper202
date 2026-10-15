@@ -401,6 +401,32 @@ final class AuthClassTest extends TestCase
         $this->assertFalse(AUTH::is_rate_limited($mockDb, 'someone', '203.0.113.9'));
     }
 
+    /**
+     * Both counts ask for failures alone (login_success 0): a sign-in whose
+     * password was right but which could not be completed (2) is not a
+     * guess. SignInLogIntegrationTest counts real rows.
+     */
+    public function testIsRateLimitedCountsOnlyFailedAttempts(): void
+    {
+        $prepared = [];
+        $mockDb = $this->createMockDb();
+        $stmt = $mockDb->prepare('');
+        $counting = $this->createMock(\mysqli::class);
+        $counting->method('prepare')->willReturnCallback(static function (string $sql) use (&$prepared, $stmt) {
+            $prepared[] = $sql;
+            return $stmt;
+        });
+
+        $this->assertFalse(AUTH::is_rate_limited($counting, 'someone', '203.0.113.9'));
+        $this->assertCount(2, $prepared, 'the per-IP count, then the per-user count');
+        foreach ($prepared as $sql) {
+            $this->assertMatchesRegularExpression(
+                '/\bWHERE login_success = 0 AND (ip_address|user_name) = \? AND login_time >= \?$/',
+                $sql
+            );
+        }
+    }
+
     public function testLoginAuditSnapshotKeepsSafeFieldsOnly(): void
     {
         $_SERVER['REQUEST_METHOD'] = 'POST';

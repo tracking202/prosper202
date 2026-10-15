@@ -8,7 +8,9 @@ use UAParser\Parser;
 $tracker_id = $_GET['t202id'] ?? '';
 if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 
-# check to see if mysql connection works, if not fail over to cached stored redirect urls
+// No outage fallback: the URL a redirector sends to is built for one click
+// (its subid), so there is none to keep for the next visitor, and without the
+// database the bootstrap answers 503.
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 
 // Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
@@ -18,25 +20,6 @@ if (p202IsSpeculativeRequest()) {
 	p202DeclineSpeculativeRequest();
 }
 
-
-$usedCachedRedirect = false;
-if (!$db) $usedCachedRedirect = true;
-
-#the mysql server is down, use the cached redirect
-if ($usedCachedRedirect==true) { 
-
-		//if a cached key is found for this id, redirect to that url
-		if ($memcacheWorking) {
-			$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-			if ($getUrl) {			
-				p202NoStore();
-				header('location: '. $getUrl); 
-				die();
-			}
-		}
-
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
-}
 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -53,18 +36,9 @@ if ($rtrTrackerId !== null) {
     }
 }
 
-// Guard BEFORE dereferencing: a missing row (unknown tracker, DB hiccup, or
-// stale cache) must never crash the redirect. Fall back to the cached default
-// url so the visitor still lands somewhere instead of losing the click.
+// Guard BEFORE dereferencing: an id that names no tracker has nowhere to
+// send the visitor.
 if (!$rotator_row) {
-	if ($memcacheWorking) {
-		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-		if ($getUrl) {
-			p202NoStore();
-			header('location: ' . $getUrl);
-			die();
-		}
-	}
 	die();
 }
 
@@ -374,16 +348,6 @@ if ($default == true) {
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
-	
-		if ($usedCachedRedirect==true) { 
-
-			if ($memcacheWorking) {
-				$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-				if (!$getUrl) {
-						setCache(md5('default_url' . $tracker_id . systemHash()), $default, 0);			
-				}
-			}
-		}
 	p202NoStore();
 	header('location: '.$default);
 	die();
@@ -653,8 +617,10 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
 	return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 };
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 try {
-	$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 	// The site URL lookup caches the ids of the rows it inserts: held until
 	// the transaction commits, and dropped with a rollback.
 	p202WithHeldCacheWrites(static fn () => $reClick !== null

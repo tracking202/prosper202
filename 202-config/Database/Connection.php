@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Database;
 
+use LogicException;
 use mysqli;
 use mysqli_result;
 use mysqli_stmt;
@@ -16,14 +17,21 @@ use Throwable;
  *
  * Consolidates the prepare/bind/execute boilerplate that was duplicated
  * across every Attribution repository implementation.
+ *
+ * It is the one place a transaction begins or ends
+ * (TransactionsBeginOnlyInConnectionTest): mysqli's begin_transaction()
+ * inside an open transaction commits it, so a transaction opened anywhere
+ * else is one transaction() cannot refuse to nest inside.
  */
 final class Connection
 {
     /**
-     * Transactions open through transaction(), per connection: one handle is
-     * wrapped by many Connections.
+     * The connections a transaction() is open on. One handle is wrapped by
+     * many Connections, so it is kept per handle, not per wrapper. The value
+     * is true for an open transaction, or why the handle may still hold
+     * writes nobody will commit or roll back (a rollback that failed).
      *
-     * @var \WeakMap<mysqli, int>|null
+     * @var \WeakMap<mysqli, true|string>|null
      */
     private static ?\WeakMap $open = null;
 
@@ -131,18 +139,9 @@ final class Connection
      */
     public function execute(object $stmt): void
     {
-        // @phpstan-ignore-next-line -- this IS the centralized execute wrapper; self-routing would recurse
         if (!$stmt->execute()) {
-            try {
-                $error = $stmt->error;
-            } catch (\Error) {
-                $error = '(unknown)';
-            }
-            try {
-                $errno = (int) $stmt->errno;
-            } catch (\Error) {
-                $errno = 0;
-            }
+            $error = self::text(static fn (): string => $stmt->error, '(unknown)');
+            $errno = self::number(static fn (): int => $stmt->errno);
             unset($this->boundValues[spl_object_id($stmt)]);
             $stmt->close();
             // The errno tag makes error-class detection (deadlock, duplicate
@@ -223,11 +222,7 @@ final class Connection
      */
     private function fetchFailed(object $stmt, mysqli_result $result): never
     {
-        try {
-            $error = $stmt->error;
-        } catch (\Error) {
-            $error = '';
-        }
+        $error = self::text(static fn (): string => $stmt->error, '');
         $result->free();
         $stmt->close();
         throw new QueryException('MySQL fetch failed: ' . ($error !== '' ? $error : '(unknown)'));
@@ -251,11 +246,7 @@ final class Connection
     {
         $result = $stmt->get_result();
         if (!$result instanceof mysqli_result) {
-            try {
-                $error = $stmt->error;
-            } catch (\Error) {
-                $error = '(unknown)';
-            }
+            $error = self::text(static fn (): string => $stmt->error, '(unknown)');
             $stmt->close();
             throw new QueryException('MySQL get_result failed: ' . ($error !== '' ? $error : '(no result set)'));
         }
@@ -298,23 +289,15 @@ final class Connection
     {
         $this->execute($stmt);
 
-        try {
-            $insertId = $stmt->insert_id;
-        } catch (\Error) {
-            $insertId = 0;
-        }
-
-        if (!$insertId) {
-            try {
-                $insertId = $this->write->insert_id;
-            } catch (\Error) {
-                $insertId = 0;
-            }
+        $insertId = self::number(static fn (): int|string => $stmt->insert_id);
+        if ($insertId === 0) {
+            $write = $this->write;
+            $insertId = self::number(static fn (): int|string => $write->insert_id);
         }
 
         $stmt->close();
 
-        return (int) $insertId;
+        return $insertId;
     }
 
     /**
@@ -327,102 +310,133 @@ final class Connection
     {
         $this->execute($stmt);
 
-        try {
-            $affected = $stmt->affected_rows;
-        } catch (\Error) {
-            // Native mysqli_stmt::$affected_rows is a virtual property whose
-            // read throws on statements that skipped the real constructor
-            // (the test fakes; same constraint as ::$error). Those fakes can
-            // expose the count through a plain method instead — callers like
-            // the DimensionSync CAS persist branch on it to detect guard
-            // misses, so it must be fakeable.
-            $affected = method_exists($stmt, 'affectedRowsFallback') ? $stmt->affectedRowsFallback() : 0;
-        }
+        // Native mysqli_stmt::$affected_rows is a virtual property whose read
+        // throws on statements that skipped the real constructor (the test
+        // fakes). Those fakes can expose the count through a plain method
+        // instead — callers like the DimensionSync CAS persist branch on it
+        // to detect guard misses, so it must be fakeable.
+        $fallback = method_exists($stmt, 'affectedRowsFallback') ? $stmt->affectedRowsFallback() : 0;
+        $affected = self::number(static fn (): int|string => $stmt->affected_rows, is_int($fallback) ? $fallback : 0);
 
         $stmt->close();
 
-        return (int) $affected;
+        return $affected;
     }
 
     /**
-     * Run a callback inside a transaction with automatic rollback on exception.
+     * Run $fn in a transaction of its own: begin, commit, and roll back on
+     * any throwable (which is passed on). A value returned from here has
+     * been committed.
+     *
+     * Refused inside another transaction on the same connection, before
+     * anything is written: mysqli's begin_transaction() there commits the
+     * outer one (CLAUDE.md #13), whose rollback then undoes nothing it had
+     * done so far. Work that belongs to the caller's transaction runs
+     * through joinTransaction() instead.
+     *
+     * A rollback that fails leaves the transaction's writes pending on the
+     * handle, so that is thrown (with the callback's throwable as previous)
+     * and the handle stays marked with why: a later transaction() is refused
+     * rather than beginning, which would commit them, and joinTransaction()
+     * rather than adding to them.
      *
      * @template T
      * @param callable(): T $fn
      * @return T
+     * @throws LogicException inside another transaction on this connection
      * @throws Throwable re-throws whatever the callback threw after rollback
+     * @throws QueryException when the rollback itself fails
      */
     public function transaction(callable $fn): mixed
     {
+        $this->refuseAfterFailedRollback();
+        if ($this->inTransaction()) {
+            throw new LogicException(
+                'A transaction was asked for inside another on the same connection; beginning it would'
+                    . ' commit the outer one. Run work that belongs to the caller\'s transaction with'
+                    . ' Connection::joinTransaction().'
+            );
+        }
         if (!$this->write->begin_transaction()) {
-            try {
-                $error = $this->write->error;
-            } catch (\Error) {
-                $error = '(unknown)';
-            }
-            throw new QueryException('Unable to begin transaction: ' . $error);
+            throw $this->boundaryFailed('Unable to begin transaction');
         }
         $open = self::$open ??= new \WeakMap();
-        $open[$this->write] = ($open[$this->write] ?? 0) + 1;
+        $open[$this->write] = true;
+        $rolledBack = true;
 
         try {
             $result = $fn();
-
             if (!$this->write->commit()) {
-                try {
-                    $error = $this->write->error;
-                } catch (\Error) {
-                    $error = '(unknown)';
-                }
-                try {
-                    $errno = (int) $this->write->errno;
-                } catch (\Error) {
-                    $errno = 0;
-                }
-                throw new QueryException(
-                    'Unable to commit transaction: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
-                );
+                throw $this->boundaryFailed('Unable to commit transaction');
             }
 
             return $result;
         } catch (Throwable $e) {
-            $this->write->rollback();
+            try {
+                $rolledBack = $this->write->rollback();
+            } catch (Throwable) {
+                $rolledBack = false;
+            }
+            if (!$rolledBack) {
+                $failed = $this->boundaryFailed('Unable to roll back transaction after "' . $e->getMessage() . '"');
+                $open[$this->write] = $failed->getMessage();
+                throw new QueryException($failed->getMessage(), $failed->getCode(), $e);
+            }
             throw $e;
         } finally {
-            $depth = ($open[$this->write] ?? 0) - 1;
-            if ($depth > 0) {
-                $open[$this->write] = $depth;
-            } else {
+            if ($rolledBack) {
                 unset($open[$this->write]);
             }
         }
     }
 
     /**
-     * transaction(), refused when this connection already has one open
-     * through transaction(): begin_transaction() inside it would commit it
-     * (CLAUDE.md #13), and its rollback would then undo nothing. One opened
-     * with begin_transaction() or autocommit(false) directly is not seen.
+     * Run $fn inside the transaction the caller holds on this connection:
+     * no begin and no commit of its own, so its writes commit or roll back
+     * with the caller's. Refused when there is none, where each of its
+     * statements would commit on its own.
      *
      * @template T
      * @param callable(): T $fn
      * @return T
-     * @throws \LogicException inside another transaction, before anything is written
+     * @throws LogicException outside a transaction on this connection
      */
-    public function outermostTransaction(callable $fn): mixed
+    public function joinTransaction(callable $fn): mixed
     {
-        if ((self::$open[$this->write] ?? 0) > 0) {
-            throw new \LogicException(
-                'A transaction was asked for inside another on the same connection;'
-                    . ' beginning it would commit the outer one'
+        $this->refuseAfterFailedRollback();
+        if (!$this->inTransaction()) {
+            throw new LogicException(
+                'Work meant for the caller\'s transaction was run outside one; each of its statements would'
+                    . ' commit on its own. Run it inside Connection::transaction().'
             );
         }
 
-        return $this->transaction($fn);
+        return $fn();
+    }
+
+    /** Whether a transaction() is open on this connection's write handle. */
+    public function inTransaction(): bool
+    {
+        return self::$open !== null && isset(self::$open[$this->write]);
     }
 
     /**
-     * The transactions open on $connection were ended without transaction():
+     * Neither begin a transaction nor join one on a handle whose rollback
+     * failed: its writes may still be pending, and a begin would commit them.
+     */
+    private function refuseAfterFailedRollback(): void
+    {
+        $why = self::$open[$this->write] ?? true;
+        if (is_string($why)) {
+            throw new LogicException(
+                'A rollback on this connection failed (' . $why . '), so its writes may still be pending;'
+                    . ' no transaction is begun or joined on it until the error page ends them.'
+            );
+        }
+    }
+
+    /**
+     * The transaction open on $connection was ended without transaction():
      * the database error page rolls back its caller's before it records, and
      * its own lookups then run outside any.
      */
@@ -459,21 +473,52 @@ final class Connection
     {
         $stmt = $connection->prepare($sql);
         if ($stmt === false) {
-            try {
-                $error = $connection->error;
-            } catch (\Error) {
-                $error = '(unknown)';
-            }
-            try {
-                $errno = (int) $connection->errno;
-            } catch (\Error) {
-                $errno = 0;
-            }
+            $error = self::text(static fn (): string => $connection->error, '(unknown)');
+            $errno = self::number(static fn (): int => $connection->errno);
             throw new QueryException(
                 'Failed to prepare MySQL statement: ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : '')
             );
         }
 
         return $stmt;
+    }
+
+    /** A failed begin or commit, with the server's errno as its tag and its code. */
+    private function boundaryFailed(string $what): QueryException
+    {
+        $write = $this->write;
+        $error = self::text(static fn (): string => $write->error, '(unknown)');
+        $errno = self::number(static fn (): int => $write->errno);
+
+        return new QueryException($what . ': ' . $error . ($errno > 0 ? ' [errno ' . $errno . ']' : ''), $errno);
+    }
+
+    /**
+     * A handle's error text. Reading it throws \Error on a closed handle and
+     * on a test double that skipped the native constructor.
+     *
+     * @param \Closure(): string $read
+     */
+    private static function text(\Closure $read, string $otherwise): string
+    {
+        try {
+            return $read();
+        } catch (\Error) {
+            return $otherwise;
+        }
+    }
+
+    /**
+     * A handle's errno, insert id or row count, read as text() reads.
+     *
+     * @param \Closure(): (int|string) $read
+     */
+    private static function number(\Closure $read, int $otherwise = 0): int
+    {
+        try {
+            return (int) $read();
+        } catch (\Error) {
+            return $otherwise;
+        }
     }
 }

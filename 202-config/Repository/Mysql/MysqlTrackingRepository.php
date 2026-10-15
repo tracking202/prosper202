@@ -142,7 +142,7 @@ final readonly class MysqlTrackingRepository implements TrackingRepositoryInterf
             return $found;
         }
 
-        return $this->conn->outermostTransaction(function () use ($variables, $ids): int {
+        return $this->conn->transaction(function () use ($variables, $ids): int {
             $setId = $this->ids->insert(
                 'INSERT INTO 202_variable_sets SET variables = ?',
                 's',

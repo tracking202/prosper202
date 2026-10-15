@@ -75,6 +75,20 @@ reading with escapes and one without both leave in), and
 away. It cannot see a result that is assigned and never tested, which is
 what the 240 calls that assign one leave to the next sweep.
 
+The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
+logged and answered false, the click path's showed the error page and died
+— and of `record_mysql_error()`, the cached reads, `setCache()` and five
+more, drifted the same way: one name failed one way on a report page and
+another on a redirect, and a test standing in for one had to say which
+(#9). There is one copy of each now, in `functions-shared.php`, which both
+load first. `_mysqli_query()` logs and answers false everywhere, and the
+caller acts on the false; `memcache_mysql_fetch_assoc()` and its list twin
+throw a `QueryException` for a failed query instead of the `false` and `[]`
+that read as "no row" (on the click path the uncaught handler makes that
+the error page). What still differs between the two is asked of
+`p202OnTheClickPath()` where it matters. A function both bootstraps need
+goes there, never into each.
+
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
 answers 200; it caught a failed rollup, printed `Error: …` into the body and
@@ -308,6 +322,8 @@ calls the error page again): the test held a "the server refused the row"
 branch that cannot run on the click path, where a refused row re-entered
 the page and logged the server's words about it. The runner now gives each
 definition its own file's `_mysqli_query()` wherever the answer matters.
+There is one definition now (`functions-shared.php`, below in #1), and the
+runner runs it under each bootstrap.
 
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
@@ -413,6 +429,16 @@ When adding a check, trace an actual bad value from the outermost entry point
 and confirm it *reaches* the check — this is #5 across layers rather than
 across sibling call sites.
 
+The guard can also sit below a layer that ends the request first. The click
+path's outage fallback (`if (!$db)` in dl.php, lp.php and off.php: send the
+visitor to the URL kept in memcache) did not run from 1.8.4 to 1.9.78: the
+bootstrap connected unguarded under `MYSQLI_REPORT_STRICT`, so a refused
+connection threw before any script reached its check, and dl.php built its
+repositories on the connection above its check as well — every request a
+500, the fallback's own fixes in between made to code that could not run.
+`tests/live/outage-fallback.sh` takes the database away from one server and
+runs the path.
+
 ### 13. Retry seams must know whether the write landed
 An exception says nothing about whether the database changed. `Controller::create()`
 inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
@@ -425,6 +451,16 @@ commits the outer. The code that knows says so instead: handlers wrap their
 post-write steps and rethrow `WriteCommittedException`, and the seams refuse
 the retry. Any code that decides "safe to run this again" needs a fact, not an
 inference from an exception type.
+
+That implicit commit was silent wherever it happened: a nested transaction
+committed the outer one's work so far, and the outer's rollback then undid
+only what came after. `Connection::transaction()` now refuses to begin inside
+another on the same handle (a `LogicException`, before anything is written),
+so a value it returns has committed; work that belongs to the caller's
+transaction goes through `joinTransaction()`, which refuses when none is
+open. A transaction opened anywhere else is one the refusal cannot see, so
+Connection is the only place one begins or ends
+(`TransactionsBeginOnlyInConnectionTest`).
 
 ### 14. Safety flags must survive process and reset boundaries
 `--staged` promises a write becomes a proposal. The interactive shell resets

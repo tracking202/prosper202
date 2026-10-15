@@ -14,21 +14,21 @@ if ($clickIdPublic === null) {
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
+    // Decoded as sent: it joins a URL, never a statement, and escaping
+    // base64 text changed nothing but needed a connection.
+    $mysql['202vars'] = base64_decode($varsParam);
 }
 
 // The click's destination, its campaign's name when the campaign is the
 // click's account's, and that account's referer setting (it was the first
 // account's for every click). Not cached: a rotator re-click keeps the
-// public id and changes where the click goes.
-// With MySQL down there is nothing to read: the not-found page, as before.
+// public id and changes where the click goes, so with MySQL down there is
+// nothing to send the visitor to, and the bootstrap answers 503.
 $tracker_row = null;
-if ($db instanceof \mysqli) {
-    try {
-        $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->cloakedClick($clickIdPublic);
-    } catch (\Throwable $clReadError) {
-        record_mysql_error($db, 'reading cloaked click ' . $clickIdPublic, $clReadError->getMessage());
-    }
+try {
+    $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->cloakedClick($clickIdPublic);
+} catch (\Throwable $clReadError) {
+    record_mysql_error($db, 'reading cloaked click ' . $clickIdPublic, $clReadError->getMessage());
 }
 
 if ($tracker_row === null) {

@@ -18,8 +18,8 @@ use WeakMap;
  * and a connection freed and replaced cannot inherit its predecessor's.
  *
  * This is the edge where the bootstrap's globals are read: whether memcache
- * answered (connect2.php's $memcacheWorking, with its getCache()/setCache()),
- * and the install's cache namespace (systemHash()).
+ * answered ($memcacheWorking, with getCache()/setCache()), and the install's
+ * cache namespace (systemHash()).
  */
 final class LookupRepositoryFactory
 {
@@ -101,15 +101,21 @@ final class LookupRepositoryFactory
     }
 
     /**
-     * Memcache through the bootstrap's own helpers, when it answered. Only
-     * connect2.php defines getCache(), so the signed-in pages' bootstrap
-     * (connect.php) reads the database every time, as it always has. No
-     * systemHash() is no cache: an entry needs the install's namespace, and
-     * one shared by every install would answer another install's ids.
+     * Memcache through the bootstrap's own helpers, on the click path only,
+     * when it answered. Both bootstraps load the helpers, but the signed-in
+     * pages, the API and the cron jobs read the database every time, as they
+     * always have: nothing there holds a cache write until a transaction
+     * commits (p202WithHeldCacheWrites() is the click scripts'), so a lookup
+     * in one that rolls back would cache the id of a row the rollback took
+     * away. No systemHash() is no cache: an entry needs the install's
+     * namespace, and one shared by every install would answer another
+     * install's ids.
      */
     private static function bootstrapCacheWorks(): bool
     {
-        return function_exists('getCache')
+        return function_exists('p202OnTheClickPath')
+            && \p202OnTheClickPath()
+            && function_exists('getCache')
             && function_exists('setCache')
             && function_exists('systemHash')
             && ($GLOBALS['memcacheWorking'] ?? false) === true;

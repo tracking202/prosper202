@@ -91,14 +91,14 @@ final class CookieDomainSourceTest extends TestCase
     public function testTheScanReadsTheTreesCookieDomains(): void
     {
         // Without this a scan that read nothing would pass the test above:
-        // connect2.php's twelve click cookies and remember_me's three. (go.php
+        // connect2.php's ten click cookies and remember_me's three. (go.php
         // set three of its own; a 202v link's cookies go through connect2.php's
         // setters now, under its owner's privacy setting.)
         $read = 0;
         foreach (SourceScan::phpFiles() as $path => $source) {
             $read += self::scan($source, self::ALLOWED_IN_FILE[$path] ?? [])['domains'];
         }
-        self::assertGreaterThanOrEqual(15, $read);
+        self::assertGreaterThanOrEqual(13, $read);
     }
 
     /**
@@ -121,9 +121,9 @@ final class CookieDomainSourceTest extends TestCase
             }
         }
 
-        // connect2.php's twelve, remember_me's three and the visitor cookie:
+        // connect2.php's ten, remember_me's three and the visitor cookie:
         // without a floor a scan that read nothing would pass.
-        self::assertGreaterThanOrEqual(16, $read);
+        self::assertGreaterThanOrEqual(14, $read);
         self::assertSame([], $problems, "A cookie is not set for the whole site:\n  " . implode("\n  ", $problems)
             . "\nPass 'path' => '/': the readers (lp.php, the pixels, the API) live in other directories.");
     }

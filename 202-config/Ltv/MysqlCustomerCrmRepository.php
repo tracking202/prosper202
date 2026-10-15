@@ -168,10 +168,10 @@ final class MysqlCustomerCrmRepository
         // ONE transaction end to end: a payload rejected part-way through —
         // invalid email, unknown custom field, alias conflict — must roll a
         // freshly created customer/alias back with it instead of leaving a
-        // committed partial record. Connection::transaction does not nest,
-        // so every step below runs in in-transaction mode.
+        // committed partial record. Connection::transaction() refuses to
+        // nest, so every step below runs in this one.
         return $this->conn->transaction(function () use ($userId, $payload, $now): int {
-            $customerId = $this->resolveTarget($userId, $payload, $now, true);
+            $customerId = $this->resolveTarget($userId, $payload, $now);
 
             $this->applyCrmFields($userId, $customerId, $payload, $now);
             $this->syncCompanyLink($userId, $customerId, $payload, $now);
@@ -558,9 +558,12 @@ final class MysqlCustomerCrmRepository
     }
 
     /**
+     * The customer an upsert body names, created when it is new, inside
+     * upsert()'s transaction.
+     *
      * @param array<string, mixed> $payload
      */
-    private function resolveTarget(int $userId, array $payload, int $now, bool $inTransaction = false): int
+    private function resolveTarget(int $userId, array $payload, int $now): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
@@ -593,13 +596,8 @@ final class MysqlCustomerCrmRepository
         // stampCompany: false — upsert() runs syncCompanyLink right after,
         // which performs the same attachment once.
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now, false);
-        if ($inTransaction) {
-            return $resolve();
-        }
 
-        return $this->conn->transaction(
-            $resolve
-        );
+        return $this->conn->joinTransaction($resolve);
     }
 
     /**

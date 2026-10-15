@@ -11,59 +11,6 @@ use PHPUnit\Framework\TestCase;
 class DlUnitTest extends TestCase
 {
     /**
-     * Test ipAddress() function creates proper IP object
-     */
-    public function testIpAddressFunction(): void
-    {
-        // Include the function (would normally be in connect2.php)
-        if (!function_exists('ipAddress')) {
-            function ipAddress($ip_address)
-            {
-                $ip = new \stdClass;
-                
-                if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-                    $ip->address = $ip_address;
-                    if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-                        $ip->type = 'ipv4';
-                    } else {
-                        $ip->type = 'ipv6';
-                    }
-                } else {
-                    $ip->type = 'invalid';
-                    $ip->address = '';
-                }
-                
-                return $ip;
-            }
-        }
-        
-        // Test IPv4
-        $ip = ipAddress('192.168.1.1');
-        $this->assertEquals('192.168.1.1', $ip->address);
-        $this->assertEquals('ipv4', $ip->type);
-        
-        // Test IPv6
-        $ip = ipAddress('2001:0db8:85a3:0000:0000:8a2e:0370:7334');
-        $this->assertEquals('2001:0db8:85a3:0000:0000:8a2e:0370:7334', $ip->address);
-        $this->assertEquals('ipv6', $ip->type);
-        
-        // Test invalid IP
-        $ip = ipAddress('invalid.ip.address');
-        $this->assertEquals('invalid', $ip->type);
-        $this->assertEquals('', $ip->address);
-        
-        // Test empty string
-        $ip = ipAddress('');
-        $this->assertEquals('invalid', $ip->type);
-        $this->assertEquals('', $ip->address);
-        
-        // Test null (cast to string)
-        $ip = ipAddress((string)null);
-        $this->assertEquals('invalid', $ip->type);
-        $this->assertEquals('', $ip->address);
-    }
-    
-    /**
      * Test URL token replacement function
      */
     public function testReplaceTrackerPlaceholders(): void

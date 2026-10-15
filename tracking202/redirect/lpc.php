@@ -23,16 +23,15 @@ if ($landingId === null) {
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
+    // Decoded as sent: it joins a URL, never a statement, and escaping
+    // base64 text changed nothing but needed a connection.
+    $mysql['202vars'] = base64_decode($varsParam);
 }
 
 // The landing page and its campaign, when the campaign is the page's
 // account's. The row carries the campaign's id, which a rotating campaign's
 // URL rotation is kept under: without it every such campaign turned one
 // shared rotation.
-if (!$db instanceof \mysqli) {
-    die();
-}
 try {
     $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->landingPageOffer($landingId);
 } catch (\Throwable $lpcReadError) {

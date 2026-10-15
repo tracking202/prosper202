@@ -24,7 +24,7 @@ final class ReportPrefsStore
 {
     private readonly Connection $conn;
 
-    public function __construct(private readonly mysqli $db)
+    public function __construct(mysqli $db)
     {
         // Every statement goes through Connection: checked execute, a
         // get_result() false that throws, reference-safe binds.
@@ -141,45 +141,41 @@ final class ReportPrefsStore
         }
 
         $assignments = implode(', ', array_map(static fn (string $c): string => "`$c` = ?", array_keys($set)));
-        if (!$this->db->begin_transaction()) {
-            throw new RuntimeException('Could not start saving the report filters: ' . $this->db->error);
-        }
         try {
-            $stmt = $this->conn->prepareWrite("UPDATE 202_users_pref SET $assignments WHERE user_id = ?");
-            [$types, $params] = self::bindingsFor($set);
-            $types .= 'i';
-            $params[] = $userId;
-            $this->conn->bind($stmt, $types, $params);
-            $this->conn->executeUpdate($stmt);
+            $this->conn->transaction(function () use ($assignments, $set, $userId): void {
+                $stmt = $this->conn->prepareWrite("UPDATE 202_users_pref SET $assignments WHERE user_id = ?");
+                [$types, $params] = self::bindingsFor($set);
+                $types .= 'i';
+                $params[] = $userId;
+                $this->conn->bind($stmt, $types, $params);
+                $this->conn->executeUpdate($stmt);
 
-            $stored = $this->loadStored($userId);
-            if ($stored === []) {
-                throw new RuntimeException('There is no preferences row for this user to save the report filters in.');
-            }
-            $refused = [];
-            foreach ($set as $column => $wanted) {
-                $got = $stored[$column] ?? null;
-                if ((string) ($got ?? '') !== (string) ($wanted ?? '')) {
-                    $field = array_search($column, ReportFilterInput::COLUMNS, true);
-                    $refused[$field === false ? 'range' : (string) $field] = $wanted;
+                $stored = $this->loadStored($userId);
+                if ($stored === []) {
+                    throw new RuntimeException(
+                        'There is no preferences row for this user to save the report filters in.'
+                    );
                 }
-            }
-            if ($refused !== []) {
-                if (!$this->db->rollback()) {
-                    throw new RuntimeException('Could not undo a report filter that did not fit: ' . $this->db->error);
+                $refused = [];
+                foreach ($set as $column => $wanted) {
+                    $got = $stored[$column] ?? null;
+                    if ((string) ($got ?? '') !== (string) ($wanted ?? '')) {
+                        $field = array_search($column, ReportFilterInput::COLUMNS, true);
+                        $refused[$field === false ? 'range' : (string) $field] = $wanted;
+                    }
                 }
-                $sentences = [];
-                foreach ($refused as $field => $wanted) {
-                    $sentences[$field] = "This value ($wanted) does not fit the column the saved filter is kept in, so it was not applied.";
+                if ($refused !== []) {
+                    // Thrown so the whole write rolls back.
+                    throw new ReportFiltersDidNotFit($refused);
                 }
-                return $sentences;
+            });
+        } catch (ReportFiltersDidNotFit $e) {
+            $sentences = [];
+            foreach ($e->refused as $field => $wanted) {
+                $sentences[$field] = "This value ($wanted) does not fit the column the saved filter is kept in,"
+                    . ' so it was not applied.';
             }
-            if (!$this->db->commit()) {
-                throw new RuntimeException('Could not save the report filters: ' . $this->db->error);
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
+            return $sentences;
         }
         return [];
     }
