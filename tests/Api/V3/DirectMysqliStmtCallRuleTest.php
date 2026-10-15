@@ -13,7 +13,7 @@ use Tests\TestCase;
  * message points to; a closure or an arrow function written inside that
  * method reports the method as its function, and was exempt too until the
  * rule asked whether the scope is an anonymous function. Every spelling of
- * the call is planted: a nullsafe call, another case and the procedural
+ * the call is planted: a nullsafe call, and another case and the procedural
  * functions, which the rule did not see. Lines ending in `// REPORT` must be
  * reported; no other line may be.
  *

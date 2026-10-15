@@ -14,7 +14,6 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
-use PHPStan\Type\TypeCombinator;
 
 /**
  * Forbids direct calls to mysqli_stmt::execute() and mysqli_stmt::bind_param().
@@ -75,9 +74,8 @@ final class ForbidDirectMysqliStmtCallRule implements Rule
             if (!isset(self::FORBIDDEN_METHODS[$methodName])) {
                 return [];
             }
-            // PHPStan reads `$stmt?->execute()` as this call too, on a type
-            // that keeps the null: the call runs whenever there is a statement.
-            $callerType = TypeCombinator::removeNull($scope->getType($node->var));
+            // PHPStan hands `$stmt?->execute()` to rules as this call too.
+            $callerType = $scope->getType($node->var);
             if (!(new ObjectType('mysqli_stmt'))->isSuperTypeOf($callerType)->yes()) {
                 return [];
             }
