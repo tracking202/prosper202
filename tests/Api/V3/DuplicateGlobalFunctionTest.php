@@ -28,34 +28,6 @@ final class DuplicateGlobalFunctionTest extends TestCase
 {
     private const NOT_LOADED_BY_THE_APP = ['phpstan-legacy-stubs.php'];
 
-    /**
-     * The click path's bootstrap (connect2.php) keeps its own copies of
-     * helpers connect.php's files declare; a request loads one bootstrap or
-     * the other. The copies are being removed: drop an entry when its copy is
-     * gone. A third declaration of one of these, or a pair in other files,
-     * fails as any duplicate does.
-     *
-     * @var array<string, list<string>> lowercased name => the files declaring it, sorted
-     */
-    private const KNOWN_BOOTSTRAP_COPIES = [
-        '_die' => ['202-config/connect2.php', '202-config/functions.php'],
-        '_mysqli_query' => ['202-config/connect2.php', '202-config/functions.php'],
-        'array_any' => ['202-config/connect2.php', '202-config/functions.php'],
-        'delay_sql' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'foreach_memcache_mysql_fetch_assoc' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'get_absolute_url' => ['202-config/connect2.php', '202-config/functions.php'],
-        'getdata' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'getforeignpayout' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'gettrackingdomain' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'inet6_aton' => ['202-config/connect.php', '202-config/connect2.php'],
-        'inet6_ntoa' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'ipaddress' => ['202-config/connect2.php', '202-config/functions.php'],
-        'memcache_mysql_fetch_assoc' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'record_mysql_error' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-        'setcache' => ['202-config/connect.php', '202-config/connect2.php'],
-        'systemhash' => ['202-config/connect2.php', '202-config/functions-tracking202.php'],
-    ];
-
     /** @return array<string, list<string>> lowercased name => "file:line" of each declaration */
     private function declarations(): array
     {
@@ -87,11 +59,6 @@ final class DuplicateGlobalFunctionTest extends TestCase
         $duplicated = [];
         foreach ($this->declarations() as $name => $sites) {
             if (count($sites) < 2) {
-                continue;
-            }
-            $files = array_map(static fn (string $site): string => (string) preg_replace('/:\d+$/', '', $site), $sites);
-            sort($files);
-            if ((self::KNOWN_BOOTSTRAP_COPIES[$name] ?? null) === $files) {
                 continue;
             }
             $duplicated[$name] = $sites;
