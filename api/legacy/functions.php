@@ -49,8 +49,7 @@ function runReports($db, $vars, $user, $timezone, string $version): array
         // A list (c1[]=x) is no value to filter by: refused, not read as none.
         foreach (['c1', 'c2', 'c3', 'c4'] as $variable) {
             if (isset($vars[$variable]) && !is_scalar($vars[$variable])) {
-                $refused = ['msg' => "$variable takes one value", 'error' => true, 'status' => 400];
-                print_r(pretty_json(json_encode($refused, JSON_UNESCAPED_SLASHES)));
+                echo legacy_api_json(['msg' => "$variable takes one value", 'error' => true, 'status' => 400]);
                 die();
             }
         }
@@ -79,8 +78,7 @@ function runReports($db, $vars, $user, $timezone, string $version): array
         $cidText = is_scalar($cidSent) ? (string) $cidSent : null;
         if ($cidSent !== null && $cidText !== '' && $cidText !== '0') {
             if ($cidText === null || !ctype_digit($cidText) || $cidText[0] === '0') {
-                $notFound = ['msg' => 'Campaign not found', 'error' => true, 'status' => 404];
-                print_r(pretty_json(json_encode($notFound, JSON_UNESCAPED_SLASHES)));
+                echo legacy_api_json(['msg' => 'Campaign not found', 'error' => true, 'status' => 404]);
                 die();
             }
             if (getCampaignID($db, $cidText, $user)) {
@@ -93,9 +91,7 @@ function runReports($db, $vars, $user, $timezone, string $version): array
         $dateToSent = $vars['date_to'] ?? null;
         if ($dateFromSent != null || $dateToSent != null) {
             if (!validateDate($dateFromSent) || !validateDate($dateToSent)) {
-                $data = ['msg' => 'Wrong date format', 'error' => true, 'status' => 404];
-                $json = json_encode($data, JSON_UNESCAPED_SLASHES);
-                print_r(pretty_json($json));
+                echo legacy_api_json(['msg' => 'Wrong date format', 'error' => true, 'status' => 404]);
                 die();
             }
 
@@ -580,15 +576,14 @@ function getCampaignID($db, $campaign, $user): bool
 				WHERE  	`user_id`='" . $mysql['user_id'] . "' AND `aff_campaign_id`='" . $mysql['campaign_id'] . "'";
     $key_result = _mysqli_query($db, $key_sql);
     if ($key_result === false) {
-        print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+        echo legacy_api_json(legacy_api_database_error($db));
         die();
     }
 
     if ($key_result->num_rows > 0) {
         return true;
     } else {
-        $json = json_encode(['msg' => 'Campaign not found', 'error' => true, 'status' => 404], JSON_UNESCAPED_SLASHES);
-        print_r(pretty_json($json));
+        echo legacy_api_json(['msg' => 'Campaign not found', 'error' => true, 'status' => 404]);
         die();
     }
 }
@@ -625,6 +620,28 @@ function getTimestamp($datefrom, $dateto): array
     $date['to'] = $date_to;
 
     return $date;
+}
+
+/**
+ * An answer as the legacy API prints it: JSON, slashes unescaped, indented.
+ * Bytes that are not UTF-8 are replaced rather than failing the whole
+ * answer, and one that still cannot be encoded (a NAN or an infinity) is the
+ * API's error under a 500: json_encode()'s false printed an empty 200.
+ *
+ * @param array<mixed> $data
+ */
+function legacy_api_json(array $data): string
+{
+    $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        error_log('Legacy report API: the answer could not be encoded: ' . json_last_error_msg());
+        if (!headers_sent()) {
+            http_response_code(500);
+        }
+        $json = '{"msg":"The answer could not be encoded","error":true,"status":500}';
+    }
+
+    return pretty_json($json);
 }
 
 function pretty_json($json): string

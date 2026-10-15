@@ -26,6 +26,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 	$data = ['msg' => 'Not allowed request method', 'error' => true, 'status' => 405];
 }
 
-$json = str_replace('\\/', '/', json_encode($data));
-
-print_r(pretty_json($json));
+echo legacy_api_json($data);

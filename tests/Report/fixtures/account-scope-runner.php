@@ -244,6 +244,16 @@ try {
                 $dbName,
                 (int) ($port !== '' ? $port : 3306)
             );
+            // The session the bootstrap set up on its own connection: under
+            // MySQL 8.0's default sql_mode (ONLY_FULL_GROUP_BY) the report's
+            // GROUP BY is refused.
+            $mode = $db->query('SELECT @@SESSION.sql_mode');
+            $mode = $mode instanceof mysqli_result ? $mode->fetch_row()[0] ?? null : null;
+            $set = is_string($mode) ? "SET SESSION sql_mode = '" . $failing->real_escape_string($mode) . "'" : null;
+            if ($set === null || !$failing->query($set)) {
+                fwrite(STDERR, "could not give the failing connection the app's sql_mode\n");
+                exit(2);
+            }
             $failing->failOn = match ($sent['fail'] ?? 'none') {
                 'key' => '202_api_keys',
                 'user' => '`user_timezone`',

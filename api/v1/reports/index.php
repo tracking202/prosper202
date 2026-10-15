@@ -28,6 +28,4 @@ array_walk_recursive($data, function(&$val): void {
 });
 
 
-$json = str_replace('\\/', '/', json_encode($data));
-
-print_r(pretty_json($json));
+echo legacy_api_json($data);

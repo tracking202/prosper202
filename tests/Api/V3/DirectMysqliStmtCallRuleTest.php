@@ -12,8 +12,10 @@ use Tests\TestCase;
  * call it exempts is Connection::execute()'s own, the checked execute the
  * message points to; a closure or an arrow function written inside that
  * method reports the method as its function, and was exempt too until the
- * rule asked whether the scope is an anonymous function. Lines ending in
- * `// REPORT` must be reported; no other line may be.
+ * rule asked whether the scope is an anonymous function. Every spelling of
+ * the call is planted: a nullsafe call, another case and the procedural
+ * functions, which the rule did not see. Lines ending in `// REPORT` must be
+ * reported; no other line may be.
  *
  * @group phpstan
  */
@@ -50,6 +52,14 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
             public function execute(\mysqli_stmt $stmt): void
             {
                 $stmt->execute();                                                               // REPORT
+            }
+
+            public function spellings(?\mysqli_stmt $maybe, \mysqli_stmt $stmt, int $n): void
+            {
+                $maybe?->execute();                                                             // REPORT
+                $stmt->EXECUTE();                                                               // REPORT
+                mysqli_stmt_execute($stmt);                                                     // REPORT
+                \mysqli_stmt_bind_param($stmt, 'i', $n);                                        // REPORT
             }
         }
 
@@ -148,7 +158,7 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
                 $expected[] = $index + 1;
             }
         }
-        $this->assertCount(7, $expected, 'the fixture lost some of its planted defects');
+        $this->assertCount(11, $expected, 'the fixture lost some of its planted defects');
 
         $found = $this->reportedIn($dir);
         $this->assertCount(1, $found, 'findings outside the fixture: ' . var_export($found, true));

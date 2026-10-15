@@ -33,21 +33,33 @@ final class OutageFallbackIsDeclaredTest extends TestCase
         'api/v2/categories/index.php' => 'the API\'s JSON error, under a 503',
     ];
 
+    /**
+     * Read from the tokens, not the text: the declaration is the statement
+     * directly before the bootstrap's include, in the same block, and the
+     * only write of the name in the file. A comment, a string, a dead branch
+     * above it or a later reset all read as declared to a search of the text.
+     */
     public function testEveryScriptThatGoesOnWithoutTheDatabaseIsListed(): void
     {
         $declared = [];
         $loaders = 0;
         foreach (SourceScan::phpFiles() as $file => $source) {
-            if (preg_match(self::BOOTSTRAP, $source, $include, PREG_OFFSET_CAPTURE) !== 1) {
+            $include = self::bootstrapInclude($tokens = \PhpToken::tokenize($source));
+            if ($include === null) {
                 continue;
             }
             $loaders++;
-            $define = strpos($source, '$p202OutageFallback = true;');
-            if ($define === false) {
-                continue;
+            $writes = count(array_filter(
+                $tokens,
+                static fn (\PhpToken $t): bool => $t->is(T_VARIABLE) && $t->text === '$p202OutageFallback'
+            ));
+            $statement = self::statementBefore($tokens, $include);
+            if ($statement === ['$p202OutageFallback', '=', 'true']) {
+                self::assertSame(1, $writes, "$file names the fallback again besides declaring it");
+                $declared[] = $file;
+            } else {
+                self::assertSame(0, $writes, "$file names the fallback, but not as the statement before its include");
             }
-            self::assertLessThan($include[0][1], $define, "$file declares the fallback after loading connect2.php");
-            $declared[] = $file;
         }
         sort($declared);
         $listed = array_keys(self::FALLBACK);
@@ -55,6 +67,58 @@ final class OutageFallbackIsDeclaredTest extends TestCase
 
         self::assertGreaterThan(20, $loaders, 'the scripts that load connect2.php were read');
         self::assertSame($listed, $declared, 'A script that goes on without the database, unlisted or gone.');
+    }
+
+    /**
+     * The include keyword of the statement that loads connect2.php, or null.
+     *
+     * @param list<\PhpToken> $tokens
+     */
+    private static function bootstrapInclude(array $tokens): ?int
+    {
+        foreach ($tokens as $i => $token) {
+            if (!$token->is([T_INCLUDE, T_INCLUDE_ONCE, T_REQUIRE, T_REQUIRE_ONCE])) {
+                continue;
+            }
+            for ($j = $i + 1; isset($tokens[$j]) && $tokens[$j]->text !== ';'; $j++) {
+                if ($tokens[$j]->is(T_CONSTANT_ENCAPSED_STRING) && str_contains($tokens[$j]->text, 'connect2.php')) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The code of the statement that ends just before $at, lower-cased
+     * keywords aside, without whitespace or comments: [] when $at begins its
+     * block or follows a statement that does not end in `;`.
+     *
+     * @param list<\PhpToken> $tokens
+     * @return list<string>
+     */
+    private static function statementBefore(array $tokens, int $at): array
+    {
+        $i = $at - 1;
+        while ($i >= 0 && $tokens[$i]->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])) {
+            $i--;
+        }
+        if ($i < 0 || $tokens[$i]->text !== ';') {
+            return [];
+        }
+        $code = [];
+        for ($i--; $i >= 0; $i--) {
+            $token = $tokens[$i];
+            if (in_array($token->text, [';', '{', '}'], true) || $token->is([T_OPEN_TAG, T_CLOSE_TAG])) {
+                break;
+            }
+            if (!$token->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])) {
+                $code[] = $token->is(T_STRING) ? strtolower($token->text) : $token->text;
+            }
+        }
+
+        return array_reverse($code);
     }
 
     public function testAScriptIncludedPastTheBootstrapAsksForTheDatabase(): void

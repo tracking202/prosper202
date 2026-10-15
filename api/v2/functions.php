@@ -91,12 +91,12 @@ function listCategories($db,$user): void {
     // `or die()` answered an empty 200, which a client reads as no categories.
     $aff_network_result = $db->query($aff_network_sql);
     if ($aff_network_result === false) {
-        print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+        echo legacy_api_json(legacy_api_database_error($db));
         return;
     }
     while (($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) !== null) {
         if ($aff_network_row === false) {
-            print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+            echo legacy_api_json(legacy_api_database_error($db));
             return;
         }
 
@@ -105,8 +105,6 @@ function listCategories($db,$user): void {
     $cat['categories'][]=['category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']];    
 }
 
-$json = str_replace('\\/', '/', json_encode($cat));
-
-print_r(pretty_json($json));
+echo legacy_api_json($cat);
 
 }
