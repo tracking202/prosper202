@@ -72,8 +72,17 @@ session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
 read with escapes the next value was kept — so the line keeps only what a
 reading with escapes and one without both leave in), and
 `MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
-away. It cannot see a result that is assigned and never tested, which is
-what the 240 calls that assign one leave to the next sweep.
+away. The next sweep read the other 81: 12 used the answer before any
+test or never read it (a failed ownership check was `->num_rows` on false,
+an \Error; a refused write set `$add_success = true`), and 17 tested it
+only to fold the failure into an answer (a failed preferences read showed
+AutoCron and MaxMind as off; a failed reset-key lookup said "no key was
+found"). `MysqliQueryResultIsTestedTest` now holds every result to a test
+for failure in the next condition that refuses there — throws, a call
+declared `never`, the legacy API's database error, the page's
+`$error[...]` — and lists each fold that remains, with the answer it gives
+and why. A bare `return` or `continue` in the failure branch is a fold: it
+hands the failure on as an answer.
 
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died

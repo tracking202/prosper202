@@ -22,6 +22,9 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
 $user_row = $user_results->fetch_assoc();
 
 if (!empty($user_row['url']))
@@ -39,6 +42,9 @@ $pixel_types = [];
 
 $ppc_pixel_type_sql = "SELECT * FROM `202_pixel_types`";
 $ppc_pixel_type_result = _mysqli_query($ppc_pixel_type_sql);
+if ($ppc_pixel_type_result === false) {
+    record_mysql_error($ppc_pixel_type_sql);
+}
 
 // pixel_type_id => name, unescaped, for the Slack messages.
 $pixelTypeNames = [];
@@ -77,7 +83,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			if ($network_editing == true) {
 				$ppc_network_sql  .= "WHERE ppc_network_id='" . $mysql['ppc_network_id'] . "'";
 			}
-			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
+            $ppc_network_result = _mysqli_query($ppc_network_sql);
+            if ($ppc_network_result === false) {
+                record_mysql_error($ppc_network_sql);
+            }
 			$add_success = true;
 			// Landing Page Optimizer (segments-v2 G10): flag this user's dimension
 			// snapshot dirty; the hourly cron pushes it. DB-only — no HTTP here.
@@ -139,7 +148,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
-			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
+            $ppc_network_result = _mysqli_query($ppc_network_sql);
+            if ($ppc_network_result === false) {
+                record_mysql_error($ppc_network_sql);
+            }
 			if ($ppc_network_result->num_rows == 0) {
 				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source';
 			}
@@ -150,7 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 			$ppc_network_sql = "SELECT * FROM `202_ppc_networks` WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
-			$ppc_network_result = _mysqli_query($ppc_network_sql); //($ppc_network_sql);
+            $ppc_network_result = _mysqli_query($ppc_network_sql);
+            if ($ppc_network_result === false) {
+                record_mysql_error($ppc_network_sql);
+            }
 			if ($ppc_network_result->num_rows == 0) {
 				$error['wrong_user'] = 'You are not authorized to add an account to another user\'s traffic source';
 			}
@@ -161,7 +176,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_GET['edit_ppc_account_id']);
 				$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 				$ppc_account_sql = "SELECT * FROM `202_ppc_accounts` LEFT JOIN 202_ppc_account_pixels USING (ppc_account_id) LEFT JOIN 202_pixel_types USING (pixel_type_id) WHERE `user_id`='" . $mysql['user_id'] . "' AND `ppc_account_id`='" . $mysql['ppc_account_id'] . "'";
-				$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
+                $ppc_account_result = _mysqli_query($ppc_account_sql);
+                if ($ppc_account_result === false) {
+                    record_mysql_error($ppc_account_sql);
+                }
 				if ($ppc_account_result->num_rows == 0) {
 					$error['wrong_user'] = ($error['wrong_user'] ?? '') . 'You are not authorized to modify another user\'s traffic source account';
 				}
@@ -193,7 +211,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$ppc_account_sql  .= "WHERE ppc_account_id='" . $mysql['ppc_account_id'] . "'";
 			}
 
-			$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
+            $ppc_account_result = _mysqli_query($ppc_account_sql);
+            if ($ppc_account_result === false) {
+                record_mysql_error($ppc_account_sql);
+            }
 			$add_success = true;
 			// Cast to int: this id is interpolated into SQL without quotes, where
 			// real_escape_string() would not prevent injection in a numeric context.
@@ -204,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // (RollupRefresh). The account is saved either way; a queue that
             // fails is logged.
             $sourceBefore = (int) ($ppc_old_account_row['ppc_network_id'] ?? 0);
-            if ($editing == true && $ppc_account_result && $sourceBefore !== (int) $mysql['ppc_network_id']) {
+            if ($editing == true && $sourceBefore !== (int) $mysql['ppc_network_id']) {
                 try {
                     $rollupConn = new \Prosper202\Database\Connection($db);
                     $owner = (int) $mysql['user_id'];
@@ -285,15 +306,17 @@ if (isset($_GET['delete_ppc_network_id'])) {
 								`ppc_network_time`='" . $mysql['ppc_network_time'] . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `ppc_network_id`='" . $mysql['ppc_network_id'] . "'";
-		if ($delete_result = _mysqli_query($delete_sql)) { //($delete_result)) {
-			$delete_success = true;
-			// Landing Page Optimizer (segments-v2 G10): deletes change the
-			// synced snapshot too (buildSnapshot omits deleted rows) — flag
-			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
-			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
-			if ($slack)
-				$slack->push('traffic_source_deleted', ['name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']]);
-		}
+        if ($delete_result = _mysqli_query($delete_sql)) {
+            $delete_success = true;
+            // Landing Page Optimizer (segments-v2 G10): deletes change the
+            // synced snapshot too (buildSnapshot omits deleted rows) — flag
+            // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+            \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+            if ($slack)
+                $slack->push('traffic_source_deleted', ['name' => $_GET['delete_ppc_network_name'], 'user' => $user_row['username']]);
+        } else {
+            record_mysql_error($delete_sql);
+        }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
 	}
@@ -325,6 +348,8 @@ if (isset($_GET['delete_ppc_account_id'])) {
 			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 			if ($slack)
 				$slack->push('traffic_source_account_deleted', ['account_name' => $_GET['delete_ppc_account_name'], 'user' => $user_row['username']]);
+        } else {
+            record_mysql_error($delete_sql);
 		}
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
@@ -341,6 +366,9 @@ if (!empty($_GET['edit_ppc_network_id'])) {
 						 WHERE  `ppc_network_id`='" . $mysql['ppc_network_id'] . "'
 						 AND    `user_id`='" . $mysql['user_id'] . "'";
 	$ppc_network_result = _mysqli_query($ppc_network_sql);
+    if ($ppc_network_result === false) {
+        record_mysql_error($ppc_network_sql);
+    }
 	$ppc_network_row = $ppc_network_result->fetch_assoc() ?? [];
 
 	$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -356,7 +384,10 @@ if (!empty($_GET['edit_ppc_account_id'])) {
 						 FROM   `202_ppc_accounts`
 						 WHERE  `ppc_account_id`='" . $mysql['ppc_account_id'] . "'
 						 AND    `user_id`='" . $mysql['user_id'] . "'";
-	$ppc_account_result = _mysqli_query($ppc_account_sql); //($ppc_account_sql);
+    $ppc_account_result = _mysqli_query($ppc_account_sql);
+    if ($ppc_account_result === false) {
+        record_mysql_error($ppc_account_sql);
+    }
 	$ppc_account_row = $ppc_account_result->fetch_assoc() ?? [];
 
 	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'] ?? '';

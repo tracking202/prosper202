@@ -26,9 +26,13 @@ use PHPStan\Type\ObjectType;
  *
  * Read in the spellings that are calls: a method call in any case, a
  * nullsafe one (`$stmt?->execute()`) and the procedural functions
- * (`mysqli_stmt_execute($stmt)`). Not seen: a first-class callable
- * (`$stmt->execute(...)`, which PHPStan hands to rules as its own node) and
- * a callable built from strings (`call_user_func([$stmt, 'execute'])`).
+ * (`mysqli_stmt_execute($stmt)`), on any receiver that may be a statement:
+ * one PHPStan cannot type (a page's global `$db` makes every statement it
+ * prepares one), `object`, or `mysqli_stmt|false` as prepare() answers. Only
+ * a receiver it proves is something else is passed over. Not seen: a
+ * first-class callable (`$stmt->execute(...)`, which PHPStan hands to rules
+ * as its own node) and a callable built from strings
+ * (`call_user_func([$stmt, 'execute'])`).
  *
  * @implements Rule<CallLike>
  */
@@ -75,8 +79,10 @@ final class ForbidDirectMysqliStmtCallRule implements Rule
                 return [];
             }
             // PHPStan hands `$stmt?->execute()` to rules as this call too.
+            // A receiver that may be a statement is one: the pages' untyped
+            // receivers were all statements, and none of them was reported.
             $callerType = $scope->getType($node->var);
-            if (!(new ObjectType('mysqli_stmt'))->isSuperTypeOf($callerType)->yes()) {
+            if ((new ObjectType('mysqli_stmt'))->isSuperTypeOf($callerType)->no()) {
                 return [];
             }
         } else {

@@ -12,10 +12,13 @@ use Tests\TestCase;
  * call it exempts is Connection::execute()'s own, the checked execute the
  * message points to; a closure or an arrow function written inside that
  * method reports the method as its function, and was exempt too until the
- * rule asked whether the scope is an anonymous function. Every spelling of
- * the call is planted: a nullsafe call, and another case and the procedural
- * functions, which the rule did not see. Lines ending in `// REPORT` must be
- * reported; no other line may be.
+ * rule asked whether the scope is an anonymous function. The stand-in takes
+ * `object`, as the real method does. Every spelling of the call is planted:
+ * a nullsafe call, and another case and the procedural functions, which the
+ * rule did not see; and every receiver that may be a statement, an untyped
+ * one and prepare()'s `mysqli_stmt|false`, which it passed over. A class of
+ * its own with an `execute()` is not a statement. Lines ending in
+ * `// REPORT` must be reported; no other line may be.
  *
  * @group phpstan
  */
@@ -32,7 +35,7 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
 
         final class Connection
         {
-            public function execute(\mysqli_stmt $stmt): void
+            public function execute(object $stmt): void
             {
                 $stmt->execute();
                 $run = function () use ($stmt): void { $stmt->execute(); };                    // REPORT
@@ -60,6 +63,21 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
                 $stmt->EXECUTE();                                                               // REPORT
                 mysqli_stmt_execute($stmt);                                                     // REPORT
                 \mysqli_stmt_bind_param($stmt, 'i', $n);                                        // REPORT
+            }
+
+            public function receivers($untyped, \mysqli $db): void
+            {
+                $untyped->execute();                                                            // REPORT
+                $prepared = $db->prepare('SELECT 1');
+                $prepared->bind_param('i', $untyped);                                           // REPORT
+                (new Job())->execute();
+            }
+        }
+
+        final class Job
+        {
+            public function execute(): void
+            {
             }
         }
 
@@ -158,7 +176,7 @@ final class DirectMysqliStmtCallRuleTest extends TestCase
                 $expected[] = $index + 1;
             }
         }
-        $this->assertCount(11, $expected, 'the fixture lost some of its planted defects');
+        $this->assertCount(13, $expected, 'the fixture lost some of its planted defects');
 
         $found = $this->reportedIn($dir);
         $this->assertCount(1, $found, 'findings outside the fixture: ' . var_export($found, true));

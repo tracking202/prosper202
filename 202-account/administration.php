@@ -60,17 +60,22 @@ if (isset($_POST['autocron'])) {
 		$endpoint = 'register';
 		$sql = "SELECT * FROM 202_cronjob_logs";
 		$result = _mysqli_query($sql);
-		if ($result && $result->num_rows > 0) {
-			$row = $result->fetch_assoc();
+        if ($result === false) {
+            p202_account_flash('bad', 'Whether your own cron job is running could not be checked just now,'
+                . ' so AutoCron was not changed. Try again in a few minutes.');
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+        if ($result->num_rows > 0) {
+            $row = $result->fetch_assoc();
 
-			$last_five_minutes = time() - 300;
+            $last_five_minutes = time() - 300;
 
-			if ($row['last_execution_time'] < $last_five_minutes) {
-				$autocron = true;
-			}
-		} else {
-			$autocron = true;
-		}
+            if ($row['last_execution_time'] < $last_five_minutes) {
+                $autocron = true;
+            }
+        } else {
+            $autocron = true;
+        }
 	} else {
 		$endpoint = 'deregister';
 		$autocron = true;
@@ -281,11 +286,13 @@ $click_row = memcache_mysql_fetch_assoc($click_sql);
 $clicks = $click_row['clicks'] ?? null;
 
 $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-$pref_result = _mysqli_query("SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'");
-$pref_row = $pref_result ? $pref_result->fetch_assoc() : null;
-if (!is_array($pref_row)) {
-	$pref_row = [];
+$pref_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
+$pref_result = _mysqli_query($pref_sql);
+if ($pref_result === false) {
+    // Read as no row, the page would say AutoCron and MaxMind are off.
+    record_mysql_error($pref_sql);
 }
+$pref_row = p202FetchRow($pref_result, $pref_sql) ?? [];
 
 /** What a deletion by date keeps, said under the form (ClickRetention's rule). */
 const P202_ADMIN_RECLICK_KEPT = 'A click visited again on or after the day is kept whole.';

@@ -807,10 +807,14 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 		";
     // _mysqli_query() answers false for a failed statement, and the fetch
     // false for a failed read: either is recorded, and the error page.
+    $failed = 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed';
     $click_result = _mysqli_query($db, $click_sql);
-    $click_row = $click_result === false ? false : $click_result->fetch_assoc();
+    if ($click_result === false) {
+        record_mysql_error($db, $click_sql, $failed);
+    }
+    $click_row = $click_result->fetch_assoc();
     if ($click_row === false) {
-        record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
+        record_mysql_error($db, $click_sql, $failed);
     }
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.

@@ -926,18 +926,6 @@ function runWeekly($user_pref) {}
 
 
 
-function user_cache_time($user_id)
-{
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-
-    $mysql['user_id'] = $db->real_escape_string($user_id);
-    $sql = "SELECT cache_time FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
-    return $row !== null ? $row['cache_time'] : null;
-}
-
 function get_user_data_feedback($user_id)
 {
     $database = DB::getInstance();
@@ -945,8 +933,13 @@ function get_user_data_feedback($user_id)
     $mysql['user_id'] = $db->real_escape_string((string)$user_id);
     $sql = "SELECT user_email, user_time_register, p202_customer_api_key, install_hash, user_hash, modal_status, vip_perks_status FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
 
+    // Every signed-in page's header reads this: a failed read throws, and the
+    // page's handler shows the recorded error page.
     $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
+    if ($result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed | ' . p202RedactedStatement($sql));
+    }
+    $row = p202FetchRow($result, $sql);
 
     if ($row === null) {
         return [
@@ -1866,7 +1859,7 @@ function getDashEmail(): string|bool
                 //found it save to DB and return
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
-                $user_result = _mysqli_query($sql);
+                _mysqli_query($sql);
                 // The address, not its copy escaped for the statement above.
                 return (string) $dashEmail['email'];
             }

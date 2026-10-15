@@ -59,25 +59,11 @@ if ($goalPost) {
 	if (!AUTH::check_csrf_token()) {
 		$goalErrors['goal'] = 'Invalid or expired form token. Please reload the page and try again.';
 	} else {
-		$goalOwnerStmt = $db->prepare('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
-		$goalOwner = null;
-		if ($goalOwnerStmt !== false) {
-			$goalSessionUser = (int) $_SESSION['user_id'];
-			$goalOwnerStmt->bind_param('ii', $goalCampaignId, $goalSessionUser);
-			if (!$goalOwnerStmt->execute()) {
-				$goalOwnerStmt->close();
-				throw new \RuntimeException('aff_campaigns: the campaign owner lookup failed');
-			}
-			$goalOwnerResult = $goalOwnerStmt->get_result();
-			if ($goalOwnerResult === false) {
-				$goalOwnerStmt->close();
-				throw new \RuntimeException('aff_campaigns: the campaign owner lookup returned no result');
-			}
-			$goalOwner = $goalOwnerResult->fetch_assoc();
-			$goalOwnerStmt->close();
-		} else {
-			throw new \RuntimeException('aff_campaigns: the campaign owner lookup could not be prepared');
-		}
+        // A failed read throws (QueryException), and the page's handler records it.
+        $goalOwnerConn = new \Prosper202\Database\Connection($db);
+        $goalOwnerStmt = $goalOwnerConn->prepareWrite('SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? AND aff_campaign_deleted = 0 LIMIT 1');
+        $goalOwnerConn->bind($goalOwnerStmt, 'ii', [$goalCampaignId, (int) $_SESSION['user_id']]);
+        $goalOwner = $goalOwnerConn->fetchOne($goalOwnerStmt);
 		if ($goalOwner === null) {
 			$goalErrors['goal'] = 'Goals belong to a campaign of yours: open the campaign to edit its goals.';
 		} elseif ($goalAction === 'save') {

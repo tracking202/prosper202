@@ -30,8 +30,8 @@ if (!function_exists('memcache_set')) {
     }
 }
 
-// query(), memcache_mysql_fetch_assoc(), foreach_memcache_mysql_fetch_assoc(),
-// user_cache_time() and get_user_data_feedback() are
-// functions-tracking202.php's, which connect.php loads first: the guarded
-// copies that stood here never ran on a page, and the tests that exercised
-// them tested a stand-in.
+// query() and get_user_data_feedback() are functions-tracking202.php's, and
+// memcache_mysql_fetch_assoc() and foreach_memcache_mysql_fetch_assoc()
+// functions-shared.php's, which connect.php loads first: the guarded copies
+// that stood here never ran on a page, and the tests that exercised them
+// tested a stand-in.
