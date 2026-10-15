@@ -8,9 +8,9 @@ use UAParser\Parser;
 $tracker_id = $_GET['t202id'] ?? '';
 if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 
-# check to see if mysql connection works, if not fail over to cached stored redirect urls
-// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
-$p202OutageFallback = true;
+// No outage fallback: the URL a redirector sends to is built for one click
+// (its subid), so there is none to keep for the next visitor, and without the
+// database the bootstrap answers 503.
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 
 // Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
@@ -20,25 +20,6 @@ if (p202IsSpeculativeRequest()) {
 	p202DeclineSpeculativeRequest();
 }
 
-
-$usedCachedRedirect = false;
-if (!$db) $usedCachedRedirect = true;
-
-#the mysql server is down, use the cached redirect
-if ($usedCachedRedirect==true) { 
-
-		//if a cached key is found for this id, redirect to that url
-		if ($memcacheWorking) {
-			$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-			if ($getUrl) {			
-				p202NoStore();
-				header('location: '. $getUrl); 
-				die();
-			}
-		}
-
-	p202Unavailable();
-}
 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -55,18 +36,9 @@ if ($rtrTrackerId !== null) {
     }
 }
 
-// Guard BEFORE dereferencing: a missing row (unknown tracker, DB hiccup, or
-// stale cache) must never crash the redirect. Fall back to the cached default
-// url so the visitor still lands somewhere instead of losing the click.
+// Guard BEFORE dereferencing: an id that names no tracker has nowhere to
+// send the visitor.
 if (!$rotator_row) {
-	if ($memcacheWorking) {
-		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-		if ($getUrl) {
-			p202NoStore();
-			header('location: ' . $getUrl);
-			die();
-		}
-	}
 	die();
 }
 
@@ -376,16 +348,6 @@ if ($default == true) {
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
-	
-		if ($usedCachedRedirect==true) { 
-
-			if ($memcacheWorking) {
-				$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-				if (!$getUrl) {
-						setCache(md5('default_url' . $tracker_id . systemHash()), $default, 0);			
-				}
-			}
-		}
 	p202NoStore();
 	header('location: '.$default);
 	die();

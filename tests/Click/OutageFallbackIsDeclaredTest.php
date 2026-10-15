@@ -24,7 +24,6 @@ final class OutageFallbackIsDeclaredTest extends TestCase
     /** file => what it does without the database */
     private const FALLBACK = [
         'tracking202/redirect/dl.php' => 'the URL it keeps for an outage, or its 503 page',
-        'tracking202/redirect/rtr.php' => 'the URL it keeps for an outage, or p202Unavailable()',
         'tracking202/redirect/lp.php' => 'the URL it keeps for an outage, or p202Unavailable()',
         'tracking202/redirect/off.php' => 'the URL it keeps for an outage, or p202Unavailable()',
         'tracking202/redirect/cl2.php' => 'never reads the database',

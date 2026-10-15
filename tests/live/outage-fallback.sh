@@ -2,9 +2,10 @@
 # Live pass for the click path's MySQL-outage fallback: with the database out
 # of reach, dl.php, lp.php and off.php send the visitor to the URL they kept
 # in memcache for the campaign while it was up, and a link with nothing kept
-# (rtr.php's too) answers 503. Every other click and pixel endpoint needs the
-# database, and answers 503 before it reaches code that would use it; the
-# legacy APIs answer their JSON error under a 503.
+# answers 503. Every other click and pixel endpoint needs the database
+# (rtr.php too: its URL is built for one click, so it keeps none), and answers
+# 503 before it reaches code that would use it; the legacy APIs answer their
+# JSON error under a 503.
 #
 # The connection used to be made unguarded under MYSQLI_REPORT_STRICT, so a
 # refused connect was an uncaught exception: every request a 500, the
@@ -100,7 +101,6 @@ expect "$(hit "/tracking202/redirect/off.php?acip=$ACIP")" "302*$U/offer?s=p202*
 
 say "a link with nothing kept answers 503"
 expect "$(hit "/tracking202/redirect/dl.php?t202id=9$TD")" "503 " "dl.php"
-expect "$(hit "/tracking202/redirect/rtr.php?t202id=9$TD")" "503 " "rtr.php"
 expect "$(hit "/tracking202/redirect/lp.php?lpip=9$LPS")" "503 " "lp.php"
 expect "$(hit "/tracking202/redirect/off.php?acip=9$ACIP")" "503 " "off.php"
 
@@ -121,7 +121,7 @@ GO202V=$(printf '1 1' | base64)
 for p in "redirect/offrtr.php?rpi=1" "redirect/go.php?202v=$GO202V&rpi=1"; do
     expect "$(hit "/tracking202/$p" "tracking202subid=1")" "503 " "${p%%\?*} answers 503"
 done
-for p in "redirect/pci.php?pci=1" "redirect/cl.php?pci=123" "redirect/lpc.php?lpip=$LPS" \
+for p in "redirect/rtr.php?t202id=$TD" "redirect/pci.php?pci=1" "redirect/cl.php?pci=123" "redirect/lpc.php?lpip=$LPS" \
     "static/record.php?lpip=$LPS" "static/record_simple.php?lpip=$LPS" "static/record_adv.php?lpip=$LPS" \
     "static/px.php?acip=$ACIP" "static/pb.php?subid=1" "static/gpb.php?subid=1" "static/gpx.php" "static/upx.php" \
     "static/landing.php?lpip=$LPS" "static/get_custom_vars.php?lpip=$LPS" "static/p13n.php"; do
