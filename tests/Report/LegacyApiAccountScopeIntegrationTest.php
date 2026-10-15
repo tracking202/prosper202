@@ -456,6 +456,41 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         self::assertSame('[WP] Changed', $changed->fetch_row()[0] ?? null);
     }
 
+    /**
+     * An update names a page by an id that is well formed and names no page
+     * of the account: none at all, or another account's. The update of
+     * nothing answered `error: '0'`, which the plugin reads as saved.
+     */
+    public function testTheWordPressPluginsUpdateOfAPageNotTheAccountsIsRefused(): void
+    {
+        $foreign = self::USER + 5;
+        self::q("DELETE FROM 202_landing_pages WHERE landing_page_id = $foreign");
+        self::row('202_landing_pages', [
+            'landing_page_id' => $foreign, 'landing_page_id_public' => $foreign, 'user_id' => self::OTHER,
+            'aff_campaign_id' => self::OTHER, 'landing_page_nickname' => 'Not Yours',
+            'landing_page_url' => 'https://page.example/other', 'landing_page_time' => self::$now,
+        ]);
+        $pages = static function (): array {
+            $found = self::$db->query('SELECT landing_page_id, landing_page_nickname FROM 202_landing_pages'
+                . ' ORDER BY landing_page_id');
+            self::assertInstanceOf(\mysqli_result::class, $found);
+
+            return $found->fetch_all(MYSQLI_ASSOC);
+        };
+        $before = $pages();
+        $title = '&page_title=Changed&page_url=https%3A%2F%2Fpage.example%2Fchanged';
+        foreach (['no page' => 999999999, "another account's page" => $foreign] as $what => $id) {
+            foreach (['alp' => '', 'slp' => '&slp_page_campaign=' . self::USER] as $type => $campaign) {
+                self::assertSame(
+                    ['error' => '1'],
+                    self::read("api-v1:wp?type=wp_update_lp&page_type=$type$title&lp_pid=$id$campaign", true),
+                    "$type, $what"
+                );
+                self::assertSame($before, $pages(), "$type, $what: nothing written");
+            }
+        }
+    }
+
     /** The key check each endpoint makes first, with nothing failing. */
     public function testTheKeyCheckReaderAnswersWithNothingFailing(): void
     {

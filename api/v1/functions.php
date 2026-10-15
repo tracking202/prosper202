@@ -206,6 +206,19 @@ function wpUpdateLp($db, $user): array {
         }
         $mysql['user_id'] = $db->real_escape_string($user);
 
+        // A page of another account, or none: the update of nothing answered
+        // saved. Its affected rows cannot say so, since an unchanged page
+        // answers 0 as well.
+        $pageSql = "SELECT 1 FROM 202_landing_pages WHERE landing_page_id_public = " . $landingPageIdPublic
+            . " AND user_id = '" . $mysql['user_id'] . "'";
+        $pageResult = $db->query($pageSql);
+        if ($pageResult === false) {
+            return legacy_api_database_error($db);
+        }
+        if ($pageResult->num_rows === 0) {
+            return ['error' => '1'];
+        }
+
         if ($_GET['page_type'] == 'alp') {
             $sql = "UPDATE `202_landing_pages` 
 					SET 

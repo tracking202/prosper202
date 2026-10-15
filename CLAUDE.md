@@ -1157,8 +1157,9 @@ cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
 where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
 another account's offer URL (found by review, measured on the old code).
 `PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
-quoted value anywhere on the click path, and `ClickPathReads` answers nothing
-for an id below 1 without asking.
+quoted value anywhere in the served tree (the setup pages and the WordPress
+plugin's calls had six more: `12abc` opened, rewrote or made a page on record
+12), and `ClickPathReads` answers nothing for an id below 1 without asking.
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
