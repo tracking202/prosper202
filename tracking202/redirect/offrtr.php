@@ -27,7 +27,13 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$mysql['click_id'] = $db->real_escape_string((string) $cookieClickId);
+// The cookie's click id, exactly: is_numeric() let '1e3' through, which the
+// SQL read as click 1000.
+$offrtrClickId = \Prosper202\Click\ClickId::parse($cookieClickId);
+if ($offrtrClickId === null) {
+    die();
+}
+$mysql['click_id'] = (string) $offrtrClickId;
 $mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
 
 $rotator_sql = "SELECT
@@ -59,16 +65,21 @@ $rotator_sql = "SELECT
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 
-// The click the cookie names must be one of the rotator's account's. The
-// cookie is the visitor's to set and a click id is a sequential number, and
-// everything below writes to that click (its rotator, its rule, its
-// campaign and payout): any click on the install was moved into any
-// account's rotator (CLAUDE.md #27). Another account's click, or none, is
-// refused as an unknown rotator is.
-$offrtrClickOwner = p202ClickOwner((int) $cookieClickId);
-if ($offrtrClickOwner === null || $offrtrClickOwner['user_id'] !== (int) ($rotator_row['user_id'] ?? 0)) {
-	die();
+// recordExit() below refuses a click that is not the rotator's account's;
+// asked here first, such a click turns no campaign's rotation, looks up no
+// URL and costs no location lookup before it is refused.
+try {
+    $offrtrClicks = new \Prosper202\Click\MysqlClickRepository(
+        \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+    );
+    $offrtrIsAccountsClick = $offrtrClicks->isAccountsClick((int) $rotator_row['user_id'], $offrtrClickId);
+} catch (\Throwable $offrtrReadError) {
+    record_mysql_error($db, 'reading click ' . $mysql['click_id'] . "'s account", $offrtrReadError->getMessage());
 }
+if (!$offrtrIsAccountsClick) {
+    die();
+}
+
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 $rule_sql = "SELECT ru.id as rule_id
@@ -267,7 +278,6 @@ foreach ($rule_row as $rule) {
 		$rule_redirects_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
-					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
 					   2c.click_filtered,
 					   2c.landing_page_id,
 					   2cr.click_cloaking,
@@ -302,7 +312,8 @@ foreach ($rule_row as $rule) {
 				ORDER BY rur.id";
         // A rule left with no usable redirect passes the click on, as
         // rtr.php does: to a later rule, or to the default.
-        $redirectRows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+        // Not cached: read with one click's row.
+        $redirectRows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql, 0);
         $rule_redirect_rows = [];
         foreach ($redirectRows as $redirectRow) {
             if (p202RuleRedirectIsUsable($redirectRow)) {
@@ -325,34 +336,64 @@ if ($default) {
 	$mysql['rule_id'] = '0';
 }
 
-$mysql['click_out'] = 1;
-
-// rule_redirect_id is resolved later (after the redirect lookup) and updated then
-$click_sql = "
-	REPLACE INTO
-		202_clicks_rotator
-	SET
-		click_id='".$mysql['click_id']."',
-		rotator_id='".$mysql['rotator_id']."',
-		rule_id='".$mysql['rule_id']."',
-		rule_redirect_id = '0'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
-
-// The click row names its rotator as rtr.php's does: 202_clicks.rotator_id is
-// what GET /clicks serves, and this left it 0, so a click a landing page sent
-// through its offer rotator read as one that never met a rotator. In
-// rtr.php's rows 202_clicks.rule_id is the chosen redirect's id (the rule is
-// 202_clicks_rotator.rule_id); it is set to that below, once one is chosen.
-// The attribution rollup reads neither column, so the rewrite needs no mark.
-$click_sql = "
-	UPDATE
-		202_clicks
-	SET
-		rotator_id='".$mysql['rotator_id']."',
-		rule_id='0'
-	WHERE
-		click_id='".$mysql['click_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
+// Every way out records the click's route through the rotator, and the
+// offer it leaves for, in one write that refuses a click, a rotator or an
+// offer that is not the rotator's account's: the click is the visitor's
+// cookie, a sequential number, and named any click on the install
+// (CLAUDE.md #27). A refused click goes nowhere, as an unknown rotator does.
+// The click row names its rotator as rtr.php's does (GET /clicks serves
+// 202_clicks.rotator_id); in rtr.php's rows 202_clicks.rule_id is the chosen
+// redirect's id. A rule's redirect is 0 for the rotator's default.
+$offrtrRecordExit = function (
+    int $ruleRedirectId,
+    ?array $offer = null,
+    bool $cloaked = false,
+    int $outboundSiteUrlId = 0,
+    ?\Closure $resolveRedirect = null
+) use (
+    $db,
+    $mysql,
+    $rotator_row,
+    $offrtrClickId,
+    $offrtrClicks
+): void {
+    $recorded = false;
+    try {
+        $exit = new \Prosper202\Click\ClickExit(
+            (int) $rotator_row['user_id'],
+            $offrtrClickId,
+            offer: $offer === null ? null : new \Prosper202\Click\OfferRoute(
+                (int) $offer['aff_campaign_id'],
+                (string) $offer['aff_campaign_payout']
+            ),
+            rotator: new \Prosper202\Click\RotatorRoute(
+                (int) $rotator_row['id'],
+                (int) $mysql['rule_id'],
+                $ruleRedirectId
+            ),
+            clickedOut: $offer !== null,
+            cloaking: $offer === null ? null : ($cloaked ? 1 : 0),
+            outboundSiteUrlId: $outboundSiteUrlId,
+        );
+        // The site URL lookup caches the ids of the rows it inserts: held
+        // until the transaction commits, and dropped with a rollback.
+        p202WithHeldCacheWrites(function () use (&$recorded, $offrtrClicks, $exit, $resolveRedirect): void {
+            $recorded = $offrtrClicks->recordExit($exit, $resolveRedirect);
+        });
+    } catch (\Throwable $offrtrWriteError) {
+        record_mysql_error(
+            $db,
+            'recording click ' . $mysql['click_id'] . ' leaving through rotator ' . $mysql['rotator_id'],
+            $offrtrWriteError->getMessage()
+        );
+    }
+    if (!$recorded) {
+        die();
+    }
+    // The reports read a click's rotator and rule from its rollup row,
+    // whichever kind of redirect it leaves by.
+    (new DataEngine())->setDirtyHour($mysql['click_id']);
+};
 
 if ($default == false) {
 
@@ -369,117 +410,39 @@ if ($default == false) {
 			$rule_redirect_row = $rule_redirect_rows[0] ?? null;
 		}
 
-			// backfill the resolved redirect id onto the click row
-			if (is_array($rule_redirect_row) && isset($rule_redirect_row['rule_redirect_id'])) {
-				$mysql['rule_redirect_id'] = $db->real_escape_string((string)$rule_redirect_row['rule_redirect_id']);
-				$update_sql = "
-					UPDATE
-						202_clicks_rotator
-					SET
-						rule_redirect_id = '".$mysql['rule_redirect_id']."'
-					WHERE
-						click_id='".$mysql['click_id']."'";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
-				$update_sql = "
-					UPDATE
-						202_clicks
-					SET
-						rule_id = '".$mysql['rule_redirect_id']."'
-					WHERE
-						click_id='".$mysql['click_id']."'";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
+			$offrtrRedirectId = is_array($rule_redirect_row) && isset($rule_redirect_row['rule_redirect_id'])
+				? (int) $rule_redirect_row['rule_redirect_id']
+				: 0;
+			if (empty($rule_redirect_row['redirect_campaign'])) {
+				$offrtrRecordExit($offrtrRedirectId);
 			}
 
-			// The reports read a click's rotator and rule from its rollup row,
-			// which only the campaign branch below refreshed: a rule that sends
-			// to a landing page or a URL left the click out of every rotator
-			// report until the dataengine job next covered its hour.
-			(new DataEngine())->setDirtyHour($mysql['click_id']);
-
 			if (!empty($rule_redirect_row['redirect_campaign'])) {
-				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_id']);
-				$mysql['click_payout'] = $db->real_escape_string((string)$rule_redirect_row['aff_campaign_payout']);
-
-				// The click leaves the landing page for this offer: route it to the
-				// offer's campaign and seed its payout with the campaign's. Only a click
-				// that has not converted: a converted click's value belongs to its
-				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
-				// leave the click disagreeing with its rows.
-				// A click leaving its landing page for an offer takes the offer's
-				// campaign. When the click is old enough for the attribution report
-				// rollup to have summed it, the rewrite and its mark are one transaction
-				// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
-				$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($rule_redirect_row['first_click_time'] ?? null);
-				if ($rollupMark) {
-					$db->begin_transaction() or record_mysql_error($db);
-					\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($rule_redirect_row['user_id'] ?? 0), (int) $mysql['click_id']);
-				}
-				$update_sql = "
-					UPDATE
-						202_clicks AS 2c
-						LEFT JOIN 202_clicks_spy AS 2cs ON (2c.click_id = 2cs.click_id)
-					SET
-						2c.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-						2cs.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-						2c.click_payout='" . $mysql['click_payout'] . "',
-						2cs.click_payout='" . $mysql['click_payout'] . "'
-					WHERE
-						2c.click_id='" . $mysql['click_id'] . "'
-						AND 2c.click_lead = 0
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
-				if ($rollupMark) {
-					$db->commit() or record_mysql_error($db);
-				}
-
-				// Initialize before the branch so the non-cloaked path doesn't read an
-				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
-				$cloaking_on = false;
 				// The setting the click keeps, or the redirect campaign's when it
 				// leaves the decision to the campaign (ClickCloaking).
-				if (\Prosper202\Click\ClickCloaking::isOn($rule_redirect_row)) {
-				    $cloaking_on = true;
-				    $mysql['click_cloaking'] = 1;
-				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-				} else {
-				    $mysql['click_cloaking'] = 0;
-				}
-
-				$update_sql = "
-					UPDATE
-						202_clicks_record
-					SET
-						click_out='" . $mysql['click_out'] . "',
-						click_cloaking='" . $mysql['click_cloaking'] . "'
-					WHERE
-						click_id='" . $mysql['click_id'] . "'
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				$cloaking_on = \Prosper202\Click\ClickCloaking::isOn($rule_redirect_row);
 
                 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
-				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
-
-				$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
-				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
-
-				$update_sql = "
-					UPDATE
-						202_clicks_site
-					SET
-						click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-						click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'
-					WHERE
-						click_id='" . $mysql['click_id'] . "'
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
-
-				$de = new DataEngine();
-				$data = $de->setDirtyHour($mysql['click_id']);
+				// Read back inside the write: the payout token is the offer's.
+				$offrtrRecordExit(
+					$offrtrRedirectId,
+					$rule_redirect_row,
+					$cloaking_on,
+					(int) $click_outbound_site_url_id,
+					function () use ($db, &$redirect_site_url, $mysql, $rotator_row, $locationRepo): int {
+						$redirect_site_url = replaceTrackerPlaceholders(
+							$db,
+							$redirect_site_url,
+							$mysql['click_id'],
+							(int) $rotator_row['user_id']
+						);
+						return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
+					}
+				);
 
 				if ($cloaking_on == true) { ?>
 				<html>
@@ -527,15 +490,14 @@ if ($default == false) {
 			}
 } else {
 
-		// As in the rule branch: the click's rollup row carries its rotator
-		// now, whichever kind of default the rotator sends it to.
-		(new DataEngine())->setDirtyHour($mysql['click_id']);
+		if (empty($rotator_row['aff_campaign_id'])) {
+			$offrtrRecordExit(0);
+		}
 
 		if (!empty($rotator_row['aff_campaign_id'])) {
 				$click_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
-					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
 					   2c.click_filtered,
 					   2c.landing_page_id,
 					   2cr.click_cloaking,
@@ -545,94 +507,36 @@ if ($default == false) {
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 
-			$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+			$click_row = memcache_mysql_fetch_assoc($db, $click_sql, 0); // uncached: one click's row
 
-				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rotator_row['aff_campaign_id']);
-				$mysql['click_payout'] = $db->real_escape_string((string)$rotator_row['aff_campaign_payout']);
-
-				// The click leaves the landing page for this offer: route it to the
-				// offer's campaign and seed its payout with the campaign's. Only a click
-				// that has not converted: a converted click's value belongs to its
-				// conversion ledger (MysqlConversionLedger), and re-seeding it here would
-				// leave the click disagreeing with its rows.
-				// A click leaving its landing page for an offer takes the offer's
-				// campaign. When the click is old enough for the attribution report
-				// rollup to have summed it, the rewrite and its mark are one transaction
-				// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
-				$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($click_row['first_click_time'] ?? null);
-				if ($rollupMark) {
-					$db->begin_transaction() or record_mysql_error($db);
-					\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($click_row['user_id'] ?? 0), (int) $mysql['click_id']);
-				}
-				$update_sql = "
-					UPDATE
-						202_clicks AS 2c
-						LEFT JOIN 202_clicks_spy AS 2cs ON (2c.click_id = 2cs.click_id)
-					SET
-						2c.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-						2cs.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-						2c.click_payout='" . $mysql['click_payout'] . "',
-						2cs.click_payout='" . $mysql['click_payout'] . "'
-					WHERE
-						2c.click_id='" . $mysql['click_id'] . "'
-						AND 2c.click_lead = 0
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
-				if ($rollupMark) {
-					$db->commit() or record_mysql_error($db);
-				}
-
-				// Initialize before the branch so the non-cloaked path doesn't read an
-				// undefined variable at the $cloaking_on checks further down (matches off.php/rtr.php).
-				$cloaking_on = false;
 				// The setting the click keeps, or the default campaign's when it
 				// leaves the decision to the campaign (ClickCloaking).
-				if (\Prosper202\Click\ClickCloaking::isOn([
+				$cloaking_on = \Prosper202\Click\ClickCloaking::isOn([
 					'click_cloaking' => $click_row['click_cloaking'] ?? null,
 					'aff_campaign_cloaking' => $rotator_row['aff_campaign_cloaking'] ?? null,
-				])) {
-				    $cloaking_on = true;
-				    $mysql['click_cloaking'] = 1;
-				    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-				} else {
-				    $mysql['click_cloaking'] = 0;
-				}
-
-				$update_sql = "
-					UPDATE
-						202_clicks_record
-					SET
-						click_out='" . $mysql['click_out'] . "',
-						click_cloaking='" . $mysql['click_cloaking'] . "'
-					WHERE
-						click_id='" . $mysql['click_id'] . "'
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
+				]);
 
                 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 				$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
-				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
-
-				$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
-				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
-
-				$update_sql = "
-					UPDATE
-						202_clicks_site
-					SET
-						click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-						click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'
-					WHERE
-						click_id='" . $mysql['click_id'] . "'
-				";
-				$click_result = $db->query($update_sql) or record_mysql_error($db);
-
-				$de = new DataEngine();
-				$data = $de->setDirtyHour($mysql['click_id']);
+				// Read back inside the write: the payout token is the offer's.
+				$offrtrRecordExit(
+					0,
+					$rotator_row,
+					$cloaking_on,
+					(int) $click_outbound_site_url_id,
+					function () use ($db, &$redirect_site_url, $mysql, $rotator_row, $locationRepo): int {
+						$redirect_site_url = replaceTrackerPlaceholders(
+							$db,
+							$redirect_site_url,
+							$mysql['click_id'],
+							(int) $rotator_row['user_id']
+						);
+						return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
+					}
+				);
 
 				if ($cloaking_on == true) { ?>
 				<html>

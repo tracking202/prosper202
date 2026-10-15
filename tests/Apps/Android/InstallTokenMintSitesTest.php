@@ -125,7 +125,7 @@ final class InstallTokenMintSitesTest extends TestCase
                 );
             }
         }
-        self::assertGreaterThanOrEqual(4, $sites, 'the repository (2), rtr.php and getClickId() allocate click ids');
+        self::assertGreaterThanOrEqual(1, $sites, 'MysqlClickRepository::allocateClickId() allocates click ids');
     }
 
     private static function functionBody(string $src, string $name): string

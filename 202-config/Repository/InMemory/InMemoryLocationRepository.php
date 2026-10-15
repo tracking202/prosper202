@@ -95,4 +95,10 @@ final class InMemoryLocationRepository implements LocationRepositoryInterface
 
         return $this->siteUrls[$url] ??= $this->nextId++;
     }
+
+    #[\Override]
+    public function findOrCreateClickSiteUrl(string $url): int
+    {
+        return $this->findOrCreateSiteUrl($url);
+    }
 }

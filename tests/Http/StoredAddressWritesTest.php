@@ -89,28 +89,17 @@ final class StoredAddressWritesTest extends TestCase
      */
     private const WRITES = [
         // ── The click path ──────────────────────────────────────────────
-        '202-config/Click/RotatorClickWriter.php' => [
-            '202_clicks_advance.ip_id' => [
-                self::STORED,
-                'the rotator\'s click: rtr.php resolves it with findOrCreateIp(p202StoredVisitorIp())',
-                ['tracking202/redirect/rtr.php'],
-            ],
-        ],
         '202-config/Click/MysqlClickRepository.php' => [
             '202_clicks_advance.ip_id' => [
                 self::STORED,
                 'the ip_id its callers resolve with findOrCreateIp(p202StoredVisitorIp())',
                 [
                     'tracking202/redirect/dl.php', 'tracking202/static/record_simple.php',
-                    'tracking202/static/record_adv.php',
+                    'tracking202/static/record_adv.php', 'tracking202/redirect/rtr.php',
                 ],
             ],
         ],
         '202-config/connect2.php' => [
-            '202_clicks_advance.ip_id' => [
-                self::DERIVED,
-                'insertClicksAdvance() has no caller; a caller would hand it the click path\'s $mysql[\'ip_id\']',
-            ],
             '202_last_ips.ip_id' => [
                 self::DERIVED,
                 'FILTER::checkLastIps(): the click\'s stored ip_id, masked under privacy',
@@ -176,10 +165,12 @@ final class StoredAddressWritesTest extends TestCase
                 self::OPERATOR,
                 'the login audit log: the address of whoever tried to sign in, the throttle\'s key',
             ],
+        ],
+        '202-config/User/SignInRecord.php' => [
             '202_users.user_last_login_ip_id' => [
                 self::OPERATOR,
-                'the signed-in user\'s address, as it arrived: FILTER::checkUserIP compares the click\'s address'
-                    . ' before the mask with it',
+                'the signed-in user\'s address, as it arrived (202-login.php, its one caller):'
+                    . ' FILTER::checkUserIP compares the click\'s address before the mask with it',
             ],
         ],
         '202-config/functions-report-prefs.php' => [

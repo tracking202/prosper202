@@ -32,7 +32,9 @@ $click_sql = "
 	WHERE
 		click_id_public='".$mysql['click_id_public']."'
 ";
-$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+// Not cached: a rotator re-click rewrites the click's destination and keeps
+// its public id, and a cached row sent the visitor to the one before.
+$click_row = memcache_mysql_fetch_assoc($db, $click_sql, 0);
 
 // Guard BEFORE dereferencing: an unknown/expired public click id must not crash
 // the cloaked confirmation redirect.
@@ -48,12 +50,26 @@ p202ApplyOwnerPrivacy($click_row['user_id'] ?? null);
 $aff_campaign_id = $click_row['aff_campaign_id'];
 $mysql['click_id'] = $db->real_escape_string((string) $click_id);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string) $aff_campaign_id);
-$mysql['click_out'] = '1';
 
-$click_sql = "UPDATE    202_clicks_record
-			  SET       click_out='".$mysql['click_out']."'
-			  WHERE     click_id='".$mysql['click_id']."'";
-$click_result = $db->query($click_sql) or record_mysql_error($db);
+// The click's own account: its public id names the click and nothing else.
+$pciRecorded = false;
+try {
+    $pciClicks = new \Prosper202\Click\MysqlClickRepository(
+        \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+    );
+    $pciRecorded = $pciClicks->recordExit(
+        new \Prosper202\Click\ClickExit((int) $click_row['user_id'], (int) $click_id)
+    );
+} catch (\Throwable $pciWriteError) {
+    record_mysql_error(
+        $db,
+        'recording click ' . $mysql['click_id'] . ' leaving its cloaked link',
+        $pciWriteError->getMessage()
+    );
+}
+if (!$pciRecorded) {
+    die();
+}
 
 
 //see if cloaking was turned on

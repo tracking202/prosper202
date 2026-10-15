@@ -26,11 +26,16 @@ final class ClickCloaking
     }
 
     /**
-     * The tracker's setting on a row that may have none: -1 when the row has
-     * no click_cloaking (no tracker) or it is NULL, otherwise the stored
-     * value — 0 stays 0, "off for this link".
+     * The tracker's setting on a row that may have none: 1 on for this link,
+     * 0 off for this link, and -1, the campaign decides, for -1, for no
+     * click_cloaking (no tracker), NULL and anything else. Get Links offers
+     * those three and refuses the rest, as the API does; a value an earlier
+     * Get Links stored from a hand-built post reads as the form's default,
+     * where it was read as off (a link cloaked by its campaign then showed
+     * the offer).
      *
-     * record_adv.php stores this on the click for off.php to decide with, and
+     * record_adv.php stores this on the click (which takes -1, 0 or 1:
+     * ClickRecord) for off.php to decide with, and
      * stored -1 for 0 as well (`!$row['click_cloaking']`), so a link set to
      * "off" was cloaked whenever its campaign was.
      *
@@ -40,7 +45,11 @@ final class ClickCloaking
     {
         $value = $row['click_cloaking'] ?? null;
 
-        return $value === null ? self::CAMPAIGN_DECIDES : (int) $value;
+        return match (is_int($value) ? (string) $value : $value) {
+            '1' => 1,
+            '0' => 0,
+            default => self::CAMPAIGN_DECIDES,
+        };
     }
 
     /**

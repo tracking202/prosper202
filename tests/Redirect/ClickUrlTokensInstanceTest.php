@@ -40,6 +40,9 @@ final class ClickUrlTokensInstanceTest extends TestCase
     private static string $viaRotator = '';
     private static string $landingPage = '';
     private static string $cpaTracker = '';
+    private static int $owner = 0;
+    private static int $campaign = 0;
+    private static int $rotator = 0;
 
     public static function setUpBeforeClass(): void
     {
@@ -59,17 +62,26 @@ final class ClickUrlTokensInstanceTest extends TestCase
         $query = implode('&', array_map(static fn (string $t): string => "$t=[[$t]]", self::TOKENS));
         try {
             $network = self::create('aff-networks', ['aff_network_name' => "$run network"], 'aff_network_id');
-            $campaign = self::create('campaigns', [
+            $campaign = self::$campaign = self::create('campaigns', [
                 'aff_campaign_name' => "$run campaign",
                 'aff_campaign_url' => "https://offer.example/$run?$query",
                 'aff_campaign_payout' => '2.75', 'aff_network_id' => $network,
             ], 'aff_campaign_id');
-            $source = self::create('ppc-networks', ['ppc_network_name' => "$run source"], 'ppc_network_id');
+            $sourceRow = self::createRow('ppc-networks', ['ppc_network_name' => "$run source"]);
+            $source = (int) ($sourceRow['ppc_network_id'] ?? 0);
+            self::$owner = (int) ($sourceRow['user_id'] ?? 0);
+            if ($source <= 0 || self::$owner <= 0) {
+                throw new \RuntimeException('The traffic source create answered without its id and owner.');
+            }
             self::$account = self::create('ppc-accounts', [
                 'ppc_account_name' => "$run account", 'ppc_network_id' => $source,
             ], 'ppc_account_id');
             self::$direct = self::tracker(['aff_campaign_id' => $campaign]);
-            $rotator = self::create('rotators', ['name' => "$run redirector", 'default_campaign' => $campaign], 'id');
+            $rotator = self::$rotator = self::create(
+                'rotators',
+                ['name' => "$run redirector", 'default_campaign' => $campaign],
+                'id'
+            );
             self::$viaRotator = self::tracker(['aff_campaign_id' => 0, 'rotator_id' => $rotator]);
             self::$cpaTracker = (string) (self::createRow('trackers', [
                 'aff_campaign_id' => $campaign, 'ppc_account_id' => self::$account, 'click_cpa' => '1.25',
@@ -170,6 +182,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
             [$click['country_name'], $click['country_code'], $click['region_name'], $click['city_name']],
             [$tokens['country'], $tokens['country_code'], $tokens['region'], $tokens['city']]
         );
+        self::assertSame(1, $click['click_out'], 'pci.php marks the click as gone to the offer');
     }
 
     /**
@@ -217,17 +230,103 @@ final class ClickUrlTokensInstanceTest extends TestCase
     }
 
     /**
+     * A dynamic bid (t202b, when the account takes them) is the click's cost
+     * on each of the four scripts that read one, through the script's own
+     * wiring: three threw a TypeError on every bid (number_format() of a
+     * string under strict_types), and the click was lost. A bid that is no
+     * plain decimal from 0 to 99.99 costs the tracker's CPC (DynamicBid).
+     * The landing pages read the account's setting cached for three minutes
+     * when memcache is on: run this without it, as CI does.
+     */
+    public function testADynamicBidIsTheClicksCost(): void
+    {
+        $preferences = 'users/' . self::$owner . '/preferences';
+        [$status, , $answer] = self::request(self::$base . '/api/v3/' . $preferences, [
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key],
+        ]);
+        self::assertSame(200, $status, $answer);
+        $was = json_decode($answer, true)['data']['user_pref_dynamic_bid'] ?? null;
+        self::assertContains($was, [0, 1], $answer);
+
+        self::put($preferences, ['user_pref_dynamic_bid' => 1]);
+        try {
+            // Trackers no click has read yet: dl.php and rtr.php read the setting with theirs.
+            $direct = self::tracker(['aff_campaign_id' => self::$campaign]);
+            $viaRotator = self::tracker(['aff_campaign_id' => 0, 'rotator_id' => self::$rotator]);
+            $advanced = (string) (self::createRow('landing-pages', [
+                'landing_page_nickname' => self::$run . ' advanced', 'landing_page_url' => 'https://lp.example/adv',
+                'aff_campaign_id' => self::$campaign, 'landing_page_type' => 1,
+            ])['landing_page_id_public'] ?? '');
+            self::assertNotSame('', $advanced, 'the landing page create answered a landing_page_id_public');
+
+            $costs = [];
+            foreach (['0.25', '$1.5', 'abc', '100'] as $bid) {
+                $query = ['t202b' => $bid];
+                $clicks = [
+                    'direct link' => self::click('tracking202/redirect/dl.php', $direct, $query)['subid'],
+                    'redirector' => self::click('tracking202/redirect/rtr.php', $viaRotator, $query)['subid'],
+                    'simple landing page' => self::simpleLandingPage($query, $direct)['subid'],
+                    'advanced landing page' => self::advancedLandingPage($advanced, $direct, $query),
+                ];
+                foreach ($clicks as $path => $clickId) {
+                    $costs[$path][$bid] = self::clickRow($clickId)['click_cpc'];
+                }
+            }
+        } finally {
+            self::put($preferences, ['user_pref_dynamic_bid' => $was]);
+        }
+
+        $each = ['0.25' => 0.25, '$1.5' => 1.5, 'abc' => 0.37, '100' => 0.37];
+        self::assertSame([
+            'direct link' => $each,
+            'redirector' => $each,
+            'simple landing page' => $each,
+            'advanced landing page' => $each,
+        ], $costs);
+    }
+
+    /**
+     * An advanced landing page's script records the click and names it.
+     *
+     * @param array<string, string> $query
+     */
+    private static function advancedLandingPage(string $landingPage, string $tracker, array $query): string
+    {
+        [$status, $headers, $script] = self::request(
+            self::$base . '/tracking202/static/record_adv.php?' . http_build_query([
+                'lpip' => $landingPage, 't202id' => $tracker,
+            ] + $query),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(200, $status, $headers . $script);
+        self::assertSame(1, preg_match('/var subid ?= ?"([1-9][0-9]*)";/', $script, $subid), $script);
+
+        return $subid[1];
+    }
+
+    /** @param array<string, mixed> $body */
+    private static function put(string $resource, array $body): void
+    {
+        [$status, , $answer] = self::request(self::$base . '/api/v3/' . $resource, [
+            CURLOPT_CUSTOMREQUEST => 'PUT',
+            CURLOPT_POSTFIELDS => json_encode($body, JSON_THROW_ON_ERROR),
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key, 'Content-Type: application/json'],
+        ]);
+        self::assertSame(200, $status, "PUT /$resource: $answer");
+    }
+
+    /**
      * The page's script records the click and answers the outbound link,
      * which pci.php turns into the offer URL the click was stored with.
      *
      * @param array<string, string> $query
      * @return array<string, string> each token's value in the offer URL
      */
-    private static function simpleLandingPage(array $query): array
+    private static function simpleLandingPage(array $query, ?string $tracker = null): array
     {
         [$status, $headers, $script] = self::request(
             self::$base . '/tracking202/static/record_simple.php?' . http_build_query([
-                'lpip' => self::$landingPage, 't202id' => self::$direct,
+                'lpip' => self::$landingPage, 't202id' => $tracker ?? self::$direct,
             ] + $query),
             [CURLOPT_USERAGENT => self::UA]
         );

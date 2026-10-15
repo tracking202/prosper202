@@ -29,7 +29,7 @@ final class ClickBotEntryPointsTest extends TestCase
         '202-config/connect2.php',
     ];
 
-    /** recordClick() allocates the id itself when the record carries none. */
+    /** A click's id comes from allocateClickId(); recordClick() writes a click that has one. */
     private const ALLOCATES = '/->allocateClickId\s*\(|\bgetClickId\s*\(|->recordClick\s*\('
         . '|INSERT\s+INTO\s+`?202_clicks(?:_counter)?\b`?/i';
 

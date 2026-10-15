@@ -35,9 +35,7 @@ final class UncheckedExecuteTest extends TestCase
      *
      * @var string[]
      */
-    private const KNOWN_UNCHECKED = [
-        '202-login.php',
-    ];
+    private const KNOWN_UNCHECKED = [];
 
     /** @return array<string, list<int>> file (repo-relative) => lines of bare execute() calls */
     private function bareExecuteCalls(): array
@@ -75,13 +73,8 @@ final class UncheckedExecuteTest extends TestCase
 
     public function testTheKnownListHasNoStaleEntries(): void
     {
-        $current = $this->bareExecuteCalls();
-        foreach (self::KNOWN_UNCHECKED as $file) {
-            $this->assertArrayHasKey(
-                $file,
-                $current,
-                "$file no longer has an unchecked execute() -- remove it from KNOWN_UNCHECKED."
-            );
-        }
+        $stale = array_values(array_diff(self::KNOWN_UNCHECKED, array_keys($this->bareExecuteCalls())));
+
+        $this->assertSame([], $stale, 'No longer unchecked; remove from KNOWN_UNCHECKED: ' . implode(', ', $stale));
     }
 }

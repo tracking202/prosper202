@@ -22,7 +22,9 @@
 #     the click into that campaign, then into none);
 #   - lpc.php fills an offer URL's tokens only from a click of the landing
 #     page's own account (the click id is the visitor's cookie, and the read
-#     handed any account's keyword, values, cost and payout to the URL).
+#     handed any account's keyword, values, cost and payout to the URL);
+#   - lp.php marks only its own account's click as gone to the offer (it
+#     marked whatever click the cookie named).
 # The rules are told apart by browser (the click's User-Agent), so the pass
 # does not depend on how a redirect reads the visitor's address.
 #
@@ -218,7 +220,7 @@ if [ -z "$OTHER_ACCOUNT" ]; then
     OTHER_ACCOUNT=$(field "d['data']['user_id']")
 fi
 FOREIGN_ACIP=$((970000000 + RANDOM))
-Q "INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5, aff_campaign_payout, aff_campaign_cloaking, aff_campaign_time, aff_campaign_rotate, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals) SELECT $FOREIGN_ACIP, $OTHER_ACCOUNT, aff_network_id, '$TAG foreign', '$U/foreign', '', '', '', '', 99, 0, aff_campaign_time, 0, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id=$CA"
+Q "INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5, aff_campaign_payout, aff_campaign_cloaking, aff_campaign_time, aff_campaign_rotate, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals) SELECT $FOREIGN_ACIP, $OTHER_ACCOUNT, aff_network_id, '$TAG foreign', '$U/foreign', '$U/foreign-2', '', '', '', 99, 0, aff_campaign_time, 1, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id=$CA"
 FOREIGN_CA=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$FOREIGN_ACIP")
 FOREIGN_RPI=$((970000000 + RANDOM))
 Q "INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer) VALUES ($FOREIGN_RPI, $OTHER_ACCOUNT, '$TAG foreign', '$U/foreign-rotator', $FOREIGN_CA, NULL, NULL)"
@@ -233,13 +235,32 @@ eq "${location:-none}" "none" "off.php sends no one to another account's offer w
 location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" \
   -b "tracking202subid=$C_ID" "$BASE/tracking202/redirect/offrtr.php?rpi=$FOREIGN_RPI")
 eq "${location:-none}" "none" "offrtr.php sends no one through another account's rotator with this click"
+# The other account's default campaign rotates its URLs: a refused click
+# must not have turned it (offrtr.php refused only once it had).
+eq "$(Q "SELECT COUNT(*) FROM 202_rotations WHERE aff_campaign_id=$FOREIGN_CA")" "0" \
+  "and turns none of that account's campaign rotation"
 eq "$(Q "SELECT CONCAT(c.aff_campaign_id, '/', c.click_payout, ' ', c.rotator_id, '/', (SELECT COUNT(*) FROM 202_clicks_rotator WHERE click_id=$C_ID)) FROM 202_clicks c WHERE c.click_id=$C_ID")" "$C_BEFORE 0/0" \
   "and the click keeps its campaign and payout, with no rotator"
 # The same click through this account's own offer still goes out (the
 # refusal above is about the account, not the click).
 curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" "$BASE/tracking202/redirect/off.php?acip=$ACIP&pci=$C_PCI"
 eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$C_ID")" "1" "its own account's offer takes it"
-Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA"
+
+say "lp.php marks only its own account's click as gone to the offer"
+# lp.php takes the click from the visitor's cookie for the page's campaign
+# and marked whatever click it named, any account's.
+FOREIGN_CLICK=$(Q "INSERT INTO 202_clicks_counter SET click_id = DEFAULT; SELECT LAST_INSERT_ID()")
+Q "INSERT INTO 202_clicks (click_id, user_id, ppc_account_id, click_cpc, click_time) VALUES ($FOREIGN_CLICK, $OTHER_ACCOUNT, 0, 0, UNIX_TIMESTAMP()); INSERT INTO 202_clicks_record (click_id, click_id_public, click_cloaking, click_in, click_out) VALUES ($FOREIGN_CLICK, 0, 0, 1, 0)"
+location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.93" \
+  -b "tracking202subid_a_$CA=$FOREIGN_CLICK" "$BASE/tracking202/redirect/lp.php?lpip=$LPIP")
+eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$FOREIGN_CLICK")" "0" "another account's click stays as it was"
+eq "$(printf '%s' "${location:-none}" | sed 's/[?&].*//')" "$U/offer" "and the visitor still reaches the offer, as with no cookie"
+read -r D_ID _ < <(lpclick "$OTHER" 203.0.113.94)
+curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.94" -b "tracking202subid_a_$CA=$D_ID" \
+  "$BASE/tracking202/redirect/lp.php?lpip=$LPIP"
+eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$D_ID")" "1" "its own account's click is marked"
+Q "DELETE FROM 202_clicks WHERE click_id=$FOREIGN_CLICK; DELETE FROM 202_clicks_record WHERE click_id=$FOREIGN_CLICK"
+Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA; DELETE FROM 202_rotations WHERE aff_campaign_id=$FOREIGN_CA"
 
 say "a rule whose redirect is another account's campaign passes the click on"
 Q "UPDATE 202_aff_campaigns SET user_id=$OTHER_ACCOUNT WHERE aff_campaign_id=$CA_MOVED"

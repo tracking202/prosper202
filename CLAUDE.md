@@ -1090,6 +1090,17 @@ They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
 refuses the literal and any file handling the sentinel without it. When a
 rule is a spelling, one function should own the spelling.
 
+Two writers of one *row* is the same tell from the other side. A redirector
+re-click rewrote its click with `REPLACE`, which deletes the row and inserts
+another: every column the statement did not name went back to its default —
+the customer a conversion had linked, the reviewed flag, the public id every
+cl.php and pci.php link already handed out carried, the landing URL
+(measured). `REPLACE` is a write only where the statement owns every column
+of the row; a rewrite names what it changes (`INSERT … ON DUPLICATE KEY
+UPDATE` of its own columns), and the test is a row another writer has
+touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
+writer, `MysqlClickRepository`.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1166,6 +1177,16 @@ join exists to tie. Measured: any account's `acip` or `rpi` moved any
 click, named by a sequential id or a public id two random digits wide,
 into that account's campaign at its payout, or its rotator. When a script
 takes two ids from one request, compare their owners before the write.
+The click scripts now ask it where the write is made: a click leaving its
+landing page goes through `MysqlClickRepository::recordExit()`, which takes
+the account and refuses another account's click, offer or rotator (lp.php
+had no check, and marked whatever click its cookie named). The account
+handed in is the other record's — the offer's, the rotator's, the landing
+page's — never the click's own, which compares the click with itself and
+can refuse nothing (off.php's first draft did, behind a read that happened
+to tie them). And
+`ClickRowsWrittenOnlyByTheWriterTest` holds every other rewrite of a click's
+rows to a list that says why its clicks are the account's own.
 
 Tying a join is not the end of the change: the joined row is now NULL where
 it used to be another account's, and every consumer of the joined columns
@@ -1338,7 +1359,7 @@ URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
 direct link they are blank now (measured: `c1=&kw=` from a click carrying
 `c1=hello`), while `rtr.php`, whose rows were still written first, filled
 them. Before moving a write, find every reader of what it writes in the same
-request; `RotatorClickWriter` resolves the rotator's URL inside the click's
+request; `MysqlClickRepository` resolves the rotator's URL inside the click's
 transaction, after the rows, for that reason. An endpoint that redirects
 before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
 values it holds (`replaceClickPlaceholders()`), and the read-back is for one
@@ -1791,6 +1812,13 @@ where a check quietly fails to check what it appears to.
   never happened and the test passed against the code it was supposed to
   fail. Print a marker (`assert old in s`, then re-grep the file) before
   believing the run.
+- **A case that two checks refuse proves neither.** The exit writer's
+  refusal cases named another account's rotator with this account's rule,
+  and another rotator's rule with no redirect of its own: the rule check,
+  then the redirect check, refused them first, so removing the rotator's
+  owner check, and then the rule check, left every test green. Build each
+  refusal case so the check it names is the only one it trips (every other
+  record it names is the right one), and plant the removal of each check.
 - **A backup is only a backup where you will read it back.** A plant harness
   copied each file to a fixed scratch path (`plant/keep`) before planting a
   defect, and that path

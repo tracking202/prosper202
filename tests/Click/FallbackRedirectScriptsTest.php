@@ -171,7 +171,7 @@ final class FallbackRedirectScriptsTest extends TestCase
     private static function off(bool $pci, string $url, string $cached): array
     {
         $row = [
-            'click_id' => '5', 'user_id' => '1', 'first_click_time' => (string) time(), 'click_filtered' => '0',
+            'click_id' => '5', 'user_id' => '1', 'click_filtered' => '0',
             'landing_page_id' => '0', 'click_cloaking' => '0', 'aff_campaign_id' => '3', 'aff_campaign_rotate' => '0',
             'aff_campaign_url' => $url, 'aff_campaign_name' => 'Offer', 'aff_campaign_cloaking' => '0',
             'aff_campaign_payout' => '1.00',

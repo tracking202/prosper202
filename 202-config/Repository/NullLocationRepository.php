@@ -47,4 +47,10 @@ final class NullLocationRepository implements LocationRepositoryInterface
     {
         return 0;
     }
+
+    #[\Override]
+    public function findOrCreateClickSiteUrl(string $url): int
+    {
+        return 0;
+    }
 }
