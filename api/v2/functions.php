@@ -13,6 +13,9 @@ function getAuth($db, $variables): mixed {
 				INNER JOIN `202_users` u ON u.`user_id` = k.`user_id`
 				WHERE  	k.`api_key`='".$mysql['api_key']."' AND u.`user_deleted` = 0";
 	$key_result = _mysqli_query($db, $key_sql);
+	if ($key_result === false) {
+		return legacy_api_database_error($db);
+	}
 	$key_row = $key_result->fetch_assoc();
 
 	if($key_result->num_rows > 0) {
@@ -38,6 +41,9 @@ function getAuth($db, $variables): mixed {
 					FROM   	`202_users`
 					WHERE  	`user_id`='".$mysql['user_id']."'";
 		$user_result = _mysqli_query($db, $user_sql);
+		if ($user_result === false) {
+			return legacy_api_database_error($db);
+		}
 		$user_row = $user_result->fetch_assoc();
 		return [
 			'msg' => 'Authorized',

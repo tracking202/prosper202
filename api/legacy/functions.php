@@ -543,7 +543,10 @@ function getCampaignID($db, $campaign, $user): bool
 				FROM   	`202_aff_campaigns` 
 				WHERE  	`user_id`='" . $mysql['user_id'] . "' AND `aff_campaign_id`='" . $mysql['campaign_id'] . "'";
     $key_result = _mysqli_query($db, $key_sql);
-    $key_row = $key_result->fetch_assoc();
+    if ($key_result === false) {
+        print_r(pretty_json(json_encode(legacy_api_database_error($db), JSON_UNESCAPED_SLASHES)));
+        die();
+    }
 
     if ($key_result->num_rows > 0) {
         return true;

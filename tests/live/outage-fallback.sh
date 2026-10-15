@@ -6,7 +6,7 @@
 #
 # The connection used to be made unguarded under MYSQLI_REPORT_STRICT, so a
 # refused connect was an uncaught exception: every request a 500, the
-# fallback never reached (measured, 5 of 6 below failing).
+# fallback never reached (measured, 5 of the 6 redirect cases failing).
 #
 # It needs a server whose 202-config.php reaches MySQL through something it
 # can take away without stopping MySQL for anyone else, and memcached
@@ -96,6 +96,12 @@ expect "$(hit "/tracking202/redirect/lp.php?lpip=$LPS")" "302*$U/offer?s=p202*" 
 expect "$(hit "/tracking202/redirect/off.php?acip=$ACIP")" "302*$U/offer?s=p202*" "off.php sends the visitor to the kept URL"
 expect "$(hit "/tracking202/redirect/dl.php?t202id=9$TD")" "503*" "a tracker with nothing kept is the unavailable page"
 expect "$(hit "/tracking202/redirect/cl.php?pci=123")" "[23]0[02]*" "cl.php answers without a connection"
+hit "/api/v1/reports/?apikey=$P202_API_KEY" >/dev/null
+if grep -q '"Database connection is unavailable"' "$OUT/page"; then
+    ok "the legacy report API answers its JSON error"
+else
+    bad "the legacy report API answers its JSON error (got $(head -c 200 "$OUT/page"))"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 rm -rf "$OUT"
