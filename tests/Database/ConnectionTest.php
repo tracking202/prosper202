@@ -274,6 +274,39 @@ final class ConnectionTest extends TestCase
         $this->assertFalse($write->committed);
     }
 
+    public function testARollbackThatFailsIsThrownAndKeepsTheHandleFromBeginningAgain(): void
+    {
+        $write = $this->createFakeMysqli();
+        $write->rollbackResult = false;
+        $conn = new Connection($write);
+
+        try {
+            $conn->transaction(function () {
+                throw new RuntimeException('boom');
+            });
+            $this->fail('A failed rollback was not reported');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('Unable to roll back transaction after "boom"', $e->getMessage());
+            $this->assertInstanceOf(RuntimeException::class, $e->getPrevious());
+            $this->assertSame('boom', $e->getPrevious()->getMessage());
+        }
+
+        // The writes may still be pending on the handle: beginning another
+        // transaction there would commit them.
+        $this->assertTrue($conn->inTransaction());
+        try {
+            $conn->transaction(fn () => 'next');
+            $this->fail('A transaction began over a rollback that failed');
+        } catch (\LogicException) {
+            $this->assertSame(1, $write->begins);
+        }
+
+        // The error page ends it its own way, and says so.
+        Connection::transactionsEnded($write);
+        $write->rollbackResult = true;
+        $this->assertSame('next', $conn->transaction(fn () => 'next'));
+    }
+
     public function testTransactionThrowsWhenBeginFails(): void
     {
         $write = $this->createFakeMysqli(beginTransactionResult: false);
@@ -482,6 +515,7 @@ class FakeMysqli extends mysqli
     public bool $rolledBack = false;
     public int $begins = 0;
     public bool $commitResult = true;
+    public bool $rollbackResult = true;
     private bool $inTransaction = false;
 
     public function __construct(
@@ -520,9 +554,9 @@ class FakeMysqli extends mysqli
     public function rollback(int $flags = 0, ?string $name = null): bool
     {
         $this->rolledBack = true;
-        $this->inTransaction = false;
+        $this->inTransaction = !$this->rollbackResult;
 
-        return true;
+        return $this->rollbackResult;
     }
 
     public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool

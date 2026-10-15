@@ -332,11 +332,17 @@ final class Connection
      * done so far. Work that belongs to the caller's transaction runs
      * through joinTransaction() instead.
      *
+     * A rollback that fails leaves the transaction's writes pending on the
+     * handle, so that is thrown (with the callback's throwable as previous)
+     * and the handle stays marked: a later transaction() is refused rather
+     * than beginning, which would commit them.
+     *
      * @template T
      * @param callable(): T $fn
      * @return T
      * @throws LogicException inside another transaction on this connection
      * @throws Throwable re-throws whatever the callback threw after rollback
+     * @throws QueryException when the rollback itself fails
      */
     public function transaction(callable $fn): mixed
     {
@@ -352,6 +358,7 @@ final class Connection
         }
         $open = self::$open ??= new \WeakMap();
         $open[$this->write] = true;
+        $rolledBack = true;
 
         try {
             $result = $fn();
@@ -361,10 +368,20 @@ final class Connection
 
             return $result;
         } catch (Throwable $e) {
-            $this->write->rollback();
+            try {
+                $rolledBack = $this->write->rollback();
+            } catch (Throwable) {
+                $rolledBack = false;
+            }
+            if (!$rolledBack) {
+                $failed = $this->boundaryFailed('Unable to roll back transaction after "' . $e->getMessage() . '"');
+                throw new QueryException($failed->getMessage(), $failed->getCode(), $e);
+            }
             throw $e;
         } finally {
-            unset($open[$this->write]);
+            if ($rolledBack) {
+                unset($open[$this->write]);
+            }
         }
     }
 
