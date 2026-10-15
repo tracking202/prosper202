@@ -269,6 +269,12 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         });
     }
 
+    #[\Override]
+    public function isAccountsClick(int $userId, int $clickId): bool
+    {
+        return $this->accountsClickFirstTime($userId, $clickId) !== null;
+    }
+
     /**
      * The time of the click's first row when every row is the account's;
      * null when it has none or one is another's. Not locked: a click's

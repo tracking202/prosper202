@@ -220,7 +220,7 @@ if [ -z "$OTHER_ACCOUNT" ]; then
     OTHER_ACCOUNT=$(field "d['data']['user_id']")
 fi
 FOREIGN_ACIP=$((970000000 + RANDOM))
-Q "INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5, aff_campaign_payout, aff_campaign_cloaking, aff_campaign_time, aff_campaign_rotate, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals) SELECT $FOREIGN_ACIP, $OTHER_ACCOUNT, aff_network_id, '$TAG foreign', '$U/foreign', '', '', '', '', 99, 0, aff_campaign_time, 0, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id=$CA"
+Q "INSERT INTO 202_aff_campaigns (aff_campaign_id_public, user_id, aff_network_id, aff_campaign_name, aff_campaign_url, aff_campaign_url_2, aff_campaign_url_3, aff_campaign_url_4, aff_campaign_url_5, aff_campaign_payout, aff_campaign_cloaking, aff_campaign_time, aff_campaign_rotate, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals) SELECT $FOREIGN_ACIP, $OTHER_ACCOUNT, aff_network_id, '$TAG foreign', '$U/foreign', '$U/foreign-2', '', '', '', 99, 0, aff_campaign_time, 1, aff_campaign_currency, aff_campaign_foreign_payout, attribution_model_id, payout_mode, identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id=$CA"
 FOREIGN_CA=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$FOREIGN_ACIP")
 FOREIGN_RPI=$((970000000 + RANDOM))
 Q "INSERT INTO 202_rotators (public_id, user_id, name, default_url, default_campaign, default_lp, auto_monetizer) VALUES ($FOREIGN_RPI, $OTHER_ACCOUNT, '$TAG foreign', '$U/foreign-rotator', $FOREIGN_CA, NULL, NULL)"
@@ -235,6 +235,10 @@ eq "${location:-none}" "none" "off.php sends no one to another account's offer w
 location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" \
   -b "tracking202subid=$C_ID" "$BASE/tracking202/redirect/offrtr.php?rpi=$FOREIGN_RPI")
 eq "${location:-none}" "none" "offrtr.php sends no one through another account's rotator with this click"
+# The other account's default campaign rotates its URLs: a refused click
+# must not have turned it (offrtr.php refused only once it had).
+eq "$(Q "SELECT COUNT(*) FROM 202_rotations WHERE aff_campaign_id=$FOREIGN_CA")" "0" \
+  "and turns none of that account's campaign rotation"
 eq "$(Q "SELECT CONCAT(c.aff_campaign_id, '/', c.click_payout, ' ', c.rotator_id, '/', (SELECT COUNT(*) FROM 202_clicks_rotator WHERE click_id=$C_ID)) FROM 202_clicks c WHERE c.click_id=$C_ID")" "$C_BEFORE 0/0" \
   "and the click keeps its campaign and payout, with no rotator"
 # The same click through this account's own offer still goes out (the
@@ -256,7 +260,7 @@ curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.94" -b "trackin
   "$BASE/tracking202/redirect/lp.php?lpip=$LPIP"
 eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$D_ID")" "1" "its own account's click is marked"
 Q "DELETE FROM 202_clicks WHERE click_id=$FOREIGN_CLICK; DELETE FROM 202_clicks_record WHERE click_id=$FOREIGN_CLICK"
-Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA"
+Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA; DELETE FROM 202_rotations WHERE aff_campaign_id=$FOREIGN_CA"
 
 say "a rule whose redirect is another account's campaign passes the click on"
 Q "UPDATE 202_aff_campaigns SET user_id=$OTHER_ACCOUNT WHERE aff_campaign_id=$CA_MOVED"

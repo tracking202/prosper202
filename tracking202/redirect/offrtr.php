@@ -65,6 +65,21 @@ $rotator_sql = "SELECT
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 
+// recordExit() below refuses a click that is not the rotator's account's;
+// asked here first, such a click turns no campaign's rotation, looks up no
+// URL and costs no location lookup before it is refused.
+try {
+    $offrtrClicks = new \Prosper202\Click\MysqlClickRepository(
+        \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+    );
+    $offrtrIsAccountsClick = $offrtrClicks->isAccountsClick((int) $rotator_row['user_id'], $offrtrClickId);
+} catch (\Throwable $offrtrReadError) {
+    record_mysql_error($db, 'reading click ' . $mysql['click_id'] . "'s account", $offrtrReadError->getMessage());
+}
+if (!$offrtrIsAccountsClick) {
+    die();
+}
+
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 $rule_sql = "SELECT ru.id as rule_id
@@ -335,7 +350,13 @@ $offrtrRecordExit = function (
     bool $cloaked = false,
     int $outboundSiteUrlId = 0,
     ?\Closure $resolveRedirect = null
-) use ($db, $mysql, $rotator_row, $offrtrClickId): void {
+) use (
+    $db,
+    $mysql,
+    $rotator_row,
+    $offrtrClickId,
+    $offrtrClicks
+): void {
     $recorded = false;
     try {
         $exit = new \Prosper202\Click\ClickExit(
@@ -354,13 +375,10 @@ $offrtrRecordExit = function (
             cloaking: $offer === null ? null : ($cloaked ? 1 : 0),
             outboundSiteUrlId: $outboundSiteUrlId,
         );
-        $clicks = new \Prosper202\Click\MysqlClickRepository(
-            \Prosper202\Repository\LookupRepositoryFactory::connection($db)
-        );
         // The site URL lookup caches the ids of the rows it inserts: held
         // until the transaction commits, and dropped with a rollback.
-        p202WithHeldCacheWrites(function () use (&$recorded, $clicks, $exit, $resolveRedirect): void {
-            $recorded = $clicks->recordExit($exit, $resolveRedirect);
+        p202WithHeldCacheWrites(function () use (&$recorded, $offrtrClicks, $exit, $resolveRedirect): void {
+            $recorded = $offrtrClicks->recordExit($exit, $resolveRedirect);
         });
     } catch (\Throwable $offrtrWriteError) {
         record_mysql_error(

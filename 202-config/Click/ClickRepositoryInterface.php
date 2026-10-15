@@ -44,4 +44,11 @@ interface ClickRepositoryInterface
      *        outbound URL; null when the exit records no URLs
      */
     public function recordExit(ClickExit $exit, ?\Closure $redirectSiteUrlId = null): bool;
+
+    /**
+     * Whether the click has rows and every one is the account's: for a script
+     * to stop before work recordExit() would refuse to record (a rotation
+     * turned, a URL looked up), not in place of that refusal.
+     */
+    public function isAccountsClick(int $userId, int $clickId): bool;
 }

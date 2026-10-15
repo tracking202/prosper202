@@ -1180,7 +1180,11 @@ takes two ids from one request, compare their owners before the write.
 The click scripts now ask it where the write is made: a click leaving its
 landing page goes through `MysqlClickRepository::recordExit()`, which takes
 the account and refuses another account's click, offer or rotator (lp.php
-had no check, and marked whatever click its cookie named), and
+had no check, and marked whatever click its cookie named). The account
+handed in is the other record's — the offer's, the rotator's, the landing
+page's — never the click's own, which compares the click with itself and
+can refuse nothing (off.php's first draft did, behind a read that happened
+to tie them). And
 `ClickRowsWrittenOnlyByTheWriterTest` holds every other rewrite of a click's
 rows to a list that says why its clicks are the account's own.
 

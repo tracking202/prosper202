@@ -210,6 +210,7 @@ $info_sql = "
 	SELECT
 		2c.click_id,
 		2c.user_id,
+		2ac.user_id AS aff_campaign_user_id,
 		click_filtered,
 		landing_page_id,
 		click_cloaking,
@@ -298,11 +299,12 @@ $redirect_site_url = rotateTrackerUrl($db, $info_row);
 // The click leaves its landing page for this offer: it takes the offer's
 // campaign and, unless it has converted, its payout, and the redirect URL's
 // placeholders are read back from those rows. Written only when the click
-// and the offer are one account's, which the read above already asks.
+// is the offer's account's: the read above asks it too, and the writer asks
+// it again of the offer's account, not the click's.
 $offExitRecorded = false;
 try {
     $offExit = new \Prosper202\Click\ClickExit(
-        (int) $info_row['user_id'],
+        (int) $info_row['aff_campaign_user_id'],
         (int) $click_id,
         offer: new \Prosper202\Click\OfferRoute(
             (int) $info_row['aff_campaign_id'],

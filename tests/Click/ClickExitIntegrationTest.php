@@ -225,6 +225,25 @@ final class ClickExitIntegrationTest extends TestCase
         self::assertFalse(self::repo()->recordExit(new ClickExit(self::OWNER, self::FIRST_CLICK + 2)));
     }
 
+    /** The question offrtr.php asks before it turns a rotation: the same one recordExit() asks. */
+    public function testIsAccountsClickAnswersForTheAccountsOwnClicksOnly(): void
+    {
+        $own = self::FIRST_CLICK + 16;
+        $others = self::FIRST_CLICK + 17;
+        self::click($own);
+        self::click($others, self::OTHER);
+        // A re-click's second row of another account's makes the click no longer wholly this one's.
+        $mixed = self::FIRST_CLICK + 18;
+        self::click($mixed);
+        self::q('INSERT INTO 202_clicks SET click_id = ' . $mixed . ', user_id = ' . self::OTHER
+            . ', ppc_account_id = 0, click_cpc = 0, click_time = ' . time());
+
+        self::assertTrue(self::repo()->isAccountsClick(self::OWNER, $own));
+        self::assertFalse(self::repo()->isAccountsClick(self::OWNER, $others));
+        self::assertFalse(self::repo()->isAccountsClick(self::OWNER, self::FIRST_CLICK + 19), 'no rows');
+        self::assertFalse(self::repo()->isAccountsClick(self::OWNER, $mixed));
+    }
+
     public function testAnotherAccountsOfferIsNotWritten(): void
     {
         $clickId = self::FIRST_CLICK + 3;
