@@ -355,12 +355,6 @@ function setCache($key, $value, $exp = null)
 // inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
 // renders an address (HtmlReportFormatter) can be loaded without this file.
 
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
-
 try {
     $database = DB::getInstance();
 

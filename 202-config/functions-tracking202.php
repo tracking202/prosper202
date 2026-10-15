@@ -1155,31 +1155,6 @@ function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
     }
 }
 
-// this function delays an SQL statement, puts iy in a mysql table, to be cronjobed out every 5 minutes
-function delay_sql($delayed_sql)
-{
-    if (is_string($delayed_sql))
-        $mysql['delayed_sql'] = str_replace("'", "''", $delayed_sql);
-    else
-        return false;
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($delayed_sql); // ($delayed_sql);
-}
-
 function user_cache_time($user_id)
 {
     $database = DB::getInstance();

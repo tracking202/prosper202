@@ -219,7 +219,7 @@ final class AttributedInstallHasConversionTest extends TestCase
                 );
             }
         }
-        self::assertGreaterThanOrEqual(5, $sites, 'the fallbacks (dl, lp, off x2, connect2) were all found');
+        self::assertGreaterThanOrEqual(4, $sites, 'the fallbacks (dl, lp, off x2) were all found');
     }
 
     public function testTheWriterScanSeesEveryPlantedShape(): void

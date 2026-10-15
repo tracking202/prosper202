@@ -167,17 +167,6 @@ function getCache(string $key, $default = false)
 
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-if (!function_exists('array_any')) {
-    function array_any(array $items, callable $callback): bool
-    {
-        foreach ($items as $key => $value) {
-            if ($callback($value, $key)) {
-                return true;
-            }
-        }
-        return false;
-    }
-}
 include_once(CONFIG_PATH . '/DeviceDetect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
@@ -502,35 +491,6 @@ function _mysqli_query($dbOrSql, $sql = null)
 
     $result = $db->query((string) $sql) or record_mysql_error($db, (string) $sql); //or die($db->error . '<br/><br/>' . $sql);
     return $result;
-}
-
-// our own die, that will display the them around the error message
-function _die($message, ...$legacyArgs): never
-{
-    echo $message;
-    die();
-}
-
-// this funciton delays an SQL statement, puts in in a mysql table, to be cron jobbed out every 5 minutes
-function delay_sql($db, $delayed_sql): void
-{
-    $mysql['delayed_sql'] = $db->real_escape_string($delayed_sql);
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($db, $delayed_sql); // ($delayed_sql);
 }
 
 class FILTER
@@ -980,25 +940,6 @@ function setClickIdCookie($click_id, $campaign_id = 0)
     }
 }
 
-function setClickIdCookieForLp($click_id_public, $lp_public_id)
-{
-    if (trackingEnabled()) {
-        //set the cookie for the PIXEL to fire, expire in 30 days
-        $expire = time() + (60 *  60 * 24 * 30);
-        $expire_header = 60 *  60 * 24 * 30;
-        $path = '/';
-        // Domain: the request host without its port, none for an IP (CookieDomain).
-        $secure = TRUE;
-        $httponly = TRUE;
-
-
-        //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
-
-        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-    }
-}
-
 class PLATFORMS
 {
 
@@ -1445,11 +1386,6 @@ function replaceTokens($url, $tokens = [], $fillblanks = 0)
     // pixels alike, so a path that never loads this file (POST /events,
     // the goal notifier) replaces tokens exactly as the tracker does.
     return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
-}
-
-function rawurlencode202($token)
-{
-    return \Prosper202\Conversion\TrafficSourcePixels::encode($token);
 }
 
 function getGeoData($ip)
@@ -2041,143 +1977,6 @@ function getTrackingDomain(): string
     return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
 }
 
-function parseUaForRotatorCriteria($detect, $parser, $ua)
-{
-    $result = $parser->parse($ua);
-
-    if (!$detect->isMobile() && !$detect->isTablet()) {
-
-        switch ($result->device->family) {
-            //Is Bot
-            case 'Bot':
-                $result->device->family = "Bot";
-                break;
-            //Is Desktop
-            case 'Other':
-                $result->device->family = "Desktop";
-                break;
-        }
-    } else {
-        if ($detect->isTablet()) {
-            $result->device->family = "Tablet";
-            //If mobile 
-        } else {
-            $result->device->family = "Mobile";
-        }
-    }
-
-    return $result;
-}
-
-function ip_in_range($ip, $range)
-{
-    if (str_contains((string) $range, '/')) {
-        [$range, $netmask] = explode('/', (string) $range, 2);
-        if (str_contains($netmask, '.')) {
-            $netmask = str_replace('*', '0', $netmask);
-            $netmask_dec = ip2long($netmask);
-            return ((ip2long($ip) & $netmask_dec) == (ip2long($range) & $netmask_dec));
-        } else {
-            $x = explode('.', $range);
-            while (count($x) < 4) $x[] = '0';
-            [$a, $b, $c, $d] = $x;
-            $range = sprintf("%u.%u.%u.%u", empty($a) ? '0' : $a, empty($b) ? '0' : $b, empty($c) ? '0' : $c, empty($d) ? '0' : $d);
-            $range_dec = ip2long($range);
-            $ip_dec = ip2long($ip);
-
-            $wildcard_dec = 2 ** (32 - (int)$netmask) - 1;
-            $netmask_dec = ~$wildcard_dec;
-
-            return (($ip_dec & $netmask_dec) == ($range_dec & $netmask_dec));
-        }
-    } else {
-        if (str_contains((string) $range, '*')) {
-            $lower = str_replace('*', '0', $range);
-            $upper = str_replace('*', '255', $range);
-            $range = "$lower-$upper";
-        }
-
-        if (str_contains((string) $range, '-')) { // A-B format
-            [$lower, $upper] = explode('-', (string) $range, 2);
-            $lower_dec = (float)sprintf("%u", ip2long($lower));
-            $upper_dec = (float)sprintf("%u", ip2long($upper));
-            $ip_dec = (float)sprintf("%u", ip2long($ip));
-            return (($ip_dec >= $lower_dec) && ($ip_dec <= $upper_dec));
-        }
-
-        return false;
-    }
-}
-
-function getData($url)
-{
-    if (function_exists('curl_version')) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    } else {
-        return false;
-    }
-}
-
-function getPublisher($pubid)
-{
-    global $db;
-
-    $publisher_id_sql = "
-		SELECT
-			`user_id`
-		FROM
-			`202_users`
-		WHERE
-			`user_public_publisher_id`='" . $pubid . "'";
-
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
-    $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
-    if ($pubid_row) {
-        return $db->real_escape_string($pubid_row['user_id']);
-    } else {
-        return 1;
-    }
-}
-
-function getTokens($mysql)
-{
-    $tokens = [
-        "subid" => $mysql['click_id'],
-        "t202kw" => $mysql['t202kw'],
-        "c1" => $mysql['c1'],
-        "c2" => $mysql['c2'],
-        "c3" => $mysql['c3'],
-        "c4" => $mysql['c4'],
-        "gclid" => $mysql['gclid'],
-        "msclkid" => $mysql['msclkid'],
-        "fbclid" => $mysql['fbclid'],
-        "utm_source" => $mysql['utm_source'],
-        "utm_medium" => $mysql['utm_medium'],
-        "utm_campaign" => $mysql['utm_campaign'],
-        "utm_term" => $mysql['utm_term'],
-        "utm_content" => $mysql['utm_content'],
-        "cpc" => round($mysql['cpc'], 2),
-        "cpc2" => $mysql['cpc'],
-        "timestamp" => time(),
-        "payout" => $mysql['payout'],
-        "random" => mt_rand(1000000, 9999999),
-        "referer" => $mysql['referer'],
-        "sourceid" => $mysql['ppc_account_id'],
-        "transactionid" => $mysql['txid']
-    ];
-
-    return $tokens;
-}
-
 /**
  * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
  */
@@ -2220,151 +2019,6 @@ function maskIpAddress($ip)
     return $ip;
 }
 
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
-
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
-function sanitizeIn($data) {
-    global $db;
-    if (!is_string($data)) {
-        return '';
-    }
-    return $db->real_escape_string($data);
-}
-
-function processCacheRedirect(): void
-{
-    global $db, $memcacheWorking, $memcache;
-    $usedCachedRedirect = false;
-    if (!$db) $usedCachedRedirect = true;
-
-    #the mysql server is down, use the cached redirect
-    if ($usedCachedRedirect == true) {
-
-        $t202id = $_GET['t202id'];
-
-        //if a cached key is found for this t202id, redirect to that url
-        if ($memcacheWorking) {
-            $getUrl = getCache(md5('url_' . $t202id . systemHash()));
-            if ($getUrl) {
-
-                $new_url = str_replace("[[subid]]", "p202", $getUrl);
-                // No click is recorded while MySQL is down, so there is no
-                // click to sign: the install token expands empty (plan §5.1),
-                // never to a value an install could be credited through.
-                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
-
-                // t202pubid string replace for cached redirect
-                if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {
-                    $new_url = str_replace("[[t202pubid]]", $_GET['t202pubid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[t202pubid]]", "t202pubid", $new_url);
-                }
-
-                //c1 string replace for cached redirect
-                if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                    $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-                }
-
-                //c2 string replace for cached redirect
-                if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                    $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-                }
-
-                //c3 string replace for cached redirect
-                if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                    $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-                }
-
-                //c4 string replace for cached redirect
-                if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                    $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c4]]", "p202c4", $new_url);
-                }
-
-                //gclid string replace for cached redirect
-                if (isset($_GET['gclid']) && $_GET['gclid'] != '') {
-                    $new_url = str_replace("[[gclid]]", $_GET['gclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[gclid]]", "p202gclid", $new_url);
-                }
-
-                //msclkid string replace for cached redirect
-                if (isset($_GET['msclkid']) && $_GET['msclkid'] != '') {
-                    $new_url = str_replace("[[msclkid]]", $_GET['msclkid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[msclkid]]", "p202msclkid", $new_url);
-                }
-
-                //fbclid string replace for cached redirect
-                if (isset($_GET['fbclid']) && $_GET['fbclid'] != '') {
-                    $new_url = str_replace("[[fbclid]]", $_GET['fbclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[fbclid]]", "p202fbclid", $new_url);
-                }
-
-                //utm_source string replace for cached redirect
-                if (isset($_GET['utm_source']) && $_GET['utm_source'] != '') {
-                    $new_url = str_replace("[[utm_source]]", $_GET['utm_source'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_source]]", "p202utm_source", $new_url);
-                }
-
-                //utm_medium string replace for cached redirect
-                if (isset($_GET['utm_medium']) && $_GET['utm_medium'] != '') {
-                    $new_url = str_replace("[[utm_medium]]", $_GET['utm_medium'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_medium]]", "p202utm_medium", $new_url);
-                }
-
-                //utm_campaign string replace for cached redirect
-                if (isset($_GET['utm_campaign']) && $_GET['utm_campaign'] != '') {
-                    $new_url = str_replace("[[utm_campaign]]", $_GET['utm_campaign'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_campaign]]", "p202utm_campaign", $new_url);
-                }
-
-                //utm_term string replace for cached redirect
-                if (isset($_GET['utm_term']) && $_GET['utm_term'] != '') {
-                    $new_url = str_replace("[[utm_term]]", $_GET['utm_term'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_term]]", "p202utm_term", $new_url);
-                }
-
-                //utm_content string replace for cached redirect
-                if (isset($_GET['utm_content']) && $_GET['utm_content'] != '') {
-                    $new_url = str_replace("[[utm_content]]", $_GET['utm_content'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
-                }
-
-                //show url or redirect to url
-                if (isset($_GET['202rdu']) && $_GET['202rdu'] != '') {
-                    echo $new_url;
-                } else {
-                    header('location: ' . $new_url);
-                }
-
-                die();
-            }
-        }
-        die();
-    }
-}
-
 function setDirtyHour($mysql)
 {
     $de = new DataEngine();
@@ -2374,82 +2028,6 @@ function setDirtyHour($mysql)
 function isSSL(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || intval($_SERVER['SERVER_PORT']) == intval(getservbyname('https', 'tcp'));
-}
-
-function getScheme(): string
-{
-    if (isSSL()) {
-        $scheme = 'https';
-    } else {
-        $scheme = 'http';
-    }
-
-    return $scheme;
-}
-
-function is_prefetch(): bool
-{
-    // Delegate to the one hardened detector so this legacy helper cannot drift
-    // back to exact-match matching (which missed "Purpose: prefetch;prerender"
-    // and let speculative hits double-count).
-    return p202IsSpeculativeRequest();
-}
-
-function getForeignPayout($currency, $payout_currency, $payout)
-{
-    $fields = [
-        'currency' => $currency,
-        'payout_currency' => $payout_currency,
-        'payout' => $payout * 10000   //multiply by 10000 to get more accurate exchange rate
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-    $result = curl_exec($ch);
-
-    curl_close($ch);
-    $result = json_decode($result, true);
-
-    $result['exchange_payout'] /= 10000;
-    return $result;
-}
-
-function getDynamicEPVPixelId(&$mysql)
-{
-    global $db;
-
-    if (isset($mysql['ppc_account_id']) && isset($mysql['b202_fbpa_dynamic_epv']) && $mysql['ppc_account_id'] != '' && $mysql['b202_fbpa_dynamic_epv'] != '') {
-        $dynamic_epv_sql = "SELECT SUM(`income`)/SUM(`click_out`) as dynamic_epv_value, pixel_code AS pixel_id 
-                            FROM `202_dataengine` 
-                            LEFT JOIN `202_ppc_account_pixels` USING (`ppc_account_id`)
-                            WHERE `ppc_account_id`= " . $mysql['ppc_account_id'] . " AND `pixel_type_id`= 6 AND `click_time` >= UNIX_TIMESTAMP(TIMESTAMPADD(DAY,-7,NOW()))
-        
-        ";
-
-        $dynamic_epv_result = $db->query($dynamic_epv_sql);
-        $dynamic_epv_row = $dynamic_epv_result->fetch_assoc();
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['dynamic_epv_value']) {
-            $mysql['dynamic_epv_value'] = number_format($dynamic_epv_row['dynamic_epv_value'], 2);
-        } else {
-            $mysql['dynamic_epv_value'] = 0;
-        }
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['pixel_id']) {
-            $mysql['pixel_id'] = $dynamic_epv_row['pixel_id'];
-        } else {
-            $mysql['pixel_id'] = 0;
-        }
-    }
 }
 
 function getPayout(&$mysql)
@@ -2467,23 +2045,6 @@ function getPayout(&$mysql)
     $sql_row = $sql_result->fetch_assoc();
 
     $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
-}
-
-function getUrlVars202(): array
-{
-    $urlvarslist = [];
-    $temp = explode('&', (string) $_SERVER['QUERY_STRING']);
-
-    foreach ($temp as $key => $value) {
-        $subkv = explode('=', $value);
-        $key = $subkv[0];
-        $value = $subkv[1];
-        $urlvarslist[$key] = $value;
-    }
-
-    $urlvarslist = filter_var_array($urlvarslist, FILTER_SANITIZE_URL);
-
-    return $urlvarslist;
 }
 
 /** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */
