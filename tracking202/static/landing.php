@@ -74,7 +74,7 @@ $lpip = $_GET['lpip'] ?? '';
 $t202TrackerId = \Prosper202\Click\PublicId::parse($t202id);
 $t202LandingPageId = \Prosper202\Click\PublicId::parse($lpip);
 try {
-    $t202Reads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+    $t202Reads = \Prosper202\Repository\LookupRepositoryFactory::liveReads($db);
     // The traffic source's variables: the named tracker's (on a named page,
     // only when it is the page's account's), or for a page reached without
     // one, a tracker of the page's campaign of the page's account. Each
@@ -113,7 +113,7 @@ try {
 $p202CampaignCapture = false;
 if ($t202LandingPageId !== null) {
     try {
-        $identityRow = \Prosper202\Repository\LookupRepositoryFactory::reads($db)
+        $identityRow = \Prosper202\Repository\LookupRepositoryFactory::liveReads($db)
             ->landingPageCapture($t202LandingPageId, $t202TrackerId);
         if ($identityRow !== null) {
             $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1

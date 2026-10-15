@@ -15,7 +15,8 @@ use Tests\Support\SourceScan;
  * ClickId) and compared as numbers: bound, or an int put in the statement.
  *
  * Read per string literal of the click path's files: a column ending in
- * `_public` or named `public_id`, then `=`, then a quote. It does not follow
+ * `_public` or named `public_id`, then a comparison (`=`, `!=`, `<>`, `<=>`,
+ * `IN (`, `LIKE`, with or without BINARY), then a quote. It does not follow
  * a value into a variable first (`$sql = "… = '" . $id . "'"` is seen,
  * `$col . "='"` is not), and it reads only the scripts and classes below.
  */
@@ -29,7 +30,8 @@ final class PublicIdsAreComparedAsNumbersTest extends TestCase
         '202-config/static-endpoint-helpers.php',
     ];
 
-    private const QUOTED_COMPARE = '/\b\w*(?:_public|public_id)\s*=\s*\\\\?[\'"]/i';
+    private const QUOTED_COMPARE = '/\b\w*(?:_public|public_id)\s*(?:<=>|[!<>]?=|<>|\bIN\s*\(|\bLIKE\b)\s*'
+        . '(?:BINARY\s+)?\\\\?[\'"]/i';
 
     public function testNoPublicIdIsComparedAsText(): void
     {
@@ -73,6 +75,13 @@ final class PublicIdsAreComparedAsNumbersTest extends TestCase
         ];
         yield 'heredoc, third line' => ["<?php \$s = <<<SQL\nSELECT 1\nWHERE click_id_public = '\$p'\nSQL;\n", [3]];
         yield 'upper case' => ["<?php \$s = \"SELECT 1 FROM t WHERE CLICK_ID_PUBLIC='\" . \$p . \"'\";", [1]];
+        yield 'not equal' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public != '\" . \$p . \"'\";", [1]];
+        yield 'not equal, SQL spelling' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public<>'0'\";", [1]];
+        yield 'null-safe' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public <=> '\" . \$p . \"'\";", [1]];
+        yield 'a list' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public IN ('\" . \$p . \"')\";", [1]];
+        yield 'binary' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public = BINARY '\" . \$p . \"'\";", [1]];
+        yield 'like' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public LIKE '\" . \$p . \"'\";", [1]];
+        yield 'a list of ints' => ["<?php \$s = 'SELECT 1 FROM t WHERE click_id_public IN (' . \$ids . ')';", []];
         yield 'bound' => ["<?php \$s = 'SELECT 1 FROM t WHERE click_id_public = ?';", []];
         yield 'an int in the statement' => ["<?php \$s = \"SELECT 1 FROM t WHERE click_id_public=\" . \$p;", []];
         yield 'a PHP variable, not SQL' => ["<?php \$click_id_public = '';", []];

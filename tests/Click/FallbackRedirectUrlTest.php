@@ -102,7 +102,8 @@ final class FallbackRedirectUrlTest extends TestCase
                 'url_',
                 ['(string) ($tracker_row[\'aff_campaign_url\'] ?? \'\')'],
             ],
-            'lp.php' => ['tracking202/redirect/lp.php', 'lp_', [self::withSubidOf('tracker_row')]],
+            // A page naming no campaign of its account empties it, then the campaign's URL.
+            'lp.php' => ['tracking202/redirect/lp.php', 'lp_', ["''", self::withSubidOf('tracker_row')]],
             // Both branches: a click without a public id, then one with.
             'off.php' => [
                 'tracking202/redirect/off.php',

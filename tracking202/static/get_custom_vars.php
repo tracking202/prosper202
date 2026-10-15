@@ -6,7 +6,9 @@ $data = [];
 $trackerId = \Prosper202\Click\PublicId::parse($_GET['t202id'] ?? null);
 // The tracker's traffic source, only when the source is the tracker's account's.
 try {
-    $row = $trackerId === null ? null : \Prosper202\Repository\LookupRepositoryFactory::reads($db)->tracker($trackerId);
+    $row = $trackerId === null
+        ? null
+        : \Prosper202\Repository\LookupRepositoryFactory::liveReads($db)->tracker($trackerId);
 } catch (\Throwable $readError) {
     // A failed read is not "no variables".
     error_log('get_custom_vars.php: could not read tracker ' . $trackerId . ': ' . $readError->getMessage());

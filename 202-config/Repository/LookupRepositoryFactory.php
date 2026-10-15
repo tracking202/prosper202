@@ -55,6 +55,16 @@ final class LookupRepositoryFactory
         return self::bundle($db)->reads;
     }
 
+    /**
+     * The same reads, never cached: for a page that has always read its
+     * setup live (the landing page's script and its variables), so a Setup
+     * edit, the identity-capture switch among them, shows on the next view.
+     */
+    public static function liveReads(mysqli $db): ClickPathReads
+    {
+        return ClickPathReads::uncached(new Connection($db));
+    }
+
     public static function reset(): void
     {
         self::$bundles = null;

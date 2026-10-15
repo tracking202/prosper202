@@ -40,7 +40,7 @@ if ($tracker_row === null) {
 	$action_site_url = p202InstallPath('tracking202/redirect/cl2.php');
 	//modify the redirect site url to go through another cloaked link
 	$redirect_site_url = $tracker_row['site_url_address'];
-	$referrer = $tracker_row['user_pref_cloak_referer'] ?? '';
+	$referrer = $tracker_row['user_pref_cloak_referer'] ?? 'origin'; // no preferences row: the column's default
 	$html['aff_campaign_name'] = $tracker_row['aff_campaign_name'] ?? '';
 } 
 

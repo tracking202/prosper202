@@ -196,6 +196,15 @@ Q "INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, ppc_account_id, c
 get "/tracking202/redirect/cl.php?pci=7${FC}7" >/dev/null
 eq "$(grep -oE 'name="referrer" content="[^"]*"' "$OUT/page")" 'name="referrer" content="never"' "the second account's click"
 if grep -q "url=$U/cloaked-$FC" "$OUT/page"; then ok "and goes to its own URL"; else bad "and goes to its own URL"; fi
+# An account with no preferences row has the column's default, not an empty
+# policy (which a browser reads as its own default).
+NOPREF=$(Q "SELECT COALESCE(MAX(user_id), 0) + 1000 FROM 202_users")
+NC=$(Q "INSERT INTO 202_clicks_counter SET click_id = DEFAULT; SELECT LAST_INSERT_ID()")
+Q "INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, ppc_account_id, click_cpc, click_time) VALUES ($NC, $NOPREF, 0, 0, 0, $T); INSERT INTO 202_clicks_record (click_id, click_id_public, click_cloaking) VALUES ($NC, 7${NC}7, 1); INSERT INTO 202_clicks_site (click_id, click_redirect_site_url_id) VALUES ($NC, $FSU)"
+get "/tracking202/redirect/cl.php?pci=7${NC}7" >/dev/null
+eq "$(grep -oE 'name="referrer" content="[^"]*"' "$OUT/page")" 'name="referrer" content="origin"' \
+    "an account with no preferences row takes the setting's default"
+Q "DELETE FROM 202_clicks WHERE click_id = $NC; DELETE FROM 202_clicks_record WHERE click_id = $NC; DELETE FROM 202_clicks_site WHERE click_id = $NC"
 
 say "an offer link without a click (off.php) for an account other than the first"
 loc=$(get "/tracking202/redirect/off.php?acip=$P")
@@ -248,6 +257,16 @@ curl -sS -o /dev/null -b "tracking202subid=${pxid:-0}" "$BASE/tracking202/static
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${pxid:-0}'")" "0" "px.php?acip=${ACIP}abc names no campaign"
 curl -sS -o /dev/null -b "tracking202subid=${pxid:-0}" "$BASE/tracking202/static/px.php?acip=$ACIP"
 eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${pxid:-0}'")" "1" "while acip=$ACIP converts the cookie's click"
+
+say "the landing page's script reads its campaign's capture switch live"
+# landing.php read it uncached before 1.9.78; kept for three minutes, a switch
+# turned off went on capturing (measured with memcached running).
+capture() { get "/tracking202/static/landing.php?lpip=$LPS" >/dev/null; grep -oE 'var p202CampaignCapture = [a-z]+' "$OUT/page" | awk '{print $4}'; }
+Q "UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = $CA"
+eq "$(capture)" "true" "capture on"
+Q "UPDATE 202_aff_campaigns SET identity_signals = 0 WHERE aff_campaign_id = $CA"
+eq "$(capture)" "false" "and off on the very next view once switched off"
+Q "UPDATE 202_aff_campaigns SET identity_signals = 1 WHERE aff_campaign_id = $CA"
 
 say "a public id of 0 names no click"
 # A click without cloaking is stored with public id 0, its "none".
