@@ -655,8 +655,10 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
 	return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 };
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 try {
-	$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 	// The site URL lookup caches the ids of the rows it inserts: held until
 	// the transaction commits, and dropped with a rollback.
 	p202WithHeldCacheWrites(static fn () => $reClick !== null

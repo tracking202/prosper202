@@ -492,8 +492,10 @@ $computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $tracki
 
     // Every row in one transaction (MysqlClickRepository), its cache writes
     // held until it commits; a failure is the error page, as rtr.php's is.
+    // Built outside the try: a record the builder refuses is a bug, not a
+    // database failure, and the uncaught handler logs it as one.
+    $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
     try {
-        $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
         p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($dlClick));
     } catch (\Throwable $dlWriteError) {
         record_mysql_error($db, 'recording click ' . $click_id, $dlWriteError->getMessage());
