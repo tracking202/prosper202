@@ -110,6 +110,28 @@ final class StagedChangesControllerTest extends TestCase
         $this->controller($this->authFor(5))->get($id);
     }
 
+    /** A key that may not read an area sees no proposal there, even its own user's. */
+    public function testAKeySeesOnlyTheProposalsOfAreasItReads(): void
+    {
+        $owner = $this->controller($this->authFor(5));
+        $campaign = $owner->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $user = $owner->stage('PUT', '/users/5', ['user_email' => 'a@example.com'], null)['data']['change_id'];
+
+        $narrow = $this->controller($this->authFor(5, 'campaigns:read,reports:read'));
+        $this->assertSame([$campaign], array_column($narrow->list([])['data'], 'change_id'));
+        $this->assertSame($campaign, $narrow->get($campaign)['data']['change_id']);
+        try {
+            $narrow->get($user);
+            $this->fail('a key without users:read read a users proposal');
+        } catch (NotFoundException) {
+        }
+
+        foreach (['*', 'read', 'write', 'read,stage'] as $wide) {
+            $all = $this->controller($this->authFor(5, $wide))->list([]);
+            $this->assertCount(2, $all['data'], $wide);
+        }
+    }
+
     public function testGetUnknownIdIsNotFound(): void
     {
         $this->expectException(NotFoundException::class);

@@ -186,15 +186,18 @@ try {
     // exchanging a one-time approval for the connection's key, so it has no
     // key to present yet: the code and its verifier are the credential.
     // POST /connect/revoke (after authentication, below) is a connection's
-    // key removing itself. Neither write previews, so ?dry_run is refused
-    // rather than ignored (CLAUDE.md #14).
+    // key removing itself. Neither write previews or proposes, so ?dry_run
+    // and ?staged are refused rather than ignored (CLAUDE.md #14).
     if ($path === '/connect' && $method === 'GET') {
         Bootstrap::jsonResponse(['data' => ['connect' => 1]]);
         exit;
     }
-    if (($path === '/connect/token' || $path === '/connect/revoke') && array_key_exists('dry_run', $queryParams)) {
-        Bootstrap::errorResponse('dry_run is not supported on ' . $path . '; it writes or does nothing', 422);
-        exit;
+    if ($path === '/connect/token' || $path === '/connect/revoke') {
+        $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
+        if ($withheld !== null) {
+            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            exit;
+        }
     }
     if ($path === '/connect/token' && $method === 'POST') {
         // Only failed exchanges are counted, per address: every MCP server

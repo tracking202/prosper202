@@ -29,11 +29,22 @@ final class AiConnect
     /** Seconds between the approval and the exchange. */
     public const CODE_TTL = 300;
 
-    /** The access a person can give, and the key scope each mints. */
-    public const ACCESS_SCOPES = [
-        'read' => 'read',
-        'propose' => 'read,stage',
-        'write' => 'write',
+    /** The access a person can give, in the order the approval page lists them. */
+    public const ACCESSES = ['read', 'propose', 'write'];
+
+    /**
+     * The API areas the hosted MCP server's tools read, and of those the ones
+     * they change: all an AI key reaches, whatever the approving user's role.
+     * Never `users` (its keys and identity key), `system` or `sync`.
+     * TestHostedMCPToolsStayInsideTheAIKeyAreas (go-cli) holds every hosted
+     * tool's requests to these lists, and the lists to what the tools use.
+     */
+    public const READ_AREAS = [
+        'reports', 'attribution', 'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts',
+        'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes',
+    ];
+    public const WRITE_AREAS = [
+        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks',
     ];
 
     /**
@@ -161,10 +172,54 @@ final class AiConnect
         return $ka !== null && $ka === $key($b);
     }
 
-    /** The scope a chosen access mints, or null for an access that is not one of the three. */
+    /**
+     * The scope a chosen access mints, or null for an access that is not one
+     * of the three: `<area>:read` for each area the tools read, and for the
+     * areas they change `<area>:stage` beside it (propose) or `<area>:write`
+     * in its place (write).
+     */
     public static function scopeFor(string $access): ?string
     {
-        return self::ACCESS_SCOPES[$access] ?? null;
+        if (!in_array($access, self::ACCESSES, true)) {
+            return null;
+        }
+        $tokens = [];
+        foreach (self::READ_AREAS as $area) {
+            $changes = in_array($area, self::WRITE_AREAS, true);
+            $tokens[] = $area . ($changes && $access === 'write' ? ':write' : ':read');
+            if ($changes && $access === 'propose') {
+                $tokens[] = $area . ':stage';
+            }
+        }
+        return implode(',', $tokens);
+    }
+
+    /** The access a stored scope was minted for, or null when it is none of the three. */
+    public static function accessFor(string $scope): ?string
+    {
+        foreach (self::ACCESSES as $access) {
+            if (self::scopeFor($access) === $scope) {
+                return $access;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The query flag a connect route cannot honour, or null. Neither
+     * /connect/token nor /connect/revoke previews or proposes, so a request
+     * asking for either is refused rather than performed (CLAUDE.md #14).
+     *
+     * @param array<string, mixed> $queryParams
+     */
+    public static function withheldFlag(array $queryParams): ?string
+    {
+        foreach (['dry_run', 'staged'] as $flag) {
+            if (array_key_exists($flag, $queryParams)) {
+                return $flag;
+            }
+        }
+        return null;
     }
 
     /**
@@ -234,7 +289,7 @@ final class AiConnect
         try {
             $withLabel = Auth::apiKeyLabelColumnExists($db);
         } catch (AuthException $e) {
-            return $refuse(500, 'server_error', 'The install could not read its API key table; try again.');
+            return $refuse(500, 'server_error', 'The install could not read its API key table.' . $again);
         }
         // Consumed whatever happens next: a code works once.
         $grant = $store->consumeConnectCode(hash('sha256', $code));
@@ -248,7 +303,8 @@ final class AiConnect
         }
         $userId = (int) $grant['user_id'];
         $scope = (string) $grant['scope'];
-        if (!in_array($scope, self::ACCESS_SCOPES, true)) {
+        $access = self::accessFor($scope);
+        if ($access === null) {
             return $refuse(500, 'server_error', 'The approval was stored without a known access.' . $again);
         }
 
@@ -257,7 +313,7 @@ final class AiConnect
             $userName = self::activeUserName($conn, $userId);
         } catch (QueryException $e) {
             error_log('p202: AI connect: ' . $e->getMessage());
-            return $refuse(500, 'server_error', 'The install could not read the user who approved; try again.');
+            return $refuse(500, 'server_error', 'The install could not read the user who approved.' . $again);
         }
         if ($userName === null) {
             return $refuse(400, 'invalid_grant', 'The user who approved can no longer sign in to this install.');
@@ -274,7 +330,7 @@ final class AiConnect
         if ($licenceKey === null || $licenceKey === '') {
             // cliAccess() let an unknown through; the MCP server needs the
             // key's hash to check, so an unreadable key stops here.
-            return $refuse(500, 'server_error', 'The install could not read its ClickServer API key; try again.');
+            return $refuse(500, 'server_error', 'The install could not read its ClickServer API key.' . $again);
         }
 
         $label = self::label((string) $grant['client_name']);
@@ -294,12 +350,13 @@ final class AiConnect
             $conn->executeInsert($stmt);
         } catch (QueryException $e) {
             error_log('p202: AI connect: ' . $e->getMessage());
-            return $refuse(500, 'server_error', 'The key could not be created; nothing was connected. Try again.');
+            return $refuse(500, 'server_error', 'The key could not be created; nothing was connected.' . $again);
         }
 
         return [200, ['data' => [
             'api_key' => $apiKey,
             'scope' => $scope,
+            'access' => $access,
             'user' => ['user_id' => $userId, 'user_name' => $userName],
             'version' => self::version(),
             'licensed' => true,

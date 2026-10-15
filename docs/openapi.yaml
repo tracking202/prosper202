@@ -5698,7 +5698,9 @@ paths:
         with the person (RFC 7636). A code works once and for five minutes.
         The licence is decided first, as the install's CLI licence gate decides
         it; the answer is then a new API key of the user who approved, with the
-        access they chose (read; read,stage; or write). `?dry_run` is refused.
+        access they chose. The key's scope holds it to the areas the MCP
+        server's tools use (never users, system or sync). `?dry_run` and
+        `?staged` are refused.
       operationId: connectToken
       security: []
       requestBody:
@@ -5729,7 +5731,14 @@ paths:
                         type: string
                       scope:
                         type: string
-                        enum: [read, 'read,stage', write]
+                        description: >-
+                          `<area>:read` for each area the MCP server's tools read, with
+                          `<area>:stage` (propose) or `<area>:write` (write) for the areas
+                          they change
+                      access:
+                        type: string
+                        enum: [read, propose, write]
+                        description: The access the person chose on the approval page
                       user:
                         type: object
                         properties:
@@ -5741,7 +5750,11 @@ paths:
                         type: string
                       licensed:
                         type: boolean
-                        description: Always true; an unlicensed approval answers 402 and no key is made
+                        description: >-
+                          Always true: an approval the install's licence gate refuses
+                          answers 402 and no key is made. The gate lets an approval
+                          through when the licence service cannot answer, as it does for
+                          the CLI, so the MCP server checks licence_key_sha256 itself
                       licence_key_sha256:
                         type: string
                         description: >-
@@ -5760,9 +5773,11 @@ paths:
             licence: the approving user's ClickServer API key (or the install
             owner's) has no Pro licence; no key was made
         '422':
-          description: An unknown field, or ?dry_run
+          description: An unknown field, or ?dry_run or ?staged
         '500':
-          description: The key or the licence key could not be read or written; nothing was connected
+          description: >-
+            The key or the licence key could not be read or written; nothing
+            was connected, and the approval is spent
 
   /connect/revoke:
     post:
@@ -5772,7 +5787,7 @@ paths:
       description: >-
         Any key may remove itself, whatever its scope; it removes nothing
         else. Tracking202's MCP server calls it when a connection cannot be
-        completed.
+        completed. `?dry_run` and `?staged` are refused.
       operationId: connectRevoke
       responses:
         '200':
@@ -5781,6 +5796,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         '404':
           description: No key with exactly these characters
+        '422':
+          description: ?dry_run or ?staged
 
   /capabilities:
     get:

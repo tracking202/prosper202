@@ -91,6 +91,10 @@ type mcpToolSpec struct {
 	// is a person's decision; a model that could stage a write and then
 	// apply it would make --staged mean nothing (CLAUDE.md #14).
 	NotStaged bool
+	// NotHosted: the tool reads an area the keys made for the hosted MCP
+	// server do not cover (AiConnect::READ_AREAS in api/v3), so that server
+	// does not offer it (mcpCatalog.HostedExcludes).
+	NotHosted bool
 }
 
 // mcpOmittedFlags are never tool arguments: --force is the tool approval's
@@ -191,7 +195,7 @@ var mcpToolSpecs = []mcpToolSpec{
 
 	// Account
 	{Name: "whoami", Command: []string{"whoami"}, Title: "Who this connection acts as", Kind: mcpRead},
-	{Name: "system_info", Command: []string{"system", "info"}, Title: "Install information", Kind: mcpRead},
+	{Name: "system_info", Command: []string{"system", "info"}, Title: "Install information", Kind: mcpRead, NotHosted: true},
 }
 
 // mcpInstructions is the server's instructions to the model.
@@ -260,6 +264,9 @@ type mcpCatalog struct {
 	StagedExcludes     []string `json:"staged_excludes"`
 	StagedInstructions string   `json:"staged_instructions"`
 	MaxInputBytes      int      `json:"max_input_bytes"`
+	// HostedExcludes are the tools the hosted relay never offers
+	// (mcpToolSpec.NotHosted): its keys cannot reach what they read.
+	HostedExcludes []string `json:"hosted_excludes"`
 }
 
 // mcpFlagKinds maps pflag value types to JSON types. A curated command with
@@ -462,6 +469,7 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 		StagedInstructions: mcpStagedInstructions,
 		Tools:              []mcpTool{},
 		StagedExcludes:     []string{},
+		HostedExcludes:     []string{},
 	}
 	if staged {
 		cat.Instructions += mcpStagedInstructions
@@ -469,6 +477,9 @@ func buildMCPCatalog(root *cobra.Command, readOnly, staged bool) (mcpCatalog, er
 	for _, s := range mcpToolSpecs {
 		if s.NotStaged {
 			cat.StagedExcludes = append(cat.StagedExcludes, s.Name)
+		}
+		if s.NotHosted {
+			cat.HostedExcludes = append(cat.HostedExcludes, s.Name)
 		}
 		if !s.offered(readOnly, staged) {
 			continue

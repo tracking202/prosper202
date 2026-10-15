@@ -141,11 +141,15 @@ final class AiConnectTest extends TestCase
 
     public function testOnlyTheThreeAccessesMintAScope(): void
     {
-        self::assertSame('read,stage', AiConnect::scopeFor('propose'));
-        self::assertSame('read', AiConnect::scopeFor('read'));
-        self::assertSame('write', AiConnect::scopeFor('write'));
-        foreach (['', '*', 'full', 'READ', 'read,stage'] as $other) {
+        foreach (AiConnect::ACCESSES as $access) {
+            self::assertSame($access, AiConnect::accessFor((string) AiConnect::scopeFor($access)), $access);
+        }
+        foreach (['', '*', 'full', 'READ', 'read,stage', 'write '] as $other) {
             self::assertNull(AiConnect::scopeFor($other), $other);
+        }
+        // The global scopes an earlier draft minted are no access now.
+        foreach (['read', 'read,stage', 'write', '*'] as $global) {
+            self::assertNull(AiConnect::accessFor($global), $global);
         }
         self::assertSame('read', AiConnect::DEFAULT_ACCESS);
         $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php');
@@ -189,7 +193,7 @@ final class AiConnectTest extends TestCase
     public function testADatabaseThatCannotAnswerLeavesTheCodeUnspent(): void
     {
         $verifier = str_repeat('v', 50);
-        $code = AiConnect::approve(new ServerStateStore(), 7, 'read', self::challenge($verifier), 'Claude');
+        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
         $broken = new FakeMysqliConnection();
         $broken->whenQueryContainsResultFails("SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
         $payload = ['code' => $code, 'code_verifier' => $verifier];
@@ -201,6 +205,11 @@ final class AiConnectTest extends TestCase
         self::assertStringContainsString('verifier does not match', $body['message']);
     }
 
+    private static function readScope(): string
+    {
+        return (string) AiConnect::scopeFor('read');
+    }
+
     private static function challenge(string $verifier): string
     {
         return rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
@@ -209,7 +218,7 @@ final class AiConnectTest extends TestCase
     public function testACodeWorksOnceAndOnlyWithItsVerifier(): void
     {
         $verifier = str_repeat('v', 50);
-        $code = AiConnect::approve(new ServerStateStore(), 7, 'read', self::challenge($verifier), 'Claude');
+        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
         self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]{43}$/', $code);
 
         [$status, $body] = self::exchange(['code' => $code, 'code_verifier' => str_repeat('w', 50)]);
@@ -236,7 +245,8 @@ final class AiConnectTest extends TestCase
 
     public function testTheCodeItselfIsNeverStored(): void
     {
-        $code = AiConnect::approve(new ServerStateStore(), 7, 'read', self::challenge(str_repeat('v', 50)), 'Claude');
+        $verifier = str_repeat('v', 50);
+        $code = AiConnect::approve(new ServerStateStore(), 7, self::readScope(), self::challenge($verifier), 'Claude');
         $stored = (string) shell_exec('cat ' . escapeshellarg($this->stateDir) . '/tokens/connect.json');
         self::assertStringContainsString(hash('sha256', $code), $stored);
         self::assertStringNotContainsString($code, $stored);

@@ -92,35 +92,40 @@ $relayHost = (string) parse_url(AiConnect::relayOrigin(), PHP_URL_HOST);
 $accessChoices = [
     'read' => [
         'Read only <span class="text-secondary">(recommended)</span>',
-        'It sees what you can see, and changes nothing.',
+        'It reads your campaigns, trackers, landing pages, traffic sources, rotators, reports, clicks and '
+            . 'conversions, as far as your role can, and changes nothing.',
     ],
     'propose' => [
         'Read, and propose changes',
-        'A change it makes waits as a proposal until you apply it with the p202 command line '
+        'It reads the same. A change it makes to campaigns, trackers, landing pages, traffic sources or '
+            . 'categories waits as a proposal until you apply it with the p202 command line '
             . '(<code>p202 change apply</code>).',
     ],
     'write' => [
         'Read and change',
-        'It can change and delete campaigns, trackers and landing pages; deleting a tracker stops its links. '
-            . 'Your AI app\'s approval prompt is then the only check, so do not set it to always allow deletes.',
+        'It reads the same, and can change and delete campaigns, trackers, landing pages, traffic sources and '
+            . 'categories; deleting a tracker stops its links. Your AI app\'s approval prompt is then the only '
+            . 'check, so do not set it to always allow deletes.',
     ],
 ];
 echo p202_standalone_card('Connect an AI assistant');
 ?>
     <p>
+        Tracking202's MCP server (<?php echo $e($relayHost); ?>) says that
         <?php if ($request['client_domain'] !== '') { ?>
-        <strong><?php echo $e($request['client_name']); ?></strong>, verified as
+        <strong><?php echo $e($request['client_name']); ?></strong>, verified there as
         <strong><?php echo $e($request['client_domain']); ?></strong>,
         <?php } else { ?>
-        An app calling itself <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
+        an app calling itself <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
         (a name it chose, not verified)
         <?php } ?>
-        asks to use this Prosper202 as <strong><?php echo $e($userName); ?></strong>, through
-        Tracking202's MCP server (<?php echo $e($relayHost); ?>).
+        asks to use this Prosper202 as <strong><?php echo $e($userName); ?></strong>, and that the connection
+        is handed to <strong><?php echo $e($request['redirect_host']); ?></strong>.
     </p>
-    <p>The connection is handed to <strong><?php echo $e($request['redirect_host']); ?></strong>.</p>
     <p class="small text-secondary">
-        Allow it only if you started connecting this app just now, and that is where you expect it to go.
+        Allow it only if you started connecting this app yourself, just now, in this browser: the connection
+        completes only in the browser that started it. Whatever you choose, it cannot see or change users,
+        API keys or this install's settings.
     </p>
 <?php if ($error !== '') { ?>
     <div class="alert alert-danger p202-flash" role="alert">

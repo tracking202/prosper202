@@ -243,7 +243,7 @@ docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   the runtime code depending on it. The `known_unresolved` list in the
   manifest is for dead references only, each with the reason. It should
   shrink, never grow.
-- **Go build fails** — confirm `go version` is ≥ 1.22 and that
+- **Go build fails** — confirm `go version` is ≥ 1.25 and that
   `make -C go-cli all` succeeds on its own. Cross-compiles use
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping
