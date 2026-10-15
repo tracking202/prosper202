@@ -337,20 +337,6 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
     }
 }
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
-
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-// ipAddress() function has been moved to functions.php - using that implementation instead
-// to avoid duplicate function declaration errors
 
 // inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
 // renders an address (HtmlReportFormatter) can be loaded without this file.

@@ -42,15 +42,29 @@ final class StoredVisitorIpTest extends TestCase
         self::assertSame('', StoredVisitorIp::fromServer([], true));
     }
 
-    public function testConnect2sMaskIsTheSameMask(): void
+    public function testTheAddressGlobalsMaskIsTheSameMask(): void
     {
-        // ipAddress() masks the $ip_address global through maskIpAddress();
-        // it must give what is stored.
-        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/connect2.php');
-        $start = strpos($source, 'function maskIpAddress(');
-        self::assertIsInt($start);
-        $body = substr($source, $start, (int) strpos($source, "\n}\n", $start) - $start);
-        self::assertStringContainsString('\Prosper202\Http\StoredVisitorIp::mask((string) $ip->address)', $body);
-        self::assertStringNotContainsString('explode(', $body, 'the string-splitting mask is gone');
+        // ipAddress() masks the $ip_address global the click path builds; it
+        // must give what is stored. Run in a child PHP: the shared functions
+        // would collide with other suites' stand-ins in this process.
+        $root = dirname(__DIR__, 2);
+        $code = 'require ' . var_export($root . '/vendor/autoload.php', true) . ';'
+            . ' require ' . var_export($root . '/202-config/mysql-error-args.php', true) . ';'
+            . ' require ' . var_export($root . '/202-config/functions-shared.php', true) . ';'
+            . ' $out = [];'
+            . ' foreach (["198.51.100.7", "2001:db8:85a3::8a2e:370:7334", "not an address", ""] as $a) {'
+            . ' $out[] = [ipAddress($a, true)->address, ipAddress($a)->address, ipAddress($a)->type]; }'
+            . ' echo json_encode($out);';
+        $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        $seen = json_decode((string) $out, true);
+        self::assertIsArray($seen, (string) $out);
+
+        self::assertSame([StoredVisitorIp::mask('198.51.100.7'), '198.51.100.7', 'ipv4'], $seen[0]);
+        self::assertSame(
+            [StoredVisitorIp::mask('2001:db8:85a3::8a2e:370:7334'), '2001:db8:85a3::8a2e:370:7334', 'ipv6'],
+            $seen[1]
+        );
+        self::assertSame(['0.0.0.0', '0.0.0.0', 'invalid'], $seen[2], 'not an address is the unspecified one');
+        self::assertSame(['0.0.0.0', '0.0.0.0', 'invalid'], $seen[3]);
     }
 }

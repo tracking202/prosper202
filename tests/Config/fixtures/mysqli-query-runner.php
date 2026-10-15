@@ -1,9 +1,9 @@
 <?php
 
 /**
- * Runs the admin pages' real _mysqli_query() (202-config/functions.php, with
- * the p202LogFailedQuery() it logs through) against a real database, in a
- * process of its own: functions.php cannot be loaded alone, and a global
+ * Runs the real _mysqli_query() (202-config/functions-shared.php, with the
+ * p202Mysqli() and p202LogFailedQuery() it calls) against a real database,
+ * in a process of its own: the file cannot be loaded alone, and a global
  * _mysqli_query() defined in a test process would stand in for the stubs
  * other suites define.
  *
@@ -17,9 +17,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/lift-function.php';
 
-$functions = __DIR__ . '/../../../202-config/functions.php';
-eval(lift_function($functions, '_mysqli_query'));
-eval(lift_function($functions, 'p202LogFailedQuery'));
+$functions = __DIR__ . '/../../../202-config/functions-shared.php';
+foreach (['_mysqli_query', 'p202Mysqli', 'p202LogFailedQuery'] as $function) {
+    eval(lift_function($functions, $function));
+}
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
 
 mysqli_report(MYSQLI_REPORT_STRICT);

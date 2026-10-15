@@ -8,7 +8,11 @@ if (!file_exists(__DIR__ . '/version.php')) {
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
+// Before anything that can fail: the error page and the cached reads are
+// there, and they ask p202OnTheClickPath() which bootstrap this is.
+define('P202_CLICK_PATH', true);
 require_once(__DIR__ . '/mysql-error-args.php');
+require_once(__DIR__ . '/functions-shared.php');
 
 /**
  * What the click path answers for a throw nothing caught: a 500, unless a
@@ -30,7 +34,7 @@ function p202ClickPathUncaught(\Throwable $e): void
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
         [$file, $line] = [$e->getFile(), $e->getLine()];
         foreach ($e->getTrace() as $frame) {
-            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database|Repository)[/\\\\]~', $file) !== 1) {
+            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database[/\\\\]|Repository[/\\\\]|functions-shared\.php$)~', $file) !== 1) {
                 break;
             }
             if (isset($frame['file'], $frame['line'])) {
@@ -100,71 +104,6 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 }
 
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    // Held while a transaction is open; see p202WithHeldCacheWrites().
-    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
-        $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
-        return true;
-    }
-    // Default expiration time if not provided
-    if ($exp === null) {
-        $exp = 2592000; // 30 days in seconds
-    }
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
-
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-/**
- * Run $work with the cache writes it makes held: written once it returns,
- * dropped when it throws (and the throw passed on).
- *
- * The lookups that run inside a click's transaction cache the id of a row
- * they insert at once (the site URL's, through CachedLocationRepository),
- * so a rollback after them left an entry naming no row, and every click to
- * that URL stored the dangling id until it expired. Run the transaction as
- * $work and an entry is written only once its row is committed.
- */
-function p202WithHeldCacheWrites(callable $work): void
-{
-    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
-        throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
-    }
-    $GLOBALS['p202HeldCacheWrites'] = [];
-    try {
-        $work();
-    } catch (\Throwable $e) {
-        $GLOBALS['p202HeldCacheWrites'] = null;
-        throw $e;
-    }
-    $held = $GLOBALS['p202HeldCacheWrites'];
-    $GLOBALS['p202HeldCacheWrites'] = null;
-    // The work is done (its transaction committed): a cache write that fails
-    // now costs a miss, and must not read as the work failing.
-    foreach ($held as [$key, $value, $exp]) {
-        try {
-            setCache($key, $value, $exp);
-        } catch (\Throwable $e) {
-            error_log('A held cache write failed after the work was done: ' . $e->getMessage());
-        }
-    }
-}
-
-function getCache(string $key, $default = false)
-{
-    global $memcache;
-    if ($memcache instanceof \Memcached || $memcache instanceof \Memcache) {
-        return call_user_func([$memcache, 'get'], $key);
-    }
-    return $default;
-}
-
 
 include_once(CONFIG_PATH . '/functions-auth.php');
 include_once(CONFIG_PATH . '/DeviceDetect.php');
@@ -232,11 +171,14 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($user_sql);
+    try {
+        $privacy = memcache_mysql_fetch_assoc($user_sql);
+    } catch (\Prosper202\Database\Exceptions\QueryException $privacyReadError) {
+        $privacy = false;
+    }
     if ($privacy === false) {
-        // The read failed (memcache_mysql_fetch_assoc() answers false for a
-        // failed query, null for no row): hold back rather than track in
-        // full, as the app intakes do (PrivacySetting). It answered
+        // The read failed (logged where it failed): hold back rather than
+        // track in full, as the app intakes do (PrivacySetting). It answered
         // 'disabled' here — the most permissive setting standing in for one
         // nobody could read (CLAUDE.md #11).
         error_log('p202 privacy: user 1\'s user_pref_privacy could not be read; holding back for this request');
@@ -469,30 +411,6 @@ function p202VisitorMayBeInEu(): bool
     return $mayBe;
 }
 
-function _mysqli_query($dbOrSql, $sql = null)
-{
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
-        $db = $GLOBALS['db'] ?? null;
-    } else {
-        $db = $dbOrSql;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        record_mysql_error((string) $sql);
-    }
-
-    $result = $db->query((string) $sql) or record_mysql_error($db, (string) $sql); //or die($db->error . '<br/><br/>' . $sql);
-    return $result;
-}
-
 class FILTER
 {
 
@@ -635,27 +553,19 @@ class FILTER
     // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
-
-
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-        $check_sql = "SELECT * FROM 202_last_ips WHERE user_id='" . $mysql['user_id'] . "' AND ip_id='" . $mysql['ip_id'] . "'";
-        $check_result = _mysqli_query($db, $check_sql); // ($check_sql);
-        $check_row = $check_result->fetch_assoc();
-        $count = $check_result->num_rows;
-
-        if ($count > 0) {
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
+        $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        if ($conn->fetchOne($stmt) !== null) {
             // if this ip has been seen within the last 24 hours, filter it out.
             return true;
-        } else {
-
-            // else if this ip has not been recorded, record it now
-            $mysql['time'] = time();
-            $insert_sql = "INSERT INTO 202_last_ips SET user_id='" . $mysql['user_id'] . "', ip_id='" . $mysql['ip_id'] . "', time='" . $mysql['time'] . "'";
-            $insert_result = _mysqli_query($db, $insert_sql); // ($insert_sql);
-            return false;
         }
+
+        // else if this ip has not been recorded, record it now
+        $stmt = $conn->prepareWrite('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (?, ?, ?)');
+        $conn->bind($stmt, 'iii', [(int) $user_id, (int) $ip_id, time()]);
+        $conn->executeInsert($stmt);
+        return false;
     }
 }
 
@@ -690,7 +600,6 @@ function rotateTrackerUrl($db, $tracker_row)
     if (! $tracker_row['aff_campaign_rotate'])
         return $tracker_row['aff_campaign_url'];
 
-    $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
     $urls = [];
     array_push($urls, $tracker_row['aff_campaign_url']);
 
@@ -706,18 +615,20 @@ function rotateTrackerUrl($db, $tracker_row)
     $count = count($urls);
 
     // Atomic upsert to avoid TOCTOU race condition on concurrent requests
-    $mysql['count'] = $db->real_escape_string((string) $count);
-    $sql5 = "INSERT INTO 202_rotations SET aff_campaign_id='" . $mysql['aff_campaign_id'] . "', rotation_num=0
-             ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= " . ((int)$count - 1) . ", 0, rotation_num + 1)";
-    _mysqli_query($db, $sql5);
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareWrite(
+        'INSERT INTO 202_rotations SET aff_campaign_id = ?, rotation_num = 0'
+            . ' ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= ?, 0, rotation_num + 1)'
+    );
+    $conn->bind($stmt, 'ii', [(int) $tracker_row['aff_campaign_id'], $count - 1]);
+    $conn->executeUpdate($stmt);
     // Read back the current value
-    $sql5 = "SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
-    $result5 = _mysqli_query($db, $sql5);
-    $row5 = $result5->fetch_assoc();
-    $num = $row5 ? (int) $row5['rotation_num'] : 0;
+    $stmt = $conn->prepareWrite('SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id = ?');
+    $conn->bind($stmt, 'i', [(int) $tracker_row['aff_campaign_id']]);
+    $row5 = $conn->fetchOne($stmt);
+    $num = $row5 !== null ? (int) $row5['rotation_num'] : 0;
 
-    $url = $urls[$num];
-    return $url;
+    return $urls[$num];
 }
 
 /**
@@ -864,9 +775,11 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 				2c.click_id='" . $mysql['click_id'] . "'
                 AND 2c.user_id='" . $ownerId . "'
 		";
-    $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
+    // _mysqli_query() answers false for a failed statement, and the fetch
+    // false for a failed read: either is recorded, and the error page.
+    $click_result = _mysqli_query($db, $click_sql);
+    $click_row = $click_result === false ? false : $click_result->fetch_assoc();
     if ($click_row === false) {
-        // As a failed query here already does: recorded, and the error page.
         record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
     }
     // No such click (a page reading an earlier one by a subid it was sent):
@@ -1149,169 +1062,6 @@ class PLATFORMS
     }
 }
 
-function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $minutes = 3)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    // Support legacy invocation styles:
-    //  - memcache_mysql_fetch_assoc($sql)
-    //  - memcache_mysql_fetch_assoc($db, $sql)
-    //  - memcache_mysql_fetch_assoc($sql, $allowCaching, $minutes)
-    //  - memcache_mysql_fetch_assoc($mysqliResult)
-    if ($arg1 instanceof mysqli_result) {
-        return $arg1->fetch_assoc();
-    }
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-            if (func_num_args() > 3) {
-                $minutes = (int) func_get_arg(3);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-        if (func_num_args() > 2) {
-            $minutes = (int) func_get_arg(2);
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return false;
-    }
-
-    if ($memcacheWorking == false) {
-        $result = _mysqli_query($connection, $sql);
-        if ($result === false) {
-            return false;
-        }
-        $row = $result->fetch_assoc();
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $result = _mysqli_query($connection, $sql);
-            if ($result === false) {
-                return false;
-            }
-            $row = $result->fetch_assoc();
-            return $row;
-        } else {
-            // Check if its set
-            $getCache = $memcache->get(md5($sql . systemHash()));
-
-            if ($getCache === false) {
-                // cache this data
-                $result = _mysqli_query($connection, $sql);
-                if ($result === false) {
-                    return false;
-                }
-                $fetchArray = $result->fetch_assoc();
-                $setCache = setCache(md5($sql . systemHash()), serialize($fetchArray), 60 * $minutes);
-
-                // store all this users memcache keys, so we can delete them fast later on
-
-
-                return $fetchArray;
-            } else {
-
-                // Data Cached — restrict to arrays only, no object instantiation
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
-function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to foreach_memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return [];
-    }
-
-    if ($memcacheWorking == false) {
-        $row = [];
-        $result = _mysqli_query($connection, $sql); // ($sql);
-        if ($result === false) {
-            return [];
-        }
-        while ($fetch = $result->fetch_assoc()) {
-            $row[] = $fetch;
-        }
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $row = [];
-            $result = _mysqli_query($connection, $sql); // ($sql);
-            if ($result === false) {
-                return [];
-            }
-            while ($fetch = $result->fetch_assoc()) {
-                $row[] = $fetch;
-            }
-            return $row;
-        } else {
-
-            $getCache = $memcache->get(md5($sql . systemHash()));
-            if ($getCache === false) {
-                // if data is NOT cache, cache this data
-                $row = [];
-                $result = _mysqli_query($connection, $sql); // ($sql);
-                if ($result === false) {
-                    return [];
-                }
-                while ($fetch = $result->fetch_assoc()) {
-                    $row[] = $fetch;
-                }
-
-                $setCache = setCache(md5($sql . systemHash()), serialize($row), 60 * 1);
-
-
-                return $row;
-            } else {
-                // if data is cached, returned the cache data Data Cached — restrict to arrays only
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
 /**
  * The installation's install-token key: 32 bytes, null when none was minted.
  * Read once per process, and kept only when it was read: a missing or
@@ -1529,25 +1279,6 @@ function getIspData($ip)
     return "Unknown ISP/Carrier";
 }
 
-/**
- * The namespace of every cache key: the host, and the install the ids and
- * rows a key names belong to. Its directory is shared by no other install on
- * the server and is known in every scope; its database also tells a
- * reinstall into a new one apart. The other copy (connect2.php /
- * functions-tracking202.php, one directory) is the same function.
- */
-function systemHash(): string
-{
-    $install = [__DIR__];
-    foreach (['dbhost', 'dbname'] as $setting) {
-        $value = $GLOBALS[$setting] ?? '';
-        $install[] = is_string($value) ? $value : '';
-    }
-
-    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
-        . "\0" . implode("\0", $install));
-}
-
 function setPCIdCookie($click_id_public)
 {
     if (trackingEnabled()) {
@@ -1669,85 +1400,6 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 }
 
 /**
- * @param ?string $error what failed, from a caller that caught it: by then
- *        the connection's own error is cleared, if the caller rolled back
- */
-function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
-{
-    global $server_row;
-
-    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
-    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
-    if (!$db instanceof \mysqli) {
-        $db = $GLOBALS['db'] ?? null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
-        echo 'Database error. The webmaster has been notified.';
-        die();
-    }
-
-    // The server's message and the statement, without the values they
-    // quote: they are logged, and listed in Account › Settings.
-    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
-
-
-    // Rolled back first, and never a fatal in place of the page; see
-    // p202RecordMysqlErrorRow().
-    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
-        // On the connection the row is written to, which has just been
-        // rolled back: a lookup that fails throws back to the recorder.
-        $locations = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-        $mysql['ip_id'] = (string) $locations->findOrCreateIp(p202StoredVisitorIp());
-        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
-            \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
-        );
-
-        // A click has no session: 0, as the admin pages' copy writes, where
-        // '' was refused by the column under P202_SQL_STRICT.
-        $mysql['user_id'] = isset($_SESSION['user_id'])
-            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
-            : 0;
-        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
-        $mysql['mysql_error_time'] = time();
-
-        $report_sql = "INSERT     INTO  202_mysql_errors
-								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
-										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
-										user_id='" . $mysql['user_id'] . "',
-										ip_id='" . $mysql['ip_id'] . "',
-										site_id='" . $mysql['site_id'] . "',
-										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-        // Not through _mysqli_query(), which on this path calls this page
-        // again instead of answering false. The server's words about the
-        // statement would repeat what it records: its errno says enough.
-        if ($db->query($report_sql) === false) {
-            throw new \RuntimeException('the server refused the row [errno ' . $db->errno . ']');
-        }
-    });
-
-    // report error to user and end page
-?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
-
-
-<?php
-    $memcacheWorking = false;
-    $memcache = null;
-    die();
-}
-
-/**
  * The key of the entry that takes this visit, each entry's chance its
  * 'weight' over the sum of the weights: the one chooser for a rotator rule's
  * redirects (rtr.php and offrtr.php).
@@ -1782,11 +1434,6 @@ function getSplitTestValue(array $values)
             return $key;
         }
     }
-}
-
-function get_absolute_url(): string
-{
-    return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
 /**
@@ -1943,80 +1590,6 @@ function p202DeclineSpeculativeRequest(): never
         p202NoStore();
     }
     die();
-}
-
-/**
- * The tracking domain (`host[:port]`) of a URL handed back to the requester:
- * user 1's stored one, or the host this request arrived at
- * (TrackingBaseUrl::domainForResponse()). The functions-tracking202.php
- * copy's twin; its callers are listed in RequestHostSourceTest.
- */
-function getTrackingDomain(): string
-{
-    global $db;
-
-    $tracking_domain_sql = "
-		SELECT
-			`user_tracking_domain`
-		FROM
-			`202_users_pref`
-		WHERE
-			`user_id`='1'
-	";
-    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql);
-    if (!$tracking_domain_result instanceof \mysqli_result) {
-        // Read as "none stored", every URL would name the request's host
-        // instead of the domain the account configured.
-        throw new \RuntimeException('Unable to read the tracking domain');
-    }
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $stored = is_array($tracking_domain_row) ? (string) ($tracking_domain_row['user_tracking_domain'] ?? '') : '';
-
-    // host[:port] only: a stored full URL doubled the scheme in every link
-    // built from it (see TrackingDomain).
-    return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
-}
-
-/**
- * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
- */
-function ipAddress($ip_address, ?bool $masked = null)
-{
-
-    $ip = new stdClass;
-
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-        $ip->address = '0.0.0.0';
-    }
-
-    if ($masked ?? !trackingEnabled()) {
-        $ip = maskIpAddress($ip);
-    }
-
-    $formatted = @inet_ntop(@inet_pton($ip->address));
-    if ($formatted !== false) {
-        $ip->address = $formatted; //format ip address in standard form
-    }
-    return $ip;
-}
-
-function maskIpAddress($ip)
-{
-    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
-    // so the $ip_address global and every stored address agree.
-    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
-        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
-    }
-
-    return $ip;
 }
 
 function setDirtyHour($mysql)

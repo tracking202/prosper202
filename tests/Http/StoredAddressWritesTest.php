@@ -70,7 +70,7 @@ final class StoredAddressWritesTest extends TestCase
      * How many listed writes do not go through the storage helper. Lower it
      * when one goes; raising it is a decision a reviewer has to see.
      */
-    private const CEILING = 20;
+    private const CEILING = 19;
 
     private const HELPER_CALL = '/\bp202StoredVisitorIp\(\)|\bStoredVisitorIp::forAccount\(/';
 
@@ -104,23 +104,19 @@ final class StoredAddressWritesTest extends TestCase
                 self::DERIVED,
                 'FILTER::checkLastIps(): the click\'s stored ip_id, masked under privacy',
             ],
+        ],
+        '202-config/functions-shared.php' => [
             '202_mysql_errors.ip_id' => [
                 self::STORED,
-                'the click path\'s error log: findOrCreateIp(p202StoredVisitorIp())',
-                ['202-config/connect2.php'],
+                'the error log, record_mysql_error(): on the click path findOrCreateIp(p202StoredVisitorIp());'
+                    . ' on connect.php\'s pages, which no visitor of a tracking link reaches, the operator\'s'
+                    . ' address as it arrived (StoredVisitorIpSourceTest lists that call)',
+                ['202-config/functions-shared.php'],
             ],
         ],
         '202-config/Repository/Mysql/MysqlLocationRepository.php' => [
             '202_ips.ip_address' => [self::INDEX, 'findOrCreateIp(): the address it was handed'],
             '202_ips_v6.ip_address' => [self::INDEX, 'findOrCreateIp(): the address it was handed'],
-        ],
-        '202-config/functions-tracking202.php' => [
-            '202_mysql_errors.ip_id' => [
-                self::OPERATOR,
-                'record_mysql_error() on connect.php\'s pages: the signed-in pages, the sign-in page and the cron'
-                    . ' jobs, plus ClickBank\'s notification (cb202.php, ClickBank\'s server); no visitor of a'
-                    . ' tracking link reaches connect.php',
-            ],
         ],
         // ── Conversions ─────────────────────────────────────────────────
         '202-config/Conversion/MysqlConversionRepository.php' => [

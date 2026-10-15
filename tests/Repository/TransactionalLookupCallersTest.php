@@ -32,9 +32,9 @@ final class TransactionalLookupCallersTest extends TestCase
     private const CALLERS = [
         // The sign-in (202-login.php, its one caller), which opens no transaction.
         '202-config/User/SignInRecord.php' => ['findorcreateip' => 1],
-        // The error pages, after p202RecordMysqlErrorRow() ended the caller's transaction.
-        '202-config/connect2.php' => ['findorcreateip' => 1],
-        '202-config/functions-tracking202.php' => ['findorcreateip' => 1],
+        // The error page (the click path's call and the admin pages'), after
+        // p202RecordMysqlErrorRow() ended the caller's transaction.
+        '202-config/functions-shared.php' => ['findorcreateip' => 2],
         // Before recordClick() opens the click's transaction.
         'tracking202/redirect/dl.php' => ['findorcreateip' => 1, 'findorcreatevariableset' => 1],
         'tracking202/static/record_adv.php' => ['findorcreateip' => 1, 'findorcreatevariableset' => 1],

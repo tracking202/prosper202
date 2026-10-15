@@ -17,9 +17,9 @@ use PHPUnit\Framework\TestCase;
  * entry lived (measured on a live instance with memcached). That URL is the
  * click's own now and is not cached at all; the hold stays for any cached
  * lookup made inside the write. The real
- * setCache() and p202WithHeldCacheWrites() are lifted out of connect2.php
- * under other names, so they cannot collide with the setCache() other
- * suites declare.
+ * setCache() and p202WithHeldCacheWrites() are lifted out of
+ * functions-shared.php under other names, so they cannot collide with the
+ * setCache() other suites declare.
  */
 final class HeldCacheWritesTest extends TestCase
 {
@@ -32,9 +32,9 @@ final class HeldCacheWritesTest extends TestCase
         if (function_exists('p202HeldTest_setCache')) {
             return;
         }
-        $connect2 = __DIR__ . '/../../202-config/connect2.php';
+        $shared = __DIR__ . '/../../202-config/functions-shared.php';
         foreach (['setCache', 'p202WithHeldCacheWrites'] as $name) {
-            $source = lift_function($connect2, $name);
+            $source = lift_function($shared, $name);
             eval(str_replace(
                 ['setCache(', 'p202WithHeldCacheWrites('],
                 ['p202HeldTest_setCache(', 'p202HeldTest_withHeld('],

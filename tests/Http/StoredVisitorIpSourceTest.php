@@ -51,10 +51,10 @@ final class StoredVisitorIpSourceTest extends TestCase
                 . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
                 . ' has no privacy state',
         ],
-        '202-config/functions-tracking202.php' => [
-            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() on connect.php\'s pages:'
-                . ' the signed-in pages, the sign-in page and the cron jobs, and ClickBank\'s server;'
-                . ' no tracking-link visitor reaches connect.php',
+        '202-config/functions-shared.php' => [
+            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() off the click path'
+                . ' (p202OnTheClickPath()), on connect.php\'s pages: the signed-in pages, the sign-in page and'
+                . ' the cron jobs, and ClickBank\'s server; no tracking-link visitor reaches connect.php',
         ],
         '202-config/static-endpoint-helpers.php' => [
             '(string)($opts[\'ip\']??\'\')' => 'p202RecordLegacyConversion() handing its own \'ip\''

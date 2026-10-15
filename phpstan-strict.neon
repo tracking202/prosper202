@@ -23,9 +23,9 @@ parameters:
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
         - 202-config/User/SignInRecord.php
-    # The click bootstrap's getCache(), setCache() and systemHash(), which
-    # LookupRepositoryFactory calls: read for their signatures, not analysed.
+    # getCache(), setCache() and systemHash(), which LookupRepositoryFactory
+    # calls: read for their signatures, not analysed.
     scanFiles:
-        - 202-config/connect2.php
+        - 202-config/functions-shared.php
     checkMissingOverrideMethodAttribute: true
     reportUnmatchedIgnoredErrors: true

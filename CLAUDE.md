@@ -75,6 +75,20 @@ reading with escapes and one without both leave in), and
 away. It cannot see a result that is assigned and never tested, which is
 what the 240 calls that assign one leave to the next sweep.
 
+The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
+logged and answered false, the click path's showed the error page and died
+— and of `record_mysql_error()`, the cached reads, `setCache()` and five
+more, drifted the same way: one name failed one way on a report page and
+another on a redirect, and a test standing in for one had to say which
+(#9). There is one copy of each now, in `functions-shared.php`, which both
+load first. `_mysqli_query()` logs and answers false everywhere, and the
+caller acts on the false; `memcache_mysql_fetch_assoc()` and its list twin
+throw a `QueryException` for a failed query instead of the `false` and `[]`
+that read as "no row" (on the click path the uncaught handler makes that
+the error page). What still differs between the two is asked of
+`p202OnTheClickPath()` where it matters. A function both bootstraps need
+goes there, never into each.
+
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
 answers 200; it caught a failed rollup, printed `Error: …` into the body and
@@ -308,6 +322,8 @@ calls the error page again): the test held a "the server refused the row"
 branch that cannot run on the click path, where a refused row re-entered
 the page and logged the server's words about it. The runner now gives each
 definition its own file's `_mysqli_query()` wherever the answer matters.
+There is one definition now (`functions-shared.php`, below in #1), and the
+runner runs it under each bootstrap.
 
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the

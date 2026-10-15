@@ -3,18 +3,18 @@
 declare(strict_types=1);
 
 /**
- * Runs one of the two real record_mysql_error() definitions in a process of
- * its own (it is declared `never` and ends in die()), called the way the
- * redirect and admin pages call it.
+ * Runs the real record_mysql_error() in a process of its own (it is
+ * declared `never` and ends in die()), called the way the redirect and
+ * admin pages call it, under either bootstrap: connect2.php (the click path,
+ * P202_CLICK_PATH defined) or functions-tracking202.php (the admin pages).
  *
- * Neither defining file can be loaded alone — connect2.php bootstraps the
- * whole click path and functions-tracking202.php declares half the admin
- * pages' functions — so the function's own source is lifted out of the file
- * by its tokens and evaluated beside stand-ins for what it calls. The body
- * that runs is the shipped body, byte for byte, and its address and URL
- * lookups are the real repositories, on the connection it was handed.
+ * Its file, functions-shared.php, would bring the names this runner stands
+ * in for, so the function's own source is lifted out by its tokens and
+ * evaluated beside stand-ins for what it calls. The body that runs is the
+ * shipped body, byte for byte, and its address and URL lookups are the real
+ * repositories, on the connection it was handed.
  *
- * argv: <defining file> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
+ * argv: <bootstrap: connect2.php | functions-tracking202.php> <call shape: db | db_sql | sql | caught | caught_blank | db_sql_secret |
  *       caught_secret | caught_forged_tag> [<scenario>]
  *   caught: ($db, what was being done, the failure the caller caught)
  *   caught_blank: the same with an empty failure
@@ -77,15 +77,20 @@ class DB
         return $GLOBALS['db'] ?? null;
     }
 }
-if (basename((string) $file) === 'connect2.php') {
-    // connect2.php's own, in every scenario: it calls record_mysql_error()
-    // when a statement fails, which a stand-in answering false would hide.
-    eval(lift_function((string) $file, '_mysqli_query'));
-} elseif ($scenario === 'gone' || $scenario === 'lookup_fails') {
-    // The admin pages' own (functions.php, beside functions-tracking202.php),
-    // which answers false.
+// One definition serves both bootstraps (functions-shared.php); $file names
+// which one the page runs under, as connect2.php says it by its constant.
+$shared = __DIR__ . '/../../../202-config/functions-shared.php';
+$clickPath = basename((string) $file) === 'connect2.php';
+if ($clickPath) {
+    define('P202_CLICK_PATH', true);
+}
+foreach (['p202OnTheClickPath', 'p202Mysqli'] as $name) {
+    eval(lift_function($shared, $name));
+}
+if ($scenario === 'gone' || $scenario === 'lookup_fails') {
+    // The real one, which logs a failed statement and answers false.
     foreach (['_mysqli_query', 'p202LogFailedQuery'] as $query) {
-        eval(lift_function(dirname((string) $file) . '/functions.php', $query));
+        eval(lift_function($shared, $query));
     }
 } else {
     function _mysqli_query($dbOrSql, $sql = null)
@@ -121,11 +126,13 @@ if (basename((string) $file) === 'connect2.php') {
 // database the page is about (the account's dash email, the tracking domain
 // of the cron ping): its real source, and what it calls. The click path
 // loads no template.php and its page draws no footer.
-if (basename((string) $file) !== 'connect2.php') {
-    $config = dirname((string) $file);
+if (!$clickPath) {
+    $config = dirname($shared);
     eval(lift_function("$config/template.php", 'template_bottom'));
-    eval(lift_function("$config/functions.php", 'get_absolute_url'));
-    foreach (['getDashEmail', 'p202CronBeaconStatement', 'getTrackingDomain', 'p202StoredTrackingDomain'] as $footer) {
+    foreach (['get_absolute_url', 'getTrackingDomain', 'p202StoredTrackingDomain'] as $footer) {
+        eval(lift_function($shared, $footer));
+    }
+    foreach (['getDashEmail', 'p202CronBeaconStatement'] as $footer) {
         eval(lift_function("$config/functions-tracking202.php", $footer));
     }
 }
@@ -151,7 +158,7 @@ $_SERVER += [
 ];
 $_SESSION = ['user_id' => $marker, 'user_timezone' => 'UTC'];
 
-eval(lift_function((string) $file, 'record_mysql_error'));
+eval(lift_function($shared, 'record_mysql_error'));
 
 /**
  * A connection that records every statement it is asked through its own

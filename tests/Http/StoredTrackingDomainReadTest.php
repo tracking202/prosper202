@@ -20,8 +20,8 @@ use Tests\Support\SourceScan;
  * killed, the healthy `track.example.com` became the Host header the
  * request sent and `http://internal-name:8134/`.
  *
- * Executed, both copies — functions-tracking202.php's and the connect2.php
- * twin's getTrackingDomain() — each from its own source in a child PHP with
+ * Executed from its source (functions-shared.php, the one copy both
+ * bootstraps load; getTrackingDomain() reads through it) in a child PHP with
  * the database read stubbed: a stored domain is answered, no row is '', and
  * a query that fails (false, or a strict-mode exception) throws naming the
  * tracking domain.
@@ -33,8 +33,8 @@ final class StoredTrackingDomainReadTest extends TestCase
      */
     public static function definitions(): iterable
     {
-        // The DB singleton and _mysqli_query(), as functions-tracking202.php
-        // reaches them; $GLOBALS['answer'] says what the query does.
+        // The DB singleton and _mysqli_query(), as the function reaches them;
+        // $GLOBALS['answer'] says what the query does.
         $stubs = <<<'PHP'
             final class FakeConnection { public string $error = 'MySQL server has gone away';
                 public function real_escape_string(string $s): string { return addslashes($s); } }
@@ -51,20 +51,11 @@ final class StoredTrackingDomainReadTest extends TestCase
                 };
             }
             PHP;
-        yield 'functions-tracking202.php p202StoredTrackingDomain()' => [
-            '202-config/functions-tracking202.php',
+        yield 'functions-shared.php p202StoredTrackingDomain()' => [
+            '202-config/functions-shared.php',
             'p202StoredTrackingDomain',
             $stubs,
             ['false', 'throws'],
-        ];
-        yield 'connect2.php getTrackingDomain()' => [
-            '202-config/connect2.php',
-            'getTrackingDomain',
-            $stubs,
-            // connect2.php sets MYSQLI_REPORT_STRICT alone, so a failed query
-            // answers false there; it is that file's owner's to name a
-            // strict-mode exception too.
-            ['false'],
         ];
     }
 
