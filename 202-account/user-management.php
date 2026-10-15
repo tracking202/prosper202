@@ -244,23 +244,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// Authorization gate that MUST run before the write: only users who can manage
 	// admins may assign the Admin role or modify an existing Admin/Super-user account.
 	// (The role_id==2 check further down only guards the GET form-render path.)
-	if (!$canManageAdmins) {
-		if ($mysql['user_role'] === '2') {
-			$error['user_role'] = 'You are not authorized to assign the Admin role.';
-		}
-		if ($editing === true) {
-			$target_role_sql = "SELECT role_id FROM 202_user_role WHERE user_id = '" . $mysql['form_user_id'] . "'";
-			$target_role_result = _mysqli_query($target_role_sql);
+    if (!$canManageAdmins) {
+        if ($mysql['user_role'] === '2') {
+            $error['user_role'] = 'You are not authorized to assign the Admin role.';
+        }
+        if ($editing === true) {
+            $target_role_sql = "SELECT role_id FROM 202_user_role WHERE user_id = '" . $mysql['form_user_id'] . "'";
+            $target_role_result = _mysqli_query($target_role_sql);
             if ($target_role_result === false) {
                 $error['user_role'] = 'This account\'s role could not be read just now, so nothing was changed. Try again.';
             } else {
                 $target_role_row = p202FetchRow($target_role_result, $target_role_sql);
-            $target_role_id = $target_role_row['role_id'] ?? null;
+                $target_role_id = $target_role_row['role_id'] ?? null;
                 if ($mysql['form_user_id'] === '1' || $target_role_id === '1' || $target_role_id === '2') {
-                $error['user_role'] = 'You are not authorized to modify this account.';
+                    $error['user_role'] = 'You are not authorized to modify this account.';
+                }
             }
         }
-	}
     }
 	if ($editing === true && $mysql['form_user_id'] === '1') {
 		$error['user_role'] = 'You are not authorized to modify this account.';

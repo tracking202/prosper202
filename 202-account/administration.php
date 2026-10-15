@@ -69,7 +69,7 @@ if (isset($_POST['autocron'])) {
             p202_account_redirect('202-account/administration.php#autocron');
         }
         if ($result->num_rows > 0) {
-            $row = $result->fetch_assoc();
+            $row = p202FetchRow($result, $sql);
 
             $last_five_minutes = time() - 300;
 

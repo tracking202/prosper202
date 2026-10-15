@@ -56,6 +56,8 @@ if ($showEdit) {
 		$cpa_value = explode(".", (string) $edit_tracker_row['click_cpa'], 2);
 	}
 }
+// A link asked for that opened nothing is said, not a blank add form alone.
+$editRefused = isset($_GET['edit_tracker_id']) && !$showEdit;
 
 
 
@@ -192,7 +194,12 @@ template_top('Get Trackers'); ?>
 	</div>
 </div>
 
-<?php $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rotatorOptions === []; ?>
+<?php
+if ($editRefused) {
+    echo p202_flash('bad', 'That tracking link is not one of yours, or it was removed, so there is nothing to edit.');
+}
+$nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rotatorOptions === [];
+?>
 
 <div class="row g-4">
 	<div class="col-12 col-lg-6">

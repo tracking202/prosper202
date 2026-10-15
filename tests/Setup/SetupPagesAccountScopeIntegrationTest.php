@@ -272,6 +272,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
     {
         $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => (string) self::LINK_ON_MINE]);
         self::assertStringContainsString('Edit tracking link', $out);
+        self::assertStringNotContainsString('That tracking link is not one of yours', $out);
         self::assertStringContainsString('name="tracker_id" value="' . self::LINK_ON_MINE . '"', $out);
     }
 
@@ -288,6 +289,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         yield 'a space before the id' => [' %d'];
         yield 'a decimal point' => ['%d.0'];
         yield 'zero' => ['0'];
+        yield 'an id no link has' => ['999999999'];
     }
 
     /**
@@ -302,6 +304,8 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => $id]);
         self::assertStringContainsString('Get a tracking link', $out);
         self::assertStringNotContainsString('name="edit_tracker"', $out, 'no link was opened to edit');
+        $refused = 'That tracking link is not one of yours, or it was removed';
+        self::assertStringContainsString($refused, $out, 'and the page says so');
     }
 
     /** A redirector, its rules, their criteria and redirects, as "rows/rules/criteria/redirects". */
