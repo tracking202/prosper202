@@ -72,11 +72,16 @@ final class ForbidDirectMysqliStmtCallRule implements Rule
         ];
     }
 
+    /**
+     * Directly in that method's body: a closure or arrow function written
+     * there reports the method as its function too, and is not exempt.
+     */
     private static function isConnectionMethod(Scope $scope, string $method): bool
     {
         $function = $scope->getFunction();
 
         return $scope->getClassReflection()?->getName() === 'Prosper202\\Database\\Connection'
+            && !$scope->isInAnonymousFunction()
             && $function !== null
             && strtolower($function->getName()) === $method;
     }
