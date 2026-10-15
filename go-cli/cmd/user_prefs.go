@@ -42,7 +42,7 @@ var prefFlags = []prefFlag{
 	{name: "user_daily_email", desc: "Hour the daily stats email is sent, in your time zone", values: dailyEmailHours},
 	{name: "user_keyword_searched_or_bidded", desc: "Keyword to record: the one searched or the one bid on", values: []string{"searched", "bidded"}},
 	{name: "user_pref_referer_data", desc: "Referer to record: the browser's, or the t202ref link parameter", values: []string{"browser", "t202ref"}},
-	{name: "user_pref_dynamic_bid", desc: "Click cost: 0 from the tracker's setup, 1 from the t202b link parameter", values: binaryValues},
+	{name: "user_pref_dynamic_bid", desc: "Click cost: 0 from the tracker's setup, 1 from the t202b link parameter (0 to 99.99; any other bid costs the tracker's)", values: binaryValues},
 	{name: "user_pref_privacy", desc: "Privacy mode: disabled, eu (European traffic only) or all traffic", values: []string{"disabled", "eu", "all"}},
 	{name: "user_pref_cloak_referer", desc: "What a cloaked link shows as referer: origin (this domain) or never (blank)", values: []string{"origin", "never"}},
 	{name: "user_pref_ad_settings", desc: "Where Prosper202 shows its ads", values: []string{"show_all", "hide_login", "hide_all"}},

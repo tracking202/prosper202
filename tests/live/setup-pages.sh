@@ -518,6 +518,12 @@ done
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-csrf.html" --data-urlencode "token=wrong" --data-urlencode "tracker_type=0"
 eq "$LAST_CODE" "403" "generating without the token is refused"
 eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "0" "and writes nothing"
+# The click path reads a cloaking value the form never offers as the campaign's.
+ajax "$AJAX/generate_tracking_link.php" "$OUT/k-cloak.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
+  --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=directlink" \
+  --data-urlencode "click_cloaking=2" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=25"
+has "$OUT/k-cloak.html" "Choose the cloaking for this link: as the campaign sets it, off, or on." "a cloaking value the form never offers is refused in words"
+eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "0" "and writes nothing"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-dl.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=directlink" \
   --data-urlencode "landing_page_id=0" --data-urlencode "text_ad_id=$AD" --data-urlencode "click_cloaking=-1" \
@@ -529,8 +535,9 @@ has "$OUT/k-dl.html" "p202-code" "in the v2 code box"
 eq "$(Q "SELECT CONCAT(aff_campaign_id,'|',text_ad_id,'|',ppc_account_id,'|',click_cpc,'|',landing_page_id) FROM 202_trackers")" "$CAMP|$AD|$ACC|0.25000|0" "the tracker row holds what was posted"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-lp.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=landingpage" \
-  --data-urlencode "landing_page_id=$LP" --data-urlencode "click_cloaking=-1" --data-urlencode "cost_type=cpa" --data-urlencode "cpa_dollars=3" --data-urlencode "cpa_cents=00"
+  --data-urlencode "landing_page_id=$LP" --data-urlencode "click_cloaking=0" --data-urlencode "cost_type=cpa" --data-urlencode "cpa_dollars=3" --data-urlencode "cpa_cents=00"
 has "$OUT/k-lp.html" "lp.example/quiz" "a landing-page tracker answers with the landing page URL"
+hasnt "$OUT/k-lp.html" "not attached to any cloaking preference" "cloaking off for the link is a preference, not a missing one"
 ajax "$AJAX/generate_tracking_link.php" "$OUT/k-lpmissing.html" --data-urlencode "token=$T" --data-urlencode "tracker_type=0" \
   --data-urlencode "aff_network_id=$NET" --data-urlencode "aff_campaign_id=$CAMP" --data-urlencode "method_of_promotion=landingpage" --data-urlencode "landing_page_id=0"
 has "$OUT/k-lpmissing.html" "You have not selected a landing page to use." "a landing-page tracker with no page is refused in words"
@@ -538,6 +545,7 @@ ajax "$AJAX/generate_tracking_link.php" "$OUT/k-rtr.html" --data-urlencode "toke
   --data-urlencode "tracker_rotator=$ROT" --data-urlencode "cost_type=cpc" --data-urlencode "cpc_dollars=0" --data-urlencode "cpc_cents=10"
 has "$OUT/k-rtr.html" "tracking202/redirect/rtr.php?t202id=" "a redirector tracker answers with its rtr.php link"
 eq "$(Q 'SELECT COUNT(*) FROM 202_trackers')" "3" "three trackers stored"
+eq "$(Q "SELECT click_cloaking FROM 202_trackers WHERE rotator_id=$ROT")" "-1" "a link posted with no cloaking leaves it to the campaign"
 get "$SETUP/get_trackers.php" "$P"; T=$(token_of "$P")
 KID=$(Q "SELECT tracker_id FROM 202_trackers WHERE rotator_id=$ROT")
 has "$P" "data-tracker-id=\"$KID\"" "the list shows the redirector tracker"

@@ -1,5 +1,7 @@
 <?php
 declare(strict_types=1);
+use Prosper202\Click\ClickRequest;
+use Prosper202\Click\DynamicBid;
 use UAParser\Parser;
 
 #only allow numeric id, reject 0 as invalid
@@ -61,7 +63,8 @@ $rotator_sql = "SELECT  tr.user_id,
 					   	up.user_keyword_searched_or_bidded,
                         up.user_pref_dynamic_bid,
 					   	up.maxmind_isp,
-					   	lp.landing_page_url
+					   	lp.landing_page_url,
+					   	lp.landing_page_id AS default_landing_page_id
 				FROM    202_trackers AS tr
 				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
 				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
@@ -85,6 +88,12 @@ if (!$rotator_row) {
 			die();
 		}
 	}
+	die();
+}
+
+// A tracker that names no redirector (a direct link's, sent here by hand)
+// has nowhere to send the visitor: no click, as for an unknown tracker.
+if ((int) ($rotator_row['rotator_id'] ?? 0) <= 0) {
 	die();
 }
 
@@ -146,14 +155,11 @@ if( !$detect->isMobile() && !$detect->isTablet() ){
 	}
 }
 
-// set cpc use dynamic variable if set or the default if not
-if (isset ( $_GET ['t202b'] ) && $rotator_row['user_pref_dynamic_bid'] == '1') {
-    $_GET ['t202b']=ltrim((string) $_GET ['t202b'],'$');
-    if(is_numeric ( $_GET ['t202b'] )){
-        $bid = number_format ( $_GET ['t202b'], 5, '.', '' );
-        $rotator_row ['click_cpc'] = $db->real_escape_string ( $bid );
-    }
-} 
+// The bid the link names when the account takes dynamic bids, else the tracker's CPC.
+$bid = $rotator_row['user_pref_dynamic_bid'] == '1' ? DynamicBid::fromRequest($_GET['t202b'] ?? null) : null;
+if ($bid !== null) {
+	$rotator_row['click_cpc'] = $bid;
+}
 
 // When the rotator has no rules, the loop below never runs and would leave
 // $default false, dropping the click with a blank response. Default to the
@@ -384,7 +390,9 @@ if ($default == true) {
 			$rotator_row['redirect_url'] = $rotator_row['default_url'];
 		} elseif (!empty($rotator_row['default_lp'])) {
 			$rotator_row['type'] = 'lp';
-			// landing_page_url is already selected via the default_lp JOIN.
+			// landing_page_url is already selected via the default_lp JOIN;
+			// the click names the page, as one a rule sends there does.
+			$rotator_row['landing_page_id'] = $rotator_row['default_landing_page_id'] ?? 0;
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
@@ -435,7 +443,7 @@ $rule = array_merge($ruleDefaults, is_array($rule) ? $rule : []);
 
 $escape = static fn($value) => $db->real_escape_string((string)($value ?? ''));
 
-$uaParam = (string)($_GET['ua'] ?? '');
+$uaParam = ClickRequest::text($_GET, 'ua');
 $detectInstance = new DeviceDetect();
 if ($uaParam !== '') {
 	$detectInstance->setUserAgent($uaParam);
@@ -447,16 +455,14 @@ if (!is_array($device_id)) {
 
 $mysql['click_time'] = time();
 $mysql['aff_campaign_id'] = $escape($rule['aff_campaign_id']);
-$mysql['click_cpc'] = $escape($rule['click_cpc']);
+$mysql['click_cpc'] = $escape($cpc);
 $mysql['click_payout'] = $escape($rule['aff_campaign_payout']);
 $mysql['rule_id'] = $escape($rule['rule_id']);
 $mysql['rule_redirect_id'] = $escape($rule['redirect_id']);
-$mysql['ppc_account'] = $escape($ppc_account);
-$mysql['cpc'] = $escape($cpc);
+$mysql['ppc_account_id'] = $escape($ppc_account);
 $mysql['landing_page_id'] = $escape($rule['landing_page_id']);
 
-/* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
-//so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
+// The referring page's query: its q is a searched keyword (ClickRequest::keyword()), its url the referer.
 $referer_url_parsed = @parse_url((string)($_SERVER['HTTP_REFERER'] ?? ''));
 $referer_url_query = $referer_url_parsed['query'] ?? '';
 $referer_query = [];
@@ -464,95 +470,32 @@ if ($referer_url_query !== '') {
     @parse_str($referer_url_query, $referer_query);
 }
 
-$keyword = (string)($_GET['t202kw'] ?? '');
-
-switch ($keyword_type) {
-
-	case "bidded":
-	      #try to get the bidded keyword first
-		if (isset($_GET['OVKEY']) && $_GET['OVKEY'] != '') { //if this is a Y! keyword
-			$keyword = (string)$_GET['OVKEY'];   
-		}  elseif (isset($_GET['t202kw']) && $_GET['t202kw'] != '') { 
-			$keyword = (string)$_GET['t202kw'];  
-		} elseif (isset($_GET['target_passthrough']) && $_GET['target_passthrough'] != '') { //if this is a mediatraffic! keyword
-			$keyword = (string)$_GET['target_passthrough'];   
-		} else { //if this is a zango, or more keyword
-			$keyword = (string)($_GET['keyword'] ?? '');   
-		} 
-		break;
-		case "searched":
-		#try to get the searched keyword
-		if (is_string($referer_query['q'] ?? null) && $referer_query['q'] !== '') { // a referer's q[]= is not a keyword
-			$keyword = $referer_query['q'];
-		} elseif (isset($_GET['OVRAW']) && $_GET['OVRAW'] != '') { //if this is a Y! keyword
-			$keyword = (string)$_GET['OVRAW'];   
-		} elseif (isset($_GET['target_passthrough']) && $_GET['target_passthrough'] != '') { //if this is a mediatraffic! keyword
-			$keyword = (string)$_GET['target_passthrough'];   
-		} elseif (isset($_GET['keyword']) && $_GET['keyword'] != '') { //if this is a zango, or more keyword
-			$keyword = (string)$_GET['keyword'];   
-		} elseif (isset($_GET['search_word']) && $_GET['search_word'] != '') { //if this is a eniro, or more keyword
-			$keyword = (string)$_GET['search_word'];   
-		} elseif (isset($_GET['query']) && $_GET['query'] != '') { //if this is a naver, or more keyword
-			$keyword = (string)$_GET['query'];   
-		} elseif (isset($_GET['encquery']) && $_GET['encquery'] != '') { //if this is a aol, or more keyword
-			$keyword = (string)$_GET['encquery'];   
-		} elseif (isset($_GET['terms']) && $_GET['terms'] != '') { //if this is a about.com, or more keyword
-			$keyword = (string)$_GET['terms'];   
-		} elseif (isset($_GET['rdata']) && $_GET['rdata'] != '') { //if this is a viola, or more keyword
-			$keyword = (string)$_GET['rdata'];   
-		} elseif (isset($_GET['qs']) && $_GET['qs'] != '') { //if this is a virgilio, or more keyword
-			$keyword = (string)$_GET['qs'];   
-		} elseif (isset($_GET['wd']) && $_GET['wd'] != '') { //if this is a baidu, or more keyword
-			$keyword = (string)$_GET['wd'];   
-		} elseif (isset($_GET['text']) && $_GET['text'] != '') { //if this is a yandex, or more keyword
-			$keyword = (string)$_GET['text'];   
-		} elseif (isset($_GET['szukaj']) && $_GET['szukaj'] != '') { //if this is a wp.pl, or more keyword
-			$keyword = (string)$_GET['szukaj'];   
-		} elseif (isset($_GET['qt']) && $_GET['qt'] != '') { //if this is a O*net, or more keyword
-			$keyword = (string)$_GET['qt'];   
-		} elseif (isset($_GET['k']) && $_GET['k'] != '') { //if this is a yam, or more keyword
-			$keyword = (string)$_GET['k'];   
-		} elseif (isset($_GET['words']) && $_GET['words'] != '') { //if this is a Rambler, or more keyword
-			$keyword = (string)$_GET['words'];   
-		} else { 
-			$keyword = (string)($_GET['t202kw'] ?? '');
-		}
-		break;
-}
-
-if (str_starts_with($keyword, 't202var_')) {
-	$t202var = substr($keyword, strpos($keyword, "_") + 1);
-
-	if (is_string($_GET[$t202var] ?? null)) {
-		$keyword = $_GET[$t202var];
-	}
-}
+$keyword = ClickRequest::keyword($_GET, $referer_query, $keyword_type);
 
 // Raw values: the repositories bind them as parameters, so a value escaped
 // here would be stored with its backslashes.
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 
-$keyword = str_replace('%20',' ',$keyword);      
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = (string) $keyword_id;
 
-$c1 = (string)($_GET['c1'] ?? '');
+$c1 = ClickRequest::text($_GET, 'c1');
 $c1 = str_replace('%20',' ',$c1);  
 $c1_id = $trackingRepo->findOrCreateC1($c1);
 $mysql['c1_id'] = (string) $c1_id;
 
-$c2 = (string)($_GET['c2'] ?? '');
+$c2 = ClickRequest::text($_GET, 'c2');
 $c2 = str_replace('%20',' ',$c2);
 $c2_id = $trackingRepo->findOrCreateC2($c2);
 $mysql['c2_id'] = (string) $c2_id;
 
-$c3 = (string)($_GET['c3'] ?? '');
+$c3 = ClickRequest::text($_GET, 'c3');
 $c3 = str_replace('%20',' ',$c3);  
 $c3_id = $trackingRepo->findOrCreateC3($c3);
 $mysql['c3_id'] = (string) $c3_id;
 
-$c4 = (string)($_GET['c4'] ?? '');
+$c4 = ClickRequest::text($_GET, 'c4');
 $c4 = str_replace('%20',' ',$c4);
 $c4_id = $trackingRepo->findOrCreateC4($c4);
 $mysql['c4_id'] = (string) $c4_id;
@@ -601,56 +544,36 @@ if ($clickIsBot) {
 $mysql['click_filtered'] = $db->real_escape_string((string)$click_filtered);
 }
 
-if(isset($_GET['lpr']) && $_GET['lpr'] != '') {
-	// The visitor's last click by the address the click path stored
-	// (p202StoredVisitorIp), within the last 30 days as the pixels' fallback
-	// looks. The query read `click_time >= 30` (1970, so any click ever from
-	// the address), which could hand this visit a click from years before.
-	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-		new \Prosper202\Database\Connection($db),
+$clickRepo = new \Prosper202\Click\MysqlClickRepository(\Prosper202\Repository\LookupRepositoryFactory::connection($db));
+
+// A re-click (?lpr=) rewrites the visitor's last click rather than recording
+// a new one: that click by the address the click path stored
+// (p202StoredVisitorIp), within the last 30 days as the pixels' fallback
+// looks. With none, the visit is a new click.
+$reClick = null;
+if (ClickRequest::string($_GET, 'lpr') !== '') {
+	$reClick = \Prosper202\Click\LastClickFromAddress::find(
+		\Prosper202\Repository\LookupRepositoryFactory::connection($db),
 		p202StoredVisitorIp(),
 		(int) $user_id,
 		time() - 2592000,
 		!trackingEnabled()
 	);
-
-	if ($click_row1 && !empty($click_row1['click_id'])) {
-		// Set the bare $click_id too, not just the escaped copy: it is read at
-		// the cloaked click_id_public build and by replaceTrackerPlaceholders for
-		// {clickid}. This reuse path left it undefined, so a cloaked link on the
-		// ?lpr= flow got a malformed public id and an empty {clickid}.
-		$click_id = (int)$click_row1['click_id'];
-		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
-		$keyword_id = (int) $click_row1['keyword_id'];
-		$mysql['keyword_id'] = (string) $keyword_id;
-	} else {
-		// No prior click matched this IP/user inside the window. Fall back to a
-		// fresh click id instead of writing 202_clicks* rows keyed on an empty
-		// click_id, which produced junk rows that never join back to anything.
-		// It is a click recorded by this request, like the main allocation
-		// below, so it is noted for the redirect to sign; the reuse branch above
-		// is not, because that id belongs to an earlier click. $click_id (not
-		// just $mysql['click_id']) is read later for the cloaked
-		// click_id_public and the {clickid} placeholder, so set both.
-		$click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-		$click_result = $db->query($click_sql) or record_mysql_error($db);
-		$click_id = $db->insert_id;
-		\Prosper202\Click\RecordedClicks::note((int) $click_id);
-		$mysql['click_id'] = $db->real_escape_string((string)$click_id);
-		// Leave $mysql['keyword_id'] as resolved above — this path still has a
-		// real keyword; zeroing it here dropped it from the Keywords report.
+}
+if ($reClick !== null) {
+	// The click keeps its keyword. Its id belongs to an earlier click, so it
+	// is not noted for the redirect to sign (RecordedClicks).
+	$click_id = $reClick['click_id'];
+	$keyword_id = $reClick['keyword_id'];
+	$mysql['keyword_id'] = (string) $keyword_id;
+} else {
+	try {
+		$click_id = $clickRepo->allocateClickId();
+	} catch (\Throwable $rtrAllocateError) {
+		record_mysql_error($db, 'allocating a rotator click id', $rtrAllocateError->getMessage());
 	}
 }
-else{
-//ok we have the main data, now insert this row
-$click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-$click_result = $db->query($click_sql) or record_mysql_error($db); 
-
-//now gather the info for the advance click insert
-$click_id = $db->insert_id;
-\Prosper202\Click\RecordedClicks::note((int) $click_id);
-$mysql['click_id'] = $db->real_escape_string((string)$click_id); 
-}
+$mysql['click_id'] = (string) $click_id;
 $mysql['click_alp'] = 0;
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_id); 
@@ -662,9 +585,12 @@ $mysql['click_id_public'] = '';
 if ($rule['aff_campaign_cloaking'] == 1) {
 	$cloaking_on = true;
 	$mysql['click_cloaking'] = 1;
-	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-	$click_id_public = random_int(1,9) . $click_id . random_int(1,9);
-	$mysql['click_id_public'] = $db->real_escape_string($click_id_public); 
+	//if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link.
+	// A re-click keeps the one its cl.php and pci.php links were handed out with.
+	$click_id_public = $reClick !== null && $reClick['click_id_public'] !== '' && $reClick['click_id_public'] !== '0'
+		? $reClick['click_id_public']
+		: random_int(1,9) . $click_id . random_int(1,9);
+	$mysql['click_id_public'] = $click_id_public;
 } else { 
 	$mysql['click_cloaking'] = 0; 
 }
@@ -686,6 +612,9 @@ $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 if ($cloaking_on == true) {
 	// The request's own scheme, host and port, and the install directory.
 	$cloaking_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/cl.php?pci=' . $click_id_public;
+	// Where pci.php sends a cloaked click, as dl.php stores it: without it a
+	// cloaked click's pci.php link led nowhere.
+	$mysql['click_cloaking_site_url_id'] = (string) $locationRepo->findOrCreateClickSiteUrl($cloaking_site_url);
 }
 // Landing Page Optimizer: the t202ctx token is minted ONLY when the
 // destination comes from the type='lp' branch below (p202-edge-sync §3.3) —
@@ -717,68 +646,42 @@ if ($rule['aff_campaign_id'] != null) {
 	}
 }
 
-// The click's rows, written together (RotatorClickWriter). A rotator
-// re-click (lpr) rewrites the click it found above rather than recording a
-// new one: the REPLACEs give that click another 202_clicks row, its keyword
-// and its c1-c4. The attribution report rollup has summed that click into
-// its hours and into the hours of any conversion whose journey holds it, so
-// the rewrite and the mark that sends those hours back to exact go in the
-// same transaction (AttributionRollup rule 2). A new click needs no mark:
-// its hour is not summed yet.
-$rtrClick = new \Prosper202\Click\ClickRecord();
-$rtrClick->clickId = (int) $click_id;
-$rtrClick->userId = (int) $mysql['user_id'];
-$rtrClick->affCampaignId = (int) $mysql['aff_campaign_id'];
-$rtrClick->landingPageId = (int) $mysql['landing_page_id'];
-$rtrClick->ppcAccountId = (int) $mysql['ppc_account'];
-// '' (no campaign, so no payout) was 0 in the decimal column.
-$rtrClick->clickCpc = $mysql['cpc'] === '' ? '0' : $mysql['cpc'];
-$rtrClick->clickPayout = $mysql['click_payout'] === '' ? '0' : $mysql['click_payout'];
-$rtrClick->clickAlp = (int) $mysql['click_alp'];
-$rtrClick->clickFiltered = (int) $mysql['click_filtered'];
-$rtrClick->clickBot = (int) $mysql['click_bot'];
-$rtrClick->clickTime = (int) $mysql['click_time'];
-$rtrClick->textAdId = (int) $mysql['text_ad_id'];
-$rtrClick->keywordId = (int) $mysql['keyword_id'];
-$rtrClick->ipId = (int) $mysql['ip_id'];
-$rtrClick->countryId = (int) $mysql['country_id'];
-$rtrClick->regionId = (int) $mysql['region_id'];
-$rtrClick->ispId = (int) $mysql['isp_id'];
-$rtrClick->cityId = (int) $mysql['city_id'];
-$rtrClick->platformId = (int) $mysql['platform_id'];
-$rtrClick->browserId = (int) $mysql['browser_id'];
-$rtrClick->deviceId = (int) $mysql['device_id'];
-$rtrClick->c1Id = (int) $mysql['c1_id'];
-$rtrClick->c2Id = (int) $mysql['c2_id'];
-$rtrClick->c3Id = (int) $mysql['c3_id'];
-$rtrClick->c4Id = (int) $mysql['c4_id'];
-$rtrClick->clickIdPublic = (string) $mysql['click_id_public'];
-$rtrClick->clickCloaking = (int) $mysql['click_cloaking'];
-$rtrClick->clickIn = (int) $mysql['click_in'];
-$rtrClick->clickOut = (int) $mysql['click_out'];
-$rtrClick->clickRefererSiteUrlId = (int) $mysql['click_referer_site_url_id'];
-$rtrClick->clickOutboundSiteUrlId = (int) $mysql['click_outbound_site_url_id'];
+// Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
+// landing page sends, a signed customer id, linked once the click's rows
+// are committed. A rule that points at a bare URL has no campaign and
+// leaves capture on; a campaign whose setting cannot be read captures
+// nothing.
+$rtrCampaignAllows = true;
+if ((int) $rule['aff_campaign_id'] > 0) {
+	$rtrCampaignRow = memcache_mysql_fetch_assoc(
+		$db,
+		"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
+	);
+	// `?? '0'` turns a NULL setting into capture off. Today it never sees
+	// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
+	// passes NULL through to campaignAllows(), which reads it as ON,
+	// because there NULL means "no campaign" (a LEFT JOIN miss). If the
+	// column is ever made nullable, this line and dl.php's must change
+	// together, or a campaign's NULL captures on one redirect path and
+	// not on the other.
+	$rtrCampaignAllows = is_array($rtrCampaignRow)
+		&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
+}
+$rtrIdentity = p202ClickIdentity($_GET, $rtrCampaignAllows);
 
 // Inside the transaction: the placeholders are read back from the rows just
 // written. A plain closure: it hands the resolved URL out.
 $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $user_id, $locationRepo): int {
 	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
-	return $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
+	return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 };
 try {
-	// Its own Connection on $db: the resolver reads back through $db, and
-	// only a transaction on that same handle shows it the new rows.
-	$rtrWriter = new \Prosper202\Click\RotatorClickWriter(new \Prosper202\Database\Connection($db));
+	$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 	// The site URL lookup caches the ids of the rows it inserts: held until
 	// the transaction commits, and dropped with a rollback.
-	p202WithHeldCacheWrites(static fn () => $rtrWriter->write(
-		$rtrClick,
-		(int) $mysql['rotator_id'],
-		(int) $mysql['rule_id'],
-		(int) $mysql['rule_redirect_id'],
-		isset($_GET['lpr']) && $_GET['lpr'] != '',
-		$rtrResolveRedirect
-	));
+	p202WithHeldCacheWrites(static fn () => $reClick !== null
+		? $clickRepo->recordReClick($rtrClick, $rtrResolveRedirect)
+		: $clickRepo->recordClick($rtrClick, $rtrResolveRedirect));
 } catch (\Throwable $rtrWriteError) {
 	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
 }
@@ -787,37 +690,7 @@ try {
 		//set the cookie
 		setClickIdCookie($mysql['click_id'],$rule['aff_campaign_id']);
 	}
-
-	// Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
-	// landing page sends, a signed customer id. The rotator writes its click
-	// rows itself (RotatorClickWriter), so the click is linked here, once
-	// they are committed.
-	// A rule that points at a bare URL has no campaign and leaves capture on;
-	// a campaign whose setting cannot be read captures nothing.
-	$rtrCampaignAllows = true;
-	if ((int) $rule['aff_campaign_id'] > 0) {
-		$rtrCampaignRow = memcache_mysql_fetch_assoc(
-			$db,
-			"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
-		);
-		// `?? '0'` turns a NULL setting into capture off. Today it never sees
-		// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
-		// passes NULL through to campaignAllows(), which reads it as ON,
-		// because there NULL means "no campaign" (a LEFT JOIN miss). If the
-		// column is ever made nullable, this line and dl.php's must change
-		// together, or a campaign's NULL captures on one redirect path and
-		// not on the other.
-		$rtrCampaignAllows = is_array($rtrCampaignRow)
-			&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
-	}
-	$rtrIdentity = p202ClickIdentity($_GET, $rtrCampaignAllows);
 	$rtrIdentity->sendCookie($_SERVER);
-	$rtrIdentity->attach(
-		\Prosper202\Repository\LookupRepositoryFactory::connection($db),
-		(int) $mysql['user_id'],
-		(int) $mysql['click_id'],
-		(int) $mysql['click_time']
-	);
 
 	//set dirty hour
 	$de = new DataEngine();

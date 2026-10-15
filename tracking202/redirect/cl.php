@@ -33,7 +33,9 @@ $tracker_sql = "
 		AND 202_clicks_site.click_redirect_site_url_id = 202_site_urls.site_url_id
 ";
 
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// Not cached: a rotator re-click rewrites the click's destination and keeps
+// its public id, and a cached row sent the visitor to the one before.
+$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql, 0);
 
 if (!$tracker_row) {
 	$action_site_url = p202InstallPath('202-404.php');

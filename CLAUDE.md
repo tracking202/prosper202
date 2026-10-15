@@ -1090,6 +1090,17 @@ They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
 refuses the literal and any file handling the sentinel without it. When a
 rule is a spelling, one function should own the spelling.
 
+Two writers of one *row* is the same tell from the other side. A redirector
+re-click rewrote its click with `REPLACE`, which deletes the row and inserts
+another: every column the statement did not name went back to its default —
+the customer a conversion had linked, the reviewed flag, the public id every
+cl.php and pci.php link already handed out carried, the landing URL
+(measured). `REPLACE` is a write only where the statement owns every column
+of the row; a rewrite names what it changes (`INSERT … ON DUPLICATE KEY
+UPDATE` of its own columns), and the test is a row another writer has
+touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
+writer, `MysqlClickRepository`.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1338,7 +1349,7 @@ URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
 direct link they are blank now (measured: `c1=&kw=` from a click carrying
 `c1=hello`), while `rtr.php`, whose rows were still written first, filled
 them. Before moving a write, find every reader of what it writes in the same
-request; `RotatorClickWriter` resolves the rotator's URL inside the click's
+request; `MysqlClickRepository` resolves the rotator's URL inside the click's
 transaction, after the rows, for that reason. An endpoint that redirects
 before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
 values it holds (`replaceClickPlaceholders()`), and the read-back is for one

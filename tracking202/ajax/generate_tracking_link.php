@@ -53,7 +53,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 
 	//but we'll allow them to choose the following options, can make a tracker link without but they will be notified
 	if (isset($_POST['tracker_type']) && $_POST['tracker_type'] != 2) {
-		if(empty($_POST['click_cloaking'])) { $error['click_cloaking'] = 'This tracking link is not attached to any cloaking preference, are you sure you want to do this?'; }
+		if(!isset($_POST['click_cloaking'])) { $error['click_cloaking'] = 'This tracking link is not attached to any cloaking preference, are you sure you want to do this?'; }
 	}
 
 
@@ -63,6 +63,11 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	if(empty($_POST['ppc_network_id'])) { $error['ppc_network_id'] = 'This tracking link is not attached to any traffic source, are you sure you want to do this?'; }
 	if(empty($_POST['ppc_account_id'])) { $error['ppc_account_id'] = 'This tracking link is not attached to any traffic source account, are you sure you want to do this?'; }
 	if((!isset($_POST['cpc_dollars']) || !is_numeric($_POST['cpc_dollars'])) or (!isset($_POST['cpc_cents']) || !is_numeric($_POST['cpc_cents']))) { $error['cpc'] = 'This tracking link does not have its CPC set, are you sure you want to do this?'; }
+
+// The form offers these three, as the API takes; none sent is its default, the campaign's.
+if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
+    die(p202_flash('bad', 'Choose the cloaking for this link: as the campaign sets it, off, or on.'));
+}
 
 	//if they do a landing page, make sure they have one
 	if (!empty($_POST['method_of_promotion']) && $_POST['method_of_promotion'] == 'landingpage') {
@@ -151,7 +156,7 @@ require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
 	$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 	$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? '0')); 
 	$mysql['ppc_account_id'] = $db->real_escape_string((string)($_POST['ppc_account_id'] ?? '0')); 
-	$mysql['click_cloaking'] = $db->real_escape_string((string)($_POST['click_cloaking'] ?? '0')); 
+	$mysql['click_cloaking'] = $db->real_escape_string((string)($_POST['click_cloaking'] ?? '-1')); 
 	$mysql['landing_page_id'] = $db->real_escape_string((string)($landing_page_row['landing_page_id'] ?? '0'));
 	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? '0'));
 	$mysql['tracker_time'] = time();

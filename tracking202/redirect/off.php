@@ -86,32 +86,10 @@ if ($usedCachedRedirect == true) {
             // No click is recorded: the install token expands empty (plan §5.1).
             $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
             
-            // c1 sring replace for cached redirect
-            if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-            } else {
-                $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-            }
-            
-            // c2 sring replace for cached redirect
-            if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-            } else {
-                $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-            }
-            
-            // c3 sring replace for cached redirect
-            if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-            } else {
-                $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-            }
-            
-            // c4 sring replace for cached redirect
-            if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-            } else {
-                $new_url = str_replace("[[c4]]", "p202c4", $new_url);
+            // c1-c4 as sent, or p202<name> for one not sent: a list (c1[]=x) is none
+            foreach (['c1', 'c2', 'c3', 'c4'] as $token) {
+                $sent = \Prosper202\Click\ClickRequest::text($_GET, $token);
+                $new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
             }
             
             $urlvars = getPrePopVars($urlvarslist);
@@ -266,7 +244,8 @@ $info_sql = "
 // random digits, into that account's campaign (CLAUDE.md #27). Another
 // account's campaign now names no row, the unknown-pair path below.
 
-$info_row = memcache_mysql_fetch_assoc($db, $info_sql);
+// Not cached: one click's row, which this page and a rotator re-click rewrite.
+$info_row = memcache_mysql_fetch_assoc($db, $info_sql, 0);
 
 // Guard BEFORE dereferencing: the public click id / campaign combo may not
 // exist (expired, mistyped, or a DB hiccup). Never crash the redirect — fall
@@ -367,14 +346,18 @@ $click_result = $db->query($update_sql) or record_mysql_error($db);
 
 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+// Get LP Code's PHP redirect names the click (&pci=, as go.php's 202v does), a
+// new URL every click; its go.php?acip= link is the same for all of them.
+$click_outbound_site_url_id = \Prosper202\Click\ClickRequest::string($_GET, 'pci') !== ''
+    ? $locationRepo->findOrCreateClickSiteUrl($outbound_site_url)
+    : $locationRepo->findOrCreateSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
 $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $info_row['user_id']);
 
-$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
+$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 $mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 $update_sql = "

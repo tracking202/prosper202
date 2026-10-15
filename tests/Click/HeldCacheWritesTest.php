@@ -10,11 +10,13 @@ use PHPUnit\Framework\TestCase;
  * Cache writes made while a click's transaction is open are written when it
  * commits and dropped when it does not.
  *
- * rtr.php resolves the redirect URL's site URL id inside the transaction,
- * and the lookup (CachedLocationRepository) caches the id of a row it
+ * rtr.php resolved the redirect URL's site URL id inside the transaction
+ * through a lookup (CachedLocationRepository) that caches the id of a row it
  * inserts at once: a rollback after it left the entry naming no row, and
  * every later click to that URL stored the dangling id for as long as the
- * entry lived (measured on a live instance with memcached). The real
+ * entry lived (measured on a live instance with memcached). That URL is the
+ * click's own now and is not cached at all; the hold stays for any cached
+ * lookup made inside the write. The real
  * setCache() and p202WithHeldCacheWrites() are lifted out of connect2.php
  * under other names, so they cannot collide with the setCache() other
  * suites declare.
@@ -149,8 +151,8 @@ final class HeldCacheWritesTest extends TestCase
 
     /**
      * The hold only works where the click's write runs inside it: rtr.php's
-     * one call of the writer is in the arguments of its one call of
-     * p202WithHeldCacheWrites().
+     * one call of the writer, a new click or a re-click, is in the arguments
+     * of its one call of p202WithHeldCacheWrites().
      */
     public function testRtrWritesTheRotatorClickInsideTheHold(): void
     {
@@ -180,13 +182,27 @@ final class HeldCacheWritesTest extends TestCase
                 $holds[] = [$i + 1, self::closingParen($code, $i + 1)];
             }
             $member = $prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON]);
-            if ($t->is(T_STRING) && $t->text === 'write' && $next?->text === '(' && $member) {
+            $write = $t->is(T_STRING) && in_array($t->text, ['recordClick', 'recordReClick'], true);
+            if ($write && $next?->text === '(' && $member) {
                 $writes[] = $i;
             }
         }
 
+        // A write the scan cannot follow is refused, not taken for none.
+        foreach ($code as $i => $t) {
+            $writerName = in_array(substr($t->text, 1, -1), ['recordClick', 'recordReClick'], true);
+            self::assertFalse(
+                $t->is(T_CONSTANT_ENCAPSED_STRING) && $writerName,
+                'rtr.php names the writer\'s method in a string (a callable): line ' . $t->line
+            );
+            self::assertFalse(
+                $t->text === '{' && ($code[$i - 1] ?? null)?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR]),
+                'rtr.php calls a member named at runtime: line ' . $t->line
+            );
+        }
+
         self::assertCount(1, $holds, 'rtr.php holds its cache writes once');
-        self::assertCount(1, $writes, 'rtr.php writes its click once');
+        self::assertCount(2, $writes, 'rtr.php writes its click in one place, as a new click or a re-click');
 
         // The held work is the write and nothing else: an arrow function
         // (which cannot hold a try) whose body is the call, so the failure the
@@ -194,24 +210,33 @@ final class HeldCacheWritesTest extends TestCase
         // it held; caught on the way, the hold would write the rolled-back ids.
         [$open, $close] = $holds[0];
         $line = 'line ' . $code[$open]->line;
-        self::assertSame(
-            ['static', 'fn', '(', ')', '=>', '$rtrWriter', '->', 'write', '('],
-            array_map(static fn (\PhpToken $t): string => $t->text, array_slice($code, $open + 1, 9)),
-            $line . ': the hold\'s argument is static fn () => $rtrWriter->write(…)'
+        $text = static fn (int $from, int $length): array => array_map(
+            static fn (\PhpToken $t): string => $t->text,
+            array_slice($code, $from, $length)
         );
-        self::assertSame($open + 8, $writes[0]);
-        self::assertSame($close - 1, self::closingParen($code, $open + 9), "$line: the write is all the held work");
+        self::assertSame(
+            ['static', 'fn', '(', ')', '=>', '$reClick', '!==', 'null', '?', '$clickRepo', '->', 'recordReClick', '('],
+            $text($open + 1, 13),
+            $line . ': the hold\'s argument is static fn () => $reClick !== null ? $clickRepo->recordReClick(…) : …'
+        );
+        self::assertSame($open + 12, $writes[0]);
+        $reClickEnd = self::closingParen($code, $open + 13);
+        self::assertSame(
+            [':', '$clickRepo', '->', 'recordClick', '('],
+            $text($reClickEnd + 1, 5),
+            "$line: … : \$clickRepo->recordClick(…)"
+        );
+        self::assertSame($reClickEnd + 4, $writes[1]);
+        $clickEnd = self::closingParen($code, $reClickEnd + 5);
+        self::assertSame($close - 1, $clickEnd, "$line: the write is all the held work");
 
         $assigned = [];
         foreach ($code as $i => $t) {
-            if ($t->is(T_VARIABLE) && $t->text === '$rtrWriter' && ($code[$i + 1] ?? null)?->text === '=') {
-                $assigned[] = implode(' ', array_map(
-                    static fn (\PhpToken $t): string => $t->text,
-                    array_slice($code, $i + 2, 3)
-                ));
+            if ($t->is(T_VARIABLE) && $t->text === '$clickRepo' && ($code[$i + 1] ?? null)?->text === '=') {
+                $assigned[] = implode(' ', $text($i + 2, 3));
             }
         }
-        self::assertSame(['new \\Prosper202\\Click\\RotatorClickWriter ('], $assigned, 'what $rtrWriter is');
+        self::assertSame(['new \\Prosper202\\Click\\MysqlClickRepository ('], $assigned, 'what $clickRepo is');
     }
 
     /** @param list<\PhpToken> $code */

@@ -9,7 +9,9 @@ use PHPUnit\Framework\TestCase;
 /**
  * The click scripts read four values the visitor's request decides: the
  * referring page's q and url, the parameter a t202var_ keyword names, and
- * t202ref. Any of them can be a list (q[]=1, url[]=1, x[]=1, t202ref[]=1).
+ * t202ref. The keyword's two (q and t202var_) are read by
+ * ClickRequest::keyword() alone, which ClickRequestTest holds to strings;
+ * the scripts read the other two themselves. Any of them can be a list (q[]=1, url[]=1, x[]=1, t202ref[]=1).
  * A list reaching a lookup that takes a string is a TypeError: the click is
  * lost, on dl.php after its redirect was sent (measured: a referer's url[]
  * and q[], and a t202var_ list, each left no click), and a list cast with
@@ -35,14 +37,14 @@ final class ClickRequestValuesAreStringsTest extends TestCase
         'referer q' => [
             '$referer_query[\'q\']',
             'is_string($referer_query[\'q\'] ?? null) && $referer_query[\'q\'] !== \'\'',
-            [],
+            self::SCRIPTS,
         ],
         'referer url' => [
             '$referer_query[\'url\']',
             'is_string($referer_query[\'url\'] ?? null) && $referer_query[\'url\'] !== \'\'',
             [],
         ],
-        't202var' => ['$_GET[$t202var]', 'is_string($_GET[$t202var] ?? null)', []],
+        't202var' => ['$_GET[$t202var]', 'is_string($_GET[$t202var] ?? null)', self::SCRIPTS],
         't202ref' => [
             '$_GET[\'t202ref\']',
             'is_string($_GET[\'t202ref\'] ?? null) && $_GET[\'t202ref\'] !== \'\'',
@@ -78,6 +80,80 @@ final class ClickRequestValuesAreStringsTest extends TestCase
                 }
             }
         }
+    }
+
+    /** Where ClickRequest::keyword() reads; none of them is read by a script itself, in any quoting. */
+    private const KEYWORD_SOURCES = [
+        '$_GET' => [
+            'OVKEY', 'OVRAW', 't202kw', 'target_passthrough', 'keyword', 'search_word', 'query', 'encquery', 'terms',
+            'rdata', 'qs', 'wd', 'text', 'szukaj', 'qt', 'k', 'words',
+        ],
+        '$referer_query' => ['q'],
+    ];
+
+    public function testEveryScriptReadsItsKeywordThroughTheOneReader(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (self::SCRIPTS as $script) {
+            $source = (string) file_get_contents($root . '/' . $script);
+            self::assertSame(1, substr_count($source, 'ClickRequest::keyword($_GET, $referer_query, '), $script);
+            self::assertSame([], self::keywordSourceReads($source), "$script reads a keyword source itself");
+            self::assertStringNotContainsString('t202var_', $source, "$script resolves a t202var_ keyword itself");
+        }
+    }
+
+    /** @return iterable<string, array{string, list<string>}> */
+    public static function keywordSourceSpellings(): iterable
+    {
+        yield 'single quotes' => ["<?php \$k = \$_GET['t202kw'] ?? '';", ["\$_GET['t202kw']"]];
+        yield 'double quotes' => ['<?php $k = $_GET["OVKEY"];', ['$_GET["OVKEY"]']];
+        yield 'the request' => ["<?php \$k = \$_REQUEST['keyword'];", ["\$_REQUEST['keyword']"]];
+        yield 'the lower-cased copy' => ["<?php \$k = \$_lGET['words'];", ["\$_lGET['words']"]];
+        yield 'spaced' => ["<?php \$k = \$referer_query [ 'q' ];", ["\$referer_query['q']"]];
+        yield 'another parameter' => ["<?php \$k = \$_GET['c1'];", []];
+        yield 'the referer\'s url' => ["<?php \$k = \$referer_query['url'];", []];
+    }
+
+    /**
+     * @dataProvider keywordSourceSpellings
+     * @param list<string> $expected
+     */
+    public function testTheKeywordSourceScanReadsEverySpelling(string $source, array $expected): void
+    {
+        self::assertSame($expected, self::keywordSourceReads($source));
+    }
+
+    /**
+     * Each read of a keyword source in a source, by its tokens: the request
+     * ($_GET, $_REQUEST, dl.php's lower-cased $_lGET) or the referring page's
+     * query, indexed by a source's name in either quoting.
+     *
+     * @return list<string>
+     */
+    private static function keywordSourceReads(string $source): array
+    {
+        $code = array_values(array_filter(
+            \PhpToken::tokenize($source),
+            static fn (\PhpToken $t): bool => !$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])
+        ));
+        $arrays = [
+            '$_GET' => '$_GET', '$_REQUEST' => '$_GET', '$_lGET' => '$_GET', '$referer_query' => '$referer_query',
+        ];
+        $found = [];
+        foreach ($code as $i => $t) {
+            $from = $arrays[$t->text] ?? null;
+            if (!$t->is(T_VARIABLE) || $from === null || ($code[$i + 1] ?? null)?->text !== '[') {
+                continue;
+            }
+            $key = $code[$i + 2] ?? null;
+            $source = $key !== null && $key->is(T_CONSTANT_ENCAPSED_STRING)
+                && in_array(substr($key->text, 1, -1), self::KEYWORD_SOURCES[$from], true);
+            if ($source) {
+                $found[] = $t->text . '[' . $key->text . ']';
+            }
+        }
+
+        return $found;
     }
 
     /** @return array<string, array{string, ?string}> */

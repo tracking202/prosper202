@@ -393,7 +393,7 @@ final class LookupTablesWrittenOnlyByRepositoriesTest extends TestCase
      *
      * @return list<array{int, string, string}>
      */
-    private static function inserts(string $source): array
+    public static function inserts(string $source): array
     {
         $out = [];
         foreach (AssembledStrings::of($source) as ['line' => $line, 'text' => $text]) {

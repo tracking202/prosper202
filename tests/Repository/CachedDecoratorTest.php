@@ -137,6 +137,28 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame(77, $cached->findOrCreateIp('192.0.2.1'));
     }
 
+    /**
+     * A URL only one click has goes to the database alone: its entry would
+     * be written on every click and read by none. The same URL looked up as
+     * an ordinary one is still cached, and the two answer the same row.
+     */
+    public function testAClicksOwnUrlIsNeitherReadFromNorWrittenToTheCache(): void
+    {
+        $cache = new ArrayIdCache();
+        $inner = new InMemoryLocationRepository();
+        $cached = new CachedLocationRepository($inner, $cache, 'h');
+        $url = 'https://offer.example/?s=90210';
+
+        $id = $cached->findOrCreateClickSiteUrl($url);
+
+        self::assertSame($inner->findOrCreateSiteUrl($url), $id);
+        self::assertSame([], $cache->reads);
+        self::assertSame([], $cache->writes);
+        self::assertSame($id, $cached->findOrCreateClickSiteUrl($url), 'found again, not stored twice');
+        self::assertSame($id, $cached->findOrCreateSiteUrl($url));
+        self::assertSame([md5('url-id' . $url . 'h')], $cache->writtenKeys());
+    }
+
     public function testEmptyValuesSkipCacheAndReturnZero(): void
     {
         $cache = new ArrayIdCache();
@@ -150,6 +172,7 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame(0, $location->findOrCreateIp(''));
         self::assertSame(0, $location->findOrCreateSiteDomain(''));
         self::assertSame(0, $location->findOrCreateSiteUrl(''));
+        self::assertSame(0, $location->findOrCreateClickSiteUrl(''));
         self::assertSame(0, $tracking->findOrCreateKeyword(''));
         self::assertSame([], $cache->reads, 'An empty value is no lookup');
         self::assertSame([], $cache->writes, 'Should not cache zero results');

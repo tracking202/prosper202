@@ -32,7 +32,9 @@ $click_sql = "
 	WHERE
 		click_id_public='".$mysql['click_id_public']."'
 ";
-$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+// Not cached: a rotator re-click rewrites the click's destination and keeps
+// its public id, and a cached row sent the visitor to the one before.
+$click_row = memcache_mysql_fetch_assoc($db, $click_sql, 0);
 
 // Guard BEFORE dereferencing: an unknown/expired public click id must not crash
 // the cloaked confirmation redirect.

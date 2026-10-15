@@ -67,8 +67,8 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Attribution/AttributionStore.php' => self::MARKS,
         '202-config/static-endpoint-helpers.php' => self::MARKS,
         '202-config/Ltv/MysqlCustomerRepository.php' => self::MARKS,
-        // rtr.php's click rows, a re-click (?lpr=) marked in their transaction.
-        '202-config/Click/RotatorClickWriter.php' => self::MARKS,
+        // Every path's click rows; rtr.php's re-click (?lpr=) marked in their transaction.
+        '202-config/Click/MysqlClickRepository.php' => self::MARKS,
         'tracking202/redirect/off.php' => self::MARKS,
         'tracking202/redirect/offrtr.php' => self::MARKS,
         // The Update CPC write, behind the page and POST /api/v3/clicks/cpc.
@@ -78,8 +78,6 @@ final class RollupWritersAreMarkedTest extends TestCase
         '202-config/Attribution/ModelRepository.php' => self::ROLLUP,
         '202-config/User/UserDataPurge.php' => self::ROLLUP,
         '202-config/Report/RollupDirty.php' => 'the marks themselves: they read the click rows they mark',
-        '202-config/Click/MysqlClickRepository.php' => 'inserts a new click at the time of the request that records it; its hour is not summed until it is sealed',
-        '202-config/connect2.php' => 'inserts new clicks at the time of the request that records them',
         '202-config/Repository/Mysql/MysqlDeviceRepository.php' => 'inserts a device model only when no row has its name and type, while recording the click that uses it; no click already summed can join a row that did not exist',
         '202-config/Conversion/Ledger/MysqlConversionLedger.php' => 'ledger rows change counted state through the outbox, and the worker marks every journey and credit it rewrites; the click columns it writes (click_lead, click_payout) are summed by no part of the rollup',
         '202-config/Conversion/MysqlConversionRepository.php' => 'ledger rows change counted state through the outbox, and the worker marks every journey and credit it rewrites; campaign_id and user_id, which the effective rows read, are written only when a row is inserted',
@@ -459,7 +457,7 @@ final class RollupWritersAreMarkedTest extends TestCase
     public function testEveryWriterOfASummedTableIsClassified(): void
     {
         $found = self::writers();
-        self::assertArrayHasKey('202-config/Click/RotatorClickWriter.php', $found, 'the scan sees the writer that rewrites clicks');
+        self::assertArrayHasKey('202-config/Click/MysqlClickRepository.php', $found, 'the scan sees the writer that rewrites clicks');
 
         $unclassified = array_diff_key($found, self::WRITERS);
         self::assertSame([], $unclassified, "a file writes a table the report rollup sums and is not classified here:\n"

@@ -302,7 +302,8 @@ foreach ($rule_row as $rule) {
 				ORDER BY rur.id";
         // A rule left with no usable redirect passes the click on, as
         // rtr.php does: to a later rule, or to the default.
-        $redirectRows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+        // Not cached: read with one click's row.
+        $redirectRows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql, 0);
         $rule_redirect_rows = [];
         foreach ($redirectRows as $redirectRow) {
             if (p202RuleRedirectIsUsable($redirectRow)) {
@@ -464,7 +465,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
-				$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
+				$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "
@@ -545,7 +546,7 @@ if ($default == false) {
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 
-			$click_row = memcache_mysql_fetch_assoc($db, $click_sql);
+			$click_row = memcache_mysql_fetch_assoc($db, $click_sql, 0); // uncached: one click's row
 
 				$mysql['aff_campaign_id'] = $db->real_escape_string((string)$rotator_row['aff_campaign_id']);
 				$mysql['click_payout'] = $db->real_escape_string((string)$rotator_row['aff_campaign_payout']);
@@ -617,7 +618,7 @@ if ($default == false) {
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
 				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
-				$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl((string) $redirect_site_url);
+				$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
 
 				$update_sql = "

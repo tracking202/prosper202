@@ -255,13 +255,13 @@ final class IdentityGraphIntegrationTest extends TestCase
     public function testTheClickPathLinksAfterCommitAndKeepsTheClickWhenLinkingFails(): void
     {
         $repo = new MysqlClickRepository($this->conn);
-        $click = new ClickRecord();
-        $click->clickId = $repo->allocateClickId();
-        $click->userId = 1;
-        $click->clickTime = 1700000100;
-        $click->clickIdPublic = '0';
-        $click->identity = ClickIdentity::fromRequest([], ['p202vid' => str_repeat('c', 32)], true);
-        $id = $repo->recordClick($click);
+        $id = $repo->allocateClickId();
+        $repo->recordClick(new ClickRecord(
+            clickId: $id,
+            userId: 1,
+            clickTime: 1700000100,
+            identity: ClickIdentity::fromRequest([], ['p202vid' => str_repeat('c', 32)], true),
+        ));
         self::assertSame(1, (int) self::scalar("SELECT COUNT(*) FROM 202_clicks WHERE click_id=$id"));
         self::assertNotNull(self::scalar("SELECT visitor_key FROM 202_clicks_visitor WHERE click_id=$id"));
 
@@ -270,13 +270,13 @@ final class IdentityGraphIntegrationTest extends TestCase
         $log = tempnam(sys_get_temp_dir(), 'idlog');
         $old = ini_set('error_log', (string) $log);
         try {
-            $second = new ClickRecord();
-            $second->clickId = $repo->allocateClickId();
-            $second->userId = 1;
-            $second->clickTime = 1700000200;
-            $second->clickIdPublic = '0';
-            $second->identity = ClickIdentity::fromRequest([], ['p202vid' => str_repeat('c', 32)], true);
-            $id2 = $repo->recordClick($second);
+            $id2 = $repo->allocateClickId();
+            $repo->recordClick(new ClickRecord(
+                clickId: $id2,
+                userId: 1,
+                clickTime: 1700000200,
+                identity: ClickIdentity::fromRequest([], ['p202vid' => str_repeat('c', 32)], true),
+            ));
         } finally {
             ini_set('error_log', (string) $old);
             self::$db->query('RENAME TABLE 202_identity_signals_gone TO 202_identity_signals');
