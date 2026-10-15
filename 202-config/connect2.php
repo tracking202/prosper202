@@ -34,7 +34,7 @@ function p202ClickPathUncaught(\Throwable $e): void
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
         record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
     }
-    error_log('Uncaught on the click path: ' . $e);
+    error_log(p202UncaughtLogLine('Uncaught on the click path', $e));
 }
 set_exception_handler('p202ClickPathUncaught');
 

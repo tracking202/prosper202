@@ -300,7 +300,7 @@ if (!function_exists('p202PageUncaught')) {
         if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
             record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
         }
-        error_log('Uncaught on a page: ' . $e);
+        error_log(p202UncaughtLogLine('Uncaught on a page', $e));
     }
 }
 if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {

@@ -27,8 +27,9 @@ function legacy_api_ratio(mixed $a, mixed $b, int $precision = 0, int|float $sca
  */
 function runReports($db, $vars, $user, $timezone, string $version): array
 {
-
-    date_default_timezone_set($timezone);
+    // As every other reader of the column (CLAUDE.md #29): a name PHP lists,
+    // else UTC. A raw value PHP refused left the server's own zone in force.
+    date_default_timezone_set(\Prosper202\Report\AccountZone::normalize(is_string($timezone) ? $timezone : null));
     $c1 = null;
     $c2 = null;
     $c3 = null;
@@ -181,7 +182,9 @@ function reportDimensionJoin(string $type): string
  */
 function legacy_api_database_error(mysqli $db): array
 {
-    error_log('Legacy report API: a report query failed: ' . $db->errno . ' ' . $db->error);
+    // Without the values the server's words repeat (the statements quote c1-c4).
+    error_log('Legacy report API: a report query failed: ' . $db->errno . ' '
+        . p202FailedQueryMessage($db->errno, $db->error));
     if (!headers_sent()) {
         http_response_code(500);
     }

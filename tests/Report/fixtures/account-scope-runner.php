@@ -28,6 +28,11 @@ declare(strict_types=1);
  *                   RETURNED line), v1's `wp?<query>` is the WordPress
  *                   plugin's call its `type` names (get_data_for_wp,
  *                   wp_create_lp, wp_update_lp) with the query as $_GET,
+ *                   `auth?fail=<none|key|user>&apikey=<key>` the key check
+ *                   each version's endpoint makes first (v1's getStats(), a
+ *                   text_ads report, v2's getAuth()) on a connection whose
+ *                   fetch of the key's row, or of the account's time zone,
+ *                   answers false,
  *                   and v2's `categories` its listCategories(), each handed
  *                   the user id as its endpoint hands it (v1 a string, v2
  *                   an int)
@@ -89,6 +94,33 @@ $GLOBALS['dbpass'] = (string) (getenv('P202_TEST_DB_PASS') ?: '');
 $GLOBALS['mchost'] = '';
 $_SERVER += ['SERVER_NAME' => 'localhost', 'REQUEST_URI' => '/account-scope', 'SCRIPT_URL' => '/account-scope', 'REMOTE_ADDR' => '127.0.0.1'];
 boot_app($root, str_starts_with($reader, 'api-'));
+
+// A connection whose fetch from the statements naming $failOn answers false,
+// as a failed one does. Evaluated, as the integration suites declare their
+// stand-ins.
+eval(<<<'PHP'
+    final class FailingFetchMysqli extends mysqli
+    {
+        public ?string $failOn = null;
+
+        public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
+        {
+            if ($this->failOn === null || !str_contains($query, $this->failOn)) {
+                return parent::query($query, $result_mode);
+            }
+            if (!$this->real_query($query)) {
+                return false;
+            }
+
+            return new class ($this, MYSQLI_STORE_RESULT) extends mysqli_result {
+                public function fetch_assoc(): array|null|false
+                {
+                    return false;
+                }
+            };
+        }
+    }
+    PHP);
 
 $db = DB::getInstance()->getConnection();
 $at = $db->query('SELECT DATABASE()');
@@ -163,7 +195,7 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
-    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|(?:report|wp)\?[^\s]*)$/D', $reader, $m) === 1) {
+    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|(?:report|wp|auth)\?[^\s]*)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
         // them, through the version's own functions.php (the report helpers
         // are api/legacy/functions.php's, which it loads). Loaded as they
@@ -203,6 +235,28 @@ try {
                 'wp_create_lp' => wpCreateLp($db, (string) $userId),
                 'wp_update_lp' => wpUpdateLp($db, (string) $userId),
             };
+        } elseif (str_starts_with($m[2], 'auth?')) {
+            parse_str(substr($m[2], 5), $sent);
+            $failing = new FailingFetchMysqli(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                $dbName,
+                (int) ($port !== '' ? $port : 3306)
+            );
+            $failing->failOn = match ($sent['fail'] ?? 'none') {
+                'key' => '202_api_keys',
+                'user' => '`user_timezone`',
+                default => null,
+            };
+            $result = $m[1] === 'v1'
+                ? getStats($failing, [
+                    'apikey' => (string) ($sent['apikey'] ?? ''),
+                    'type' => 'text_ads',
+                    'date_from' => gmdate('m/d/Y', $from),
+                    'date_to' => gmdate('m/d/Y', $to),
+                ])
+                : getAuth($failing, ['apikey' => (string) ($sent['apikey'] ?? '')]);
         } elseif (str_starts_with($m[2], 'cid=')) {
             $result = runReports($db, [
                 'type' => 'text_ads',

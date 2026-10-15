@@ -493,6 +493,51 @@ function p202UncaughtAt(\Throwable $e): string
 }
 
 /**
+ * What an uncaught throwable leaves in the log, from either bootstrap's
+ * handler: each throwable of the chain by its class, its message and where it
+ * was thrown, and the frames it passed through without their arguments (a
+ * statement handed down the stack carries its values). A database failure's
+ * message is the server's words, which repeat the values its statement
+ * quoted, so it is redacted as the failed-query log is.
+ */
+function p202UncaughtLogLine(string $where, \Throwable $e): string
+{
+    $parts = [];
+    for ($thrown = $e; $thrown !== null; $thrown = $thrown->getPrevious()) {
+        $message = $thrown->getMessage();
+        if ($thrown instanceof \mysqli_sql_exception) {
+            $message = p202FailedQueryMessage((int) $thrown->getCode(), $message);
+        } elseif ($thrown instanceof \Prosper202\Database\Exceptions\QueryException) {
+            // Connection's tag, last in the message; none redacts everything quoted.
+            $errno = preg_match('/ \[errno (\d+)\]\z/', $message, $m) === 1 ? (int) $m[1] : 0;
+            $message = p202FailedQueryMessage($errno, $message);
+        }
+        $frames = [];
+        foreach ($thrown->getTrace() as $i => $frame) {
+            $frames[] = sprintf(
+                '#%d %s(%s): %s%s%s()',
+                $i,
+                $frame['file'] ?? '[internal function]',
+                $frame['line'] ?? '',
+                $frame['class'] ?? '',
+                $frame['type'] ?? '',
+                $frame['function']
+            );
+        }
+        $parts[] = sprintf(
+            "%s: %s in %s:%d\n%s",
+            $thrown::class,
+            $message,
+            $thrown->getFile(),
+            $thrown->getLine(),
+            implode("\n", $frames)
+        );
+    }
+
+    return $where . ': ' . implode("\nPrevious: ", $parts);
+}
+
+/**
  * The database error page: the failure logged and recorded in
  * 202_mysql_errors (both without the values the statement quotes), the
  * page told whether it was, and the request ended, under a 500 so a client
@@ -504,12 +549,19 @@ function p202UncaughtAt(\Throwable $e): string
  */
 function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = null): never
 {
+    $clickPath = p202OnTheClickPath();
     if (!headers_sent()) {
-        // In place of whatever the page meant to answer: dl.php has set its
-        // redirect before it writes the click.
-        header_remove('Location');
-        http_response_code(500);
-        header('Cache-Control: no-store');
+        // In place of whatever the page meant to answer, except a redirect
+        // the click path has queued: dl.php sets it before it writes the
+        // click, and a failure there loses the click, not the visitor too,
+        // as under PHP-FPM, where the redirect has gone by then.
+        // p202ClickPathUncaught() keeps one the same way.
+        $status = http_response_code();
+        if (!($clickPath && is_int($status) && $status >= 300 && $status < 400)) {
+            header_remove('Location');
+            http_response_code(500);
+            header('Cache-Control: no-store');
+        }
     }
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -525,8 +577,6 @@ function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = 
         echo 'Database error. The webmaster has been notified.';
         die();
     }
-
-    $clickPath = p202OnTheClickPath();
 
     // The server's message and the statement, without the values they
     // quote: they are logged, and listed in Account › Settings.

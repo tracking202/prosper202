@@ -84,7 +84,11 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
     {
         $clicks = implode(', ', [self::OWN_CLICK, self::FOREIGN_CLICK, self::BARE_CLICK]);
         foreach ([self::USER, self::OTHER] as $user) {
-            foreach (['202_users_pref', '202_users', '202_aff_campaigns', '202_aff_networks', '202_landing_pages', '202_text_ads', '202_clicks'] as $table) {
+            $tables = [
+                '202_users_pref', '202_users', '202_api_keys', '202_aff_campaigns', '202_aff_networks',
+                '202_landing_pages', '202_text_ads', '202_clicks',
+            ];
+            foreach ($tables as $table) {
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
@@ -374,6 +378,53 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
             );
             self::assertSame($databaseError, self::read('api-v1:wp?type=get_data_for_wp', true), 'get_data_for_wp');
         });
+    }
+
+    /** The key check each endpoint makes first, with nothing failing. */
+    public function testTheKeyCheckReaderAnswersWithNothingFailing(): void
+    {
+        $key = self::legacyKey();
+        $report = self::read("api-v1:auth?fail=none&apikey=$key");
+        self::assertArrayHasKey('text_ads', $report, json_encode($report));
+        $authorized = self::read("api-v2:auth?fail=none&apikey=$key", true);
+        self::assertSame(['Authorized', 'UTC'], [$authorized['msg'] ?? null, $authorized['user_timezone'] ?? null]);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function failedFetches(): iterable
+    {
+        foreach (['v1', 'v2'] as $version) {
+            yield "$version, the key's row" => [$version, 'key'];
+            yield "$version, the account's time zone" => [$version, 'user'];
+        }
+    }
+
+    /**
+     * The same, with the fetch of the key's row or of the account's time
+     * zone failing: a failed fetch is false, which read as no row refused the
+     * key as a deactivated account's, gave v2 every report in UTC, and was a
+     * TypeError on v1.
+     *
+     * @dataProvider failedFetches
+     */
+    public function testAFailedFetchOfTheKeyOrTheZoneIsTheDatabaseError(string $version, string $failing): void
+    {
+        self::assertSame(
+            ['msg' => 'Database error', 'error' => true, 'status' => 500],
+            self::read("api-$version:auth?fail=$failing&apikey=" . self::legacyKey(), true)
+        );
+    }
+
+    /** An API key of USER's, made once. */
+    private static function legacyKey(): string
+    {
+        $key = 'p202-legacy-fetch-' . self::USER;
+        $found = self::$db->query("SELECT COUNT(*) FROM 202_api_keys WHERE api_key = '$key'");
+        if ((int) ($found instanceof \mysqli_result ? $found->fetch_row()[0] : 0) === 0) {
+            self::row('202_api_keys', ['user_id' => self::USER, 'api_key' => $key, 'created_at' => self::$now]);
+        }
+
+        return $key;
     }
 
     /** v2's categories with the statement refused: `or die()` answered an empty 200. */

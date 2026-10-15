@@ -2,10 +2,13 @@
 # Live pass for a click the database refuses to store: a direct link
 # (dl.php), a redirector link (rtr.php) and a landing page's script
 # (record_simple.php, record_adv.php) each write the click in one
-# transaction, and a failure there is the database error page under a 500,
-# recorded in 202_mysql_errors under "recording ... click <id>" with the
-# server's words, and no row of the click stored. HeldCacheWritesTest reads the shape of
-# these calls; this runs them.
+# transaction, and a failure there is recorded in 202_mysql_errors under
+# "recording ... click <id>" with the server's words, with no row of the
+# click stored. rtr.php and the two scripts answer the database error page
+# under a 500. dl.php has queued its redirect before it writes the click, so
+# the visitor still goes to the offer, as under PHP-FPM, where the redirect
+# has been sent by then. HeldCacheWritesTest reads the shape of these calls;
+# this runs them.
 #
 # A trigger refuses the 202_clicks rows of the records this pass makes (its
 # own campaign and landing pages), so other clicks are untouched; it is
@@ -96,11 +99,18 @@ for path in "/tracking202/redirect/dl.php?t202id=$TD" "/tracking202/redirect/rtr
     before=$(errors)
     stored=$(clicks)
     answer=$(curl -s -o "$OUT/page" -w '%{http_code} %{redirect_url}' "$BASE$path")
-    eq "$answer" "500 " "$script answers 500 with no redirect, not a page a client reads as served"
-    if grep -q 'A database error has occurred, and it has been recorded' "$OUT/page"; then
-        ok "$script answers the database error page, saying it was recorded"
+    if [ "$script" = dl.php ]; then
+        case "$answer" in
+            "302 $U/offer?s="*) ok "$script keeps its redirect: the click is lost, not the visitor" ;;
+            *) bad "$script keeps its redirect to the offer (got '$answer')" ;;
+        esac
     else
-        bad "$script answers the database error page (got $(head -c 200 "$OUT/page"))"
+        eq "$answer" "500 " "$script answers 500 with no redirect, not a page a client reads as served"
+        if grep -q 'A database error has occurred, and it has been recorded' "$OUT/page"; then
+            ok "$script answers the database error page, saying it was recorded"
+        else
+            bad "$script answers the database error page (got $(head -c 200 "$OUT/page"))"
+        fi
     fi
     eq "$(errors)" "$((before + 1))" "$script records the error with the server's words, under the click"
     eq "$(clicks)" "$stored" "$script stores no row of the click"

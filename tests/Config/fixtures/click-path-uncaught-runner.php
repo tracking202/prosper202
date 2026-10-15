@@ -14,6 +14,9 @@
  *   query_after_redirect  a QueryException once Location is set and nothing
  *                         sent, as dl.php records its click after redirecting
  *   other_after_redirect  any other throw there
+ *   secret                any other throw, chained to a QueryException and a
+ *                         mysqli_sql_exception that quote a value, thrown
+ *                         from a call that was handed one
  *
  * Prints what reached record_mysql_error(), and at shutdown the response
  * code the request ends with.
@@ -24,10 +27,12 @@ declare(strict_types=1);
 [, $scenario] = $argv + [null, 'query'];
 
 require __DIR__ . '/../../../vendor/autoload.php';
+require __DIR__ . '/../../../202-config/mysql-error-args.php';
 require __DIR__ . '/lift-function.php';
 
 eval(lift_function(__DIR__ . '/../../../202-config/connect2.php', 'p202ClickPathUncaught'));
 eval(lift_function(__DIR__ . '/../../../202-config/functions-shared.php', 'p202UncaughtAt'));
+eval(lift_function(__DIR__ . '/../../../202-config/functions-shared.php', 'p202UncaughtLogLine'));
 // Evaluated, as the other runners declare their stand-ins.
 eval(<<<'PHP'
     function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
@@ -77,6 +82,17 @@ if (str_starts_with($scenario, 'query')) {
     throw new \Prosper202\Database\Exceptions\QueryException(
         "MySQL execute failed: Data too long for column 'site_url_address' at row 1 [errno 1406]"
     );
+}
+if ($scenario === 'secret') {
+    $lookUp = static function (string $value): never {
+        $server = new \mysqli_sql_exception("Incorrect integer value: 's3cr3t-sql' for column 'n' at row 1", 1366);
+        throw new \RuntimeException('the lookup failed', 0, new \Prosper202\Database\Exceptions\QueryException(
+            "MySQL execute failed: Duplicate entry 's3cr3t-msg' for key 'uk' [errno 1062]",
+            0,
+            $server
+        ));
+    };
+    $lookUp('s3cr3t-arg');
 }
 if ($scenario === 'other_after_output') {
     echo "PAGE STARTED\n";

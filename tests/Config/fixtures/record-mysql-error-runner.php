@@ -25,7 +25,10 @@ declare(strict_types=1);
  *   uncaught: (connect2.php) a repository's QueryException that nothing
  *       catches, ending at connect2.php's own p202ClickPathUncaught();
  *       the repository's call is printed as CALLED AT
- * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
+ * env:  P202_RME_REDIRECT=1 queues a redirect before the call, as dl.php
+ *       sets Location before it writes the click; the response code the
+ *       request ends with is printed as STATUS.
+ *       P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_RME_MARKER (the user id
  *       the recorded row carries, so the test can find it; below 2^24, and
  *       the request's address and URL are made from it, so no row an
  *       earlier run committed can answer this run's lookups)
@@ -52,6 +55,11 @@ declare(strict_types=1);
  */
 
 [$script, $file, $shape, $scenario] = $argv + [null, null, 'db', 'page'];
+
+// Held until the end, as a web response's body is until the page ends: the
+// CLI sends its headers with the first output, after which the page's status
+// cannot be set or read.
+ob_start();
 
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
 // The classes the bodies reach through connect.php's autoloader (VisitorIp,
@@ -345,6 +353,7 @@ if ($scenario === 'handed') {
 // one the runner asks (printed, so a recorder that saw nothing cannot pass),
 // and every later one was asked by the page.
 register_shutdown_function(static function () use ($conn, $other): void {
+    echo 'STATUS: ', var_export(http_response_code(), true), "\n";
     foreach ($conn->asked as $i => $query) {
         echo ($i === 0 ? 'ASKED FIRST: ' : 'ASKED BY THE PAGE: ') . $query . "\n";
     }
@@ -367,6 +376,9 @@ register_shutdown_function(static function () use ($conn, $other): void {
 
 $sql = 'SELECT nothing FROM p202_no_such_table_for_record_mysql_error';
 echo "BEFORE\n";
+if (getenv('P202_RME_REDIRECT') === '1') {
+    header('Location: https://offer.example/rme');
+}
 if ($shape === 'db') {
     $conn->query($sql) or record_mysql_error($conn);
 } elseif ($shape === 'db_sql') {
@@ -394,6 +406,7 @@ if ($shape === 'db') {
 } elseif ($shape === 'uncaught') {
     eval(lift_function((string) $file, 'p202ClickPathUncaught'));
     eval(lift_function($shared, 'p202UncaughtAt'));
+    eval(lift_function($shared, 'p202UncaughtLogLine'));
     set_exception_handler('p202ClickPathUncaught');
     $keywords = new \Prosper202\Repository\Mysql\MysqlTrackingRepository(new \Prosper202\Database\Connection($conn));
     echo 'CALLED AT: ', __LINE__ + 1, "\n";

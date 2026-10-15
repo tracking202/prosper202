@@ -17,6 +17,11 @@ function getAuth($db, $variables): mixed {
 		return legacy_api_database_error($db);
 	}
 	$key_row = $key_result->fetch_assoc();
+    // A failed fetch is false; read as no row, the key would be refused as
+    // the wrong thing (a deactivated account).
+    if ($key_row === false) {
+        return legacy_api_database_error($db);
+    }
 
 	if($key_result->num_rows > 0) {
 
@@ -45,6 +50,13 @@ function getAuth($db, $variables): mixed {
 			return legacy_api_database_error($db);
 		}
 		$user_row = $user_result->fetch_assoc();
+        // A failed fetch read as no row answered every report in UTC.
+        if ($user_row === false) {
+            return legacy_api_database_error($db);
+        }
+        if ($user_row === null) {
+            return ['msg' => 'Unauthorized', 'error' => true, 'status' => 401];
+        }
 		return [
 			'msg' => 'Authorized',
 			'error' => false,
