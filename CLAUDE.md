@@ -87,7 +87,12 @@ with no `else`, which the first draft counted as tested because the call
 sat in the condition (found by review): the redirector removal nested three
 of them, and a refused second delete stopped it half way with nothing said.
 A call in a condition is tested only where the branch its false takes
-refuses (#21: naming a thing is not being guarded by it).
+refuses (#21: naming a thing is not being guarded by it). And a refusal
+that only says so — `$error[...]`, a 'bad' flash — carries on past the
+if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
+the false it had just reported (found by review): such a branch counts
+only when nothing reads the result on the path it goes on to, after the
+if or from the top of a loop around it (#22).
 
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died

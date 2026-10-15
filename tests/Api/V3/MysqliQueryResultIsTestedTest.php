@@ -36,7 +36,11 @@ use Tests\TestCase;
  * (`die`, `exit`, a call declared `never`: `record_mysql_error()`,
  * `p202_account_redirect()`), returns the legacy API's database error, says
  * so to the person (`p202_account_flash('bad', ...)`), or files the page's
- * form error (`$error[...] = ...`). A bare `return`, `continue` or `break`
+ * form error (`$error[...] = ...`). The last two carry on past the if, so a
+ * result with a name is tested by them only when nothing reads it on that
+ * path: after the if chain to the end of its scope (unless the whole
+ * variable is assigned again directly in a block the path is in), or from
+ * the top of a loop around it. A bare `return`, `continue` or `break`
  * hands the failure on as an answer, so it is a fold; so is a condition with
  * no else, which goes on past the failure (`if (_mysqli_query($sql)) {
  * ... }` stopped a redirector's removal half way without a word), a call
@@ -319,6 +323,84 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         yield 'refusal only nested' => ["\$r = $q; if (!\$r) { if (\$strict) { throw new E(); } }", 'folded'];
         yield 'joined to another condition' => ["\$r = $q; if (\$r === false || \$skip) { throw new E(); }", 'folded'];
         yield 'loose' => ["\$r = $q; if (\$r == false) { throw new E(); }", 'folded'];
+        yield 'a form error, read after the if' => [
+            "\$r = $q; if (\$r === false) { \$error['db'] = 'x'; } \$r->fetch_assoc();",
+            'unread',
+        ];
+        yield 'a form error, read in the else' => [
+            "\$r = $q; if (\$r === false) { \$error['db'] = 'x'; } else { \$r->fetch_assoc(); } done();",
+            'tested',
+        ];
+        yield 'a form error, read in an elseif' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } elseif (\$r->num_rows) { a(); } else { b(\$r); }",
+            'tested',
+        ];
+        yield 'a form error, read after an else if' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } else if (\$c) { a(\$r); } else { b(); } \$r->c();",
+            'unread',
+        ];
+        yield 'a form error, an else that is a switch, read after' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } else switch (\$c) { case 1: a(); } \$r->c();",
+            'unread',
+        ];
+        yield 'a form error, an else that is a loop, read after' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } else foreach (\$a as \$x) { b(); } \$r->c();",
+            'unread',
+        ];
+        yield 'a form error in alternative syntax, which is not read as refusing' => [
+            "\$r = $q; if (!\$r): \$error['x'] = 1; else: a(\$r); endif;",
+            'folded',
+        ];
+        yield 'a form error, braceless, read after' => ["\$r = $q; if (!\$r) \$error['x'] = 1; \$r->c();", 'unread'];
+        yield 'a form error and a die' => ["\$r = $q; if (!\$r) { \$error['x'] = 1; die(); } \$r->c();", 'tested'];
+        yield 'a form error, assigned again' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } \$r = b(); \$r->c();",
+            'tested',
+        ];
+        yield 'a form error, assigned again in a branch' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } if (\$c) { \$r = b(); } \$r->c();",
+            'unread',
+        ];
+        yield 'a form error, read after the block' => [
+            "if (\$c) { \$r = $q; if (!\$r) { \$error['x'] = 1; } } \$r->c();",
+            'unread',
+        ];
+        yield 'a form error in a loop, read at its top' => [
+            "foreach (\$a as \$x) { if (\$r) { \$r->c(); } \$r = $q; if (!\$r) { \$error['x'] = 1; } }",
+            'unread',
+        ];
+        yield 'a form error in a while loop, read at its top' => [
+            "while (\$x) { b(\$r); \$r = $q; if (!\$r) { \$error['x'] = 1; } }",
+            'unread',
+        ];
+        yield 'a form error in a do loop, read at its top' => [
+            "do { b(\$r); \$r = $q; if (!\$r) { \$error['x'] = 1; } } while (\$x);",
+            'unread',
+        ];
+        yield 'a form error in an alternative-syntax loop, read at its top' => [
+            "foreach (\$a as \$x): b(\$r); \$r = $q; if (!\$r) { \$error['x'] = 1; } endforeach;",
+            'unread',
+        ];
+        yield 'a form error in a loop, read only in it before' => [
+            "\$r = 1; foreach (\$a as \$x) { \$y = $q; if (!\$y) { \$error['x'] = 1; } }",
+            'tested',
+        ];
+        yield 'a form error, captured by a closure after' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } \$f = function () use (\$r) { return 1; };",
+            'unread',
+        ];
+        yield 'a form error, read in a closure declared after' => [
+            "\$r = $q; if (!\$r) { \$error['x'] = 1; } \$f = function (\$r) { return \$r; };",
+            'tested',
+        ];
+        yield 'a bad flash in an else, assigned in the condition, read after' => [
+            "if (\$r = $q) { a(); } else { p202_account_flash('bad', 'x'); } \$r->c();",
+            'unread',
+        ];
+        yield 'a bad flash, nothing to read' => [
+            "if ($q) { a(); } else { p202_account_flash('bad', 'x'); } \$r->c();",
+            'tested',
+        ];
     }
 
     /** @dataProvider shapes */
@@ -409,17 +491,16 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             if ($tokens[$opener - 1]->is(T_WHILE)) {
                 return ['folded', 'a loop on it ends on its failure as on its last row'];
             }
+            $named = $assigned ? $tokens[$start]->text : null;
             if (in_array($condition, ['! Q', '! ( Q )', 'Q === false', 'false === Q'], true)) {
-                return self::branchRefuses($tokens, $closer + 1)
-                    ? ['tested', '']
-                    : ['folded', 'the branch that tests it for failure refuses nothing at its own level'];
+                return self::refusal($tokens, $bodies, $closer + 1, $named, $start)
+                    ?? ['folded', 'the branch that tests it for failure refuses nothing at its own level'];
             }
             if (in_array($condition, ['Q', '( Q )', 'Q !== false', 'false !== Q'], true)) {
                 $else = self::elseBranch($tokens, $closer + 1);
 
-                return $else !== null && self::branchRefuses($tokens, $else)
-                    ? ['tested', '']
-                    : ['folded', 'its failure falls through: no else refuses when it answers false'];
+                return ($else !== null ? self::refusal($tokens, $bodies, $else, $named, $start) : null)
+                    ?? ['folded', 'its failure falls through: no else refuses when it answers false'];
             }
             $before = $tokens[$start - 1];
             $next = $after?->text;
@@ -438,19 +519,20 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             return ['unread', 'its answer is handed on, not assigned and tested'];
         }
 
-        return self::firstRead($tokens, $bodies, $tokens[$call - 2]->text, $close + 1);
+        return self::firstRead($tokens, $bodies, $call - 2, $close + 1);
     }
 
     /**
-     * How the first appearance of $variable after $from, in the same
-     * function, reads it.
+     * How the first appearance of the variable assigned at $variableAt,
+     * after $from, in the same function, reads it.
      *
      * @param list<PhpToken> $tokens
      * @param list<array{int, int, string}> $bodies
      * @return array{string, string}
      */
-    private static function firstRead(array $tokens, array $bodies, string $variable, int $from): array
+    private static function firstRead(array $tokens, array $bodies, int $variableAt, int $from): array
     {
+        $variable = $tokens[$variableAt]->text;
         [$scopeStart, $scopeEnd] = self::scopeOf($bodies, $from, count($tokens));
         for ($k = $from + 1; $k < $scopeEnd; $k++) {
             foreach ($bodies as [$start, $end]) {
@@ -480,9 +562,8 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             if ($isCondition) {
                 $closer = self::closing($tokens, $opener);
                 if (self::isFailureTest(array_slice($tokens, $opener + 1, $closer - $opener - 1), $variable)) {
-                    return self::branchRefuses($tokens, $closer + 1)
-                        ? ['tested', '']
-                        : ['folded', "the branch that tests $variable for failure refuses nothing at its own level"];
+                    return self::refusal($tokens, $bodies, $closer + 1, $variable, $variableAt)
+                        ?? ['folded', "the branch that tests $variable for failure refuses nothing at its own level"];
                 }
             }
 
@@ -565,17 +646,47 @@ final class MysqliQueryResultIsTestedTest extends TestCase
     }
 
     /**
+     * How the failure branch at $at refuses, as a site's kind, or null when
+     * it refuses nothing. A branch that ends the request answers tested. One
+     * that only says so (files `$error[...]`, flashes 'bad') carries on past
+     * the if, so a result with a name is tested only when nothing reads it on
+     * that path (CLAUDE.md #22): after the if, to the end of its scope, or
+     * from the top of a loop it sits in, on the loop's next turn.
+     *
+     * @param list<PhpToken> $tokens
+     * @param list<array{int, int, string}> $bodies
+     * @return array{string, string}|null
+     */
+    private static function refusal(array $tokens, array $bodies, int $at, ?string $variable, int $assignedAt): ?array
+    {
+        $how = self::branchRefuses($tokens, $at);
+        if ($how === 'none') {
+            return null;
+        }
+        if ($how === 'ends' || $variable === null) {
+            return ['tested', ''];
+        }
+        $read = self::readAfterSaying($tokens, $bodies, $variable, $assignedAt, self::chainEnd($tokens, $at));
+
+        return $read === null
+            ? ['tested', '']
+            : ['unread', "$variable is read on line $read after a failure that only says so and carries on"];
+    }
+
+    /**
      * Whether the branch starting at $at (a block, or one statement) holds,
-     * at its own top level, a statement that refuses.
+     * at its own top level, a statement that ends the request ('ends'), only
+     * one that says so ('says'), or neither ('none').
      *
      * @param list<PhpToken> $tokens
      */
-    private static function branchRefuses(array $tokens, int $at): bool
+    private static function branchRefuses(array $tokens, int $at): string
     {
         $braced = ($tokens[$at]->text ?? '') === '{';
         $end = $braced ? self::closing($tokens, $at) : self::statementEnd($tokens, $at);
         $statementStart = true;
         $depth = 0;
+        $says = false;
         for ($k = $braced ? $at + 1 : $at; $k < $end; $k++) {
             $token = $tokens[$k];
             if ($depth === 0 && $statementStart) {
@@ -587,10 +698,14 @@ final class MysqliQueryResultIsTestedTest extends TestCase
                     $token->is(self::REFUSALS)
                     || in_array(SourceScan::callableName($token->id, $token->text), self::REFUSING_CALLS, true)
                     || $returnsAnError
-                    || ($token->is(T_VARIABLE) && $token->text === '$error' && ($tokens[$k + 1]->text ?? '') === '[')
+                ) {
+                    return 'ends';
+                }
+                if (
+                    ($token->is(T_VARIABLE) && $token->text === '$error' && ($tokens[$k + 1]->text ?? '') === '[')
                     || self::flashesBad($tokens, $k)
                 ) {
-                    return true;
+                    $says = true;
                 }
             }
             if (self::opens($token)) {
@@ -599,6 +714,247 @@ final class MysqliQueryResultIsTestedTest extends TestCase
                 $depth--;
             }
             $statementStart = $depth === 0 && in_array($token->text, [';', '}'], true);
+        }
+
+        return $says ? 'says' : 'none';
+    }
+
+    /**
+     * Where the if/elseif/else chain whose branch starts at $at ends: the
+     * last token of its last branch. A branch whose end cannot be read here
+     * (alternative syntax, a braceless try or do) ends where it starts, so
+     * what it holds is read as after the chain.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function chainEnd(array $tokens, int $at): int
+    {
+        while (true) {
+            $end = self::branchEnd($tokens, $at);
+            $next = $tokens[$end + 1] ?? null;
+            if ($end > $at && $next !== null && $next->is(T_ELSEIF)) {
+                $at = self::closing($tokens, $end + 2) + 1;
+                continue;
+            }
+            if ($end > $at && $next !== null && $next->is(T_ELSE)) {
+                return self::branchEnd($tokens, $end + 2);
+            }
+
+            return $end;
+        }
+    }
+
+    /** @param list<PhpToken> $tokens */
+    private static function branchEnd(array $tokens, int $at): int
+    {
+        $first = $tokens[$at] ?? null;
+        if ($first === null) {
+            return $at;
+        }
+        if ($first->text === '{') {
+            return self::closing($tokens, $at);
+        }
+        if ($first->is(T_IF)) {
+            return self::chainEnd($tokens, self::closing($tokens, $at + 1) + 1);
+        }
+        if ($first->is([T_FOR, T_FOREACH, T_WHILE, T_SWITCH])) {
+            $body = self::closing($tokens, $at + 1) + 1;
+
+            return $first->is(T_SWITCH) ? self::closing($tokens, $body) : self::branchEnd($tokens, $body);
+        }
+        if ($first->text === ':' || $first->is([T_TRY, T_DO])) {
+            return $at;
+        }
+
+        return self::statementEnd($tokens, $at);
+    }
+
+    /**
+     * The line of the first appearance of $variable on the path a failure
+     * that only says so goes on to: from the end of its if chain to the end
+     * of its scope, stopping at an assignment of the whole variable made
+     * directly in a block the path is in, and from the top of the outermost
+     * loop around the assignment up to it. Null when there is none.
+     *
+     * @param list<PhpToken> $tokens
+     * @param list<array{int, int, string}> $bodies
+     */
+    private static function readAfterSaying(
+        array $tokens,
+        array $bodies,
+        string $variable,
+        int $assignedAt,
+        int $chainEnd
+    ): ?int {
+        [$scopeStart, $scopeEnd] = self::scopeOf($bodies, $assignedAt, count($tokens));
+        $loop = self::loopAround($tokens, $scopeStart, $assignedAt);
+        if ($loop !== null) {
+            $line = self::appearance($tokens, $variable, $loop, $assignedAt);
+            if ($line !== null) {
+                return $line;
+            }
+        }
+        $depth = 0;
+        $floor = 0;
+        for ($k = $chainEnd + 1; $k < $scopeEnd; $k++) {
+            if ($tokens[$k]->is(T_FUNCTION)) {
+                [$k, $captured] = self::pastFunction($tokens, $k, $variable);
+                if ($captured !== null) {
+                    return $captured;
+                }
+                continue;
+            }
+            $token = $tokens[$k];
+            if (self::opens($token)) {
+                $depth++;
+            } elseif (in_array($token->text, [')', ']', '}'], true)) {
+                $depth--;
+                $floor = min($floor, $depth);
+            }
+            if (!$token->is(T_VARIABLE) || $token->text !== $variable) {
+                continue;
+            }
+            if ($depth === $floor && ($tokens[$k + 1]->text ?? '') === '=' && self::startsStatement($tokens, $k)) {
+                return null;
+            }
+
+            return $token->line;
+        }
+
+        return null;
+    }
+
+    /**
+     * The line of $variable's first appearance in [$from, $to), outside the
+     * functions declared there (a closure's `use` of it counts), or null.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function appearance(array $tokens, string $variable, int $from, int $to): ?int
+    {
+        for ($k = $from; $k < $to; $k++) {
+            if ($tokens[$k]->is(T_FUNCTION)) {
+                [$k, $captured] = self::pastFunction($tokens, $k, $variable);
+                if ($captured !== null) {
+                    return $captured;
+                }
+                continue;
+            }
+            if ($tokens[$k]->is(T_VARIABLE) && $tokens[$k]->text === $variable) {
+                return $tokens[$k]->line;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Past a function declared at $k (its parameters are its own, and so is
+     * its body): [the index of its body's `}`, the line of a `use` of
+     * $variable, which captures it, or null].
+     *
+     * @param list<PhpToken> $tokens
+     * @return array{int, int|null}
+     */
+    private static function pastFunction(array $tokens, int $k, string $variable): array
+    {
+        $count = count($tokens);
+        $depth = 0;
+        $captured = null;
+        for ($j = $k + 1; $j < $count; $j++) {
+            $text = $tokens[$j]->text;
+            if ($text === '(') {
+                $depth++;
+            } elseif ($text === ')') {
+                $depth--;
+            } elseif ($depth === 0 && $text === ';') {
+                // No body: a declaration only.
+                return [$j, null];
+            } elseif ($depth === 0 && $text === '{') {
+                return [self::closing($tokens, $j), $captured];
+            } elseif (
+                $captured === null
+                && $tokens[$j]->is(T_VARIABLE)
+                && $text === $variable
+                && self::inUse($tokens, $k, $j)
+            ) {
+                $captured = $tokens[$j]->line;
+            }
+        }
+
+        return [$count, $captured];
+    }
+
+    /**
+     * Whether the variable at $j, in the head of the function declared at
+     * $k, is in its `use (...)`.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function inUse(array $tokens, int $k, int $j): bool
+    {
+        for ($u = $k; $u < $j; $u++) {
+            if ($tokens[$u]->is(T_USE)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Where the body of the outermost loop around $at in its scope opens, or
+     * null when it is in none: a `{` after `for (…)`, `foreach (…)`,
+     * `while (…)` or `do`, or the `:` of their alternative syntax.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function loopAround(array $tokens, int $scopeStart, int $at): ?int
+    {
+        $braces = [];
+        $alternative = [];
+        for ($k = $scopeStart + 1; $k < $at; $k++) {
+            $token = $tokens[$k];
+            if ($token->text === '{' || $token->is([T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
+                $braces[] = [$k, $token->text === '{' && self::afterALoopHead($tokens, $k)];
+            } elseif ($token->text === '}') {
+                array_pop($braces);
+            } elseif ($token->text === ':' && self::afterALoopHead($tokens, $k)) {
+                $alternative[] = $k;
+            } elseif ($token->is([T_ENDFOR, T_ENDFOREACH, T_ENDWHILE])) {
+                array_pop($alternative);
+            }
+        }
+        $opens = array_merge(array_column(array_filter($braces, static fn (array $b): bool => $b[1]), 0), $alternative);
+
+        return $opens === [] ? null : min($opens);
+    }
+
+    /**
+     * Whether the token at $k follows a loop's head: `do`, or the `)` that
+     * closes `for (`, `foreach (` or `while (`.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function afterALoopHead(array $tokens, int $k): bool
+    {
+        $prev = $tokens[$k - 1] ?? null;
+        if ($prev === null) {
+            return false;
+        }
+        if ($prev->is(T_DO)) {
+            return true;
+        }
+        if ($prev->text !== ')') {
+            return false;
+        }
+        $depth = 0;
+        for ($j = $k - 1; $j >= 0; $j--) {
+            if ($tokens[$j]->text === ')') {
+                $depth++;
+            } elseif ($tokens[$j]->text === '(' && --$depth === 0) {
+                return ($tokens[$j - 1] ?? null)?->is([T_FOR, T_FOREACH, T_WHILE]) ?? false;
+            }
         }
 
         return false;

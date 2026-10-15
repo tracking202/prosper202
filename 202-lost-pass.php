@@ -18,13 +18,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
 	$user_result = _mysqli_query($db, $user_sql);
+    $user_row = null;
     if ($user_result === false) {
         // Said before anything is known of the account, so it tells nobody
         // whether one matches; read as no row, the page promised an email
         // that was never sent.
         $error['user'] = 'Your request could not be processed just now. Please try again in a moment.';
+    } else {
+        $user_row = p202FetchRow($user_result, $user_sql);
     }
-    $user_row = $user_result instanceof mysqli_result ? p202FetchRow($user_result, $user_sql) : null;
 
 	// Always report success regardless of whether the account exists. Revealing
 	// "invalid username/email combination" lets an attacker enumerate which
