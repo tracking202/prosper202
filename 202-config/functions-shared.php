@@ -8,8 +8,9 @@
  * Only function definitions: loading this runs nothing. Whoever loads it
  * loads mysql-error-args.php too (the error page's helpers).
  *
- * What still differs between the two is asked of p202OnTheClickPath(), in
- * the one place it matters (the error page's address and footer).
+ * What still differs between the two is asked of p202OnTheClickPath(): the
+ * error page's address and footer, and how long a cached read keeps its
+ * answer.
  */
 
 declare(strict_types=1);
@@ -299,7 +300,8 @@ function memcache_mysql_fetch_assoc(mixed ...$args): ?array
     if (($args[0] ?? null) instanceof \mysqli_result) {
         return p202FetchRow($args[0], '(a result handed in)');
     }
-    [$connection, $sql, $allowCaching, $minutes] = p202CachedReadArgs(array_values($args), 3);
+    $default = p202CachedReadMinutes(false);
+    [$connection, $sql, $allowCaching, $minutes] = p202CachedReadArgs(array_values($args), $default);
 
     return p202CachedRead(
         $connection,
@@ -318,7 +320,8 @@ function memcache_mysql_fetch_assoc(mixed ...$args): ?array
  */
 function foreach_memcache_mysql_fetch_assoc(mixed ...$args): array
 {
-    [$connection, $sql, $allowCaching, $minutes] = p202CachedReadArgs(array_values($args), 5);
+    $default = p202CachedReadMinutes(true);
+    [$connection, $sql, $allowCaching, $minutes] = p202CachedReadArgs(array_values($args), $default);
 
     return p202CachedRead(
         $connection,
@@ -335,6 +338,21 @@ function foreach_memcache_mysql_fetch_assoc(mixed ...$args): array
         static fn (mixed $kept): bool => is_array($kept) && array_is_list($kept)
             && array_filter($kept, static fn (mixed $row): bool => !p202IsRow($row)) === [],
     );
+}
+
+/**
+ * How long a cached read keeps its answer when its caller names no time, as
+ * each bootstrap's own copy kept it: on the click path 3 minutes for a row
+ * and 1 for a list (a redirector's rules and criteria, so an edit in Setup
+ * reaches its clicks within the minute), on the pages 5 for both.
+ */
+function p202CachedReadMinutes(bool $list): int
+{
+    if (p202OnTheClickPath()) {
+        return $list ? 1 : 3;
+    }
+
+    return 5;
 }
 
 /**
