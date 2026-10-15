@@ -165,13 +165,17 @@ function reportDimensionJoin(string $type): string
 
 /**
  * A report statement the server refused: logged for the operator, and
- * answered as the API's error envelope rather than an HTML error page.
+ * answered as the API's error envelope rather than an HTML error page, under
+ * the status the envelope names, which a client reads before the body.
  *
  * @return array{msg: string, error: true, status: int}
  */
 function legacy_api_database_error(mysqli $db): array
 {
     error_log('Legacy report API: a report query failed: ' . $db->errno . ' ' . $db->error);
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
 
     return ['msg' => 'Database error', 'error' => true, 'status' => 500];
 }
@@ -311,7 +315,11 @@ function reportQuery(
     }
     $rows = $report_result->num_rows;
     if ($rows > 0) {
-        while ($report_row = $report_result->fetch_assoc()) {
+        // A fetch that fails is false, which a bare loop reads as the last row.
+        while (($report_row = $report_result->fetch_assoc()) !== null) {
+            if ($report_row === false) {
+                return legacy_api_database_error($db);
+            }
             $click_sql = "SELECT 
 							COUNT(*) AS clicks,
 							AVG(2c.click_cpc) AS avg_cpc,
@@ -401,6 +409,10 @@ function reportQuery(
                 return legacy_api_database_error($db);
             }
             $click_row = $click_result->fetch_assoc();
+            if (!is_array($click_row)) {
+                // COUNT(*) always answers a row: none is a fetch that failed.
+                return legacy_api_database_error($db);
+            }
             $country_code = '';
 
             //get the stats
