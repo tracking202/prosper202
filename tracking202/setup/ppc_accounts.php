@@ -25,7 +25,7 @@ $user_results = $db->query($user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
 }
-$user_row = $user_results->fetch_assoc();
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -48,9 +48,9 @@ if ($ppc_pixel_type_result === false) {
 
 // pixel_type_id => name, unescaped, for the Slack messages.
 $pixelTypeNames = [];
-while ($ppc_pixel_type_row = $ppc_pixel_type_result->fetch_assoc()) {
-	$pixel_types[] = ['pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8')];
-	$pixelTypeNames[(int) ($ppc_pixel_type_row['pixel_type_id'] ?? 0)] = (string) ($ppc_pixel_type_row['pixel_type'] ?? '');
+while (($ppc_pixel_type_row = p202FetchRow($ppc_pixel_type_result, $ppc_pixel_type_sql)) !== null) {
+    $pixel_types[] = ['pixel_type' => htmlentities((string)($ppc_pixel_type_row['pixel_type'] ?? ''), ENT_QUOTES, 'UTF-8'), 'pixel_type_id' => htmlentities((string)($ppc_pixel_type_row['pixel_type_id'] ?? ''), ENT_QUOTES, 'UTF-8')];
+    $pixelTypeNames[(int) ($ppc_pixel_type_row['pixel_type_id'] ?? 0)] = (string) ($ppc_pixel_type_row['pixel_type'] ?? '');
 }
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -184,13 +184,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$error['wrong_user'] = ($error['wrong_user'] ?? '') . 'You are not authorized to modify another user\'s traffic source account';
 				}
 
-				$ppc_old_account_row = $ppc_account_result->fetch_assoc();
+                $ppc_old_account_row = p202FetchRow($ppc_account_result, $ppc_account_sql);
 			}
 		}
 
 		if (empty($error)) {
 
-			$ppc_network_row = $ppc_network_result->fetch_assoc();
+            $ppc_network_row = p202FetchRow($ppc_network_result, $ppc_network_sql);
 			$mysql['ppc_network_id'] = $db->real_escape_string((string)($_POST['ppc_network_id'] ?? ''));
 			$mysql['ppc_account_name'] = $db->real_escape_string((string)$_POST['ppc_account_name']);
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
@@ -369,7 +369,7 @@ if (!empty($_GET['edit_ppc_network_id'])) {
     if ($ppc_network_result === false) {
         record_mysql_error($ppc_network_sql);
     }
-	$ppc_network_row = $ppc_network_result->fetch_assoc() ?? [];
+    $ppc_network_row = p202FetchRow($ppc_network_result, $ppc_network_sql) ?? [];
 
 	$html['ppc_network_name'] = htmlentities((string)($ppc_network_row['ppc_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 	$autocomplete_ppc_network_name =  $html['ppc_network_name'];
@@ -388,7 +388,7 @@ if (!empty($_GET['edit_ppc_account_id'])) {
     if ($ppc_account_result === false) {
         record_mysql_error($ppc_account_sql);
     }
-	$ppc_account_row = $ppc_account_result->fetch_assoc() ?? [];
+    $ppc_account_row = p202FetchRow($ppc_account_result, $ppc_account_sql) ?? [];
 
 	$selected['ppc_network_id'] = $ppc_account_row['ppc_network_id'] ?? '';
 	$html['ppc_account_name'] = htmlentities((string)($ppc_account_row['ppc_account_name'] ?? ''), ENT_QUOTES, 'UTF-8');
