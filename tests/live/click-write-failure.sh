@@ -86,6 +86,8 @@ mysql "${MYSQL_ARGS[@]}" -N --delimiter='//' "$DB" -e "CREATE TRIGGER $TRIGGER B
    END IF" || { echo "could not create the trigger" >&2; exit 2; }
 
 errors() { Q "SELECT COUNT(*) FROM 202_mysql_errors WHERE mysql_error_text LIKE '%refused by the click write failure pass%' AND mysql_error_sql LIKE 'recording%click%'"; }
+# Counted before and after each request: a pass that truncates the setup
+# tables hands their ids out again, and the clicks stored under them stay.
 clicks() { Q "SELECT COUNT(*) FROM 202_clicks WHERE aff_campaign_id = $CA OR landing_page_id IN ($LS, $LA)"; }
 
 for path in "/tracking202/redirect/dl.php?t202id=$TD" "/tracking202/redirect/rtr.php?t202id=$TR" \
@@ -93,6 +95,7 @@ for path in "/tracking202/redirect/dl.php?t202id=$TD" "/tracking202/redirect/rtr
     script=${path%%\?*}
     script=${script##*/}
     before=$(errors)
+    stored=$(clicks)
     get "$path" >/dev/null
     if grep -q 'A database error has occurred, and it has been recorded' "$OUT/page"; then
         ok "$script answers the database error page, saying it was recorded"
@@ -100,7 +103,7 @@ for path in "/tracking202/redirect/dl.php?t202id=$TD" "/tracking202/redirect/rtr
         bad "$script answers the database error page (got $(head -c 200 "$OUT/page"))"
     fi
     eq "$(errors)" "$((before + 1))" "$script records the error with the server's words, under the click"
-    eq "$(clicks)" "0" "$script stores no row of the click"
+    eq "$(clicks)" "$stored" "$script stores no row of the click"
     id=$(Q "SELECT mysql_error_sql FROM 202_mysql_errors ORDER BY mysql_error_id DESC LIMIT 1" | grep -oE '[0-9]+$')
     rows=0
     for table in 202_clicks_advance 202_clicks_record 202_clicks_site 202_clicks_tracking 202_clicks_spy; do
