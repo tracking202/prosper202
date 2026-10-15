@@ -92,7 +92,10 @@ that only says so — `$error[...]`, a 'bad' flash — carries on past the
 if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
 the false it had just reported (found by review): such a branch counts
 only when nothing reads the result on the path it goes on to, after the
-if or from the top of a loop around it (#22).
+if or from the top of a loop around it (#22). The test itself has to run
+whenever the assignment did: the first draft took the first appearance in
+source order, so a test inside one branch of an `if`, or in an `elseif`,
+vouched for the other branch's use of the false (found by review).
 
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died

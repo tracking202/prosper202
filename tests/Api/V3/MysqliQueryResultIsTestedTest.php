@@ -28,9 +28,14 @@ use Tests\TestCase;
  *    `else` refuses;
  *  - or it is assigned, `$r = _mysqli_query(...);` as a statement of its
  *    own, and the first appearance of `$r` after it, in the same function,
- *    is the whole condition of an `if`/`elseif` testing it for failure
- *    (`!$r`, `$r === false`, `false === $r`, `!$r instanceof mysqli_result`,
- *    `!($r instanceof mysqli_result)`), whose branch refuses.
+ *    is the whole condition of an `if` testing it for failure (`!$r`,
+ *    `$r === false`, `false === $r`, `!$r instanceof mysqli_result`,
+ *    `!($r instanceof mysqli_result)`), whose branch refuses. That `if` is
+ *    a statement of its own that runs whenever the assignment did: in the
+ *    assignment's block, or one around it reached without leaving a loop
+ *    (after a `try`, say). One inside a branch, in an `elseif`, after an
+ *    `else` or a `case` label, or after the loop that assigned it tests one
+ *    path, and is reported.
  *
  * A branch refuses at its own top level: it throws, ends the request
  * (`die`, `exit`, a call declared `never`: `record_mysql_error()`,
@@ -58,8 +63,7 @@ use Tests\TestCase;
  *
  * Not read: a result reached through a variable that names no
  * `_mysqli_query()` (a call through `call_user_func()`, a wrapper that
- * returns its answer). The first appearance is found in source order, so a
- * test written in one branch of an `if` reads as the test for the other.
+ * returns its answer).
  */
 final class MysqliQueryResultIsTestedTest extends TestCase
 {
@@ -285,7 +289,36 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             "\$r = $q; if (\$r === false) { \$error['x'] = 'y'; } elseif (\$r->num_rows) { a(); }",
             'tested',
         ];
-        yield 'elseif' => ["\$r = $q; if (\$a) { b(); } elseif (\$r === false) { throw new E(); }", 'tested'];
+        yield 'elseif' => ["\$r = $q; if (\$a) { b(); } elseif (\$r === false) { throw new E(); }", 'unread'];
+        yield 'tested in one branch, used in the other' => [
+            "\$r = $q; if (\$a) { if (!\$r) { throw new E(); } } else { \$r->c(); }",
+            'unread',
+        ];
+        yield 'tested in a braceless branch' => [
+            "\$r = $q; if (\$a) if (!\$r) { throw new E(); } \$r->c();",
+            'unread',
+        ];
+        yield 'tested after a case label' => [
+            "switch (\$a) { case 1: b(); \$r = $q; case 2: if (!\$r) { throw new E(); } }",
+            'unread',
+        ];
+        yield 'tested after the loop that assigned it' => [
+            "foreach (\$a as \$x) { \$r = $q; } if (!\$r) { throw new E(); }",
+            'unread',
+        ];
+        yield 'tested after an alternative-syntax loop' => [
+            "foreach (\$a as \$x): b(); \$r = $q; endforeach; if (!\$r) { throw new E(); }",
+            'unread',
+        ];
+        yield 'tested after a do loop' => ["do { \$r = $q; } while (\$a); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'tested after the if that assigned it' => [
+            "if (\$a) { \$r = $q; } if (!\$r) { throw new E(); }",
+            'tested',
+        ];
+        yield 'tested after a block of markup' => [
+            "\$r = $q; ?>\n<p>x</p>\n<?php if (!\$r) { throw new E(); }",
+            'tested',
+        ];
         yield 'in a try, tested after it' => [
             "try { \$r = $q; } catch (E \$e) { throw \$e; } if (\$r === false) { throw new E(); }",
             'tested',
@@ -562,6 +595,15 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             if ($isCondition) {
                 $closer = self::closing($tokens, $opener);
                 if (self::isFailureTest(array_slice($tokens, $opener + 1, $closer - $opener - 1), $variable)) {
+                    if (
+                        !$tokens[$opener - 1]->is(T_IF)
+                        || !self::startsStatement($tokens, $opener - 1)
+                        || !self::runsOnEveryPathFrom($tokens, $from, $opener - 1)
+                    ) {
+                        return ['unread', "$variable is tested for failure on one path only: the test is not an if"
+                            . ' of its own that runs whenever the assignment did'];
+                    }
+
                     return self::refusal($tokens, $bodies, $closer + 1, $variable, $variableAt)
                         ?? ['folded', "the branch that tests $variable for failure refuses nothing at its own level"];
                 }
@@ -579,6 +621,56 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         }
 
         return ['unread', "$variable is never read"];
+    }
+
+    /**
+     * Whether a statement at $at runs on every path from $from: it is not
+     * inside a block opened after $from, and no loop body around $from has
+     * closed between them (a test after the loop reads only its last turn).
+     * Leaving any other block (an if's, a try's) keeps every path.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function runsOnEveryPathFrom(array $tokens, int $from, int $at): bool
+    {
+        $depth = 0;
+        $floor = 0;
+        $alternative = 0;
+        for ($k = $from; $k < $at; $k++) {
+            $token = $tokens[$k];
+            if (self::opens($token)) {
+                $depth++;
+            } elseif (in_array($token->text, [')', ']', '}'], true)) {
+                $depth--;
+                if ($depth < $floor) {
+                    $floor = $depth;
+                    if ($token->text === '}' && self::afterALoopHead($tokens, self::opening($tokens, $k))) {
+                        return false;
+                    }
+                }
+            } elseif ($token->text === ':' && self::afterALoopHead($tokens, $k)) {
+                $alternative++;
+            } elseif ($token->is([T_ENDFOR, T_ENDFOREACH, T_ENDWHILE]) && --$alternative < 0) {
+                return false;
+            }
+        }
+
+        return $depth === $floor && $alternative === 0;
+    }
+
+    /** @param list<PhpToken> $tokens */
+    private static function opening(array $tokens, int $close): int
+    {
+        $depth = 0;
+        for ($k = $close; $k >= 0; $k--) {
+            if (in_array($tokens[$k]->text, [')', ']', '}'], true)) {
+                $depth++;
+            } elseif (self::opens($tokens[$k]) && --$depth === 0) {
+                return $k;
+            }
+        }
+
+        return 0;
     }
 
     /**
@@ -987,7 +1079,7 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         $prev = $tokens[$at - 1] ?? null;
 
         return $prev === null
-            || $prev->is([T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO])
+            || $prev->is([T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO, T_CLOSE_TAG, T_INLINE_HTML])
             || in_array($prev->text, [';', '{', '}'], true);
     }
 

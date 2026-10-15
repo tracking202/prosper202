@@ -58,11 +58,36 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 		if ($editing == true) {
-			// scope rename to the acting user's own rotator
-			$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['rotator_id'] ?? ''));
-			$sql = "UPDATE 202_rotators SET name='" . $mysql['rotator_name'] . "' WHERE id='" . $mysql['rotator_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
-            if ($db->query($sql) === false) {
-                record_mysql_error($sql);
+            // Renamed only when it is the account's own. The UPDATE named the
+            // account, so another account's redirector, or one removed, was
+            // left as it was while the page said it had been renamed.
+            $rawRenameId = $_POST['rotator_id'] ?? '';
+            $renameId = is_string($rawRenameId) && preg_match('/\A[1-9][0-9]{0,9}\z/', $rawRenameId) === 1
+                ? (int) $rawRenameId : 0;
+            $renameName = (string) $_POST['rotator_name'];
+            $renameUserId = (int) $_SESSION['user_id'];
+            $renamed = false;
+            try {
+                $rotatorConn = new \Prosper202\Database\Connection($db);
+                $renamed = $rotatorConn->transaction(
+                    static function () use ($rotatorConn, $renameId, $renameName, $renameUserId): bool {
+                        $owned = $rotatorConn->prepareWrite('SELECT id FROM 202_rotators WHERE id = ? AND user_id = ? FOR UPDATE');
+                        $rotatorConn->bind($owned, 'ii', [$renameId, $renameUserId]);
+                        if ($rotatorConn->fetchOne($owned) === null) {
+                            return false;
+                        }
+                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ? WHERE id = ?');
+                        $rotatorConn->bind($rename, 'si', [$renameName, $renameId]);
+                        $rotatorConn->executeUpdate($rename);
+
+                        return true;
+                    }
+                );
+            } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+                record_mysql_error($db, 'UPDATE 202_rotators (redirector ' . $renameId . ')', $e->getMessage());
+            }
+            if (!$renamed) {
+                $error['rotator_id'] = 'That redirector was not found on this account. Nothing was saved.';
             }
 		} else {
 			$sql = "INSERT INTO 202_rotators SET name='" . $mysql['rotator_name'] . "', user_id='" . $mysql['user_id'] . "'";
@@ -78,10 +103,12 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
             }
 		}
 
-		$add_success = true;
-
-		if ($slack)
-			$slack->push('rotator_created', ['name' => $_POST['rotator_name'], 'user' => $user_row['username']]);
+        if (!$error) {
+            $add_success = true;
+            if ($slack) {
+                $slack->push('rotator_created', ['name' => $_POST['rotator_name'], 'user' => $user_row['username']]);
+            }
+        }
 	}
 }
 

@@ -275,6 +275,16 @@ has "$OUT/pw-short.html" 'Your password must be between 8 and 72 characters long
 has "$OUT/pw-short.html" 'Your password did not match, please try again.' "a mismatch is refused under the retype"
 hasnt "$OUT/pw-short.html" "value=\"$P202_PASS\"" "no password is echoed back into the page"
 eq "$(Q "SELECT user_pass FROM 202_users WHERE user_id=$OWNER")" "$ORIG_HASH" "hash unchanged"
+# A change the database refuses is said, and the old password still works.
+fail_writes rv3_fail_pass 202_users UPDATE "NEW.user_pass <> OLD.user_pass"
+get "202-account/account.php" "$OUT/account.html"
+submit "$OUT/account.html" change_user_pass "202-account/account.php" "$OUT/pw-fail.html" \
+  "user_pass=$P202_PASS" new_user_pass=NewPass-123 retype_new_user_pass=NewPass-123
+clear_fail rv3_fail_pass
+eq "$FIRST_STATUS" "200" "a password write that fails re-renders the page"
+has "$OUT/pw-fail.html" 'Your password could not be changed. Your old password still works; try again.' "and says so"
+hasnt "$OUT/pw-fail.html" 'Your password is changed.' "and does not say changed"
+eq "$(Q "SELECT user_pass FROM 202_users WHERE user_id=$OWNER")" "$ORIG_HASH" "hash unchanged"
 get "202-account/account.php" "$OUT/account.html"
 submit "$OUT/account.html" change_user_pass "202-account/account.php" "$OUT/pw-ok.html" \
   "user_pass=$P202_PASS" new_user_pass=NewPass-123 retype_new_user_pass=NewPass-123

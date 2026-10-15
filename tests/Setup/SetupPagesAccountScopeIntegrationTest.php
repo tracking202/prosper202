@@ -202,15 +202,16 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
      * What a page printed, run as A.
      *
      * @param array<string, string> $get
+     * @param array<string, string> $post a POST's fields, when it is one
      */
-    private static function page(string $page, array $get = []): string
+    private static function page(string $page, array $get = [], array $post = []): string
     {
         self::requireScratch();
         $env = [
             'P202_TEST_REPORT_USER' => (string) self::USER,
             'P202_TEST_SESSION_DIR' => self::$sessions,
             'P202_TEST_GET' => (string) json_encode((object) $get),
-            'P202_TEST_POST' => '{}',
+            'P202_TEST_POST' => (string) json_encode((object) $post),
         ] + getenv();
         $proc = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL & ~E_DEPRECATED', __DIR__ . '/fixtures/page-runner.php', $page],
@@ -339,6 +340,36 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         self::assertSame('', $answer, 'the account\'s own is removed, and the page answers with a redirect');
         $mine = self::redirectorRows(self::MY_REDIRECTOR);
         self::assertSame('0/0/0/0', $mine, 'with its rules, criteria and redirects');
+    }
+
+    /** A redirector's name. */
+    private static function redirectorName(int $id): ?string
+    {
+        $found = self::$db->query("SELECT name FROM 202_rotators WHERE id = $id");
+        self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
+        $row = $found->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * A redirector is renamed only when it is the account's. The rename's
+     * UPDATE named the account, so another account's was left as it was,
+     * and the page said "Redirector renamed".
+     */
+    public function testRenamingARedirectorRenamesOnlyTheAccountsOwn(): void
+    {
+        $rename = static fn (int $id): string => self::page('tracking202/setup/rotator.php', [], [
+            'edit_rotator' => '1', 'rotator_id' => (string) $id, 'rotator_name' => 'Renamed', 'token' => 'SESSION',
+        ]);
+        $out = $rename(self::OTHER);
+        self::assertStringContainsString('That redirector was not found on this account. Nothing was saved.', $out);
+        self::assertSame('Their Rotator', self::redirectorName(self::OTHER), 'another account\'s keeps its name');
+
+        $answer = $rename(self::USER);
+        self::assertSame('', $answer, 'the account\'s own is renamed, and the page answers with a redirect');
+        self::assertSame('Renamed', self::redirectorName(self::USER));
+        self::q("UPDATE 202_rotators SET name = 'My Rotator' WHERE id = " . self::USER);
     }
 
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void

@@ -678,7 +678,7 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
             $verify_stmt = $passConn->prepareWrite('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
             $passConn->bind($verify_stmt, 'i', [(int) ($_SESSION['user_own_id'] ?? 0)]);
             $stored = $passConn->fetchOne($verify_stmt);
-                    $verified = true;
+            $verified = true;
         } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
             // Said below; not counted as a wrong password.
         }
