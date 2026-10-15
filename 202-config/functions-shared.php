@@ -471,15 +471,46 @@ function p202FetchRow(\mysqli_result $result, string $sql): ?array
 }
 
 /**
+ * Where a failure nothing caught came from, for the database error page's
+ * record: the first frame outside the database layer and this file (a
+ * QueryException is thrown deep in Connection or a repository), as its
+ * file's name and line.
+ */
+function p202UncaughtAt(\Throwable $e): string
+{
+    $layer = '~[/\\\\]202-config[/\\\\](?:Database[/\\\\]|Repository[/\\\\]|functions-shared\.php$)~';
+    [$file, $line] = [$e->getFile(), $e->getLine()];
+    foreach ($e->getTrace() as $frame) {
+        if (preg_match($layer, $file) !== 1) {
+            break;
+        }
+        if (isset($frame['file'], $frame['line'])) {
+            [$file, $line] = [$frame['file'], $frame['line']];
+        }
+    }
+
+    return basename($file) . ':' . $line;
+}
+
+/**
  * The database error page: the failure logged and recorded in
  * 202_mysql_errors (both without the values the statement quotes), the
- * page told whether it was, and the request ended.
+ * page told whether it was, and the request ended, under a 500 so a client
+ * or a monitor does not read it as served (a page that has already sent its
+ * headers keeps the status it sent).
  *
  * @param ?string $error what failed, from a caller that caught it: by then
  *        the connection's own error is cleared, if the caller rolled back
  */
 function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = null): never
 {
+    if (!headers_sent()) {
+        // In place of whatever the page meant to answer: dl.php has set its
+        // redirect before it writes the click.
+        header_remove('Location');
+        http_response_code(500);
+        header('Cache-Control: no-store');
+    }
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
     if (!$db instanceof \mysqli) {

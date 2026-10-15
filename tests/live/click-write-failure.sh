@@ -2,9 +2,9 @@
 # Live pass for a click the database refuses to store: a direct link
 # (dl.php), a redirector link (rtr.php) and a landing page's script
 # (record_simple.php, record_adv.php) each write the click in one
-# transaction, and a failure there is the database error page, recorded in
-# 202_mysql_errors under "recording ... click <id>" with the server's words,
-# and no row of the click stored. HeldCacheWritesTest reads the shape of
+# transaction, and a failure there is the database error page under a 500,
+# recorded in 202_mysql_errors under "recording ... click <id>" with the
+# server's words, and no row of the click stored. HeldCacheWritesTest reads the shape of
 # these calls; this runs them.
 #
 # A trigger refuses the 202_clicks rows of the records this pass makes (its
@@ -50,7 +50,6 @@ api() {
 }
 field() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$OUT/body"; }
 must() { case "$1" in 2??) ;; *) echo "setup failed: $2 ($1) $(head -c 300 "$OUT/body")" >&2; exit 2 ;; esac; }
-get() { curl -s -o "$OUT/page" -w '%{http_code}' "$BASE$1"; }
 
 T=$(date +%s%N | cut -c1-13)
 TAG="cwf $T"
@@ -96,7 +95,8 @@ for path in "/tracking202/redirect/dl.php?t202id=$TD" "/tracking202/redirect/rtr
     script=${script##*/}
     before=$(errors)
     stored=$(clicks)
-    get "$path" >/dev/null
+    answer=$(curl -s -o "$OUT/page" -w '%{http_code} %{redirect_url}' "$BASE$path")
+    eq "$answer" "500 " "$script answers 500 with no redirect, not a page a client reads as served"
     if grep -q 'A database error has occurred, and it has been recorded' "$OUT/page"; then
         ok "$script answers the database error page, saying it was recorded"
     else

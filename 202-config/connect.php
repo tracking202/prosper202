@@ -284,6 +284,28 @@ require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
+if (!function_exists('p202PageUncaught')) {
+    /**
+     * A failure nothing on a signed-in page caught. A database failure (the
+     * cached reads throw one rather than answer "no row") is the database
+     * error page, recorded, as on the click path (p202ClickPathUncaught());
+     * anything else is logged, under a 500 either way. Not set on the
+     * command line, where a cron job's stderr and exit status are its answer.
+     */
+    function p202PageUncaught(\Throwable $e): void
+    {
+        if (!headers_sent()) {
+            http_response_code(500);
+        }
+        if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
+            record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
+        }
+        error_log('Uncaught on a page: ' . $e);
+    }
+}
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    set_exception_handler('p202PageUncaught');
+}
 // The visitor's address (VisitorIp: the one reader of the forwarding
 // headers), once the autoloader and functions-shared.php's ipAddress() are
 // loaded. Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.

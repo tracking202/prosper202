@@ -393,6 +393,7 @@ if ($shape === 'db') {
     );
 } elseif ($shape === 'uncaught') {
     eval(lift_function((string) $file, 'p202ClickPathUncaught'));
+    eval(lift_function($shared, 'p202UncaughtAt'));
     set_exception_handler('p202ClickPathUncaught');
     $keywords = new \Prosper202\Repository\Mysql\MysqlTrackingRepository(new \Prosper202\Database\Connection($conn));
     echo 'CALLED AT: ', __LINE__ + 1, "\n";

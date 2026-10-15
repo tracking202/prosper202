@@ -32,16 +32,7 @@ function p202ClickPathUncaught(\Throwable $e): void
         http_response_code(500);
     }
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
-        [$file, $line] = [$e->getFile(), $e->getLine()];
-        foreach ($e->getTrace() as $frame) {
-            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database[/\\\\]|Repository[/\\\\]|functions-shared\.php$)~', $file) !== 1) {
-                break;
-            }
-            if (isset($frame['file'], $frame['line'])) {
-                [$file, $line] = [$frame['file'], $frame['line']];
-            }
-        }
-        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . basename($file) . ':' . $line, $e->getMessage());
+        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
     }
     error_log('Uncaught on the click path: ' . $e);
 }

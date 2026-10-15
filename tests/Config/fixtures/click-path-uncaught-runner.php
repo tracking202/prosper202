@@ -27,6 +27,7 @@ require __DIR__ . '/../../../vendor/autoload.php';
 require __DIR__ . '/lift-function.php';
 
 eval(lift_function(__DIR__ . '/../../../202-config/connect2.php', 'p202ClickPathUncaught'));
+eval(lift_function(__DIR__ . '/../../../202-config/functions-shared.php', 'p202UncaughtAt'));
 // Evaluated, as the other runners declare their stand-ins.
 eval(<<<'PHP'
     function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
