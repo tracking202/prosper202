@@ -22,6 +22,8 @@ elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null
 
 if (! is_numeric($acip))
     die();
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 

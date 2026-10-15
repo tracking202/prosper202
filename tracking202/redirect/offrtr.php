@@ -17,6 +17,8 @@ if($cookieClickId === null || !is_numeric($cookieClickId) || !isset($rpi) || !is
 } 
 
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
+// It keeps no URL for an outage; go.php can load it past the bootstrap's check.
+p202RequireDatabase($db);
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 // Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD

@@ -2,7 +2,8 @@
 # Live pass for the click path's MySQL-outage fallback: with the database out
 # of reach, dl.php, lp.php and off.php send the visitor to the URL they kept
 # in memcache for the campaign while it was up, and a link with nothing kept
-# answers the unavailable page.
+# answers the unavailable page. Every other click and pixel endpoint needs the
+# database, and answers 503 before it reaches code that would use it.
 #
 # The connection used to be made unguarded under MYSQLI_REPORT_STRICT, so a
 # refused connect was an uncaught exception: every request a 500, the
@@ -56,7 +57,7 @@ api() {
 }
 field() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$OUT/body"; }
 must() { case "$1" in 2??) ;; *) echo "setup failed: $2 ($1) $(head -c 300 "$OUT/body")" >&2; exit 2 ;; esac; }
-hit() { curl -s -o "$OUT/page" -w '%{http_code} %{redirect_url}' "$BASE$1"; }
+hit() { curl -s -o "$OUT/page" -w '%{http_code} %{redirect_url}' ${2:+-b "$2"} "$BASE$1"; }
 expect() { # what it answered, the pattern it must match, what it says
     # shellcheck disable=SC2254 # $2 is a glob on purpose: "302*<url>*"
     case "$1" in $2) ok "$3" ;; *) bad "$3 (got $1 $(head -c 200 "$OUT/page"))" ;; esac
@@ -103,6 +104,19 @@ if grep -q '"Database connection is unavailable"' "$OUT/page"; then
 else
     bad "the legacy report API answers its JSON error (got $(head -c 200 "$OUT/page"))"
 fi
+
+say "every other endpoint answers 503"
+# offrtr.php goes no further without a click cookie, so these two carry one.
+GO202V=$(printf '1 1' | base64)
+for p in "redirect/offrtr.php?rpi=1" "redirect/go.php?202v=$GO202V&rpi=1"; do
+    expect "$(hit "/tracking202/$p" "tracking202subid=1")" "503 " "${p%%\?*} answers 503"
+done
+for p in "redirect/pci.php?pci=1" \
+    "static/record.php?lpip=$LPS" "static/record_simple.php?lpip=$LPS" "static/record_adv.php?lpip=$LPS" \
+    "static/px.php?acip=$ACIP" "static/pb.php?subid=1" "static/gpb.php?subid=1" "static/gpx.php" "static/upx.php" \
+    "static/landing.php?lpip=$LPS" "static/get_custom_vars.php?lpip=$LPS" "static/p13n.php"; do
+    expect "$(hit "/tracking202/$p")" "503 " "${p%%\?*} answers 503"
+done
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 rm -rf "$OUT"

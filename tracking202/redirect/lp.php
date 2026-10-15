@@ -6,6 +6,8 @@ $lpip = $_GET['lpip'] ?? '';
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 

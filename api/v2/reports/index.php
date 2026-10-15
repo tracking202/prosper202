@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config.php'); 
+// Goes on when the database is out of reach: it answers the outage in JSON.
+$p202OutageFallback = true;
 include_once($_SERVER['DOCUMENT_ROOT'] . '/202-config/connect2.php');
 include_once($_SERVER['DOCUMENT_ROOT'] . '/api/v2/functions.php');
 

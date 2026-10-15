@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 use Tracking202\Redirect\RedirectHelper;
 
+// Goes on when the database is out of reach: it answers without the database.
+$p202OutageFallback = true;
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
 // The click's public id exactly: FILTER_VALIDATE_INT took 0 (every click
