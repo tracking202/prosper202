@@ -179,7 +179,11 @@ function p202Mysqli(): \mysqli
     if ($db instanceof \mysqli) {
         return $db;
     }
-    $database = \DB::getInstance();
+    try {
+        $database = \DB::getInstance();
+    } catch (\mysqli_sql_exception $e) {
+        throw new \Prosper202\Database\Exceptions\QueryException('No database connection: ' . $e->getMessage(), 0, $e);
+    }
     $db = method_exists($database, 'getConnection') ? $database->getConnection() : null;
     if (!$db instanceof \mysqli) {
         throw new \Prosper202\Database\Exceptions\QueryException('No database connection');

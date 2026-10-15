@@ -62,9 +62,17 @@ DEFINE('CONFIG_PATH', __DIR__);
 mysqli_report(MYSQLI_REPORT_STRICT);
 include_once(ROOT_PATH . '/202-config.php');
 
-// Get database instance
-$database = DB::getInstance();
-$db = $database->getConnection();
+// A refused connection throws under MYSQLI_REPORT_STRICT. Caught, $db is null
+// and the redirects fall back to the URL they keep in memcache for an outage
+// (dl.php, lp.php, off.php); uncaught, every request was a 500 before any of
+// them could.
+try {
+    $database = DB::getInstance();
+    $db = $database->getConnection();
+} catch (\mysqli_sql_exception $connectError) {
+    error_log('The click path could not connect to the database: ' . $connectError->getMessage());
+    $db = null;
+}
 
 $whatCache = false;
 
@@ -120,18 +128,6 @@ if (!isset($tid)) {
     }
 }
 
-// Initialize database connection using the DB class from 202-config.php
-if (!isset($db)) {
-    try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-    } catch (Exception $e) {
-        // Log error but don't interrupt execution
-        error_log('Database connection error in connect2.php: ' . $e->getMessage());
-        $db = null; // dl.php checks if $db is falsey
-    }
-}
-
 //set sql mode - only if db connection is available
 if ($db) {
     // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
@@ -172,7 +168,8 @@ if (!isset($_SESSION['privacy'])) {
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
     try {
-        $privacy = memcache_mysql_fetch_assoc($user_sql);
+        // No connection (an outage): nothing to read, and no second attempt.
+        $privacy = $db instanceof \mysqli ? memcache_mysql_fetch_assoc($user_sql) : false;
     } catch (\Prosper202\Database\Exceptions\QueryException $privacyReadError) {
         $privacy = false;
     }

@@ -14,7 +14,9 @@ if ($clickIdPublic === null) {
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
+    // Decoded as sent: it joins a URL, never a statement, and escaping
+    // base64 text changed nothing but needed a connection.
+    $mysql['202vars'] = base64_decode($varsParam);
 }
 
 // The click's destination, its campaign's name when the campaign is the

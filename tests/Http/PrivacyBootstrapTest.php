@@ -93,8 +93,9 @@ final class PrivacyBootstrapTest extends TestCase
     /**
      * What the bootstrap's lines call: a cache that holds nothing under any
      * key (what a redirect's tracker-id key always was), and a database whose
-     * user 1 row holds $GLOBALS['p202TestStored'] (false: the query failed;
-     * null: there is no row), recording the SQL asked.
+     * user 1 row holds $GLOBALS['p202TestStored'] (false: the query failed,
+     * which the real read reports by a throw; null: there is no row),
+     * recording the SQL asked.
      */
     private static function stubs(): void
     {
@@ -107,8 +108,11 @@ final class PrivacyBootstrapTest extends TestCase
             function memcache_mysql_fetch_assoc($sql) {
                 $GLOBALS['p202TestSql'][] = $sql;
                 $stored = array_key_exists('p202TestStored', $GLOBALS) ? $GLOBALS['p202TestStored'] : 'all';
-                // false: the query failed; null: no row (fetch_assoc()'s answer).
-                return $stored === false || $stored === null ? $stored : ['user_pref_privacy' => $stored];
+                if ($stored === false) {
+                    throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: gone [errno 2006]');
+                }
+                // null: no row (fetch_assoc()'s answer).
+                return $stored === null ? null : ['user_pref_privacy' => $stored];
             }
             PHP);
     }
@@ -117,14 +121,14 @@ final class PrivacyBootstrapTest extends TestCase
     private static function bootstrap(bool $memcacheWorking): mixed
     {
         $src = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/connect2.php');
-        $start = strpos($src, '// Initialize database connection using the DB class from 202-config.php');
+        $start = strpos($src, "// The privacy mode: the install's setting");
         $end = strpos($src, "// The visitor's address: one rule");
         self::assertIsInt($start, 'the bootstrap\'s database step is not where this test looks');
         self::assertIsInt($end);
 
         return (static function (string $code, bool $memcacheWorking): mixed {
-            // What the lines read: no database (the stubs answer for it).
-            $db = false;
+            // What the lines read: a connection, never used (the stubs answer for it).
+            $db = mysqli_init();
             $tid = 1;
             eval($code);
 

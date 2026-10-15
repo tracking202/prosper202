@@ -429,6 +429,16 @@ When adding a check, trace an actual bad value from the outermost entry point
 and confirm it *reaches* the check — this is #5 across layers rather than
 across sibling call sites.
 
+The guard can also sit below a layer that ends the request first. The click
+path's outage fallback (`if (!$db)` in dl.php, lp.php and off.php: send the
+visitor to the URL kept in memcache) did not run from 1.8.4 to 1.9.78: the
+bootstrap connected unguarded under `MYSQLI_REPORT_STRICT`, so a refused
+connection threw before any script reached its check, and dl.php built its
+repositories on the connection above its check as well — every request a
+500, the fallback's own fixes in between made to code that could not run.
+`tests/live/outage-fallback.sh` takes the database away from one server and
+runs the path.
+
 ### 13. Retry seams must know whether the write landed
 An exception says nothing about whether the database changed. `Controller::create()`
 inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
