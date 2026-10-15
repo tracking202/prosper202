@@ -276,6 +276,13 @@ final class RtrClickInstanceTest extends TestCase
         );
         $clickId = (int) $plain[1];
 
+        // The re-clicks a second after the first visit: two visits of one
+        // click in one second share a time, and nothing orders them once an
+        // exit has written its route on every row (LatestVisit says so).
+        $first = time();
+        while (time() === $first) {
+            usleep(20000);
+        }
         $second = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "x-$run", 'c1' => "second-$run"]);
         $third = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "y-$run", 'c1' => "third-$run"]);
 

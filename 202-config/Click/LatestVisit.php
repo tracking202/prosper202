@@ -9,11 +9,16 @@ use InvalidArgumentException;
 /**
  * A redirector re-click gives the click another 202_clicks row, at its own
  * visit's time; the click as it is now is its latest row, the one its route,
- * redirect URL and cloaked link are. Two visits in one second share a time,
- * and the table has nothing else to order them by: the one on the route the
- * click holds now (202_clicks_rotator, written with the latest visit) is the
- * latest. A read of one click's row that takes no order gets whichever row
- * the database reads first, usually the first visit.
+ * redirect URL and cloaked link are. A read of one click's row that takes no
+ * order gets whichever row the database reads first, usually the first visit.
+ *
+ * Two visits in one second share a time, and the table has no per-visit key
+ * to order them by. The one on the route the click holds now
+ * (202_clicks_rotator, written with the latest visit) is taken first, which
+ * tells them apart only while their routes differ: two visits on one route,
+ * or any after an exit (MysqlClickRepository::recordExit() writes the exit's
+ * route on every row of the click), are read in whatever order the database
+ * gives.
  */
 final class LatestVisit
 {
