@@ -81,14 +81,10 @@ try {
 if ($tracker_row === null) {
     // No campaign of the page's account: an outage sends nobody anywhere
     // either, whatever an earlier read kept (another account's campaign,
-    // before this read was tied to the account).
+    // before this read was tied to the account). Deleted, not written
+    // empty: a write would keep an entry for every id anyone sends.
     if ($memcacheWorking) {
-        \Prosper202\Click\FallbackRedirectUrl::refresh(
-            md5('lp_' . $lpip . systemHash()),
-            '',
-            static fn(string $key): mixed => $memcache->get($key),
-            static fn(string $key, string $url): mixed => setCache($key, $url, 0),
-        );
+        $memcache->delete(md5('lp_' . $lpip . systemHash()));
     }
     die();
 }
