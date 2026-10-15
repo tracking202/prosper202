@@ -19,6 +19,9 @@ use Prosper202\Repository\Cache\RowCache;
  * is tied to the account of the row it comes from, and a lookup that takes
  * an account asks for it.
  *
+ * An id below 1 names nothing, and is never looked up: a column stores 0 for
+ * "none" (a click with no public id), and every such row would match it.
+ *
  * Rows come back as the scripts read them before, every value text or null,
  * and an id a script copies into a click is 0 where the join found nothing,
  * as a tracker that names none always gave. Setup rows are kept in the row
@@ -61,6 +64,10 @@ final readonly class ClickPathReads
      */
     public function tracker(int $publicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT tr.user_id,
                     tr.tracker_id_public,
@@ -120,6 +127,10 @@ final readonly class ClickPathReads
      */
     public function accountTracker(int $userId, int $publicId): ?array
     {
+        if ($userId < 1 || $publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT IFNULL(ta.text_ad_id, 0) AS text_ad_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
@@ -161,6 +172,10 @@ final readonly class ClickPathReads
      */
     public function redirectorTracker(int $publicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT tr.user_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
@@ -204,6 +219,31 @@ final readonly class ClickPathReads
     }
 
     /**
+     * A landing page by its public id (record.php, record_adv.php): its
+     * account, id and type.
+     *
+     * @return Row|null
+     */
+    public function landingPage(int $publicId): ?array
+    {
+        if ($publicId < 1) {
+            return null;
+        }
+
+        return $this->setupRow(
+            'SELECT lp.user_id,
+                    lp.landing_page_id,
+                    lp.landing_page_type
+               FROM 202_landing_pages AS lp
+              WHERE lp.landing_page_id_public = ?
+              ORDER BY lp.landing_page_id
+              LIMIT 1',
+            'i',
+            [$publicId]
+        );
+    }
+
+    /**
      * A simple landing page and its campaign (lp.php, lpc.php,
      * record_simple.php). None when the campaign is not the landing page's
      * account's: the campaign is where its visitors are sent.
@@ -212,6 +252,10 @@ final readonly class ClickPathReads
      */
     public function landingPageOffer(int $publicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT lp.user_id,
                     lp.landing_page_id,
@@ -248,6 +292,10 @@ final readonly class ClickPathReads
      */
     public function landingPageVisitVariables(int $publicId, int $trackerPublicId): ?array
     {
+        if ($publicId < 1 || $trackerPublicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT (SELECT GROUP_CONCAT(v.ppc_variable_id ORDER BY v.ppc_variable_id)
                        FROM 202_ppc_network_variables AS v
@@ -279,6 +327,10 @@ final readonly class ClickPathReads
      */
     public function landingPageTrackerVariables(int $publicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT (SELECT GROUP_CONCAT(v.ppc_variable_id ORDER BY v.ppc_variable_id)
                        FROM 202_ppc_network_variables AS v
@@ -312,6 +364,10 @@ final readonly class ClickPathReads
      */
     public function landingPageCapture(int $publicId, ?int $trackerPublicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT lp.landing_page_type,
                     lpc.identity_signals AS lp_setting,
@@ -328,8 +384,8 @@ final readonly class ClickPathReads
               ORDER BY lp.landing_page_id, tr.tracker_id
               LIMIT 1',
             'ii',
-            // No tracker named: 0, which no tracker's public id is.
-            [$trackerPublicId ?? 0, $publicId]
+            // No tracker named: NULL, which equals nothing.
+            [$trackerPublicId !== null && $trackerPublicId > 0 ? $trackerPublicId : null, $publicId]
         );
     }
 
@@ -341,6 +397,10 @@ final readonly class ClickPathReads
      */
     public function offer(int $publicId): ?array
     {
+        if ($publicId < 1) {
+            return null;
+        }
+
         return $this->setupRow(
             'SELECT ac.user_id,
                     ac.aff_campaign_id,
@@ -371,6 +431,9 @@ final readonly class ClickPathReads
      */
     public function cloakedClick(int $clickPublicId): ?array
     {
+        if ($clickPublicId < 1) {
+            return null;
+        }
         $stmt = $this->conn->prepareRead(
             'SELECT ac.aff_campaign_name,
                     su.site_url_address,
@@ -393,7 +456,7 @@ final readonly class ClickPathReads
     }
 
     /**
-     * @param list<int> $params
+     * @param list<int|null> $params
      * @return Row|null
      */
     private function setupRow(string $sql, string $types, array $params): ?array
@@ -417,7 +480,7 @@ final readonly class ClickPathReads
      * The statement is part of the key, so a changed select list is never
      * answered with a row kept for the old one.
      *
-     * @param list<int> $params
+     * @param list<int|null> $params
      */
     private function key(string $sql, array $params): string
     {

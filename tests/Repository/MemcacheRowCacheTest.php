@@ -51,6 +51,16 @@ final class MemcacheRowCacheTest extends TestCase
         self::assertNull($hit->row);
     }
 
+    public function testARowJsonCannotHoldIsNotKept(): void
+    {
+        // A connection whose character set is not UTF-8 hands text back in
+        // its own bytes: the row is read from the database every time.
+        $this->cache()->set('k', ['aff_campaign_url' => "https://offer.example/caf\xE9"]);
+
+        self::assertSame([], $this->store);
+        self::assertNull($this->cache()->get('k'));
+    }
+
     public function testNothingKeptIsAMiss(): void
     {
         self::assertNull($this->cache()->get('absent'));

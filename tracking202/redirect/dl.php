@@ -190,7 +190,6 @@ if ($memcacheWorking) {
 
 //set the timezone to the users timezone
 $mysql['user_id'] = $db->real_escape_string((string)($tracker_row['user_id'] ?? '0'));
-$mysql['tracker_id_public'] = (string) $dlTrackerId;
 
 //now this sets timezone
 date_default_timezone_set($tracker_row['user_timezone']);
@@ -545,7 +544,7 @@ $mysql['click_time'] = $db->real_escape_string((string)$click_time);
 if ($mysql['click_cpa'] != NULL) {
 	$insert_sql = "INSERT INTO 202_cpa_trackers
                                    SET         click_id='" . $mysql['click_id'] . "',
-                                                           tracker_id_public='" . $mysql['tracker_id_public'] . "'";
+                                                           tracker_id_public=" . (int) $dlTrackerId;
 	// Post-redirect: the visitor is already gone, so log a failure instead of
 	// dying (which would abandon the remaining bookkeeping below).
 	if ($db->query($insert_sql) === false) {

@@ -96,7 +96,11 @@ try {
         $t202CustomVars = array_column(\Prosper202\Click\TrackerVariables::pairs($cv_row), 0);
     }
 } catch (\Throwable $cvError) {
+    // A failed read is not "no variables": served, the script would capture
+    // none of the source's values on this view, with nothing said.
     error_log('landing.php: could not read the traffic source variables: ' . $cvError->getMessage());
+    http_response_code(500);
+    exit;
 }
 
 // Whether this page's campaign lets identity signals be captured: the same

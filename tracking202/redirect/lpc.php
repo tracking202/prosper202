@@ -14,8 +14,9 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-// Validate landing page id
-$landingId = RedirectHelper::getIntParam('lpip');
+// The landing page's id exactly: FILTER_VALIDATE_INT took 0, +12 and padded
+// whitespace.
+$landingId = \Prosper202\Click\PublicId::parse($_GET['lpip'] ?? null);
 if ($landingId === null) {
     RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }

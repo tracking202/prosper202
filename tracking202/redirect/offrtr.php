@@ -39,7 +39,6 @@ $offrtrRotatorId = \Prosper202\Click\PublicId::parse($rpi);
 if ($offrtrRotatorId === null) {
     die();
 }
-$mysql['rpi'] = (string) $offrtrRotatorId;
 
 $rotator_sql = "SELECT
 					   rt.id,
@@ -66,7 +65,7 @@ $rotator_sql = "SELECT
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
                     AND lp.user_id = rt.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = rt.user_id
-				WHERE   rt.public_id='".$mysql['rpi']."'"; 
+				WHERE   rt.public_id=" . $offrtrRotatorId;
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 

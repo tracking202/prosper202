@@ -25,7 +25,10 @@
 #     the first;
 #   - lpc.php and off.php without a click turned no campaign's own URL
 #     rotation;
-#   - a public id with trailing letters (lpip=123abc) named record 123.
+#   - a public id with trailing letters (lpip=123abc) named record 123, on
+#     record_simple.php, record.php, record_adv.php and pb.php;
+#   - a click public id of 0, a click stored without one, named every such
+#     click: pci.php marked one as gone, cl.php sent the visitor to one's URL.
 #
 # Additive: it creates its own records (named "cpr-pass <time>"), including
 # rows of a second account written with SQL, and fires real clicks; it
@@ -228,8 +231,31 @@ say "a public id is read exactly"
 before=$(since)
 get "/tracking202/static/record_simple.php?lpip=${LPS}abc&t202kw=cpr" >/dev/null
 eq "$(since)" "$before" "lpip=${LPS}abc names no landing page"
+get "/tracking202/static/record.php?lpip=${LPA}abc&t202kw=cpr" >/dev/null
+get "/tracking202/static/record_adv.php?lpip=${LPA}abc&t202kw=cpr" >/dev/null
+eq "$(since)" "$before" "nor through record.php or record_adv.php"
 get "/tracking202/static/record_simple.php?lpip=$LPS&t202kw=cpr" >/dev/null
 eq "$(since)" "$((before + 1))" "while lpip=$LPS records its click"
+id=$(grep -oE 'var subid =[^;]*' "$OUT/page" | grep -oE '[0-9]+' | head -1)
+ACIP=$(public 202_aff_campaigns aff_campaign_id_public "aff_campaign_id=$CA")
+curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=${ACIP}abc&subid=${id:-0}"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${id:-0}'")" "0" "pb.php?acip=${ACIP}abc names no campaign"
+curl -sS -o /dev/null "$BASE/tracking202/static/pb.php?acip=$ACIP&subid=${id:-0}"
+eq "$(Q "SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = '${id:-0}'")" "1" "while acip=$ACIP converts the click"
+
+say "a public id of 0 names no click"
+# A click without cloaking is stored with public id 0, its "none".
+# pci.php went on to mark the first such click as gone and send the visitor
+# to its URL; cl.php sent the visitor to the latest such click's URL.
+out0=$(Q "SELECT COUNT(*) FROM 202_clicks_record WHERE click_id_public = 0 AND click_out = 1")
+eq "$(get "/tracking202/redirect/pci.php?pci=0")" "none" "pci.php?pci=0 sends no one anywhere"
+eq "$(Q "SELECT COUNT(*) FROM 202_clicks_record WHERE click_id_public = 0 AND click_out = 1")" "$out0" \
+    "and marks no click without a public id as gone"
+loc=$(get "/tracking202/redirect/cl.php?pci=0")
+case "$loc$(grep -oE 'url=[^"]*' "$OUT/page" | head -1)" in
+    *202-404*) ok "cl.php?pci=0 is the not-found page" ;;
+    *) bad "cl.php?pci=0 is the not-found page (got $loc $(grep -oE 'url=[^"]*' "$OUT/page" | head -1))" ;;
+esac
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 rm -rf "$OUT"

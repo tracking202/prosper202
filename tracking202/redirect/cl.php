@@ -5,8 +5,9 @@ use Tracking202\Redirect\RedirectHelper;
 
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
-// Validate required parameter
-$clickIdPublic = RedirectHelper::getIntParam('pci');
+// The click's public id exactly: FILTER_VALIDATE_INT took 0 (every click
+// stored without one), +12 and padded whitespace.
+$clickIdPublic = \Prosper202\Click\ClickId::parse($_GET['pci'] ?? null);
 if ($clickIdPublic === null) {
     RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }

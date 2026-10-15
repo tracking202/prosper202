@@ -39,16 +39,25 @@ $_GET += [
 	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
-$landing_page_id_public = ClickRequest::string($_GET, 'lpip');
-$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
-$tracker_sql = "SELECT  202_landing_pages.user_id,
-						  202_landing_pages.landing_page_id
-				FROM     202_landing_pages
-				WHERE  202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The landing page, by its id exactly: compared as text, MySQL read 12abc as 12.
+$raLandingPageId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 'lpip'));
+$tracker_row = null;
+if ($raLandingPageId !== null) {
+    try {
+        $raLandingPage = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->landingPage($raLandingPageId);
+    } catch (\Throwable $raReadError) {
+        record_mysql_error($db, 'reading landing page ' . $raLandingPageId, $raReadError->getMessage());
+    }
+    if ($raLandingPage !== null) {
+        $tracker_row = [
+            'user_id' => $raLandingPage['user_id'],
+            'landing_page_id' => $raLandingPage['landing_page_id'],
+        ];
+    }
+}
 
-if (!$tracker_row) {
-	die();
+if ($tracker_row === null) {
+    die();
 }
 
 // The privacy setting in force for this visitor: the stricter of the

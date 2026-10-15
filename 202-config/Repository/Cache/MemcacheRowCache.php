@@ -66,8 +66,16 @@ final readonly class MemcacheRowCache implements RowCache
     #[\Override]
     public function set(string $key, ?array $row): void
     {
+        try {
+            $entry = json_encode(['row' => $row], JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            // Text JSON cannot hold (a connection whose character set is not
+            // UTF-8 hands bytes back as stored): the row is read from the
+            // database every time rather than kept changed or not served.
+            return;
+        }
         // A write the cache refuses costs the next read a trip to the
         // database; it is not an answer to check.
-        ($this->write)($key, json_encode(['row' => $row], JSON_THROW_ON_ERROR), $this->ttl);
+        ($this->write)($key, $entry, $this->ttl);
     }
 }

@@ -1107,6 +1107,13 @@ the visitor's last click up by its public id: `click_id_public = '0'` matched
 each of the account's clicks stored without one, and the first was moved into
 the offer's campaign (measured live). Read a key the way its writer means it
 before using it (`ClickId::parse()` refuses 0), and treat "none" as no key.
+The first fix read the ids exactly in five click scripts and left pci.php,
+cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
+where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
+another account's offer URL (found by review, measured on the old code).
+`PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
+quoted value anywhere on the click path, and `ClickPathReads` answers nothing
+for an id below 1 without asking.
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took

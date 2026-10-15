@@ -213,9 +213,6 @@ if ($offPciId === null) {
 /* ------------------------------------------------------- */
 /* ------------------------------------------------------- */
 
-$mysql['aff_campaign_id_public'] = (string) ($offOfferId ?? 0);
-$mysql['click_id_public'] = (string) $offPciId;
-
 $info_sql = "
 	SELECT
 		2c.click_id,
@@ -242,8 +239,8 @@ $info_sql = "
 		LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)
 		LEFT JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2cr.click_id)
 	WHERE
-		2ac.aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
-		AND 2cr.click_id_public='" . $mysql['click_id_public'] . "'
+		2ac.aff_campaign_id_public=" . (int) $offOfferId . "
+		AND 2cr.click_id_public=" . (int) $offPciId . "
 		AND 2ac.user_id = 2c.user_id
 ";
 // The offer and the click are named separately (an advanced landing page

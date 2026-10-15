@@ -349,6 +349,45 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertNull(self::reads()->cloakedClick(1));
     }
 
+    public function testALandingPageIsReadByItsPublicId(): void
+    {
+        $row = self::reads()->landingPage(self::PUBLIC + 3);
+
+        self::assertText($row);
+        self::assertSame((string) self::OWNER, $row['user_id']);
+        self::assertSame('0', $row['landing_page_type']);
+        self::assertNull(self::reads()->landingPage(self::PUBLIC + 90));
+    }
+
+    /**
+     * 0 is a column's "none" (a click stored without a public id), so it is
+     * never looked up: every row without one would match it.
+     */
+    public function testAnIdBelowOneNamesNothingAndIsNotLookedUp(): void
+    {
+        $cache = new RecordingRowCache();
+        $reads = self::reads($cache);
+        foreach ([0, -1] as $id) {
+            self::assertNull($reads->tracker($id));
+            self::assertNull($reads->accountTracker(self::OWNER, $id));
+            self::assertNull($reads->accountTracker($id, self::PUBLIC + 1));
+            self::assertNull($reads->redirectorTracker($id));
+            self::assertNull($reads->landingPage($id));
+            self::assertNull($reads->landingPageOffer($id));
+            self::assertNull($reads->landingPageVisitVariables($id, self::PUBLIC + 1));
+            self::assertNull($reads->landingPageVisitVariables(self::PUBLIC + 1, $id));
+            self::assertNull($reads->landingPageTrackerVariables($id));
+            self::assertNull($reads->landingPageCapture($id, null));
+            self::assertNull($reads->offer($id));
+            self::assertNull($reads->cloakedClick($id));
+        }
+        self::assertSame([], $cache->calls, 'nothing was looked up');
+
+        $stray = $reads->landingPageCapture(self::PUBLIC + 1, 0);
+        self::assertText($stray);
+        self::assertNull($stray['tracker_campaign'], 'a tracker id of 0 names no tracker');
+    }
+
     public function testASetupRowIsKeptAndAMissingOneToo(): void
     {
         $cache = new RecordingRowCache();
