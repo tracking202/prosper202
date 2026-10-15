@@ -9,7 +9,9 @@ use Prosper202\Database\Connection;
 use Prosper202\Report\RollupDirty;
 
 /**
- * The one writer of a click's rows, for every path that records one.
+ * The one writer of a click's rows, for every path that records one or
+ * sends one on from its landing page (recordExit(), which writes another
+ * account's click never).
  *
  * 202_clicks and 202_clicks_spy have no key on click_id (they are
  * partitioned by time), so a re-click gives the click a second row there at
@@ -118,6 +120,12 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             throw new LogicException('A click carries its redirect URL id or has it resolved, not both');
         }
         $this->conn->transaction(function () use ($click, $route, $redirectSiteUrlId): void {
+            // rtr.php finds the click among its account's: anything else is a caller's mistake.
+            if ($this->accountsClickFirstTime($click->userId, $click->clickId) === null) {
+                throw new LogicException(
+                    "A re-click names click {$click->clickId}, which is not account {$click->userId}'s"
+                );
+            }
             // The rollup has summed the click into its hours and those of
             // every conversion whose journey holds it; the mark sends them
             // back to exact (AttributionRollup rule 2).
@@ -184,6 +192,157 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             );
         });
         $this->link($click);
+    }
+
+    #[\Override]
+    public function recordExit(ClickExit $exit, ?\Closure $redirectSiteUrlId = null): bool
+    {
+        if (($redirectSiteUrlId === null) !== ($exit->outboundSiteUrlId === 0)) {
+            throw new LogicException('A click exit records its outbound and redirect URLs together, or neither');
+        }
+        if ($exit->offer === null && $exit->rotator === null && !$exit->clickedOut) {
+            throw new LogicException('A click exit that writes nothing');
+        }
+
+        return $this->conn->transaction(function () use ($exit, $redirectSiteUrlId): bool {
+            $firstClickTime = $this->accountsClickFirstTime($exit->userId, $exit->clickId);
+            if ($firstClickTime === null || !$this->namesTheAccountsRecords($exit)) {
+                return false;
+            }
+            $route = $exit->rotator;
+            if ($route !== null) {
+                $this->write(
+                    'INSERT INTO 202_clicks_rotator (click_id, rotator_id, rule_id, rule_redirect_id)'
+                        . ' VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE rotator_id = VALUES(rotator_id),'
+                        . ' rule_id = VALUES(rule_id), rule_redirect_id = VALUES(rule_redirect_id)',
+                    'iiii',
+                    [$exit->clickId, $route->rotatorId, $route->ruleId, $route->ruleRedirectId]
+                );
+                // rule_id holds the rule's redirect, as rtr.php writes it. No sum reads either column.
+                $this->write(
+                    'UPDATE 202_clicks SET rotator_id = ?, rule_id = ? WHERE click_id = ?',
+                    'iii',
+                    [$route->rotatorId, $route->ruleRedirectId, $exit->clickId]
+                );
+            }
+            $offer = $exit->offer;
+            if ($offer !== null) {
+                // A click old enough to be summed is marked in the rewrite's
+                // transaction (AttributionRollup rule 2).
+                if (RollupDirty::hotPathRewriteNeedsMark($firstClickTime)) {
+                    RollupDirty::click($this->conn, $exit->userId, $exit->clickId);
+                }
+                $this->write(
+                    'UPDATE 202_clicks AS c'
+                        . ' LEFT JOIN 202_clicks_spy AS s ON (s.click_id = c.click_id AND s.user_id = c.user_id)'
+                        . ' SET c.aff_campaign_id = ?, s.aff_campaign_id = ?, c.click_payout = ?, s.click_payout = ?'
+                        . ' WHERE c.click_id = ? AND c.click_lead = 0',
+                    'iissi',
+                    [$offer->campaignId, $offer->campaignId, $offer->payout, $offer->payout, $exit->clickId]
+                );
+            }
+            if ($exit->clickedOut) {
+                if ($exit->cloaking === null) {
+                    $this->write(
+                        'UPDATE 202_clicks_record SET click_out = 1 WHERE click_id = ?',
+                        'i',
+                        [$exit->clickId]
+                    );
+                } else {
+                    $this->write(
+                        'UPDATE 202_clicks_record SET click_out = 1, click_cloaking = ? WHERE click_id = ?',
+                        'ii',
+                        [$exit->cloaking, $exit->clickId]
+                    );
+                }
+            }
+            if ($redirectSiteUrlId !== null) {
+                $this->write(
+                    'UPDATE 202_clicks_site SET click_outbound_site_url_id = ?, click_redirect_site_url_id = ?'
+                        . ' WHERE click_id = ?',
+                    'iii',
+                    [$exit->outboundSiteUrlId, $redirectSiteUrlId(), $exit->clickId]
+                );
+            }
+
+            return true;
+        });
+    }
+
+    /**
+     * The time of the click's first row when every row is the account's;
+     * null when it has none or one is another's. Not locked: a click's
+     * account never changes, and FOR UPDATE on the non-unique click_id key
+     * would hold the gap after it, where new clicks are inserted, until the
+     * exit commits.
+     */
+    private function accountsClickFirstTime(int $userId, int $clickId): ?int
+    {
+        $stmt = $this->conn->prepareWrite('SELECT user_id, click_time FROM 202_clicks WHERE click_id = ?');
+        $this->conn->bind($stmt, 'i', [$clickId]);
+        $first = null;
+        foreach ($this->conn->fetchAll($stmt) as $row) {
+            if (self::intColumn($row, 'user_id') !== $userId) {
+                return null;
+            }
+            $time = self::intColumn($row, 'click_time');
+            $first = $first === null ? $time : min($first, $time);
+        }
+
+        return $first;
+    }
+
+    /** Whether the offer's campaign and the rotator, its rule and redirect, are the exit's account's. */
+    private function namesTheAccountsRecords(ClickExit $exit): bool
+    {
+        if ($exit->offer !== null) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ?'
+            );
+            $this->conn->bind($stmt, 'ii', [$exit->offer->campaignId, $exit->userId]);
+            if ($this->conn->fetchOne($stmt) === null) {
+                return false;
+            }
+        }
+        $route = $exit->rotator;
+        if ($route !== null) {
+            $stmt = $this->conn->prepareWrite(
+                'SELECT r.id, ru.id AS rule_id, rr.id AS redirect_id FROM 202_rotators AS r'
+                    . ' LEFT JOIN 202_rotator_rules AS ru ON (ru.id = ? AND ru.rotator_id = r.id)'
+                    . ' LEFT JOIN 202_rotator_rules_redirects AS rr ON (rr.id = ? AND rr.rule_id = ?)'
+                    . ' WHERE r.id = ? AND r.user_id = ?'
+            );
+            $this->conn->bind(
+                $stmt,
+                'iiiii',
+                [$route->ruleId, $route->ruleRedirectId, $route->ruleId, $route->rotatorId, $exit->userId]
+            );
+            $row = $this->conn->fetchOne($stmt);
+            if ($row === null) {
+                return false;
+            }
+            if ($route->ruleId !== 0 && ($row['rule_id'] ?? null) === null) {
+                return false;
+            }
+            if ($route->ruleRedirectId !== 0 && ($row['redirect_id'] ?? null) === null) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function intColumn(array $row, string $column): int
+    {
+        $value = $row[$column] ?? null;
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/\A-?\d+\z/', $value) === 1) {
+            return (int) $value;
+        }
+        throw new \UnexpectedValueException("202_clicks.$column read as " . get_debug_type($value));
     }
 
     /** 202_clicks (with the route, 0 off the redirector) and its 202_clicks_spy copy. */

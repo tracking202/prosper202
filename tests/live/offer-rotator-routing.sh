@@ -22,7 +22,9 @@
 #     the click into that campaign, then into none);
 #   - lpc.php fills an offer URL's tokens only from a click of the landing
 #     page's own account (the click id is the visitor's cookie, and the read
-#     handed any account's keyword, values, cost and payout to the URL).
+#     handed any account's keyword, values, cost and payout to the URL);
+#   - lp.php marks only its own account's click as gone to the offer (it
+#     marked whatever click the cookie named).
 # The rules are told apart by browser (the click's User-Agent), so the pass
 # does not depend on how a redirect reads the visitor's address.
 #
@@ -239,6 +241,21 @@ eq "$(Q "SELECT CONCAT(c.aff_campaign_id, '/', c.click_payout, ' ', c.rotator_id
 # refusal above is about the account, not the click).
 curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.92" "$BASE/tracking202/redirect/off.php?acip=$ACIP&pci=$C_PCI"
 eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$C_ID")" "1" "its own account's offer takes it"
+
+say "lp.php marks only its own account's click as gone to the offer"
+# lp.php takes the click from the visitor's cookie for the page's campaign
+# and marked whatever click it named, any account's.
+FOREIGN_CLICK=$(Q "INSERT INTO 202_clicks_counter SET click_id = DEFAULT; SELECT LAST_INSERT_ID()")
+Q "INSERT INTO 202_clicks (click_id, user_id, ppc_account_id, click_cpc, click_time) VALUES ($FOREIGN_CLICK, $OTHER_ACCOUNT, 0, 0, UNIX_TIMESTAMP()); INSERT INTO 202_clicks_record (click_id, click_id_public, click_cloaking, click_in, click_out) VALUES ($FOREIGN_CLICK, 0, 0, 1, 0)"
+location=$(curl -sS -o /dev/null -w '%{redirect_url}' -A "$OTHER" -H "X-Forwarded-For: 203.0.113.93" \
+  -b "tracking202subid_a_$CA=$FOREIGN_CLICK" "$BASE/tracking202/redirect/lp.php?lpip=$LPIP")
+eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$FOREIGN_CLICK")" "0" "another account's click stays as it was"
+eq "$(printf '%s' "${location:-none}" | sed 's/[?&].*//')" "$U/offer" "and the visitor still reaches the offer, as with no cookie"
+read -r D_ID _ < <(lpclick "$OTHER" 203.0.113.94)
+curl -sS -o /dev/null -A "$OTHER" -H "X-Forwarded-For: 203.0.113.94" -b "tracking202subid_a_$CA=$D_ID" \
+  "$BASE/tracking202/redirect/lp.php?lpip=$LPIP"
+eq "$(Q "SELECT click_out FROM 202_clicks_record WHERE click_id=$D_ID")" "1" "its own account's click is marked"
+Q "DELETE FROM 202_clicks WHERE click_id=$FOREIGN_CLICK; DELETE FROM 202_clicks_record WHERE click_id=$FOREIGN_CLICK"
 Q "DELETE FROM 202_rotators WHERE id=$FOREIGN_RT; DELETE FROM 202_aff_campaigns WHERE aff_campaign_id=$FOREIGN_CA"
 
 say "a rule whose redirect is another account's campaign passes the click on"

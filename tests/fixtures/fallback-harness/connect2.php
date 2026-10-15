@@ -59,6 +59,12 @@ final class P202HarnessDb extends mysqli
     {
         return str_starts_with(ltrim($query), 'SELECT');
     }
+
+    // The repositories' statements (off.php's next step after its refresh) end it too.
+    public function prepare(string $query): mysqli_stmt|false
+    {
+        exit;
+    }
 }
 
 $db = (new ReflectionClass(P202HarnessDb::class))->newInstanceWithoutConstructor();

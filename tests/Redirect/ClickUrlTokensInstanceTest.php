@@ -182,6 +182,7 @@ final class ClickUrlTokensInstanceTest extends TestCase
             [$click['country_name'], $click['country_code'], $click['region_name'], $click['city_name']],
             [$tokens['country'], $tokens['country_code'], $tokens['region'], $tokens['city']]
         );
+        self::assertSame(1, $click['click_out'], 'pci.php marks the click as gone to the offer');
     }
 
     /**

@@ -1177,6 +1177,12 @@ join exists to tie. Measured: any account's `acip` or `rpi` moved any
 click, named by a sequential id or a public id two random digits wide,
 into that account's campaign at its payout, or its rotator. When a script
 takes two ids from one request, compare their owners before the write.
+The click scripts now ask it where the write is made: a click leaving its
+landing page goes through `MysqlClickRepository::recordExit()`, which takes
+the account and refuses another account's click, offer or rotator (lp.php
+had no check, and marked whatever click its cookie named), and
+`ClickRowsWrittenOnlyByTheWriterTest` holds every other rewrite of a click's
+rows to a list that says why its clicks are the account's own.
 
 Tying a join is not the end of the change: the joined row is now NULL where
 it used to be another account's, and every consumer of the joined columns
@@ -1802,6 +1808,13 @@ where a check quietly fails to check what it appears to.
   never happened and the test passed against the code it was supposed to
   fail. Print a marker (`assert old in s`, then re-grep the file) before
   believing the run.
+- **A case that two checks refuse proves neither.** The exit writer's
+  refusal cases named another account's rotator with this account's rule,
+  and another rotator's rule with no redirect of its own: the rule check,
+  then the redirect check, refused them first, so removing the rotator's
+  owner check, and then the rule check, left every test green. Build each
+  refusal case so the check it names is the only one it trips (every other
+  record it names is the right one), and plant the removal of each check.
 - **A backup is only a backup where you will read it back.** A plant harness
   copied each file to a fixed scratch path (`plant/keep`) before planting a
   defect, and that path
