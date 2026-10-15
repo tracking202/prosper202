@@ -22,7 +22,10 @@ declare(strict_types=1);
  *                   getDataForWP() (get_data_for_wp); `refused` is the
  *                   keywords report grouped by a column no table has, a
  *                   statement the server refuses; `cid=<id>` is runReports()
- *                   for text_ads on that campaign, and v2's `categories`
+ *                   for text_ads on that campaign, `report?<query>` is
+ *                   runReports() for text_ads with the query's parameters as
+ *                   sent (a refusal prints the API's JSON and ends, with no
+ *                   RETURNED line), and v2's `categories`
  *                   its listCategories(), each handed the user id as its
  *                   endpoint hands it (v1 a string, v2 an int)
  *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
@@ -157,7 +160,7 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
-    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+)$/D', $reader, $m) === 1) {
+    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|report\?[^\s]*)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
         // them, through the version's own functions.php (the report helpers
         // are api/legacy/functions.php's, which it loads). Loaded as they
@@ -183,6 +186,13 @@ try {
             ob_start();
             listCategories($db, $userId);
             $result = json_decode((string) ob_get_clean(), true, 512, JSON_THROW_ON_ERROR);
+        } elseif (str_starts_with($m[2], 'report?')) {
+            parse_str(substr($m[2], 7), $sent);
+            $result = runReports($db, [
+                'type' => 'text_ads',
+                'date_from' => gmdate('m/d/Y', $from),
+                'date_to' => gmdate('m/d/Y', $to),
+            ] + $sent, $m[1] === 'v1' ? (string) $userId : $userId, 'UTC', $m[1]);
         } elseif (str_starts_with($m[2], 'cid=')) {
             $result = runReports($db, [
                 'type' => 'text_ads',

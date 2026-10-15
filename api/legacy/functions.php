@@ -62,9 +62,19 @@ function runReports($db, $vars, $user, $timezone, string $version): array
         }
 
 
-        if (isset($vars['cid']) && $vars['cid'] > 0) {
-            if (getCampaignID($db, $vars['cid'], $user)) {
-                $cid = $vars['cid'];
+        // No cid, an empty one or 0 is every campaign. Anything else is one
+        // of the account's campaigns by its id exactly: `> 0` let -1 through
+        // as every campaign, and MySQL read 12abc as campaign 12.
+        $cidSent = $vars['cid'] ?? null;
+        $cidText = is_scalar($cidSent) ? (string) $cidSent : null;
+        if ($cidSent !== null && $cidText !== '' && $cidText !== '0') {
+            if ($cidText === null || !ctype_digit($cidText)) {
+                $notFound = ['msg' => 'Campaign not found', 'error' => true, 'status' => 404];
+                print_r(pretty_json(json_encode($notFound, JSON_UNESCAPED_SLASHES)));
+                die();
+            }
+            if (getCampaignID($db, $cidText, $user)) {
+                $cid = $cidText;
             }
         }
 
@@ -235,22 +245,23 @@ function reportQuery(
     }
 
     //If any of C1-C4 variables are set
-    if ($mysql['c1'] || $mysql['c2'] || $mysql['c3'] || $mysql['c4']) {
+    // A value is a filter even when it is "0"; only an empty one is none.
+    if ($mysql['c1'] !== '' || $mysql['c2'] !== '' || $mysql['c3'] !== '' || $mysql['c4'] !== '') {
         $report_sql .= "LEFT OUTER JOIN 202_clicks_tracking AS 2cv ON (2cv.click_id = 2c.click_id)";
 
-        if ($mysql['c1']) {
+        if ($mysql['c1'] !== '') {
             $report_sql .= "LEFT OUTER JOIN 202_tracking_c1 AS 2c1 ON (2c1.c1_id = 2cv.c1_id)";
         }
 
-        if ($mysql['c2']) {
+        if ($mysql['c2'] !== '') {
             $report_sql .= "LEFT OUTER JOIN 202_tracking_c2 AS 2c2 ON (2c2.c2_id = 2cv.c2_id)";
         }
 
-        if ($mysql['c3']) {
+        if ($mysql['c3'] !== '') {
             $report_sql .= "LEFT OUTER JOIN 202_tracking_c3 AS 2c3 ON (2c3.c3_id = 2cv.c3_id)";
         }
 
-        if ($mysql['c4']) {
+        if ($mysql['c4'] !== '') {
             $report_sql .= "LEFT OUTER JOIN 202_tracking_c4 AS 2c4 ON (2c4.c4_id = 2cv.c4_id)";
         }
     }
@@ -259,21 +270,21 @@ function reportQuery(
         . " AND click_time > " . $mysql['date_from'] . " AND click_time < " . $mysql['date_to'] . "";
 
     //If C variables are set
-    if ($mysql['c1']) {
+    if ($mysql['c1'] !== '') {
         $report_sql .= " AND 2c1.c1='" . $mysql['c1'] . "'";
     }
-    if ($mysql['c2']) {
+    if ($mysql['c2'] !== '') {
         $report_sql .= " AND 2c2.c2='" . $mysql['c2'] . "'";
     }
-    if ($mysql['c3']) {
+    if ($mysql['c3'] !== '') {
         $report_sql .= " AND 2c3.c3='" . $mysql['c3'] . "'";
     }
-    if ($mysql['c4']) {
+    if ($mysql['c4'] !== '') {
         $report_sql .= " AND 2c4.c4='" . $mysql['c4'] . "'";
     }
 
     //If CID variable set
-    if ($mysql['aff_campaign_id']) {
+    if ($mysql['aff_campaign_id'] !== '') {
         $report_sql .= " AND 2c.aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
     }
 
@@ -324,22 +335,23 @@ function reportQuery(
             }
 
             //If any of C1-C4 variables are set
-            if ($mysql['c1'] || $mysql['c2'] || $mysql['c3'] || $mysql['c4']) {
+            // A value is a filter even when it is "0"; only an empty one is none.
+            if ($mysql['c1'] !== '' || $mysql['c2'] !== '' || $mysql['c3'] !== '' || $mysql['c4'] !== '') {
                 $click_sql .= "LEFT OUTER JOIN 202_clicks_tracking AS 2cv ON (2cv.click_id = 2c.click_id)";
 
-                if ($mysql['c1']) {
+                if ($mysql['c1'] !== '') {
                     $click_sql .= "LEFT OUTER JOIN 202_tracking_c1 AS 2c1 ON (2c1.c1_id = 2cv.c1_id)";
                 }
 
-                if ($mysql['c2']) {
+                if ($mysql['c2'] !== '') {
                     $click_sql .= "LEFT OUTER JOIN 202_tracking_c2 AS 2c2 ON (2c2.c2_id = 2cv.c2_id)";
                 }
 
-                if ($mysql['c3']) {
+                if ($mysql['c3'] !== '') {
                     $click_sql .= "LEFT OUTER JOIN 202_tracking_c3 AS 2c3 ON (2c3.c3_id = 2cv.c3_id)";
                 }
 
-                if ($mysql['c4']) {
+                if ($mysql['c4'] !== '') {
                     $click_sql .= "LEFT OUTER JOIN 202_tracking_c4 AS 2c4 ON (2c4.c4_id = 2cv.c4_id)";
                 }
             }
@@ -350,21 +362,21 @@ function reportQuery(
                 . " AND click_time > '" . $mysql['date_from'] . "' AND click_time < '" . $mysql['date_to'] . "'";
 
             //If C variables are set
-            if ($mysql['c1']) {
+            if ($mysql['c1'] !== '') {
                 $click_sql .= " AND 2c1.c1='" . $mysql['c1'] . "'";
             }
-            if ($mysql['c2']) {
+            if ($mysql['c2'] !== '') {
                 $click_sql .= " AND 2c2.c2='" . $mysql['c2'] . "'";
             }
-            if ($mysql['c3']) {
+            if ($mysql['c3'] !== '') {
                 $click_sql .= " AND 2c3.c3='" . $mysql['c3'] . "'";
             }
-            if ($mysql['c4']) {
+            if ($mysql['c4'] !== '') {
                 $click_sql .= " AND 2c4.c4='" . $mysql['c4'] . "'";
             }
 
             //If CID variable is set
-            if ($mysql['aff_campaign_id']) {
+            if ($mysql['aff_campaign_id'] !== '') {
                 $click_sql .= " AND 2c.aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
             }
 

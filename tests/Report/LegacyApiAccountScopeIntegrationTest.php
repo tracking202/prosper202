@@ -88,9 +88,10 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
                 self::q("DELETE FROM $table WHERE user_id = $user");
             }
         }
-        foreach (['202_clicks_advance', '202_clicks_record', '202_clicks_site'] as $table) {
+        foreach (['202_clicks_advance', '202_clicks_record', '202_clicks_site', '202_clicks_tracking'] as $table) {
             self::q("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
+        self::q('DELETE FROM 202_tracking_c1 WHERE c1_id = ' . self::USER);
         $places = implode(', ', [self::USER, self::OTHER]);
         self::q("DELETE FROM 202_locations_country WHERE country_id IN ($places)");
         self::q("DELETE FROM 202_locations_city WHERE city_id IN ($places)");
@@ -134,10 +135,29 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
                 'city_id' => $named, 'platform_id' => 0, 'browser_id' => 0, 'device_id' => 0, 'isp_id' => $named]);
             self::row('202_clicks_record', ['click_id' => $click, 'click_id_public' => $click, 'click_out' => 1]);
         }
+        // c1 "0" on A's own click alone: a real value, which a filter on it finds.
+        self::row('202_tracking_c1', ['c1_id' => self::USER, 'c1' => '0']);
+        self::row('202_clicks_tracking', [
+            'click_id' => self::OWN_CLICK, 'c1_id' => self::USER, 'c2_id' => 0, 'c3_id' => 0, 'c4_id' => 0,
+        ]);
     }
 
     /** What a reader returned, as the runner printed it. */
     private static function read(string $reader, bool $errorExpected = false): array
+    {
+        $out = self::output($reader);
+        self::assertStringStartsWith('RETURNED ', $out, $out);
+        $result = json_decode(substr(trim($out), 9), true);
+        self::assertIsArray($result, $out);
+        if (!$errorExpected) {
+            self::assertArrayNotHasKey('error', $result, "$reader answered an error: " . json_encode($result));
+        }
+
+        return $result;
+    }
+
+    /** Everything a reader printed, refusals included. */
+    private static function output(string $reader): string
     {
         self::requireScratch();
         $env = [
@@ -158,14 +178,9 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         fclose($pipes[1]);
         fclose($pipes[2]);
         self::assertNotSame(2, proc_close($proc), "the runner could not set up: $err");
-        self::assertStringStartsWith('RETURNED ', $out, $out . $err);
-        $result = json_decode(substr(trim($out), 9), true);
-        self::assertIsArray($result, $out);
-        if (!$errorExpected) {
-            self::assertArrayNotHasKey('error', $result, "$reader answered an error: " . json_encode($result));
-        }
+        self::assertNotSame('', trim($out), "$reader printed nothing: $err");
 
-        return $result;
+        return $out;
     }
 
     private static function assertNamesNothingOfTheOtherAccount(array $result, string $reader): void
@@ -261,6 +276,48 @@ final class LegacyApiAccountScopeIntegrationTest extends TestCase
         $report = self::read("api-$version:cid=" . self::USER);
         self::assertSame(['My Ad'], array_column($report['text_ads'] ?? [], 'text_ad_name'), json_encode($report));
         self::assertEquals(1, $report['totals']['clicks'] ?? null);
+    }
+
+    /**
+     * A c1 of "0" is a value to filter on, and a cid of 0 (or none) is every
+     * campaign; c1 was tested for truth, so "0" read as no filter and the
+     * report answered every click.
+     *
+     * @dataProvider versions
+     */
+    public function testCZeroIsAFilterAndCidZeroIsEveryCampaign(string $version): void
+    {
+        $all = self::read("api-$version:report?");
+        self::assertEquals(3, $all['totals']['clicks'] ?? null, 'no filter: all three clicks');
+        $every = self::read("api-$version:report?cid=0");
+        self::assertEquals(3, $every['totals']['clicks'] ?? null, 'cid=0: every campaign');
+        $filtered = self::read("api-$version:report?c1=0");
+        self::assertEquals(1, $filtered['totals']['clicks'] ?? null, json_encode($filtered));
+        self::assertSame(['My Ad'], array_column($filtered['text_ads'] ?? [], 'text_ad_name'));
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function cidsThatNameNoCampaign(): iterable
+    {
+        foreach (['v1', 'v2'] as $version) {
+            yield "$version, a negative id" => [$version, 'cid=-1'];
+            // MySQL reads 990081abc as 990081, the account's own campaign.
+            yield "$version, the account's id with letters after it" => [$version, 'cid=' . self::USER . 'abc'];
+            yield "$version, a list" => [$version, 'cid%5B%5D=' . self::USER];
+        }
+    }
+
+    /**
+     * A cid that is not exactly an id is the API's "Campaign not found", as
+     * one of another account is: `> 0` let -1 through as every campaign.
+     *
+     * @dataProvider cidsThatNameNoCampaign
+     */
+    public function testACidThatIsNotAnIdIsRefused(string $version, string $query): void
+    {
+        $said = self::output("api-$version:report?$query");
+        self::assertStringNotContainsString('RETURNED ', $said, 'answered a report');
+        self::assertStringContainsString('"Campaign not found"', $said);
     }
 
     /** v2's categories, as categories/index.php asks for them (an int user id, which was a 500). */
