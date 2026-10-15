@@ -130,12 +130,10 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         ],
     ];
 
-    /** Statements a failure branch may refuse with, at its own top level. */
-    private const REFUSALS = [T_THROW, T_EXIT];
-
     /**
      * Calls that refuse as a statement of their own: each is declared
      * `never` (testTheRefusingCallsNeverReturn()), so nothing after one runs.
+     * Called, that is: `record_mysql_error(...)` makes a closure and goes on.
      */
     private const REFUSING_CALLS = ['record_mysql_error', 'p202_account_redirect'];
 
@@ -393,6 +391,20 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         ];
         yield 'refusal only nested' => ["\$r = $q; if (!\$r) { if (\$strict) { throw new E(); } }", 'folded'];
         yield 'joined to another condition' => ["\$r = $q; if (\$r === false || \$skip) { throw new E(); }", 'folded'];
+        yield 'a refusing call made a closure' => [
+            "\$r = $q; if (\$r === false) { record_mysql_error(...); } \$r->c();",
+            'folded',
+        ];
+        yield 'a refusing call, called' => [
+            "\$r = $q; if (\$r === false) { record_mysql_error(\$sql); } \$r->c();",
+            'tested',
+        ];
+        yield 'an error answer made a closure' => [
+            "\$r = $q; if (!\$r) { return legacy_api_database_error(...); }",
+            'folded',
+        ];
+        yield 'exit made a closure' => ["\$r = $q; if (!\$r) { exit(...); }", 'folded'];
+        yield 'a bare exit' => ["\$r = $q; if (!\$r) { exit; }", 'tested'];
         yield 'loose' => ["\$r = $q; if (\$r == false) { throw new E(); }", 'folded'];
         yield 'a form error, read after the if' => [
             "\$r = $q; if (\$r === false) { \$error['db'] = 'x'; } \$r->fetch_assoc();",
@@ -823,10 +835,12 @@ final class MysqliQueryResultIsTestedTest extends TestCase
                 $returned = $token->is(T_RETURN) ? ($tokens[$k + 1] ?? null) : null;
                 $returnsAnError = $returned !== null
                     && in_array(SourceScan::callableName($returned->id, $returned->text), self::ERROR_ANSWERS, true)
-                    && ($tokens[$k + 2]->text ?? '') === '(';
+                    && self::isCall($tokens, $k + 1);
                 if (
-                    $token->is(self::REFUSALS)
-                    || in_array(SourceScan::callableName($token->id, $token->text), self::REFUSING_CALLS, true)
+                    $token->is(T_THROW)
+                    || ($token->is(T_EXIT) && (self::isCall($tokens, $k) || ($tokens[$k + 1]->text ?? '') === ';'))
+                    || (in_array(SourceScan::callableName($token->id, $token->text), self::REFUSING_CALLS, true)
+                        && self::isCall($tokens, $k))
                     || $returnsAnError
                 ) {
                     return 'ends';
@@ -1088,6 +1102,18 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         }
 
         return false;
+    }
+
+    /**
+     * Whether the name at $k is called: `name(` with arguments, not the
+     * first-class callable `name(...)`, which makes a closure and goes on.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function isCall(array $tokens, int $k): bool
+    {
+        return ($tokens[$k + 1]->text ?? '') === '('
+            && !(($tokens[$k + 2] ?? null)?->is(T_ELLIPSIS) && ($tokens[$k + 3]->text ?? '') === ')');
     }
 
     /**

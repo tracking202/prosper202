@@ -362,6 +362,27 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             $use . "\$s = $joined . LatestVisit::orderBy('x', 'r') . ' LIMIT 1';",
             ['3 {main} any'],
         ];
+        yield 'ordered by a route joined to no click' => [
+            $use . "\$s = 'SELECT c.x FROM 202_clicks c LEFT JOIN 202_clicks_rotator r ON r.click_id = 0"
+                . " WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1';",
+            ['3 {main} any'],
+        ];
+        yield 'ordered by a route joined to another click' => [
+            $use . "\$s = 'SELECT c.x FROM 202_clicks c JOIN 202_clicks_record d ON d.click_id = c.click_id + 1"
+                . " LEFT JOIN 202_clicks_rotator r ON r.click_id = d.click_id"
+                . " WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1';",
+            ['3 {main} any'],
+        ];
+        yield 'ordered by a route joined to an arithmetic of the click' => [
+            $use . "\$s = 'SELECT c.x FROM 202_clicks c LEFT JOIN 202_clicks_rotator r ON r.click_id = 1 + c.click_id"
+                . " WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1';",
+            ['3 {main} any'],
+        ];
+        yield 'ordered by a route joined by an arithmetic of its own id' => [
+            $use . "\$s = 'SELECT c.x FROM 202_clicks c LEFT JOIN 202_clicks_rotator r ON 1 + r.click_id = c.click_id"
+                . " WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1';",
+            ['3 {main} any'],
+        ];
         yield 'ordered by a route not joined' => [
             $use . "\$s = 'SELECT c.x FROM 202_clicks c WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r');",
             ['3 {main} any'],
@@ -407,6 +428,14 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             "<?php\n\$s = 'SELECT 2c.x FROM `202_clicks` AS 2c LEFT JOIN 202_clicks_rotator AS cro"
                 . " ON cro.click_id = 2c.click_id WHERE 2c.click_id = ? '"
                 . " . \\Prosper202\\Click\\LatestVisit::orderBy('2c', 'cro');",
+            ['2 {main} latest'],
+        ];
+        yield 'ordered, the route joined through the record' => [
+            "<?php\n\$s = 'SELECT 2c.x FROM 202_clicks_record AS 2cr"
+                . " LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)"
+                . " LEFT JOIN 202_clicks_rotator AS cro ON (cro.click_id = 2cr.click_id)"
+                . " WHERE 2cr.click_id_public = ? '"
+                . " . \\Prosper202\\Click\\LatestVisit::orderBy('2c', 'cro') . ' LIMIT 1';",
             ['2 {main} latest'],
         ];
         yield 'ordered, under another name' => [
@@ -571,13 +600,21 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
 
         $ordered = [];
         $derived = [];
+        $sameClick = self::sameClick($text);
         foreach ($calls as $call) {
             if (strtolower($call['class']) !== self::LATEST_VISIT) {
                 continue;
             }
             $method = strtolower($call['method']);
-            if ($method === 'orderby' && in_array($call['args'][1] ?? null, $routes, true)) {
-                $ordered[] = $call['args'][0] ?? null;
+            [$clickAlias, $routeAlias] = [$call['args'][0] ?? null, $call['args'][1] ?? null];
+            if (
+                $method === 'orderby'
+                && in_array($routeAlias, $routes, true)
+                && $clickAlias !== null
+                && $routeAlias !== null
+                && ($sameClick[$clickAlias] ?? $clickAlias) === ($sameClick[$routeAlias] ?? $routeAlias)
+            ) {
+                $ordered[] = $clickAlias;
             } elseif ($method === 'of') {
                 $derived[] = $call['offset'];
             }
@@ -591,6 +628,35 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         }
 
         return array_diff($clicks, $ordered) === [] && array_diff($unread, $derived) === [];
+    }
+
+    /**
+     * The aliases a statement equates by click id (`a.click_id = b.click_id`,
+     * in any clause, directly or through another alias), each mapped to one
+     * alias standing for its group. A route is the click's only when it is
+     * joined to it: joined on anything else, its order picks among visits of
+     * no click.
+     *
+     * @return array<string, string>
+     */
+    private static function sameClick(string $text): array
+    {
+        // Each side whole: no arithmetic beside either column.
+        $pattern = '/(?<![-+*\/%.\w`])(?<![-+*\/%]\s)`?(\w+)`?\.`?click_id`?\s*(?:<=>|=)\s*'
+            . '`?(\w+)`?\.`?click_id`?(?![\w`])(?!\s*[-+*\/%.(])/i';
+        if (preg_match_all($pattern, $text, $pairs, PREG_SET_ORDER) === false) {
+            throw new \RuntimeException('Reading a statement failed: ' . preg_last_error_msg());
+        }
+        $group = [];
+        foreach ($pairs as [, $a, $b]) {
+            $ga = $group[$a] ?? $a;
+            $gb = $group[$b] ?? $b;
+            foreach ($group + [$a => $a, $b => $b] as $alias => $g) {
+                $group[$alias] = $g === $gb ? $ga : $g;
+            }
+        }
+
+        return $group;
     }
 
     /**
