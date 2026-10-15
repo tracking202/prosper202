@@ -11,11 +11,12 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$pci = $_GET['pci'] ?? '';
-if (!is_numeric($pci)) {
-	die();
+// The click's public id exactly: compared as text, MySQL read 1e3 as 1000,
+// and 0, a click with none, matched every click stored without one.
+$pciPublicId = \Prosper202\Click\ClickId::parse($_GET['pci'] ?? null);
+if ($pciPublicId === null) {
+    die();
 }
-$mysql['click_id_public'] = $db->real_escape_string((string)$pci);
 
 $click_sql = "
 	SELECT
@@ -30,7 +31,7 @@ $click_sql = "
 		LEFT JOIN 202_clicks_record USING (click_id) 
 		LEFT JOIN 202_clicks_site   USING (click_id)
 	WHERE
-		click_id_public='".$mysql['click_id_public']."'
+		click_id_public=" . $pciPublicId . "
 ";
 // Not cached: a rotator re-click rewrites the click's destination and keeps
 // its public id, and a cached row sent the visitor to the one before.

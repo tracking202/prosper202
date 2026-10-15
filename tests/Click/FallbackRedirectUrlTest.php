@@ -147,6 +147,20 @@ final class FallbackRedirectUrlTest extends TestCase
         );
     }
 
+    /**
+     * A landing page that names no campaign of its account deletes the URL
+     * an earlier read kept for an outage. Written empty instead, every id
+     * anyone sends would keep an entry that never expires.
+     */
+    public function testLpDeletesTheKeptUrlOfAPageWithNoCampaign(): void
+    {
+        $src = self::scriptSource('tracking202/redirect/lp.php');
+        $found = preg_match('/if \(\$tracker_row === null\) \{(.*?)\n\}/s', $src, $m);
+        self::assertSame(1, $found, 'lp.php: no branch for a page with no campaign');
+        self::assertStringContainsString("\$memcache->delete(md5('lp_' . \$lpip . systemHash()));", $m[1]);
+        self::assertStringNotContainsString('refresh(', $m[1], 'lp.php writes the key for an id that names no page');
+    }
+
     public function testNoOtherFileWritesTheseKeys(): void
     {
         $root = dirname(__DIR__, 2);

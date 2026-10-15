@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Prosper202\Repository;
 
 use mysqli;
+use Prosper202\Click\ClickPathReads;
 use Prosper202\Database\Connection;
-use Prosper202\Repository\Cache\IdCache;
 use Prosper202\Repository\Cache\MemcacheIdCache;
+use Prosper202\Repository\Cache\MemcacheRowCache;
 use WeakMap;
 
 /**
@@ -49,6 +50,21 @@ final class LookupRepositoryFactory
         return self::bundle($db)->tracking;
     }
 
+    public static function reads(mysqli $db): ClickPathReads
+    {
+        return self::bundle($db)->reads;
+    }
+
+    /**
+     * The same reads, never cached: for a page that has always read its
+     * setup live (the landing page's script and its variables), so a Setup
+     * edit, the identity-capture switch among them, shows on the next view.
+     */
+    public static function liveReads(mysqli $db): ClickPathReads
+    {
+        return ClickPathReads::uncached(new Connection($db));
+    }
+
     public static function reset(): void
     {
         self::$bundles = null;
@@ -64,12 +80,24 @@ final class LookupRepositoryFactory
 
     private static function build(Connection $connection): LookupRepositories
     {
-        $cache = self::bootstrapCache();
-        if ($cache === null) {
+        if (!self::bootstrapCacheWorks()) {
             return LookupRepositories::uncached($connection);
         }
 
-        return LookupRepositories::cached($connection, $cache, \systemHash());
+        return LookupRepositories::cached(
+            $connection,
+            new MemcacheIdCache(
+                static fn (string $key): mixed => \getCache($key),
+                static fn (string $key, int $id, int $ttl): mixed
+                    => \setCache($key, $id, $ttl),
+            ),
+            new MemcacheRowCache(
+                static fn (string $key): mixed => \getCache($key),
+                static fn (string $key, string $entry, int $ttl): mixed
+                    => \setCache($key, $entry, $ttl),
+            ),
+            \systemHash()
+        );
     }
 
     /**
@@ -79,21 +107,11 @@ final class LookupRepositoryFactory
      * systemHash() is no cache: an entry needs the install's namespace, and
      * one shared by every install would answer another install's ids.
      */
-    private static function bootstrapCache(): ?IdCache
+    private static function bootstrapCacheWorks(): bool
     {
-        if (
-            !function_exists('getCache')
-            || !function_exists('setCache')
-            || !function_exists('systemHash')
-            || ($GLOBALS['memcacheWorking'] ?? false) !== true
-        ) {
-            return null;
-        }
-
-        return new MemcacheIdCache(
-            static fn (string $key): mixed => \getCache($key),
-            static fn (string $key, int $id, int $ttl): mixed
-                => \setCache($key, $id, $ttl),
-        );
+        return function_exists('getCache')
+            && function_exists('setCache')
+            && function_exists('systemHash')
+            && ($GLOBALS['memcacheWorking'] ?? false) === true;
     }
 }

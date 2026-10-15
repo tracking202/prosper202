@@ -5,39 +5,33 @@ use Tracking202\Redirect\RedirectHelper;
 
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
-// Validate required parameter
-$clickIdPublic = RedirectHelper::getIntParam('pci');
+// The click's public id exactly: FILTER_VALIDATE_INT took 0 (every click
+// stored without one), +12 and padded whitespace.
+$clickIdPublic = \Prosper202\Click\ClickId::parse($_GET['pci'] ?? null);
 if ($clickIdPublic === null) {
     RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
-
-$mysql['click_id_public'] = $db->real_escape_string((string)$clickIdPublic);
 
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
     $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
 }
-$tracker_sql = "
-	SELECT
-		aff_campaign_name,
-		site_url_address,
-		user_pref_cloak_referer
-	FROM
-		202_clicks, 202_clicks_record, 202_clicks_site, 202_site_urls, 202_aff_campaigns,202_users_pref
-	WHERE
-		202_clicks.aff_campaign_id = 202_aff_campaigns.aff_campaign_id
-		AND 202_users_pref.user_id = 1
-		AND 202_clicks.click_id = 202_clicks_record.click_id
-		AND 202_clicks_record.click_id_public='".$mysql['click_id_public']."'
-		AND 202_clicks_record.click_id = 202_clicks_site.click_id 
-		AND 202_clicks_site.click_redirect_site_url_id = 202_site_urls.site_url_id
-";
 
-// Not cached: a rotator re-click rewrites the click's destination and keeps
-// its public id, and a cached row sent the visitor to the one before.
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql, 0);
+// The click's destination, its campaign's name when the campaign is the
+// click's account's, and that account's referer setting (it was the first
+// account's for every click). Not cached: a rotator re-click keeps the
+// public id and changes where the click goes.
+// With MySQL down there is nothing to read: the not-found page, as before.
+$tracker_row = null;
+if ($db instanceof \mysqli) {
+    try {
+        $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->cloakedClick($clickIdPublic);
+    } catch (\Throwable $clReadError) {
+        record_mysql_error($db, 'reading cloaked click ' . $clickIdPublic, $clReadError->getMessage());
+    }
+}
 
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	$action_site_url = p202InstallPath('202-404.php');
 	$redirect_site_url = p202InstallPath('202-404.php');
 	$referrer = '';
@@ -46,7 +40,7 @@ if (!$tracker_row) {
 	$action_site_url = p202InstallPath('tracking202/redirect/cl2.php');
 	//modify the redirect site url to go through another cloaked link
 	$redirect_site_url = $tracker_row['site_url_address'];
-	$referrer = $tracker_row['user_pref_cloak_referer'] ?? '';
+	$referrer = $tracker_row['user_pref_cloak_referer'] ?? 'origin'; // no preferences row: the column's default
 	$html['aff_campaign_name'] = $tracker_row['aff_campaign_name'] ?? '';
 } 
 

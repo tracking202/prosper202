@@ -237,8 +237,8 @@ final class RtrClickInstanceTest extends TestCase
      * record it built; this is rtr.php's wiring of it, read back through
      * cl.php (the offer URL the click now holds) and GET /clicks/{id}.
      * 202_clicks has no key on click_id, so each visit is a row of its own
-     * there (as REPLACE made it), and which visit's campaign GET /clicks
-     * shows is its query's choice: not asserted.
+     * there (as REPLACE made it), and GET /clicks/{id} answers the latest:
+     * the third visit's campaign.
      */
     public function testAReClickRewritesTheVisitorsLastClick(): void
     {
@@ -294,11 +294,12 @@ final class RtrClickInstanceTest extends TestCase
         $click = json_decode($answer, true)['data'] ?? null;
         self::assertIsArray($click, $answer);
         $actual = [];
-        foreach (['click_id_public', 'rotator_id', 'click_cloaking', 'keyword', 'c1'] as $field) {
+        foreach (['click_id_public', 'aff_campaign_id', 'rotator_id', 'click_cloaking', 'keyword', 'c1'] as $field) {
             $actual[$field] = array_key_exists($field, $click) ? $click[$field] : '(not served)';
         }
         self::assertSame([
             'click_id_public' => (int) $second['pci'],
+            'aff_campaign_id' => $campaign,
             'rotator_id' => $rotator,
             'click_cloaking' => 1,
             'keyword' => "kw-$run",

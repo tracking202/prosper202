@@ -122,7 +122,7 @@ final class ClickCookieTest extends TestCase
         foreach (SourceScan::phpFiles() as $path => $source) {
             $through += preg_match_all("/(?:getCookie202|ClickCookie::value)\\([^)]*'tracking202/", $source);
         }
-        self::assertGreaterThanOrEqual(12, $through);
+        self::assertGreaterThanOrEqual(11, $through);
     }
 
     /** @return iterable<string, array{string, int}> */

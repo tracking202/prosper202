@@ -40,41 +40,18 @@ if ($usedCachedRedirect==true) {
 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
-//grab tracker data
-$mysql['tracker_id_public'] = $db->real_escape_string($tracker_id);
-$rotator_sql = "SELECT  tr.user_id,
-						tr.ppc_account_id,
-						tr.rotator_id,
-						tr.click_cpc,
-						rt.default_url,
-						rt.default_campaign,
-						rt.default_lp,
-						rt.auto_monetizer,
-						ca.aff_campaign_id,
-						ca.aff_campaign_rotate,
-					    ca.aff_campaign_url,
-					    ca.aff_campaign_url_2,
-					    ca.aff_campaign_url_3,
-					    ca.aff_campaign_url_4,
-					    ca.aff_campaign_url_5,
-					    ca.aff_campaign_payout,
-					    ca.aff_campaign_cloaking,
-						ur.user_timezone,
-					   	up.user_keyword_searched_or_bidded,
-                        up.user_pref_dynamic_bid,
-					   	up.maxmind_isp,
-					   	lp.landing_page_url,
-					   	lp.landing_page_id AS default_landing_page_id
-				FROM    202_trackers AS tr
-				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
-				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
-                    AND ca.user_id = tr.user_id
-				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
-                    AND lp.user_id = tr.user_id
-				LEFT JOIN 202_users AS ur ON ur.user_id = tr.user_id
-				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
-				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
-$rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
+// The tracker, with its rotator and the rotator's defaults when each is the
+// tracker's account's: a tracker naming another account's rotator sent the
+// click through that account's rules, under this account.
+$rtrTrackerId = \Prosper202\Click\PublicId::parse($tracker_id);
+$rotator_row = null;
+if ($rtrTrackerId !== null) {
+    try {
+        $rotator_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->redirectorTracker($rtrTrackerId);
+    } catch (\Throwable $rtrReadError) {
+        record_mysql_error($db, 'reading tracker ' . $rtrTrackerId, $rtrReadError->getMessage());
+    }
+}
 
 // Guard BEFORE dereferencing: a missing row (unknown tracker, DB hiccup, or
 // stale cache) must never crash the redirect. Fall back to the cached default
@@ -91,8 +68,9 @@ if (!$rotator_row) {
 	die();
 }
 
-// A tracker that names no redirector (a direct link's, sent here by hand)
-// has nowhere to send the visitor: no click, as for an unknown tracker.
+// A tracker that names no redirector of its account (a direct link's, sent
+// here by hand) has nowhere to send the visitor: no click, as for an
+// unknown tracker.
 if ((int) ($rotator_row['rotator_id'] ?? 0) <= 0) {
 	die();
 }

@@ -100,17 +100,11 @@ final class AccountScopedJoinTest extends TestCase
     private const LTV_PRODUCTS = 'the product of the account\'s own line items: a line item names only a product upserted for its account (MysqlCustomerRepository::upsertProduct($userId, …)); $mrrSubquery is the per-product MRR join after it, scoped `s.user_id = ?`';
     private const REVENUE_CONVERSION = 'the conversion of the account\'s own revenue event (`re.user_id = ?` or `r.user_id`): a revenue event is written for its conversion in the same account (MysqlConversionRepository::recordLocked())';
     private const WEBHOOK_DELIVERY = 'the dispatcher reads every account\'s due deliveries with their own endpoint: a delivery is written only for a webhook read for the same account (MysqlWebhookRepository::enqueue(): `WHERE user_id = ?`)';
-    private const CLICK_TRACKER = 'the click\'s own tracker: 202_cpa_trackers records the tracker the click came through, and the redirect takes the click\'s user_id from that tracker';
     private const AUTH_KEY = 'the comma join\'s WHERE ties it: `2u.user_id = 2a.user_id`, with `2a.user_id` the signed-in account';
     private const LEDGER_PARTS = 'the counted conversion rows of the report\'s own clicks: LedgerReportSql::partsTable() selects `lp.click_id IN (SELECT s.click_id FROM 202_dataengine s WHERE <the report\'s owner condition and window>)`, its goal join is tied, and a conversion is recorded only on its own account\'s click';
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
     private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
-
-    // Why a site is in KNOWN_UNSCOPED (it can show or use another
-    // account's record, and is left to the change that owns the file).
-
-    private const TRACKING_PATH = 'tracking path (a redirect or static endpoint resolving public ids from the URL): follows a tracker\'s, landing page\'s or rotator rule\'s stored id to another account\'s record; reported, not changed here';
 
     /**
      * Category (b): reads that join an account-owned table without tying
@@ -212,9 +206,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0 #2' => self::SAME_CLICK_CONVERSIONS,
             'no user_id tie | 202_conversion_logs | cl.click_id = c.click_id AND cl.deleted = 0 #3' => self::SAME_CLICK_CONVERSIONS,
         ],
-        '202-config/connect2.php' => [
-            'no user_id tie | 202_trackers | `2trk`.tracker_id_public = `2cpa`.tracker_id_public' => self::CLICK_TRACKER,
-        ],
         '202-config/functions-auth.php' => [
             'comma join | 202_users | SELECT * FROM 202_auth_keys `2a` , 202_users `2u` WHERE `2a`.expires > UNIX_TIMESTAMP' => self::AUTH_KEY,
         ],
@@ -227,9 +218,6 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/migrations/run_ltv_backfill.php' => [
             'no user_id tie | 202_revenue_events | re.conv_id = cl.conv_id' => self::UPGRADE,
-        ],
-        '202-config/static-endpoint-helpers.php' => [
-            'no user_id tie | 202_trackers | t.tracker_id_public = cp.tracker_id_public' => self::CLICK_TRACKER,
         ],
         '202-cronjobs/ltv_maintenance.php' => [
             'no user_id tie | 202_subscriptions | customer_id IN ( {{$in}} )' => self::CUSTOMER_ROWS,
@@ -282,69 +270,11 @@ final class AccountScopedJoinTest extends TestCase
         'tracking202/ajax/ltv_products.php' => [
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id' => self::EVENT_LINES,
         ],
-    ];
-
-    /**
-     * Category (c) left for another change: a read that can show another
-     * account's name, in a file another piece of work owns (the redirects
-     * and static endpoints that resolve public ids from URLs). The legacy
-     * report pages and data engine, the Setup pages, the legacy API and the
-     * daily-email cron were tied in their own changes and left this list.
-     * This list only ever shrinks.
-     *
-     * @var array<string, array<string, string>>
-     */
-    private const KNOWN_UNSCOPED = [
-        '202-config/Tracker/MysqlTrackerRepository.php' => [
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        'tracking202/redirect/cl.php' => [
-            'comma join | 202_aff_campaigns | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,
-            'comma join | 202_users_pref | , user_pref_cloak_referer FROM 202_clicks , 202_clicks_record , 202_clicks_site , 202_site_urls , 202_aff_campaigns , 202_users_pref' => self::TRACKING_PATH,
-        ],
-        'tracking202/redirect/dl.php' => [
-            'USING without user_id | 202_aff_campaigns | ) LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | ) LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
-        'tracking202/redirect/lp.php' => [
-            'comma join | 202_aff_campaigns | . aff_campaign_cloaking FROM 202_landing_pages , 202_aff_campaigns WHERE 202_landing_pages.landing_page_id_public = \'{0}\' AND 202_aff_campaigns' => self::TRACKING_PATH,
-        ],
-        'tracking202/redirect/lpc.php' => [
-            'USING without user_id | 202_aff_campaigns | 202_landing_pages LEFT JOIN 202_aff_campaigns USING ( aff_campaign_id ) WHERE landing_page_id_public = \'{0}\'' => self::TRACKING_PATH,
-        ],
-        'tracking202/redirect/rtr.php' => [
-            'no user_id tie | 202_rotators | rt.id = tr.rotator_id' => self::TRACKING_PATH,
-        ],
-        'tracking202/static/get_custom_vars.php' => [
-            'USING without user_id | 202_ppc_accounts | 202_trackers LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-        ],
         'tracking202/static/gpb.php' => [
-            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::TRACKING_PATH,
-            'condition built at runtime | 202_trackers | ( `2cpa`.`tracker_id_public` = `2trc`.`tracker_id_public` ) {$site_urls}' => self::TRACKING_PATH,
-        ],
-        'tracking202/static/gpx.php' => [
-            'USING without user_id | 202_trackers | ) LEFT JOIN 202_trackers USING ( tracker_id_public ) WHERE click_id = \'{0}\'' => self::TRACKING_PATH,
-        ],
-        'tracking202/static/landing.php' => [
-            'USING without user_id | 202_ppc_accounts | 202_trackers LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-            'no user_id tie | 202_trackers | tr.aff_campaign_id = lp.aff_campaign_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | aff_campaign_id LEFT JOIN 202_ppc_accounts USING ( ppc_account_id ) LEFT JOIN ( SELECT ppc_network_id ,' => self::TRACKING_PATH,
-            'no user_id tie | 202_aff_campaigns | lpc.aff_campaign_id = lp.aff_campaign_id' => self::TRACKING_PATH,
-            'no user_id tie | 202_trackers | tr.tracker_id_public = ?' => self::TRACKING_PATH,
-            'no user_id tie | 202_aff_campaigns | trc.aff_campaign_id = tr.aff_campaign_id' => self::TRACKING_PATH,
-        ],
-        'tracking202/static/record_adv.php' => [
-            'no user_id tie | 202_aff_campaigns | ac.aff_campaign_id = tr.aff_campaign_id' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | aff_campaign_id LEFT JOIN 202_ppc_accounts AS `2ppc` USING ( ppc_account_id ) LEFT JOIN ( SELECT' => self::TRACKING_PATH,
-        ],
-        'tracking202/static/record_simple.php' => [
-            'comma join | 202_aff_campaigns | . identity_signals FROM 202_landing_pages , 202_aff_campaigns WHERE 202_landing_pages.landing_page_id_public = \'{0}\' AND 202_aff_campaigns' => self::TRACKING_PATH,
-            'USING without user_id | 202_ppc_accounts | `2tr` LEFT JOIN 202_ppc_accounts AS `2ppc` USING ( ppc_account_id ) LEFT JOIN ( SELECT' => self::TRACKING_PATH,
+            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
         ],
         'tracking202/static/upx.php' => [
-            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::TRACKING_PATH,
-            'condition built at runtime | 202_trackers | ( `2cpa`.`tracker_id_public` = `2trc`.`tracker_id_public` ) {$site_urls}' => self::TRACKING_PATH,
+            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
         ],
     ];
 
@@ -474,7 +404,7 @@ final class AccountScopedJoinTest extends TestCase
         $unexpected = [];
         foreach (self::treeFindings() as $file => $findings) {
             foreach ($findings as $f) {
-                if (!isset(self::HARMLESS[$file][$f['key']]) && !isset(self::KNOWN_UNSCOPED[$file][$f['key']])) {
+                if (!isset(self::HARMLESS[$file][$f['key']])) {
                     $unexpected[] = "  $file:{$f['line']}  {$f['key']}";
                 }
             }
@@ -493,13 +423,11 @@ final class AccountScopedJoinTest extends TestCase
     {
         $tree = self::treeFindings();
         $stale = [];
-        foreach (['HARMLESS' => self::HARMLESS, 'KNOWN_UNSCOPED' => self::KNOWN_UNSCOPED] as $list => $entries) {
-            foreach ($entries as $file => $keys) {
-                $present = array_column($tree[$file] ?? [], 'key');
-                foreach (array_keys($keys) as $key) {
-                    if (!in_array($key, $present, true)) {
-                        $stale[] = "  $list: $file  $key";
-                    }
+        foreach (self::HARMLESS as $file => $keys) {
+            $present = array_column($tree[$file] ?? [], 'key');
+            foreach (array_keys($keys) as $key) {
+                if (!in_array($key, $present, true)) {
+                    $stale[] = "  HARMLESS: $file  $key";
                 }
             }
         }

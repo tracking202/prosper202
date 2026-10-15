@@ -1659,7 +1659,10 @@ paths:
     get:
       tags: [Clicks]
       summary: Get a click
-      description: Full click details including geo, device, and custom variable lookups.
+      description: >-
+        Full click details including geo, device, and custom variable lookups.
+        A click a redirector link re-clicked has a row for each visit, each
+        listed by GET /clicks; this answers the latest.
       operationId: getClick
       responses:
         "200":

@@ -1101,6 +1101,20 @@ UPDATE` of its own columns), and the test is a row another writer has
 touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
 writer, `MysqlClickRepository`.
 
+A "none" that is also a lookup key finds every row that has none. A direct
+link's click without cloaking is stored with public id 0, and off.php looked
+the visitor's last click up by its public id: `click_id_public = '0'` matched
+each of the account's clicks stored without one, and the first was moved into
+the offer's campaign (measured live). Read a key the way its writer means it
+before using it (`ClickId::parse()` refuses 0), and treat "none" as no key.
+The first fix read the ids exactly in five click scripts and left pci.php,
+cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
+where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
+another account's offer URL (found by review, measured on the old code).
+`PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
+quoted value anywhere on the click path, and `ClickPathReads` answers nothing
+for an id below 1 without asking.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1201,6 +1215,14 @@ landing page for a link that names one, fell through to building a direct
 link the link was never made as. Group by the expression you select, count
 a none row by the same NULL the join produced, and give a row whose record
 is not the account's no action rather than a different one.
+
+The tracking path's reads were the floor's last list of untied joins. They
+go through `ClickPathReads` now, prepared and tied, and an id the click
+copies from a tracker (its campaign, text ad, traffic source account,
+redirector) comes back 0 where the joined row is another account's, the
+"none" a tracker naming nothing always gave, so every consumer already reads
+it. The read is where the account is decided: a writer handed an id another
+account's read produced cannot tell it apart from its own.
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal

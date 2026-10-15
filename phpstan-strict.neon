@@ -11,6 +11,7 @@ parameters:
     paths:
         - 202-config/Repository
         - 202-config/Click/ClickExit.php
+        - 202-config/Click/ClickPathReads.php
         - 202-config/Click/ClickRecord.php
         - 202-config/Click/ClickRecordBuilder.php
         - 202-config/Click/ClickRepositoryInterface.php
@@ -18,6 +19,7 @@ parameters:
         - 202-config/Click/DynamicBid.php
         - 202-config/Click/MysqlClickRepository.php
         - 202-config/Click/OfferRoute.php
+        - 202-config/Click/PublicId.php
         - 202-config/Click/RotatorRoute.php
         - 202-config/Click/StoredAddressIds.php
         - 202-config/User/SignInRecord.php
