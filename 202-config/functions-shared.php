@@ -165,9 +165,14 @@ function p202StoredTrackingDomain(?int $userId = null): string
         }
         throw new \RuntimeException($failed . ($error !== '' ? ': ' . $error : ''));
     }
-    $row = $tracking_domain_result->fetch_assoc();
+    try {
+        // A failed fetch throws too: false read as "no preferences row".
+        $row = p202FetchRow($tracking_domain_result, $tracking_domain_sql);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+        throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
+    }
 
-    return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
+    return is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
 }
 
 /**

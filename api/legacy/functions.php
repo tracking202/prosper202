@@ -68,7 +68,7 @@ function runReports($db, $vars, $user, $timezone, string $version): array
             }
         }
 
-        // Either date may be left out; both out is today.
+        // Both dates or neither: neither is today, and one alone is refused below.
         $dateFromSent = $vars['date_from'] ?? null;
         $dateToSent = $vars['date_to'] ?? null;
         if ($dateFromSent != null || $dateToSent != null) {
