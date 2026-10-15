@@ -491,7 +491,8 @@ $computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $tracki
 	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
     // Every row in one transaction (MysqlClickRepository), its cache writes
-    // held until it commits; a failure is the error page, as rtr.php's is.
+    // held until it commits; a failure is recorded, as rtr.php's is, and a
+    // redirect already queued stands (record_mysql_error()).
     // Built outside the try: a record the builder refuses is a bug, not a
     // database failure, and the uncaught handler logs it as one.
     $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
