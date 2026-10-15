@@ -70,8 +70,8 @@ if (!function_exists('p202RecordMysqlErrorRow')) {
             if (!$db->rollback() || !$db->autocommit(true)) {
                 throw new \RuntimeException('its transaction could not be rolled back: ' . $db->error);
             }
-            // A lookup that opens a transaction of its own refuses to inside
-            // another (Connection::outermostTransaction()): there is none now.
+            // Connection::transaction() refuses to begin inside another:
+            // there is none now, so a lookup may open its own.
             if (class_exists(\Prosper202\Database\Connection::class)) {
                 \Prosper202\Database\Connection::transactionsEnded($db);
             }

@@ -203,76 +203,89 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 		$get_tracker_row = $get_tracker_result->fetch_assoc();
 	}
 
-	// The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
-	// implemented as delete-then-recreate, and with the DELETE outside the
-	// transaction any failure of the INSERT/UPDATE below (or of begin itself)
-	// destroyed the user's tracker and never replaced it -- the rollback could
-	// not reach a row deleted in autocommit.
-	//
-	// begin_transaction() is checked because under this bootstrap's
-	// mysqli_report(MYSQLI_REPORT_STRICT) a failure returns false rather than
-	// throwing; ignoring it would run everything below in autocommit with the
-	// rollbacks undoing nothing. record_mysql_error($db, ...) reads the error,
-	// then rolls back and exits (it is `never`): nothing follows it.
-	if (!$db->begin_transaction()) {
-		record_mysql_error('begin_transaction() for tracker creation');
-	}
+    // The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
+    // implemented as delete-then-recreate, and with the DELETE outside the
+    // transaction any failure of the INSERT/UPDATE below (or of begin itself)
+    // destroyed the user's tracker and never replaced it -- the rollback could
+    // not reach a row deleted in autocommit.
+    //
+    // A failed statement inside goes to record_mysql_error($db, ...), which rolls
+    // the transaction back and exits (it is `never`); a failed begin or commit is
+    // Connection's QueryException, caught below, after its rollback.
 
-	if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
-		$drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
-		if (!$db->query($drop_tracker)) {
-			record_mysql_error($db, $drop_tracker);
-		}
-	}
+    // Set only for a cost type and for an edit, respectively.
+    $cost_sql ??= '';
+    $get_tracker_result ??= null;
+    $get_tracker_row ??= null;
+    try {
+        $trackerConn = new \Prosper202\Database\Connection($db);
+        [$tracker_row, $tracker_id_public] = $trackerConn->transaction(static function () use (
+            $db,
+            $mysql,
+            $cost_sql,
+            $get_tracker_result,
+            $get_tracker_row
+        ): array {
+            if (isset($get_tracker_result) && $get_tracker_result->num_rows > 0) {
+                $drop_tracker = "DELETE FROM 202_trackers WHERE tracker_id = '".$get_tracker_row['tracker_id']."'";
+                if (!$db->query($drop_tracker)) {
+                    record_mysql_error($db, $drop_tracker);
+                }
+            }
 
-	$tracker_sql = "INSERT INTO `202_trackers`
-					SET			`user_id`='".$mysql['user_id']."',
-								`aff_campaign_id`='".$mysql['aff_campaign_id']."',
-								`tracker_id_public`='0',
-								`text_ad_id`='".$mysql['text_ad_id']."',
-								`ppc_account_id`='".$mysql['ppc_account_id']."',
-								".$cost_sql."
-								`landing_page_id`='".$mysql['landing_page_id']."',
-								`rotator_id`='".$mysql['rotator_id']."',
-								`click_cloaking`='".$mysql['click_cloaking']."',
-								`tracker_time`='".$mysql['tracker_time']."'";
-	$tracker_result = $db->query($tracker_sql);
-	if (!$tracker_result) {
-		record_mysql_error($db, $tracker_sql);
-		die('Error creating tracker');
-	}
+            $tracker_sql = "INSERT INTO `202_trackers`
+                            SET			`user_id`='".$mysql['user_id']."',
+                                        `aff_campaign_id`='".$mysql['aff_campaign_id']."',
+                                        `tracker_id_public`='0',
+                                        `text_ad_id`='".$mysql['text_ad_id']."',
+                                        `ppc_account_id`='".$mysql['ppc_account_id']."',
+                                        ".$cost_sql."
+                                        `landing_page_id`='".$mysql['landing_page_id']."',
+                                        `rotator_id`='".$mysql['rotator_id']."',
+                                        `click_cloaking`='".$mysql['click_cloaking']."',
+                                        `tracker_time`='".$mysql['tracker_time']."'";
+            $tracker_result = $db->query($tracker_sql);
+            if (!$tracker_result) {
+                record_mysql_error($db, $tracker_sql);
+                die('Error creating tracker');
+            }
 
-	$tracker_row['tracker_id'] = $db->insert_id;
-	$mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
+            $tracker_row['tracker_id'] = $db->insert_id;
+            $mysql['tracker_id'] = $db->real_escape_string((string)$tracker_row['tracker_id']);
 
-	if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
-		$mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
-	} else {
-		// A digit, the tracker's id, a digit, as every Get Links link has
-		// been -- drawn until no tracker in any account holds it: the click
-		// endpoints find a tracker by this id alone (TrackerPublicId).
-		try {
-			$tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage($db, (int) $tracker_row['tracker_id']);
-		} catch (\RuntimeException $e) {
-			record_mysql_error($db, 'choosing a free tracker public id', $e->getMessage());
-		}
-		$mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
-	}
+            if (isset($_POST['edit_tracker']) && $_POST['edit_tracker'] && isset($_POST['tracker_id']) && $_POST['tracker_id'] && $get_tracker_result->num_rows > 0) {
+                $mysql['tracker_id_public'] = $db->real_escape_string((string)$get_tracker_row['tracker_id_public']);
+            } else {
+                // A digit, the tracker's id, a digit, as every Get Links link has
+                // been -- drawn until no tracker in any account holds it: the click
+                // endpoints find a tracker by this id alone (TrackerPublicId).
+                try {
+                    $tracker_id_public = \Prosper202\Setup\TrackerPublicId::forPage(
+                        $db,
+                        (int) $tracker_row['tracker_id']
+                    );
+                } catch (\RuntimeException $e) {
+                    record_mysql_error($db, 'choosing a free tracker public id', $e->getMessage());
+                }
+                $mysql['tracker_id_public'] = $db->real_escape_string((string)$tracker_id_public);
+            }
 
-	$tracker_id_public = $mysql['tracker_id_public'];
+            $tracker_id_public = $mysql['tracker_id_public'];
 
-	$tracker_sql = "UPDATE 		`202_trackers`
-					SET			`tracker_id_public`='".$mysql['tracker_id_public']."'
-					WHERE		`tracker_id`='".$mysql['tracker_id']."'";
-	$tracker_result = $db->query($tracker_sql);
-	if (!$tracker_result) {
-		record_mysql_error($db, $tracker_sql);
-		die('Error setting tracker ID');
-	}
+            $tracker_sql = "UPDATE 		`202_trackers`
+                            SET			`tracker_id_public`='".$mysql['tracker_id_public']."'
+                            WHERE		`tracker_id`='".$mysql['tracker_id']."'";
+            $tracker_result = $db->query($tracker_sql);
+            if (!$tracker_result) {
+                record_mysql_error($db, $tracker_sql);
+                die('Error setting tracker ID');
+            }
 
-	if (!$db->commit()) {
-		record_mysql_error($db, 'commit() for tracker creation');
-	}
+            return [$tracker_row, $tracker_id_public];
+        });
+    } catch (\Prosper202\Database\Exceptions\QueryException $e) {
+        record_mysql_error($db, 'the transaction for tracker creation', $e->getMessage());
+    }
 
 	$parsed_url = [];
 	if (!empty($landing_page_row['landing_page_url'])) {

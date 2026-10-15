@@ -284,6 +284,103 @@ final class ConnectionTest extends TestCase
         $conn->transaction(fn () => 'nope');
     }
 
+    public function testATransactionInsideAnotherIsRefusedBeforeItBegins(): void
+    {
+        $write = $this->createFakeMysqli();
+        $conn = new Connection($write);
+
+        $inners = ['the same wrapper' => $conn, 'another wrapper of the handle' => new Connection($write)];
+        foreach ($inners as $how => $inner) {
+            $ran = false;
+            try {
+                $conn->transaction(static function () use ($inner, &$ran): void {
+                    $inner->transaction(static function () use (&$ran): void {
+                        $ran = true;
+                    });
+                });
+                $this->fail("$how: a transaction began inside another");
+            } catch (\LogicException $e) {
+                $this->assertStringContainsString('inside another', $e->getMessage(), $how);
+            }
+            $this->assertFalse($ran, $how);
+            $this->assertTrue($write->rolledBack, "$how: the outer rolled back");
+            $this->assertFalse($conn->inTransaction(), $how);
+            $write->rolledBack = false;
+        }
+        $this->assertSame(2, $write->begins, 'one begin per outer transaction, none for the refused ones');
+    }
+
+    public function testAnotherHandleOpensItsOwnTransaction(): void
+    {
+        $write = $this->createFakeMysqli();
+        $other = $this->createFakeMysqli();
+
+        $result = (new Connection($write))->transaction(
+            static fn (): string => (new Connection($other))->transaction(static fn (): string => 'both')
+        );
+
+        $this->assertSame('both', $result);
+        $this->assertTrue($write->committed);
+        $this->assertTrue($other->committed);
+    }
+
+    public function testJoinTransactionRunsInTheCallersAndRefusesOutsideOne(): void
+    {
+        $write = $this->createFakeMysqli();
+        $conn = new Connection($write);
+
+        $this->assertSame('joined', $conn->transaction(
+            static fn (): string => (new Connection($write))->joinTransaction(static fn (): string => 'joined')
+        ));
+        $this->assertSame(1, $write->begins, 'joining begins nothing');
+
+        $ran = false;
+        try {
+            $conn->joinTransaction(static function () use (&$ran): void {
+                $ran = true;
+            });
+            $this->fail('work meant for a transaction ran outside one');
+        } catch (\LogicException $e) {
+            $this->assertStringContainsString('outside one', $e->getMessage());
+        }
+        $this->assertFalse($ran);
+    }
+
+    public function testEveryWayOutOfATransactionLetsTheNextOneBegin(): void
+    {
+        $write = $this->createFakeMysqli();
+        $conn = new Connection($write);
+
+        $conn->transaction(static fn () => null);
+        $this->assertFalse($conn->inTransaction(), 'after a commit');
+
+        try {
+            $conn->transaction(static function (): void {
+                throw new RuntimeException('boom');
+            });
+        } catch (RuntimeException) {
+        }
+        $this->assertFalse($conn->inTransaction(), 'after a rollback');
+
+        $write->commitResult = false;
+        try {
+            $conn->transaction(static fn () => null);
+            $this->fail('a failed commit read as a commit');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('Unable to commit transaction', $e->getMessage());
+        }
+        $this->assertTrue($write->rolledBack);
+        $this->assertFalse($conn->inTransaction(), 'after a failed commit');
+        $write->commitResult = true;
+
+        $conn->transaction(static function () use ($conn, $write): void {
+            // What the database error page does before it records.
+            Connection::transactionsEnded($write);
+            $conn->transaction(static fn () => null);
+        });
+        $this->assertSame(5, $write->begins);
+    }
+
     // ── Connection accessors ─────────────────────────────────────────
 
     public function testWriteConnectionReturnsWriteInstance(): void
@@ -383,6 +480,8 @@ class FakeMysqli extends mysqli
     public int $prepareCallCount = 0;
     public bool $committed = false;
     public bool $rolledBack = false;
+    public int $begins = 0;
+    public bool $commitResult = true;
     private bool $inTransaction = false;
 
     public function __construct(
@@ -402,6 +501,7 @@ class FakeMysqli extends mysqli
 
     public function begin_transaction(int $flags = 0, ?string $name = null): bool
     {
+        $this->begins++;
         if ($this->beginTransactionResult) {
             $this->inTransaction = true;
         }
@@ -411,10 +511,10 @@ class FakeMysqli extends mysqli
 
     public function commit(int $flags = 0, ?string $name = null): bool
     {
-        $this->committed = true;
-        $this->inTransaction = false;
+        $this->committed = $this->commitResult;
+        $this->inTransaction = !$this->commitResult;
 
-        return true;
+        return $this->commitResult;
     }
 
     public function rollback(int $flags = 0, ?string $name = null): bool

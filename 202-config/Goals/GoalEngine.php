@@ -324,6 +324,18 @@ final class GoalEngine
         if ($subject->type !== GoalSubject::INSTALL) {
             throw new \InvalidArgumentException('evaluateInstallInTransaction() evaluates an install subject');
         }
+
+        return $this->conn->joinTransaction(fn (): array => $this->evaluateInstallLocked($userId, $subject));
+    }
+
+    /**
+     * evaluateInstallInTransaction()'s work, in the caller's transaction.
+     *
+     * @return array{post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>},
+     *               install_conversion_id: int|null, outcomes_written: int}
+     */
+    private function evaluateInstallLocked(int $userId, GoalSubject $subject): array
+    {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => []];
         $row = $this->lockSubject($userId, $subject, $now);
@@ -1440,6 +1452,17 @@ final class GoalEngine
      * @return array{post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>, notices: list<array<string, mixed>>}, install_conversion_id: int|null}
      */
     public function recreditInstallInTransaction(int $userId, int $installRowId): array
+    {
+        return $this->conn->joinTransaction(fn (): array => $this->recreditInstallLocked($userId, $installRowId));
+    }
+
+    /**
+     * recreditInstallInTransaction()'s work, in the caller's transaction.
+     *
+     * @return array{post: array{ledger: list<array<string, mixed>>, clicks: array<int, true>,
+     *               notices: list<array<string, mixed>>}, install_conversion_id: int|null}
+     */
+    private function recreditInstallLocked(int $userId, int $installRowId): array
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];

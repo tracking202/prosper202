@@ -75,18 +75,20 @@ final class CurrencyChange
     }
 
     /**
-     * Write planned updates. Runs inside the caller's transaction: it opens
-     * none of its own, because a second begin_transaction() on the
-     * connection would commit the caller's work so far.
+     * Write planned updates. Runs inside the caller's transaction, and is
+     * refused outside one (Connection::joinTransaction()): the account's
+     * currency and its campaigns' payouts change together or not at all.
      *
      * @param list<array{0: string, 1: string, 2: list<int|string>}> $updates
      */
     public static function apply(Connection $conn, array $updates): void
     {
-        foreach ($updates as [$sql, $types, $values]) {
-            $stmt = $conn->prepareWrite($sql);
-            $conn->bind($stmt, $types, $values);
-            $conn->executeUpdate($stmt);
-        }
+        $conn->joinTransaction(static function () use ($conn, $updates): void {
+            foreach ($updates as [$sql, $types, $values]) {
+                $stmt = $conn->prepareWrite($sql);
+                $conn->bind($stmt, $types, $values);
+                $conn->executeUpdate($stmt);
+            }
+        });
     }
 }

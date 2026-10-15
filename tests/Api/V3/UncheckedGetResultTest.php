@@ -56,7 +56,6 @@ final class UncheckedGetResultTest extends TestCase
         '202-config/migrations/run_ltv_migration.php',
         '202-account/user-management.php',
         '202-account/account.php',
-        '202-config/install.php',
     ];
 
     /**

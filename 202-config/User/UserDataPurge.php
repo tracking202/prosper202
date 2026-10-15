@@ -6,6 +6,7 @@ namespace Prosper202\User;
 
 use Api\V3\Apps\AppDataPurge;
 use Prosper202\Attribution\ExportFiles;
+use Prosper202\Database\Connection;
 
 /**
  * Deleting a user: the soft delete of the 202_users row and the purge of the
@@ -235,32 +236,29 @@ final class UserDataPurge
             throw new \InvalidArgumentException('A user id to delete is positive');
         }
 
-        if (!$this->db->begin_transaction()) {
-            throw new \RuntimeException('Could not start the user deletion transaction');
-        }
         try {
-            // The user row is locked first, before anything is purged. The
-            // attribution worker reads user_deleted with a shared lock on
-            // that row before it writes a conversion's journey and credits,
-            // so the two serialize: a worker already holding it finishes and
-            // commits, and the purge below then deletes what it wrote; a
-            // worker that comes after waits for this commit and reads the
-            // user as deleted. Taken last (with the soft delete), the lock
-            // let a worker write between the purge's DELETEs and its commit,
-            // and those rows outlived the user.
-            $this->run(self::LOCK_USER, $userId);
-            // Read inside the transaction, before the rows that hold them go.
-            $exportFileNames = $this->exportFileNames($userId);
-            foreach (self::statements() as $sql) {
-                $this->run($sql, $userId);
-            }
-            $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
-            $this->run('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?', $userId);
-            if (!$this->db->commit()) {
-                throw new \RuntimeException('Could not commit the user deletion');
-            }
+            [$exportFileNames, $unlinked] = (new Connection($this->db))->transaction(function () use ($userId): array {
+                // The user row is locked first, before anything is purged. The
+                // attribution worker reads user_deleted with a shared lock on
+                // that row before it writes a conversion's journey and credits,
+                // so the two serialize: a worker already holding it finishes and
+                // commits, and the purge below then deletes what it wrote; a
+                // worker that comes after waits for this commit and reads the
+                // user as deleted. Taken last (with the soft delete), the lock
+                // let a worker write between the purge's DELETEs and its commit,
+                // and those rows outlived the user.
+                $this->run(self::LOCK_USER, $userId);
+                // Read inside the transaction, before the rows that hold them go.
+                $exportFileNames = $this->exportFileNames($userId);
+                foreach (self::statements() as $sql) {
+                    $this->run($sql, $userId);
+                }
+                $unlinked = (new AppDataPurge($this->db))->purgeUser($userId);
+                $this->run('UPDATE 202_users SET user_deleted = 1 WHERE user_id = ?', $userId);
+
+                return [$exportFileNames, $unlinked];
+            });
         } catch (\Throwable $e) {
-            $this->db->rollback();
             throw new \RuntimeException('User ' . $userId . ' was not deleted: ' . $e->getMessage(), 0, $e);
         }
 

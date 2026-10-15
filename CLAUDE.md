@@ -452,6 +452,16 @@ post-write steps and rethrow `WriteCommittedException`, and the seams refuse
 the retry. Any code that decides "safe to run this again" needs a fact, not an
 inference from an exception type.
 
+That implicit commit was silent wherever it happened: a nested transaction
+committed the outer one's work so far, and the outer's rollback then undid
+only what came after. `Connection::transaction()` now refuses to begin inside
+another on the same handle (a `LogicException`, before anything is written),
+so a value it returns has committed; work that belongs to the caller's
+transaction goes through `joinTransaction()`, which refuses when none is
+open. A transaction opened anywhere else is one the refusal cannot see, so
+Connection is the only place one begins or ends
+(`TransactionsBeginOnlyInConnectionTest`).
+
 ### 14. Safety flags must survive process and reset boundaries
 `--staged` promises a write becomes a proposal. The interactive shell resets
 the whole flag tree between commands and re-applied only the flags someone

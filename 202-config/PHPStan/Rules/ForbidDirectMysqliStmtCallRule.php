@@ -60,10 +60,24 @@ final class ForbidDirectMysqliStmtCallRule implements Rule
             return [];
         }
 
+        // Connection::execute() is the checked execute the message points to.
+        if ($methodName === 'execute' && self::isConnectionMethod($scope, 'execute')) {
+            return [];
+        }
+
         return [
             RuleErrorBuilder::message(self::FORBIDDEN_METHODS[$methodName])
                 ->identifier('prosper202.directStmtCall')
                 ->build(),
         ];
+    }
+
+    private static function isConnectionMethod(Scope $scope, string $method): bool
+    {
+        $function = $scope->getFunction();
+
+        return $scope->getClassReflection()?->getName() === 'Prosper202\\Database\\Connection'
+            && $function !== null
+            && strtolower($function->getName()) === $method;
     }
 }
