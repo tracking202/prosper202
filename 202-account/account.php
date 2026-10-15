@@ -212,7 +212,10 @@ if (!$canPersonal) {
 }
 
 $user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
@@ -746,7 +749,10 @@ $user_sql = "	SELECT 	*
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 /** The stored value, or what the person typed on a refused submit. */

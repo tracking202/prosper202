@@ -11,7 +11,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 202_users.user_name AS username, 202_users_pref.maxmind_isp, 202_users_pref.user_slack_incoming_webhook AS url FROM 202_users_pref LEFT JOIN 202_users ON (202_users.user_id = '".$mysql['user_own_id']."') WHERE 202_users_pref.user_id='1'";
 $user_result = $db->query($user_sql);
-$user_row = $user_result->fetch_assoc();
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql);
 
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
