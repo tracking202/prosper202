@@ -82,7 +82,12 @@ for failure in the next condition that refuses there — throws, a call
 declared `never`, the legacy API's database error, the page's
 `$error[...]` — and lists each fold that remains, with the answer it gives
 and why. A bare `return` or `continue` in the failure branch is a fold: it
-hands the failure on as an answer.
+hands the failure on as an answer. So is `if (_mysqli_query($sql)) { … }`
+with no `else`, which the first draft counted as tested because the call
+sat in the condition (found by review): the redirector removal nested three
+of them, and a refused second delete stopped it half way with nothing said.
+A call in a condition is tested only where the branch its false takes
+refuses (#21: naming a thing is not being guarded by it).
 
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died

@@ -18,21 +18,29 @@ use Tests\TestCase;
  * answer is never read reports success over nothing. A call standing alone
  * is MysqliQueryResultIsNotDiscardedTest's; this reads every other call.
  *
- * A call is tested when, read from the tokens:
+ * A call is tested when, read from the tokens, the branch its failure
+ * takes refuses:
  *
- *  - it is the condition, or a whole operand of it, of an `if`, `elseif` or
- *    `while`: `if (_mysqli_query($sql))`, `if (!_mysqli_query($sql))`,
- *    `if ($r = _mysqli_query($sql))`, `if (_mysqli_query($sql) === false)`;
+ *  - it is the whole condition of an `if`/`elseif`, and either the
+ *    condition tests it for failure (`!_mysqli_query($sql)`,
+ *    `_mysqli_query($sql) === false`) and its branch refuses, or tests it
+ *    for success (`_mysqli_query($sql)`, `$r = _mysqli_query($sql)`) and an
+ *    `else` refuses;
  *  - or it is assigned, `$r = _mysqli_query(...);` as a statement of its
  *    own, and the first appearance of `$r` after it, in the same function,
  *    is the whole condition of an `if`/`elseif` testing it for failure
  *    (`!$r`, `$r === false`, `false === $r`, `!$r instanceof mysqli_result`,
- *    `!($r instanceof mysqli_result)`), whose branch refuses at its own top
- *    level: it throws, ends the request (`die`, `exit`, a call declared
- *    `never`: `record_mysql_error()`, `p202_account_redirect()`), returns the
- *    legacy API's database error, or files the page's form error
- *    (`$error[...] = ...`). A bare `return`, `continue` or `break` hands the
- *    failure on as an answer, so it is a fold.
+ *    `!($r instanceof mysqli_result)`), whose branch refuses.
+ *
+ * A branch refuses at its own top level: it throws, ends the request
+ * (`die`, `exit`, a call declared `never`: `record_mysql_error()`,
+ * `p202_account_redirect()`), returns the legacy API's database error, says
+ * so to the person (`p202_account_flash('bad', ...)`), or files the page's
+ * form error (`$error[...] = ...`). A bare `return`, `continue` or `break`
+ * hands the failure on as an answer, so it is a fold; so is a condition with
+ * no else, which goes on past the failure (`if (_mysqli_query($sql)) {
+ * ... }` stopped a redirector's removal half way without a word), a call
+ * tested together with another condition, and a `while` on one.
  *
  * Anything else that reads `$r` first is a fold: a test whose failure
  * answers something that reads like an answer (`$r ? $r->fetch_assoc() :
@@ -71,6 +79,25 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         '202-config/Database/SchemaInstaller.php::executeStatement' => [
             1,
             'Records the failure in $this->errors, which install() reports, and answers false.',
+        ],
+        '202-config/Database/SchemaInstaller.php::disableStrictMode' => [
+            1,
+            'Clearing the session\'s sql_mode for the install: a failure is logged and the install goes on; a'
+            . ' table that then fails to create is reported by executeStatement().',
+        ],
+        '202-config/Database/SchemaInstaller.php::setCollations' => [
+            1,
+            'The 202_ips_v6 collation for the install: a failure is logged and the install goes on.',
+        ],
+        '202-config/class-dataengine.php::doSummary' => [
+            2,
+            'Not reached: doQuery()\'s one caller hands it an INSERT … SELECT (ClickRollupSql), which answers true'
+            . ' and returns before doSummary(). Its insert and its window mark log a failure.',
+        ],
+        '202-config/functions-auth.php::remember_me_on_auth' => [
+            1,
+            'A remember-me key that cannot be stored sets no cookie: the person stays signed in for the session,'
+            . ' and a cookie whose key is not stored would be refused on every later visit.',
         ],
         '202-config/functions-auth.php::remember_me_on_logged_out' => [
             1,
@@ -209,12 +236,26 @@ final class MysqliQueryResultIsTestedTest extends TestCase
     {
         $q = '_mysqli_query($sql)';
         yield 'alone' => ["$q;", 'discarded'];
-        yield 'the condition' => ["if ($q) { ok(); }", 'tested'];
-        yield 'negated condition' => ["if (!$q) { return false; }", 'tested'];
-        yield 'compared in the condition' => ["if ($q === false) { return false; }", 'tested'];
-        yield 'assigned in the condition' => ["if (\$r = $q) { ok(); }", 'tested'];
-        yield 'one operand of two' => ["if ($q && $q) { ok(); }", 'tested'];
-        yield 'in a while' => ["while ($q) { ok(); }", 'tested'];
+        yield 'the condition, an else refuses' => ["if ($q) { ok(); } else { throw new E(); }", 'tested'];
+        yield 'the condition, braceless else' => ["if ($q) ok(); else record_mysql_error(\$sql);", 'tested'];
+        yield 'the condition, a bad flash' => ["if ($q) { ok(); } else { p202_account_flash('bad', 'x'); }", 'tested'];
+        yield 'negated condition' => ["if (!$q) { throw new E(); }", 'tested'];
+        yield 'compared in the condition' => ["if ($q === false) { die(); }", 'tested'];
+        yield 'assigned in the condition, an else refuses' => [
+            "if (\$r = $q) { ok(); } else { record_mysql_error(\$sql); }",
+            'tested',
+        ];
+        yield 'the condition, no else' => ["if ($q) { ok(); }", 'folded'];
+        yield 'nested, no else' => ["if ($q) { if ($q) { ok(); } }", 'folded'];
+        yield 'the condition, an else that says it went well' => [
+            "if ($q) { ok(); } else { p202_account_flash('ok', 'x'); }",
+            'folded',
+        ];
+        yield 'the condition, an elseif' => ["if ($q) { ok(); } elseif (\$b) { throw new E(); }", 'folded'];
+        yield 'assigned in the condition, no else' => ["if (\$r = $q) { ok(); }", 'folded'];
+        yield 'negated, a bare return' => ["if (!$q) { return false; }", 'folded'];
+        yield 'one operand of two' => ["if ($q && $q) { ok(); }", 'folded'];
+        yield 'in a while' => ["while ($q) { ok(); }", 'folded'];
         yield 'with the connection' => [
             "\$r = _mysqli_query(\$db, \$sql); if (\$r === false) { throw new E(); }",
             'tested',
@@ -359,18 +400,35 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         $assigned = ($tokens[$call - 1]->text ?? '') === '=' && ($tokens[$call - 2] ?? null)?->is(T_VARIABLE);
         $start = $assigned ? $call - 2 : $call;
 
-        // A whole operand of an if/elseif/while condition.
-        $opener = self::enclosingParen($tokens, $start);
+        // In an if/elseif/while condition: the branch its failure takes has
+        // to refuse, as an assigned result's does.
+        $opener = self::conditionParen($tokens, $start);
         if ($opener !== null && ($tokens[$opener - 1] ?? null)?->is([T_IF, T_ELSEIF, T_WHILE])) {
+            $closer = self::closing($tokens, $opener);
+            $condition = self::conditionWith($tokens, $opener, $closer, $start, $close);
+            if ($tokens[$opener - 1]->is(T_WHILE)) {
+                return ['folded', 'a loop on it ends on its failure as on its last row'];
+            }
+            if (in_array($condition, ['! Q', '! ( Q )', 'Q === false', 'false === Q'], true)) {
+                return self::branchRefuses($tokens, $closer + 1)
+                    ? ['tested', '']
+                    : ['folded', 'the branch that tests it for failure refuses nothing at its own level'];
+            }
+            if (in_array($condition, ['Q', '( Q )', 'Q !== false', 'false !== Q'], true)) {
+                $else = self::elseBranch($tokens, $closer + 1);
+
+                return $else !== null && self::branchRefuses($tokens, $else)
+                    ? ['tested', '']
+                    : ['folded', 'its failure falls through: no else refuses when it answers false'];
+            }
             $before = $tokens[$start - 1];
             $next = $after?->text;
-            if (in_array($before->text, ['(', '!', '&&', '||'], true) || $before->is([T_LOGICAL_AND, T_LOGICAL_OR])) {
-                if (
-                    in_array($next, [')', '&&', '||', '===', '!==', '==', '!='], true)
-                    || ($after?->is([T_LOGICAL_AND, T_LOGICAL_OR]) ?? false)
-                ) {
-                    return ['tested', ''];
-                }
+            if (
+                (in_array($before->text, ['(', '!', '&&', '||'], true) || $before->is([T_LOGICAL_AND, T_LOGICAL_OR]))
+                && (in_array($next, [')', '&&', '||', '===', '!==', '==', '!='], true)
+                    || ($after?->is([T_LOGICAL_AND, T_LOGICAL_OR]) ?? false))
+            ) {
+                return ['folded', 'it is tested together with another condition'];
             }
 
             return ['unread', 'it is read inside the condition, not tested by it'];
@@ -466,6 +524,47 @@ final class MysqliQueryResultIsTestedTest extends TestCase
     }
 
     /**
+     * A condition's tokens as lower-case text, the call (with an assignment
+     * of it) standing as `Q`.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function conditionWith(array $tokens, int $opener, int $closer, int $start, int $close): string
+    {
+        $words = [];
+        for ($k = $opener + 1; $k < $closer; $k++) {
+            if ($k === $start) {
+                $words[] = 'Q';
+                $k = $close;
+                continue;
+            }
+            $words[] = $tokens[$k]->is(T_NAME_FULLY_QUALIFIED)
+                ? ltrim(strtolower($tokens[$k]->text), '\\')
+                : strtolower($tokens[$k]->text);
+        }
+
+        return implode(' ', $words);
+    }
+
+    /**
+     * Where the `else` branch of the `if` whose body starts at $at begins,
+     * or null when it has none (an `elseif` is another condition, not a
+     * branch that refuses).
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function elseBranch(array $tokens, int $at): ?int
+    {
+        if (!isset($tokens[$at])) {
+            return null;
+        }
+        $end = $tokens[$at]->text === '{' ? self::closing($tokens, $at) : self::statementEnd($tokens, $at);
+        $next = $tokens[$end + 1] ?? null;
+
+        return $next !== null && $next->is(T_ELSE) ? $end + 2 : null;
+    }
+
+    /**
      * Whether the branch starting at $at (a block, or one statement) holds,
      * at its own top level, a statement that refuses.
      *
@@ -489,6 +588,7 @@ final class MysqliQueryResultIsTestedTest extends TestCase
                     || in_array(SourceScan::callableName($token->id, $token->text), self::REFUSING_CALLS, true)
                     || $returnsAnError
                     || ($token->is(T_VARIABLE) && $token->text === '$error' && ($tokens[$k + 1]->text ?? '') === '[')
+                    || self::flashesBad($tokens, $k)
                 ) {
                     return true;
                 }
@@ -502,6 +602,22 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         }
 
         return false;
+    }
+
+    /**
+     * Whether the statement at $k says the failure to the person:
+     * `p202_account_flash('bad', ...)`.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function flashesBad(array $tokens, int $k): bool
+    {
+        $kind = $tokens[$k + 2] ?? null;
+
+        return SourceScan::callableName($tokens[$k]->id, $tokens[$k]->text) === 'p202_account_flash'
+            && ($tokens[$k + 1]->text ?? '') === '('
+            && $kind !== null && $kind->is(T_CONSTANT_ENCAPSED_STRING)
+            && in_array($kind->text, ["'bad'", '"bad"'], true);
     }
 
     private static function opens(PhpToken $token): bool

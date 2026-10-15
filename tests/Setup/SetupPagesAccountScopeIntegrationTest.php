@@ -50,14 +50,15 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
     private const LINK_ON_THEIR_REDIRECTOR = 99007129;
     private const LINK_ON_MINE = 99007139;
     private const ROLE = 990071;
+    private const MY_REDIRECTOR = 990101;
 
     private static string $sessions = '';
 
     /** @var list<string>|null 202_version as this class found it, put back after */
     private static ?array $versions = null;
 
-    /** @var int|null the permission row this class added, if it added one */
-    private static ?int $addedPermission = null;
+    /** @var list<int> the permission rows this class added */
+    private static array $addedPermissions = [];
 
     public static function setUpBeforeClass(): void
     {
@@ -107,12 +108,16 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
             }
         }
         self::q('DELETE FROM 202_ppc_network_variables WHERE ppc_variable_id IN (' . self::OTHER . ', ' . self::USER . ')');
+        $rotators = self::OTHER . ', ' . self::MY_REDIRECTOR;
+        self::q("DELETE FROM 202_rotator_rules_redirects WHERE id IN ($rotators) OR rule_id IN ($rotators)");
+        self::q("DELETE FROM 202_rotator_rules_criteria WHERE id IN ($rotators) OR rotator_id IN ($rotators)");
+        self::q("DELETE FROM 202_rotator_rules WHERE id IN ($rotators) OR rotator_id IN ($rotators)");
         self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
         self::q('DELETE FROM 202_roles WHERE role_id = ' . self::ROLE);
-        if (self::$addedPermission !== null) {
-            self::q('DELETE FROM 202_permissions WHERE permission_id = ' . self::$addedPermission);
-            self::$addedPermission = null;
+        foreach (self::$addedPermissions as $permission) {
+            self::q('DELETE FROM 202_permissions WHERE permission_id = ' . $permission);
         }
+        self::$addedPermissions = [];
     }
 
     private static function seed(): void
@@ -124,15 +129,19 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         }
         // A licence key on file (the session has already validated it).
         self::q("UPDATE 202_users SET p202_customer_api_key = 'page-runner' WHERE user_id = " . self::USER);
-        // A role that may use Setup.
-        $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE permission_description = 'access_to_setup_section'");
-        $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
-        if ($permission === null) {
-            self::$addedPermission = self::insert("INSERT INTO 202_permissions SET permission_description = 'access_to_setup_section'");
-            $permission = self::$addedPermission;
-        }
+        // A role that may use Setup and remove a redirector.
         self::row('202_roles', ['role_id' => self::ROLE, 'role_name' => 'scope test']);
-        self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $permission]);
+        foreach (['access_to_setup_section', 'remove_rotator'] as $name) {
+            $found = self::$db->query(
+                "SELECT permission_id FROM 202_permissions WHERE permission_description = '$name'"
+            );
+            $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+            if ($permission === null) {
+                $permission = self::insert("INSERT INTO 202_permissions SET permission_description = '$name'");
+                self::$addedPermissions[] = $permission;
+            }
+            self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $permission]);
+        }
         self::row('202_user_role', ['user_id' => self::USER, 'role_id' => self::ROLE]);
 
         // OTHER's records.
@@ -176,6 +185,17 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
             'text_ad_id' => 0, 'ppc_account_id' => $a, 'landing_page_id' => $a, 'rotator_id' => 0, 'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t]);
         // A redirector of A's own: something to link to, so Get Links shows its form.
         self::row('202_rotators', ['id' => $a, 'public_id' => $a, 'user_id' => $a, 'name' => 'My Rotator']);
+        // A rule, a criterion and a redirect on OTHER's redirector and on
+        // another of A's, each keyed by its redirector's id.
+        $mine = self::MY_REDIRECTOR;
+        self::row('202_rotators', ['id' => $mine, 'public_id' => $mine, 'user_id' => $a, 'name' => 'My Second Rotator']);
+        foreach ([$o, $mine] as $r) {
+            self::row('202_rotator_rules', ['id' => $r, 'rotator_id' => $r, 'rule_name' => 'rule', 'splittest' => 0, 'status' => 1]);
+            self::row('202_rotator_rules_criteria', ['id' => $r, 'rotator_id' => $r, 'rule_id' => $r,
+                'type' => 'country', 'statement' => 'is', 'value' => 'US']);
+            self::row('202_rotator_rules_redirects', ['id' => $r, 'rule_id' => $r,
+                'redirect_url' => 'https://example.com/', 'weight' => 100, 'name' => 'to']);
+        }
     }
 
     /**
@@ -281,6 +301,44 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
         $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => $id]);
         self::assertStringContainsString('Get a tracking link', $out);
         self::assertStringNotContainsString('name="edit_tracker"', $out, 'no link was opened to edit');
+    }
+
+    /** A redirector, its rules, their criteria and redirects, as "rows/rules/criteria/redirects". */
+    private static function redirectorRows(int $id): string
+    {
+        $found = self::$db->query("SELECT CONCAT((SELECT COUNT(*) FROM 202_rotators WHERE id = $id), '/',
+            (SELECT COUNT(*) FROM 202_rotator_rules WHERE rotator_id = $id), '/',
+            (SELECT COUNT(*) FROM 202_rotator_rules_criteria WHERE rotator_id = $id), '/',
+            (SELECT COUNT(*) FROM 202_rotator_rules_redirects WHERE rule_id = $id))");
+        self::assertInstanceOf(\mysqli_result::class, $found, (string) self::$db->error);
+
+        return (string) $found->fetch_row()[0];
+    }
+
+    /**
+     * Removing a redirector removes its rules, their criteria and redirects,
+     * and only when it is the account's. The page deleted the rules and
+     * criteria by the redirector's id alone after the redirector's own
+     * delete, which names the account, had matched nothing: another
+     * account's redirector kept its row and lost its rules, and every
+     * redirect was left behind.
+     */
+    public function testRemovingARedirectorRemovesOnlyTheAccountsOwn(): void
+    {
+        $remove = static fn (int $id): string => self::page('tracking202/setup/rotator.php', [
+            'delete_rotator_id' => (string) $id, 'delete_rotator_name' => 'x', 'token' => 'p202pagerunnertoken',
+        ]);
+        self::assertSame('1/1/1/1', self::redirectorRows(self::OTHER));
+        $out = $remove(self::OTHER);
+        self::assertStringContainsString('That redirector was not found on this account. Nothing was removed.', $out);
+        $theirs = self::redirectorRows(self::OTHER);
+        self::assertSame('1/1/1/1', $theirs, 'another account\'s redirector keeps its rules, criteria and redirects');
+
+        self::assertSame('1/1/1/1', self::redirectorRows(self::MY_REDIRECTOR));
+        $answer = $remove(self::MY_REDIRECTOR);
+        self::assertSame('', $answer, 'the account\'s own is removed, and the page answers with a redirect');
+        $mine = self::redirectorRows(self::MY_REDIRECTOR);
+        self::assertSame('0/0/0/0', $mine, 'with its rules, criteria and redirects');
     }
 
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void
