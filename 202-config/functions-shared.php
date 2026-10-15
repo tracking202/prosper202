@@ -202,8 +202,12 @@ function p202Mysqli(): \mysqli
  * An address as the $ip_address global holds it: its type, and the address
  * in standard form, masked (StoredVisitorIp::mask()) when asked. Anything
  * that is not an address is the unspecified 0.0.0.0.
+ *
+ * $masked has no default: the click path masks under the privacy setting and
+ * the admin pages never do, and a caller that left it out would get one of
+ * those without saying which.
  */
-function ipAddress(mixed $ip_address, bool $masked = false): \stdClass
+function ipAddress(mixed $ip_address, bool $masked): \stdClass
 {
     $ip = new \stdClass();
     if (is_string($ip_address) && filter_var($ip_address, FILTER_VALIDATE_IP) !== false) {

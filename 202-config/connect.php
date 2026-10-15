@@ -285,9 +285,11 @@ include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
 // The visitor's address (VisitorIp: the one reader of the forwarding
-// headers), once the autoloader and functions.php's ipAddress() are loaded.
-// Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
-$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+// headers), once the autoloader and functions-shared.php's ipAddress() are
+// loaded. Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
+// Never masked: on these pages it is the operator's own address, which the
+// sign-in log keeps as it arrived.
+$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER), false);
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 

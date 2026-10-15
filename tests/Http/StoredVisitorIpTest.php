@@ -53,7 +53,9 @@ final class StoredVisitorIpTest extends TestCase
             . ' require ' . var_export($root . '/202-config/functions-shared.php', true) . ';'
             . ' $out = [];'
             . ' foreach (["198.51.100.7", "2001:db8:85a3::8a2e:370:7334", "not an address", ""] as $a) {'
-            . ' $out[] = [ipAddress($a, true)->address, ipAddress($a)->address, ipAddress($a)->type]; }'
+            . ' $out[] = [ipAddress($a, true)->address, ipAddress($a, false)->address, ipAddress($a, false)->type]; }'
+            . ' try { ipAddress("198.51.100.7"); $out[] = "answered without saying whether to mask"; }'
+            . ' catch (\\ArgumentCountError) { $out[] = "refused"; }'
             . ' echo json_encode($out);';
         $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
         $seen = json_decode((string) $out, true);
@@ -66,5 +68,6 @@ final class StoredVisitorIpTest extends TestCase
         );
         self::assertSame(['0.0.0.0', '0.0.0.0', 'invalid'], $seen[2], 'not an address is the unspecified one');
         self::assertSame(['0.0.0.0', '0.0.0.0', 'invalid'], $seen[3]);
+        self::assertSame('refused', $seen[4], 'a caller must say whether the address is masked');
     }
 }
