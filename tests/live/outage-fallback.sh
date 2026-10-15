@@ -58,6 +58,7 @@ field() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)
 must() { case "$1" in 2??) ;; *) echo "setup failed: $2 ($1) $(head -c 300 "$OUT/body")" >&2; exit 2 ;; esac; }
 hit() { curl -s -o "$OUT/page" -w '%{http_code} %{redirect_url}' "$BASE$1"; }
 expect() { # what it answered, the pattern it must match, what it says
+    # shellcheck disable=SC2254 # $2 is a glob on purpose: "302*<url>*"
     case "$1" in $2) ok "$3" ;; *) bad "$3 (got $1 $(head -c 200 "$OUT/page"))" ;; esac
 }
 
