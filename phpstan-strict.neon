@@ -17,6 +17,7 @@ parameters:
         - 202-config/Click/ClickRepositoryInterface.php
         - 202-config/Click/ClickRequest.php
         - 202-config/Click/DynamicBid.php
+        - 202-config/Click/LatestVisit.php
         - 202-config/Click/MysqlClickRepository.php
         - 202-config/Click/OfferRoute.php
         - 202-config/Click/PublicId.php

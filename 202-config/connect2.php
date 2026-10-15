@@ -321,7 +321,9 @@ function p202ClickOwner(int $clickId): ?array
     }
     try {
         $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareRead('SELECT user_id, aff_campaign_id FROM 202_clicks WHERE click_id = ?');
+        $stmt = $conn->prepareRead(
+            'SELECT c.user_id, c.aff_campaign_id FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c'
+        );
         $conn->bind($stmt, 'i', [$clickId]);
         $row = $conn->fetchOne($stmt);
     } catch (\Throwable $e) {
@@ -721,7 +723,15 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         return $url;
     }
 
-    $mysql['click_id'] = $db->real_escape_string((string) $click_id);
+    // Anything but a click id names no click: its tokens are blank, as for a
+    // click not there (compared as text, `12abc` read click 12).
+    $tokenClickId = \Prosper202\Click\ClickId::parse((string) $click_id);
+    if ($tokenClickId === null) {
+        return replaceClickPlaceholders($url, (string) $click_id, []);
+    }
+    $mysql['click_id'] = (string) $tokenClickId;
+    // The click's latest visit: a re-click adds a row.
+    $latestVisit = \Prosper202\Click\LatestVisit::of($mysql['click_id']);
     $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
@@ -745,7 +755,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 		        2lc.country_code,
 		        2lr.region_name,
                 2u.user_public_publisher_id,
-		        2lc2.city_name FROM 202_clicks AS 2c 
+		        2lc2.city_name FROM " . $latestVisit . " AS 2c 
             	LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`) 
             	LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2ct.click_id = 2c.click_id) 
             	LEFT OUTER JOIN 202_tracking_c1 AS 2tc1 ON (2ct.c1_id = 2tc1.c1_id) 

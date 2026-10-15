@@ -304,7 +304,7 @@ foreach ($rule_row as $rule) {
 					   ca.aff_campaign_payout,
 					   ca.aff_campaign_cloaking,
 					   lp.landing_page_url, lp.landing_page_id
-				FROM 202_clicks AS 2c
+				FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id	   
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
@@ -507,7 +507,7 @@ if ($default == false) {
 					   2cr.click_cloaking,
 					   2cs.click_cloaking_site_url_id,
 					   2cs.click_redirect_site_url_id
-				FROM 202_clicks AS 2c
+				FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 

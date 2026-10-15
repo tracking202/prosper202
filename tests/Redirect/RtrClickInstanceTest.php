@@ -245,7 +245,8 @@ final class RtrClickInstanceTest extends TestCase
         $run = self::$run;
         $campaign = self::create('campaigns', [
             'aff_campaign_name' => "$run cloaked",
-            'aff_campaign_url' => "https://offer.example/$run/cloaked?s=[[subid]]&kw=[[t202kw]]&c1=[[c1]]&end",
+            'aff_campaign_url' => "https://offer.example/$run/cloaked"
+                . '?s=[[subid]]&kw=[[t202kw]]&c1=[[c1]]&cpc=[[cpc]]&end',
             'aff_campaign_cloaking' => 1,
             'aff_campaign_payout' => '1', 'aff_network_id' => self::$ids['network'],
         ], 'aff_campaign_id');
@@ -279,13 +280,28 @@ final class RtrClickInstanceTest extends TestCase
         $third = self::cloakedClick(['t202id' => $tracker, 'lpr' => '1', 't202kw' => "y-$run", 'c1' => "third-$run"]);
 
         self::assertSame(
-            [$clickId, "kw-$run", "second-$run", $clickId, $second['pci'], "kw-$run", "third-$run"],
+            [$clickId, "kw-$run", "second-$run", '0.1', $clickId, $second['pci'], "kw-$run", "third-$run", '0.1'],
             [
-                $second['click'], $second['kw'], $second['c1'],
-                $third['click'], $third['pci'], $third['kw'], $third['c1'],
+                $second['click'], $second['kw'], $second['c1'], $second['cpc'],
+                $third['click'], $third['pci'], $third['kw'], $third['c1'], $third['cpc'],
             ],
-            'each re-click is the first click, with its keyword, the visit\'s c1, and the public id handed out first'
+            'each re-click is the first click, with its keyword, the visit\'s c1, the public id handed out first,'
+                . ' and the cost of the visit, not the first visit\'s 0.37'
         );
+
+        // The click's cookie names the campaign of its latest visit: pci.php
+        // reads the click by its public id, go.php by its id.
+        $campaignCookie = '~^Set-Cookie: tracking202subid_a_([0-9]+)=' . $clickId . ';~mi';
+        [$status, $headers] = self::request(self::$base . '/tracking202/redirect/pci.php?pci=' . $second['pci']);
+        self::assertSame(302, $status, $headers);
+        self::assertSame(1, preg_match($campaignCookie, $headers, $cookie), 'pci.php sets a cookie: ' . $headers);
+        self::assertSame((string) $campaign, $cookie[1], 'pci.php: the latest visit\'s campaign');
+        [, $headers] = self::request(
+            self::$base . '/tracking202/redirect/go.php?202v='
+                . rawurlencode(base64_encode($clickId . ' ' . $second['pci']))
+        );
+        self::assertSame(1, preg_match($campaignCookie, $headers, $cookie), 'go.php sets a cookie: ' . $headers);
+        self::assertSame((string) $campaign, $cookie[1], 'go.php: the latest visit\'s campaign');
 
         [$status, , $answer] = self::request(self::$base . '/api/v3/clicks/' . $clickId, [
             CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key],
@@ -317,7 +333,7 @@ final class RtrClickInstanceTest extends TestCase
      * cl.php the offer URL the click holds, whose subid is the click's id.
      *
      * @param array<string, string> $query
-     * @return array{pci: string, click: int, kw: string, c1: string}
+     * @return array{pci: string, click: int, kw: string, c1: string, cpc: string}
      */
     private static function cloakedClick(array $query): array
     {
@@ -337,7 +353,7 @@ final class RtrClickInstanceTest extends TestCase
             1,
             preg_match(
                 '~url=https://offer\.example/' . self::$run
-                    . '/cloaked\?s=([1-9][0-9]*)&amp;kw=([^&]*)&amp;c1=([^&]*)&amp;end~',
+                    . '/cloaked\?s=([1-9][0-9]*)&amp;kw=([^&]*)&amp;c1=([^&]*)&amp;cpc=([^&]*)&amp;end~',
                 $page,
                 $offer
             ),
@@ -346,7 +362,7 @@ final class RtrClickInstanceTest extends TestCase
 
         return [
             'pci' => $pci[1], 'click' => (int) $offer[1],
-            'kw' => urldecode($offer[2]), 'c1' => urldecode($offer[3]),
+            'kw' => urldecode($offer[2]), 'c1' => urldecode($offer[3]), 'cpc' => urldecode($offer[4]),
         ];
     }
 

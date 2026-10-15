@@ -238,10 +238,13 @@ $info_sql = "
 		202_clicks_record AS 2cr
 		LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)
 		LEFT JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2cr.click_id)
+		LEFT JOIN 202_clicks_rotator AS cro ON (cro.click_id = 2cr.click_id)
 	WHERE
 		2ac.aff_campaign_id_public=" . (int) $offOfferId . "
 		AND 2cr.click_id_public=" . (int) $offPciId . "
 		AND 2ac.user_id = 2c.user_id
+	" . \Prosper202\Click\LatestVisit::orderBy('2c', 'cro') . "
+	LIMIT 1
 ";
 // The offer and the click are named separately (an advanced landing page
 // lets the visitor choose among the account's offers, so the campaign may

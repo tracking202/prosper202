@@ -267,7 +267,7 @@ class ClicksController
             LEFT JOIN 202_tracking_c3 t3 ON ct.c3_id = t3.c3_id
             LEFT JOIN 202_tracking_c4 t4 ON ct.c4_id = t4.c4_id
             WHERE c.click_id = ? AND c.user_id = ?
-            ORDER BY c.click_time DESC, (c.rotator_id = crot.rotator_id AND c.rule_id = crot.rule_redirect_id) DESC
+            ' . \Prosper202\Click\LatestVisit::orderBy('c', 'crot') . '
             LIMIT 1';
 
         $stmt = $this->prepare($sql);
