@@ -135,6 +135,38 @@ final class HeldCacheWritesTest extends TestCase
         self::assertSame([['keyword-id-a', 3, 2592000]], self::$written);
     }
 
+    /**
+     * exit runs no finally, so work that ends the request in die() left the
+     * writes held: shutdown work that writes to the cache was swallowed.
+     */
+    public function testWorkThatEndsTheRequestLeavesTheCacheWritableAtShutdown(): void
+    {
+        $script = tempnam(sys_get_temp_dir(), 'p202held');
+        file_put_contents($script, '<?php
+            require ' . var_export(__DIR__ . '/../Config/fixtures/lift-function.php', true) . ';
+            $shared = ' . var_export(__DIR__ . '/../../202-config/functions-shared.php', true) . ';
+            foreach (["setCache", "p202WithHeldCacheWrites"] as $name) {
+                eval(lift_function($shared, $name));
+            }
+            $GLOBALS["whatCache"] = "memcached";
+            $GLOBALS["memcache"] = new class {
+                public function set(string $k, mixed $v, mixed $e): bool { echo "written:$k\n"; return true; }
+            };
+            p202WithHeldCacheWrites(static function (): void {
+                setCache("inside", 1);
+                register_shutdown_function(static function (): void { setCache("at-shutdown", 1); });
+                exit(0);
+            });
+        ');
+        try {
+            $out = (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($script) . ' 2>&1');
+        } finally {
+            unlink($script);
+        }
+        self::assertStringContainsString('written:at-shutdown', $out, $out);
+        self::assertStringNotContainsString('written:inside', $out, 'the unfinished work\'s write is dropped');
+    }
+
     public function testHoldingInsideAHoldIsRefusedAndTheOuterWritesAreKept(): void
     {
         \p202HeldTest_withHeld(static function (): void {

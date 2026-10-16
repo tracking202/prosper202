@@ -340,11 +340,18 @@ if ($default == true) {
 		if (!empty($rotator_row['default_url'])) {
 			$rotator_row['type'] = 'url';
 			$rotator_row['redirect_url'] = $rotator_row['default_url'];
-		} elseif (!empty($rotator_row['default_lp'])) {
+		} elseif (!empty($rotator_row['landing_page_url'])) {
 			$rotator_row['type'] = 'lp';
-			// landing_page_url is already selected via the default_lp JOIN;
-			// the click names the page, as one a rule sends there does.
+			// landing_page_url comes from the default_lp JOIN, which is tied
+			// to the tracker's account (as in offrtr.php): a default page of
+			// another account reads as none. The click names the page, as
+			// one a rule sends there does.
 			$rotator_row['landing_page_id'] = $rotator_row['default_landing_page_id'] ?? 0;
+		} else {
+			// No default this account can send the visitor to (none set, or
+			// a campaign or page of another account): no click, as for a
+			// tracker with no redirector, rather than an empty Location.
+			die();
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
@@ -540,15 +547,15 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
 if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
-    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+    $click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 } else {
-    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+    $click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
 }
 
 $mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
 if ($cloaking_on == true) {

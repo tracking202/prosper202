@@ -61,6 +61,35 @@ final class RequestSignals
         return $value === '1';
     }
 
+    /**
+     * An advanced landing page's capture, which its tracker's campaign
+     * decides ($row from ClickPathReads::landingPageCapture()). No tracker
+     * named, or a tracker that names no campaign, is no campaign: capture
+     * stays on. A tracker named but not among the page's account's (a stale
+     * or malformed id, another account's), or one whose campaign is not the
+     * account's, is a setting that cannot be read: off (CLAUDE.md #11).
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function trackerAllows(bool $trackerNamed, array $row): bool
+    {
+        if (!$trackerNamed) {
+            return self::campaignAllows(null);
+        }
+        if (($row['tracker_found'] ?? null) === null) {
+            return false;
+        }
+        $named = $row['tracker_campaign_named'] ?? null;
+        if ($named === null || (string) $named === '0') {
+            return self::campaignAllows(null);
+        }
+        if (($row['tracker_campaign'] ?? null) === null) {
+            return false;
+        }
+
+        return self::campaignAllows($row['tracker_setting'] ?? null);
+    }
+
     /** @param array<string, mixed> $cookies */
     public static function visitorCookie(array $cookies): ?string
     {

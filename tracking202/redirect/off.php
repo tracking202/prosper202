@@ -304,7 +304,7 @@ $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
 // new URL every click; its go.php?acip= link is the same for all of them.
 $click_outbound_site_url_id = \Prosper202\Click\ClickRequest::string($_GET, 'pci') !== ''
     ? $locationRepo->findOrCreateClickSiteUrl($outbound_site_url)
-    : $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+    : $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 

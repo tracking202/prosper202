@@ -119,7 +119,7 @@ if (!function_exists('p202RedactedStatement')) {
         // Cut to whole bytes, then off a character the cut split, by pattern
         // rather than mb_strcut(): this runs on every failed query, the
         // error page's included, and asks nothing of an extension.
-        $cut = static fn (string $text, int $length): string => (string) preg_replace(
+        $cut = static fn (string $text, int $length): ?string => preg_replace(
             '/(?:[\xC0-\xDF]|[\xE0-\xEF][\x80-\xBF]?|[\xF0-\xF7][\x80-\xBF]{0,2})\z/',
             '',
             substr($text, 0, $length)
@@ -135,15 +135,29 @@ if (!function_exists('p202RedactedStatement')) {
         // not backtracked through: PCRE gives up past about 20,000 characters.
         $escaped = preg_replace('/\'(?:[^\'\\\\]++|\\\\.?)*+(?:\'|\z)|"(?:[^"\\\\]++|\\\\.?)*+(?:"|\z)/s', '?', $sql);
         $literal = $escaped === null ? null : preg_replace('/\'[^\']*+(?:\'|\z)|"[^"]*+(?:"|\z)/', '?', $sql);
+        // A pattern that fails answers null, never an empty statement that
+        // reads like a blank query.
+        $notShown = static fn (): string => '(a statement of ' . strlen($sql) . ' bytes, not shown: '
+            . preg_last_error_msg() . ')';
         if ($escaped === null || $literal === null) {
-            return '(a statement of ' . strlen($sql) . ' bytes, not shown: ' . preg_last_error_msg() . ')';
+            return $notShown();
         }
-        $shape = $escaped === $literal
-            ? $escaped
-            : $cut($escaped, strspn($escaped ^ $literal, "\0")) . '…';
-        $shape = trim((string) preg_replace('/\s+/', ' ', $shape));
+        $shape = $escaped === $literal ? $escaped : $cut($escaped, strspn($escaped ^ $literal, "\0"));
+        if ($shape === null) {
+            return $notShown();
+        }
+        $shape = $escaped === $literal ? $shape : $shape . '…';
+        $collapsed = preg_replace('/\s+/', ' ', $shape);
+        if ($collapsed === null) {
+            return $notShown();
+        }
+        $shape = trim($collapsed);
+        if (strlen($shape) <= $bytes) {
+            return $shape;
+        }
+        $short = $cut($shape, $bytes - 3);
 
-        return strlen($shape) > $bytes ? $cut($shape, $bytes - 3) . '…' : $shape;
+        return $short === null ? $notShown() : $short . '…';
     }
 }
 

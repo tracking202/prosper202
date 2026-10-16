@@ -26,6 +26,25 @@ final class MysqlErrorArgsTest extends TestCase
         return (new \ReflectionClass(\mysqli::class))->newInstanceWithoutConstructor();
     }
 
+    /**
+     * A pattern that fails (PCRE's backtrack limit, forced low here) names
+     * itself in the logged statement instead of leaving it empty, which read
+     * like a blank query.
+     */
+    public function testARedactionThatFailsIsNamedNotEmpty(): void
+    {
+        $code = 'require ' . var_export(dirname(__DIR__, 2) . '/202-config/mysql-error-args.php', true) . ';'
+            . ' echo p202RedactedStatement("SELECT a,   b FROM t WHERE x = 1 " . str_repeat("AND z = 3 ", 80));';
+        $run = static fn (int $limit): string => (string) shell_exec(escapeshellarg(PHP_BINARY)
+            . ' -d pcre.jit=0 -d pcre.backtrack_limit=' . $limit . ' -r ' . escapeshellarg($code) . ' 2>&1');
+
+        $failed = $run(1);
+        self::assertStringStartsWith('(a statement of 833 bytes, not shown: ', $failed, $failed);
+        $shown = $run(1000000);
+        self::assertStringStartsWith('SELECT a, b FROM t WHERE x = 1 AND z = 3', $shown);
+        self::assertSame(500, strlen($shown), 'cut to 500 bytes');
+    }
+
     public function testAConnectionAloneIsTheConnectionNotAStatement(): void
     {
         $db = self::connection();

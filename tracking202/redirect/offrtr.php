@@ -430,7 +430,7 @@ if ($default == false) {
 
                 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-				$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+				$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
 				// Read back inside the write: the payout token is the offer's.
@@ -524,7 +524,7 @@ if ($default == false) {
 
                 $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 				$outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-				$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+				$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
 				// Read back inside the write: the payout token is the offer's.

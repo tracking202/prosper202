@@ -96,6 +96,29 @@ final class IdentitySignalsTest extends TestCase
         }
     }
 
+    /** An advanced page's tracker: a named tracker the account cannot read turns capture off. */
+    public function testATrackerTheAccountCannotReadTurnsCaptureOff(): void
+    {
+        $row = static fn (?string $found, ?string $named, ?string $campaign, ?string $setting): array => [
+            'tracker_found' => $found, 'tracker_campaign_named' => $named,
+            'tracker_campaign' => $campaign, 'tracker_setting' => $setting,
+        ];
+        self::assertTrue(RequestSignals::trackerAllows(false, $row(null, null, null, null)), 'no tracker named');
+        self::assertFalse(
+            RequestSignals::trackerAllows(true, $row(null, null, null, null)),
+            'named, not the account\'s'
+        );
+        self::assertTrue(RequestSignals::trackerAllows(true, $row('7', '0', null, null)), 'no campaign');
+        self::assertTrue(RequestSignals::trackerAllows(true, $row('7', null, null, null)), 'no campaign');
+        self::assertFalse(
+            RequestSignals::trackerAllows(true, $row('7', '9', null, null)),
+            'its campaign is another account\'s'
+        );
+        self::assertFalse(RequestSignals::trackerAllows(true, $row('7', '9', '9', '0')), 'capture off');
+        self::assertTrue(RequestSignals::trackerAllows(true, $row('7', '9', '9', '1')), 'capture on');
+        self::assertFalse(RequestSignals::trackerAllows(true, $row('7', '9', '9', 'x')), 'unreadable');
+    }
+
     public function testBrowserIdsMustBeExactlyWhatTheTrackerMints(): void
     {
         self::assertSame(self::VID, RequestSignals::visitorCookie(['p202vid' => self::VID]));

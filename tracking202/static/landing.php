@@ -116,10 +116,9 @@ if ($t202LandingPageId !== null) {
         $identityRow = \Prosper202\Repository\LookupRepositoryFactory::liveReads($db)
             ->landingPageCapture($t202LandingPageId, $t202TrackerId);
         if ($identityRow !== null) {
+            // A t202id that does not parse still named a tracker.
             $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1
-                ? \Prosper202\Identity\RequestSignals::campaignAllows(
-                    $identityRow['tracker_campaign'] === null ? null : $identityRow['tracker_setting']
-                )
+                ? \Prosper202\Identity\RequestSignals::trackerAllows($t202id !== '', $identityRow)
                 : \Prosper202\Identity\RequestSignals::campaignAllows($identityRow['lp_setting'] ?? '0');
         }
     } catch (\Throwable $identityError) {

@@ -59,6 +59,16 @@ function p202WithHeldCacheWrites(callable $work): void
     if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
         throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
     }
+    static $releasedAtShutdown = false;
+    if (!$releasedAtShutdown) {
+        $releasedAtShutdown = true;
+        // Work that ends the request (die() in an error page) neither returns
+        // nor throws, and exit runs no finally: its writes are dropped, as for
+        // a throw, and the work that runs at shutdown writes to the cache again.
+        register_shutdown_function(static function (): void {
+            $GLOBALS['p202HeldCacheWrites'] = null;
+        });
+    }
     $GLOBALS['p202HeldCacheWrites'] = [];
     try {
         $work();
@@ -606,7 +616,7 @@ function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = 
         $mysql['ip_id'] = (string) ($clickPath
             ? $locations->findOrCreateIp(p202StoredVisitorIp())
             : $locations->findOrCreateIp(\Prosper202\Http\VisitorIp::fromServer($_SERVER)));
-        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
+        $mysql['site_id'] = (string) $locations->findOrCreateClickSiteUrl(
             \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
         );
 

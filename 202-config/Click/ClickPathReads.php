@@ -372,7 +372,9 @@ final readonly class ClickPathReads
             'SELECT lp.landing_page_type,
                     lpc.identity_signals AS lp_setting,
                     trc.identity_signals AS tracker_setting,
-                    trc.aff_campaign_id AS tracker_campaign
+                    trc.aff_campaign_id AS tracker_campaign,
+                    tr.tracker_id AS tracker_found,
+                    tr.aff_campaign_id AS tracker_campaign_named
                FROM 202_landing_pages AS lp
                LEFT JOIN 202_aff_campaigns AS lpc
                       ON lpc.aff_campaign_id = lp.aff_campaign_id AND lpc.user_id = lp.user_id
@@ -473,7 +475,13 @@ final readonly class ClickPathReads
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $params);
         $row = $this->conn->fetchOne($stmt);
-        $row = $row === null ? null : self::text($row);
+        if ($row === null) {
+            // Not kept: an id that names nothing would hold a cache entry for
+            // every id anyone sends, and one read before its record exists
+            // would stay missing until the entry expired.
+            return null;
+        }
+        $row = self::text($row);
         $this->cache->set($key, $row);
 
         return $row;

@@ -249,7 +249,7 @@ if (($user_row['user_pref_referer_data'] ?? '') == 't202ref') {
 		$_referer_site_url = ClickRequest::string($_GET, 'referer');
 	}
 }
-$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_referer_site_url);
+$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_referer_site_url);
 
 $mysql['click_referer_site_url_id'] = $db->real_escape_string((string) $click_referer_site_url_id);
 

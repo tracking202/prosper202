@@ -11,12 +11,13 @@ use PHPUnit\Framework\TestCase;
  * subid, a cl.php or pci.php link, off.php?acip=…&pci=… — is looked up with
  * findOrCreateClickSiteUrl(), which leaves the cache alone: through
  * findOrCreateSiteUrl() every click wrote an entry, kept 30 days, that
- * nothing read again. The URLs no click's id is in (the referer, the landing
- * page, the link a click script was reached by: go.php?acip=…,
- * offrtr.php?rpi=…, a tracker's dl.php or rtr.php link) keep the cached
- * lookup. Whether those repeat is the link's doing (a traffic source's gclid
- * differs per click); where they do, the cache saves both of the lookup's
- * SELECTs.
+ * nothing read again. The URLs a visitor's request brings are looked up
+ * uncached too: the referer, and the link a click script was reached by
+ * (go.php?acip=…, offrtr.php?rpi=…, a tracker's dl.php or rtr.php link),
+ * carry the traffic source's per-click values (c1-c4, the keyword, a
+ * gclid), so cached they wrote an entry per click that churned the cache
+ * the fallback URLs live in. Only the landing page's own URL, which every
+ * visitor of the page shares, keeps the cached lookup.
  *
  * Which URL a call is handed is a judgement the scan cannot make, so each
  * click script's lookups are listed whole, in order, by method and argument
@@ -32,42 +33,42 @@ final class ClickSiteUrlsAreUncachedTest extends TestCase
     /** file => its lookups in order: [method, argument] */
     private const CALLS = [
         'tracking202/redirect/dl.php' => [
-            [self::SHARED, "\$_GET [ 't202ref' ]"],
-            [self::SHARED, "\$referer_query [ 'url' ]"],
-            [self::SHARED, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
-            [self::SHARED, "\$referer_query [ 'url' ]"],
-            [self::SHARED, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
+            [self::CLICK, "\$_GET [ 't202ref' ]"],
+            [self::CLICK, "\$referer_query [ 'url' ]"],
+            [self::CLICK, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
+            [self::CLICK, "\$referer_query [ 'url' ]"],
+            [self::CLICK, "\$_SERVER [ 'HTTP_REFERER' ] ?? ''"],
             // dl.php?t202id=…: the link the click was reached by, before it had an id
-            [self::SHARED, '$outbound_site_url'],
+            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '$cloaking_site_url'],
             [self::CLICK, '$redirect_site_url'],
         ],
         'tracking202/redirect/off.php' => [
             // off.php?acip=…&pci=<the click's public id>, and go.php?acip=…
             [self::CLICK, '$outbound_site_url'],
-            [self::SHARED, '$outbound_site_url'],
+            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
         ],
         'tracking202/redirect/offrtr.php' => [
             // offrtr.php?rpi=… or go.php?rpi=…: no click's id
-            [self::SHARED, '$outbound_site_url'],
+            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
-            [self::SHARED, '$outbound_site_url'],
+            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
         ],
         'tracking202/redirect/rtr.php' => [
-            [self::SHARED, "\$referer_query [ 'url' ]"],
-            [self::SHARED, "(string) ( \$_SERVER [ 'HTTP_REFERER' ] ?? '' )"],
-            [self::SHARED, '$outbound_site_url'],
+            [self::CLICK, "\$referer_query [ 'url' ]"],
+            [self::CLICK, "(string) ( \$_SERVER [ 'HTTP_REFERER' ] ?? '' )"],
+            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '$cloaking_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
         ],
         'tracking202/static/record_adv.php' => [
-            [self::SHARED, '$_referer_site_url'],
+            [self::CLICK, '$_referer_site_url'],
             [self::SHARED, '$landing_site_url'],
         ],
         'tracking202/static/record_simple.php' => [
-            [self::SHARED, '$_referer_site_url'],
+            [self::CLICK, '$_referer_site_url'],
             [self::SHARED, '$landing_site_url'],
             // pci.php?pci=<the click's public id>
             [self::CLICK, '$outbound_site_url'],

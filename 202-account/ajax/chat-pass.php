@@ -90,10 +90,7 @@ if (strlen($p202ChatInstallUrl) > 300 || preg_match('#^https?://#i', $p202ChatIn
 }
 
 try {
-    $p202ChatFingerprint = hash('sha256', json_encode(
-        [$p202ChatRequest, $p202ChatInstallUrl, CHAT_PASS_URL],
-        JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
-    ));
+    $p202ChatFingerprint = ChatPassClient::fingerprint($p202ChatRequest, $p202ChatInstallUrl, CHAT_PASS_URL);
 } catch (\JsonException $e) {
     error_log('Prosper202 chat: the pass request could not be encoded: ' . $e->getMessage());
     $p202ChatAnswer(500, ['ok' => false, 'error' => 'internal']);

@@ -37,6 +37,33 @@ final class ChatPassClientTest extends TestCase
         return (string) json_encode($answer);
     }
 
+    /** A kept pass is for one version: after an upgrade the next pass reports the new one. */
+    public function testAKeptPassIsForTheVersionItReports(): void
+    {
+        $identity = [
+            'api_key' => 'k', 'install_hash' => 'h', 'user_id' => 1, 'user_email' => 'a@b.c', 'user_name' => 'u',
+        ];
+        $url = 'https://t.example.com/';
+        $pass = 'https://portal.example.com/pass';
+        self::assertSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78'),
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78')
+        );
+        self::assertNotSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.77'),
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78')
+        );
+        self::assertSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, PROSPER202_VERSION),
+            \ChatPassClient::fingerprint($identity, $url, $pass)
+        );
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/ajax/chat-pass.php');
+        self::assertStringContainsString(
+            'ChatPassClient::fingerprint($p202ChatRequest, $p202ChatInstallUrl, CHAT_PASS_URL)',
+            $page
+        );
+    }
+
     public function testAGoodAnswerIsTaken(): void
     {
         $expires = time() + 86400;

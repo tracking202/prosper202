@@ -145,6 +145,9 @@ class ShellAccessCache
         return $mtime !== false && $mtime <= time() && (time() - $mtime) <= $maxAgeSeconds;
     }
 
+    /** A temp file this old was left by a write that never finished. */
+    public const ORPHAN_TMP_SECONDS = 3600;
+
     /**
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
@@ -169,13 +172,19 @@ class ShellAccessCache
             glob($dir . '/*.unknown') ?: [],
             glob($dir . '/*.checking') ?: []
         );
-        foreach ($files as $file) {
-            if (is_link($file)) {
-                continue;
-            }
-            $mtime = @filemtime($file);
-            if ($mtime !== false && $mtime < $cutoff && @unlink($file)) {
-                $removed++;
+        // put()'s temp files, left by a process that stopped between the
+        // write and the rename: an hour is far longer than any write takes.
+        $orphanCutoff = time() - min($olderThanSeconds, self::ORPHAN_TMP_SECONDS);
+        $tmpFiles = glob($dir . '/*.tmp') ?: [];
+        foreach ([[$files, $cutoff], [$tmpFiles, $orphanCutoff]] as [$batch, $before]) {
+            foreach ($batch as $file) {
+                if (is_link($file)) {
+                    continue;
+                }
+                $mtime = @filemtime($file);
+                if ($mtime !== false && $mtime < $before && @unlink($file)) {
+                    $removed++;
+                }
             }
         }
         return $removed;

@@ -39,6 +39,26 @@ final class ChatPassClient
     }
 
     /**
+     * What a pass is kept in the session for: everything request() sends,
+     * the version included, so an upgrade asks for a pass that reports the
+     * new version rather than reusing one that reports the old.
+     *
+     * @param array<string, mixed> $identity
+     * @throws \JsonException
+     */
+    public static function fingerprint(
+        array $identity,
+        string $installUrl,
+        string $passUrl,
+        string $version = PROSPER202_VERSION
+    ): string {
+        return hash('sha256', json_encode(
+            [$identity, $installUrl, $passUrl, $version],
+            JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
+        ));
+    }
+
+    /**
      * The identity goes with this install's version (p202_version), which
      * the portal keeps beside the install.
      *
