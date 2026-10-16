@@ -231,6 +231,21 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         self::assertFalse(self::cookieSet($headers, 'p202vid'), $headers . $this->serverLog());
     }
 
+    public function testADirectLinkWithNoCampaignCaptures(): void
+    {
+        [, $headers] = self::get('/tracking202/redirect/dl.php?t202id=' . (3936 + 100000));
+        self::assertTrue(self::cookieSet($headers, 'p202vid'), $headers . $this->serverLog());
+    }
+
+    public function testAnUnknownDirectLinkRecordsNothingAndCapturesNothing(): void
+    {
+        $before = self::clicks();
+        [$status, $headers] = self::get('/tracking202/redirect/dl.php?t202id=' . (3999 + 100000));
+        self::assertSame(404, $status, $headers . $this->serverLog());
+        self::assertFalse(self::cookieSet($headers, 'p202vid'), $headers);
+        self::assertSame($before, self::clicks());
+    }
+
     public function testAnotherAccountsDefaultPageIsNoDefault(): void
     {
         $before = self::clicks();
