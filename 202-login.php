@@ -31,10 +31,10 @@ function logged_in_redirect($safe_context = false)
 {
 	prosper_log('login', 'User already authenticated, preparing redirect.');
 
-	// Honor the redirect parameter if present — only allow local paths to prevent open redirect
+	// A page on this install only; PHP decoded it once, as each link encodes it once.
 	if (isset($_GET['redirect'])) {
-		$target = urldecode((string) $_GET['redirect']);
-		if ($target !== '' && $target[0] === '/') {
+		$target = \Prosper202\Http\SignInReturn::path((string) $_GET['redirect']);
+		if ($target !== null) {
 			prosper_log('login', 'Redirecting authenticated user to ' . $target);
 			header('location: ' . $target);
 			exit;

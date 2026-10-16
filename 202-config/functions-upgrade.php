@@ -4340,13 +4340,23 @@ class UPGRADE
 
         if ($prosper202_version == '1.9.77') {
 
-            // 1.9.78 changes no schema yet, so its step only records the
-            // version. A schema change for 1.9.78 belongs in this block,
-            // reconciled before the version is written.
-            if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
-                $prosper202_version = '1.9.78';
+            // 202_api_keys gains label: the name a key is shown with in
+            // Account › API keys. A key an AI app's connection mints is
+            // labelled with the app (Api\V3\Support\AiConnect).
+            // A schema change for 1.9.78 belongs in this block, reconciled
+            // before the version is written.
+            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
+
+            if ($api_keys_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
+                    $prosper202_version = '1.9.78';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.78; '
+                        . 'leaving version at 1.9.77 so the next run retries.');
+                }
             } else {
-                error_log('Prosper202 upgrade: failed to persist version 1.9.78; leaving version at 1.9.77 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled; '
+                    . 'leaving version at 1.9.77 so the next run retries.');
             }
         }
 

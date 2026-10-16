@@ -180,6 +180,46 @@ try {
         exit;
     }
 
+    // AI connections (Api\V3\Support\AiConnect, 202-account/connect-ai.php).
+    // GET /connect tells Tracking202's MCP server the install offers them,
+    // before anyone has signed in. POST /connect/token is that server
+    // exchanging a one-time approval for the connection's key, so it has no
+    // key to present yet: the code and its verifier are the credential.
+    // POST /connect/revoke (after authentication, below) is a connection's
+    // key removing itself. Neither write previews or proposes, so ?dry_run
+    // and ?staged are refused rather than ignored (CLAUDE.md #14).
+    if ($path === '/connect' && $method === 'GET') {
+        Bootstrap::jsonResponse(['data' => ['connect' => 1]]);
+        exit;
+    }
+    if ($path === '/connect/token' || $path === '/connect/revoke') {
+        $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
+        if ($withheld !== null) {
+            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            exit;
+        }
+    }
+    if ($path === '/connect/token' && $method === 'POST') {
+        // Only failed exchanges are counted, per address: every MCP server
+        // call can arrive from one shared address (a proxy, Cloudflare's
+        // Worker egress), so counting every exchange let junk requests turn
+        // real ones away. A good exchange is a 256-bit one-time code plus its
+        // verifier, so it is never refused; a failure past the limit is
+        // answered 429.
+        $connectStore = new ServerStateStore();
+        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, $connectStore))
+            ->token($payload);
+        if ($connectStatus >= 400) {
+            $retryAfter = $connectStore->softIpRateLimit('connect-token-failed', 30, 60);
+            if ($retryAfter !== null) {
+                header('Retry-After: ' . $retryAfter);
+                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
+                exit;
+            }
+        }
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
     // Unauthenticated app schema, fetched by an app build at runtime so a
     // change on the server needs no store resubmission. An app binary cannot
     // hold an API key; the registration is selected by the app token in the
@@ -223,6 +263,14 @@ try {
     $userId = $auth->userId();
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
+
+    // The key that authenticated removes itself, and only itself, whatever
+    // its scope: so before the limits, the CLI licence gate and the scopes.
+    if ($path === '/connect/revoke' && $method === 'POST') {
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::revoke($db, Auth::bearerKey($headers));
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
 
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();

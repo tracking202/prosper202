@@ -824,6 +824,54 @@ class ServerStateStore implements QuotaStore
         return $valid;
     }
 
+    /**
+     * Stores an AI connection approval under the hash of its one-time code
+     * (the code itself is never written), and drops expired approvals.
+     *
+     * @param array<string, mixed> $grant
+     */
+    public function issueConnectCode(string $codeHash, array $grant, int $ttlSeconds): void
+    {
+        $grant['expires_at'] = time() + $ttlSeconds;
+        $mutate = static function (array $state) use ($codeHash, $grant): array {
+            $now = time();
+            $items = is_array($state['items'] ?? null) ? $state['items'] : [];
+            foreach ($items as $key => $item) {
+                if (!is_array($item) || (int) ($item['expires_at'] ?? 0) < $now) {
+                    unset($items[$key]);
+                }
+            }
+            $items[$codeHash] = $grant;
+            $state['items'] = $items;
+            return $state;
+        };
+        $this->mutateJsonFile($this->connectCodesPath(), ['items' => []], $mutate, true);
+    }
+
+    /**
+     * The approval stored under this code hash, removed in the same locked
+     * step (a code works once, even when two exchanges race), or null when
+     * there is none or it expired.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function consumeConnectCode(string $codeHash): ?array
+    {
+        $found = null;
+        $consume = static function (array $state) use ($codeHash, &$found): array {
+            $item = $state['items'][$codeHash] ?? null;
+            if (is_array($item)) {
+                unset($state['items'][$codeHash]);
+                if ((int) ($item['expires_at'] ?? 0) >= time()) {
+                    $found = $item;
+                }
+            }
+            return $state;
+        };
+        $this->mutateJsonFile($this->connectCodesPath(), ['items' => []], $consume, true);
+        return $found;
+    }
+
     /** @return array<int, array<string, mixed>> */
     public function listJobs(array $statuses = [], int $limit = 50): array
     {
@@ -1598,6 +1646,11 @@ class ServerStateStore implements QuotaStore
     private function pruneTokensPath(): string
     {
         return $this->dir('tokens') . '/prune.json';
+    }
+
+    private function connectCodesPath(): string
+    {
+        return $this->dir('tokens') . '/connect.json';
     }
 
     private function spansPath(): string

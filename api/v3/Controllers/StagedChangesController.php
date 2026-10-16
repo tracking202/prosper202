@@ -239,13 +239,39 @@ final class StagedChangesController
                 fn(array $c): bool => ($c['status'] ?? '') === $status
             ));
         }
+        $items = array_values(array_filter($items, $this->keyReads(...)));
 
         return ['data' => array_map($this->present(...), $items)];
     }
 
     public function get(string $changeId): array
     {
-        return ['data' => $this->present($this->requireVisibleChange($changeId))];
+        $change = $this->requireVisibleChange($changeId);
+        if (!$this->keyReads($change)) {
+            throw new NotFoundException('Staged change not found');
+        }
+        return ['data' => $this->present($change)];
+    }
+
+    /**
+     * Whether this key may read what a change records. Its payload and
+     * preview show the write, so a key that may not read the change's area
+     * (one made for an AI connection reaches only its tools' areas) does not
+     * see it; a change whose area cannot be told needs a key that reads every
+     * area.
+     */
+    private function keyReads(array $change): bool
+    {
+        $area = (string)($change['resource_area'] ?? '');
+        if ($area === '') {
+            $area = (string)Auth::scopeAreaForPath((string)($change['path'] ?? ''));
+        }
+        if ($area === '') {
+            return $this->auth->hasFullScope()
+                || in_array('read', $this->auth->scopes(), true)
+                || in_array('write', $this->auth->scopes(), true);
+        }
+        return $this->auth->hasScope($area . ':read');
     }
 
     /**

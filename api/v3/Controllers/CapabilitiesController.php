@@ -377,17 +377,9 @@ class CapabilitiesController
             return true;
         }
 
-        $customerKey = $this->loadClickServerKey();
+        $customerKey = self::licenceKeyFor($this->db, $this->userId);
         if ($customerKey === null) {
-            // Whether this user has a key of their own is unknown; judging
-            // them by the owner's would be a guess in either direction.
-            return true;
-        }
-        if ($customerKey === '') {
-            $customerKey = $this->loadOwnerClickServerKey();
-            if ($customerKey === null) {
-                return true; // the owner lookup failed: unknown, open
-            }
+            return true; // unknown, open
         }
         if ($customerKey === '') {
             return false; // no key on the install is a real "not licensed"
@@ -407,6 +399,28 @@ class CapabilitiesController
             return true;
         }
         return $result['paid'];
+    }
+
+    /**
+     * The ClickServer key whose licence decides for a user: their own, else
+     * the install owner's. The CLI gate above and the AI connection
+     * (Api\V3\Support\AiConnect) both ask this, so they cannot disagree on
+     * whose licence counts.
+     *
+     * @return string|null the key; '' when nobody on the install has one;
+     *         null when a lookup failed. When the user's own lookup fails,
+     *         whether they have a key is unknown, and judging them by the
+     *         owner's would be a guess in either direction, so that is null
+     *         too.
+     */
+    public static function licenceKeyFor(\mysqli $db, int $userId): ?string
+    {
+        $controller = new self($db, $userId);
+        $own = $controller->loadClickServerKey();
+        if ($own === null || $own !== '') {
+            return $own;
+        }
+        return $controller->loadOwnerClickServerKey();
     }
 
     /**

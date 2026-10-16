@@ -759,7 +759,7 @@ var goalReevaluateCmd = &cobra.Command{
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == 422 {
 				if _, ok := apiErr.FieldErrors["version"]; ok {
-					return withHint(err, "`p202 goal versions "+args[0]+"` lists the goal's versions.")
+					return withHint(err, "%s", "`p202 goal versions "+args[0]+"` lists the goal's versions.")
 				}
 			}
 			return err
