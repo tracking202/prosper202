@@ -5,7 +5,11 @@ use UAParser\Parser;
 require_once __DIR__ . '/mysql-error-args.php';
 
 // This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($dbOrSql, $sql = null): never
+/**
+ * @param ?string $error what failed, from a caller that caught it: by then
+ *        the connection's own error is cleared, if the caller rolled back
+ */
+function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
 {
     // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
     [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
@@ -14,18 +18,17 @@ function record_mysql_error($dbOrSql, $sql = null): never
         $db = $database->getConnection();
     }
     if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
+        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
         echo 'Database error. The webmaster has been notified.';
         die();
     }
 
     global $server_row;
 
-    // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
-
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
+    // The server's message and the statement, without the values they
+    // quote: they are logged, and listed in Account › Settings.
+    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
+    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
 
     // The session's zone, for the footer's clock; this page counts nothing in
     // it. AUTH::set_timezone() would read the account's zone from the
@@ -36,37 +39,49 @@ function record_mysql_error($dbOrSql, $sql = null): never
         date_default_timezone_set($sessionZone);
     }
 
-    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
+    // Rolled back first, and never a fatal in place of the page; see
+    // p202RecordMysqlErrorRow().
+    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
+        $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+        $mysql['ip_id'] = $db->real_escape_string((string) $ip_id);
 
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
+        $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
+        $site_id = INDEXES::get_site_url_id($site_url);
+        $mysql['site_id'] = $db->real_escape_string((string) $site_id);
 
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id'])) : 0;
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
+        $mysql['user_id'] = isset($_SESSION['user_id'])
+            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
+            : 0;
+        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
+        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
+        $mysql['mysql_error_time'] = time();
 
-    $report_sql = "INSERT     INTO  202_mysql_errors
+        $report_sql = "INSERT     INTO  202_mysql_errors
 								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
 										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
 										user_id='" . $mysql['user_id'] . "',
 										ip_id='" . $mysql['ip_id'] . "',
 										site_id='" . $mysql['site_id'] . "',
 										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($report_sql);
+        // On the connection just rolled back: the global one this used
+        // before may be another, with a transaction of its own still open.
+        // The statement it failed on carries what it records: the server's
+        // words are left to _mysqli_query()'s own line, if it logs one.
+        if (_mysqli_query($db, $report_sql) === false) {
+            throw new \RuntimeException('the server refused the row');
+        }
+    });
 
     // report error to user and end page
 ?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
+    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
 
 
 <?php
 
-    template_bottom();
+    // Without the footer's reads (the dash email, the cron ping's tracking
+    // domain): they would ask the database that has just failed.
+    template_bottom(false);
     die();
 }
 
@@ -273,6 +288,28 @@ function p202TrackingBaseUrl(): string
 function getTrackingDomain(): string
 {
     return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+}
+
+/**
+ * The account's dash email as a JavaScript string, for the footer's support
+ * widget: written between quotes as stored, an address with a ' ended the
+ * string and broke the script.
+ */
+function p202DashEmailJson(): string
+{
+    $json = json_encode(
+        (string) getDashEmail(),
+        JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if ($json === false) {
+        error_log('The dash email could not be written into the footer script: ' . json_last_error_msg());
+
+        return '""';
+    }
+
+    return $json;
 }
 
 /**
@@ -1498,8 +1535,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 255 charactesr of keyword
-        // $keyword = substr($keyword, 0, 255);
+        // Cut as the column holds it, so the lookup finds the row it stores.
+        $keyword = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword((string) $keyword);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1558,8 +1595,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c1 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c1);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1619,8 +1656,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c2 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c2);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1680,8 +1717,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c3 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c3);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -1741,8 +1778,8 @@ class INDEXES
     {
         global $memcacheWorking, $memcache;
 
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
+        // Cut as the repository stores it, so the lookup finds the row it stores.
+        $c4 = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue((string) $c4);
 
         if ($memcacheWorking) {
             // get from memcached
@@ -2830,9 +2867,15 @@ function getDashEmail(): string|bool
     //get the main users dash email and api key from the db
     $sql = "SELECT user_dash_email,p202_customer_api_key FROM 202_users WHERE user_id ='" . $_SESSION['user_id'] . "'";
     $user_result = _mysqli_query($sql);
+    // Every signed-in page's footer reads this: a failed read (logged by
+    // _mysqli_query()) leaves the address unknown rather than the page cut
+    // off by a fatal.
+    if (!$user_result instanceof \mysqli_result) {
+        return false;
+    }
     $user_row = $user_result->fetch_assoc();
 
-    if ($user_row === null) {
+    if (!is_array($user_row)) {
         return false;
     }
 
@@ -2848,7 +2891,8 @@ function getDashEmail(): string|bool
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
                 $user_result = _mysqli_query($sql);
-                return ($mysql['email']);
+                // The address, not its copy escaped for the statement above.
+                return (string) $dashEmail['email'];
             }
         }
     }

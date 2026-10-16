@@ -51,7 +51,9 @@ $rotator_sql = "SELECT
 					   lp.landing_page_url
 				FROM 202_rotators AS rt
 				LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = rt.default_campaign
+                    AND ac.user_id = rt.user_id
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
+                    AND lp.user_id = rt.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = rt.user_id
 				WHERE   rt.public_id='".$mysql['rpi']."'"; 
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
@@ -262,8 +264,55 @@ foreach ($rule_row as $rule) {
 	}
 
 	if ($count == count($rotate)) {
+		$rule_redirects_sql = "SELECT
+					   2c.click_id, 
+					   2c.user_id,
+					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
+					   2c.click_filtered,
+					   2c.landing_page_id,
+					   2cr.click_cloaking,
+					   2cs.click_cloaking_site_url_id,
+					   2cs.click_redirect_site_url_id,
+					   rur.id as rule_redirect_id,
+					   rur.redirect_url,
+					   rur.redirect_campaign,
+					   rur.redirect_lp,
+					   rur.auto_monetizer,
+					   rur.weight,
+					   ca.aff_campaign_name,
+					   ca.aff_campaign_id,
+					   ca.aff_campaign_rotate,
+					   ca.aff_campaign_url,
+					   ca.aff_campaign_url_2,
+					   ca.aff_campaign_url_3,
+					   ca.aff_campaign_url_4,
+					   ca.aff_campaign_url_5,
+					   ca.aff_campaign_payout,
+					   ca.aff_campaign_cloaking,
+					   lp.landing_page_url, lp.landing_page_id
+				FROM 202_clicks AS 2c
+				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
+				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id	   
+				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
+				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
+                    AND ca.user_id = 2c.user_id
+				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
+                    AND lp.user_id = 2c.user_id
+				WHERE 2c.click_id='".$mysql['click_id']."'
+				ORDER BY rur.id";
+        // A rule left with no usable redirect passes the click on, as
+        // rtr.php does: to a later rule, or to the default.
+        $redirectRows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
+        $rule_redirect_rows = [];
+        foreach ($redirectRows as $redirectRow) {
+            if (p202RuleRedirectIsUsable($redirectRow)) {
+                $rule_redirect_rows[] = $redirectRow;
+            }
+        }
+        if ($rule_redirect_rows === []) {
+            continue;
+        }
 		$default = false;
-		$mysql['rule_id'] = $mysql['rule_id'];
 		break;
 	}
 }	
@@ -307,40 +356,6 @@ $click_result = $db->query($click_sql) or record_mysql_error($db);
 
 if ($default == false) {
 
-		$rule_redirects_sql = "SELECT
-					   2c.click_id, 
-					   2c.user_id,
-					   (SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2c.click_id) AS first_click_time,
-					   2c.click_filtered,
-					   2c.landing_page_id,
-					   2cr.click_cloaking,
-					   2cs.click_cloaking_site_url_id,
-					   2cs.click_redirect_site_url_id,
-					   rur.id as rule_redirect_id,
-					   rur.redirect_url,
-					   rur.redirect_campaign,
-					   rur.redirect_lp,
-					   rur.auto_monetizer,
-					   rur.weight,
-					   ca.aff_campaign_name,
-					   ca.aff_campaign_id,
-					   ca.aff_campaign_rotate,
-					   ca.aff_campaign_url,
-					   ca.aff_campaign_url_2,
-					   ca.aff_campaign_url_3,
-					   ca.aff_campaign_url_4,
-					   ca.aff_campaign_url_5,
-					   ca.aff_campaign_payout,
-					   ca.aff_campaign_cloaking,
-					   lp.landing_page_url
-				FROM 202_clicks AS 2c
-				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
-				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id	   
-				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
-				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rur.redirect_campaign
-				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rur.redirect_lp
-				WHERE 2c.click_id='".$mysql['click_id']."'
-				ORDER BY rur.id";
 		// One row per redirect of the rule, chosen by weight with rtr.php's
 		// chooser, as rtr.php chooses: the first row alone sent every click
 		// to the rule's first redirect, a weight of 0 included. (In id order,
@@ -348,7 +363,6 @@ if ($default == false) {
 		// no weight anywhere sends both entry points to the same first one;
 		// the changed text also keys a fresh cache entry, so a row the old
 		// single-row read cached is never taken for a list.)
-		$rule_redirect_rows = foreach_memcache_mysql_fetch_assoc($db, $rule_redirects_sql);
 		if (count($rule_redirect_rows) > 1) {
 			$rule_redirect_row = $rule_redirect_rows[getSplitTestValue($rule_redirect_rows)];
 		} else {
@@ -447,7 +461,7 @@ if ($default == false) {
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rule_redirect_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
@@ -500,7 +514,7 @@ if ($default == false) {
 			} else if (!empty($rule_redirect_row['redirect_lp'])) {
 				// The chosen redirect's landing page (lp joins on rur.redirect_lp),
 				// not the rotator default's, which $rotator_row carries.
-				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $rule_redirect_row['landing_page_url'], $mysql['click_id'], (int) $rotator_row['user_id']);
 				header('location: ' . $redirect_site_url);
 				die();
 			} else if(!empty($rule_redirect_row['redirect_url'])) {
@@ -516,7 +530,7 @@ if ($default == false) {
 		// now, whichever kind of default the rotator sends it to.
 		(new DataEngine())->setDirtyHour($mysql['click_id']);
 
-		if (!empty($rotator_row['default_campaign'])) {
+		if (!empty($rotator_row['aff_campaign_id'])) {
 				$click_sql = "SELECT
 					   2c.click_id, 
 					   2c.user_id,
@@ -599,7 +613,7 @@ if ($default == false) {
 				$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
 
 				$redirect_site_url = rotateTrackerUrl($db, $rotator_row);
-				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id']);
+				$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $mysql['click_id'], (int) $rotator_row['user_id']);
 
 				$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
 				$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
@@ -649,8 +663,8 @@ if ($default == false) {
 				    die();
 				}
 
-		} else if (!empty($rotator_row['default_lp'])) {
-			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id']);	
+		} else if (!empty($rotator_row['landing_page_url'])) {
+			$redirect_site_url = replaceTrackerPlaceholders($db, $rotator_row['landing_page_url'], $mysql['click_id'], (int) $rotator_row['user_id']);	
 			header('location: ' . $redirect_site_url);
 			die();
 		} else if(!empty($rotator_row['default_url'])) {

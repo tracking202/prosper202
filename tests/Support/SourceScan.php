@@ -134,11 +134,31 @@ final class SourceScan
     }
 
     /**
+     * The name a token calls, as PHP compares it (lowercase), for `name`,
+     * `\name` and `namespace\name`; null for any other token. The last two
+     * name the global function: `namespace\name` only outside a namespace,
+     * and inside one it is another function, which a scan then reports (the
+     * loud direction). A name in another namespace (`Other\name`) answers
+     * with its backslash, so it matches no global name.
+     */
+    public static function callableName(int $id, string $text): ?string
+    {
+        return match ($id) {
+            T_STRING => strtolower($text),
+            T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE
+                => strtolower((string) preg_replace('/^(?:namespace)?\\\\/i', '', $text)),
+            default => null,
+        };
+    }
+
+    /**
      * Lines on which a call to one of $methods (as `->name(...)` or
-     * `::name(...)`) or one of $functions (as a bare `name(...)`) forms a
-     * whole statement whose result is discarded: nothing between the previous
-     * statement boundary and the call but the receiver expression, and a `;`
-     * straight after the closing parenthesis.
+     * `::name(...)`) or one of $functions (as `name(...)`, `\name(...)` or
+     * `namespace\name(...)`), in any case, forms a whole statement whose
+     * result is discarded: nothing between the previous statement boundary
+     * and the call but the receiver expression, and a `;` straight after the
+     * closing parenthesis. A call through a variable or call_user_func()
+     * names nothing here and is not seen.
      *
      * `$x = $db->commit();`, `if (!$db->commit())`, `return $db->commit();`
      * and `$ok && $db->commit()` are all "used" and not reported. The receiver
@@ -160,15 +180,19 @@ final class SourceScan
         $tokens = self::significantTokens($source);
         $count = count($tokens);
         $lines = [];
+        $methods = array_map('strtolower', $methods);
+        $functions = array_map('strtolower', $functions);
 
         for ($i = 0; $i < $count; $i++) {
             $tok = $tokens[$i];
-            if (!is_array($tok) || $tok[0] !== T_STRING) {
+            $name = is_array($tok) ? self::callableName($tok[0], $tok[1]) : null;
+            if ($name === null) {
                 continue;
             }
-            $name = $tok[1];
+            $qualified = $tok[0] !== T_STRING;
             $prev = $i > 0 ? $tokens[$i - 1] : null;
-            $isMethod = in_array($name, $methods, true)
+            $isMethod = !$qualified
+                && in_array($name, $methods, true)
                 && is_array($prev)
                 && in_array($prev[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON], true);
             $isFunction = in_array($name, $functions, true)

@@ -74,7 +74,6 @@ final class StoredAddressWritesTest extends TestCase
     private const HELPER_CALL = '/\bp202StoredVisitorIp\(\)|\bStoredVisitorIp::forAccount\(/';
 
     private const INDEX_INSERT = 'INDEXES::insert_ip(): the address get_ip_id() was handed';
-    private const INDEX_COPY = 'the dead copy of INDEXES (class-indexes.php yields to whichever INDEXES loaded first)';
     private const DATAENGINE = 'the dataengine\'s rows, copied from the stored clicks (ip_id included: DERIVED)';
 
     /**
@@ -90,10 +89,10 @@ final class StoredAddressWritesTest extends TestCase
      */
     private const WRITES = [
         // ── The click path ──────────────────────────────────────────────
-        'tracking202/redirect/rtr.php' => [
+        '202-config/Click/RotatorClickWriter.php' => [
             '202_clicks_advance.ip_id' => [
                 self::STORED,
-                'the rotator\'s click: INDEXES::get_ip_id($db, p202StoredVisitorIp())',
+                'the rotator\'s click: rtr.php resolves it with INDEXES::get_ip_id($db, p202StoredVisitorIp())',
                 ['tracking202/redirect/rtr.php'],
             ],
         ],
@@ -137,10 +136,6 @@ final class StoredAddressWritesTest extends TestCase
                     . ' jobs, plus ClickBank\'s notification (cb202.php, ClickBank\'s server); no visitor of a'
                     . ' tracking link reaches connect.php',
             ],
-        ],
-        '202-config/class-indexes.php' => [
-            '202_ips.ip_address' => [self::INDEX, self::INDEX_COPY],
-            '202_ips_v6.ip_address' => [self::INDEX, self::INDEX_COPY],
         ],
         // ── Conversions ─────────────────────────────────────────────────
         '202-config/Conversion/MysqlConversionRepository.php' => [

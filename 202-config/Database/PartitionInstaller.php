@@ -106,6 +106,9 @@ final readonly class PartitionInstaller
         // different session (and fatals from CLI/test contexts with no global
         // $db). Matches SchemaInstaller::disableStrictMode().
         $sql = "SET session sql_mode= ''";
-        _mysqli_query($this->connection, $sql);
+        if ($this->connection->query($sql) === false) {
+            // Logged and carried on, as a partition statement's failure is.
+            error_log('PartitionInstaller: Failed to clear sql_mode: ' . $this->connection->error);
+        }
     }
 }

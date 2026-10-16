@@ -47,15 +47,10 @@ final class RequestHostSourceTest extends TestCase
             . ' (CURLOPT_RESOLVE), so a name the request claimed never takes the call off this machine',
         ],
         '202-config/connect.php' => [3, "maps nginx's catch-all server name `_` to the request's host"],
-        '202-config/connect2.php' => [
-            6,
-            "the same `_` mapping (3); the install fingerprint hash (1); the server_name column of 202_mysql_errors"
-            . ' and the error email (2)',
-        ],
+        '202-config/connect2.php' => [4, "the same `_` mapping (3); the install fingerprint hash (1)"],
         '202-config/functions-tracking202.php' => [
-            4,
-            'the server_name column of 202_mysql_errors (1); the license'
-            . " service's click-server id, the Host header as sent (2); the install fingerprint hash (1)",
+            3,
+            "the license service's click-server id, the Host header as sent (2); the install fingerprint hash (1)",
         ],
         // getTrackingDomain() (both copies) read SERVER_NAME and SERVER_PORT
         // as its fallback, the address the server listens on rather than the
