@@ -140,6 +140,14 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         $tracker(3936, self::OWNER, 0, 0, 3903);
         $tracker(3937, self::OWNER, 0, 3922, 0);
         $tracker(3938, self::OWNER, 0, 3923, 0);
+        foreach ([3914 => 3921, 3915 => 3922] as $id => $campaign) {
+            self::row('202_rotators', [
+                'id' => $id, 'public_id' => $id + 100000, 'user_id' => self::OWNER, 'name' => "rotator $id",
+                'default_url' => null, 'default_campaign' => $campaign, 'default_lp' => null,
+            ]);
+        }
+        $tracker(3939, self::OWNER, 3914, 0, 0);
+        $tracker(3940, self::OWNER, 3915, 0, 0);
     }
 
     protected function setUp(): void
@@ -253,6 +261,26 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         self::assertSame(200, $status, $headers . $this->serverLog());
         self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers, 'no empty Location');
         self::assertSame($before, self::clicks(), 'no click is recorded');
+    }
+
+    /** @return iterable<string, array{int, bool}> */
+    public static function rotatorCampaigns(): iterable
+    {
+        yield 'the default campaign has capture off' => [3939, false];
+        yield 'the default campaign has capture on' => [3940, true];
+    }
+
+    /**
+     * A rotator click's capture follows its campaign's setting.
+     *
+     * @dataProvider rotatorCampaigns
+     */
+    public function testARotatorsCampaignDecidesCapture(int $tracker, bool $capture): void
+    {
+        [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . ($tracker + 100000));
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertMatchesRegularExpression('~^Location: https://offer\.example/~mi', $headers);
+        self::assertSame($capture, self::cookieSet($headers, 'p202vid'), $headers);
     }
 
     public function testARotatorWithNoDefaultRecordsNothing(): void

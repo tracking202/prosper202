@@ -59,6 +59,40 @@ final class ChatPassClient
     }
 
     /**
+     * The session's record of a pass, kept for the request it answered.
+     *
+     * @param array{pass: string, chat_url: string, expires_at_s: int} $pass
+     * @return array<string, mixed>
+     */
+    public static function keep(string $fingerprint, array $pass): array
+    {
+        return ['for' => $fingerprint] + $pass;
+    }
+
+    /**
+     * A kept pass the page may hand out again, or null: one kept for this
+     * request (same fingerprint, so the same version) with more than an hour
+     * left.
+     *
+     * @return array{pass: string, chat_url: string, expires_at_s: int}|null
+     */
+    public static function keptPass(mixed $kept, string $fingerprint, int $now): ?array
+    {
+        if (
+            !is_array($kept)
+            || ($kept['for'] ?? null) !== $fingerprint
+            || !is_string($kept['pass'] ?? null)
+            || !is_string($kept['chat_url'] ?? null)
+            || !is_int($kept['expires_at_s'] ?? null)
+            || $kept['expires_at_s'] - 3600 <= $now
+        ) {
+            return null;
+        }
+
+        return ['pass' => $kept['pass'], 'chat_url' => $kept['chat_url'], 'expires_at_s' => $kept['expires_at_s']];
+    }
+
+    /**
      * What request() sends: fingerprint() hashes the same, so a field added
      * to the request is part of what a kept pass is for.
      *

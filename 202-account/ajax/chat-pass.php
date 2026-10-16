@@ -97,22 +97,9 @@ try {
 }
 
 $p202ChatCached = $_SESSION['p202_chat_pass'] ?? null;
-$p202ChatPass = null;
-if (
-    $p202ChatRefresh === '0'
-    && is_array($p202ChatCached)
-    && ($p202ChatCached['for'] ?? null) === $p202ChatFingerprint
-    && is_string($p202ChatCached['pass'] ?? null)
-    && is_string($p202ChatCached['chat_url'] ?? null)
-    && is_int($p202ChatCached['expires_at_s'] ?? null)
-    && $p202ChatCached['expires_at_s'] - 3600 > time()
-) {
-    $p202ChatPass = [
-        'pass'         => $p202ChatCached['pass'],
-        'chat_url'     => $p202ChatCached['chat_url'],
-        'expires_at_s' => $p202ChatCached['expires_at_s'],
-    ];
-}
+$p202ChatPass = $p202ChatRefresh === '0'
+    ? ChatPassClient::keptPass($p202ChatCached, $p202ChatFingerprint, time())
+    : null;
 
 if ($p202ChatPass === null) {
     try {
@@ -128,7 +115,7 @@ if ($p202ChatPass === null) {
     }
     $p202ChatFresh = $p202ChatPass;
     withWritableSession(static function () use ($p202ChatFingerprint, $p202ChatFresh): void {
-        $_SESSION['p202_chat_pass'] = ['for' => $p202ChatFingerprint] + $p202ChatFresh;
+        $_SESSION['p202_chat_pass'] = ChatPassClient::keep($p202ChatFingerprint, $p202ChatFresh);
     });
 }
 

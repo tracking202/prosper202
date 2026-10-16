@@ -602,21 +602,20 @@ if ($rule['aff_campaign_id'] != null) {
 // Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
 // landing page sends, a signed customer id, linked once the click's rows
 // are committed. A rule that points at a bare URL has no campaign and
-// leaves capture on; a campaign whose setting cannot be read captures
-// nothing.
+// leaves capture on. dl.php and record_adv.php decide by the tracker's row
+// (RequestSignals::trackerRowAllows()), where a campaign of another account
+// reads as none; here the campaign id has already been through an
+// account-tied join (a rule's redirect to another account's campaign is
+// skipped as unusable, a default campaign of another account reads as no
+// default), so it is always the account's own. The setting is still read for
+// this account only, and a row this read cannot find captures nothing.
 $rtrCampaignAllows = true;
 if ((int) $rule['aff_campaign_id'] > 0) {
 	$rtrCampaignRow = memcache_mysql_fetch_assoc(
 		$db,
-		"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
+		"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id']
+			. "' AND user_id='" . $db->real_escape_string((string) $user_id) . "'"
 	);
-	// `?? '0'` turns a NULL setting into capture off. Today it never sees
-	// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
-	// passes NULL through to campaignAllows(), which reads it as ON,
-	// because there NULL means "no campaign" (a LEFT JOIN miss). If the
-	// column is ever made nullable, this line and dl.php's must change
-	// together, or a campaign's NULL captures on one redirect path and
-	// not on the other.
 	$rtrCampaignAllows = is_array($rtrCampaignRow)
 		&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
 }

@@ -57,10 +57,10 @@ function setCache(string $key, mixed $value, mixed $exp = null): bool
  * Work that ends the request (die() in an error page) neither returns nor
  * throws, and exit runs no finally: the writes stay held, and so does every
  * write until the process ends, shutdown work's included. That is the safe
- * direction: the work's transaction is still open and is rolled back only
- * when the connection closes, after shutdown, so an id cached then could name
- * a row that never existed. Only a request's own work holds; a process that
- * outlives one (a test runner) ends with it.
+ * direction: the work's transaction is still open through the shutdown
+ * functions and is rolled back when the process ends
+ * (HeldWritesOpenTransactionIntegrationTest), so an id cached then could name
+ * a row that is never kept.
  */
 function p202WithHeldCacheWrites(callable $work): void
 {
