@@ -72,8 +72,44 @@ session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
 read with escapes the next value was kept — so the line keeps only what a
 reading with escapes and one without both leave in), and
 `MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
-away. It cannot see a result that is assigned and never tested, which is
-what the 240 calls that assign one leave to the next sweep.
+away. The next sweep read the other 81: 12 used the answer before any
+test or never read it (a failed ownership check was `->num_rows` on false,
+an \Error; a refused write set `$add_success = true`), and 17 tested it
+only to fold the failure into an answer (a failed preferences read showed
+AutoCron and MaxMind as off; a failed reset-key lookup said "no key was
+found"). `MysqliQueryResultIsTestedTest` now holds every result to a test
+for failure in the next condition that refuses there — throws, a call
+declared `never`, the legacy API's database error, the page's
+`$error[...]` — and lists each fold that remains, with the answer it gives
+and why. A bare `return` or `continue` in the failure branch is a fold: it
+hands the failure on as an answer. So is `if (_mysqli_query($sql)) { … }`
+with no `else`, which the first draft counted as tested because the call
+sat in the condition (found by review): the redirector removal nested three
+of them, and a refused second delete stopped it half way with nothing said.
+A call in a condition is tested only where the branch its false takes
+refuses (#21: naming a thing is not being guarded by it). And a refusal
+that only says so — `$error[...]`, a 'bad' flash — carries on past the
+if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
+the false it had just reported (found by review): such a branch counts
+only when nothing reads the result on the path it goes on to, after the
+if or from the top of a loop around it (#22). The test itself has to run
+whenever the assignment did: the first draft took the first appearance in
+source order, so a test inside one branch of an `if`, or in an `elseif`,
+vouched for the other branch's use of the false (found by review).
+
+The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
+logged and answered false, the click path's showed the error page and died
+— and of `record_mysql_error()`, the cached reads, `setCache()` and five
+more, drifted the same way: one name failed one way on a report page and
+another on a redirect, and a test standing in for one had to say which
+(#9). There is one copy of each now, in `functions-shared.php`, which both
+load first. `_mysqli_query()` logs and answers false everywhere, and the
+caller acts on the false; `memcache_mysql_fetch_assoc()` and its list twin
+throw a `QueryException` for a failed query instead of the `false` and `[]`
+that read as "no row" (on the click path the uncaught handler makes that
+the error page). What still differs between the two is asked of
+`p202OnTheClickPath()` where it matters. A function both bootstraps need
+goes there, never into each.
 
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
@@ -308,6 +344,8 @@ calls the error page again): the test held a "the server refused the row"
 branch that cannot run on the click path, where a refused row re-entered
 the page and logged the server's words about it. The runner now gives each
 definition its own file's `_mysqli_query()` wherever the answer matters.
+There is one definition now (`functions-shared.php`, below in #1), and the
+runner runs it under each bootstrap.
 
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
@@ -413,6 +451,16 @@ When adding a check, trace an actual bad value from the outermost entry point
 and confirm it *reaches* the check — this is #5 across layers rather than
 across sibling call sites.
 
+The guard can also sit below a layer that ends the request first. The click
+path's outage fallback (`if (!$db)` in dl.php, lp.php and off.php: send the
+visitor to the URL kept in memcache) did not run from 1.8.4 to 1.9.78: the
+bootstrap connected unguarded under `MYSQLI_REPORT_STRICT`, so a refused
+connection threw before any script reached its check, and dl.php built its
+repositories on the connection above its check as well — every request a
+500, the fallback's own fixes in between made to code that could not run.
+`tests/live/outage-fallback.sh` takes the database away from one server and
+runs the path.
+
 ### 13. Retry seams must know whether the write landed
 An exception says nothing about whether the database changed. `Controller::create()`
 inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
@@ -425,6 +473,16 @@ commits the outer. The code that knows says so instead: handlers wrap their
 post-write steps and rethrow `WriteCommittedException`, and the seams refuse
 the retry. Any code that decides "safe to run this again" needs a fact, not an
 inference from an exception type.
+
+That implicit commit was silent wherever it happened: a nested transaction
+committed the outer one's work so far, and the outer's rollback then undid
+only what came after. `Connection::transaction()` now refuses to begin inside
+another on the same handle (a `LogicException`, before anything is written),
+so a value it returns has committed; work that belongs to the caller's
+transaction goes through `joinTransaction()`, which refuses when none is
+open. A transaction opened anywhere else is one the refusal cannot see, so
+Connection is the only place one begins or ends
+(`TransactionsBeginOnlyInConnectionTest`).
 
 ### 14. Safety flags must survive process and reset boundaries
 `--staged` promises a write becomes a proposal. The interactive shell resets
@@ -1101,6 +1159,21 @@ UPDATE` of its own columns), and the test is a row another writer has
 touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
 writer, `MysqlClickRepository`.
 
+A "none" that is also a lookup key finds every row that has none. A direct
+link's click without cloaking is stored with public id 0, and off.php looked
+the visitor's last click up by its public id: `click_id_public = '0'` matched
+each of the account's clicks stored without one, and the first was moved into
+the offer's campaign (measured live). Read a key the way its writer means it
+before using it (`ClickId::parse()` refuses 0), and treat "none" as no key.
+The first fix read the ids exactly in five click scripts and left pci.php,
+cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
+where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
+another account's offer URL (found by review, measured on the old code).
+`PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
+quoted value anywhere in the served tree (the setup pages and the WordPress
+plugin's calls had six more: `12abc` opened, rewrote or made a page on record
+12), and `ClickPathReads` answers nothing for an id below 1 without asking.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1131,6 +1204,15 @@ with the ones beside it. The same form computed the day's midnight with
 to PHP, so India and Ireland were cut hours off, and any day across a DST
 change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
 $day, $zone)`.
+
+The same re-click is the other half of this: a click id names one row per
+visit, so a read of "the click" that takes no order takes whichever visit
+the database returns first, usually the first (a re-click's offer URL
+carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
+`SingleClickReadsNameTheirVisitTest` holds every read of one click's
+`202_clicks` row to it or to a listed reason; the conversion, pixel, goal
+and install reads are listed until it is decided which visit a conversion
+credits. Only `click_id` and `user_id` are the same on every visit's row.
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
@@ -1201,6 +1283,14 @@ landing page for a link that names one, fell through to building a direct
 link the link was never made as. Group by the expression you select, count
 a none row by the same NULL the join produced, and give a row whose record
 is not the account's no action rather than a different one.
+
+The tracking path's reads were the floor's last list of untied joins. They
+go through `ClickPathReads` now, prepared and tied, and an id the click
+copies from a tracker (its campaign, text ad, traffic source account,
+redirector) comes back 0 where the joined row is another account's, the
+"none" a tracker naming nothing always gave, so every consumer already reads
+it. The read is where the account is decided: a writer handed an id another
+account's read produced cannot tell it apart from its own.
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal

@@ -1175,7 +1175,8 @@ p202 system metrics    [--json]     # Admin only; sync counters, queue, alerts
 
 # Account › Settings — Admin and a role with access_to_settings:
 p202 system info       [--json]     # versions (database_upgrade_needed), PHP limits, memcache, clicks, DB size, cron, DataEngine
-p202 system login-log  [--limit 1-500] [--json]   # newest first: user_name, login_time, ip_address, login_success
+p202 system login-log  [--limit 1-500] [--status passed|failed|not_completed] [--json]   # newest first: user_name, login_time, ip_address, status, login_success
+                       # not_completed: the password was right but a database failure stopped the sign-in; the throttle counts failed alone
 p202 system retention show [--json]               # auto_delete_days, scheduled_deletion
 p202 system retention set --days 0-36500 [--force]                 # asks when it keeps less than now
 p202 system retention delete-before --date YYYY-MM-DD [--dry-run] [--force]   # irreversible; always previews

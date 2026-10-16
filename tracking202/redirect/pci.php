@@ -11,26 +11,30 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$pci = $_GET['pci'] ?? '';
-if (!is_numeric($pci)) {
-	die();
+// The click's public id exactly: compared as text, MySQL read 1e3 as 1000,
+// and 0, a click with none, matched every click stored without one.
+$pciPublicId = \Prosper202\Click\ClickId::parse($_GET['pci'] ?? null);
+if ($pciPublicId === null) {
+    die();
 }
-$mysql['click_id_public'] = $db->real_escape_string((string)$pci);
 
 $click_sql = "
 	SELECT
-		202_clicks.click_id,
-		202_clicks.user_id,
-		202_clicks.aff_campaign_id,
+		pc.click_id,
+		pc.user_id,
+		pc.aff_campaign_id,
 		click_cloaking,
 		click_cloaking_site_url_id,
 		click_redirect_site_url_id
 	FROM
-		202_clicks 
+		202_clicks AS pc
 		LEFT JOIN 202_clicks_record USING (click_id) 
 		LEFT JOIN 202_clicks_site   USING (click_id)
+		LEFT JOIN 202_clicks_rotator AS cro ON cro.click_id = pc.click_id
 	WHERE
-		click_id_public='".$mysql['click_id_public']."'
+		click_id_public=" . $pciPublicId . "
+	" . \Prosper202\Click\LatestVisit::orderBy('pc', 'cro') . "
+	LIMIT 1
 ";
 // Not cached: a rotator re-click rewrites the click's destination and keeps
 // its public id, and a cached row sent the visitor to the one before.

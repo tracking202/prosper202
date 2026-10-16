@@ -17,6 +17,8 @@ if($cookieClickId === null || !is_numeric($cookieClickId) || !isset($rpi) || !is
 } 
 
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
+// It keeps no URL for an outage; go.php can load it past the bootstrap's check.
+p202RequireDatabase($db);
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
 // Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
@@ -34,7 +36,11 @@ if ($offrtrClickId === null) {
     die();
 }
 $mysql['click_id'] = (string) $offrtrClickId;
-$mysql['rpi'] = $db->real_escape_string((string)$_GET['rpi']);
+// The rotator's public id exactly: compared as text, MySQL read 12abc as 12.
+$offrtrRotatorId = \Prosper202\Click\PublicId::parse($rpi);
+if ($offrtrRotatorId === null) {
+    die();
+}
 
 $rotator_sql = "SELECT
 					   rt.id,
@@ -61,7 +67,7 @@ $rotator_sql = "SELECT
 				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
                     AND lp.user_id = rt.user_id
 				LEFT JOIN 202_users_pref AS up ON up.user_id = rt.user_id
-				WHERE   rt.public_id='".$mysql['rpi']."'"; 
+				WHERE   rt.public_id=" . $offrtrRotatorId;
 $rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
 if (!$rotator_row) die();
 
@@ -300,7 +306,7 @@ foreach ($rule_row as $rule) {
 					   ca.aff_campaign_payout,
 					   ca.aff_campaign_cloaking,
 					   lp.landing_page_url, lp.landing_page_id
-				FROM 202_clicks AS 2c
+				FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id	   
 				LEFT JOIN 202_rotator_rules_redirects AS rur ON rur.rule_id = '".$mysql['rule_id']."'
@@ -503,7 +509,7 @@ if ($default == false) {
 					   2cr.click_cloaking,
 					   2cs.click_cloaking_site_url_id,
 					   2cs.click_redirect_site_url_id
-				FROM 202_clicks AS 2c
+				FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c
 				LEFT JOIN 202_clicks_record AS 2cr ON 2cr.click_id = 2c.click_id
 				LEFT JOIN 202_clicks_site AS 2cs ON 2cs.click_id = 2c.click_id
 				WHERE 2c.click_id='".$mysql['click_id']."'"; 

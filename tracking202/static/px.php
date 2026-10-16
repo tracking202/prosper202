@@ -14,12 +14,20 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 // it produces can be listed, broken down and attributed. Before, it only
 // flagged the click and left no trace.
 
-//get the aff_camapaign_id
-$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)($_GET['acip'] ?? ''));
-$aff_campaign_sql = "SELECT user_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
-$aff_campaign_row =  memcache_mysql_fetch_assoc($aff_campaign_sql);
+// The campaign, by its id exactly: compared as text, MySQL read 12abc as 12.
+$pxCampaignId = \Prosper202\Click\PublicId::parse($_GET['acip'] ?? null);
+$aff_campaign_row = null;
+if ($pxCampaignId !== null) {
+    try {
+        $aff_campaign_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->offer($pxCampaignId);
+    } catch (\Throwable $pxReadError) {
+        record_mysql_error($db, 'reading campaign ' . $pxCampaignId, $pxReadError->getMessage());
+    }
+}
 
-if (!$aff_campaign_row) { die(); }
+if ($aff_campaign_row === null) {
+    die();
+}
 
 $mysql['user_id'] = $db->real_escape_string((string)$aff_campaign_row['user_id']);
 // The privacy setting in force: the stricter of the install's and the
@@ -40,7 +48,7 @@ $click_id = 0;
 if ($cookie !== '') {
 	$click_id = p202ParseClickId($cookie) ?? 0;
 	if ($click_id === 0) {
-		error_log('px: refusing malformed tracking202subid cookie for acip ' . $mysql['aff_campaign_id_public']);
+		error_log('px: refusing malformed tracking202subid cookie for acip ' . $pxCampaignId);
 		exit;
 	}
 } else {

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Prosper202\Repository;
 
+use Prosper202\Click\ClickPathReads;
 use Prosper202\Database\Connection;
 use Prosper202\Repository\Cache\IdCache;
+use Prosper202\Repository\Cache\RowCache;
 use Prosper202\Repository\Cached\CachedDeviceRepository;
 use Prosper202\Repository\Cached\CachedLocationRepository;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
@@ -21,6 +23,7 @@ final readonly class LookupRepositories
         public LocationRepositoryInterface $location,
         public DeviceRepositoryInterface $device,
         public TrackingRepositoryInterface $tracking,
+        public ClickPathReads $reads,
     ) {
     }
 
@@ -31,6 +34,7 @@ final readonly class LookupRepositories
             new MysqlLocationRepository($connection),
             new MysqlDeviceRepository($connection),
             new MysqlTrackingRepository($connection),
+            ClickPathReads::uncached($connection),
         );
     }
 
@@ -38,6 +42,7 @@ final readonly class LookupRepositories
     public static function cached(
         Connection $connection,
         IdCache $cache,
+        RowCache $rows,
         string $namespace
     ): self {
         return new self(
@@ -57,6 +62,7 @@ final readonly class LookupRepositories
                 $cache,
                 $namespace
             ),
+            ClickPathReads::cached($connection, $rows, $namespace),
         );
     }
 }

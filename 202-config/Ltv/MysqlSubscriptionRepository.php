@@ -119,7 +119,7 @@ final class MysqlSubscriptionRepository
             // Identity creation inside the same transaction: a failed
             // subscription write must roll the fresh customer/alias back
             // with it, never leave an orphan zero-MRR record.
-            $customerId = $this->resolveCustomer($userId, $payload, $now, true);
+            $customerId = $this->resolveCustomer($userId, $payload, $now);
 
             // An upsert may MOVE the subscription to a different customer;
             // capture the previous owner so their rollups get corrected too.
@@ -530,9 +530,13 @@ final class MysqlSubscriptionRepository
     }
 
     /**
+     * The customer a subscription body names, created when it is new, inside
+     * upsert()'s transaction so a failed subscription write rolls a fresh
+     * customer/alias back with it.
+     *
      * @param array<string, mixed> $payload
      */
-    private function resolveCustomer(int $userId, array $payload, int $now, bool $inTransaction = false): int
+    private function resolveCustomer(int $userId, array $payload, int $now): int
     {
         $explicitId = isset($payload['customer_id']) ? (int) $payload['customer_id'] : 0;
         if ($explicitId > 0) {
@@ -563,10 +567,7 @@ final class MysqlSubscriptionRepository
 
         $resolve = fn (): int => $this->customers->resolveOrCreateByAlias($userId, $refType, $ref, $crm, null, $now);
 
-        // upsert() passes true so a failed subscription write rolls the
-        // fresh customer/alias back with it (Connection::transaction does
-        // not nest).
-        return $inTransaction ? $resolve() : $this->conn->transaction($resolve);
+        return $this->conn->joinTransaction($resolve);
     }
 
     /**

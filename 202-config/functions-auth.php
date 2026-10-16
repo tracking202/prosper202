@@ -142,8 +142,16 @@ class AUTH
         }
 
         if ($verification['needsRehash'] === true) {
-           // die('upgrading password hash...');
-            self::upgrade_user_password($db, (int) $user_row['user_id'], $password);
+            try {
+                self::upgrade_user_password($db, (int) $user_row['user_id'], $password);
+            } catch (\RuntimeException $e) {
+                // The password was right: not a failure for the throttle.
+                throw new \Prosper202\User\SignInNotCompleted(
+                    'Storing the rehashed password failed: ' . $e->getMessage(),
+                    0,
+                    $e
+                );
+            }
         }
       //  die('authentication successful...');
         return [
@@ -816,7 +824,8 @@ class AUTH
      * Brute-force throttle. Returns true when recent failed login attempts for
      * this IP or username exceed the configured thresholds within the rolling
      * window, in which case the caller should reject the attempt without
-     * checking credentials.
+     * checking credentials. Only SignInOutcome::Failed counts: a right
+     * password whose sign-in could not be completed is not a guess.
      */
     public static function is_rate_limited(\mysqli $db, string $username, string $ip): bool
     {
@@ -841,7 +850,8 @@ class AUTH
         // request input, so it is safe to interpolate; $value/$since are bound.
         $stmt = $db->prepare(
             'SELECT COUNT(*) AS failures FROM 202_users_log '
-            . 'WHERE login_success = 0 AND ' . $column . ' = ? AND login_time >= ?'
+            . 'WHERE ' . \Prosper202\User\SignInOutcome::Failed->sqlCondition()
+            . ' AND ' . $column . ' = ? AND login_time >= ?'
         );
         if (!$stmt) {
             throw new \RuntimeException('Unable to prepare login throttle query: ' . $db->error);

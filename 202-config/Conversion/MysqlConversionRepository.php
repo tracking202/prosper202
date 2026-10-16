@@ -197,10 +197,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * that must record several ledger rows atomically with its own rows (the
      * goals engine: an event, its outcomes and their conversions commit or
      * roll back together). Same rules, same row, same recompute and outbox;
-     * the only differences are that it opens no transaction (mysqli's
-     * begin_transaction() inside an open one would commit the caller's work,
-     * CLAUDE.md #13) and does not retry on a deadlock (the caller retries its
-     * whole transaction). After the caller commits it must hand the result
+     * the only differences are that it opens no transaction (it joins the
+     * caller's, Connection::joinTransaction(), and is refused outside one)
+     * and does not retry on a deadlock (the caller retries its whole
+     * transaction). After the caller commits it must hand the result
      * to afterRecordCommit(), which refreshes the report row and emits the
      * post-commit bridge event exactly as record() does.
      *
@@ -214,11 +214,13 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function recordInTransaction(int $userId, array $data): array
     {
-        $prepared = $this->prepareRecord($data);
-        $result = $this->recordLocked($userId, $prepared, null);
-        $result['_prepared'] = $prepared;
+        return $this->conn->joinTransaction(function () use ($userId, $data): array {
+            $prepared = $this->prepareRecord($data);
+            $result = $this->recordLocked($userId, $prepared, null);
+            $result['_prepared'] = $prepared;
 
-        return $result;
+            return $result;
+        });
     }
 
     /**
@@ -730,7 +732,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function softDeleteInTransaction(int $id, int $userId): ?int
     {
-        return $this->softDeleteLocked($id, $userId);
+        return $this->conn->joinTransaction(fn (): ?int => $this->softDeleteLocked($id, $userId));
     }
 
     /**
@@ -751,9 +753,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         if ($reason !== SupersededReason::REPLAY && $reason !== SupersededReason::REEVALUATION) {
             throw new LedgerIntegrityException('a goal row is retired by a replay or a re-evaluation, not by "' . $reason->value . '"');
         }
-        $this->assertGoalRow($convId, $userId);
 
-        return $this->softDeleteLocked($convId, $userId, $reason);
+        return $this->conn->joinTransaction(function () use ($convId, $userId, $reason): ?int {
+            $this->assertGoalRow($convId, $userId);
+
+            return $this->softDeleteLocked($convId, $userId, $reason);
+        });
     }
 
     /**
@@ -788,6 +793,14 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * @throws LedgerIntegrityException
      */
     public function reviveGoalRowInTransaction(int $convId, int $userId, int $clickId, string $dedupeKey): ?int
+    {
+        return $this->conn->joinTransaction(
+            fn (): ?int => $this->reviveGoalRowLocked($convId, $userId, $clickId, $dedupeKey)
+        );
+    }
+
+    /** reviveGoalRowInTransaction()'s write, in the caller's transaction. */
+    private function reviveGoalRowLocked(int $convId, int $userId, int $clickId, string $dedupeKey): ?int
     {
         $found = $this->assertGoalRow($convId, $userId);
         if ((int) $found['click_id'] !== $clickId || (string) $found['dedupe_key'] !== $dedupeKey) {

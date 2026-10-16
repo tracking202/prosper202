@@ -8,7 +8,9 @@ use UAParser\Parser;
 $tracker_id = $_GET['t202id'] ?? '';
 if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
 
-# check to see if mysql connection works, if not fail over to cached stored redirect urls
+// No outage fallback: the URL a redirector sends to is built for one click
+// (its subid), so there is none to keep for the next visitor, and without the
+// database the bootstrap answers 503.
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 
 // Speculative requests (browser prefetch/prerender, link-preview scanners, HEAD
@@ -19,80 +21,30 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-$usedCachedRedirect = false;
-if (!$db) $usedCachedRedirect = true;
-
-#the mysql server is down, use the cached redirect
-if ($usedCachedRedirect==true) { 
-
-		//if a cached key is found for this id, redirect to that url
-		if ($memcacheWorking) {
-			$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-			if ($getUrl) {			
-				p202NoStore();
-				header('location: '. $getUrl); 
-				die();
-			}
-		}
-
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
-}
-
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
-//grab tracker data
-$mysql['tracker_id_public'] = $db->real_escape_string($tracker_id);
-$rotator_sql = "SELECT  tr.user_id,
-						tr.ppc_account_id,
-						tr.rotator_id,
-						tr.click_cpc,
-						rt.default_url,
-						rt.default_campaign,
-						rt.default_lp,
-						rt.auto_monetizer,
-						ca.aff_campaign_id,
-						ca.aff_campaign_rotate,
-					    ca.aff_campaign_url,
-					    ca.aff_campaign_url_2,
-					    ca.aff_campaign_url_3,
-					    ca.aff_campaign_url_4,
-					    ca.aff_campaign_url_5,
-					    ca.aff_campaign_payout,
-					    ca.aff_campaign_cloaking,
-						ur.user_timezone,
-					   	up.user_keyword_searched_or_bidded,
-                        up.user_pref_dynamic_bid,
-					   	up.maxmind_isp,
-					   	lp.landing_page_url,
-					   	lp.landing_page_id AS default_landing_page_id
-				FROM    202_trackers AS tr
-				LEFT JOIN 202_rotators AS rt ON rt.id = tr.rotator_id
-				LEFT JOIN 202_aff_campaigns AS ca ON ca.aff_campaign_id = rt.default_campaign
-                    AND ca.user_id = tr.user_id
-				LEFT JOIN 202_landing_pages AS lp ON lp.landing_page_id = rt.default_lp
-                    AND lp.user_id = tr.user_id
-				LEFT JOIN 202_users AS ur ON ur.user_id = tr.user_id
-				LEFT JOIN 202_users_pref AS up ON up.user_id = tr.user_id
-				WHERE   tracker_id_public='".$mysql['tracker_id_public']."'"; 
-$rotator_row = memcache_mysql_fetch_assoc($db, $rotator_sql);
+// The tracker, with its rotator and the rotator's defaults when each is the
+// tracker's account's: a tracker naming another account's rotator sent the
+// click through that account's rules, under this account.
+$rtrTrackerId = \Prosper202\Click\PublicId::parse($tracker_id);
+$rotator_row = null;
+if ($rtrTrackerId !== null) {
+    try {
+        $rotator_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->redirectorTracker($rtrTrackerId);
+    } catch (\Throwable $rtrReadError) {
+        record_mysql_error($db, 'reading tracker ' . $rtrTrackerId, $rtrReadError->getMessage());
+    }
+}
 
-// Guard BEFORE dereferencing: a missing row (unknown tracker, DB hiccup, or
-// stale cache) must never crash the redirect. Fall back to the cached default
-// url so the visitor still lands somewhere instead of losing the click.
+// Guard BEFORE dereferencing: an id that names no tracker has nowhere to
+// send the visitor.
 if (!$rotator_row) {
-	if ($memcacheWorking) {
-		$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-		if ($getUrl) {
-			p202NoStore();
-			header('location: ' . $getUrl);
-			die();
-		}
-	}
 	die();
 }
 
-// A tracker that names no redirector (a direct link's, sent here by hand)
-// has nowhere to send the visitor: no click, as for an unknown tracker.
+// A tracker that names no redirector of its account (a direct link's, sent
+// here by hand) has nowhere to send the visitor: no click, as for an
+// unknown tracker.
 if ((int) ($rotator_row['rotator_id'] ?? 0) <= 0) {
 	die();
 }
@@ -396,16 +348,6 @@ if ($default == true) {
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
-	
-		if ($usedCachedRedirect==true) { 
-
-			if ($memcacheWorking) {
-				$getUrl = $memcache->get(md5("default_url" . $tracker_id . systemHash()));
-				if (!$getUrl) {
-						setCache(md5('default_url' . $tracker_id . systemHash()), $default, 0);			
-				}
-			}
-		}
 	p202NoStore();
 	header('location: '.$default);
 	die();
@@ -675,8 +617,10 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 	$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, (int) $user_id);
 	return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
 };
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 try {
-	$rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 	// The site URL lookup caches the ids of the rows it inserts: held until
 	// the transaction commits, and dropped with a rollback.
 	p202WithHeldCacheWrites(static fn () => $reClick !== null

@@ -8,7 +8,11 @@ if (!file_exists(__DIR__ . '/version.php')) {
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
+// Before anything that can fail: the error page and the cached reads are
+// there, and they ask p202OnTheClickPath() which bootstrap this is.
+define('P202_CLICK_PATH', true);
 require_once(__DIR__ . '/mysql-error-args.php');
+require_once(__DIR__ . '/functions-shared.php');
 
 /**
  * What the click path answers for a throw nothing caught: a 500, unless a
@@ -28,18 +32,9 @@ function p202ClickPathUncaught(\Throwable $e): void
         http_response_code(500);
     }
     if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
-        [$file, $line] = [$e->getFile(), $e->getLine()];
-        foreach ($e->getTrace() as $frame) {
-            if (preg_match('~[/\\\\]202-config[/\\\\](?:Database|Repository)[/\\\\]~', $file) !== 1) {
-                break;
-            }
-            if (isset($frame['file'], $frame['line'])) {
-                [$file, $line] = [$frame['file'], $frame['line']];
-            }
-        }
-        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . basename($file) . ':' . $line, $e->getMessage());
+        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
     }
-    error_log('Uncaught on the click path: ' . $e);
+    error_log(p202UncaughtLogLine('Uncaught on the click path', $e));
 }
 set_exception_handler('p202ClickPathUncaught');
 
@@ -58,9 +53,49 @@ DEFINE('CONFIG_PATH', __DIR__);
 mysqli_report(MYSQLI_REPORT_STRICT);
 include_once(ROOT_PATH . '/202-config.php');
 
-// Get database instance
-$database = DB::getInstance();
-$db = $database->getConnection();
+// A refused connection throws under MYSQLI_REPORT_STRICT. Caught, $db is null
+// and the redirects fall back to the URL they keep in memcache for an outage
+// (dl.php, lp.php, off.php); uncaught, every request was a 500 before any of
+// them could.
+try {
+    $database = DB::getInstance();
+    $db = $database->getConnection();
+} catch (\mysqli_sql_exception $connectError) {
+    error_log('The click path could not connect to the database: ' . $connectError->getMessage());
+    $db = null;
+}
+
+/**
+ * The answer to a request the database is needed for and out of reach: the
+ * outage in the status, so a client or a monitor never reads it as served.
+ */
+function p202Unavailable(): never
+{
+    http_response_code(503);
+    header('Retry-After: 60');
+    header('Cache-Control: no-store');
+    die('Service temporarily unavailable');
+}
+
+/**
+ * End the request with p202Unavailable() when the bootstrap could not
+ * connect. A script that answers without the database (it keeps a URL for an
+ * outage, or never needs one) sets $p202OutageFallback = true before loading
+ * this file; every other one would only reach code that needs it. A script
+ * another may load after this file ran calls it itself (offrtr.php, through
+ * go.php).
+ */
+function p202RequireDatabase(?\mysqli $db): void
+{
+    if (!$db instanceof \mysqli) {
+        p202Unavailable();
+    }
+}
+
+// Read where the script set it: this file's scope is the including script's.
+if (($p202OutageFallback ?? null) !== true) {
+    p202RequireDatabase($db);
+}
 
 $whatCache = false;
 
@@ -100,84 +135,8 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 }
 
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    // Held while a transaction is open; see p202WithHeldCacheWrites().
-    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
-        $GLOBALS['p202HeldCacheWrites'][] = [$key, $value, $exp];
-        return true;
-    }
-    // Default expiration time if not provided
-    if ($exp === null) {
-        $exp = 2592000; // 30 days in seconds
-    }
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
-
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-/**
- * Run $work with the cache writes it makes held: written once it returns,
- * dropped when it throws (and the throw passed on).
- *
- * The lookups that run inside a click's transaction cache the id of a row
- * they insert at once (the site URL's, through CachedLocationRepository),
- * so a rollback after them left an entry naming no row, and every click to
- * that URL stored the dangling id until it expired. Run the transaction as
- * $work and an entry is written only once its row is committed.
- */
-function p202WithHeldCacheWrites(callable $work): void
-{
-    if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
-        throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
-    }
-    $GLOBALS['p202HeldCacheWrites'] = [];
-    try {
-        $work();
-    } catch (\Throwable $e) {
-        $GLOBALS['p202HeldCacheWrites'] = null;
-        throw $e;
-    }
-    $held = $GLOBALS['p202HeldCacheWrites'];
-    $GLOBALS['p202HeldCacheWrites'] = null;
-    // The work is done (its transaction committed): a cache write that fails
-    // now costs a miss, and must not read as the work failing.
-    foreach ($held as [$key, $value, $exp]) {
-        try {
-            setCache($key, $value, $exp);
-        } catch (\Throwable $e) {
-            error_log('A held cache write failed after the work was done: ' . $e->getMessage());
-        }
-    }
-}
-
-function getCache(string $key, $default = false)
-{
-    global $memcache;
-    if ($memcache instanceof \Memcached || $memcache instanceof \Memcache) {
-        return call_user_func([$memcache, 'get'], $key);
-    }
-    return $default;
-}
-
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-if (!function_exists('array_any')) {
-    function array_any(array $items, callable $callback): bool
-    {
-        foreach ($items as $key => $value) {
-            if ($callback($value, $key)) {
-                return true;
-            }
-        }
-        return false;
-    }
-}
 include_once(CONFIG_PATH . '/DeviceDetect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
@@ -189,18 +148,6 @@ if (!isset($tid)) {
         $tid = $t202id;
     } else {
         $tid = 1; // Default to user_id 1 if not set
-    }
-}
-
-// Initialize database connection using the DB class from 202-config.php
-if (!isset($db)) {
-    try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-    } catch (Exception $e) {
-        // Log error but don't interrupt execution
-        error_log('Database connection error in connect2.php: ' . $e->getMessage());
-        $db = null; // dl.php checks if $db is falsey
     }
 }
 
@@ -243,11 +190,15 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($user_sql);
+    try {
+        // No connection (an outage): nothing to read, and no second attempt.
+        $privacy = $db instanceof \mysqli ? memcache_mysql_fetch_assoc($user_sql) : false;
+    } catch (\Prosper202\Database\Exceptions\QueryException $privacyReadError) {
+        $privacy = false;
+    }
     if ($privacy === false) {
-        // The read failed (memcache_mysql_fetch_assoc() answers false for a
-        // failed query, null for no row): hold back rather than track in
-        // full, as the app intakes do (PrivacySetting). It answered
+        // The read failed (logged where it failed): hold back rather than
+        // track in full, as the app intakes do (PrivacySetting). It answered
         // 'disabled' here — the most permissive setting standing in for one
         // nobody could read (CLAUDE.md #11).
         error_log('p202 privacy: user 1\'s user_pref_privacy could not be read; holding back for this request');
@@ -393,7 +344,9 @@ function p202ClickOwner(int $clickId): ?array
     }
     try {
         $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareRead('SELECT user_id, aff_campaign_id FROM 202_clicks WHERE click_id = ?');
+        $stmt = $conn->prepareRead(
+            'SELECT c.user_id, c.aff_campaign_id FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c'
+        );
         $conn->bind($stmt, 'i', [$clickId]);
         $row = $conn->fetchOne($stmt);
     } catch (\Throwable $e) {
@@ -478,59 +431,6 @@ function p202VisitorMayBeInEu(): bool
     }
 
     return $mayBe;
-}
-
-function _mysqli_query($dbOrSql, $sql = null)
-{
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
-        $db = $GLOBALS['db'] ?? null;
-    } else {
-        $db = $dbOrSql;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        record_mysql_error((string) $sql);
-    }
-
-    $result = $db->query((string) $sql) or record_mysql_error($db, (string) $sql); //or die($db->error . '<br/><br/>' . $sql);
-    return $result;
-}
-
-// our own die, that will display the them around the error message
-function _die($message, ...$legacyArgs): never
-{
-    echo $message;
-    die();
-}
-
-// this funciton delays an SQL statement, puts in in a mysql table, to be cron jobbed out every 5 minutes
-function delay_sql($db, $delayed_sql): void
-{
-    $mysql['delayed_sql'] = $db->real_escape_string($delayed_sql);
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($db, $delayed_sql); // ($delayed_sql);
 }
 
 class FILTER
@@ -675,27 +575,19 @@ class FILTER
     // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
-
-
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-        $check_sql = "SELECT * FROM 202_last_ips WHERE user_id='" . $mysql['user_id'] . "' AND ip_id='" . $mysql['ip_id'] . "'";
-        $check_result = _mysqli_query($db, $check_sql); // ($check_sql);
-        $check_row = $check_result->fetch_assoc();
-        $count = $check_result->num_rows;
-
-        if ($count > 0) {
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
+        $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        if ($conn->fetchOne($stmt) !== null) {
             // if this ip has been seen within the last 24 hours, filter it out.
             return true;
-        } else {
-
-            // else if this ip has not been recorded, record it now
-            $mysql['time'] = time();
-            $insert_sql = "INSERT INTO 202_last_ips SET user_id='" . $mysql['user_id'] . "', ip_id='" . $mysql['ip_id'] . "', time='" . $mysql['time'] . "'";
-            $insert_result = _mysqli_query($db, $insert_sql); // ($insert_sql);
-            return false;
         }
+
+        // else if this ip has not been recorded, record it now
+        $stmt = $conn->prepareWrite('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (?, ?, ?)');
+        $conn->bind($stmt, 'iii', [(int) $user_id, (int) $ip_id, time()]);
+        $conn->executeInsert($stmt);
+        return false;
     }
 }
 
@@ -730,7 +622,6 @@ function rotateTrackerUrl($db, $tracker_row)
     if (! $tracker_row['aff_campaign_rotate'])
         return $tracker_row['aff_campaign_url'];
 
-    $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
     $urls = [];
     array_push($urls, $tracker_row['aff_campaign_url']);
 
@@ -746,18 +637,20 @@ function rotateTrackerUrl($db, $tracker_row)
     $count = count($urls);
 
     // Atomic upsert to avoid TOCTOU race condition on concurrent requests
-    $mysql['count'] = $db->real_escape_string((string) $count);
-    $sql5 = "INSERT INTO 202_rotations SET aff_campaign_id='" . $mysql['aff_campaign_id'] . "', rotation_num=0
-             ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= " . ((int)$count - 1) . ", 0, rotation_num + 1)";
-    _mysqli_query($db, $sql5);
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareWrite(
+        'INSERT INTO 202_rotations SET aff_campaign_id = ?, rotation_num = 0'
+            . ' ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= ?, 0, rotation_num + 1)'
+    );
+    $conn->bind($stmt, 'ii', [(int) $tracker_row['aff_campaign_id'], $count - 1]);
+    $conn->executeUpdate($stmt);
     // Read back the current value
-    $sql5 = "SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
-    $result5 = _mysqli_query($db, $sql5);
-    $row5 = $result5->fetch_assoc();
-    $num = $row5 ? (int) $row5['rotation_num'] : 0;
+    $stmt = $conn->prepareWrite('SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id = ?');
+    $conn->bind($stmt, 'i', [(int) $tracker_row['aff_campaign_id']]);
+    $row5 = $conn->fetchOne($stmt);
+    $num = $row5 !== null ? (int) $row5['rotation_num'] : 0;
 
-    $url = $urls[$num];
-    return $url;
+    return $urls[$num];
 }
 
 /**
@@ -853,7 +746,15 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
         return $url;
     }
 
-    $mysql['click_id'] = $db->real_escape_string((string) $click_id);
+    // Anything but a click id names no click: its tokens are blank, as for a
+    // click not there (compared as text, `12abc` read click 12).
+    $tokenClickId = \Prosper202\Click\ClickId::parse((string) $click_id);
+    if ($tokenClickId === null) {
+        return replaceClickPlaceholders($url, (string) $click_id, []);
+    }
+    $mysql['click_id'] = (string) $tokenClickId;
+    // The click's latest visit: a re-click adds a row. Named in the statement
+    // itself, so SingleClickReadsNameTheirVisitTest can see it.
     $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
@@ -877,7 +778,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 		        2lc.country_code,
 		        2lr.region_name,
                 2u.user_public_publisher_id,
-		        2lc2.city_name FROM 202_clicks AS 2c 
+		        2lc2.city_name FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c 
             	LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`) 
             	LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2ct.click_id = 2c.click_id) 
             	LEFT OUTER JOIN 202_tracking_c1 AS 2tc1 ON (2ct.c1_id = 2tc1.c1_id) 
@@ -885,7 +786,8 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	LEFT OUTER JOIN 202_tracking_c3 AS 2tc3 ON (2ct.c3_id = 2tc3.c3_id) 
             	LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id) 
                 LEFT OUTER JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
-                LEFT OUTER JOIN 202_trackers AS 2trk ON (2trk.tracker_id_public = 2cpa.tracker_id_public)
+                LEFT OUTER JOIN 202_trackers AS 2trk
+                    ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
             	LEFT JOIN `202_google` AS 2g on (2g.click_id=2c.click_id)
                 LEFT JOIN `202_bing` AS 2b on (2b.click_id=2c.click_id)
                 LEFT JOIN `202_facebook` AS 2f on (2f.click_id=2c.click_id) 
@@ -903,10 +805,16 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
 				2c.click_id='" . $mysql['click_id'] . "'
                 AND 2c.user_id='" . $ownerId . "'
 		";
-    $click_row = _mysqli_query($db, $click_sql)->fetch_assoc();
+    // _mysqli_query() answers false for a failed statement, and the fetch
+    // false for a failed read: either is recorded, and the error page.
+    $failed = 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed';
+    $click_result = _mysqli_query($db, $click_sql);
+    if ($click_result === false) {
+        record_mysql_error($db, $click_sql, $failed);
+    }
+    $click_row = $click_result->fetch_assoc();
     if ($click_row === false) {
-        // As a failed query here already does: recorded, and the error page.
-        record_mysql_error($db, $click_sql, 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed');
+        record_mysql_error($db, $click_sql, $failed);
     }
     // No such click (a page reading an earlier one by a subid it was sent):
     // its tokens are blank, as they always were.
@@ -976,25 +884,6 @@ function setClickIdCookie($click_id, $campaign_id = 0)
                 setcookie($proofCookie . '_a_' . $campaign_id, $proof, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => true, 'samesite' => 'None']);
             }
         }
-    }
-}
-
-function setClickIdCookieForLp($click_id_public, $lp_public_id)
-{
-    if (trackingEnabled()) {
-        //set the cookie for the PIXEL to fire, expire in 30 days
-        $expire = time() + (60 *  60 * 24 * 30);
-        $expire_header = 60 *  60 * 24 * 30;
-        $path = '/';
-        // Domain: the request host without its port, none for an IP (CookieDomain).
-        $secure = TRUE;
-        $httponly = TRUE;
-
-
-        //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
-
-        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
     }
 }
 
@@ -1207,169 +1096,6 @@ class PLATFORMS
     }
 }
 
-function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $minutes = 3)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    // Support legacy invocation styles:
-    //  - memcache_mysql_fetch_assoc($sql)
-    //  - memcache_mysql_fetch_assoc($db, $sql)
-    //  - memcache_mysql_fetch_assoc($sql, $allowCaching, $minutes)
-    //  - memcache_mysql_fetch_assoc($mysqliResult)
-    if ($arg1 instanceof mysqli_result) {
-        return $arg1->fetch_assoc();
-    }
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-            if (func_num_args() > 3) {
-                $minutes = (int) func_get_arg(3);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-        if (func_num_args() > 2) {
-            $minutes = (int) func_get_arg(2);
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return false;
-    }
-
-    if ($memcacheWorking == false) {
-        $result = _mysqli_query($connection, $sql);
-        if ($result === false) {
-            return false;
-        }
-        $row = $result->fetch_assoc();
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $result = _mysqli_query($connection, $sql);
-            if ($result === false) {
-                return false;
-            }
-            $row = $result->fetch_assoc();
-            return $row;
-        } else {
-            // Check if its set
-            $getCache = $memcache->get(md5($sql . systemHash()));
-
-            if ($getCache === false) {
-                // cache this data
-                $result = _mysqli_query($connection, $sql);
-                if ($result === false) {
-                    return false;
-                }
-                $fetchArray = $result->fetch_assoc();
-                $setCache = setCache(md5($sql . systemHash()), serialize($fetchArray), 60 * $minutes);
-
-                // store all this users memcache keys, so we can delete them fast later on
-
-
-                return $fetchArray;
-            } else {
-
-                // Data Cached — restrict to arrays only, no object instantiation
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
-function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to foreach_memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return [];
-    }
-
-    if ($memcacheWorking == false) {
-        $row = [];
-        $result = _mysqli_query($connection, $sql); // ($sql);
-        if ($result === false) {
-            return [];
-        }
-        while ($fetch = $result->fetch_assoc()) {
-            $row[] = $fetch;
-        }
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $row = [];
-            $result = _mysqli_query($connection, $sql); // ($sql);
-            if ($result === false) {
-                return [];
-            }
-            while ($fetch = $result->fetch_assoc()) {
-                $row[] = $fetch;
-            }
-            return $row;
-        } else {
-
-            $getCache = $memcache->get(md5($sql . systemHash()));
-            if ($getCache === false) {
-                // if data is NOT cache, cache this data
-                $row = [];
-                $result = _mysqli_query($connection, $sql); // ($sql);
-                if ($result === false) {
-                    return [];
-                }
-                while ($fetch = $result->fetch_assoc()) {
-                    $row[] = $fetch;
-                }
-
-                $setCache = setCache(md5($sql . systemHash()), serialize($row), 60 * 1);
-
-
-                return $row;
-            } else {
-                // if data is cached, returned the cache data Data Cached — restrict to arrays only
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
 /**
  * The installation's install-token key: 32 bytes, null when none was minted.
  * Read once per process, and kept only when it was read: a missing or
@@ -1444,11 +1170,6 @@ function replaceTokens($url, $tokens = [], $fillblanks = 0)
     // pixels alike, so a path that never loads this file (POST /events,
     // the goal notifier) replaces tokens exactly as the tracker does.
     return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
-}
-
-function rawurlencode202($token)
-{
-    return \Prosper202\Conversion\TrafficSourcePixels::encode($token);
 }
 
 function getGeoData($ip)
@@ -1592,25 +1313,6 @@ function getIspData($ip)
     return "Unknown ISP/Carrier";
 }
 
-/**
- * The namespace of every cache key: the host, and the install the ids and
- * rows a key names belong to. Its directory is shared by no other install on
- * the server and is known in every scope; its database also tells a
- * reinstall into a new one apart. The other copy (connect2.php /
- * functions-tracking202.php, one directory) is the same function.
- */
-function systemHash(): string
-{
-    $install = [__DIR__];
-    foreach (['dbhost', 'dbname'] as $setting) {
-        $value = $GLOBALS[$setting] ?? '';
-        $install[] = is_string($value) ? $value : '';
-    }
-
-    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
-        . "\0" . implode("\0", $install));
-}
-
 function setPCIdCookie($click_id_public)
 {
     if (trackingEnabled()) {
@@ -1732,85 +1434,6 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
 }
 
 /**
- * @param ?string $error what failed, from a caller that caught it: by then
- *        the connection's own error is cleared, if the caller rolled back
- */
-function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
-{
-    global $server_row;
-
-    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
-    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
-    if (!$db instanceof \mysqli) {
-        $db = $GLOBALS['db'] ?? null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
-        echo 'Database error. The webmaster has been notified.';
-        die();
-    }
-
-    // The server's message and the statement, without the values they
-    // quote: they are logged, and listed in Account › Settings.
-    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
-
-
-    // Rolled back first, and never a fatal in place of the page; see
-    // p202RecordMysqlErrorRow().
-    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
-        // On the connection the row is written to, which has just been
-        // rolled back: a lookup that fails throws back to the recorder.
-        $locations = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-        $mysql['ip_id'] = (string) $locations->findOrCreateIp(p202StoredVisitorIp());
-        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
-            \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
-        );
-
-        // A click has no session: 0, as the admin pages' copy writes, where
-        // '' was refused by the column under P202_SQL_STRICT.
-        $mysql['user_id'] = isset($_SESSION['user_id'])
-            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
-            : 0;
-        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
-        $mysql['mysql_error_time'] = time();
-
-        $report_sql = "INSERT     INTO  202_mysql_errors
-								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
-										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
-										user_id='" . $mysql['user_id'] . "',
-										ip_id='" . $mysql['ip_id'] . "',
-										site_id='" . $mysql['site_id'] . "',
-										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-        // Not through _mysqli_query(), which on this path calls this page
-        // again instead of answering false. The server's words about the
-        // statement would repeat what it records: its errno says enough.
-        if ($db->query($report_sql) === false) {
-            throw new \RuntimeException('the server refused the row [errno ' . $db->errno . ']');
-        }
-    });
-
-    // report error to user and end page
-?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
-
-
-<?php
-    $memcacheWorking = false;
-    $memcache = null;
-    die();
-}
-
-/**
  * The key of the entry that takes this visit, each entry's chance its
  * 'weight' over the sum of the weights: the one chooser for a rotator rule's
  * redirects (rtr.php and offrtr.php).
@@ -1845,11 +1468,6 @@ function getSplitTestValue(array $values)
             return $key;
         }
     }
-}
-
-function get_absolute_url(): string
-{
-    return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
 /**
@@ -2008,362 +1626,6 @@ function p202DeclineSpeculativeRequest(): never
     die();
 }
 
-/**
- * The tracking domain (`host[:port]`) of a URL handed back to the requester:
- * user 1's stored one, or the host this request arrived at
- * (TrackingBaseUrl::domainForResponse()). The functions-tracking202.php
- * copy's twin; its callers are listed in RequestHostSourceTest.
- */
-function getTrackingDomain(): string
-{
-    global $db;
-
-    $tracking_domain_sql = "
-		SELECT
-			`user_tracking_domain`
-		FROM
-			`202_users_pref`
-		WHERE
-			`user_id`='1'
-	";
-    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql);
-    if (!$tracking_domain_result instanceof \mysqli_result) {
-        // Read as "none stored", every URL would name the request's host
-        // instead of the domain the account configured.
-        throw new \RuntimeException('Unable to read the tracking domain');
-    }
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $stored = is_array($tracking_domain_row) ? (string) ($tracking_domain_row['user_tracking_domain'] ?? '') : '';
-
-    // host[:port] only: a stored full URL doubled the scheme in every link
-    // built from it (see TrackingDomain).
-    return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
-}
-
-function parseUaForRotatorCriteria($detect, $parser, $ua)
-{
-    $result = $parser->parse($ua);
-
-    if (!$detect->isMobile() && !$detect->isTablet()) {
-
-        switch ($result->device->family) {
-            //Is Bot
-            case 'Bot':
-                $result->device->family = "Bot";
-                break;
-            //Is Desktop
-            case 'Other':
-                $result->device->family = "Desktop";
-                break;
-        }
-    } else {
-        if ($detect->isTablet()) {
-            $result->device->family = "Tablet";
-            //If mobile 
-        } else {
-            $result->device->family = "Mobile";
-        }
-    }
-
-    return $result;
-}
-
-function ip_in_range($ip, $range)
-{
-    if (str_contains((string) $range, '/')) {
-        [$range, $netmask] = explode('/', (string) $range, 2);
-        if (str_contains($netmask, '.')) {
-            $netmask = str_replace('*', '0', $netmask);
-            $netmask_dec = ip2long($netmask);
-            return ((ip2long($ip) & $netmask_dec) == (ip2long($range) & $netmask_dec));
-        } else {
-            $x = explode('.', $range);
-            while (count($x) < 4) $x[] = '0';
-            [$a, $b, $c, $d] = $x;
-            $range = sprintf("%u.%u.%u.%u", empty($a) ? '0' : $a, empty($b) ? '0' : $b, empty($c) ? '0' : $c, empty($d) ? '0' : $d);
-            $range_dec = ip2long($range);
-            $ip_dec = ip2long($ip);
-
-            $wildcard_dec = 2 ** (32 - (int)$netmask) - 1;
-            $netmask_dec = ~$wildcard_dec;
-
-            return (($ip_dec & $netmask_dec) == ($range_dec & $netmask_dec));
-        }
-    } else {
-        if (str_contains((string) $range, '*')) {
-            $lower = str_replace('*', '0', $range);
-            $upper = str_replace('*', '255', $range);
-            $range = "$lower-$upper";
-        }
-
-        if (str_contains((string) $range, '-')) { // A-B format
-            [$lower, $upper] = explode('-', (string) $range, 2);
-            $lower_dec = (float)sprintf("%u", ip2long($lower));
-            $upper_dec = (float)sprintf("%u", ip2long($upper));
-            $ip_dec = (float)sprintf("%u", ip2long($ip));
-            return (($ip_dec >= $lower_dec) && ($ip_dec <= $upper_dec));
-        }
-
-        return false;
-    }
-}
-
-function getData($url)
-{
-    if (function_exists('curl_version')) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    } else {
-        return false;
-    }
-}
-
-function getPublisher($pubid)
-{
-    global $db;
-
-    $publisher_id_sql = "
-		SELECT
-			`user_id`
-		FROM
-			`202_users`
-		WHERE
-			`user_public_publisher_id`='" . $pubid . "'";
-
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
-    $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
-    if ($pubid_row) {
-        return $db->real_escape_string($pubid_row['user_id']);
-    } else {
-        return 1;
-    }
-}
-
-function getTokens($mysql)
-{
-    $tokens = [
-        "subid" => $mysql['click_id'],
-        "t202kw" => $mysql['t202kw'],
-        "c1" => $mysql['c1'],
-        "c2" => $mysql['c2'],
-        "c3" => $mysql['c3'],
-        "c4" => $mysql['c4'],
-        "gclid" => $mysql['gclid'],
-        "msclkid" => $mysql['msclkid'],
-        "fbclid" => $mysql['fbclid'],
-        "utm_source" => $mysql['utm_source'],
-        "utm_medium" => $mysql['utm_medium'],
-        "utm_campaign" => $mysql['utm_campaign'],
-        "utm_term" => $mysql['utm_term'],
-        "utm_content" => $mysql['utm_content'],
-        "cpc" => round($mysql['cpc'], 2),
-        "cpc2" => $mysql['cpc'],
-        "timestamp" => time(),
-        "payout" => $mysql['payout'],
-        "random" => mt_rand(1000000, 9999999),
-        "referer" => $mysql['referer'],
-        "sourceid" => $mysql['ppc_account_id'],
-        "transactionid" => $mysql['txid']
-    ];
-
-    return $tokens;
-}
-
-/**
- * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
- */
-function ipAddress($ip_address, ?bool $masked = null)
-{
-
-    $ip = new stdClass;
-
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-        $ip->address = '0.0.0.0';
-    }
-
-    if ($masked ?? !trackingEnabled()) {
-        $ip = maskIpAddress($ip);
-    }
-
-    $formatted = @inet_ntop(@inet_pton($ip->address));
-    if ($formatted !== false) {
-        $ip->address = $formatted; //format ip address in standard form
-    }
-    return $ip;
-}
-
-function maskIpAddress($ip)
-{
-    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
-    // so the $ip_address global and every stored address agree.
-    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
-        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
-    }
-
-    return $ip;
-}
-
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
-
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
-function sanitizeIn($data) {
-    global $db;
-    if (!is_string($data)) {
-        return '';
-    }
-    return $db->real_escape_string($data);
-}
-
-function processCacheRedirect(): void
-{
-    global $db, $memcacheWorking, $memcache;
-    $usedCachedRedirect = false;
-    if (!$db) $usedCachedRedirect = true;
-
-    #the mysql server is down, use the cached redirect
-    if ($usedCachedRedirect == true) {
-
-        $t202id = $_GET['t202id'];
-
-        //if a cached key is found for this t202id, redirect to that url
-        if ($memcacheWorking) {
-            $getUrl = getCache(md5('url_' . $t202id . systemHash()));
-            if ($getUrl) {
-
-                $new_url = str_replace("[[subid]]", "p202", $getUrl);
-                // No click is recorded while MySQL is down, so there is no
-                // click to sign: the install token expands empty (plan §5.1),
-                // never to a value an install could be credited through.
-                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
-
-                // t202pubid string replace for cached redirect
-                if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {
-                    $new_url = str_replace("[[t202pubid]]", $_GET['t202pubid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[t202pubid]]", "t202pubid", $new_url);
-                }
-
-                //c1 string replace for cached redirect
-                if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                    $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-                }
-
-                //c2 string replace for cached redirect
-                if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                    $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-                }
-
-                //c3 string replace for cached redirect
-                if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                    $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-                }
-
-                //c4 string replace for cached redirect
-                if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                    $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c4]]", "p202c4", $new_url);
-                }
-
-                //gclid string replace for cached redirect
-                if (isset($_GET['gclid']) && $_GET['gclid'] != '') {
-                    $new_url = str_replace("[[gclid]]", $_GET['gclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[gclid]]", "p202gclid", $new_url);
-                }
-
-                //msclkid string replace for cached redirect
-                if (isset($_GET['msclkid']) && $_GET['msclkid'] != '') {
-                    $new_url = str_replace("[[msclkid]]", $_GET['msclkid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[msclkid]]", "p202msclkid", $new_url);
-                }
-
-                //fbclid string replace for cached redirect
-                if (isset($_GET['fbclid']) && $_GET['fbclid'] != '') {
-                    $new_url = str_replace("[[fbclid]]", $_GET['fbclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[fbclid]]", "p202fbclid", $new_url);
-                }
-
-                //utm_source string replace for cached redirect
-                if (isset($_GET['utm_source']) && $_GET['utm_source'] != '') {
-                    $new_url = str_replace("[[utm_source]]", $_GET['utm_source'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_source]]", "p202utm_source", $new_url);
-                }
-
-                //utm_medium string replace for cached redirect
-                if (isset($_GET['utm_medium']) && $_GET['utm_medium'] != '') {
-                    $new_url = str_replace("[[utm_medium]]", $_GET['utm_medium'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_medium]]", "p202utm_medium", $new_url);
-                }
-
-                //utm_campaign string replace for cached redirect
-                if (isset($_GET['utm_campaign']) && $_GET['utm_campaign'] != '') {
-                    $new_url = str_replace("[[utm_campaign]]", $_GET['utm_campaign'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_campaign]]", "p202utm_campaign", $new_url);
-                }
-
-                //utm_term string replace for cached redirect
-                if (isset($_GET['utm_term']) && $_GET['utm_term'] != '') {
-                    $new_url = str_replace("[[utm_term]]", $_GET['utm_term'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_term]]", "p202utm_term", $new_url);
-                }
-
-                //utm_content string replace for cached redirect
-                if (isset($_GET['utm_content']) && $_GET['utm_content'] != '') {
-                    $new_url = str_replace("[[utm_content]]", $_GET['utm_content'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
-                }
-
-                //show url or redirect to url
-                if (isset($_GET['202rdu']) && $_GET['202rdu'] != '') {
-                    echo $new_url;
-                } else {
-                    header('location: ' . $new_url);
-                }
-
-                die();
-            }
-        }
-        die();
-    }
-}
-
 function setDirtyHour($mysql)
 {
     $de = new DataEngine();
@@ -2373,116 +1635,6 @@ function setDirtyHour($mysql)
 function isSSL(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || intval($_SERVER['SERVER_PORT']) == intval(getservbyname('https', 'tcp'));
-}
-
-function getScheme(): string
-{
-    if (isSSL()) {
-        $scheme = 'https';
-    } else {
-        $scheme = 'http';
-    }
-
-    return $scheme;
-}
-
-function is_prefetch(): bool
-{
-    // Delegate to the one hardened detector so this legacy helper cannot drift
-    // back to exact-match matching (which missed "Purpose: prefetch;prerender"
-    // and let speculative hits double-count).
-    return p202IsSpeculativeRequest();
-}
-
-function getForeignPayout($currency, $payout_currency, $payout)
-{
-    $fields = [
-        'currency' => $currency,
-        'payout_currency' => $payout_currency,
-        'payout' => $payout * 10000   //multiply by 10000 to get more accurate exchange rate
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-    $result = curl_exec($ch);
-
-    curl_close($ch);
-    $result = json_decode($result, true);
-
-    $result['exchange_payout'] /= 10000;
-    return $result;
-}
-
-function getDynamicEPVPixelId(&$mysql)
-{
-    global $db;
-
-    if (isset($mysql['ppc_account_id']) && isset($mysql['b202_fbpa_dynamic_epv']) && $mysql['ppc_account_id'] != '' && $mysql['b202_fbpa_dynamic_epv'] != '') {
-        $dynamic_epv_sql = "SELECT SUM(`income`)/SUM(`click_out`) as dynamic_epv_value, pixel_code AS pixel_id 
-                            FROM `202_dataengine` 
-                            LEFT JOIN `202_ppc_account_pixels` USING (`ppc_account_id`)
-                            WHERE `ppc_account_id`= " . $mysql['ppc_account_id'] . " AND `pixel_type_id`= 6 AND `click_time` >= UNIX_TIMESTAMP(TIMESTAMPADD(DAY,-7,NOW()))
-        
-        ";
-
-        $dynamic_epv_result = $db->query($dynamic_epv_sql);
-        $dynamic_epv_row = $dynamic_epv_result->fetch_assoc();
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['dynamic_epv_value']) {
-            $mysql['dynamic_epv_value'] = number_format($dynamic_epv_row['dynamic_epv_value'], 2);
-        } else {
-            $mysql['dynamic_epv_value'] = 0;
-        }
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['pixel_id']) {
-            $mysql['pixel_id'] = $dynamic_epv_row['pixel_id'];
-        } else {
-            $mysql['pixel_id'] = 0;
-        }
-    }
-}
-
-function getPayout(&$mysql)
-{
-    global $db;
-
-    $sql = "
-    SELECT 
-        2c.click_payout
-    FROM `202_clicks` AS 2c    
-    WHERE 2c.`click_id` = {$mysql['click_id']}
-    LIMIT 1";
-
-    $sql_result = $db->query($sql);
-    $sql_row = $sql_result->fetch_assoc();
-
-    $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
-}
-
-function getUrlVars202(): array
-{
-    $urlvarslist = [];
-    $temp = explode('&', (string) $_SERVER['QUERY_STRING']);
-
-    foreach ($temp as $key => $value) {
-        $subkv = explode('=', $value);
-        $key = $subkv[0];
-        $value = $subkv[1];
-        $urlvarslist[$key] = $value;
-    }
-
-    $urlvarslist = filter_var_array($urlvarslist, FILTER_SANITIZE_URL);
-
-    return $urlvarslist;
 }
 
 /** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */

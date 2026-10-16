@@ -460,8 +460,10 @@ class CapabilitiesController
             $stmt->close();
             return null;
         }
-        if (!mysqli_stmt_execute($stmt)) {
-            $stmt->close();
+        try {
+            // Closes the statement when it fails.
+            $conn->execute($stmt);
+        } catch (QueryException) {
             return null;
         }
         $result = $stmt->get_result();
@@ -530,14 +532,17 @@ class CapabilitiesController
         // Connection::bind checks the bind (CLAUDE.md #7): unchecked, a failed
         // bind would run the query with no user and read as "this user has no
         // key", sending them to the owner's licence in silence.
+        $conn = new Connection($this->db);
         try {
-            (new Connection($this->db))->bind($stmt, 'i', [$this->userId]);
+            $conn->bind($stmt, 'i', [$this->userId]);
         } catch (QueryException) {
             $stmt->close();
             return null;
         }
-        if (!mysqli_stmt_execute($stmt)) {
-            $stmt->close();
+        try {
+            // Closes the statement when it fails.
+            $conn->execute($stmt);
+        } catch (QueryException) {
             return null;
         }
         $result = $stmt->get_result();

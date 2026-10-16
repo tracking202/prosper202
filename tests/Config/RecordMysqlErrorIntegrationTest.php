@@ -402,9 +402,52 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
         self::assertStringNotContainsString('p202_no_such_table_for_the_error_row', $logged, $all);
     }
 
-    /** @return array{string, string, string} stdout, the error log, and both with stderr */
-    private static function runScenario(string $file, string $shape, string $scenario, int $marker): array
+    /** @return array<string, array{string, string, bool, string}> */
+    public static function statusesByDefinition(): array
     {
+        return [
+            'the pages' => ['functions-tracking202.php', 'caught', false, '500'],
+            'the pages, a redirect queued' => ['functions-tracking202.php', 'caught', true, '500'],
+            'the click path' => ['connect2.php', 'caught', false, '500'],
+            // dl.php's click written after its redirect: under PHP-FPM the
+            // redirect has gone by then, and on every server the visitor goes.
+            'the click path, a redirect queued' => ['connect2.php', 'caught', true, '302'],
+            'the click path, a redirect queued, uncaught' => ['connect2.php', 'uncaught', true, '302'],
+        ];
+    }
+
+    /**
+     * The error page answers 500 in place of what the page meant to answer,
+     * which a client or a monitor would read as served, except a redirect
+     * the click path has queued: there the click is lost and the visitor
+     * still goes, and the failure is recorded either way.
+     *
+     * @dataProvider statusesByDefinition
+     */
+    public function testTheErrorPageAnswers500UnlessTheClickPathQueuedARedirect(
+        string $file,
+        string $shape,
+        bool $redirect,
+        string $status
+    ): void {
+        $marker = random_int(1_000_000, 16_000_000);
+        [$stdout, , $all] = self::runScenario($file, $shape, 'txn', $marker, $redirect);
+
+        self::assertTheErrorPageEndedTheRequest($stdout, $all, true);
+        self::assertStringContainsString("STATUS: $status\n", $stdout, $all);
+        $db = self::database();
+        self::assertCount(1, self::errorRows($db, $marker), $all);
+        $db->close();
+    }
+
+    /** @return array{string, string, string} stdout, the error log, and both with stderr */
+    private static function runScenario(
+        string $file,
+        string $shape,
+        string $scenario,
+        int $marker,
+        bool $redirect = false
+    ): array {
         $log = tempnam(sys_get_temp_dir(), 'p202-rme-');
         self::assertIsString($log);
         try {
@@ -418,6 +461,7 @@ final class RecordMysqlErrorIntegrationTest extends TestCase
             ];
             $env = getenv();
             $env['P202_RME_MARKER'] = (string) $marker;
+            $env['P202_RME_REDIRECT'] = $redirect ? '1' : '0';
             $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $env);
             self::assertIsResource($proc);
             $stdout = (string) stream_get_contents($pipes[1]);

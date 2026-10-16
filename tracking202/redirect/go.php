@@ -28,6 +28,9 @@ if (isset($vars[1])) {
     // a click that exists. They were set here, before any bootstrap, under
     // every setting and for any id a link named. The bootstrap is loaded for
     // this path only; the endpoints included below load it again as a no-op.
+    // Goes on when the database is out of reach: lp.php and off.php fall
+    // back, and offrtr.php asks for the database itself.
+    $p202OutageFallback = true;
     include_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
     $goClickId = ctype_digit($vars[0]) ? (int) $vars[0] : 0;
     $goClick = p202ClickOwner($goClickId);

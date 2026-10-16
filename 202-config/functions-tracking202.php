@@ -2,91 +2,10 @@
 
 use UAParser\Parser;
 
+// The functions the click path's bootstrap shares (record_mysql_error(),
+// the cached reads, systemHash(), getTrackingDomain()).
 require_once __DIR__ . '/mysql-error-args.php';
-
-// This function will return true, if a user is logged in correctly, and false, if they are not.
-/**
- * @param ?string $error what failed, from a caller that caught it: by then
- *        the connection's own error is cleared, if the caller rolled back
- */
-function record_mysql_error($dbOrSql, $sql = null, ?string $error = null): never
-{
-    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
-    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
-    if (!$db instanceof \mysqli) {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-    }
-    if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . p202RedactedStatement($sql));
-        echo 'Database error. The webmaster has been notified.';
-        die();
-    }
-
-    global $server_row;
-
-    // The server's message and the statement, without the values they
-    // quote: they are logged, and listed in Account › Settings.
-    [$clean['mysql_error_text'], $statement] = p202MysqlErrorRecorded($db, $sql, $error);
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . p202RedactedStatement($sql));
-
-    // The session's zone, for the footer's clock; this page counts nothing in
-    // it. AUTH::set_timezone() would read the account's zone from the
-    // database that has just failed, and a failed read there throws (a fatal
-    // in place of this page, with the error never recorded).
-    $sessionZone = is_string($_SESSION['user_timezone'] ?? null) ? $_SESSION['user_timezone'] : '';
-    if (\Prosper202\Report\AccountZone::isZone($sessionZone)) {
-        date_default_timezone_set($sessionZone);
-    }
-
-    // Rolled back first, and never a fatal in place of the page; see
-    // p202RecordMysqlErrorRow().
-    $recorded = p202RecordMysqlErrorRow($db, static function () use ($db, $statement, $clean): void {
-        // On the connection the row is written to, which has just been
-        // rolled back: a lookup that fails throws back to the recorder.
-        $locations = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-        $mysql['ip_id'] = (string) $locations->findOrCreateIp(
-            \Prosper202\Http\VisitorIp::fromServer($_SERVER)
-        );
-        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
-            \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
-        );
-
-        $mysql['user_id'] = isset($_SESSION['user_id'])
-            ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id']))
-            : 0;
-        $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-        $mysql['mysql_error_sql'] = $db->real_escape_string($statement);
-        $mysql['mysql_error_time'] = time();
-
-        $report_sql = "INSERT     INTO  202_mysql_errors
-								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
-										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
-										user_id='" . $mysql['user_id'] . "',
-										ip_id='" . $mysql['ip_id'] . "',
-										site_id='" . $mysql['site_id'] . "',
-										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-        // On the connection just rolled back: the global one this used
-        // before may be another, with a transaction of its own still open.
-        // The statement it failed on carries what it records: the server's
-        // words are left to _mysqli_query()'s own line, if it logs one.
-        if (_mysqli_query($db, $report_sql) === false) {
-            throw new \RuntimeException('the server refused the row');
-        }
-    });
-
-    // report error to user and end page
-?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it <?php echo $recorded ? 'has been recorded' : 'could not be recorded; the server error log has it'; ?>.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
-
-
-<?php
-
-    // Without the footer's reads (the dash email, the cron ping's tracking
-    // domain): they would ask the database that has just failed.
-    template_bottom(false);
-    die();
-}
+require_once __DIR__ . '/functions-shared.php';
 
 /** A packed IPv6 address as text (inet_ntop(), quiet on a malformed value). */
 function inet6_ntoa($ip)
@@ -201,62 +120,6 @@ function grab_timeframe($unused = null): array
 }
 
 /**
- * The tracking domain as stored for the signed-in user, or for the primary
- * account without a session (CLI cron workers), like the connect2.php
- * variant — otherwise CLI could never resolve a configured domain and URL
- * builders would degrade to 'localhost'. '' when none is set.
- * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
- *
- * A read that fails throws, naming the account. It answered '' -- "none
- * stored" -- for a failed query too, and every caller builds on that: one
- * transient database error moved every link getTrackingDomain() builds to
- * the request's host, and the address p202TrackingBaseUrl() registers with
- * the hosted service to the server's own name, with nothing to say so
- * (CLAUDE.md #11: a lookup that cannot answer must not answer). The
- * connect2.php twin, getTrackingDomain(), throws the same way.
- *
- * $userId names the account instead. Whatever the server itself calls must
- * name one: every signed-in user sets their own domain on Personal
- * Settings, and a session-dependent read let any of them choose the host
- * the report rebuild fetched (process_dataengine_job.php reads user 1's).
- */
-function p202StoredTrackingDomain(?int $userId = null): string
-{
-    $lookup_user_id = $userId !== null
-        ? (string) $userId
-        : ((isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) ? (string) $_SESSION['user_id'] : '1');
-
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    $failed = 'Unable to read the tracking domain of account ' . $lookup_user_id;
-    $tracking_domain_sql = "
-		SELECT
-			`user_tracking_domain`
-		FROM
-			`202_users_pref`
-		WHERE
-			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
-	";
-    try {
-        $tracking_domain_result = _mysqli_query($tracking_domain_sql);
-    } catch (\mysqli_sql_exception $e) {
-        // Strict reporting throws MySQL's sentence; name whose read it was.
-        throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
-    }
-    if (!$tracking_domain_result instanceof \mysqli_result) {
-        try {
-            $error = (string) $db->error;
-        } catch (\Error) {
-            $error = '';
-        }
-        throw new \RuntimeException($failed . ($error !== '' ? ': ' . $error : ''));
-    }
-    $row = $tracking_domain_result->fetch_assoc();
-
-    return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
-}
-
-/**
  * This install's tracking base, `scheme://host[:port]/<install path>/`:
  * TrackingBaseUrl::build() over the install owner's (user 1's) stored
  * tracking domain (a stored scheme kept, the request's otherwise).
@@ -277,20 +140,6 @@ function p202StoredTrackingDomain(?int $userId = null): string
 function p202TrackingBaseUrl(): string
 {
     return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
-}
-
-/**
- * The tracking domain (`host[:port]`) of the links, snippets and postback
- * URLs a page shows the person who asked for it: the stored one, or the host
- * this request arrived at (TrackingBaseUrl::domainForResponse(), which says
- * why not the server's own name and port). Its callers are listed, each with
- * why its URL goes back to the requester, in RequestHostSourceTest; a URL
- * sent to anyone else is p202TrackingBaseUrl(). Keep in step with the
- * connect2.php copy.
- */
-function getTrackingDomain(): string
-{
-    return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
 }
 
 /**
@@ -1077,121 +926,6 @@ function runWeekly($user_pref) {}
 
 
 
-function memcache_mysql_fetch_assoc($sql, $allowCaching = 1, $minutes = 5)
-{
-    global $memcacheWorking, $memcache;
-
-    if ($memcacheWorking == false) {
-        $result = _mysqli_query($sql);
-        $row = $result->fetch_assoc();
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $result = _mysqli_query($sql);
-            $row = $result->fetch_assoc();
-            return $row;
-        } else {
-
-            // Check if its set
-            $getCache = $memcache->get(md5($sql . systemHash()));
-
-            if ($getCache === false) {
-                // cache this data
-
-                $result = _mysqli_query($sql);
-                $fetchArray = $result->fetch_assoc();
-                //$setCache = $memcache->set(md5($sql . systemHash()), serialize($fetchArray), false, 60 * $minutes);
-                setCache(md5($sql . systemHash()), serialize($fetchArray),  60 * $minutes);
-
-                return $fetchArray;
-            } else {
-
-                // Data Cached
-                return unserialize($getCache);
-            }
-        }
-    }
-}
-
-function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
-{
-    global $memcacheWorking, $memcache;
-
-    if ($memcacheWorking == false) {
-        $row = [];
-        $result = _mysqli_query($sql); // ($sql);
-        while ($fetch = $result->fetch_assoc()) {
-            $row[] = $fetch;
-        }
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $row = [];
-            $result = _mysqli_query($sql); // ($sql);
-            while ($fetch = $result->fetch_assoc()) {
-                $row[] = $fetch;
-            }
-            return $row;
-        } else {
-
-            $getCache = $memcache->get(md5($sql . systemHash()));
-            if ($getCache === false) {
-                // if data is NOT cache, cache this data
-                $row = [];
-                $result = _mysqli_query($sql); // ($sql);
-                while ($fetch = $result->fetch_assoc()) {
-                    $row[] = $fetch;
-                }
-                $setCache = setCache(md5($sql . systemHash()), serialize($row), 60 * 5);
-
-                return $row;
-            } else {
-                // if data is cached, returned the cache data Data Cached
-                return unserialize($getCache);
-            }
-        }
-    }
-}
-
-// this function delays an SQL statement, puts iy in a mysql table, to be cronjobed out every 5 minutes
-function delay_sql($delayed_sql)
-{
-    if (is_string($delayed_sql))
-        $mysql['delayed_sql'] = str_replace("'", "''", $delayed_sql);
-    else
-        return false;
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($delayed_sql); // ($delayed_sql);
-}
-
-function user_cache_time($user_id)
-{
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-
-    $mysql['user_id'] = $db->real_escape_string($user_id);
-    $sql = "SELECT cache_time FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
-    return $row !== null ? $row['cache_time'] : null;
-}
-
 function get_user_data_feedback($user_id)
 {
     $database = DB::getInstance();
@@ -1199,8 +933,15 @@ function get_user_data_feedback($user_id)
     $mysql['user_id'] = $db->real_escape_string((string)$user_id);
     $sql = "SELECT user_email, user_time_register, p202_customer_api_key, install_hash, user_hash, modal_status, vip_perks_status FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
 
-    $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
+    // Every signed-in page's header reads this: a failed read throws, and the
+    // page's handler shows the recorded error page.
+    $result = _mysqli_query($db, $sql);
+    if ($result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
+    $row = p202FetchRow($result, $sql);
 
     if ($row === null) {
         return [
@@ -1315,25 +1056,6 @@ function api_key_validate($key)
 
     $data = json_decode($result, true);
     return $result;
-}
-
-/**
- * The namespace of every cache key: the host, and the install the ids and
- * rows a key names belong to. Its directory is shared by no other install on
- * the server and is known in every scope; its database also tells a
- * reinstall into a new one apart. The other copy (connect2.php /
- * functions-tracking202.php, one directory) is the same function.
- */
-function systemHash(): string
-{
-    $install = [__DIR__];
-    foreach (['dbhost', 'dbname'] as $setting) {
-        $value = $GLOBALS[$setting] ?? '';
-        $install[] = is_string($value) ? $value : '';
-    }
-
-    return hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? '')
-        . "\0" . implode("\0", $install));
 }
 
 function getBrowserIcon($name)
@@ -2139,7 +1861,7 @@ function getDashEmail(): string|bool
                 //found it save to DB and return
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
-                $user_result = _mysqli_query($sql);
+                _mysqli_query($sql);
                 // The address, not its copy escaped for the statement above.
                 return (string) $dashEmail['email'];
             }

@@ -20,75 +20,77 @@ use Tests\Support\SourceScan;
  * killed, the healthy `track.example.com` became the Host header the
  * request sent and `http://internal-name:8134/`.
  *
- * Executed, both copies — functions-tracking202.php's and the connect2.php
- * twin's getTrackingDomain() — each from its own source in a child PHP with
+ * Executed from its source (functions-shared.php, the one copy both
+ * bootstraps load; getTrackingDomain() reads through it) in a child PHP with
  * the database read stubbed: a stored domain is answered, no row is '', and
- * a query that fails (false, or a strict-mode exception) throws naming the
- * tracking domain.
+ * a query or a fetch that fails (false, or a strict-mode exception) throws
+ * naming the tracking domain.
  */
 final class StoredTrackingDomainReadTest extends TestCase
 {
     /**
-     * @return iterable<string, array{string, string, string, list<string>}>
+     * @return iterable<string, array{string, list<string>, string, list<string>}>
      */
     public static function definitions(): iterable
     {
-        // The DB singleton and _mysqli_query(), as functions-tracking202.php
-        // reaches them; $GLOBALS['answer'] says what the query does.
+        // The DB singleton and _mysqli_query(), as the function reaches them;
+        // $GLOBALS['answer'] says what the query does.
         $stubs = <<<'PHP'
             final class FakeConnection { public string $error = 'MySQL server has gone away';
                 public function real_escape_string(string $s): string { return addslashes($s); } }
             final class DB { public static function getInstance(): self { return new self(); }
                 public function getConnection(): FakeConnection { return new FakeConnection(); } }
-            final class StubResult extends \mysqli_result { public function __construct(private ?array $row) {}
+            final class StubResult extends \mysqli_result {
+                public function __construct(private array|null|false $row) {}
                 public function fetch_assoc(): array|null|false { return $this->row; } }
             function _mysqli_query($dbOrSql, $sql = null) {
                 return match ($GLOBALS['answer']) {
                     'row' => new StubResult(['user_tracking_domain' => 'track.example.com']),
                     'no row' => new StubResult(null),
                     'false' => false,
+                    'fetch fails' => new StubResult(false),
                     'throws' => throw new \mysqli_sql_exception('MySQL server has gone away', 2006),
                 };
             }
             PHP;
-        yield 'functions-tracking202.php p202StoredTrackingDomain()' => [
-            '202-config/functions-tracking202.php',
-            'p202StoredTrackingDomain',
+        yield 'functions-shared.php p202StoredTrackingDomain()' => [
+            '202-config/functions-shared.php',
+            // The read, and the fetch it reads its row through.
+            ['p202StoredTrackingDomain', 'p202FetchRow'],
             $stubs,
-            ['false', 'throws'],
-        ];
-        yield 'connect2.php getTrackingDomain()' => [
-            '202-config/connect2.php',
-            'getTrackingDomain',
-            $stubs,
-            // connect2.php sets MYSQLI_REPORT_STRICT alone, so a failed query
-            // answers false there; it is that file's owner's to name a
-            // strict-mode exception too.
-            ['false'],
+            ['false', 'throws', 'fetch fails'],
         ];
     }
 
     /**
      * @dataProvider definitions
+     * @param list<string> $functions the read first, then what it calls
      * @param list<string> $failures
      */
     public function testAFailedReadThrowsAndIsNeverNoneStored(
         string $file,
-        string $function,
+        array $functions,
         string $stubs,
         array $failures
     ): void {
         $source = (string) file_get_contents(SourceScan::repoRoot() . '/' . $file);
-        // Any parameter list: p202StoredTrackingDomain() takes an optional
-        // account, and the call below names none (the session's, or user 1).
-        $found = preg_match('/^function ' . $function . '\([^)]*\): string\n\{\n.*?^\}\n/ms', $source, $m);
-        self::assertSame(1, $found, "$function() in $file");
+        $lifted = '';
+        foreach ($functions as $name) {
+            // Any parameter list: p202StoredTrackingDomain() takes an optional
+            // account, and the call below names none (the session's, or user 1).
+            $found = preg_match('/^function ' . $name . '\([^)]*\): [?\w]+\n\{\n.*?^\}\n/ms', $source, $m);
+            self::assertSame(1, $found, "$name() in $file");
+            $lifted .= $m[0];
+        }
+        $function = $functions[0];
         $autoload = SourceScan::repoRoot() . '/vendor/autoload.php';
+        $helpers = SourceScan::repoRoot() . '/202-config/mysql-error-args.php';
         $call = var_export($function, true);
-        $code = 'require ' . var_export($autoload, true) . '; ' . $stubs . ' ' . $m[0] . <<<PHP
+        $code = 'require ' . var_export($autoload, true) . '; require ' . var_export($helpers, true) . '; '
+            . $stubs . ' ' . $lifted . <<<PHP
             \$_SERVER = ['SERVER_NAME' => 'internal', 'SERVER_PORT' => '8080', 'HTTP_HOST' => 'proxy.example:9443'];
             \$out = [];
-            foreach (['row', 'no row', 'false', 'throws'] as \$answer) {
+            foreach (['row', 'no row', 'false', 'throws', 'fetch fails'] as \$answer) {
                 \$GLOBALS['answer'] = \$answer;
                 try {
                     \$out[\$answer] = 'answered ' . (string) ($call)();

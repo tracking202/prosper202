@@ -28,7 +28,6 @@ final class ClickKeyedReadsAreUncachedTest extends TestCase
 {
     /** The reads the scan finds today: a floor, so a scan that sees none fails. */
     private const KNOWN = [
-        'tracking202/redirect/cl.php' => 1,
         'tracking202/redirect/off.php' => 1,
         'tracking202/redirect/offrtr.php' => 2,
         'tracking202/redirect/pci.php' => 1,

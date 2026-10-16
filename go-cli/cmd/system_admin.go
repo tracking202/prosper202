@@ -116,12 +116,14 @@ var systemInfoCmd = &cobra.Command{
 
 var systemLoginLogCmd = &cobra.Command{
 	Use:   "login-log",
-	Short: "Sign-in attempts to this install, newest first: who, when, from which IP, passed or failed",
+	Short: "Sign-in attempts to this install, newest first: who, when, from which IP, and how each ended",
 	Long: "The attempts Account › Settings lists (its last 50 by default; --limit up to 500). Each row\n" +
-		"is the user name typed, the time (login_time, unix seconds), the IP address and whether it\n" +
-		"passed (login_success). Throttled and token-refused attempts are not recorded.\n\n" +
+		"is the user name typed, the time (login_time, unix seconds), the IP address and how it ended\n" +
+		"(status): passed, failed, or not_completed — the password was right but a database failure\n" +
+		"stopped the sign-in, which the sign-in throttle does not count. login_success is true for\n" +
+		"passed alone. --status lists one of them. Throttled and token-refused attempts are not recorded.\n\n" +
 		systemSettingsNeeds + ", and system:read.",
-	Example: "  p202 system login-log\n  p202 system login-log --limit 200 --json",
+	Example: "  p202 system login-log\n  p202 system login-log --status failed --limit 200 --json\n  p202 system login-log --status not_completed",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params := map[string]string{}
@@ -134,8 +136,31 @@ var systemLoginLogCmd = &cobra.Command{
 			}
 			params["limit"] = v
 		}
-		return systemGet("system/login-log", params)
+		// --status is an enum flag: checked before any request (enumFlag).
+		if v := enumValue(cmd, "status"); v != "" {
+			params["status"] = v
+		}
+		if err := systemGet("system/login-log", params); err != nil {
+			return loginLogStatusError(err, params)
+		}
+		return nil
 	},
+}
+
+// systemLoginStatuses are SignInOutcome's statuses, the values GET
+// /system/login-log's ?status= takes.
+var systemLoginStatuses = []string{"passed", "failed", "not_completed"}
+
+// loginLogStatusError names the remedy when a server from before 1.9.78
+// refuses ?status= as an unknown parameter.
+func loginLogStatusError(err error, params map[string]string) error {
+	var apiErr *api.APIError
+	if _, sent := params["status"]; sent && errors.As(err, &apiErr) && apiErr.Status == 422 {
+		if msg, ok := apiErr.FieldErrors["status"]; ok && strings.Contains(msg, "not accepted") {
+			return withHint(err, "This server predates --status (Prosper202 1.9.78): run `p202 system login-log` without it and read login_success, or upgrade the server.")
+		}
+	}
+	return err
 }
 
 var systemMetricsCmd = &cobra.Command{
@@ -522,6 +547,9 @@ var systemIspLookupDisableCmd = &cobra.Command{
 
 func init() {
 	systemLoginLogCmd.Flags().String("limit", "", "How many attempts to list, 1-500 (default 50, as on the page)")
+	systemLoginLogCmd.Flags().String("status", "", "Only the attempts that ended so")
+	enumFlag(systemLoginLogCmd, "status", newEnum(systemLoginStatuses, enumHint(
+		"For example --status not_completed lists the sign-ins whose password was right but that a database failure stopped; without --status every attempt is listed.")))
 
 	systemRetentionSetCmd.Flags().String("days", "", "Days of click data to keep, 0-36500 (0 keeps every click) (required)")
 	systemRetentionSetCmd.Flags().BoolP("force", "f", false, "Set it without asking, even when it deletes more")

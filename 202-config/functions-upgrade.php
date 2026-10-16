@@ -86,9 +86,10 @@ if (!function_exists('_upgrade_query')) {
      * instead of silently skipping a migration step; every other outcome preserves
      * _mysqli_query()'s contract exactly (the mysqli_result, or false).
      *
-     * Only autocommit statements flow through here; the one explicit-transaction
-     * block (the 1.9.57 migration) calls $connection->query() directly, so a
-     * per-statement retry never runs inside an open transaction.
+     * Only autocommit statements flow through here: no upgrade step calls
+     * Connection::transaction(), the one place a transaction begins
+     * (TransactionsBeginOnlyInConnectionTest), so a per-statement retry never
+     * runs inside one.
      *
      * @param  string|mixed $sql
      * @return \mysqli_result|bool

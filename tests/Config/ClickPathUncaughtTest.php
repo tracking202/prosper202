@@ -92,6 +92,44 @@ final class ClickPathUncaughtTest extends TestCase
         self::assertSame('', $stderr);
     }
 
+    /**
+     * The log line holds no value a database failure's message or a frame's
+     * arguments carried: the server's words repeat what a statement quoted,
+     * and a statement handed down the stack is an argument. It logged the
+     * throwable as PHP prints it, with both.
+     */
+    public function testTheLogLineHoldsNoQuotedValueAndNoArgument(): void
+    {
+        [$stdout, $stderr, $logged] = self::runHandler('secret');
+
+        self::assertSame("STATUS: 500\n", $stdout);
+        self::assertSame('', $stderr);
+        self::assertStringContainsString('Uncaught on the click path: RuntimeException: the lookup failed', $logged);
+        self::assertStringContainsString(
+            'Prosper202\\Database\\Exceptions\\QueryException: '
+                . "MySQL execute failed: Duplicate entry ? for key 'uk' [errno 1062]",
+            $logged
+        );
+        self::assertStringContainsString('mysqli_sql_exception: Incorrect integer value: ? at row 1', $logged);
+        self::assertStringContainsString('{closure}()', $logged, 'the frames are listed');
+        self::assertStringNotContainsString('s3cr3t', $logged);
+    }
+
+    /** The signed-in pages' handler (connect.php) writes the same line. */
+    public function testBothBootstrapsHandlersLogThroughTheRedactedLine(): void
+    {
+        require_once __DIR__ . '/fixtures/lift-function.php';
+        $handlers = [
+            self::CONNECT2 => 'p202ClickPathUncaught',
+            __DIR__ . '/../../202-config/connect.php' => 'p202PageUncaught',
+        ];
+        foreach ($handlers as $file => $handler) {
+            $body = lift_function($file, $handler);
+            self::assertSame(1, substr_count($body, 'error_log('), "$handler logs once");
+            self::assertSame(1, preg_match('/error_log\(p202UncaughtLogLine\(\'[^\']+\', \$e\)\);/', $body), $body);
+        }
+    }
+
     public function testAThrowAfterTheHeadersWereSentIsStillLogged(): void
     {
         [$stdout, $stderr, $logged] = self::runHandler('other_after_output');
@@ -148,6 +186,8 @@ final class ClickPathUncaughtTest extends TestCase
             $proc = proc_open(
                 [
                     PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'log_errors=1', '-d', 'error_log=' . $log,
+                    // As a development php.ini has them: a frame's arguments kept, whole.
+                    '-d', 'zend.exception_ignore_args=0', '-d', 'zend.exception_string_param_max_len=1000000',
                     __DIR__ . '/fixtures/click-path-uncaught-runner.php', $scenario,
                 ],
                 [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],

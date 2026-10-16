@@ -39,16 +39,25 @@ $_GET += [
 	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
-$landing_page_id_public = ClickRequest::string($_GET, 'lpip');
-$mysql['landing_page_id_public'] = $db->real_escape_string($landing_page_id_public);
-$tracker_sql = "SELECT  202_landing_pages.user_id,
-						  202_landing_pages.landing_page_id
-				FROM     202_landing_pages
-				WHERE  202_landing_pages.landing_page_id_public='" . $mysql['landing_page_id_public'] . "'";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The landing page, by its id exactly: compared as text, MySQL read 12abc as 12.
+$raLandingPageId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 'lpip'));
+$tracker_row = null;
+if ($raLandingPageId !== null) {
+    try {
+        $raLandingPage = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->landingPage($raLandingPageId);
+    } catch (\Throwable $raReadError) {
+        record_mysql_error($db, 'reading landing page ' . $raLandingPageId, $raReadError->getMessage());
+    }
+    if ($raLandingPage !== null) {
+        $tracker_row = [
+            'user_id' => $raLandingPage['user_id'],
+            'landing_page_id' => $raLandingPage['landing_page_id'],
+        ];
+    }
+}
 
-if (!$tracker_row) {
-	die();
+if ($tracker_row === null) {
+    die();
 }
 
 // The privacy setting in force for this visitor: the stricter of the
@@ -72,31 +81,19 @@ $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string) ($user_row['u
 //now this sets it
 AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 
-$t202id = ClickRequest::string($_GET, 't202id');
-if ($t202id !== '') {
-	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
-
-		$tracker_sql2 = "
-		SELECT
-			tr.text_ad_id,
-			tr.ppc_account_id,
-			tr.click_cpc,
-			tr.click_cloaking,
-			tr.aff_campaign_id,
-			ac.aff_campaign_payout,
-			ac.identity_signals,
-			2cv.ppc_variable_ids,
-			2cv.parameters
-		FROM
-			202_trackers AS tr
-			LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = tr.aff_campaign_id
-			LEFT JOIN 202_ppc_accounts AS 2ppc USING (ppc_account_id)
-			LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)		
-		WHERE
-			tr.tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
-	if ($tracker_row2) {
+// The tracker the visit names, when it is the landing page's account's. An
+// advanced landing page's click takes its campaign and payout from the
+// tracker, so another account's tracker recorded this account's click under
+// that account's campaign, at its payout.
+$raTrackerId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 't202id'));
+if ($raTrackerId !== null) {
+    try {
+        $tracker_row2 = \Prosper202\Repository\LookupRepositoryFactory::reads($db)
+            ->accountTracker((int) $tracker_row['user_id'], $raTrackerId);
+    } catch (\Throwable $raReadError) {
+        record_mysql_error($db, 'reading tracker ' . $raTrackerId, $raReadError->getMessage());
+    }
+    if ($tracker_row2 !== null) {
 		$tracker_row = array_merge($tracker_row, $tracker_row2);
 	}
 }
@@ -349,8 +346,16 @@ $clickIdentity = p202ClickIdentity(
 	// cross-site script request links by the page's p202lpid instead.
 	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'
 );
-// Every row in one transaction (MysqlClickRepository)
-$clickRepo->recordClick(\Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity));
+// Every row in one transaction (MysqlClickRepository), its cache writes held
+// until it commits; a failure is the error page, as rtr.php's is.
+// Built outside the try: a record the builder refuses is a bug, not a
+// database failure, and the uncaught handler logs it as one.
+$raClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+try {
+    p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($raClick));
+} catch (\Throwable $raWriteError) {
+    record_mysql_error($db, 'recording click ' . $click_id, $raWriteError->getMessage());
+}
 
 
 //set the cookie

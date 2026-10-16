@@ -1,8 +1,8 @@
 <?php
 
 /**
- * Runs AUTH's remember-me key reads against a real database with the admin
- * pages' real _mysqli_query() (lifted from functions.php), in a process of
+ * Runs AUTH's remember-me key reads against a real database with the real
+ * _mysqli_query() (lifted from functions-shared.php), in a process of
  * its own, with one statement made to fail the way a lost or locked
  * connection fails it.
  *
@@ -27,10 +27,11 @@ require_once __DIR__ . '/../../../vendor/autoload.php';
 require_once __DIR__ . '/../../Config/fixtures/lift-function.php';
 require_once __DIR__ . '/../../../202-config/functions-auth.php';
 
-$functions = __DIR__ . '/../../../202-config/functions.php';
+$functions = __DIR__ . '/../../../202-config/functions-shared.php';
 $real = lift_function($functions, '_mysqli_query');
 eval(str_replace('function _mysqli_query(', 'function p202_real_mysqli_query(', $real));
 eval(lift_function($functions, 'p202LogFailedQuery'));
+eval(lift_function($functions, 'p202Mysqli'));
 require_once __DIR__ . '/../../../202-config/mysql-error-args.php';
 
 // The real _mysqli_query(), with the statement this scenario fails replaced

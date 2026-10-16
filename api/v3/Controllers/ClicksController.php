@@ -247,6 +247,14 @@ class ClicksController
         return (int) $text;
     }
 
+    /**
+     * A redirector re-click gives the click a second 202_clicks row, at the
+     * new visit's time; the click as it is now is its latest row, the one its
+     * rotator route, redirect URL and cl.php link are. The list shows each.
+     * Two visits in one second share a time, and the table has nothing else
+     * to order them by: the one on the route the click holds now
+     * (202_clicks_rotator) is the latest.
+     */
     public function get(int $id): array
     {
         $sql = 'SELECT ' . self::DETAIL_COLUMNS . ',
@@ -259,6 +267,7 @@ class ClicksController
             LEFT JOIN 202_tracking_c3 t3 ON ct.c3_id = t3.c3_id
             LEFT JOIN 202_tracking_c4 t4 ON ct.c4_id = t4.c4_id
             WHERE c.click_id = ? AND c.user_id = ?
+            ' . \Prosper202\Click\LatestVisit::orderBy('c', 'crot') . '
             LIMIT 1';
 
         $stmt = $this->prepare($sql);

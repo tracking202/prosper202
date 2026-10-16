@@ -4,11 +4,10 @@
  * Writes one rotator click as rtr.php does: MysqlClickRepository inside
  * p202WithHeldCacheWrites(), its redirect URL filled from the click's own
  * rows and looked up by LookupRepositoryFactory's location repository, which
- * caches through connect2.php's getCache() and setCache(), on the scratch
- * database with a cache that records what reaches it. A process of its own:
- * connect2.php's setCache(), getCache() and _mysqli_query() are global names
- * other suites define for themselves, and connect2.php cannot be loaded
- * alone.
+ * caches through getCache() and setCache() (functions-shared.php), on the
+ * scratch database with a cache that records what reaches it. A process of
+ * its own: setCache(), getCache() and _mysqli_query() are global names other
+ * suites define for themselves, and connect2.php cannot be loaded alone.
  *
  * argv: <commit | rollback | rollback_unheld | lookup_fails> <click id> <host> [<click | cached>]
  *   commit           the click is written
@@ -38,15 +37,21 @@ declare(strict_types=1);
 $clickId = (int) $clickId;
 
 require __DIR__ . '/../../../vendor/autoload.php';
+require __DIR__ . '/../../../202-config/mysql-error-args.php';
 require __DIR__ . '/../../Config/fixtures/lift-function.php';
 
+$shared = __DIR__ . '/../../../202-config/functions-shared.php';
+// rtr.php's bootstrap: the lookup factory caches on the click path alone.
+define('P202_CLICK_PATH', true);
+$lifted = [
+    'p202OnTheClickPath', 'setCache', 'getCache', 'p202WithHeldCacheWrites',
+    '_mysqli_query', 'p202LogFailedQuery', 'p202Mysqli', 'systemHash',
+];
+foreach ($lifted as $name) {
+    eval(lift_function($shared, $name));
+}
 $connect2 = __DIR__ . '/../../../202-config/connect2.php';
-foreach (
-    [
-        'setCache', 'getCache', 'p202WithHeldCacheWrites', '_mysqli_query', 'systemHash',
-        'replaceTrackerPlaceholders', 'replaceClickPlaceholders', 'p202ClickUrlTokens', 'replaceTokens',
-    ] as $name
-) {
+foreach (['replaceTrackerPlaceholders', 'replaceClickPlaceholders', 'p202ClickUrlTokens', 'replaceTokens'] as $name) {
     eval(lift_function($connect2, $name));
 }
 // Evaluated, as the integration suites declare their stand-ins.

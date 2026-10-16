@@ -18,13 +18,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 
 	$user_sql = "SELECT user_id FROM 202_users WHERE user_name='" . $mysql['user_name'] . "' AND user_email='" . $mysql['user_email'] . "'";
 	$user_result = _mysqli_query($db, $user_sql);
-	$user_row = ($user_result instanceof mysqli_result) ? $user_result->fetch_assoc() : null;
+    $user_row = null;
+    if ($user_result === false) {
+        // Said before anything is known of the account, so it tells nobody
+        // whether one matches; read as no row, the page promised an email
+        // that was never sent.
+        $error['user'] = 'Your request could not be processed just now. Please try again in a moment.';
+    } else {
+        $user_row = p202FetchRow($user_result, $user_sql);
+    }
 
 	// Always report success regardless of whether the account exists. Revealing
 	// "invalid username/email combination" lets an attacker enumerate which
 	// usernames and emails are registered. Only actually issue a reset when the
 	// account matches.
-	$success = true;
+    $success = $error === [];
 
 	if ($user_row) {
 
@@ -60,11 +68,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 		// Host: the email reaches the account's owner, and the Host is the
 		// requester's to choose (PasswordResetLink). With no stored address the
 		// email carries the key and the page, without a link.
-		$domain_result = _mysqli_query($db, "SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1");
-		$domain_row = ($domain_result instanceof mysqli_result) ? $domain_result->fetch_assoc() : null;
-		if (!($domain_result instanceof mysqli_result)) {
-			prosper_log('lost-pass', 'Reading the install\'s address failed, so the reset email carries no link: ' . $db->error);
-		}
+        // A failed read, or a failed fetch, sends the email without a link
+        // rather than not at all: the key was stored, and the page answers as
+        // it does for every request.
+        $domain_result = _mysqli_query($db, "SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = 1");
+        $domain_row = $domain_result instanceof mysqli_result ? $domain_result->fetch_assoc() : false;
+        if ($domain_row === false) {
+            prosper_log('lost-pass', 'Reading the install\'s address failed, so the reset email carries no link: ' . $db->error);
+            $domain_row = null;
+        }
 		$base = \Prosper202\User\PasswordResetLink::base((string) ($domain_row['user_tracking_domain'] ?? ''), $_SERVER, __DIR__);
 		$page = \Prosper202\User\PasswordResetLink::PAGE . '?key=' . $user_pass_key;
 		$html_user = htmlentities((string) $_POST['user_name'], ENT_QUOTES, 'UTF-8');

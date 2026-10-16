@@ -22,6 +22,8 @@ elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null
 
 if (! is_numeric($acip))
     die();
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -33,40 +35,9 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-if(getCookie202('tracking202subid') !== null) { //if there's a cookie use it
-    $click_id = getCookie202('tracking202subid');
-}
-
-// Nothing named the click: the visitor's last click by address. Only then —
-// a click the request names (?pci=, or the pci cookie) is the one below
-// resolves; this guess replaced it whenever the subid cookie was missing,
-// which is every visitor the privacy setting holds back (no cookies), and
-// their stored address is masked, so the guess was another visitor's click
-// in the same /24, or none.
-else if ($db && $pci === '') {
-    // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
-    // the redirect, so we must not dereference a false $db here first.
-    $mysql['user_id'] = 1;
-    // The lookup is among the first account's clicks, stored under its
-    // setting, which is the install's (p202ApplyOwnerPrivacy()).
-    p202ApplyOwnerPrivacy($mysql['user_id']);
-    $daysago = time() - 86400; // 24 hours
-    // The visitor's last click by the address the click path stored
-    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
-    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-        new \Prosper202\Database\Connection($db),
-        p202StoredVisitorIp(),
-        (int) $mysql['user_id'],
-        $daysago,
-        !trackingEnabled()
-    ) ?? [];
-    $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
-    $click_id = $mysql['click_id'];
-    $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
-    $mysql['click_id_public'] = $db->real_escape_string((string)($click_row1['click_id_public'] ?? ''));
-    $pci=$mysql['click_id_public'];
-
-}
+// The visitor's click by its subid cookie, read exactly (ClickId).
+$offSubidCookie = getCookie202('tracking202subid');
+$click_id = $offSubidCookie === null ? '' : (string) (\Prosper202\Click\ClickId::parse($offSubidCookie) ?? '');
 
 $usedCachedRedirect = false;
 if (! $db)
@@ -102,24 +73,60 @@ if ($usedCachedRedirect == true) {
         }
     }
     
-    die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+    p202Unavailable();
 }
 
+// The offer the link names, any account's: its account is the one whose
+// clicks the address lookup below searches and whose URL this is. It was
+// read for the first account only, so another account's offer reached
+// without a click went nowhere.
+$offOffer = null;
+$offOfferId = \Prosper202\Click\PublicId::parse($acip);
+if ($offOfferId !== null) {
+    try {
+        $offOffer = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->offer($offOfferId);
+    } catch (\Throwable $offReadError) {
+        record_mysql_error($db, 'reading campaign ' . $offOfferId, $offReadError->getMessage());
+    }
+}
+
+// Nothing named the click: the visitor's last click by address. Only then —
+// a click the request names (?pci=, or the pci cookie) is the one below
+// resolves; this guess replaced it whenever the subid cookie was missing,
+// which is every visitor the privacy setting holds back (no cookies), and
+// their stored address is masked, so the guess was another visitor's click
+// in the same /24, or none.
+if ($offSubidCookie === null && $pci === '' && $offOffer !== null) {
+    $mysql['user_id'] = $db->real_escape_string((string) $offOffer['user_id']);
+    // The lookup is among the offer's account's clicks, stored under its
+    // setting (p202ApplyOwnerPrivacy()).
+    p202ApplyOwnerPrivacy($mysql['user_id']);
+    $daysago = time() - 86400; // 24 hours
+    // The visitor's last click by the address the click path stored
+    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+        new \Prosper202\Database\Connection($db),
+        p202StoredVisitorIp(),
+        (int) $mysql['user_id'],
+        $daysago,
+        !trackingEnabled()
+    ) ?? [];
+    $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
+    $click_id = $mysql['click_id'];
+    $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
+    $mysql['click_id_public'] = $db->real_escape_string((string)($click_row1['click_id_public'] ?? ''));
+    $pci = $mysql['click_id_public'];
+}
+
+// The click's public id exactly (from the link, the pci cookie, go.php's 202v
+// or the address lookup). One that names no click is no click: compared as
+// text, MySQL read 12abc as 12, and a click with no public id (0) matched
+// any of the account's clicks without one, which was then rewritten.
+$offPciId = \Prosper202\Click\ClickId::parse($pci);
+
 /* OK FIRST IF THERE IS NO PUBLIC CLICK_ID, JUST REDIRECT TO THE NORMAL CAMPAIGN */
-if ($pci == '') {
-    $mysql['aff_campaign_id_public'] = $db->real_escape_string($acip);
- $aff_campaign_sql = "SELECT   aff_campaign_rotate, 
-									aff_campaign_url, 
-									aff_campaign_url_2, 
-									aff_campaign_url_3, 
-									aff_campaign_url_4, 
-									aff_campaign_url_5, 
-									aff_campaign_name, 
-									aff_campaign_cloaking 
-						    FROM 	202_aff_campaigns 
-						    WHERE 	aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
-						    AND 202_aff_campaigns.user_id=1";
-    $aff_campaign_row = memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
+if ($offPciId === null) {
+    $aff_campaign_row = $offOffer;
     // The outage fallback follows this path too (as below, for a click with
     // a public id), including a campaign left without a URL.
     if ($memcacheWorking && is_array($aff_campaign_row)) {
@@ -136,8 +143,13 @@ if ($pci == '') {
     
     $redirect_site_url = rotateTrackerUrl($db, $aff_campaign_row);
     
-    // The campaign above is the first account's (user_id=1).
-    $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id, 1);
+    // The click is read for the URL's tokens only if it is the offer's account's.
+    $redirect_site_url = replaceTrackerPlaceholders(
+        $db,
+        $redirect_site_url,
+        $click_id,
+        (int) $aff_campaign_row['user_id']
+    );
     $urlvars = getPrePopVars($urlvarslist);
     if (isset($urlvars)) {
         $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
@@ -203,9 +215,6 @@ if ($pci == '') {
 /* ------------------------------------------------------- */
 /* ------------------------------------------------------- */
 
-$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
-$mysql['click_id_public'] = $db->real_escape_string($pci);
-
 $info_sql = "
 	SELECT
 		2c.click_id,
@@ -231,10 +240,13 @@ $info_sql = "
 		202_clicks_record AS 2cr
 		LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)
 		LEFT JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2cr.click_id)
+		LEFT JOIN 202_clicks_rotator AS cro ON (cro.click_id = 2cr.click_id)
 	WHERE
-		2ac.aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
-		AND 2cr.click_id_public='" . $mysql['click_id_public'] . "'
+		2ac.aff_campaign_id_public=" . (int) $offOfferId . "
+		AND 2cr.click_id_public=" . (int) $offPciId . "
 		AND 2ac.user_id = 2c.user_id
+	" . \Prosper202\Click\LatestVisit::orderBy('2c', 'cro') . "
+	LIMIT 1
 ";
 // The offer and the click are named separately (an advanced landing page
 // lets the visitor choose among the account's offers, so the campaign may
@@ -245,7 +257,7 @@ $info_sql = "
 // account's campaign now names no row, the unknown-pair path below.
 
 // Not cached: one click's row, which this page and a rotator re-click rewrite.
-$info_row = memcache_mysql_fetch_assoc($db, $info_sql, 0);
+$info_row = $offOfferId === null ? null : memcache_mysql_fetch_assoc($db, $info_sql, 0);
 
 // Guard BEFORE dereferencing: the public click id / campaign combo may not
 // exist (expired, mistyped, or a DB hiccup). Never crash the redirect — fall

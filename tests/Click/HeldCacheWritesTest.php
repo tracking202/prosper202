@@ -17,9 +17,9 @@ use PHPUnit\Framework\TestCase;
  * entry lived (measured on a live instance with memcached). That URL is the
  * click's own now and is not cached at all; the hold stays for any cached
  * lookup made inside the write. The real
- * setCache() and p202WithHeldCacheWrites() are lifted out of connect2.php
- * under other names, so they cannot collide with the setCache() other
- * suites declare.
+ * setCache() and p202WithHeldCacheWrites() are lifted out of
+ * functions-shared.php under other names, so they cannot collide with the
+ * setCache() other suites declare.
  */
 final class HeldCacheWritesTest extends TestCase
 {
@@ -32,9 +32,9 @@ final class HeldCacheWritesTest extends TestCase
         if (function_exists('p202HeldTest_setCache')) {
             return;
         }
-        $connect2 = __DIR__ . '/../../202-config/connect2.php';
+        $shared = __DIR__ . '/../../202-config/functions-shared.php';
         foreach (['setCache', 'p202WithHeldCacheWrites'] as $name) {
-            $source = lift_function($connect2, $name);
+            $source = lift_function($shared, $name);
             eval(str_replace(
                 ['setCache(', 'p202WithHeldCacheWrites('],
                 ['p202HeldTest_setCache(', 'p202HeldTest_withHeld('],
@@ -156,50 +156,7 @@ final class HeldCacheWritesTest extends TestCase
      */
     public function testRtrWritesTheRotatorClickInsideTheHold(): void
     {
-        $tokens = \PhpToken::tokenize((string) file_get_contents(__DIR__ . '/../../tracking202/redirect/rtr.php'));
-        $code = array_values(array_filter(
-            $tokens,
-            static fn (\PhpToken $t): bool => !$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])
-        ));
-        foreach ($code as $i => $t) {
-            // An unqualified call is the global function only without these.
-            self::assertFalse(
-                $t->is(T_NAMESPACE) || ($t->is(T_USE) && ($code[$i + 1] ?? null)?->is(T_FUNCTION)),
-                'rtr.php declares no namespace and imports no function; line ' . $t->line
-            );
-        }
-
-        $holds = [];
-        $writes = [];
-        foreach ($code as $i => $t) {
-            $next = $code[$i + 1] ?? null;
-            $prev = $code[$i - 1] ?? null;
-            if ($t->is(T_STRING) && $t->text === 'p202WithHeldCacheWrites' && $next?->text === '(') {
-                self::assertFalse(
-                    $prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NEW]),
-                    'line ' . $t->line . ' calls the global function'
-                );
-                $holds[] = [$i + 1, self::closingParen($code, $i + 1)];
-            }
-            $member = $prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON]);
-            $write = $t->is(T_STRING) && in_array($t->text, ['recordClick', 'recordReClick'], true);
-            if ($write && $next?->text === '(' && $member) {
-                $writes[] = $i;
-            }
-        }
-
-        // A write the scan cannot follow is refused, not taken for none.
-        foreach ($code as $i => $t) {
-            $writerName = in_array(substr($t->text, 1, -1), ['recordClick', 'recordReClick'], true);
-            self::assertFalse(
-                $t->is(T_CONSTANT_ENCAPSED_STRING) && $writerName,
-                'rtr.php names the writer\'s method in a string (a callable): line ' . $t->line
-            );
-            self::assertFalse(
-                $t->text === '{' && ($code[$i - 1] ?? null)?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR]),
-                'rtr.php calls a member named at runtime: line ' . $t->line
-            );
-        }
+        [$code, $holds, $writes] = self::holdsAndWrites('tracking202/redirect/rtr.php');
 
         self::assertCount(1, $holds, 'rtr.php holds its cache writes once');
         self::assertCount(2, $writes, 'rtr.php writes its click in one place, as a new click or a re-click');
@@ -229,14 +186,110 @@ final class HeldCacheWritesTest extends TestCase
         self::assertSame($reClickEnd + 4, $writes[1]);
         $clickEnd = self::closingParen($code, $reClickEnd + 5);
         self::assertSame($close - 1, $clickEnd, "$line: the write is all the held work");
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function otherClickWriters(): iterable
+    {
+        yield 'dl.php' => ['tracking202/redirect/dl.php'];
+        yield 'record_simple.php' => ['tracking202/static/record_simple.php'];
+        yield 'record_adv.php' => ['tracking202/static/record_adv.php'];
+    }
+
+    /**
+     * The other click endpoints write as rtr.php does: the one write inside
+     * the one hold, as its whole work, and nothing else in it.
+     *
+     * @dataProvider otherClickWriters
+     */
+    public function testTheOtherClickWritesRunInsideTheHold(string $file): void
+    {
+        [$code, $holds, $writes] = self::holdsAndWrites($file);
+
+        self::assertCount(1, $holds, "$file holds its cache writes once");
+        self::assertCount(1, $writes, "$file writes its click in one place");
+        [$open, $close] = $holds[0];
+        $text = array_map(static fn (\PhpToken $t): string => $t->text, array_slice($code, $open + 1, 10));
+        self::assertSame(
+            ['static', 'fn', '(', ')', '=>', '$clickRepo', '->', 'recordClick', '('],
+            array_slice($text, 0, 9)
+        );
+        self::assertSame($open + 8, $writes[0], "$file: the write is the held work");
+        self::assertSame($close - 1, self::closingParen($code, $open + 9), "$file: the write is all the held work");
+    }
+
+    /**
+     * The script's tokens without whitespace and comments, each call of
+     * p202WithHeldCacheWrites() as its parentheses, and each call of the
+     * writer; refusing what the scan cannot follow, and checking what
+     * $clickRepo is.
+     *
+     * @return array{list<\PhpToken>, list<array{int, int}>, list<int>}
+     */
+    private static function holdsAndWrites(string $file): array
+    {
+        $name = basename($file);
+        $tokens = \PhpToken::tokenize((string) file_get_contents(__DIR__ . '/../../' . $file));
+        $code = array_values(array_filter(
+            $tokens,
+            static fn (\PhpToken $t): bool => !$t->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])
+        ));
+        foreach ($code as $i => $t) {
+            // An unqualified call is the global function only without these.
+            self::assertFalse(
+                $t->is(T_NAMESPACE) || ($t->is(T_USE) && ($code[$i + 1] ?? null)?->is(T_FUNCTION)),
+                "$name declares no namespace and imports no function; line " . $t->line
+            );
+        }
+
+        $holds = [];
+        $writes = [];
+        foreach ($code as $i => $t) {
+            $next = $code[$i + 1] ?? null;
+            $prev = $code[$i - 1] ?? null;
+            if ($t->is(T_STRING) && $t->text === 'p202WithHeldCacheWrites' && $next?->text === '(') {
+                self::assertFalse(
+                    $prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NEW]),
+                    'line ' . $t->line . ' calls the global function'
+                );
+                $holds[] = [$i + 1, self::closingParen($code, $i + 1)];
+            }
+            $member = $prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON]);
+            $write = $t->is(T_STRING) && in_array($t->text, ['recordClick', 'recordReClick'], true);
+            if ($write && $next?->text === '(' && $member) {
+                $writes[] = $i;
+            }
+        }
+
+        // A write the scan cannot follow is refused, not taken for none.
+        foreach ($code as $i => $t) {
+            $writerName = in_array(substr($t->text, 1, -1), ['recordClick', 'recordReClick'], true);
+            self::assertFalse(
+                $t->is(T_CONSTANT_ENCAPSED_STRING) && $writerName,
+                "$name names the writer's method in a string (a callable): line " . $t->line
+            );
+            self::assertFalse(
+                $t->text === '{' && ($code[$i - 1] ?? null)?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR]),
+                "$name calls a member named at runtime: line " . $t->line
+            );
+        }
 
         $assigned = [];
         foreach ($code as $i => $t) {
             if ($t->is(T_VARIABLE) && $t->text === '$clickRepo' && ($code[$i + 1] ?? null)?->text === '=') {
-                $assigned[] = implode(' ', $text($i + 2, 3));
+                $assigned[] = implode(' ', array_map(
+                    static fn (\PhpToken $t): string => $t->text,
+                    array_slice($code, $i + 2, 3)
+                ));
             }
         }
-        self::assertSame(['new \\Prosper202\\Click\\MysqlClickRepository ('], $assigned, 'what $clickRepo is');
+        self::assertSame(
+            ['new \\Prosper202\\Click\\MysqlClickRepository ('],
+            $assigned,
+            "what \$clickRepo is in $name"
+        );
+
+        return [$code, $holds, $writes];
     }
 
     /** @param list<\PhpToken> $code */

@@ -17,8 +17,25 @@ declare(strict_types=1);
  *   lists           the filter menus: ReportPrefsStore::lists() and
  *                   p202_overview_filter_lists()
  *   api-v1:<report> / api-v2:<report>
- *                   the legacy API's reportQuery() for text_ads or
- *                   landing_pages, and v1's getDataForWP() (get_data_for_wp)
+ *                   the legacy API's reportQuery() for text_ads,
+ *                   landing_pages, countries, cities or carriers, and v1's
+ *                   getDataForWP() (get_data_for_wp); `refused` is the
+ *                   keywords report grouped by a column no table has, a
+ *                   statement the server refuses; `cid=<id>` is runReports()
+ *                   for text_ads on that campaign, `report?<query>` is
+ *                   runReports() for text_ads with the query's parameters as
+ *                   sent (a refusal prints the API's JSON and ends, with no
+ *                   RETURNED line), v1's `wp?<query>` is the WordPress
+ *                   plugin's call its `type` names (get_data_for_wp,
+ *                   wp_create_lp, wp_update_lp) with the query as $_GET,
+ *                   `auth?fail=<none|key|user>&apikey=<key>` the key check
+ *                   each version's endpoint makes first (v1's getStats(), a
+ *                   text_ads report, v2's getAuth()) on a connection whose
+ *                   fetch of the key's row, or of the account's time zone,
+ *                   answers false,
+ *                   and v2's `categories` its listCategories(), each handed
+ *                   the user id as its endpoint hands it (v1 a string, v2
+ *                   an int)
  *   dirty-hours     the cron job's DataEngine::processDirtyHours(), then
  *                   the 202_dirty_hours rows it left (RollupRefreshIntegrationTest)
  *   click-upgrade   the cron job's DataEngine::processClickUpgrade(), and
@@ -45,8 +62,7 @@ $port = (string) (getenv('P202_TEST_DB_PORT') ?: '');
 
 /**
  * connect.php inside a function: see report-read-failure-runner.php. The
- * legacy API boots as its endpoints do, on connect2.php, beside which its
- * functions file declares helpers connect.php's own files also declare.
+ * legacy API boots as its endpoints do, on connect2.php.
  */
 function boot_app(string $root, bool $legacyApi): void
 {
@@ -78,6 +94,33 @@ $GLOBALS['dbpass'] = (string) (getenv('P202_TEST_DB_PASS') ?: '');
 $GLOBALS['mchost'] = '';
 $_SERVER += ['SERVER_NAME' => 'localhost', 'REQUEST_URI' => '/account-scope', 'SCRIPT_URL' => '/account-scope', 'REMOTE_ADDR' => '127.0.0.1'];
 boot_app($root, str_starts_with($reader, 'api-'));
+
+// A connection whose fetch from the statements naming $failOn answers false,
+// as a failed one does. Evaluated, as the integration suites declare their
+// stand-ins.
+eval(<<<'PHP'
+    final class FailingFetchMysqli extends mysqli
+    {
+        public ?string $failOn = null;
+
+        public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
+        {
+            if ($this->failOn === null || !str_contains($query, $this->failOn)) {
+                return parent::query($query, $result_mode);
+            }
+            if (!$this->real_query($query)) {
+                return false;
+            }
+
+            return new class ($this, MYSQLI_STORE_RESULT) extends mysqli_result {
+                public function fetch_assoc(): array|null|false
+                {
+                    return false;
+                }
+            };
+        }
+    }
+    PHP);
 
 $db = DB::getInstance()->getConnection();
 $at = $db->query('SELECT DATABASE()');
@@ -152,20 +195,88 @@ try {
                 ['ppc_network_id', 'ppc_account_id', 'aff_network_id', 'aff_campaign_id', 'landing_page_id', 'text_ad_id']
             ),
         ];
-    } elseif (preg_match('/^api-(v1|v2):(text_ads|landing_pages|get_data_for_wp)$/D', $reader, $m) === 1) {
+    } elseif (preg_match('/^api-(v1|v2):(\w+|cid=\d+|(?:report|wp|auth)\?[^\s]*)$/D', $reader, $m) === 1) {
         // The legacy API's functions, as GET /api/<version>/reports/ calls
-        // them. v1 and v2 declare the same functions: one version per
-        // process. Loaded as they ship, strict types and all: this runner
+        // them, through the version's own functions.php (the report helpers
+        // are api/legacy/functions.php's, which it loads). Loaded as they
+        // ship, strict types and all: this runner
         // used to strip the declare, because every report request was a
         // TypeError under it (real_escape_string() handed the window's
         // timestamps and the unasked cid/c1-c4), and so it could not see
         // that the endpoint answered 500.
         require $root . '/api/' . $m[1] . '/functions.php';
-        $result = match ($m[2]) {
-            'text_ads' => reportQuery($db, 'text_ads', 'text_ad_id', 'text_ad_name', (string) $userId, $from, $to),
-            'landing_pages' => reportQuery($db, 'landing_pages', 'landing_page_id', 'landing_page', (string) $userId, $from, $to),
-            'get_data_for_wp' => getDataForWP($db, (string) $userId),
-        };
+        $reports = [
+            'text_ads' => ['text_ads', 'text_ad_id', 'text_ad_name'],
+            'landing_pages' => ['landing_pages', 'landing_page_id', 'landing_page'],
+            'countries' => ['locations_country', 'country_id', 'country_name'],
+            'cities' => ['locations_city', 'city_id', 'city_name'],
+            'carriers' => ['locations_isp', 'isp_id', 'isp_name'],
+            'refused' => ['keywords', 'no_such_column', 'keyword'],
+        ];
+        if (isset($reports[$m[2]])) {
+            $result = reportQuery($db, ...[...$reports[$m[2]], (string) $userId, $from, $to]);
+        } elseif ($m[2] === 'get_data_for_wp') {
+            $result = getDataForWP($db, (string) $userId);
+        } elseif ($m[2] === 'categories') {
+            ob_start();
+            listCategories($db, $userId);
+            $result = json_decode((string) ob_get_clean(), true, 512, JSON_THROW_ON_ERROR);
+        } elseif (str_starts_with($m[2], 'report?')) {
+            parse_str(substr($m[2], 7), $sent);
+            $result = runReports($db, [
+                'type' => 'text_ads',
+                'date_from' => gmdate('m/d/Y', $from),
+                'date_to' => gmdate('m/d/Y', $to),
+            ] + $sent, $m[1] === 'v1' ? (string) $userId : $userId, 'UTC', $m[1]);
+        } elseif (str_starts_with($m[2], 'wp?') && $m[1] === 'v1') {
+            parse_str(substr($m[2], 3), $_GET);
+            $result = match ($_GET['type'] ?? '') {
+                'get_data_for_wp' => getDataForWP($db, (string) $userId),
+                'wp_create_lp' => wpCreateLp($db, (string) $userId),
+                'wp_update_lp' => wpUpdateLp($db, (string) $userId),
+            };
+        } elseif (str_starts_with($m[2], 'auth?')) {
+            parse_str(substr($m[2], 5), $sent);
+            $failing = new FailingFetchMysqli(
+                $host,
+                (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+                (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+                $dbName,
+                (int) ($port !== '' ? $port : 3306)
+            );
+            // The session the bootstrap set up on its own connection: under
+            // MySQL 8.0's default sql_mode (ONLY_FULL_GROUP_BY) the report's
+            // GROUP BY is refused.
+            $mode = $db->query('SELECT @@SESSION.sql_mode');
+            $mode = $mode instanceof mysqli_result ? $mode->fetch_row()[0] ?? null : null;
+            $set = is_string($mode) ? "SET SESSION sql_mode = '" . $failing->real_escape_string($mode) . "'" : null;
+            if ($set === null || !$failing->query($set)) {
+                fwrite(STDERR, "could not give the failing connection the app's sql_mode\n");
+                exit(2);
+            }
+            $failing->failOn = match ($sent['fail'] ?? 'none') {
+                'key' => '202_api_keys',
+                'user' => '`user_timezone`',
+                default => null,
+            };
+            $result = $m[1] === 'v1'
+                ? getStats($failing, [
+                    'apikey' => (string) ($sent['apikey'] ?? ''),
+                    'type' => 'text_ads',
+                    'date_from' => gmdate('m/d/Y', $from),
+                    'date_to' => gmdate('m/d/Y', $to),
+                ])
+                : getAuth($failing, ['apikey' => (string) ($sent['apikey'] ?? '')]);
+        } elseif (str_starts_with($m[2], 'cid=')) {
+            $result = runReports($db, [
+                'type' => 'text_ads',
+                'cid' => substr($m[2], 4),
+                'date_from' => gmdate('m/d/Y', $from),
+                'date_to' => gmdate('m/d/Y', $to),
+            ], $m[1] === 'v1' ? (string) $userId : $userId, 'UTC', $m[1]);
+        } else {
+            throw new InvalidArgumentException("no legacy API reader named '$m[2]'");
+        }
     } else {
         throw new InvalidArgumentException("no reader named '$reader'");
     }

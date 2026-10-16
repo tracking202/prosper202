@@ -12,6 +12,8 @@ $t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 
@@ -22,9 +24,6 @@ include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 if (p202IsSpeculativeRequest()) {
 	p202DeclineSpeculativeRequest();
 }
-
-$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 // Enable processing to continue even if the client disconnects.
 // This is necessary to ensure that critical operations, such as database updates
@@ -147,44 +146,25 @@ if ($usedCachedRedirect == true) {
 	);
 }
 
-//grab tracker data
-$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
-$tracker_sql = "SELECT 202_trackers.user_id,
-						202_trackers.aff_campaign_id,
-						text_ad_id,
-						ppc_account_id,
-						click_cpc,
-						click_cpa,
-						click_cloaking,
-						aff_campaign_rotate,
-						aff_campaign_url,
-						aff_campaign_url_2,
-						aff_campaign_url_3,
-						aff_campaign_url_4,
-						aff_campaign_url_5,
-						aff_campaign_payout,
-						aff_campaign_cloaking,
-						202_aff_campaigns.identity_signals,
-						2cv.ppc_variable_ids,
-						2cv.parameters,
-                        user_timezone, 
-		                user_keyword_searched_or_bidded,
-                        user_pref_referer_data,
-                        user_pref_dynamic_bid,
-		                maxmind_isp,
-                        user_public_publisher_id
-                        FROM 202_trackers 
-                        LEFT JOIN 202_users_pref USING (user_id) 
-            LEFT JOIN 202_users USING (user_id) 
-    			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)					                 
-				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
+// After the outage fallback above: with no connection there is nothing to build them on.
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The tracker, with its campaign, text ad and traffic source when each is the
+// tracker's account's: one of another account's, named by an id the
+// tracker kept, was copied into this account's click.
+$dlTrackerId = \Prosper202\Click\PublicId::parse($t202id);
+$tracker_row = null;
+if ($dlTrackerId !== null) {
+    try {
+        $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->tracker($dlTrackerId);
+    } catch (\Throwable $dlReadError) {
+        record_mysql_error($db, 'reading tracker ' . $dlTrackerId, $dlReadError->getMessage());
+    }
+}
 
 // Check if tracker exists BEFORE using its data
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	renderErrorPage(
 		404,
 		'Tracking Link Not Found',
@@ -446,7 +426,7 @@ $clickIdentity = p202ClickIdentity(
 );
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
+$computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
 	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
     $GeoData = $earlyGeoData ?? getGeoData($ip_address);
 	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
@@ -510,8 +490,17 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 	$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl($redirect_site_url);
 	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
-	// Every row in one transaction (MysqlClickRepository)
-	$clickRepo->recordClick(\Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity));
+    // Every row in one transaction (MysqlClickRepository), its cache writes
+    // held until it commits; a failure is recorded, as rtr.php's is, and a
+    // redirect already queued stands (record_mysql_error()).
+    // Built outside the try: a record the builder refuses is a bug, not a
+    // database failure, and the uncaught handler logs it as one.
+    $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($dlClick));
+    } catch (\Throwable $dlWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $dlWriteError->getMessage());
+    }
 };
 
 $urlvars = getPrePopVars($_GET);
@@ -567,7 +556,7 @@ $mysql['click_time'] = $db->real_escape_string((string)$click_time);
 if ($mysql['click_cpa'] != NULL) {
 	$insert_sql = "INSERT INTO 202_cpa_trackers
                                    SET         click_id='" . $mysql['click_id'] . "',
-                                                           tracker_id_public='" . $mysql['tracker_id_public'] . "'";
+                                                           tracker_id_public=" . (int) $dlTrackerId;
 	// Post-redirect: the visitor is already gone, so log a failure instead of
 	// dying (which would abandon the remaining bookkeeping below).
 	if ($db->query($insert_sql) === false) {

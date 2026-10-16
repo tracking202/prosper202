@@ -25,7 +25,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2up.maxmind_isp FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -55,24 +58,57 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
 		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 
 		if ($editing == true) {
-			// scope rename to the acting user's own rotator
-			$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['rotator_id'] ?? ''));
-			$sql = "UPDATE 202_rotators SET name='" . $mysql['rotator_name'] . "' WHERE id='" . $mysql['rotator_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
-			$result = $db->query($sql);
+            // Renamed only when it is the account's own. The UPDATE named the
+            // account, so another account's redirector, or one removed, was
+            // left as it was while the page said it had been renamed.
+            $rawRenameId = $_POST['rotator_id'] ?? '';
+            $renameId = is_string($rawRenameId) && preg_match('/\A[1-9][0-9]{0,9}\z/', $rawRenameId) === 1
+                ? (int) $rawRenameId : 0;
+            $renameName = (string) $_POST['rotator_name'];
+            $renameUserId = (int) $_SESSION['user_id'];
+            $renamed = false;
+            try {
+                $rotatorConn = new \Prosper202\Database\Connection($db);
+                $renamed = $rotatorConn->transaction(
+                    static function () use ($rotatorConn, $renameId, $renameName, $renameUserId): bool {
+                        $owned = $rotatorConn->prepareWrite('SELECT id FROM 202_rotators WHERE id = ? AND user_id = ? FOR UPDATE');
+                        $rotatorConn->bind($owned, 'ii', [$renameId, $renameUserId]);
+                        if ($rotatorConn->fetchOne($owned) === null) {
+                            return false;
+                        }
+                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ? WHERE id = ?');
+                        $rotatorConn->bind($rename, 'si', [$renameName, $renameId]);
+                        $rotatorConn->executeUpdate($rename);
+
+                        return true;
+                    }
+                );
+            } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+                record_mysql_error($db, 'UPDATE 202_rotators (redirector ' . $renameId . ')', $e->getMessage());
+            }
+            if (!$renamed) {
+                $error['rotator_id'] = 'That redirector was not found on this account. Nothing was saved.';
+            }
 		} else {
 			$sql = "INSERT INTO 202_rotators SET name='" . $mysql['rotator_name'] . "', user_id='" . $mysql['user_id'] . "'";
-			$result = $db->query($sql);
+            if ($db->query($sql) === false) {
+                record_mysql_error($sql);
+            }
 			$rotator_id = $db->insert_id;
 
 			// public_id is derived from insert_id, so only generate it for the INSERT path
 			$sql = "UPDATE 202_rotators SET public_id='" . random_int(1, 9) . $rotator_id . random_int(1, 9) . "' WHERE id='" . $rotator_id . "' AND user_id='" . $mysql['user_id'] . "'";
-			$result = $db->query($sql);
+            if ($db->query($sql) === false) {
+                record_mysql_error($sql);
+            }
 		}
 
-		$add_success = true;
-
-		if ($slack)
-			$slack->push('rotator_created', ['name' => $_POST['rotator_name'], 'user' => $user_row['username']]);
+        if (!$error) {
+            $add_success = true;
+            if ($slack) {
+                $slack->push('rotator_created', ['name' => $_POST['rotator_name'], 'user' => $user_row['username']]);
+            }
+        }
 	}
 }
 
@@ -85,23 +121,48 @@ if (isset($_GET['delete_rotator_id'])) {
 	}
 
 	if ($userObj->hasPermission("remove_rotator")) {
-		$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-		$mysql['rotator_id'] = $db->real_escape_string((string)$_GET['delete_rotator_id']);
+        // The redirector, its rules, their criteria and redirects go
+        // together, and only when the redirector is the account's, as
+        // DELETE /api/v3/rotators/{id} does. The rules and criteria were
+        // deleted by the redirector's id alone after its own delete, which
+        // names the account, had matched nothing: another account's
+        // redirector kept its row and lost its rules. Each delete's failure
+        // was a page that said nothing.
+        $rawRotatorId = $_GET['delete_rotator_id'];
+        $deleteRotatorId = is_string($rawRotatorId) && preg_match('/\A[1-9][0-9]{0,9}\z/', $rawRotatorId) === 1
+            ? (int) $rawRotatorId : 0;
+        $deleteUserId = (int) $_SESSION['user_id'];
+        try {
+            $rotatorConn = new \Prosper202\Database\Connection($db);
+            $delete_success = $rotatorConn->transaction(
+                static function () use ($rotatorConn, $deleteRotatorId, $deleteUserId): bool {
+                    $owned = $rotatorConn->prepareWrite('SELECT id FROM 202_rotators WHERE id = ? AND user_id = ? FOR UPDATE');
+                    $rotatorConn->bind($owned, 'ii', [$deleteRotatorId, $deleteUserId]);
+                    if ($rotatorConn->fetchOne($owned) === null) {
+                        return false;
+                    }
+                    foreach ([
+                        'DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?',
+                        'DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)',
+                        'DELETE FROM 202_rotator_rules WHERE rotator_id = ?',
+                        'DELETE FROM 202_rotators WHERE id = ?',
+                    ] as $deleteSql) {
+                        $stmt = $rotatorConn->prepareWrite($deleteSql);
+                        $rotatorConn->bind($stmt, 'i', [$deleteRotatorId]);
+                        $rotatorConn->executeUpdate($stmt);
+                    }
 
-		$delete_sql = "DELETE FROM 202_rotators WHERE id='" . $mysql['rotator_id'] . "' AND user_id='" . $mysql['user_id'] . "'";
-
-		if (_mysqli_query($delete_sql)) {
-			$rule_sql = "DELETE FROM 202_rotator_rules WHERE rotator_id='" . $mysql['rotator_id'] . "'";
-
-			if (_mysqli_query($rule_sql)) {
-				$criteria_sql = "DELETE FROM 202_rotator_rules_criteria WHERE rotator_id='" . $mysql['rotator_id'] . "'";
-				if (_mysqli_query($criteria_sql)) {
-					$delete_success = true;
-					if ($slack)
-						$slack->push('rotator_deleted', ['name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']]);
-				}
-			}
-		}
+                    return true;
+                }
+            );
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            record_mysql_error($db, 'DELETE FROM 202_rotators (redirector ' . $deleteRotatorId . ')', $e->getMessage());
+        }
+        if (!$delete_success) {
+            $error['delete_rotator'] = 'That redirector was not found on this account. Nothing was removed.';
+        } elseif ($slack) {
+            $slack->push('rotator_deleted', ['name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']]);
+        }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php');
 	}

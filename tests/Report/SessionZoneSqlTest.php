@@ -60,14 +60,6 @@ final class SessionZoneSqlTest extends TestCase
 
     /** @var array<string, array<string, string>> file => pattern name => why the connection's zone cannot change its answer */
     private const ALLOWED = [
-        '202-config/connect2.php' => [
-            // The fallback pixel's look-back: NOW() and UNIX_TIMESTAMP() read
-            // the same zone, so this is the instant seven days ago in any
-            // zone without a DST change in the last week, and an hour either
-            // side of it across one — a seven-day bound, not a report.
-            'NOW()' => 'UNIX_TIMESTAMP(TIMESTAMPADD(DAY, -7, NOW())): both ends in one zone',
-            'UNIX_TIMESTAMP(x)' => 'UNIX_TIMESTAMP(TIMESTAMPADD(DAY, -7, NOW())): both ends in one zone',
-        ],
         '202-config/upgrade.php' => [
             // The pre-1.9.3 upgrade form's starting date for the Data Engine
             // rebuild, shown for the operator to edit: no report engine has

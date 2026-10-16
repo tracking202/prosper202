@@ -157,7 +157,11 @@ final readonly class DataSeeder
         // Idempotent: 202_version is read as a single row (e.g. functions-upgrade.php),
         // so don't add a second row when an install retry re-runs the seed step.
         $existing = _mysqli_query($this->connection, "SELECT 1 FROM " . TableRegistry::VERSION . " LIMIT 1");
-        if ($existing instanceof \mysqli_result && $existing->num_rows > 0) {
+        if ($existing === false) {
+            // Read as no row, a retry would add a second version row.
+            throw new \RuntimeException('Seeding failed: ' . $this->connection->error);
+        }
+        if ($existing->num_rows > 0) {
             return;
         }
 

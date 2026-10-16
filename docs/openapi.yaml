@@ -461,11 +461,21 @@ paths:
       summary: Sign-in attempts to this install
       description: |
         The attempts Account › Settings lists, newest first: the user name
-        typed, the time, the IP address and whether it passed. Only those
-        columns — the table also holds each attempt's request snapshot and,
-        on installs from before the password was filtered, the password typed;
-        neither is ever served. Throttled and token-refused attempts are not
-        recorded. Unknown parameters are refused.
+        typed, the time, the IP address and how it ended (`status`). Only
+        those columns — the table also holds each attempt's request snapshot
+        and, on installs from before the password was filtered, the password
+        typed; neither is ever served. Throttled and token-refused attempts
+        are not recorded. Unknown parameters are refused.
+
+        `status` is `passed`, `failed` (the user name or password was wrong
+        or left out, or the database failed before the password was checked)
+        or `not_completed`: the password was right, but a database failure
+        stopped the sign-in (recording it, starting the session, or storing a
+        re-hashed legacy password) and the user was asked to try again. The
+        sign-in throttle counts `failed` alone, so a database hiccup never
+        locks anyone out. `login_success` is true for `passed` alone. A row
+        holding a value no version writes answers `unknown`, which no
+        `status` filter selects.
 
         Admin (or Super user) with `access_to_settings`, and `system:read`.
       operationId: systemLoginLog
@@ -478,6 +488,14 @@ paths:
             default: 50
             minimum: 1
             maximum: 500
+        - name: status
+          in: query
+          description: >-
+            Only the attempts that ended so; without it, every attempt.
+            Anything else is a `422` naming `status`.
+          schema:
+            type: string
+            enum: [passed, failed, not_completed]
       responses:
         "200":
           description: Attempts, newest first
@@ -501,11 +519,20 @@ paths:
                           type: integer
                         login_success:
                           type: boolean
+                          description: True for `passed` alone.
+                        status:
+                          type: string
+                          enum: [passed, failed, not_completed, unknown]
                   meta:
                     type: object
                     properties:
                       limit:
                         type: integer
+                      status:
+                        type: string
+                        nullable: true
+                        enum: [passed, failed, not_completed]
+                        description: The status asked for; null for every attempt.
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -1659,7 +1686,10 @@ paths:
     get:
       tags: [Clicks]
       summary: Get a click
-      description: Full click details including geo, device, and custom variable lookups.
+      description: >-
+        Full click details including geo, device, and custom variable lookups.
+        A click a redirector link re-clicked has a row for each visit, each
+        listed by GET /clicks; this answers the latest.
       operationId: getClick
       responses:
         "200":

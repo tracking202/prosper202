@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 use mysqli;
+use Prosper202\Click\ClickPathReads;
 use Prosper202\Database\Connection;
 use Prosper202\Repository\DeviceRepositoryInterface;
 use Prosper202\Repository\LookupRepositories;
@@ -35,11 +36,13 @@ final class DeviceRepositoryStandIn
 
         /** @var WeakMap<mysqli, LookupRepositories> $bundles */
         $bundles = new WeakMap();
+        $connection = new Connection($db);
         $bundles[$db] = new LookupRepositories(
-            new Connection($db),
+            $connection,
             new NullLocationRepository(),
             $devices,
             new NullTrackingRepository(),
+            ClickPathReads::uncached($connection),
         );
         (new ReflectionProperty(LookupRepositoryFactory::class, 'bundles'))->setValue(null, $bundles);
 

@@ -10,22 +10,11 @@ AUTH::require_user();
 $hasCustomerKey = false;
 if (!empty($_SESSION['premium_update_available']) && empty($_SESSION['update_needed'])) {
 	$ownId = (int) ($_SESSION['user_own_id'] ?? 0);
-	$stmt = $db->prepare('SELECT p202_customer_api_key FROM 202_users WHERE user_id = ?');
-	if ($stmt === false) {
-		throw new RuntimeException('update-needed: could not prepare the customer key lookup: ' . $db->error);
-	}
-	$stmt->bind_param('i', $ownId);
-	if (!$stmt->execute()) {
-		$stmt->close();
-		throw new RuntimeException('update-needed: could not read the customer key: ' . $db->error);
-	}
-	$result = $stmt->get_result();
-	if ($result === false) {
-		$stmt->close();
-		throw new RuntimeException('update-needed: could not read the customer key: ' . $db->error);
-	}
-	$row = $result->fetch_assoc();
-	$stmt->close();
+    // A failed read throws (QueryException), and the page's handler records it.
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareWrite('SELECT p202_customer_api_key FROM 202_users WHERE user_id = ?');
+    $conn->bind($stmt, 'i', [$ownId]);
+    $row = $conn->fetchOne($stmt);
 	$hasCustomerKey = is_array($row) && trim((string) ($row['p202_customer_api_key'] ?? '')) !== '';
 }
 

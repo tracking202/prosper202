@@ -50,7 +50,10 @@ $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -92,16 +95,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_user_id'])) {
 		p202_account_redirect('202-account/user-management.php');
 	}
 
-	$target = null;
-	$target_stmt = $db->prepare('SELECT user_name, role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1');
-	if ($target_stmt) {
-		$target_stmt->bind_param('i', $deleteUserId);
-		if ($target_stmt->execute()) {
-			$targetResult = $target_stmt->get_result();
-			$target = $targetResult !== false ? $targetResult->fetch_assoc() : null;
-		}
-		$target_stmt->close();
-	}
+    try {
+        $targetConn = new \Prosper202\Database\Connection($db);
+        $target_stmt = $targetConn->prepareWrite('SELECT user_name, role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1');
+        $targetConn->bind($target_stmt, 'i', [$deleteUserId]);
+        $target = $targetConn->fetchOne($target_stmt);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        // Read as no row, it said the user was already removed.
+        p202_account_flash('bad', 'That user could not be read just now, so nothing was removed. Try again.');
+        p202_account_redirect('202-account/user-management.php');
+    }
 	if (!$target) {
 		p202_account_flash('warn', 'That user was not found, or was already removed.');
 		p202_account_redirect('202-account/user-management.php');
@@ -130,7 +133,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['delete_user_id'])) {
 
 $user_sql = "SELECT user_id,user_email,user_time_register,user_timezone,install_hash,user_hash,modal_status,vip_perks_status FROM 202_users WHERE user_id=1";
 $user_result2 = _mysqli_query($user_sql);
-$user_row2 = $user_result2->fetch_assoc();
+if ($user_result2 === false) {
+    record_mysql_error($user_sql);
+}
+$user_row2 = p202FetchRow($user_result2, $user_sql);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// validate token
@@ -238,20 +244,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// Authorization gate that MUST run before the write: only users who can manage
 	// admins may assign the Admin role or modify an existing Admin/Super-user account.
 	// (The role_id==2 check further down only guards the GET form-render path.)
-	if (!$canManageAdmins) {
-		if ($mysql['user_role'] === '2') {
-			$error['user_role'] = 'You are not authorized to assign the Admin role.';
-		}
-		if ($editing === true) {
-			$target_role_sql = "SELECT role_id FROM 202_user_role WHERE user_id = '" . $mysql['form_user_id'] . "'";
-			$target_role_result = _mysqli_query($target_role_sql);
-			$target_role_row = $target_role_result ? $target_role_result->fetch_assoc() : null;
-			$target_role_id = $target_role_row['role_id'] ?? null;
-			if ($mysql['form_user_id'] === '1' || $target_role_id === '1' || $target_role_id === '2' || $target_role_result === false) {
-				$error['user_role'] = 'You are not authorized to modify this account.';
-			}
-		}
-	}
+    if (!$canManageAdmins) {
+        if ($mysql['user_role'] === '2') {
+            $error['user_role'] = 'You are not authorized to assign the Admin role.';
+        }
+        if ($editing === true) {
+            $target_role_sql = "SELECT role_id FROM 202_user_role WHERE user_id = '" . $mysql['form_user_id'] . "'";
+            $target_role_result = _mysqli_query($target_role_sql);
+            if ($target_role_result === false) {
+                $error['user_role'] = 'This account\'s role could not be read just now, so nothing was changed. Try again.';
+            } else {
+                $target_role_row = p202FetchRow($target_role_result, $target_role_sql);
+                $target_role_id = $target_role_row['role_id'] ?? null;
+                if ($mysql['form_user_id'] === '1' || $target_role_id === '1' || $target_role_id === '2') {
+                    $error['user_role'] = 'You are not authorized to modify this account.';
+                }
+            }
+        }
+    }
 	if ($editing === true && $mysql['form_user_id'] === '1') {
 		$error['user_role'] = 'You are not authorized to modify this account.';
 	}
@@ -337,15 +347,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 $editingRow = null;
 if ($editing == true) {
-	$edit_stmt = $db->prepare('SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1');
-	if ($edit_stmt) {
-		$edit_stmt->bind_param('i', $editUserId);
-		if ($edit_stmt->execute()) {
-			$editResult = $edit_stmt->get_result();
-			$editingRow = $editResult !== false ? $editResult->fetch_assoc() : null;
-		}
-		$edit_stmt->close();
-	}
+    try {
+        $editConn = new \Prosper202\Database\Connection($db);
+        $edit_stmt = $editConn->prepareWrite('SELECT user_fname,user_lname,user_name,user_id,user_email,user_time_register,user_active,role_id FROM 202_users LEFT JOIN 202_user_role USING (user_id) WHERE user_id = ? AND user_deleted != 1 LIMIT 1');
+        $editConn->bind($edit_stmt, 'i', [$editUserId]);
+        $editingRow = $editConn->fetchOne($edit_stmt);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        // Read as no row, it said the user was removed.
+        p202_account_flash('bad', 'That user could not be read just now. Try again.');
+        p202_account_redirect('202-account/user-management.php');
+    }
 
 	if (!$editingRow || $editUserId === 1) {
 		p202_account_flash('warn', 'That user was not found, or was removed.');

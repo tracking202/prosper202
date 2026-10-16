@@ -6,6 +6,8 @@ $lpip = $_GET['lpip'] ?? '';
 if (!is_numeric($lpip)) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0,-21) . '/202-config/connect2.php'); 
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -63,28 +65,31 @@ if ($usedCachedRedirect==true) {
 			}
 		}
 	
-	die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+	p202Unavailable();
 }
 
-$mysql['landing_page_id_public'] = $db->real_escape_string($lpip);
-$tracker_sql = "SELECT 202_landing_pages.user_id,
-						202_landing_pages.landing_page_id,
-						202_landing_pages.landing_page_id_public,
-						202_landing_pages.aff_campaign_id,
-						202_aff_campaigns.aff_campaign_rotate,
-						202_aff_campaigns.aff_campaign_url,
-						202_aff_campaigns.aff_campaign_url_2,
-						202_aff_campaigns.aff_campaign_url_3,
-						202_aff_campaigns.aff_campaign_url_4,
-						202_aff_campaigns.aff_campaign_url_5,
-						202_aff_campaigns.aff_campaign_payout,
-						202_aff_campaigns.aff_campaign_cloaking
-				FROM    202_landing_pages, 202_aff_campaigns
-				WHERE   202_landing_pages.landing_page_id_public='".$mysql['landing_page_id_public']."'
-				AND     202_aff_campaigns.aff_campaign_id = 202_landing_pages.aff_campaign_id";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The landing page's id exactly: compared as text, MySQL read 1e3 as 1000.
+$lpPublicId = \Prosper202\Click\PublicId::parse($lpip);
+if ($lpPublicId === null) {
+    die();
+}
+$lpReads = \Prosper202\Repository\LookupRepositoryFactory::reads($db);
+try {
+    $tracker_row = $lpReads->landingPageOffer($lpPublicId);
+} catch (\Throwable $lpReadError) {
+    record_mysql_error($db, 'reading landing page ' . $lpip, $lpReadError->getMessage());
+}
 
-if (!$tracker_row) { die(); }
+if ($tracker_row === null) {
+    // No campaign of the page's account: an outage sends nobody anywhere
+    // either, whatever an earlier read kept (another account's campaign,
+    // before this read was tied to the account). Deleted, not written
+    // empty: a write would keep an entry for every id anyone sends.
+    if ($memcacheWorking) {
+        $memcache->delete(md5('lp_' . $lpip . systemHash()));
+    }
+    die();
+}
 
 // The URL a MySQL outage redirects to (read above): kept equal to the
 // campaign's current URL, not the one it had at its first click.
@@ -109,20 +114,20 @@ if ($landing_page_query !== '') {
 	parse_str($landing_page_query, $_GET);
 }
 
-if (!empty($_GET['t202id'])) {
-	//grab tracker data if avaliable
-	$mysql['tracker_id_public'] = $db->real_escape_string((string)$_GET['t202id']);
-
-	$tracker_sql2 = "SELECT  text_ad_id,
-							ppc_account_id,
-							click_cpc,
-							click_cloaking
-					FROM    202_trackers
-					WHERE   tracker_id_public='".$mysql['tracker_id_public']."'";   
-	
-	$tracker_row2 = memcache_mysql_fetch_assoc($db, $tracker_sql2);
-	if ($tracker_row2) {
-		$tracker_row = array_merge($tracker_row,$tracker_row2);
+// The tracker the landing page was reached through, when it is the landing
+// page's account's: its cloaking setting decides this click's.
+$lpTrackerId = \Prosper202\Click\PublicId::parse($_GET['t202id'] ?? null);
+if ($lpTrackerId !== null) {
+    try {
+        $tracker_row2 = $lpReads->accountTracker((int) $tracker_row['user_id'], $lpTrackerId);
+    } catch (\Throwable $lpReadError) {
+        record_mysql_error($db, 'reading tracker ' . $lpTrackerId, $lpReadError->getMessage());
+    }
+    if ($tracker_row2 !== null) {
+        $tracker_row = array_merge($tracker_row, array_intersect_key(
+            $tracker_row2,
+            array_flip(['text_ad_id', 'ppc_account_id', 'click_cpc', 'click_cloaking'])
+        ));
 	}
 }
 

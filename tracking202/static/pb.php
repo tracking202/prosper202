@@ -11,13 +11,20 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 // one click carry a repeat purchase; without one the click converts once.
 // `status=reversed` with a transaction id reverses that conversion.
 
-//get the aff_camapaign_id
-$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)($_GET['acip'] ?? ''));
+// The campaign, by its id exactly: compared as text, MySQL read 12abc as 12.
+$pbCampaignId = \Prosper202\Click\PublicId::parse($_GET['acip'] ?? null);
+$aff_campaign_row = null;
+if ($pbCampaignId !== null) {
+    try {
+        $aff_campaign_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->offer($pbCampaignId);
+    } catch (\Throwable $pbReadError) {
+        record_mysql_error($db, 'reading campaign ' . $pbCampaignId, $pbReadError->getMessage());
+    }
+}
 
-$aff_campaign_sql = "SELECT aff_campaign_id, user_id FROM 202_aff_campaigns WHERE aff_campaign_id_public='".$mysql['aff_campaign_id_public']."'";
-$aff_campaign_row =  memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
-
-if (!$aff_campaign_row) { die(); }
+if ($aff_campaign_row === null) {
+    die();
+}
 
 // The privacy setting in force: the stricter of the install's and the
 // campaign's account's (p202ApplyOwnerPrivacy()), before the conversion

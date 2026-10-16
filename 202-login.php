@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Prosper202\User\SignInLog;
+use Prosper202\User\SignInNotCompleted;
+use Prosper202\User\SignInOutcome;
 use Prosper202\User\SignInRecord;
 
 include_once(__DIR__ . '/202-config/connect.php');
@@ -93,10 +96,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
+	// A right password whose sign-in a write then failed: logged apart from a
+	// failure, so the throttle does not count a database hiccup as a guess.
+	$sign_in_not_completed = false;
+	$not_completed_message = 'Your sign-in could not be completed. Please try again in a moment.';
+
 	$login_result = null;
 	if (!$error) {
 		try {
 			$login_result = AUTH::authenticate($username, $password, $db);
+		} catch (SignInNotCompleted $exception) {
+			$error['user'] = $not_completed_message;
+			$sign_in_not_completed = true;
+			prosper_log('login', 'Sign-in of username ' . $username . ' not completed: ' . $exception->getMessage());
 		} catch (RuntimeException $exception) {
 			$error['user'] = 'We were unable to process your login. Please try again later.';
 			prosper_log('login', 'Login exception for username ' . $username . ': ' . $exception->getMessage());
@@ -115,60 +127,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$slack->push('failed_login', ['username' => $username, 'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown']);
 	}
 
-	if (empty($error) && $user_row) { // before the attempt is logged, so a refusal here logs as failed
+	// Before the attempt is logged, so a sign-in that stops here logs as not
+	// completed rather than as passed.
+	if (empty($error) && $user_row) {
 		AUTH::delete_old_auth_hash();
 
 		[$modal_status, $vip_perks_status] = SignInRecord::surveyFlags(getSurveyData($user_row['install_hash']));
 
 		try {
 			SignInRecord::on($db)->record((int) $user_row['user_id'], $login_ip, $modal_status, $vip_perks_status);
+
+			$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";
+			$mod_row = memcache_mysql_fetch_assoc($mod_sql);
+			$user_row['user_mods_lb'] = ($mod_row && (int) ($user_row['user_mods_lb'] ?? 0) === 1) ? 1 : 0;
+
+			// Its owner lookup throws before the session is written.
+			AUTH::begin_user_session($user_row);
+			$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
 		} catch (\Throwable $exception) {
-			$error['user'] = 'We were unable to process your login. Please try again later.';
-			prosper_log('login', 'Sign-in of user_id ' . (int) $user_row['user_id'] . ' not recorded: ' . $exception->getMessage());
+			$error['user'] = $not_completed_message;
+			$sign_in_not_completed = true;
+			prosper_log('login', 'Sign-in of user_id ' . (int) $user_row['user_id'] . ' not completed: ' . $exception->getMessage());
 		}
 	}
 
 	// Don't record throttled/CSRF-rejected attempts: no credentials were checked,
 	// and logging them would extend the rolling window and keep a legitimate user
 	// locked out indefinitely.
-	$login_success = empty($error) ? 1 : 0;
-	$should_log_attempt = !$rate_limited && $csrf_ok;
-	$login_log_stmt = $should_log_attempt
-		? $db->prepare('INSERT INTO 202_users_log (user_name, user_pass, ip_address, login_time, login_success, login_error, login_server, login_session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-		: false;
-	if ($login_log_stmt) {
-		$login_error_serialized = serialize($error);
-		$login_server_serialized = AUTH::login_audit_snapshot();
-		$login_session_serialized = ''; // never persist session contents (API keys, tokens) at rest
-		$redacted_password = '[filtered]';
-		$ip_address = $login_ip; // same client IP the throttle keys on, so counts line up
-		$login_time = time();
-		$login_log_stmt->bind_param(
-			'sssiisss',
-			$username,
-			$redacted_password,
-			$ip_address,
-			$login_time,
-			$login_success,
-			$login_error_serialized,
-			$login_server_serialized,
-			$login_session_serialized
-		);
-		if (!$login_log_stmt->execute()) {
-			prosper_log('login', 'Unable to write login log row: ' . $login_log_stmt->error);
+	if (!$rate_limited && $csrf_ok) {
+		$login_outcome = $sign_in_not_completed
+			? SignInOutcome::NotCompleted
+			: (empty($error) ? SignInOutcome::Passed : SignInOutcome::Failed);
+		try {
+			// $login_ip: the address the throttle keys on, so its counts line up.
+			SignInLog::on($db)->append($username, $login_ip, $login_outcome, $error, AUTH::login_audit_snapshot());
+		} catch (\Throwable $exception) {
+			prosper_log('login', 'Unable to write login log row: ' . $exception->getMessage());
 		}
-		$login_log_stmt->close();
-	} elseif ($should_log_attempt) {
-		prosper_log('login', 'Unable to prepare login log statement: ' . $db->error);
 	}
 
 	if (empty($error) && $user_row) {
-		$mod_sql = "SHOW COLUMNS FROM 202_landing_pages LIKE 'leave_behind_page_url'";
-		$mod_row = memcache_mysql_fetch_assoc($mod_sql);
-		$user_row['user_mods_lb'] = ($mod_row && (int) ($user_row['user_mods_lb'] ?? 0) === 1) ? 1 : 0;
-
-		AUTH::begin_user_session($user_row);
-		$_SESSION['user_mods_lb'] = $user_row['user_mods_lb'];
 		prosper_log('login', 'Login succeeded for user_id ' . (int) $user_row['user_id']);
 
 		if (isset($_POST['remember_me'])) {
