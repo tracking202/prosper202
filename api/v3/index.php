@@ -205,17 +205,18 @@ try {
         // Worker egress), so counting every exchange let junk requests turn
         // real ones away. A good exchange is a 256-bit one-time code plus its
         // verifier, so it is never refused; a failure past the limit is
-        // answered 429.
+        // answered 429 (AiConnect::tokenWithFailureBudget: a source past its
+        // budget is refused before the work unless its code is a live one).
         $connectStore = new ServerStateStore();
-        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, $connectStore))
-            ->token($payload);
-        if ($connectStatus >= 400) {
-            $retryAfter = $connectStore->softIpRateLimit('connect-token-failed', 30, 60);
-            if ($retryAfter !== null) {
-                header('Retry-After: ' . $retryAfter);
-                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
-                exit;
-            }
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
+            $connectStore,
+            $payload,
+            fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
+        );
+        if ($connectStatus === 429) {
+            header('Retry-After: ' . (int) $connectBody['retry_after_seconds']);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, $connectBody);
+            exit;
         }
         Bootstrap::jsonResponse($connectBody, $connectStatus);
         exit;

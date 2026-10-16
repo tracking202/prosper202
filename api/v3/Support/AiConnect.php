@@ -257,6 +257,56 @@ final class AiConnect
         return $code;
     }
 
+    /** Failed exchanges counted per source address, and the window they are counted in. */
+    public const FAILURE_BUDGET = 30;
+    public const FAILURE_WINDOW = 60;
+
+    /**
+     * POST /connect/token under its failure budget. Only failures are
+     * counted: the MCP server's exchanges can share an address with anyone
+     * else's (a proxy, Cloudflare's Worker egress), so a good exchange is
+     * never refused. A source past its budget is refused before the work
+     * unless it presents a live approval, so junk spends nothing; a failure
+     * that takes a source past it is answered 429 too. A limiter that cannot
+     * answer is logged and serves, as the other public intakes' limiters do:
+     * the code and its verifier are the guard, not the count.
+     *
+     * @param array<string, mixed> $payload
+     * @param callable(): array{0: int, 1: array<string, mixed>} $exchange
+     * @return array{0: int, 1: array<string, mixed>}
+     */
+    public static function tokenWithFailureBudget(
+        ServerStateStore $store,
+        array $payload,
+        callable $exchange,
+        ?string $peerIp = null
+    ): array {
+        $limited = static fn (int $after): array => [429, ['retry_after_seconds' => $after]];
+        $bucket = 'connect-token-failed';
+        $over = $store->softIpRateLimitExceeded($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+        if ($over !== null) {
+            $code = $payload['code'] ?? null;
+            $live = false;
+            try {
+                $live = is_string($code) && $store->hasConnectCode(hash('sha256', $code));
+            } catch (\Throwable $e) {
+                error_log('p202: AI connect: approvals unreadable for the budget check: ' . $e->getMessage());
+                $live = true; // the exchange itself reads them strictly and refuses
+            }
+            if (!$live) {
+                return $limited($over);
+            }
+        }
+        [$status, $body] = $exchange();
+        if ($status >= 400) {
+            $after = $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+            if ($after !== null) {
+                return $limited($after);
+            }
+        }
+        return [$status, $body];
+    }
+
     /**
      * POST /connect/token, after ConnectController refused unknown keys.
      * Returns [status, body]. The licence is decided here, before any key

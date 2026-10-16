@@ -165,10 +165,25 @@ func TestMCPShapeResult(t *testing.T) {
 		{"characters, not bytes", mcpCallResult{Stdout: []byte(fits)}, true, false, "éé"},
 		{"a write too big still succeeded", mcpCallResult{Stdout: []byte(big)}, false, false, "The change was made"},
 	} {
-		res := mcpShapeResult(tc.in, tc.readOnly)
+		res := mcpShapeResult(tc.in, tc.readOnly, false)
 		if res.IsError != tc.isError || !strings.Contains(mcpResultText(res), tc.want) {
 			t.Errorf("%s: got %v %q", tc.name, res.IsError, mcpResultText(res))
 		}
+	}
+}
+
+// Under --staged a write only proposes: an answer too big to show must not
+// say the change was made, and names the proposal.
+func TestMCPStagedWriteTooBigSaysItWasProposed(t *testing.T) {
+	big := `{"data":{"change_id":"chg_1a2b3c","status":"staged","preview":"` + strings.Repeat("x", mcpMaxResultChars) + `"}}`
+	res := mcpShapeResult(mcpCallResult{Stdout: []byte(big)}, false, true)
+	text := mcpResultText(res)
+	if res.IsError || strings.Contains(text, "The change was made") || !strings.Contains(text, "proposed, not made") ||
+		!strings.Contains(text, `"change_id":"chg_1a2b3c"`) {
+		t.Fatalf("staged oversize answer: %v %q", res.IsError, text)
+	}
+	if !json.Valid([]byte(text)) {
+		t.Fatalf("not JSON: %q", text)
 	}
 }
 

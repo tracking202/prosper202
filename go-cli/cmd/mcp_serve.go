@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	osexec "os/exec"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -137,7 +138,7 @@ func newMCPServer(policy mcpServerPolicy) (*mcp.Server, error) {
 			if err != nil {
 				return mcpRunFailure(name, readOnly, err), nil
 			}
-			return mcpShapeResult(res, readOnly), nil
+			return mcpShapeResult(res, readOnly, policy.staged), nil
 		})
 	}
 	return server, nil
@@ -194,7 +195,10 @@ func mcpRunFailure(tool string, readOnly bool, err error) *mcp.CallToolResult {
 // the JSON error envelope from stderr on failure. An answer over
 // mcpMaxResultChars is not cut short: a read is refused with how to ask for
 // less; a write that succeeded is reported as succeeded, without the answer.
-func mcpShapeResult(r mcpCallResult, readOnly bool) *mcp.CallToolResult {
+// mcpChangeIDInAnswer finds the proposal's id in a staged write's answer.
+var mcpChangeIDInAnswer = regexp.MustCompile(`"change_id"\s*:\s*"(chg_[A-Za-z0-9]{1,64})"`)
+
+func mcpShapeResult(r mcpCallResult, readOnly, staged bool) *mcp.CallToolResult {
 	out := strings.TrimSpace(string(r.Stdout))
 	errText := strings.TrimSpace(string(r.Stderr))
 	if r.ExitCode != 0 {
@@ -215,6 +219,21 @@ func mcpShapeResult(r mcpCallResult, readOnly bool) *mcp.CallToolResult {
 		out = `{"ok":true}`
 	}
 	if size := utf8.RuneCountInString(out) + utf8.RuneCountInString(errText); size > mcpMaxResultChars {
+		if !readOnly && staged {
+			// Under --staged a write records a proposal; nothing changed yet.
+			id := ""
+			if m := mcpChangeIDInAnswer.FindStringSubmatch(out); m != nil {
+				id = m[1]
+			}
+			body, err := json.Marshal(map[string]interface{}{
+				"ok": true, "staged": true, "change_id": id,
+				"note": fmt.Sprintf("The change was proposed, not made: it waits for the user to apply it. Its answer is %d characters, too long to show; look at the proposal with change_show.", size),
+			})
+			if err != nil {
+				return mcpErrorResult("the proposal was recorded, but its summary could not be encoded", "server", "List proposals with change_list.")
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}
+		}
 		if !readOnly {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
 				`{"ok":true,"note":"The change was made. Its answer is %d characters, too long to show; look at the result with the matching get or list tool."}`, size)}}}
