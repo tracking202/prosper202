@@ -53,7 +53,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up PHP 7.4 for the 1.9.55 installer
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '7.4'
           extensions: mysqli, mbstring, curl, xml, ctype, json
@@ -65,7 +65,7 @@ jobs:
           php7.4 -r 'echo PHP_VERSION, PHP_EOL; exit(extension_loaded("mysqli") ? 0 : 1);'
 
       - name: Set up PHP 8.3 for this checkout
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.3'
           # See php-unit.yml for why the procedural `memcache` extension is disabled.
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload the servers' logs and pages
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: upgrade-equals-install
           path: |
