@@ -33,16 +33,36 @@ final class MysqlErrorArgsTest extends TestCase
      */
     public function testARedactionThatFailsIsNamedNotEmpty(): void
     {
-        $code = 'require ' . var_export(dirname(__DIR__, 2) . '/202-config/mysql-error-args.php', true) . ';'
-            . ' echo p202RedactedStatement("SELECT a,   b FROM t WHERE x = 1 " . str_repeat("AND z = 3 ", 80));';
-        $run = static fn (int $limit): string => (string) shell_exec(escapeshellarg(PHP_BINARY)
-            . ' -d pcre.jit=0 -d pcre.backtrack_limit=' . $limit . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        $run = static function (int $limit, string $statement): string {
+            $code = 'require ' . var_export(dirname(__DIR__, 2) . '/202-config/mysql-error-args.php', true) . ';'
+                . ' echo p202RedactedStatement(' . var_export($statement, true) . ');';
 
-        $failed = $run(1);
-        self::assertStringStartsWith('(a statement of 833 bytes, not shown: ', $failed, $failed);
-        $shown = $run(1000000);
+            return (string) shell_exec(escapeshellarg(PHP_BINARY) . ' -d pcre.jit=0 -d pcre.backtrack_limit=' . $limit
+                . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        };
+        // Each reaches a different pattern before the limit stops it: the
+        // whitespace collapse, the cut where two readings of a quote part, and
+        // the cut to length that keeps a character whole.
+        $statements = [
+            'SELECT a,   b FROM t WHERE x = 1 ' . str_repeat('AND z = 3 ', 80),
+            "SELECT 'a\\', k='s3cr3t'",
+            str_repeat('é', 400),
+        ];
+        foreach ($statements as $statement) {
+            $failed = $run(1, $statement);
+            self::assertStringStartsWith(
+                '(a statement of ' . strlen($statement) . ' bytes, not shown: ',
+                $failed,
+                $statement . ' => ' . $failed
+            );
+        }
+        $shown = $run(1000000, $statements[0]);
         self::assertStringStartsWith('SELECT a, b FROM t WHERE x = 1 AND z = 3', $shown);
         self::assertSame(500, strlen($shown), 'cut to 500 bytes');
+        self::assertSame('SELECT ?…', $run(1000000, $statements[1]), 'only what both readings keep');
+        $multibyte = $run(1000000, $statements[2]);
+        self::assertLessThanOrEqual(500, strlen($multibyte));
+        self::assertTrue(mb_check_encoding($multibyte, 'UTF-8'), 'no character cut in half');
     }
 
     public function testAConnectionAloneIsTheConnectionNotAStatement(): void

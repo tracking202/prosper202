@@ -416,13 +416,11 @@ if ($cloaking_on === true) {
 // signed customer id): captured now, because the cookie has to go out with
 // the redirect, and linked after the click is stored. Consent withheld —
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
-// A tracker with no campaign has NULL there, which leaves capture on (the
-// column's default); anything but '1' or '0' reads as off.
+// A tracker with no campaign leaves capture on; one whose campaign is not the
+// account's, or a setting that is neither '1' nor '0', reads as off.
 $clickIdentity = p202ClickIdentity(
 	$_GET,
-	\Prosper202\Identity\RequestSignals::campaignAllows(
-		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
-	)
+	\Prosper202\Identity\RequestSignals::trackerRowAllows($tracker_row)
 );
 
 // Helper: compute remaining click data and record

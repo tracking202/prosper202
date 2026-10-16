@@ -85,6 +85,8 @@ AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 // advanced landing page's click takes its campaign and payout from the
 // tracker, so another account's tracker recorded this account's click under
 // that account's campaign, at its payout.
+$raTrackerNamed = ClickRequest::string($_GET, 't202id') !== '';
+$raTrackerRow = null;
 $raTrackerId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 't202id'));
 if ($raTrackerId !== null) {
     try {
@@ -94,6 +96,7 @@ if ($raTrackerId !== null) {
         record_mysql_error($db, 'reading tracker ' . $raTrackerId, $raReadError->getMessage());
     }
     if ($tracker_row2 !== null) {
+		$raTrackerRow = $tracker_row2;
 		$tracker_row = array_merge($tracker_row, $tracker_row2);
 	}
 }
@@ -341,7 +344,11 @@ $mysql['click_redirect_site_url_id'] = '0';
 // campaign's identity capture is off.
 $clickIdentity = p202ClickIdentity(
 	$_GET,
-	\Prosper202\Identity\RequestSignals::campaignAllows(array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null),
+	// The tracker's campaign decides, as on landing.php: no tracker named is
+	// no campaign (on); one named that is not the account's is off.
+	$raTrackerNamed
+		? $raTrackerRow !== null && \Prosper202\Identity\RequestSignals::trackerRowAllows($raTrackerRow)
+		: \Prosper202\Identity\RequestSignals::campaignAllows(null),
 	// Minted only when the landing page is on the tracker's own site; a
 	// cross-site script request links by the page's p202lpid instead.
 	(string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '') !== 'cross-site'

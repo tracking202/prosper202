@@ -173,8 +173,9 @@ class ShellAccessCache
             glob($dir . '/*.checking') ?: []
         );
         // put()'s temp files, left by a process that stopped between the
-        // write and the rename: an hour is far longer than any write takes.
-        $orphanCutoff = time() - min($olderThanSeconds, self::ORPHAN_TMP_SECONDS);
+        // write and the rename: an hour is far longer than any write takes,
+        // whatever age the caller sweeps entries at.
+        $orphanCutoff = time() - self::ORPHAN_TMP_SECONDS;
         $tmpFiles = glob($dir . '/*.tmp') ?: [];
         foreach ([[$files, $cutoff], [$tmpFiles, $orphanCutoff]] as [$batch, $before]) {
             foreach ($batch as $file) {

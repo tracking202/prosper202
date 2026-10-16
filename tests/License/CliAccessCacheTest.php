@@ -218,6 +218,8 @@ final class CliAccessCacheTest extends TestCase
             self::assertFileDoesNotExist($orphan);
             self::assertFileExists($inFlight, 'a temp file a write may still rename is kept');
             self::assertTrue(CliAccessCache::read($this->key), 'the entry stays');
+            CliAccessCache::prune(0);
+            self::assertFileExists($inFlight, 'a sweep of every entry still leaves a temp file being written');
         } finally {
             @unlink($orphan);
             @unlink($inFlight);

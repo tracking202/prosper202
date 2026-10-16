@@ -90,6 +90,28 @@ final class RequestSignals
         return self::campaignAllows($row['tracker_setting'] ?? null);
     }
 
+    /**
+     * A click's capture from the tracker row its script read
+     * (ClickPathReads::tracker(), accountTracker()): a tracker that names no
+     * campaign leaves capture on; one whose campaign the account-tied join
+     * did not find (another account's) is a setting that cannot be read, so
+     * capture is off, as trackerAllows() decides for a landing page.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function trackerRowAllows(array $row): bool
+    {
+        $named = $row['tracker_campaign_named'] ?? null;
+        if ($named === null || (string) $named === '0') {
+            return self::campaignAllows(null);
+        }
+        if ((string) ($row['aff_campaign_id'] ?? '0') === '0') {
+            return false;
+        }
+
+        return self::campaignAllows($row['identity_signals'] ?? null);
+    }
+
     /** @param array<string, mixed> $cookies */
     public static function visitorCookie(array $cookies): ?string
     {

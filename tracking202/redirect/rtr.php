@@ -350,7 +350,11 @@ if ($default == true) {
 		} else {
 			// No default this account can send the visitor to (none set, or
 			// a campaign or page of another account): no click, as for a
-			// tracker with no redirector, rather than an empty Location.
+			// tracker with no redirector, rather than an empty Location. Logged,
+			// so an operator whose default went missing can find why.
+			error_log('rtr.php: redirector ' . (int) $rotator_row['rotator_id']
+				. ' has no default this account can send a visitor to; no click recorded');
+			p202NoStore();
 			die();
 		}
 	}

@@ -119,6 +119,14 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
             'aff_campaign_payout' => 1, 'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => time(),
             'identity_signals' => 0,
         ]);
+        foreach ([[3922, self::OWNER, 1], [3923, self::OTHER, 1]] as [$id, $user, $signals]) {
+            self::row('202_aff_campaigns', [
+                'aff_campaign_id' => $id, 'aff_campaign_id_public' => $id + 100000, 'user_id' => $user,
+                'aff_network_id' => 0, 'aff_campaign_name' => "campaign $id",
+                'aff_campaign_url' => "https://offer.example/$id?s=[[subid]]", 'aff_campaign_payout' => 1,
+                'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => time(), 'identity_signals' => $signals,
+            ]);
+        }
         $tracker = static fn (int $id, int $user, int $rotatorId, int $campaign, int $page) => self::row('202_trackers', [
             'tracker_id' => $id, 'user_id' => $user, 'tracker_id_public' => $id + 100000,
             'aff_campaign_id' => $campaign, 'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => $page,
@@ -130,6 +138,8 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         $tracker(3934, self::OWNER, 0, 3921, 3903);
         $tracker(3935, self::OTHER, 0, 0, 0);
         $tracker(3936, self::OWNER, 0, 0, 3903);
+        $tracker(3937, self::OWNER, 0, 3922, 0);
+        $tracker(3938, self::OWNER, 0, 3923, 0);
     }
 
     protected function setUp(): void
@@ -141,10 +151,11 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
     }
 
     /** @return array{int, string, string} status, headers, body */
-    private static function get(string $path): array
+    private static function get(string $path, string $referer = ''): array
     {
         $ch = curl_init(self::$base . $path);
         curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true, CURLOPT_TIMEOUT => 20,
+            CURLOPT_REFERER => $referer,
             CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36']);
         $out = (string) curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
@@ -160,6 +171,28 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
             ->fetch_row()[0];
     }
 
+    /** The site URLs the newest click of the account stored, by column. */
+    private static function newestClickSites(): array
+    {
+        $db = self::requireScratch();
+        $row = $db->query('SELECT cs.* FROM 202_clicks AS c JOIN 202_clicks_site AS cs ON cs.click_id = c.click_id'
+            . ' WHERE c.user_id = ' . self::OWNER . ' ORDER BY c.click_id DESC LIMIT 1')->fetch_assoc();
+        self::assertIsArray($row, 'the click has its site row');
+        $urls = [];
+        foreach (['click_referer_site_url_id', 'click_outbound_site_url_id', 'click_redirect_site_url_id'] as $col) {
+            $address = $db->query('SELECT site_url_address FROM 202_site_urls WHERE site_url_id = '
+                . (int) $row[$col])->fetch_row();
+            $urls[$col] = $address[0] ?? null;
+        }
+
+        return $urls;
+    }
+
+    private static function cookieSet(string $headers, string $name): bool
+    {
+        return preg_match('~^Set-Cookie: ' . preg_quote($name, '~') . '=~mi', $headers) === 1;
+    }
+
     private function serverLog(): string
     {
         return "\nserver log:\n" . (string) @file_get_contents(self::$log);
@@ -168,10 +201,34 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
     public function testARotatorsOwnDefaultPageIsWhereTheVisitorGoes(): void
     {
         $before = self::clicks();
-        [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . (3932 + 100000));
+        $path = '/tracking202/redirect/rtr.php?t202id=' . (3932 + 100000) . '&c1=visit-1';
+        [$status, $headers] = self::get($path, 'https://referer.example/page?q=1');
         self::assertSame(302, $status, $headers . $this->serverLog());
         self::assertMatchesRegularExpression('~^Location: https://own\.example/lp\r?$~mi', $headers);
         self::assertSame($before + 1, self::clicks(), 'the click is recorded');
+        // The URLs the visit brought are stored, looked up uncached.
+        $sites = self::newestClickSites();
+        self::assertSame('https://referer.example/page?q=1', $sites['click_referer_site_url_id']);
+        self::assertStringContainsString('rtr.php?t202id=' . (3932 + 100000) . '&c1=visit-1', (string) $sites['click_outbound_site_url_id']);
+    }
+
+    /** dl.php: the visit's URLs are stored, and capture follows the tracker's campaign. */
+    public function testADirectLinkStoresTheVisitsUrlsAndCapturesForItsOwnCampaign(): void
+    {
+        $path = '/tracking202/redirect/dl.php?t202id=' . (3937 + 100000) . '&c1=visit-2';
+        [$status, $headers] = self::get($path, 'https://referer.example/dl?q=2');
+        self::assertSame(302, $status, $headers . $this->serverLog());
+        self::assertTrue(self::cookieSet($headers, 'p202vid'), 'capture on: the visitor id is set. ' . $headers);
+        $sites = self::newestClickSites();
+        self::assertSame('https://referer.example/dl?q=2', $sites['click_referer_site_url_id']);
+        self::assertStringContainsString('dl.php?t202id=' . (3937 + 100000) . '&c1=visit-2', (string) $sites['click_outbound_site_url_id']);
+        self::assertStringStartsWith('https://offer.example/3922?s=', (string) $sites['click_redirect_site_url_id']);
+    }
+
+    public function testADirectLinkToAnotherAccountsCampaignCapturesNothing(): void
+    {
+        [, $headers] = self::get('/tracking202/redirect/dl.php?t202id=' . (3938 + 100000));
+        self::assertFalse(self::cookieSet($headers, 'p202vid'), $headers . $this->serverLog());
     }
 
     public function testAnotherAccountsDefaultPageIsNoDefault(): void
@@ -190,6 +247,29 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         self::assertSame(200, $status, $headers . $this->serverLog());
         self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers);
         self::assertSame($before, self::clicks());
+        self::assertStringContainsString('redirector 3913 has no default this account can send a visitor to', $this->serverLog());
+    }
+
+    /** @return iterable<string, array{int, bool}> */
+    public static function advancedClicks(): iterable
+    {
+        yield 'the tracker\'s own campaign, capture on' => [3937, true];
+        yield 'no tracker of the account' => [3999, false];
+        yield 'a tracker whose campaign is another account\'s' => [3938, false];
+    }
+
+    /**
+     * record_adv.php, an advanced landing page's click: its tracker's
+     * campaign decides capture, as on landing.php.
+     *
+     * @dataProvider advancedClicks
+     */
+    public function testAnAdvancedPagesClickCapturesOnlyForATrackerItsAccountCanRead(int $tracker, bool $capture): void
+    {
+        [$status, $headers] = self::get('/tracking202/static/record_adv.php?lpip=' . (3903 + 100000)
+            . '&t202id=' . ($tracker + 100000));
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame($capture, self::cookieSet($headers, 'p202vid'), $headers);
     }
 
     /** @return iterable<string, array{string, string}> */

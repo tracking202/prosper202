@@ -77,6 +77,7 @@ final readonly class ClickPathReads
                     IFNULL(ta.text_ad_id, 0) AS text_ad_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
+                    tr.aff_campaign_id AS tracker_campaign_named,
                     ac.aff_campaign_rotate,
                     ac.aff_campaign_url,
                     ac.aff_campaign_url_2,
@@ -137,6 +138,7 @@ final readonly class ClickPathReads
                     tr.click_cpc,
                     tr.click_cloaking,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
+                    tr.aff_campaign_id AS tracker_campaign_named,
                     ac.aff_campaign_payout,
                     ac.identity_signals,
                     (SELECT GROUP_CONCAT(v.ppc_variable_id ORDER BY v.ppc_variable_id)
