@@ -76,6 +76,9 @@ jobs:
         uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Stated, not left to the default: the full output holds the review,
+          # and the job log is public.
+          show_full_output: false
           allowed_bots: 'claude'
           # Pin this to a different model from the one the general review runs,
           # otherwise the second opinion is the same opinion. The flag is
