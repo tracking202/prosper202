@@ -37,7 +37,7 @@ final class AiConnectFailureBudgetTest extends TestCase
         $ran = false;
         return AiConnect::tokenWithFailureBudget(
             $store,
-            ['code' => $code, 'code_verifier' => str_repeat('v', 50)],
+            $code,
             function () use ($status, &$ran): array {
                 $ran = true;
                 return [$status, ['data' => []]];

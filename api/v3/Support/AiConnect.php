@@ -274,13 +274,14 @@ final class AiConnect
      * that cannot answer is logged and serves, as the other public intakes'
      * limiters do: the code and its verifier are the guard, not the count.
      *
-     * @param array<string, mixed> $payload
+     * @param mixed $presentedCode the request's `code`, read only to ask
+     *        whether it is a live approval; the exchange reads the body
      * @param callable(): array{0: int, 1: array<string, mixed>} $exchange
      * @return array{0: int, 1: array<string, mixed>}
      */
     public static function tokenWithFailureBudget(
         ServerStateStore $store,
-        array $payload,
+        mixed $presentedCode,
         callable $exchange,
         ?string $peerIp = null
     ): array {
@@ -288,10 +289,9 @@ final class AiConnect
         $bucket = 'connect-token-failed';
         $over = $store->softIpRateLimitExceeded($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
         if ($over !== null) {
-            $code = $payload['code'] ?? null;
             $live = false;
             try {
-                $live = is_string($code) && $store->hasConnectCode(hash('sha256', $code));
+                $live = is_string($presentedCode) && $store->hasConnectCode(hash('sha256', $presentedCode));
             } catch (\Throwable $e) {
                 // An approval that cannot be read cannot be exchanged either
                 // (consumeConnectCode reads strictly), so this is no live one.

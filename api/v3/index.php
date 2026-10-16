@@ -207,10 +207,13 @@ try {
         // verifier, so it is never refused; a failure past the limit is
         // answered 429 (AiConnect::tokenWithFailureBudget: a source past its
         // budget is refused before the work unless its code is a live one).
+        // The budget check reads only the presented code; the body goes
+        // whole to ConnectController::token, which refuses unknown keys.
         $connectStore = new ServerStateStore();
+        $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
         [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
             $connectStore,
-            $payload,
+            $presentedCode,
             fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
         );
         if (($connectBody['rate_limited'] ?? false) === true) {
