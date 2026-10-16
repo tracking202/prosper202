@@ -872,6 +872,14 @@ class ServerStateStore implements QuotaStore
         return $found;
     }
 
+    /** Whether a live approval is stored under this code hash, read without using it up. */
+    public function hasConnectCode(string $codeHash): bool
+    {
+        $state = $this->readJsonFile($this->connectCodesPath(), ['items' => []], true);
+        $item = $state['items'][$codeHash] ?? null;
+        return is_array($item) && (int) ($item['expires_at'] ?? 0) >= time();
+    }
+
     /** @return array<int, array<string, mixed>> */
     public function listJobs(array $statuses = [], int $limit = 50): array
     {
@@ -1057,16 +1065,10 @@ class ServerStateStore implements QuotaStore
     public function softIpRateLimit(string $prefix, int $maxPerWindow, int $windowSeconds, ?string $peerIp = null): ?int
     {
         try {
-            $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
-            if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
-                // No validated peer (CLI, misconfigured SAPI): one shared
-                // bucket rather than an attacker-nameable one.
-                $ip = 'unknown';
-            }
             if (mt_rand(1, 100) === 1) {
                 $this->pruneStaleRateLimits(max(3600, $windowSeconds * 10));
             }
-            $rate = $this->consumeRateLimit($prefix . ':' . substr($ip, 0, 64), $maxPerWindow, $windowSeconds);
+            $rate = $this->consumeRateLimit(self::softIpBucket($prefix, $peerIp), $maxPerWindow, $windowSeconds);
             if (!$rate['allowed']) {
                 return max(1, (int)$rate['reset_at'] - time());
             }
@@ -1075,6 +1077,52 @@ class ServerStateStore implements QuotaStore
             error_log('p202: rate limiter unavailable, serving request: ' . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * softIpRateLimit()'s answer without counting this request: the
+     * retry-after seconds when the source has already used its window, else
+     * null. For an endpoint that counts only its failures, checked before
+     * the work so a source over its budget is refused before anything is
+     * spent. Soft in the same way: a limiter that cannot answer is logged
+     * and serves the request.
+     */
+    public function softIpRateLimitExceeded(
+        string $prefix,
+        int $maxPerWindow,
+        int $windowSeconds,
+        ?string $peerIp = null
+    ): ?int {
+        try {
+            $state = $this->readJsonFile(
+                $this->rateLimitPath(self::softIpBucket($prefix, $peerIp)),
+                ['window_start' => 0, 'count' => 0],
+                true
+            );
+            [$windowStart, $count] = [(int)($state['window_start'] ?? 0), (int)($state['count'] ?? 0)];
+            $resetAt = $windowStart + $windowSeconds;
+            if ($windowStart > 0 && time() < $resetAt && $count >= $maxPerWindow) {
+                return max(1, $resetAt - time());
+            }
+            return null;
+        } catch (\Throwable $e) {
+            error_log('p202: rate limiter unavailable, serving request: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The bucket of a soft per-source limit: the validated TCP peer, or one
+     * shared bucket when there is none (CLI, misconfigured SAPI) rather than
+     * an attacker-nameable one.
+     */
+    private static function softIpBucket(string $prefix, ?string $peerIp): string
+    {
+        $ip = $peerIp ?? (string)($_SERVER['REMOTE_ADDR'] ?? '');
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            $ip = 'unknown';
+        }
+        return $prefix . ':' . substr($ip, 0, 64);
     }
 
     /**

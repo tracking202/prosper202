@@ -4306,7 +4306,8 @@ paths:
         Performs the recorded write by re-dispatching it through the real
         route: validation, route authorization, and scope checks re-run
         against current state under the applier's credentials. Requires
-        the write scope of the change's area (for example `campaigns:write`).
+        the write scope of the change's area (for example `campaigns:write`);
+        a change whose area cannot be told requires `write` for every area.
         The staged→applied transition is atomic; a concurrent second apply
         gets 409. A failed apply returns the change to staged with the
         error recorded.
@@ -4323,7 +4324,12 @@ paths:
     post:
       tags: [StagedChanges]
       summary: Discard a staged change
-      description: Ends the proposal without performing it. Requires `staged-changes:stage`.
+      description: >-
+        Ends the proposal without performing it. Requires the write scope of
+        the change's area (as apply does), or the stage scope of that area
+        when the request bears the key that staged the change, which may
+        withdraw its own proposals. A change whose area cannot be told
+        requires `write` for every area, or `stage` from its own key.
       operationId: discardStagedChange
       responses:
         "200":
@@ -5792,7 +5798,10 @@ paths:
                           for this user (theirs, else the install owner's), trimmed and
                           lowercased first, as the licence service compares keys. The MCP
                           server checks it with the licence service; the key itself is
-                          never sent.
+                          never sent. It is the hash the install reports, so the check
+                          shows that the install presented the hash of a paid licence key,
+                          not that the key is this install's own; obtaining another
+                          account's hash requires that account's key.
         '400':
           description: >-
             invalid_request (a missing or malformed field) or invalid_grant
