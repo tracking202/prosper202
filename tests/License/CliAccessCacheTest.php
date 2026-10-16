@@ -203,6 +203,29 @@ final class CliAccessCacheTest extends TestCase
         }
     }
 
+    /** A temp file left by a write that never finished is swept once it is an hour old. */
+    public function testPruneSweepsAnOrphanedTempFile(): void
+    {
+        $path = (new \ReflectionMethod(CliAccessCache::class, 'path'))->invoke(null, $this->key);
+        CliAccessCache::write($this->key, true);
+        $orphan = $path . '.0123456789ab.tmp';
+        $inFlight = $path . '.ba9876543210.tmp';
+        file_put_contents($orphan, 'x');
+        file_put_contents($inFlight, 'x');
+        try {
+            touch($orphan, time() - CliAccessCache::ORPHAN_TMP_SECONDS - 60);
+            self::assertSame(1, CliAccessCache::prune());
+            self::assertFileDoesNotExist($orphan);
+            self::assertFileExists($inFlight, 'a temp file a write may still rename is kept');
+            self::assertTrue(CliAccessCache::read($this->key), 'the entry stays');
+            CliAccessCache::prune(0);
+            self::assertFileExists($inFlight, 'a sweep of every entry still leaves a temp file being written');
+        } finally {
+            @unlink($orphan);
+            @unlink($inFlight);
+        }
+    }
+
     public function testOneAskerPerKeyAcrossProcesses(): void
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the first claim wins');

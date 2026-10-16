@@ -39,6 +39,72 @@ final class ChatPassClient
     }
 
     /**
+     * What a pass is kept in the session for: everything request() sends,
+     * the version included, so an upgrade asks for a pass that reports the
+     * new version rather than reusing one that reports the old.
+     *
+     * @param array<string, mixed> $identity
+     * @throws \JsonException
+     */
+    public static function fingerprint(
+        array $identity,
+        string $installUrl,
+        string $passUrl,
+        string $version = PROSPER202_VERSION
+    ): string {
+        return hash('sha256', json_encode(
+            [self::body($identity, $installUrl, $version), $passUrl],
+            JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
+        ));
+    }
+
+    /**
+     * The session's record of a pass, kept for the request it answered.
+     *
+     * @param array{pass: string, chat_url: string, expires_at_s: int} $pass
+     * @return array<string, mixed>
+     */
+    public static function keep(string $fingerprint, array $pass): array
+    {
+        return ['for' => $fingerprint] + $pass;
+    }
+
+    /**
+     * A kept pass the page may hand out again, or null: one kept for this
+     * request (same fingerprint, so the same version) with more than an hour
+     * left.
+     *
+     * @return array{pass: string, chat_url: string, expires_at_s: int}|null
+     */
+    public static function keptPass(mixed $kept, string $fingerprint, int $now): ?array
+    {
+        if (
+            !is_array($kept)
+            || ($kept['for'] ?? null) !== $fingerprint
+            || !is_string($kept['pass'] ?? null)
+            || !is_string($kept['chat_url'] ?? null)
+            || !is_int($kept['expires_at_s'] ?? null)
+            || $kept['expires_at_s'] - 3600 <= $now
+        ) {
+            return null;
+        }
+
+        return ['pass' => $kept['pass'], 'chat_url' => $kept['chat_url'], 'expires_at_s' => $kept['expires_at_s']];
+    }
+
+    /**
+     * What request() sends: fingerprint() hashes the same, so a field added
+     * to the request is part of what a kept pass is for.
+     *
+     * @param array<string, mixed> $identity
+     * @return array<string, mixed>
+     */
+    private static function body(array $identity, string $installUrl, string $version): array
+    {
+        return ['identity' => ['p202_version' => $version] + $identity, 'install_url' => $installUrl];
+    }
+
+    /**
      * The identity goes with this install's version (p202_version), which
      * the portal keeps beside the install.
      *
@@ -50,7 +116,7 @@ final class ChatPassClient
     public function request(array $identity, string $installUrl): array
     {
         $body = json_encode(
-            ['identity' => ['p202_version' => PROSPER202_VERSION] + $identity, 'install_url' => $installUrl],
+            self::body($identity, $installUrl, PROSPER202_VERSION),
             JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
         );
         if ($body === false) {

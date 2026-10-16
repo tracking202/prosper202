@@ -284,13 +284,19 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertSame((string) self::$id['ownCampaign'], $named['tracker_campaign']);
         self::assertSame('0', $named['lp_setting']);
 
+        self::assertNotNull($named['tracker_found']);
+        self::assertSame((string) self::$id['ownCampaign'], $named['tracker_campaign_named']);
+
         $other = $reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 4);
         self::assertText($other);
         self::assertNull($other['tracker_campaign'], 'another account\'s tracker');
+        self::assertNull($other['tracker_found'], 'another account\'s tracker is not found');
 
         $stray = $reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 2);
         self::assertText($stray);
         self::assertNull($stray['tracker_campaign'], 'the account\'s tracker on another account\'s campaign');
+        self::assertNotNull($stray['tracker_found']);
+        self::assertNotNull($stray['tracker_campaign_named']);
 
         $none = $reads->landingPageCapture(self::PUBLIC + 1, null);
         self::assertText($none);
@@ -429,7 +435,7 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertNull($stray['tracker_campaign'], 'a tracker id of 0 names no tracker');
     }
 
-    public function testASetupRowIsKeptAndAMissingOneToo(): void
+    public function testASetupRowIsKeptAndAMissingOneIsNot(): void
     {
         $cache = new RecordingRowCache();
         $reads = self::reads($cache);
@@ -449,8 +455,32 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertNull($reads->offer(self::PUBLIC + 90));
         self::assertNull($reads->offer(self::PUBLIC + 90));
         $sets = array_values(array_filter($cache->calls, static fn (array $call): bool => $call[0] === 'set'));
-        self::assertCount(2, $sets, 'one read of each id; the miss is kept too');
-        self::assertNull($sets[1][2]);
+        self::assertCount(1, $sets, 'the row is kept; the miss is not');
+
+        // A record made after a miss is read at once, not after an expiry.
+        self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = ' . (self::PUBLIC + 90)
+            . ' WHERE aff_campaign_id = ' . self::$id['ownCampaign']);
+        try {
+            self::assertSame('own offer', $reads->offer(self::PUBLIC + 90)['aff_campaign_name'] ?? null);
+        } finally {
+            self::q('UPDATE 202_aff_campaigns SET aff_campaign_id_public = ' . (self::PUBLIC + 1)
+                . ' WHERE aff_campaign_id = ' . self::$id['ownCampaign']);
+        }
+    }
+
+    /** A capture row for a t202id that names no tracker of the page's account is not kept. */
+    public function testACaptureRowForATrackerNotFoundIsNotKept(): void
+    {
+        $cache = new RecordingRowCache();
+        $reads = self::reads($cache);
+        $sets = static fn (): int => count(array_filter($cache->calls, static fn (array $c): bool => $c[0] === 'set'));
+
+        self::assertNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 77)['tracker_found']);
+        self::assertNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 4)['tracker_found']);
+        self::assertSame(0, $sets(), 'an unknown and another account\'s tracker: nothing kept');
+        self::assertNotNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 1)['tracker_found']);
+        $reads->landingPageCapture(self::PUBLIC + 1, null);
+        self::assertSame(2, $sets(), 'a tracker found, and no tracker named, are kept');
     }
 
     public function testEachReadAndEachInstallKeepsItsOwnEntries(): void

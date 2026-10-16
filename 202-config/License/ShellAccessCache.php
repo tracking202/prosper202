@@ -145,6 +145,9 @@ class ShellAccessCache
         return $mtime !== false && $mtime <= time() && (time() - $mtime) <= $maxAgeSeconds;
     }
 
+    /** A temp file this old was left by a write that never finished. */
+    public const ORPHAN_TMP_SECONDS = 3600;
+
     /**
      * Drop entries and hold-off markers older than $olderThanSeconds. The web
      * sign-in writes an entry for every key a user submits and nothing else
@@ -164,18 +167,29 @@ class ShellAccessCache
         $cutoff = time() - $olderThanSeconds;
         // Two globs, not GLOB_BRACE: the flag is undefined on some libcs
         // (Alpine's musl), and this runs inside write().
-        $files = array_merge(
-            glob($dir . '/*.cache') ?: [],
-            glob($dir . '/*.unknown') ?: [],
-            glob($dir . '/*.checking') ?: []
-        );
-        foreach ($files as $file) {
-            if (is_link($file)) {
-                continue;
+        $list = static function (string $pattern) use ($dir): array {
+            $found = glob($dir . '/' . $pattern);
+            if ($found === false) {
+                error_log('ShellAccessCache: could not list ' . $pattern . ' in ' . $dir);
+                return [];
             }
-            $mtime = @filemtime($file);
-            if ($mtime !== false && $mtime < $cutoff && @unlink($file)) {
-                $removed++;
+            return $found;
+        };
+        $files = array_merge($list('*.cache'), $list('*.unknown'), $list('*.checking'));
+        // put()'s temp files, left by a process that stopped between the
+        // write and the rename: an hour is far longer than any write takes,
+        // whatever age the caller sweeps entries at.
+        $orphanCutoff = time() - self::ORPHAN_TMP_SECONDS;
+        $tmpFiles = $list('*.tmp');
+        foreach ([[$files, $cutoff], [$tmpFiles, $orphanCutoff]] as [$batch, $before]) {
+            foreach ($batch as $file) {
+                if (is_link($file)) {
+                    continue;
+                }
+                $mtime = @filemtime($file);
+                if ($mtime !== false && $mtime < $before && @unlink($file)) {
+                    $removed++;
+                }
             }
         }
         return $removed;

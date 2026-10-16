@@ -77,6 +77,7 @@ final readonly class ClickPathReads
                     IFNULL(ta.text_ad_id, 0) AS text_ad_id,
                     IFNULL(ppc.ppc_account_id, 0) AS ppc_account_id,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
+                    tr.aff_campaign_id AS tracker_campaign_named,
                     ac.aff_campaign_rotate,
                     ac.aff_campaign_url,
                     ac.aff_campaign_url_2,
@@ -137,6 +138,7 @@ final readonly class ClickPathReads
                     tr.click_cpc,
                     tr.click_cloaking,
                     IFNULL(ac.aff_campaign_id, 0) AS aff_campaign_id,
+                    tr.aff_campaign_id AS tracker_campaign_named,
                     ac.aff_campaign_payout,
                     ac.identity_signals,
                     (SELECT GROUP_CONCAT(v.ppc_variable_id ORDER BY v.ppc_variable_id)
@@ -372,7 +374,9 @@ final readonly class ClickPathReads
             'SELECT lp.landing_page_type,
                     lpc.identity_signals AS lp_setting,
                     trc.identity_signals AS tracker_setting,
-                    trc.aff_campaign_id AS tracker_campaign
+                    trc.aff_campaign_id AS tracker_campaign,
+                    tr.tracker_id AS tracker_found,
+                    tr.aff_campaign_id AS tracker_campaign_named
                FROM 202_landing_pages AS lp
                LEFT JOIN 202_aff_campaigns AS lpc
                       ON lpc.aff_campaign_id = lp.aff_campaign_id AND lpc.user_id = lp.user_id
@@ -385,7 +389,11 @@ final readonly class ClickPathReads
               LIMIT 1',
             'ii',
             // No tracker named: NULL, which equals nothing.
-            [$trackerPublicId !== null && $trackerPublicId > 0 ? $trackerPublicId : null, $publicId]
+            [$trackerPublicId !== null && $trackerPublicId > 0 ? $trackerPublicId : null, $publicId],
+            // The join answers a row for any t202id: one naming no tracker of
+            // the page's account is not kept, or every id a visitor sends
+            // would hold an entry.
+            static fn (array $row): bool => $trackerPublicId === null || $row['tracker_found'] !== null
         );
     }
 
@@ -460,9 +468,10 @@ final readonly class ClickPathReads
 
     /**
      * @param list<int|null> $params
+     * @param (callable(Row): bool)|null $keep whether a found row is kept
      * @return Row|null
      */
-    private function setupRow(string $sql, string $types, array $params): ?array
+    private function setupRow(string $sql, string $types, array $params, ?callable $keep = null): ?array
     {
         $key = $this->key($sql, $params);
         $hit = $this->cache->get($key);
@@ -473,8 +482,16 @@ final readonly class ClickPathReads
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $types, $params);
         $row = $this->conn->fetchOne($stmt);
-        $row = $row === null ? null : self::text($row);
-        $this->cache->set($key, $row);
+        if ($row === null) {
+            // Not kept: an id that names nothing would hold a cache entry for
+            // every id anyone sends, and one read before its record exists
+            // would stay missing until the entry expired.
+            return null;
+        }
+        $row = self::text($row);
+        if ($keep === null || $keep($row)) {
+            $this->cache->set($key, $row);
+        }
 
         return $row;
     }

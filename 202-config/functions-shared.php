@@ -53,6 +53,16 @@ function setCache(string $key, mixed $value, mixed $exp = null): bool
  * so a rollback after them left an entry naming no row, and every click to
  * that URL stored the dangling id until it expired. Run the transaction as
  * $work and an entry is written only once its row is committed.
+ *
+ * Work that ends the request (die() in an error page) neither returns nor
+ * throws, and exit runs no finally: its writes are dropped because the work
+ * never returned, and every later write is held too, shutdown work's
+ * included. On the error page that costs only the dropped writes:
+ * record_mysql_error() has rolled back and turned autocommit on before it
+ * writes (p202RecordMysqlErrorRow()). Where an exit leaves a transaction
+ * open instead, it stays open through the shutdown functions and is rolled
+ * back when the process ends (HeldWritesOpenTransactionIntegrationTest), so
+ * an id cached then could name a row that is never kept.
  */
 function p202WithHeldCacheWrites(callable $work): void
 {
@@ -634,7 +644,7 @@ function record_mysql_error(mixed $dbOrSql, mixed $sql = null, ?string $error = 
         $mysql['ip_id'] = (string) ($clickPath
             ? $locations->findOrCreateIp(p202StoredVisitorIp())
             : $locations->findOrCreateIp(\Prosper202\Http\VisitorIp::fromServer($_SERVER)));
-        $mysql['site_id'] = (string) $locations->findOrCreateSiteUrl(
+        $mysql['site_id'] = (string) $locations->findOrCreateClickSiteUrl(
             \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER)
         );
 
