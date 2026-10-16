@@ -333,6 +333,12 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
+        // The applier needs write access to the area the change touches; a
+        // propose-only (`stage`) key cannot apply its own proposals. Asked
+        // first: a key that may not apply changes nothing and learns no
+        // status from the refusal.
+        $this->requireChangeWrite($change);
+
         if (self::isStaleApplying($change)) {
             $this->failInterrupted($ownerId, $changeId);
         }
@@ -350,10 +356,6 @@ final class StagedChangesController
                 gmdate('c', (int)($change['expires_at_epoch'] ?? 0))
             ));
         }
-
-        // The applier needs write access to the area the change touches;
-        // a propose-only (`stage`) key cannot apply its own proposals.
-        $this->requireChangeWrite($change);
 
         // Status and expiry are re-checked inside the locked transition so a
         // concurrent apply/discard or an expiry crossing between the read
@@ -480,10 +482,6 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
-        if (self::isStaleApplying($change)) {
-            $this->failInterrupted($ownerId, $changeId);
-        }
-
         // Rejecting a proposal is for whoever could apply it (`<area>:write`,
         // including the documented `read,campaigns:write` approver key) and
         // for the key that proposed it, withdrawing its own proposal with
@@ -497,6 +495,11 @@ final class StagedChangesController
                 || ($area === '' && in_array('write', $this->auth->scopes(), true)));
         if (!$ownStage) {
             $this->requireChangeWrite($change);
+        }
+        // Only after the scope check: a key that may not discard changes
+        // nothing, a stale claim included.
+        if (self::isStaleApplying($change)) {
+            $this->failInterrupted($ownerId, $changeId);
         }
 
         $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {

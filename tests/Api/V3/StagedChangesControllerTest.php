@@ -215,6 +215,27 @@ final class StagedChangesControllerTest extends TestCase
         $this->assertSame('discarded', $approver->discard($theirs)['data']['status'], 'the approver key');
     }
 
+    /** A key that may not apply or discard leaves a stale claim as it is. */
+    public function testARefusedKeyChangesNothingOnAStaleClaim(): void
+    {
+        $id = $this->controller($this->authFor(5, '*', 'user', 'person-key'))
+            ->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $this->store->updateStagedChange(
+            5,
+            $id,
+            fn (array $c): array => ['status' => 'applying', 'applying_since' => time() - 86400] + $c
+        );
+        $reader = $this->controller($this->authFor(5, 'read', 'user', 'reader-key'));
+        foreach (['apply', 'discard'] as $act) {
+            try {
+                $act === 'apply' ? $reader->apply($id, fn () => ['data' => []]) : $reader->discard($id);
+                $this->fail("a read key could $act");
+            } catch (AuthException) {
+            }
+        }
+        $this->assertSame('applying', $this->store->getStagedChangeForUser(5, $id)['status'] ?? null);
+    }
+
     /** A proposal recorded before the staging key was kept needs write access to discard. */
     public function testAnOlderProposalWithNoKeyRecordNeedsWriteToDiscard(): void
     {
