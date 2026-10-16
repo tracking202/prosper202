@@ -80,6 +80,18 @@ final class ClickServerAuthAnswerTest extends TestCase
         }
     }
 
+    public function testThePreLoginKeyPageSaysWhenNoAnswerCame(): void
+    {
+        $page = (string)file_get_contents(self::root() . '/api-key-required.php');
+        self::assertStringContainsString(
+            "\$error = \$validation_result === false ? P202_ACCOUNT_KEY_UNCHECKED : "
+                . "'Invalid API key; check it and retry.';",
+            $page
+        );
+        self::assertStringContainsString('$validation_result = api_key_validate($api_key);', $page);
+        self::assertStringContainsString("require_once __DIR__ . '/202-config/functions-account-ui.php';", $page);
+    }
+
     public function testAFailureAnswerCarriesItsStatus(): void
     {
         $code = 'require ' . var_export(self::root() . '/202-config/functions-account-ui.php', true) . ';'

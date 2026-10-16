@@ -2,6 +2,7 @@
 declare(strict_types=1);
 include_once(__DIR__ . '/202-config/connect.php');
 include_once(__DIR__ . '/202-config/functions-tracking202.php');
+require_once __DIR__ . '/202-config/functions-account-ui.php';
 
 // Check if API key already exists in database
 $existing_key_check = $db->query("SELECT p202_customer_api_key FROM 202_users WHERE user_id='1' AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''");
@@ -59,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['api_key'])) {
 				$error = 'No user found. Please complete the installation process first.';
 			}
 		} else {
-			$error = 'Invalid API key. Please check your key and try again.';
+			$error = $validation_result === false ? P202_ACCOUNT_KEY_UNCHECKED : 'Invalid API key; check it and retry.';
 		}
 	}
 }
