@@ -1017,18 +1017,29 @@ function clickserver_api_key_validate($key): ?bool
         'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
     ]));
     $result = curl_exec($ch);
-    return clickserver_auth_answer(is_string($result) ? $result : null);
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    return clickserver_auth_answer(is_string($result) ? $result : null, $status);
 }
 
 /**
  * The auth service's answer read as clickserver_api_key_validate() reports
- * it: null for no body, a body that is not the service's JSON, or one that
- * lacks either verdict.
+ * it. A key the service rejects is invalid whatever else the answer holds or
+ * its status says; a verdict of valid counts only on a 2xx answer that holds
+ * both verdicts. Anything else (no body, a body that is not the service's
+ * JSON, a failure status, a verdict missing) is null: no answer.
  */
-function clickserver_auth_answer(?string $body): ?bool
+function clickserver_auth_answer(?string $body, int $status = 200): ?bool
 {
     $data = $body === null ? null : json_decode($body, true);
-    if (!is_array($data) || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
+    if (!is_array($data)) {
+        return null;
+    }
+    $rejected = static fn ($v): bool => $v === false || $v === 'false' || $v === 0 || $v === '0';
+    if (array_key_exists('isValidKey', $data) && $rejected($data['isValidKey'])) {
+        return false;
+    }
+    $answered = $status >= 200 && $status <= 299;
+    if (!$answered || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
         return null;
     }
     return $data['isValidKey'] == 'true' && $data['isValidDomain'] == 'true';

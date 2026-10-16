@@ -258,7 +258,7 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
     {
         $before = self::clicks();
         [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . (3931 + 100000));
-        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame(404, $status, $headers . $this->serverLog());
         self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers, 'no empty Location');
         self::assertSame($before, self::clicks(), 'no click is recorded');
     }
@@ -287,10 +287,22 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
     {
         $before = self::clicks();
         [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . (3933 + 100000));
-        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertSame(404, $status, $headers . $this->serverLog());
         self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers);
         self::assertSame($before, self::clicks());
         self::assertStringContainsString('redirector 3913 has no default this account can send a visitor to', $this->serverLog());
+    }
+
+    /** Every exit with nowhere to send the visitor answers 404 and records nothing, as dl.php does. */
+    public function testALinkThatLeadsNowhereIsNotFound(): void
+    {
+        foreach (['abc', '0', (string) (3999 + 100000), (string) (3937 + 100000)] as $id) {
+            $before = self::clicks();
+            [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . $id);
+            self::assertSame(404, $status, "t202id=$id: " . $headers . $this->serverLog());
+            self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers);
+            self::assertSame($before, self::clicks(), "t202id=$id");
+        }
     }
 
     /** @return iterable<string, array{int, bool}> */
@@ -333,6 +345,9 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         yield 'a malformed id' => ['&t202id=abc', 'false'];
         yield 'a tracker with no campaign' => ['&t202id=' . (3936 + 100000), 'true'];
         yield 'no tracker named' => ['', 'true'];
+        // A list names a tracker no id can be read from, so capture is off
+        // where the same tracker sent as a string would leave it on.
+        yield 'a tracker sent as a list' => ['&t202id[]=' . (3936 + 100000), 'false'];
     }
 
     /** @dataProvider trackers */

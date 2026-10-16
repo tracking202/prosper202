@@ -160,6 +160,9 @@ final class CachedDecoratorTest extends TestCase
         self::assertSame([$domainKey], $cache->writtenKeys(), 'the second lookup reads the domain\'s entry');
         self::assertSame($id, $cached->findOrCreateSiteUrl($url));
         self::assertSame([$domainKey, md5('url-id' . $url . 'h')], $cache->writtenKeys());
+        // A domain is kept a day, every other id for the cache's own lifetime.
+        self::assertSame(86400, $cache->ttls[$domainKey]);
+        self::assertNull($cache->ttls[md5('url-id' . $url . 'h')]);
     }
 
     public function testEmptyValuesSkipCacheAndReturnZero(): void

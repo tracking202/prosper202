@@ -137,8 +137,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	// work. The key is read only from the posted field and sent only to the
 	// service — never placed in a redirect, header or log line.
 	$license_ok = false;
+	$typed_license_key = install_typed_license_key($_POST);
 	if ($csrf_ok) {
-		$license_ok = install_license_key_is_valid(api_key_validate((string) ($_POST['user_api'] ?? '')));
+		$license_ok = install_license_key_is_valid(api_key_validate($typed_license_key));
 		if (!$license_ok && ($error['general'] ?? '') === '') {
 			$error['general'] = '<div class="error">We couldn\'t confirm that license key with my.tracking202.com. <a href="' . get_absolute_url() . '202-config/get_apikey.php">Fetch your key again</a>, then submit once more.</div>';
 		}
@@ -155,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		$user_email         = (string) ($_POST['user_email'] ?? '');
 		$user_name          = (string) ($_POST['user_name'] ?? '');
 		$user_timezone      = (string) ($_POST['user_timezone'] ?? '');
-		$user_api           = (string) ($_POST['user_api'] ?? '');
+		$user_api           = $typed_license_key;
 		$user_time_register = time();
 
 		// hash_user_pass() (password_hash/bcrypt) is always available via

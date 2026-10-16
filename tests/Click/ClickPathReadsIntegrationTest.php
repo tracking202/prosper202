@@ -496,7 +496,24 @@ final class ClickPathReadsIntegrationTest extends TestCase
         self::assertCount(3, $keys);
         self::assertCount(3, array_unique($keys));
         foreach ($keys as $key) {
-            self::assertMatchesRegularExpression('/\Ap202-row-[0-9a-f]{64}\z/', $key);
+            self::assertMatchesRegularExpression('/\Ap202-row2-[0-9a-f]{64}\z/', $key);
         }
+    }
+
+    /**
+     * 1.9.77 kept misses under `p202-row-`: after an upgrade, a miss kept
+     * there must not answer for a record that exists.
+     */
+    public function testAMissKeptBeforeTheUpgradeIsNotServed(): void
+    {
+        $probe = new RecordingRowCache();
+        self::reads($probe)->tracker(self::PUBLIC + 1);
+        $sets = array_values(array_filter($probe->calls, static fn (array $call): bool => $call[0] === 'set'));
+        self::assertCount(1, $sets);
+        $old = preg_replace('/\Ap202-row2-/', 'p202-row-', $sets[0][1]);
+
+        $upgraded = new RecordingRowCache();
+        $upgraded->set($old, null);
+        self::assertNotNull(self::reads($upgraded)->tracker(self::PUBLIC + 1));
     }
 }

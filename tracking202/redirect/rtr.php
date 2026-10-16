@@ -4,9 +4,13 @@ use Prosper202\Click\ClickRequest;
 use Prosper202\Click\DynamicBid;
 use UAParser\Parser;
 
-#only allow numeric id, reject 0 as invalid
+#only allow numeric id, reject 0 as invalid. Every exit that has nowhere to
+# send the visitor answers 404, as dl.php does for a tracker it cannot find.
 $tracker_id = $_GET['t202id'] ?? '';
-if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) die();
+if (!is_numeric($tracker_id) || (int)$tracker_id <= 0) {
+	http_response_code(404);
+	die();
+}
 
 // No outage fallback: the URL a redirector sends to is built for one click
 // (its subid), so there is none to keep for the next visitor, and without the
@@ -39,6 +43,7 @@ if ($rtrTrackerId !== null) {
 // Guard BEFORE dereferencing: an id that names no tracker has nowhere to
 // send the visitor.
 if (!$rotator_row) {
+	http_response_code(404);
 	die();
 }
 
@@ -46,6 +51,7 @@ if (!$rotator_row) {
 // here by hand) has nowhere to send the visitor: no click, as for an
 // unknown tracker.
 if ((int) ($rotator_row['rotator_id'] ?? 0) <= 0) {
+	http_response_code(404);
 	die();
 }
 
@@ -355,6 +361,7 @@ if ($default == true) {
 			error_log('rtr.php: redirector ' . (int) $rotator_row['rotator_id']
 				. ' has no default this account can send a visitor to; no click recorded');
 			p202NoStore();
+			http_response_code(404);
 			die();
 		}
 	}
