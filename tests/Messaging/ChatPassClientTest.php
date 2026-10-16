@@ -37,6 +37,51 @@ final class ChatPassClientTest extends TestCase
         return (string) json_encode($answer);
     }
 
+    /** A kept pass is for one version: after an upgrade the next pass reports the new one. */
+    public function testAKeptPassIsForTheVersionItReports(): void
+    {
+        $identity = [
+            'api_key' => 'k', 'install_hash' => 'h', 'user_id' => 1, 'user_email' => 'a@b.c', 'user_name' => 'u',
+        ];
+        $url = 'https://t.example.com/';
+        $pass = 'https://portal.example.com/pass';
+        self::assertSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78'),
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78')
+        );
+        self::assertNotSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.77'),
+            \ChatPassClient::fingerprint($identity, $url, $pass, '1.9.78')
+        );
+        self::assertSame(
+            \ChatPassClient::fingerprint($identity, $url, $pass, PROSPER202_VERSION),
+            \ChatPassClient::fingerprint($identity, $url, $pass)
+        );
+
+        // The session's reuse: a pass kept under one version is not handed out
+        // when the install reports another.
+        $pass = ['pass' => 'p1', 'chat_url' => 'https://chat.example', 'expires_at_s' => 10000];
+        $kept = \ChatPassClient::keep(\ChatPassClient::fingerprint($identity, $url, $pass['chat_url'], '1.9.77'), $pass);
+        $now = 1000;
+        self::assertSame($pass, \ChatPassClient::keptPass(
+            $kept,
+            \ChatPassClient::fingerprint($identity, $url, $pass['chat_url'], '1.9.77'),
+            $now
+        ), 'the same version: reused');
+        self::assertNull(\ChatPassClient::keptPass(
+            $kept,
+            \ChatPassClient::fingerprint($identity, $url, $pass['chat_url'], '1.9.78'),
+            $now
+        ), 'another version: asked again');
+        self::assertNull(\ChatPassClient::keptPass($kept, $kept['for'], 10000 - 3600), 'an hour or less left: asked again');
+        foreach ([null, 'x', ['for' => $kept['for']], ['expires_at_s' => '10000'] + $kept, ['pass' => 7] + $kept] as $bad) {
+            self::assertNull(\ChatPassClient::keptPass($bad, $kept['for'], $now), var_export($bad, true));
+        }
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/ajax/chat-pass.php');
+        self::assertStringContainsString('ChatPassClient::keptPass($p202ChatCached, $p202ChatFingerprint, time())', $page);
+        self::assertStringContainsString('ChatPassClient::keep($p202ChatFingerprint, $p202ChatFresh)', $page);
+    }
+
     public function testAGoodAnswerIsTaken(): void
     {
         $expires = time() + 86400;

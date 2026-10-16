@@ -416,13 +416,11 @@ if ($cloaking_on === true) {
 // signed customer id): captured now, because the cookie has to go out with
 // the redirect, and linked after the click is stored. Consent withheld —
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
-// A tracker with no campaign has NULL there, which leaves capture on (the
-// column's default); anything but '1' or '0' reads as off.
+// A tracker with no campaign leaves capture on; one whose campaign is not the
+// account's, or a setting that is neither '1' nor '0', reads as off.
 $clickIdentity = p202ClickIdentity(
 	$_GET,
-	\Prosper202\Identity\RequestSignals::campaignAllows(
-		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
-	)
+	\Prosper202\Identity\RequestSignals::trackerRowAllows($tracker_row)
 );
 
 // Helper: compute remaining click data and record
@@ -460,25 +458,25 @@ $computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $tracki
 	// Compute site URLs
 	if ($tracker_row['user_pref_referer_data'] == 't202ref') {
 		if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_GET['t202ref']);
 		} else {
 			if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
-				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+				$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 			} else {
-				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+				$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 			}
 		}
 	} else {
 		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 		} else {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 		}
 	}
 	$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
 	$outbound_site_url = TrackingBaseUrl::requestUrl($_SERVER);
-	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+	$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
 	if ($cloaking_on && $cloaking_site_url !== '') {

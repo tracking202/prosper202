@@ -135,6 +135,56 @@ final class HeldCacheWritesTest extends TestCase
         self::assertSame([['keyword-id-a', 3, 2592000]], self::$written);
     }
 
+    /** Runs the hold in a child process; $exit ends the request inside the work. */
+    private static function heldRun(bool $exit): string
+    {
+        $script = tempnam(sys_get_temp_dir(), 'p202held');
+        file_put_contents($script, '<?php
+            require ' . var_export(__DIR__ . '/../Config/fixtures/lift-function.php', true) . ';
+            $shared = ' . var_export(__DIR__ . '/../../202-config/functions-shared.php', true) . ';
+            foreach (["setCache", "p202WithHeldCacheWrites"] as $name) {
+                eval(lift_function($shared, $name));
+            }
+            $GLOBALS["whatCache"] = "memcached";
+            $GLOBALS["memcache"] = new class {
+                public function set(string $k, mixed $v, mixed $e): bool { echo "written:$k\n"; return true; }
+            };
+            p202WithHeldCacheWrites(static function (): void {
+                setCache("inside", 1);
+                register_shutdown_function(static function (): void {
+                    echo "shutdown asked: " . var_export(setCache("at-shutdown", 1), true) . "\n";
+                });
+                if (' . var_export($exit, true) . ') {
+                    exit(0);
+                }
+            });
+        ');
+        try {
+            return (string) shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($script) . ' 2>&1');
+        } finally {
+            unlink($script);
+        }
+    }
+
+    /**
+     * Work that ends the request in die() leaves its writes held, shutdown
+     * work's too: the work's transaction is still open then
+     * (HeldWritesOpenTransactionIntegrationTest), so an id cached at shutdown
+     * could name a row that is never kept.
+     */
+    public function testWorkThatEndsTheRequestWritesNothingAfterIt(): void
+    {
+        $out = self::heldRun(true);
+        self::assertStringContainsString('shutdown asked: true', $out, 'the shutdown work asked to write: ' . $out);
+        self::assertStringNotContainsString('written:', $out, $out);
+
+        // The control: work that returns writes what it held, and shutdown
+        // work writes too, through the same child process.
+        $control = self::heldRun(false);
+        self::assertStringContainsString('written:inside', $control, $control);
+        self::assertStringContainsString('written:at-shutdown', $control, $control);
+    }
+
     public function testHoldingInsideAHoldIsRefusedAndTheOuterWritesAreKept(): void
     {
         \p202HeldTest_withHeld(static function (): void {

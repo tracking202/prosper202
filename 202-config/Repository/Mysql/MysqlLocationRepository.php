@@ -242,7 +242,15 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
         }
         $url = self::storedSiteUrl($url);
 
-        $domainId = $this->findOrCreateSiteDomain($url);
+        return $this->findOrCreateSiteUrlInDomain($this->findOrCreateSiteDomain($url), $url);
+    }
+
+    #[\Override]
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int
+    {
+        if ($url === '') {
+            return 0;
+        }
 
         return $this->ids->first(
             'SELECT site_url_id FROM 202_site_urls'

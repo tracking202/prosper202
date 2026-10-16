@@ -337,14 +337,25 @@ if ($default == true) {
 	// without an explicit type its synthetic default (type='url', redirect_url='')
 	// would resolve to an empty location and drop the click — so set the fields.
 	if (empty($rotator_row['aff_campaign_id'])) {
-		if (!empty($rotator_row['default_url'])) {
+		if ((string) ($rotator_row['default_url'] ?? '') !== '') {
 			$rotator_row['type'] = 'url';
 			$rotator_row['redirect_url'] = $rotator_row['default_url'];
-		} elseif (!empty($rotator_row['default_lp'])) {
+		} elseif ((string) ($rotator_row['landing_page_url'] ?? '') !== '') {
 			$rotator_row['type'] = 'lp';
-			// landing_page_url is already selected via the default_lp JOIN;
-			// the click names the page, as one a rule sends there does.
+			// landing_page_url comes from the default_lp JOIN, which is tied
+			// to the tracker's account (as in offrtr.php): a default page of
+			// another account reads as none. The click names the page, as
+			// one a rule sends there does.
 			$rotator_row['landing_page_id'] = $rotator_row['default_landing_page_id'] ?? 0;
+		} else {
+			// No default this account can send the visitor to (none set, or
+			// a campaign or page of another account): no click, as for a
+			// tracker with no redirector, rather than an empty Location. Logged,
+			// so an operator whose default went missing can find why.
+			error_log('rtr.php: redirector ' . (int) $rotator_row['rotator_id']
+				. ' has no default this account can send a visitor to; no click recorded');
+			p202NoStore();
+			die();
 		}
 	}
 	$default = redirect_process($db, $rotator_row, $rotator_row['ppc_account_id'], $rotator_row['click_cpc'], $rotator_row['rotator_id'], $GeoData, $ip_address, $user_id, $IspData, $user_keyword_searched_or_bidded);
@@ -540,15 +551,15 @@ if ($rule['aff_campaign_cloaking'] == 1) {
 //now lets get variables for clicks site
 //so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google.... 
 if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
-    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+    $click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 } else {
-    $click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+    $click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl((string) ($_SERVER['HTTP_REFERER'] ?? ''));
 }
 
 $mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 $mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
 if ($cloaking_on == true) {
@@ -591,21 +602,20 @@ if ($rule['aff_campaign_id'] != null) {
 // Identity signals (plan §6.2): the p202vid cookie, the p202lpid a
 // landing page sends, a signed customer id, linked once the click's rows
 // are committed. A rule that points at a bare URL has no campaign and
-// leaves capture on; a campaign whose setting cannot be read captures
-// nothing.
+// leaves capture on. dl.php and record_adv.php decide by the tracker's row
+// (RequestSignals::trackerRowAllows()), where a campaign of another account
+// reads as none; here the campaign id has already been through an
+// account-tied join (a rule's redirect to another account's campaign is
+// skipped as unusable, a default campaign of another account reads as no
+// default), so it is always the account's own. The setting is still read for
+// this account only, and a row this read cannot find captures nothing.
 $rtrCampaignAllows = true;
 if ((int) $rule['aff_campaign_id'] > 0) {
 	$rtrCampaignRow = memcache_mysql_fetch_assoc(
 		$db,
-		"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'"
+		"SELECT identity_signals FROM 202_aff_campaigns WHERE aff_campaign_id='" . $mysql['aff_campaign_id']
+			. "' AND user_id='" . $db->real_escape_string((string) $user_id) . "'"
 	);
-	// `?? '0'` turns a NULL setting into capture off. Today it never sees
-	// one: the column is NOT NULL DEFAULT '1' (CampaignTables). dl.php
-	// passes NULL through to campaignAllows(), which reads it as ON,
-	// because there NULL means "no campaign" (a LEFT JOIN miss). If the
-	// column is ever made nullable, this line and dl.php's must change
-	// together, or a campaign's NULL captures on one redirect path and
-	// not on the other.
 	$rtrCampaignAllows = is_array($rtrCampaignRow)
 		&& \Prosper202\Identity\RequestSignals::campaignAllows($rtrCampaignRow['identity_signals'] ?? '0');
 }

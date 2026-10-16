@@ -53,4 +53,10 @@ final class NullLocationRepository implements LocationRepositoryInterface
     {
         return 0;
     }
+
+    #[\Override]
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int
+    {
+        return 0;
+    }
 }
