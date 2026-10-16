@@ -528,7 +528,7 @@ class CapabilitiesController
             return $this->licenceChecks[$customerKey] = $this->awaitClaimantVerdict($customerKey);
         }
         try {
-            $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+            $result = $this->askLicenceService($customerKey);
             // The whole answer is recorded before the claim is released, so a
             // request waiting on it reads both verdicts, or the hold-off, and
             // never one without the other.
@@ -544,9 +544,29 @@ class CapabilitiesController
                 }
             }
         } finally {
-            ShellAccessCache::endCheck($customerKey);
+            $this->releaseClaim($customerKey);
         }
         return $this->licenceChecks[$customerKey] = $result;
+    }
+
+    /**
+     * The licence service's answer for a key, short timeouts: this runs on
+     * the request path. A seam LicenceCheckClaimTest answers through.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    protected function askLicenceService(string $customerKey): ?array
+    {
+        return ClickServerKeyValidator::check($customerKey, 2, 4);
+    }
+
+    /**
+     * Release the claim checkKey() took. A seam LicenceCheckClaimTest
+     * watches, to see what is recorded by the moment a waiter can read.
+     */
+    protected function releaseClaim(string $customerKey): void
+    {
+        ShellAccessCache::endCheck($customerKey);
     }
 
     /**

@@ -52,7 +52,7 @@ final class ClickServerAuthAnswerTest extends TestCase
         self::assertNull(p202_check_clickserver_key(''), 'an empty key removes the stored one, unchecked');
         $account = (string)file_get_contents(self::root() . '/202-account/account.php');
         self::assertStringContainsString(
-            "if ((\$csKeyError = p202_check_clickserver_key((string) \$_POST['clickserver_api_key'])) !== null) {",
+            "if ((\$csKeyError = p202_check_clickserver_key(\$csKey)) !== null) {",
             $account
         );
         $appstore = (string)file_get_contents(self::root() . '/202-appstore/index.php');
@@ -60,6 +60,33 @@ final class ClickServerAuthAnswerTest extends TestCase
         foreach ([$account, $appstore] as $page) {
             self::assertStringNotContainsString('!clickserver_api_key_validate(', $page);
         }
+    }
+
+    /** The ClickServer key form trims once, and checks and saves that one value. */
+    public function testTheClickServerKeyCheckedIsTheKeySaved(): void
+    {
+        $page = (string)file_get_contents(self::root() . '/202-account/account.php');
+        $start = strpos($page, "\$_POST['update_clickserver_api_key']");
+        self::assertIsInt($start);
+        $end = strpos($page, "if (!empty(\$_POST['", $start + 10);
+        self::assertIsInt($end);
+        $branch = substr($page, $start, $end - $start);
+        $assign = "\$mysql['clickserver_api_key'] = \$db->real_escape_string("
+            . "\$csKey = trim((string) \$_POST['clickserver_api_key']));";
+        self::assertSame(1, substr_count($branch, $assign), 'trimmed once');
+        $rest = str_replace($assign, '', $branch);
+        self::assertSame(0, preg_match('/\$csKey\s*=(?!=)/', $rest), 'and not assigned again');
+        foreach (
+            [
+                'p202_check_clickserver_key($csKey)',
+                "\$mysql['clickserver_api_key'] = \$db->real_escape_string(\$csKey);",
+                "if (\$slack && \$csKey != (\$user_row['clickserver_api_key'] ?? '')) {",
+            ] as $use
+        ) {
+            self::assertStringContainsString($use, $branch);
+        }
+        // Only the masked-key test reads the posted value besides the trim.
+        self::assertSame(2, substr_count($branch, "\$_POST['clickserver_api_key']"));
     }
 
     public function testTheRequestIsEncodedBoundedAndFollowsNoRedirect(): void

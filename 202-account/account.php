@@ -520,17 +520,17 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 		p202_account_redirect($clickserverReturn);
 	}
 
-	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+	$mysql['clickserver_api_key'] = $db->real_escape_string($csKey = trim((string) $_POST['clickserver_api_key']));
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-		if (($csKeyError = p202_check_clickserver_key((string) $_POST['clickserver_api_key'])) !== null) {
+		if (($csKeyError = p202_check_clickserver_key($csKey)) !== null) {
 			$keyErrors['clickserver_api_key'] = $csKeyError;
 		}
 
 		if (!$keyErrors || $mysql['clickserver_api_key'] == '') {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+			$mysql['clickserver_api_key'] = $db->real_escape_string($csKey);
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`clickserver_api_key`='" . $mysql['clickserver_api_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
@@ -538,7 +538,7 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 			if (!$clickserverKeySaved) {
 				p202_account_flash('bad', 'The ClickServer API key could not be saved; try again.');
 			} else {
-				if ($slack && $_POST['clickserver_api_key'] != ($user_row['clickserver_api_key'] ?? '')) {
+				if ($slack && $csKey != ($user_row['clickserver_api_key'] ?? '')) {
 					$slack->push('user_updated_clickserver_api_key', ['user' => $username]);
 				}
 				p202_account_flash('ok', 'You have updated your Prosper202 ClickServer API Key.');

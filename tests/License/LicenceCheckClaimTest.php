@@ -142,6 +142,64 @@ final class LicenceCheckClaimTest extends TestCase
         self::assertTrue($this->controller()->cliAccess(), 'unknown lets the CLI through, at once');
     }
 
+    /**
+     * The real checkKey(), with the service's answer faked: by the moment it
+     * releases the claim, everything a waiter will read is recorded (both
+     * verdicts, or both hold-offs). Released first, a waiter could read one
+     * verdict without the other, or nothing at all.
+     *
+     * @dataProvider answers
+     * @param array{valid: bool, paid: ?bool}|null $answer
+     * @param array{shell: ?bool, cli: ?bool, shellHeld: bool, cliHeld: bool} $atRelease
+     */
+    public function testTheClaimantRecordsItsWholeAnswerBeforeItReleases(?array $answer, array $atRelease): void
+    {
+        $db = $this->createMysqliMock([
+            'SELECT p202_customer_api_key FROM 202_users' => [['p202_customer_api_key' => $this->key]],
+        ]);
+        $controller = new class ($db, 7, $answer) extends CapabilitiesController {
+            /** @var array<string, mixed>|null */
+            public ?array $seen = null;
+
+            /** @param array{valid: bool, paid: ?bool}|null $answer */
+            public function __construct(\mysqli $db, int $userId, private readonly ?array $answer)
+            {
+                parent::__construct($db, $userId);
+            }
+
+            protected function askLicenceService(string $customerKey): ?array
+            {
+                return $this->answer;
+            }
+
+            protected function releaseClaim(string $customerKey): void
+            {
+                // The first release is the moment a waiter can read.
+                $this->seen ??= [
+                    'shell' => ShellAccessCache::readVerdict($customerKey),
+                    'cli' => CliAccessCache::readVerdict($customerKey),
+                    'shellHeld' => ShellAccessCache::recentlyUnknown($customerKey),
+                    'cliHeld' => CliAccessCache::recentlyUnknown($customerKey),
+                ];
+                parent::releaseClaim($customerKey);
+            }
+        };
+        $controller->cliAccess();
+        self::assertSame($atRelease, $controller->seen, 'what a waiter could read when the claim went');
+        self::assertFalse(ShellAccessCache::checkInProgress($this->key), 'and the claim was released');
+    }
+
+    /** @return iterable<string, array{?array<string, ?bool>, array<string, ?bool>}> */
+    public static function answers(): iterable
+    {
+        $seen = static fn (?bool $shell, ?bool $cli, bool $shellHeld, bool $cliHeld): array
+            => ['shell' => $shell, 'cli' => $cli, 'shellHeld' => $shellHeld, 'cliHeld' => $cliHeld];
+        yield 'paid' => [['valid' => true, 'paid' => true], $seen(true, true, false, false)];
+        yield 'not paid' => [['valid' => true, 'paid' => false], $seen(true, false, false, false)];
+        yield 'paid unknown' => [['valid' => true, 'paid' => null], $seen(true, null, false, true)];
+        yield 'no answer' => [null, $seen(null, null, true, true)];
+    }
+
     public function testAKeyRowThatDoesNotComeBackIsUnknown(): void
     {
         $controller = new CapabilitiesController($this->createMysqliMock([]), 7);
