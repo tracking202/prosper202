@@ -127,6 +127,8 @@ var searchTasks = []searchTask{
 		Phrases: []string{"multi touch attribution", "attribution report"}},
 	{Run: "p202 system login-log",
 		Phrases: []string{"sign-in attempts", "login history", "failed logins"}},
+	{Run: "p202 system retention delete-before --dry-run",
+		Phrases: []string{"delete old clicks", "delete click data before a date", "purge old click data", "preview a click deletion"}},
 
 	// Pages and tasks with no command.
 	{Pages: []string{"Home"},
