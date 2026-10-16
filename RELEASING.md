@@ -109,7 +109,13 @@ This is the normal path. CI builds and publishes; you only tag.
    `$version_string` in `202-config/version.php` (e.g. `chore: release
    vX.Y.Z`), and every pull request for that version targets that branch.
    When the version is done, merge the version branch into master in one
-   pull request. See CLAUDE.md, "Branches".
+   pull request. See CLAUDE.md, "Branches". Before opening it, fetch and run
+   `scripts/check-release-merge.sh <version>`: the merge must give exactly
+   the version branch's tree. It would not if master holds a revert of the
+   version's own commits (as it did of 1.9.78's, #218 and #219): git counts
+   those commits as merged and keeps the revert, with nothing in the pull
+   request to show it. Bring master into the version branch with the revert
+   reverted, and run the check again.
 
 2. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 

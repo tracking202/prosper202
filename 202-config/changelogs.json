@@ -1,4 +1,23 @@
 {
+  "1.9.78": {
+    "version": "1.9.78",
+    "logs": [
+      "New: Connect an AI assistant (Claude, ChatGPT and other apps that use MCP) to your Prosper202. It reads your reports and campaigns and, only if you allow it, proposes or makes changes. You approve each connection on your own install, and remove it under Account, API keys. Needs Prosper202 ClickServer Pro",
+      "Changed: A tracking link that cannot reach the database answers 503 (try again later) where it has nowhere saved to send the visitor, instead of a broken page",
+      "Changed: Two Prosper202 installs that share one memcache server no longer read each other's cached entries",
+      "Changed: The sign-in log shows whether each attempt passed, failed or did not complete (also GET /system/login-log and p202 system login-log)",
+      "Changed: Get Links refuses a cloaking setting other than the three it offers",
+      "Fixed: Security. This release fixes security problems on tracking links, landing pages, redirectors and the account pages. Update as soon as you can, then check Account, User Management for users you do not recognise",
+      "Fixed: When the database refused a change or a read failed, several pages said the change was saved, showed an empty value (a cron job that never ran, no DNI networks, no ClickServer key) or stopped on a PHP error. They now say the save failed or show the database error page, and the error is recorded",
+      "Fixed: Direct links filled the offer URL's tokens ([[c1]] to [[c4]], [[t202kw]], [[gclid]], the UTM tokens and others) with nothing, and [[cpc]], [[payout]] and [[cpa]] wrongly. They carry the click's values again",
+      "Fixed: A redirector rule that sends visitors to a campaign with URL rotation always sent its first URL",
+      "Fixed: Keywords, place and ISP names, referring sites and device models longer than their columns were stored cut and stored again on every click, and an IPv6 visitor could be shown under another visitor's address",
+      "Fixed: Keywords, c1 to c4 and gclid values holding a quote or a backslash were stored with extra backslashes",
+      "Fixed: A redirector re-click lost the click's customer, text ad and first values",
+      "Fixed: A sign-in the database could not record ended on a blank page, and a right password could be logged as a failed sign-in",
+      "Fixed: The legacy reports API (v1 and v2) answered 500 for several reports and filters, and ignored a c1 to c4 filter of 0"
+    ]
+  },
   "1.9.77": {
     "version": "1.9.77",
     "logs": [

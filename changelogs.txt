@@ -1,6 +1,7 @@
 Release notes
 
 Version 1.9.78
+-- Fixed: Settings, Personal Settings, API Integrations, ClickServers, VIP Perks and the DNI progress check act on a failed database read or write. Settings' cron and report-rebuild status, the DNI networks list and its edit form, and the ClickServer key show the database error page instead of never, none or missing; a failed save of a key, an email, the automatic deletion setting or a Landing Page Optimizer setting says it was not saved (the optimizer's pairing and context-token settings were dropped without a word); the daily email's account read records its failure. AccountPagesQueryThroughTheLoggerTest holds 202-account/ to _mysqli_query(), so MysqliQueryResultIsTestedTest reads every result there
 -- Fixed: On Setup › Traffic Sources, a traffic source or account the database refused to save, change or delete was reported as done, or the page stopped with a PHP error where it checked that the source was the account's. Each now shows the database error page, and the error is recorded
 -- Fixed: Turning AutoCron on when the cron log could not be read turned it on as though your own cron job had never run; Settings now says AutoCron was not changed. A failed read of the settings themselves showed AutoCron and MaxMind as off; it shows the database error page
 -- Fixed: Account › Users said a user it could not read had been removed already, when removing or editing them, and refused a role change it could not check as "not authorized". Each now says the user or role could not be read just now

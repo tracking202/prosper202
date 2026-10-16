@@ -78,8 +78,8 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         $page = (string) file_get_contents(self::root() . '/202-account/account.php');
         $code = (string) preg_replace('/\s+/', '', implode('', array_map(static fn (\PhpToken $t): string => $t->is([T_COMMENT, T_DOC_COMMENT]) ? '' : $t->text, \PhpToken::tokenize($page))));
         foreach ([
-            "\$user_result=\$db->query(\$user_sql);if(\$user_result){\$_SESSION['user_api_key']=\$_POST['user_api_key'];\$_SESSION['user_cirrus_link']=\$_POST['user_api_key'];p202_account_flash('ok','YouhaveupdatedyourTracking202APIKey.');p202_account_redirect('202-account/account.php');}",
-            "\$user_result=\$db->query(\$user_sql);if(\$user_result){\$_SESSION['user_stats202_app_key']=\$_POST['user_stats202_app_key'];p202_account_flash('ok','YouhaveupdatedyourStats202AppKey.');p202_account_redirect('202-account/account.php');}",
+            "\$apiKeySaved=_mysqli_query(\$db,\$user_sql);if(!\$apiKeySaved){error_log('account.php:theTracking202APIkeywasnotsaved:'.\$db->error);p202_account_flash('bad','TheTracking202APIkeycouldnotbesaved;tryagain.');}else{\$_SESSION['user_api_key']=\$_POST['user_api_key'];\$_SESSION['user_cirrus_link']=\$_POST['user_api_key'];p202_account_flash('ok','YouhaveupdatedyourTracking202APIKey.');p202_account_redirect('202-account/account.php');}",
+            "\$statsKeySaved=_mysqli_query(\$db,\$user_sql);if(!\$statsKeySaved){error_log('account.php:theStats202appkeywasnotsaved:'.\$db->error);p202_account_flash('bad','TheStats202AppKeycouldnotbesaved;tryagain.');}else{\$_SESSION['user_stats202_app_key']=\$_POST['user_stats202_app_key'];p202_account_flash('ok','YouhaveupdatedyourStats202AppKey.');p202_account_redirect('202-account/account.php');}",
         ] as $shape) {
             self::assertStringContainsString($shape, $code);
         }
