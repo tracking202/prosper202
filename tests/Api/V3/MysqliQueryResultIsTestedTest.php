@@ -79,6 +79,15 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             'The sign-in log: its panel says the log could not be read (`if (!$user_log_result)` in the markup),'
             . ' and the rest of the page is still drawn.',
         ],
+        '202-account/administration.php::database_size' => [
+            1,
+            'The size panel says unknown: it is a figure the page shows, and unknown is what the failure tells.',
+        ],
+        '202-account/administration.php::p202_admin_scheduled_deletion' => [
+            2,
+            'The scheduled deletion: a failed read of the setting says it could not be read (and is logged);'
+            . ' a failed read of the marker click names the click id only, which is what the setting holds.',
+        ],
         '202-account/user-management.php::' => [
             1,
             'The list of users: the page says it could not be read ($usersReadable) and lists none, rather than'

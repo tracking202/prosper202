@@ -20,7 +20,10 @@ try {
 	// $db (singleton mysqli) is already established by connect.php and used above.
 
 	$user_sql = 'SELECT user_email, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1';
-	$user_result = $db->query($user_sql);
+	$user_result = _mysqli_query($db, $user_sql);
+	if ($user_result === false) {
+		record_mysql_error($db, $user_sql);
+	}
 	$user_row = $user_result->fetch_assoc();
 
 	if (!$user_row['user_daily_email']) {
