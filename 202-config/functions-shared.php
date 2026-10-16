@@ -53,21 +53,19 @@ function setCache(string $key, mixed $value, mixed $exp = null): bool
  * so a rollback after them left an entry naming no row, and every click to
  * that URL stored the dangling id until it expired. Run the transaction as
  * $work and an entry is written only once its row is committed.
+ *
+ * Work that ends the request (die() in an error page) neither returns nor
+ * throws, and exit runs no finally: the writes stay held, and so does every
+ * write until the process ends, shutdown work's included. That is the safe
+ * direction: the work's transaction is still open and is rolled back only
+ * when the connection closes, after shutdown, so an id cached then could name
+ * a row that never existed. Only a request's own work holds; a process that
+ * outlives one (a test runner) ends with it.
  */
 function p202WithHeldCacheWrites(callable $work): void
 {
     if (is_array($GLOBALS['p202HeldCacheWrites'] ?? null)) {
         throw new \LogicException('Cache writes are already held: the outer work would lose its own.');
-    }
-    static $releasedAtShutdown = false;
-    if (!$releasedAtShutdown) {
-        $releasedAtShutdown = true;
-        // Work that ends the request (die() in an error page) neither returns
-        // nor throws, and exit runs no finally: its writes are dropped, as for
-        // a throw, and the work that runs at shutdown writes to the cache again.
-        register_shutdown_function(static function (): void {
-            $GLOBALS['p202HeldCacheWrites'] = null;
-        });
     }
     $GLOBALS['p202HeldCacheWrites'] = [];
     try {

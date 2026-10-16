@@ -136,10 +136,12 @@ final class HeldCacheWritesTest extends TestCase
     }
 
     /**
-     * exit runs no finally, so work that ends the request in die() left the
-     * writes held: shutdown work that writes to the cache was swallowed.
+     * Work that ends the request in die() leaves its writes held, shutdown
+     * work's too: its transaction is rolled back only when the connection
+     * closes, after shutdown, so an id cached then could name a row that was
+     * never kept.
      */
-    public function testWorkThatEndsTheRequestLeavesTheCacheWritableAtShutdown(): void
+    public function testWorkThatEndsTheRequestWritesNothingAfterIt(): void
     {
         $script = tempnam(sys_get_temp_dir(), 'p202held');
         file_put_contents($script, '<?php
@@ -152,6 +154,7 @@ final class HeldCacheWritesTest extends TestCase
             $GLOBALS["memcache"] = new class {
                 public function set(string $k, mixed $v, mixed $e): bool { echo "written:$k\n"; return true; }
             };
+            register_shutdown_function(static function (): void { echo "shutdown ran\n"; });
             p202WithHeldCacheWrites(static function (): void {
                 setCache("inside", 1);
                 register_shutdown_function(static function (): void { setCache("at-shutdown", 1); });
@@ -163,8 +166,8 @@ final class HeldCacheWritesTest extends TestCase
         } finally {
             unlink($script);
         }
-        self::assertStringContainsString('written:at-shutdown', $out, $out);
-        self::assertStringNotContainsString('written:inside', $out, 'the unfinished work\'s write is dropped');
+        self::assertStringContainsString('shutdown ran', $out, 'the probe reached shutdown');
+        self::assertStringNotContainsString('written:', $out, $out);
     }
 
     public function testHoldingInsideAHoldIsRefusedAndTheOuterWritesAreKept(): void
