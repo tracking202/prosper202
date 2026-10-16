@@ -255,6 +255,9 @@ func TestOptimizeReportsRefuseACampaignIDThatIsNotAnID(t *testing.T) {
 		{"report", "breakeven", "--aff-campaign-id", "../users"},
 		{"report", "losers", "--aff-campaign-id", "1%2f..%2fusers"},
 		{"report", "winners", "--aff-campaign-id", "7x"},
+		// Its only guard is fetchCampaignPayout's own.
+		{"campaign", "optimize", "7x"},
+		{"campaign", "optimize", "%2e%2e"},
 	} {
 		fake := &mcpFakeInstall{}
 		srv := fake.server(t)
