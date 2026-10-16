@@ -56,7 +56,7 @@ final class StoredTrackingDomainReadTest extends TestCase
         yield 'functions-shared.php p202StoredTrackingDomain()' => [
             '202-config/functions-shared.php',
             // The read, and the fetch it reads its row through.
-            ['p202StoredTrackingDomain', 'p202FetchRow'],
+            ['p202StoredTrackingDomain', 'p202FetchRow', 'p202TrackingDomainUserId'],
             $stubs,
             ['false', 'throws', 'fetch fails'],
         ];

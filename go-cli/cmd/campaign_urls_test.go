@@ -23,7 +23,9 @@ type campaignFake struct {
 	gets     []string
 	failPut  map[string]bool
 	stageAll bool
-	extra    http.HandlerFunc // other paths, when set (called under mu)
+	// refusePut answers every PUT with the CLI licence refusal (402).
+	refusePut bool
+	extra     http.HandlerFunc // other paths, when set (called under mu)
 }
 
 type campaignPut struct {
@@ -71,6 +73,11 @@ func (f *campaignFake) server(t *testing.T) *httptest.Server {
 			var body map[string]interface{}
 			_ = json.Unmarshal(raw, &body)
 			f.puts = append(f.puts, campaignPut{ID: id, Body: body})
+			if f.refusePut {
+				w.WriteHeader(402)
+				_, _ = w.Write([]byte(`{"error":true,"status":402,"category":"licence","message":"The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install's ClickServer API key. Start a Pro trial or subscription at https://my.tracking202.com/api/customers/subscriptions/support"}`))
+				return
+			}
 			if f.failPut[id] {
 				w.WriteHeader(500)
 				_, _ = w.Write([]byte(`{"message":"server error"}`))

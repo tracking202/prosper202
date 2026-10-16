@@ -129,6 +129,33 @@ function getTrackingDomain(): string
 }
 
 /**
+ * Whose stored tracking domain a request reads: the given user, else the
+ * signed-in one, else (nobody signed in: the click path) the first account.
+ * A session user id that is there but is not a positive whole number throws:
+ * read as "nobody signed in", it named the first account's domain.
+ *
+ * @param array<mixed> $session
+ */
+function p202TrackingDomainUserId(?int $userId, array $session): int
+{
+    if ($userId !== null) {
+        return $userId;
+    }
+    if (!array_key_exists('user_id', $session) || $session['user_id'] === null) {
+        return 1;
+    }
+    $sessionUser = $session['user_id'];
+    if (is_int($sessionUser) && $sessionUser > 0) {
+        return $sessionUser;
+    }
+    $digits = is_string($sessionUser) && preg_match('/^[1-9][0-9]{0,19}$/D', $sessionUser) === 1;
+    if ($digits && (string) (int) $sessionUser === $sessionUser) {
+        return (int) $sessionUser;
+    }
+    throw new \RuntimeException('Unable to read the tracking domain: the session names no usable user');
+}
+
+/**
  * The tracking domain an account stored (Personal settings), as stored:
  * the signed-in user's by default, the first account's where nobody is
  * signed in (the click path). A failed read throws: read as "none stored",
@@ -136,9 +163,7 @@ function getTrackingDomain(): string
  */
 function p202StoredTrackingDomain(?int $userId = null): string
 {
-    $lookup_user_id = $userId !== null
-        ? (string) $userId
-        : ((isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) ? (string) $_SESSION['user_id'] : '1');
+    $lookup_user_id = (string) p202TrackingDomainUserId($userId, $_SESSION ?? []);
 
     $database = DB::getInstance();
     $db = $database->getConnection();

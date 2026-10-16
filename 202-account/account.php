@@ -558,8 +558,8 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 	}
 
 	if (!preg_match('/\*/', (string) $_POST['user_api_key'])) {
-		if (!AUTH::is_valid_api_key($_POST['user_api_key'])) {
-			$keyErrors['user_api_key'] = 'This API Key appears invalid.';
+		if (($typedKeyError = p202_check_typed_key((string) $_POST['user_api_key'])) !== null) {
+			$keyErrors['user_api_key'] = $typedKeyError;
 		}
 
 		if (!$keyErrors) {
@@ -634,9 +634,8 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 	$mysql['p202_customer_api_key'] = $db->real_escape_string($postedCustomerKey);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	if ($postedCustomerKey !== '') {
-		$validate = validateCustomersApiKey($postedCustomerKey);
-		if ($validate['code'] != 200) {
-			$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
+		if (($customerKeyError = p202_customer_key_error(validateCustomersApiKey($postedCustomerKey))) !== null) {
+			$keyErrors['p202_customer_api_key'] = $customerKeyError;
 		}
 	}
 	if (!isset($keyErrors['p202_customer_api_key'])) {

@@ -1017,45 +1017,16 @@ function clickserver_api_key_validate($key)
     return true;
 }
 
+/**
+ * The licence service's raw answer for a key, as the installer and the
+ * fetch-a-key page read it: the body, or false when no answer came. Asked
+ * through ClickServerKeyValidator::answer(), which follows a redirect only to
+ * the service itself, so the key is never posted elsewhere.
+ */
 function api_key_validate($key)
 {
-    $post = [];
-    $post['key'] = $key;
-    $fields = http_build_query($post);
-
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set to post
-    curl_setopt($ch, CURLOPT_POST, true);
-    // Set post fields
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // Bound the call. With no timeouts set at all, curl waits up to 300s to
-    // connect and then indefinitely for the body, hanging whatever page called us.
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Follow redirects, keeping the POST body, so an HTTP->HTTPS redirect returns
-    // JSON rather than a redirect page that json_decode() turns into null.
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
-    // Execute
-    $result = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        // echo 'error:' . curl_error($c);
-    }
-    // close connection
-    curl_close($ch);
-
-    $data = json_decode($result, true);
-    return $result;
+    $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
+    return $answer === null ? false : $answer[1];
 }
 
 function getBrowserIcon($name)
@@ -1573,36 +1544,19 @@ function getForeignPayout($currency, $payout_currency, $payout)
     return $result;
 }
 
+/**
+ * The licence service's answer for a key, decoded, or null when no usable
+ * answer came. Asked through ClickServerKeyValidator::answer(), which follows
+ * a redirect only to the service itself.
+ */
 function validateCustomersApiKey($key)
 {
-    $fields = [
-        'key' => $key
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // A CONNECTTIMEOUT of 0 means curl's 300s default, and TIMEOUT 60 blocked the
-    // account page for a full minute whenever the licence API was slow.
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Follow redirects, keeping the POST body. Without this a 301 (an HTTP->HTTPS
-    // redirect at the edge, say) returns the redirect page instead of JSON,
-    // json_decode() yields null, and every caller then reports the key invalid
-    // because it only checks $validate['code'] != 200.
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
-    $result = curl_exec($ch);
-    curl_close($ch);
-    $result = json_decode($result, true);
-    return $result;
+    $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
+    if ($answer === null) {
+        return null;
+    }
+    $decoded = json_decode($answer[1], true);
+    return is_array($decoded) ? $decoded : null;
 }
 
 function validateRevContentCredentials($id, $secret)

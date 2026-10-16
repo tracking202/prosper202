@@ -24,6 +24,52 @@ declare(strict_types=1);
 /** The sentence a refused token gets, on every Account page. */
 const P202_ACCOUNT_TOKEN_REFUSED = 'This form expired or did not come from this page, so nothing was saved. Reload the page and try again.';
 
+/** The sentence a key gets when the licence service could not be asked about it. */
+const P202_ACCOUNT_KEY_UNCHECKED = 'The key could not be checked with Tracking202 just now, so nothing was saved. '
+    . 'Try again in a minute.';
+
+/**
+ * Why a typed key may not be saved, from the licence service's answer for
+ * that key (ClickServerKeyValidator::check()), or null when it may. No
+ * answer is a refusal here: a key that could not be checked is not saved.
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
+ */
+function p202_typed_key_error(?array $licence): ?string
+{
+    if ($licence === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return $licence['valid'] ? null : 'This API Key appears invalid.';
+}
+
+/**
+ * The account page's Tracking202 key change: why the typed key may not be
+ * saved, asking the licence service about that key itself.
+ * AUTH::is_valid_api_key() answers from the session once the signed-in key
+ * has validated and lets an unanswered check through, which suits a page
+ * gate and not a key about to be saved.
+ */
+function p202_check_typed_key(string $key): ?string
+{
+    return p202_typed_key_error(\Prosper202\License\ClickServerKeyValidator::check(trim($key)));
+}
+
+/**
+ * Why a customer API key may not be saved, from validateCustomersApiKey()'s
+ * answer, or null when it may: no answer is "could not be checked", not
+ * "invalid", and is not saved either.
+ *
+ * @param array<string, mixed>|null $answer
+ */
+function p202_customer_key_error(?array $answer): ?string
+{
+    if ($answer === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return ($answer['code'] ?? null) == 200 ? null : 'API key is not valid. Check your key and try again!';
+}
+
 /**
  * The hidden token field every Account form carries. The handlers check it
  * with AUTH::check_csrf_token(), the app's one implementation (constant-time,

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"p202/internal/api"
@@ -1595,7 +1596,11 @@ func init() {
 					index int
 					row   map[string]interface{}
 					err   error
+					// skipped: not asked, because a request before it met the
+					// licence refusal, which every later one would meet too.
+					skipped bool
 				}
+				var refusedOnce atomic.Bool
 
 				jobs := make(chan int, len(trackers))
 				results := make(chan bulkResult, len(trackers))
@@ -1604,6 +1609,10 @@ func init() {
 				worker := func() {
 					defer wg.Done()
 					for index := range jobs {
+						if refusedOnce.Load() {
+							results <- bulkResult{index: index, skipped: true}
+							continue
+						}
 						tracker := trackers[index]
 						trackerID, ok := extractIntField(tracker, "tracker_id", "id")
 						if !ok {
@@ -1613,6 +1622,9 @@ func init() {
 
 						urlData, err := c.Get(fmt.Sprintf("trackers/%d/url", trackerID), tokens)
 						if err != nil {
+							if licenceRefusal(err) != nil {
+								refusedOnce.Store(true)
+							}
 							results <- bulkResult{index: index, err: err}
 							continue
 						}
@@ -1652,14 +1664,32 @@ func init() {
 				// Returning on the first error discarded every row already
 				// fetched, so one transient 500 threw away the whole listing.
 				indexed := make([]map[string]interface{}, len(trackers))
-				failed := 0
+				failed, fetched := 0, 0
+				var refused error
 				for result := range results {
+					if result.skipped {
+						continue
+					}
+					if r := licenceRefusal(result.err); r != nil {
+						if refused == nil {
+							refused = r
+						}
+						continue
+					}
 					if result.err != nil {
 						failed++
 						fmt.Fprintf(os.Stderr, "Failed to fetch URL for tracker at row %d: %v\n", result.index+1, result.err)
 						continue
 					}
 					indexed[result.index] = result.row
+					fetched++
+				}
+				if refused != nil {
+					// Every remaining tracker would meet the same 402: report
+					// it as the licence refusal (exit 6, the trial hint), with
+					// nothing on stdout, as the bulk deletes do.
+					return fmt.Errorf("fetching tracker URLs (%d of %d fetched before it; the rest not attempted): %w",
+						fetched, len(trackers), refused)
 				}
 
 				// Drop the gaps left by failed rows rather than emitting nulls.

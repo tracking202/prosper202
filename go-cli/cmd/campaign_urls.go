@@ -207,9 +207,19 @@ func applyURLChanges(cmd *cobra.Command, c *api.Client, rows []urlChange, force 
 	// One PUT per campaign, so every slot of a campaign shares its outcome.
 	outcome := map[string]urlChange{}
 	updated, staged, failed := 0, 0, 0
+	// A licence refusal is met by every later request too: the rest are not
+	// sent, and the refusal is what the command ends with (exit 6), after the
+	// rows and the undo record for what was already applied.
+	var refused error
 	for _, id := range order {
+		if refused != nil {
+			outcome[id] = urlChange{Status: "failed", Error: "not attempted: the licence was refused"}
+			failed++
+			continue
+		}
 		data, perr := c.Put("campaigns/"+id, bodies[id])
 		if perr != nil {
+			refused = licenceRefusal(perr)
 			outcome[id] = urlChange{Status: "failed", Error: perr.Error()}
 			failed++
 			fmt.Fprintf(os.Stderr, "Failed to update campaign %s: %v\n", id, perr)
@@ -265,6 +275,14 @@ func applyURLChanges(cmd *cobra.Command, c *api.Client, rows []urlChange, force 
 			output.Success("Undo manifest (save it to a file, then pass it to --undo): %s", bytes.TrimSpace(line))
 		}
 		manifestHint = fmt.Sprintf("The rows with status applied were written. Save the JSON after `Undo manifest:` on stderr to a file to undo them with --undo <file>, and fix %s (permissions, free space) so later runs can save theirs.", undoDir())
+	}
+	if refused != nil {
+		err := fmt.Errorf("updating campaign URLs (%d of %d campaign(s) changed before it; the rest not attempted): %w",
+			updated+staged, len(order), refused)
+		if undoErr != nil {
+			return withHint(err, "%s %s", hintFor(refused), manifestHint)
+		}
+		return err
 	}
 	switch {
 	case failed > 0 && undoErr != nil:
