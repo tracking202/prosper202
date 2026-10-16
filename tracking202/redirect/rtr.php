@@ -337,10 +337,10 @@ if ($default == true) {
 	// without an explicit type its synthetic default (type='url', redirect_url='')
 	// would resolve to an empty location and drop the click — so set the fields.
 	if (empty($rotator_row['aff_campaign_id'])) {
-		if (!empty($rotator_row['default_url'])) {
+		if ((string) ($rotator_row['default_url'] ?? '') !== '') {
 			$rotator_row['type'] = 'url';
 			$rotator_row['redirect_url'] = $rotator_row['default_url'];
-		} elseif (!empty($rotator_row['landing_page_url'])) {
+		} elseif ((string) ($rotator_row['landing_page_url'] ?? '') !== '') {
 			$rotator_row['type'] = 'lp';
 			// landing_page_url comes from the default_lp JOIN, which is tied
 			// to the tracker's account (as in offrtr.php): a default page of

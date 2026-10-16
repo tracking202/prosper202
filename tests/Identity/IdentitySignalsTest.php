@@ -131,6 +131,10 @@ final class IdentitySignalsTest extends TestCase
         self::assertFalse(RequestSignals::trackerRowAllows($row('9', '9', '0')), 'capture off');
         self::assertTrue(RequestSignals::trackerRowAllows($row('9', '9', '1')), 'capture on');
         self::assertFalse(RequestSignals::trackerRowAllows($row('9', '9', 'x')), 'unreadable');
+        self::assertFalse(
+            RequestSignals::trackerRowAllows(['aff_campaign_id' => '0', 'identity_signals' => null]),
+            'a row that does not say which campaign the tracker names'
+        );
     }
 
     public function testBrowserIdsMustBeExactlyWhatTheTrackerMints(): void

@@ -53,9 +53,21 @@ final class ChatPassClient
         string $version = PROSPER202_VERSION
     ): string {
         return hash('sha256', json_encode(
-            [$identity, $installUrl, $passUrl, $version],
+            [self::body($identity, $installUrl, $version), $passUrl],
             JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
         ));
+    }
+
+    /**
+     * What request() sends: fingerprint() hashes the same, so a field added
+     * to the request is part of what a kept pass is for.
+     *
+     * @param array<string, mixed> $identity
+     * @return array<string, mixed>
+     */
+    private static function body(array $identity, string $installUrl, string $version): array
+    {
+        return ['identity' => ['p202_version' => $version] + $identity, 'install_url' => $installUrl];
     }
 
     /**
@@ -70,7 +82,7 @@ final class ChatPassClient
     public function request(array $identity, string $installUrl): array
     {
         $body = json_encode(
-            ['identity' => ['p202_version' => PROSPER202_VERSION] + $identity, 'install_url' => $installUrl],
+            self::body($identity, $installUrl, PROSPER202_VERSION),
             JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
         );
         if ($body === false) {

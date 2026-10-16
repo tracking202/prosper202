@@ -101,7 +101,12 @@ final class RequestSignals
      */
     public static function trackerRowAllows(array $row): bool
     {
-        $named = $row['tracker_campaign_named'] ?? null;
+        // A row from a read that does not say which campaign the tracker
+        // names cannot tell "none" from "not the account's": off.
+        if (!array_key_exists('tracker_campaign_named', $row)) {
+            return false;
+        }
+        $named = $row['tracker_campaign_named'];
         if ($named === null || (string) $named === '0') {
             return self::campaignAllows(null);
         }

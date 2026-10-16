@@ -176,7 +176,11 @@ class ShellAccessCache
         // write and the rename: an hour is far longer than any write takes,
         // whatever age the caller sweeps entries at.
         $orphanCutoff = time() - self::ORPHAN_TMP_SECONDS;
-        $tmpFiles = glob($dir . '/*.tmp') ?: [];
+        $tmpFiles = glob($dir . '/*.tmp');
+        if ($tmpFiles === false) {
+            error_log('ShellAccessCache: could not list temp files in ' . $dir);
+            $tmpFiles = [];
+        }
         foreach ([[$files, $cutoff], [$tmpFiles, $orphanCutoff]] as [$batch, $before]) {
             foreach ($batch as $file) {
                 if (is_link($file)) {
