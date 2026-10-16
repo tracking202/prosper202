@@ -266,10 +266,13 @@ final class AiConnect
      * counted: the MCP server's exchanges can share an address with anyone
      * else's (a proxy, Cloudflare's Worker egress), so a good exchange is
      * never refused. A source past its budget is refused before the work
-     * unless it presents a live approval, so junk spends nothing; a failure
-     * that takes a source past it is answered 429 too. A limiter that cannot
-     * answer is logged and serves, as the other public intakes' limiters do:
-     * the code and its verifier are the guard, not the count.
+     * unless it presents a live approval, so junk spends nothing; an exchange
+     * that runs answers as itself, failure or not (a failed live code says
+     * to start again, not to wait), and its failure is counted. Check and
+     * count are separate steps, so concurrent requests can pass the check
+     * together: the budget bounds the steady rate, not a burst. A limiter
+     * that cannot answer is logged and serves, as the other public intakes'
+     * limiters do: the code and its verifier are the guard, not the count.
      *
      * @param array<string, mixed> $payload
      * @param callable(): array{0: int, 1: array<string, mixed>} $exchange
@@ -300,10 +303,7 @@ final class AiConnect
         }
         [$status, $body] = $exchange();
         if ($status >= 400) {
-            $after = $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
-            if ($after !== null) {
-                return $limited($after);
-            }
+            $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
         }
         return [$status, $body];
     }

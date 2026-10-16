@@ -86,6 +86,19 @@ final class AiConnectFailureBudgetTest extends TestCase
         self::assertFalse($ran, 'the exchange ran past the budget on unreadable approvals');
     }
 
+    /** A live code that fails past the budget gets the exchange's own answer, not a bare 429. */
+    public function testAFailingLiveExchangeAnswersAsItself(): void
+    {
+        $store = new ServerStateStore();
+        $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
+        $this->spendTheBudget($store);
+
+        $ran = false;
+        [$status] = $this->call($store, $live, 402, $ran);
+        self::assertTrue($ran);
+        self::assertSame(402, $status);
+    }
+
     public function testALiveApprovalIsExchangedEvenPastTheBudget(): void
     {
         $store = new ServerStateStore();
