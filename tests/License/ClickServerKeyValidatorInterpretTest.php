@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\License;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\SourceScan;
 use Prosper202\License\ClickServerKeyValidator;
 
 /**
@@ -139,18 +140,37 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
     }
 
     /**
-     * The three readers of the endpoint follow the same number of hops: a
-     * budget smaller here than in the two older callers would let an edge
-     * change make this one alone stop deciding, in silence apart from a log.
+     * Every reader of validate-customers-key asks through answer(), which
+     * follows a redirect only to the service itself: the installer's and the
+     * account page's readers posted the key on to wherever a redirect
+     * pointed. Nothing in the served tree re-POSTs through a redirect.
      */
-    public function testTheRedirectBudgetMatchesTheOlderCallers(): void
+    public function testEveryReaderOfTheEndpointAsksThroughTheValidator(): void
     {
-        $legacy = (string)file_get_contents(dirname(__DIR__, 2) . '/202-config/functions-tracking202.php');
-        $found = preg_match_all('/curl_setopt\(\$ch, CURLOPT_MAXREDIRS, (\d+)\);/', $legacy, $m);
-        self::assertSame(2, $found, 'expected the two older validate-customers-key callers to set CURLOPT_MAXREDIRS');
-        foreach ($m[1] as $limit) {
-            self::assertSame(ClickServerKeyValidator::MAX_REDIRECTS, (int)$limit);
+        $root = dirname(__DIR__, 2);
+        $legacy = (string)file_get_contents($root . '/202-config/functions-tracking202.php');
+        foreach (['api_key_validate'] as $function) {
+            $pattern = '/function ' . $function . '\(\$key\)\s*\{(.*?)\n\}/s';
+            self::assertSame(1, preg_match($pattern, $legacy, $m), $function);
+            self::assertStringContainsString('ClickServerKeyValidator::answer((string) $key)', $m[1], $function);
+            self::assertStringNotContainsString('curl_', $m[1], $function);
         }
+        $files = new \RecursiveIteratorIterator(SourceScan::tree($root));
+        $offenders = [];
+        foreach ($files as $file) {
+            $path = substr($file->getPathname(), strlen($root) + 1);
+            if ($file->getExtension() !== 'php' || preg_match('#^(vendor|tests|node_modules|go-cli)/#', $path) === 1) {
+                continue;
+            }
+            $src = (string)file_get_contents($file->getPathname());
+            if (str_contains($src, 'validate-customers-key') && !str_contains($path, 'ClickServerKeyValidator.php')) {
+                $offenders[] = $path . ' names validate-customers-key outside ClickServerKeyValidator';
+            }
+            if (preg_match('/CURLOPT_POSTREDIR|CURL_REDIR_POST_/', $src) === 1) {
+                $offenders[] = $path . ' re-POSTs through redirects';
+            }
+        }
+        self::assertSame([], $offenders);
     }
 
     /**

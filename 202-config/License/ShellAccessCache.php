@@ -242,6 +242,32 @@ class ShellAccessCache
         return !file_exists($lock);
     }
 
+    /**
+     * How long ago the check of $key was claimed, in seconds, or null when no
+     * claim is held (beginCheck()).
+     */
+    public static function claimAge(string $key): ?int
+    {
+        $path = static::path($key);
+        if ($path === null) {
+            return null;
+        }
+        clearstatcache(true, $path . '.checking');
+        $mtime = @filemtime($path . '.checking');
+        return $mtime === false ? null : max(0, time() - $mtime);
+    }
+
+    /** Whether a check of $key is claimed and not yet released (beginCheck()). */
+    public static function checkInProgress(string $key): bool
+    {
+        $path = static::path($key);
+        if ($path === null) {
+            return false;
+        }
+        clearstatcache(true, $path . '.checking');
+        return file_exists($path . '.checking');
+    }
+
     public static function endCheck(string $key): void
     {
         $path = static::path($key);

@@ -6,6 +6,7 @@ declare(strict_types=1);
 // this file before the Composer autoloader is registered.
 require_once __DIR__ . '/License/ClickServerKeyValidator.php';
 require_once __DIR__ . '/License/ShellAccessCache.php';
+require_once __DIR__ . '/License/CliAccessCache.php';
 
 /**
  * Password helper functions live here to avoid bootstrap order issues.

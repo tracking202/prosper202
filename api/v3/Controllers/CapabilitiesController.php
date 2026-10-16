@@ -22,6 +22,36 @@ class CapabilitiesController
     private array $licenceChecks = [];
 
     /**
+     * How long a request that finds another one checking the same key waits
+     * for that verdict to land in the cache: a little over the claimant's
+     * own timeout (checkKey asks with 4 s).
+     */
+    public const CLAIM_WAIT_MS = 4500;
+
+    /**
+     * A claim older than this belongs to a claimant that has died: twice its
+     * own check's budget (4 s), so a slow claimant is never taken for one.
+     */
+    public const DEAD_CLAIM_SECONDS = 8;
+
+    /**
+     * The requests the Go CLI may make without a licence: the API root and
+     * /capabilities, so it can explain a refusal, the reads that say what is
+     * wrong with an install (health, version, info), and /system itself,
+     * which no route serves (the router answers it). Exact paths only; every
+     * other route, every /system write included, is gated.
+     */
+    public static function isCliGateExempt(string $method, string $path): bool
+    {
+        $path = rtrim($path, '/');
+        if (in_array($path, ['', '/capabilities'], true)) {
+            return true;
+        }
+        return in_array(strtoupper($method), ['GET', 'HEAD'], true)
+            && in_array($path, ['/system', '/system/health', '/system/version', '/system/info'], true);
+    }
+
+    /**
      * Whether a request comes from the Go CLI, the only client the Pro gate
      * applies to. The legacy PHP CLI (cli/ApiClient.php, "p202-cli/1.0") is
      * deliberately not gated; the Go CLI sends "p202-cli/<version> (Go)".
@@ -331,7 +361,7 @@ class CapabilitiesController
 
         $result = $this->checkKey($customerKey);
         if ($result === null) {
-            ShellAccessCache::markUnknown($customerKey);
+            // checkKey() recorded the hold-off, if this was an outage.
             return ShellAccessCache::readStale($customerKey) === true;
         }
         return $result['valid'];
@@ -395,8 +425,7 @@ class CapabilitiesController
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
-            CliAccessCache::markUnknown($customerKey);
-            return true;
+            return true; // checkKey() recorded the hold-off, if this was an outage
         }
         return $result['paid'];
     }
@@ -493,23 +522,82 @@ class CapabilitiesController
         }
         // One asker per key across processes: a burst of cold requests would
         // otherwise each pass the cache and the hold-off and each pay the
-        // timeouts. The others read "unknown" and the claimant's verdict
-        // lands in the cache for all of them.
+        // timeouts. The others wait for the claimant to finish
+        // (awaitClaimantVerdict) and read what it recorded.
         if (!ShellAccessCache::beginCheck($customerKey)) {
-            return $this->licenceChecks[$customerKey] = null;
+            return $this->licenceChecks[$customerKey] = $this->awaitClaimantVerdict($customerKey);
         }
         try {
-            $result = ClickServerKeyValidator::check($customerKey, 2, 4);
-        } finally {
-            ShellAccessCache::endCheck($customerKey);
-        }
-        if ($result !== null) {
-            ShellAccessCache::write($customerKey, $result['valid']);
-            if ($result['paid'] !== null) {
-                CliAccessCache::write($customerKey, $result['paid']);
+            $result = $this->askLicenceService($customerKey);
+            // The whole answer is recorded before the claim is released, so a
+            // request waiting on it reads both verdicts, or the hold-off, and
+            // never one without the other.
+            if ($result === null) {
+                ShellAccessCache::markUnknown($customerKey);
+                CliAccessCache::markUnknown($customerKey);
+            } else {
+                ShellAccessCache::write($customerKey, $result['valid']);
+                if ($result['paid'] !== null) {
+                    CliAccessCache::write($customerKey, $result['paid']);
+                } else {
+                    CliAccessCache::markUnknown($customerKey);
+                }
             }
+        } finally {
+            $this->releaseClaim($customerKey);
         }
         return $this->licenceChecks[$customerKey] = $result;
+    }
+
+    /**
+     * The licence service's answer for a key, short timeouts: this runs on
+     * the request path. A seam LicenceCheckClaimTest answers through.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    protected function askLicenceService(string $customerKey): ?array
+    {
+        return ClickServerKeyValidator::check($customerKey, 2, 4);
+    }
+
+    /**
+     * Release the claim checkKey() took. A seam LicenceCheckClaimTest
+     * watches, to see what is recorded by the moment a waiter can read.
+     */
+    protected function releaseClaim(string $customerKey): void
+    {
+        ShellAccessCache::endCheck($customerKey);
+    }
+
+    /**
+     * What another request recorded for $customerKey, read once it released
+     * its claim (checkKey() records the whole answer first): both verdicts,
+     * or null when it got no answer, or when it has not finished within
+     * CLAIM_WAIT_MS. When the claim is older than DEAD_CLAIM_SECONDS its
+     * claimant has died, and the waiter writes the hold-off itself, so later
+     * requests read unknown at once rather than each waiting while the dead
+     * claim lasts; a claim younger than that is a slow claimant, whose own
+     * answer is still to come, and gets none.
+     *
+     * @return array{valid: bool, paid: ?bool}|null
+     */
+    private function awaitClaimantVerdict(string $customerKey): ?array
+    {
+        $deadline = microtime(true) + self::CLAIM_WAIT_MS / 1000;
+        do {
+            usleep(100_000);
+            if (!ShellAccessCache::checkInProgress($customerKey)) {
+                $valid = ShellAccessCache::readVerdict($customerKey);
+                return $valid === null
+                    ? null
+                    : ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
+            }
+        } while (microtime(true) < $deadline);
+        if ((ShellAccessCache::claimAge($customerKey) ?? 0) >= self::DEAD_CLAIM_SECONDS) {
+            ShellAccessCache::markUnknown($customerKey);
+            CliAccessCache::markUnknown($customerKey);
+        }
+        return null;
     }
 
     /**
@@ -552,6 +640,12 @@ class CapabilitiesController
         }
         $row = $result->fetch_assoc();
         $stmt->close();
+        if (!is_array($row)) {
+            // A failed fetch, or no row for an authenticated user: unknown,
+            // never "this user has no key" (which would judge them by the
+            // owner's key), as loadOwnerClickServerKey() reads it.
+            return null;
+        }
 
         return trim((string)($row['p202_customer_api_key'] ?? ''));
     }

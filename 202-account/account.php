@@ -520,17 +520,17 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 		p202_account_redirect($clickserverReturn);
 	}
 
-	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+	$mysql['clickserver_api_key'] = $db->real_escape_string($csKey = trim((string) $_POST['clickserver_api_key']));
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-		if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] != '') {
-			$keyErrors['clickserver_api_key'] = 'This API Key appears invalid.';
+		if (($csKeyError = p202_check_clickserver_key($csKey)) !== null) {
+			$keyErrors['clickserver_api_key'] = $csKeyError;
 		}
 
 		if (!$keyErrors || $mysql['clickserver_api_key'] == '') {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+			$mysql['clickserver_api_key'] = $db->real_escape_string($csKey);
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`clickserver_api_key`='" . $mysql['clickserver_api_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
@@ -538,7 +538,7 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 			if (!$clickserverKeySaved) {
 				p202_account_flash('bad', 'The ClickServer API key could not be saved; try again.');
 			} else {
-				if ($slack && $_POST['clickserver_api_key'] != ($user_row['clickserver_api_key'] ?? '')) {
+				if ($slack && $csKey != ($user_row['clickserver_api_key'] ?? '')) {
 					$slack->push('user_updated_clickserver_api_key', ['user' => $username]);
 				}
 				p202_account_flash('ok', 'You have updated your Prosper202 ClickServer API Key.');
@@ -558,15 +558,15 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 		p202_account_redirect('202-account/account.php');
 	}
 
-	if (!preg_match('/\*/', (string) $_POST['user_api_key'])) {
-		if (!AUTH::is_valid_api_key($_POST['user_api_key'])) {
-			$keyErrors['user_api_key'] = 'This API Key appears invalid.';
+	if (!preg_match('/\*/', $typedKey = trim((string) $_POST['user_api_key']))) {
+		if (($typedKeyError = p202_check_typed_key($typedKey)) !== null) {
+			$keyErrors['user_api_key'] = $typedKeyError;
 		}
 
 		if (!$keyErrors) {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$mysql['user_api_key'] = $db->real_escape_string((string)$_POST['user_api_key']);
+			$mysql['user_api_key'] = $db->real_escape_string($typedKey);
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`user_api_key`='" . $mysql['user_api_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
@@ -579,8 +579,8 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 				error_log('account.php: the Tracking202 API key was not saved: ' . $db->error);
 				p202_account_flash('bad', 'The Tracking202 API key could not be saved; try again.');
 			} else {
-				$_SESSION['user_api_key'] = $_POST['user_api_key'];
-				$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
+				$_SESSION['user_api_key'] = $typedKey;
+				$_SESSION['user_cirrus_link'] = $typedKey;
 
 				p202_account_flash('ok', 'You have updated your Tracking202 API Key.');
 				p202_account_redirect('202-account/account.php');
@@ -637,9 +637,8 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 	$mysql['p202_customer_api_key'] = $db->real_escape_string($postedCustomerKey);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	if ($postedCustomerKey !== '') {
-		$validate = validateCustomersApiKey($postedCustomerKey);
-		if ($validate['code'] != 200) {
-			$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
+		if (($customerKeyError = p202_check_customer_key($postedCustomerKey)) !== null) {
+			$keyErrors['p202_customer_api_key'] = $customerKeyError;
 		}
 	}
 	if (!isset($keyErrors['p202_customer_api_key'])) {
