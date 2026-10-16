@@ -24,7 +24,8 @@ use PHPUnit\Framework\TestCase;
  * (a GET reaches both), in 202-account/ and 202-account/ajax/. If the braced
  * body contains a database write (an UPDATE / INSERT INTO / DELETE FROM /
  * REPLACE INTO in any string, executeUpdate()/executeInsert(), UserDataPurge)
- * or the outbound key validation (validateCustomersApiKey()), the body must
+ * or an outbound key validation (validateCustomersApiKey(), the account
+ * page's p202_check_*_key() helpers, ClickServerKeyValidator), the body must
  * also call AUTH::check_csrf_token() or AUTH::csrf_token_matches() (a GET
  * carries its token in the query string), read as calls: the class named
  * exactly AUTH before `::`, not `MyAUTH::`, outside comments. An inline
@@ -46,7 +47,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class AccountGetDoesNotWriteTest extends TestCase
 {
-    private const WRITE = '/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\b|->(?:executeUpdate|executeInsert)\(|validateCustomersApiKey\(|UserDataPurge/i';
+    private const WRITE = '/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\b|->(?:executeUpdate|executeInsert)\(|validateCustomersApiKey\(|p202_check_(?:typed|customer)_key\(|ClickServerKeyValidator::(?:check|answer|validate)\(|UserDataPurge/i';
 
     /** @return list<array{file: string, line: int, condition: string, body: ?string}> */
     private static function getGuardedBlocks(string $file, string $source): array
@@ -214,6 +215,9 @@ final class AccountGetDoesNotWriteTest extends TestCase
             '$conn->executeUpdate($stmt);',
             '(new \Prosper202\User\UserDataPurge($db))->deleteUser(3);',
             'validateCustomersApiKey($k);',
+            'p202_check_customer_key($k);',
+            'p202_check_typed_key($k);',
+            '\\Prosper202\\License\\ClickServerKeyValidator::check($k);',
         ] as $write) {
             self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { $write }\n"), $write);
             self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_REQUEST['x'])) { $write }\n"), "\$_REQUEST: $write");

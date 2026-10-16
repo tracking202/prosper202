@@ -56,18 +56,25 @@ function p202_check_typed_key(string $key): ?string
 }
 
 /**
- * Why a customer API key may not be saved, from validateCustomersApiKey()'s
- * answer, or null when it may: no answer is "could not be checked", not
+ * Why a customer API key may not be saved, from the licence service's answer
+ * for it as ClickServerKeyValidator reads it, or null when it may: no answer
+ * (an outage, a gateway's error page) is "could not be checked", not
  * "invalid", and is not saved either.
  *
- * @param array<string, mixed>|null $answer
+ * @param array{valid: bool, paid: ?bool}|null $licence
  */
-function p202_customer_key_error(?array $answer): ?string
+function p202_customer_key_error(?array $licence): ?string
 {
-    if ($answer === null) {
+    if ($licence === null) {
         return P202_ACCOUNT_KEY_UNCHECKED;
     }
-    return ($answer['code'] ?? null) == 200 ? null : 'API key is not valid. Check your key and try again!';
+    return $licence['valid'] ? null : 'API key is not valid. Check your key and try again!';
+}
+
+/** The account page's customer key form: p202_customer_key_error() for the key itself. */
+function p202_check_customer_key(string $key): ?string
+{
+    return p202_customer_key_error(\Prosper202\License\ClickServerKeyValidator::check($key));
 }
 
 /**

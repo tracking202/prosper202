@@ -55,11 +55,28 @@ func TestBulkURLsStopsOnTheLicenceRefusal(t *testing.T) {
 // reporting the rows; nothing after the refused campaign is sent.
 func TestReplaceURLStopsOnTheLicenceRefusal(t *testing.T) {
 	f := newCampaignFake()
-	f.refusePut = true
+	f.refuseFrom = 1
 	setupCampaignFake(t, f)
 	_, _, err := executeCommand("campaign", "replace-url", "--match", "http", "--with", "https", "--force")
 	assertLicenceRefusal(t, err, "campaign replace-url")
 	if len(f.puts) != 1 {
 		t.Errorf("want one refused PUT, then a stop; got %d: %+v", len(f.puts), f.puts)
+	}
+}
+
+// A proposal is not a change: the refusal counts what was staged apart from
+// what was updated.
+func TestReplaceURLRefusalCountsStagedApart(t *testing.T) {
+	f := newCampaignFake()
+	f.stageAll = true
+	f.refuseFrom = 2
+	setupCampaignFake(t, f)
+	_, _, err := executeCommand("campaign", "replace-url", "--match", "http", "--with", "https", "--force")
+	assertLicenceRefusal(t, err, "campaign replace-url")
+	if len(f.puts) != 2 {
+		t.Fatalf("want one staged PUT, one refused, then a stop; got %d", len(f.puts))
+	}
+	if !strings.Contains(err.Error(), "updated and 1 staged before it") || !strings.Contains(err.Error(), "(0 of ") {
+		t.Errorf("the refusal should count 0 updated and 1 staged: %v", err)
 	}
 }

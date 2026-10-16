@@ -277,8 +277,8 @@ func applyURLChanges(cmd *cobra.Command, c *api.Client, rows []urlChange, force 
 		manifestHint = fmt.Sprintf("The rows with status applied were written. Save the JSON after `Undo manifest:` on stderr to a file to undo them with --undo <file>, and fix %s (permissions, free space) so later runs can save theirs.", undoDir())
 	}
 	if refused != nil {
-		err := fmt.Errorf("updating campaign URLs (%d of %d campaign(s) changed before it; the rest not attempted): %w",
-			updated+staged, len(order), refused)
+		err := fmt.Errorf("updating campaign URLs (%d of %d campaign(s) updated and %d staged before it; the rest not attempted): %w",
+			updated, len(order), staged, refused)
 		if undoErr != nil {
 			return withHint(err, "%s %s", hintFor(refused), manifestHint)
 		}

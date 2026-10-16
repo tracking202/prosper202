@@ -139,6 +139,9 @@ function getTrackingDomain(): string
 function p202TrackingDomainUserId(?int $userId, array $session): int
 {
     if ($userId !== null) {
+        if ($userId <= 0) {
+            throw new \RuntimeException('Unable to read the tracking domain: account ' . $userId . ' is no account');
+        }
         return $userId;
     }
     if (!array_key_exists('user_id', $session) || $session['user_id'] === null) {

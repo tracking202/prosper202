@@ -1544,21 +1544,6 @@ function getForeignPayout($currency, $payout_currency, $payout)
     return $result;
 }
 
-/**
- * The licence service's answer for a key, decoded, or null when no usable
- * answer came. Asked through ClickServerKeyValidator::answer(), which follows
- * a redirect only to the service itself.
- */
-function validateCustomersApiKey($key)
-{
-    $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
-    if ($answer === null) {
-        return null;
-    }
-    $decoded = json_decode($answer[1], true);
-    return is_array($decoded) ? $decoded : null;
-}
-
 function validateRevContentCredentials($id, $secret)
 {
     $fields = [

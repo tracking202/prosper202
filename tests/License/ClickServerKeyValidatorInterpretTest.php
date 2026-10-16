@@ -148,7 +148,7 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
         $legacy = (string)file_get_contents($root . '/202-config/functions-tracking202.php');
-        foreach (['api_key_validate', 'validateCustomersApiKey'] as $function) {
+        foreach (['api_key_validate'] as $function) {
             $pattern = '/function ' . $function . '\(\$key\)\s*\{(.*?)\n\}/s';
             self::assertSame(1, preg_match($pattern, $legacy, $m), $function);
             self::assertStringContainsString('ClickServerKeyValidator::answer((string) $key)', $m[1], $function);

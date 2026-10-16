@@ -22,15 +22,6 @@ class CapabilitiesController
     private array $licenceChecks = [];
 
     /**
-     * Keys whose check another request held, and whose verdict did not land
-     * while this one waited: unknown here, but not an outage, so no hold-off
-     * marker is written for them.
-     *
-     * @var array<string, true>
-     */
-    private array $licenceBusy = [];
-
-    /**
      * How long a request that finds another one checking the same key waits
      * for that verdict to land in the cache: a little over the claimant's
      * own timeout (checkKey asks with 4 s).
@@ -363,9 +354,7 @@ class CapabilitiesController
 
         $result = $this->checkKey($customerKey);
         if ($result === null) {
-            if (!isset($this->licenceBusy[$customerKey])) {
-                ShellAccessCache::markUnknown($customerKey);
-            }
+            // checkKey() recorded the hold-off, if this was an outage.
             return ShellAccessCache::readStale($customerKey) === true;
         }
         return $result['valid'];
@@ -437,10 +426,7 @@ class CapabilitiesController
 
         $result = $this->checkKey($customerKey);
         if ($result === null || $result['paid'] === null) {
-            if (!isset($this->licenceBusy[$customerKey])) {
-                CliAccessCache::markUnknown($customerKey);
-            }
-            return true;
+            return true; // checkKey() recorded the hold-off, if this was an outage
         }
         return $result['paid'];
     }
@@ -515,30 +501,38 @@ class CapabilitiesController
         }
         // One asker per key across processes: a burst of cold requests would
         // otherwise each pass the cache and the hold-off and each pay the
-        // timeouts. The others wait for the claimant's verdict to land in the
-        // cache; one that does not land in time is unknown here, and not an
-        // outage (no hold-off marker: the claimant writes its own answer).
+        // timeouts. The others wait for the claimant to finish
+        // (awaitClaimantVerdict) and read what it recorded.
         if (!ShellAccessCache::beginCheck($customerKey)) {
             return $this->licenceChecks[$customerKey] = $this->awaitClaimantVerdict($customerKey);
         }
         try {
             $result = ClickServerKeyValidator::check($customerKey, 2, 4);
+            // The whole answer is recorded before the claim is released, so a
+            // request waiting on it reads both verdicts, or the hold-off, and
+            // never one without the other.
+            if ($result === null) {
+                ShellAccessCache::markUnknown($customerKey);
+                CliAccessCache::markUnknown($customerKey);
+            } else {
+                ShellAccessCache::write($customerKey, $result['valid']);
+                if ($result['paid'] !== null) {
+                    CliAccessCache::write($customerKey, $result['paid']);
+                } else {
+                    CliAccessCache::markUnknown($customerKey);
+                }
+            }
         } finally {
             ShellAccessCache::endCheck($customerKey);
-        }
-        if ($result !== null) {
-            ShellAccessCache::write($customerKey, $result['valid']);
-            if ($result['paid'] !== null) {
-                CliAccessCache::write($customerKey, $result['paid']);
-            }
         }
         return $this->licenceChecks[$customerKey] = $result;
     }
 
     /**
-     * The verdict another request is fetching for $customerKey, read from the
-     * caches as it lands, or null (and the key marked busy) when it has not
-     * landed within CLAIM_WAIT_MS.
+     * What another request recorded for $customerKey, read once it released
+     * its claim (checkKey() records the whole answer first): both verdicts,
+     * or null when it got no answer, or when it has not finished within
+     * CLAIM_WAIT_MS. Writes no hold-off: the claimant records its own.
      *
      * @return array{valid: bool, paid: ?bool}|null
      */
@@ -547,12 +541,13 @@ class CapabilitiesController
         $deadline = microtime(true) + self::CLAIM_WAIT_MS / 1000;
         do {
             usleep(100_000);
-            $valid = ShellAccessCache::readVerdict($customerKey);
-            if ($valid !== null) {
-                return ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
+            if (!ShellAccessCache::checkInProgress($customerKey)) {
+                $valid = ShellAccessCache::readVerdict($customerKey);
+                return $valid === null
+                    ? null
+                    : ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
             }
         } while (microtime(true) < $deadline);
-        $this->licenceBusy[$customerKey] = true;
         return null;
     }
 

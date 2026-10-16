@@ -32,6 +32,8 @@ final class TrackingDomainUserIdTest extends TestCase
     public static function cases(): iterable
     {
         yield 'given' => [5, ['user_id' => 9], '5'];
+        yield 'given zero' => [0, ['user_id' => 9], 'refused'];
+        yield 'given negative' => [-1, [], 'refused'];
         yield 'nobody signed in' => [null, [], '1'];
         yield 'null in the session' => [null, ['user_id' => null], '1'];
         yield 'int' => [null, ['user_id' => 9], '9'];

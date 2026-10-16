@@ -228,6 +228,17 @@ class ShellAccessCache
         return !file_exists($lock);
     }
 
+    /** Whether a check of $key is claimed and not yet released (beginCheck()). */
+    public static function checkInProgress(string $key): bool
+    {
+        $path = static::path($key);
+        if ($path === null) {
+            return false;
+        }
+        clearstatcache(true, $path . '.checking');
+        return file_exists($path . '.checking');
+    }
+
     public static function endCheck(string $key): void
     {
         $path = static::path($key);

@@ -66,6 +66,44 @@ final class LicenceCheckClaimTest extends TestCase
         self::assertFalse(ShellAccessCache::recentlyUnknown($this->key), 'no hold-off marker over a verdict');
     }
 
+    /** Runs $php in a child process, with the cache classes loaded, as the claimant. */
+    private function claimant(string $php)
+    {
+        $root = dirname(__DIR__, 2);
+        $child = proc_open([PHP_BINARY, '-r', 'require ' . var_export($root . '/vendor/autoload.php', true) . '; '
+            . 'use Prosper202\License\ShellAccessCache; use Prosper202\License\CliAccessCache; '
+            . '$k = ' . var_export($this->key, true) . '; ' . $php], [], $pipes);
+        self::assertIsResource($child);
+        return $child;
+    }
+
+    public function testAWaiterLeavesAsSoonAsTheClaimantGotNoAnswer(): void
+    {
+        self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
+        $child = $this->claimant('usleep(300000); ShellAccessCache::markUnknown($k); '
+            . 'CliAccessCache::markUnknown($k); ShellAccessCache::endCheck($k);');
+        try {
+            $started = microtime(true);
+            self::assertFalse($this->shellAccess($this->controller()), 'no answer and nothing stale: closed');
+            self::assertLessThan(2.0, microtime(true) - $started, 'it left when the claim was released');
+        } finally {
+            proc_close($child);
+        }
+    }
+
+    public function testAWaiterReadsBothVerdictsOfOneAnswer(): void
+    {
+        self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
+        // The shell verdict lands first; the CLI one 0.6 s later, then the claim goes.
+        $child = $this->claimant('usleep(200000); ShellAccessCache::write($k, true); usleep(600000); '
+            . 'CliAccessCache::write($k, false); ShellAccessCache::endCheck($k);');
+        try {
+            self::assertFalse($this->controller()->cliAccess(), 'the answer said not paid');
+        } finally {
+            proc_close($child);
+        }
+    }
+
     public function testAVerdictThatDoesNotLandWritesNoHoldOff(): void
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
@@ -131,5 +169,9 @@ final class LicenceCheckClaimTest extends TestCase
         yield 'system root' => ['GET', '/system', false];
         yield 'campaigns' => ['GET', '/campaigns', false];
         yield 'info write' => ['POST', '/system/info', false];
+        yield 'health prefix' => ['GET', '/system/healthx', false];
+        yield 'capabilities below' => ['GET', '/capabilities/x', false];
+        yield 'info below' => ['GET', '/system/info/x', false];
+        yield 'version below' => ['GET', '/system/version/../retention', false];
     }
 }
