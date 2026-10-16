@@ -29,6 +29,12 @@ class CapabilitiesController
     public const CLAIM_WAIT_MS = 4500;
 
     /**
+     * A claim older than this belongs to a claimant that has died: twice its
+     * own check's budget (4 s), so a slow claimant is never taken for one.
+     */
+    public const DEAD_CLAIM_SECONDS = 8;
+
+    /**
      * The requests the Go CLI may make without a licence: the API root and
      * /capabilities, so it can explain a refusal, the reads that say what is
      * wrong with an install (health, version, info), and /system itself,
@@ -547,10 +553,11 @@ class CapabilitiesController
      * What another request recorded for $customerKey, read once it released
      * its claim (checkKey() records the whole answer first): both verdicts,
      * or null when it got no answer, or when it has not finished within
-     * CLAIM_WAIT_MS. A claimant that has not finished by then has died (its
-     * own check gives up after 4 s), so the waiter writes the hold-off
-     * itself: later requests then read unknown at once instead of each
-     * waiting while the dead claim lasts.
+     * CLAIM_WAIT_MS. When the claim is older than DEAD_CLAIM_SECONDS its
+     * claimant has died, and the waiter writes the hold-off itself, so later
+     * requests read unknown at once rather than each waiting while the dead
+     * claim lasts; a claim younger than that is a slow claimant, whose own
+     * answer is still to come, and gets none.
      *
      * @return array{valid: bool, paid: ?bool}|null
      */
@@ -566,8 +573,10 @@ class CapabilitiesController
                     : ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
             }
         } while (microtime(true) < $deadline);
-        ShellAccessCache::markUnknown($customerKey);
-        CliAccessCache::markUnknown($customerKey);
+        if ((ShellAccessCache::claimAge($customerKey) ?? 0) >= self::DEAD_CLAIM_SECONDS) {
+            ShellAccessCache::markUnknown($customerKey);
+            CliAccessCache::markUnknown($customerKey);
+        }
         return null;
     }
 

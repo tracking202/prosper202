@@ -1664,16 +1664,18 @@ func init() {
 				// Returning on the first error discarded every row already
 				// fetched, so one transient 500 threw away the whole listing.
 				indexed := make([]map[string]interface{}, len(trackers))
-				failed, fetched := 0, 0
+				failed, fetched, notFetched := 0, 0, 0
 				var refused error
 				for result := range results {
 					if result.skipped {
+						notFetched++
 						continue
 					}
 					if r := licenceRefusal(result.err); r != nil {
 						if refused == nil {
 							refused = r
 						}
+						notFetched++
 						continue
 					}
 					if result.err != nil {
@@ -1684,13 +1686,16 @@ func init() {
 					indexed[result.index] = result.row
 					fetched++
 				}
-				if refused != nil {
+				if refused != nil && failed == 0 {
 					// Every remaining tracker would meet the same 402: report
 					// it as the licence refusal (exit 6, the trial hint), with
 					// nothing on stdout, as the bulk deletes do.
 					return fmt.Errorf("fetching tracker URLs (%d of %d fetched before it; the rest not attempted): %w",
 						fetched, len(trackers), refused)
 				}
+				// Other failures too: the refusal is not every failure's cause
+				// (licenceRefusal's rule), so the rows fetched are kept and the
+				// run ends as a partial failure that names both.
 
 				// Drop the gaps left by failed rows rather than emitting nulls.
 				ordered := make([]map[string]interface{}, 0, len(trackers)-failed)
@@ -1705,6 +1710,10 @@ func init() {
 					return fmt.Errorf("encoding tracker URLs: %w", err)
 				}
 				render(encoded)
+				if failed > 0 && refused != nil {
+					return partialFailureError("failed to fetch %d of %d tracker URLs, and %d were not fetched after a licence refusal: %v",
+						failed, len(trackers), notFetched, refused)
+				}
 				if failed > 0 {
 					return partialFailureError("failed to fetch %d of %d tracker URLs", failed, len(trackers))
 				}

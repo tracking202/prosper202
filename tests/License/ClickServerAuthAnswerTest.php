@@ -80,13 +80,25 @@ final class ClickServerAuthAnswerTest extends TestCase
         }
     }
 
+    public function testAFailureAnswerCarriesItsStatus(): void
+    {
+        $code = 'require ' . var_export(self::root() . '/202-config/functions-account-ui.php', true) . ';'
+            . ' $body = p202_status_body(503, "x"); echo http_response_code(), " ", $body;';
+        $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        self::assertSame('503 {"code":503,"msg":"x"}', trim((string)$out));
+    }
+
     public function testTheKeyPageSaysWhenNoAnswerCame(): void
     {
         $page = (string)file_get_contents(self::root() . '/202-account/ajax/validate-apikey.php');
         self::assertStringContainsString(
-            "echo api_key_validate((string) \$_POST['apikey']) ?: "
-                . "'{\"code\":503,\"msg\":\"The key could not be checked; try again.\"}';",
+            "?: p202_status_body(503, 'The key could not be checked.');",
             $page
         );
+        self::assertStringContainsString("echo api_key_validate(trim((string) \$_POST['apikey']))", $page);
+        self::assertStringContainsString("require_once __DIR__ . '/../../202-config/functions-account-ui.php';", $page);
+        $src = (string)file_get_contents(self::root() . '/202-config/functions-tracking202.php');
+        self::assertSame(1, preg_match('/function api_key_validate\(\$key\)\s*\{(.*?)\n\}/s', $src, $m));
+        self::assertStringContainsString('ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null', $m[1]);
     }
 }

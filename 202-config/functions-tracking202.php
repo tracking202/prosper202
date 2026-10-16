@@ -1036,14 +1036,18 @@ function clickserver_auth_answer(?string $body): ?bool
 
 /**
  * The licence service's raw answer for a key, as the installer and the
- * fetch-a-key page read it: the body, or false when no answer came. Asked
- * through ClickServerKeyValidator::answer(), which follows a redirect only to
- * the service itself, so the key is never posted elsewhere.
+ * fetch-a-key page read it: the body, or false when no answer came, which
+ * includes a body that is none of the service's own answers (a gateway's
+ * error page). Asked through ClickServerKeyValidator::answer(), which
+ * follows a redirect only to the service itself.
  */
 function api_key_validate($key)
 {
     $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
-    return $answer === null ? false : $answer[1];
+    if ($answer === null || \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null) {
+        return false;
+    }
+    return $answer[1];
 }
 
 function getBrowserIcon($name)

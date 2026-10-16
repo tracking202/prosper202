@@ -104,7 +104,15 @@ final class LicenceCheckClaimTest extends TestCase
         }
     }
 
-    public function testAClaimantThatNeverFinishesLeavesTheHoldOff(): void
+    /** Ages the test's claim, as a claimant that started $seconds ago would have left it. */
+    private function ageClaim(int $seconds): void
+    {
+        $path = (new \ReflectionMethod(ShellAccessCache::class, 'path'))->invoke(null, $this->key);
+        self::assertTrue(touch($path . '.checking', time() - $seconds), 'the claim was aged');
+        clearstatcache();
+    }
+
+    public function testASlowClaimantIsWaitedOutWithNoHoldOff(): void
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
         try {
@@ -112,16 +120,26 @@ final class LicenceCheckClaimTest extends TestCase
             self::assertFalse($this->shellAccess($this->controller()), 'no verdict and nothing stale: closed');
             $waited = microtime(true) - $started;
             self::assertGreaterThanOrEqual(CapabilitiesController::CLAIM_WAIT_MS / 1000 - 0.05, $waited);
-            self::assertTrue((new CapabilitiesController($this->createMysqliMock([
-                'SELECT p202_customer_api_key FROM 202_users' => [['p202_customer_api_key' => $this->key]],
-            ]), 7))->cliAccess(), 'unknown lets the CLI through');
         } finally {
             ShellAccessCache::endCheck($this->key);
         }
-        // A claimant that has not finished by then has died: the hold-off
-        // spares every later request the same wait while its claim lasts.
+        // The claim is younger than a dead one: its answer is still to come.
+        self::assertFalse(ShellAccessCache::recentlyUnknown($this->key), 'a slow claimant is not an outage');
+        self::assertFalse(CliAccessCache::recentlyUnknown($this->key), 'a slow claimant is not an outage');
+    }
+
+    public function testADeadClaimLeavesTheHoldOff(): void
+    {
+        self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
+        $this->ageClaim(CapabilitiesController::DEAD_CLAIM_SECONDS + 1);
+        try {
+            self::assertFalse($this->shellAccess($this->controller()));
+        } finally {
+            ShellAccessCache::endCheck($this->key);
+        }
         self::assertTrue(ShellAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
         self::assertTrue(CliAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
+        self::assertTrue($this->controller()->cliAccess(), 'unknown lets the CLI through, at once');
     }
 
     public function testAKeyRowThatDoesNotComeBackIsUnknown(): void

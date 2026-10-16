@@ -84,6 +84,16 @@ function p202_clickserver_key_error(?bool $valid): ?string
 }
 
 /**
+ * An answer whose failure is in its status as in its body (CLAUDE.md #1):
+ * sets $status and returns the JSON the AJAX callers read.
+ */
+function p202_status_body(int $status, string $message): string
+{
+    http_response_code($status);
+    return (string) json_encode(['code' => $status, 'msg' => $message]);
+}
+
+/**
  * The ClickServer key forms: p202_clickserver_key_error() for the key
  * itself. An empty key removes the stored one and is not checked.
  */
