@@ -35,6 +35,22 @@ const OpDownloadTooLarge = "download_too_large"
 // closed with a 422 rather than executing.
 var stagedMode = false
 
+// readOnlyMode, when set (`p202 mcp call --read-only`, which the hosted MCP
+// server and `p202 mcp --read-only` run each call with), refuses every
+// request that would change data before it is sent, whichever command made
+// it: the read-only tool list is the first check, this one is beneath it.
+var readOnlyMode = false
+
+// SetReadOnlyMode turns read-only mode on or off for every subsequent request.
+func SetReadOnlyMode(on bool) {
+	readOnlyMode = on
+}
+
+// ReadOnlyMode reports whether read-only mode is on.
+func ReadOnlyMode() bool {
+	return readOnlyMode
+}
+
 // SetStagedMode turns proposal mode on or off for every subsequent request.
 func SetStagedMode(on bool) {
 	stagedMode = on
@@ -105,6 +121,36 @@ func (e *RequestError) Error() string {
 		return fmt.Sprintf("%s error: %v", e.Kind, e.Err)
 	}
 	return fmt.Sprintf("%s error (%s): %v", e.Kind, e.Op, e.Err)
+}
+
+// checkAPIPath refuses a request path that would address something other
+// than what its command built. Commands join literal segments with ids the
+// caller typed (or an AI tool call passed on), so an id holding "?", "#",
+// a backslash, an empty, "." or ".." segment, or a space or control
+// character would move the request to another endpoint or add a query
+// (`change discard chg_1/apply?` applied the change). Ids are numbers, or
+// tokens such as chg_...; none needs any of these. A segment a command
+// percent-escaped itself (url.PathEscape) passes as it is, unless it
+// decodes to "." or ".." (%2e%2e, which a server may resolve as ..) or
+// does not decode at all.
+func checkAPIPath(path string) error {
+	trimmed := strings.TrimLeft(path, "/")
+	bad := trimmed == "" || strings.ContainsAny(trimmed, "?#\\")
+	for _, r := range trimmed {
+		if r <= ' ' || r == 0x7f {
+			bad = true
+		}
+	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		decoded, err := url.PathUnescape(seg)
+		if seg == "" || err != nil || decoded == "." || decoded == ".." {
+			bad = true
+		}
+	}
+	if bad {
+		return &RequestError{Kind: "validation", Op: "build_path", Err: fmt.Errorf("%q is not an address this command makes: an id cannot contain /, ?, #, a backslash, a space, or be . or ..; ids are the numbers (or chg_... tokens) the list commands show", path)}
+	}
+	return nil
 }
 
 func (e *RequestError) Unwrap() error {
@@ -320,7 +366,7 @@ func newClient(baseURL, apiKey string) *Client {
 		rootURL: rootURL,
 		baseURL: rootURL + "/api/v3",
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: requestTimeout, Transport: platformTransport(nil), CheckRedirect: platformCheckRedirect},
 	}
 }
 
@@ -533,8 +579,13 @@ const UpdateWriteTimeout = 15 * time.Minute
 // report's answer lists every line it did not record). A dry run is a read,
 // so --staged never stamps it; the commands refuse --staged for the writes.
 func (c *Client) PostUpdate(path string, params map[string]string, body interface{}) ([]byte, error) {
-	slow := &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport}
-	return c.doWith(slow, "POST", path, params, body, nil, maxDownloadSize, true)
+	return c.doWith(c.slowClient(), "POST", path, params, body, nil, maxDownloadSize, true)
+}
+
+// slowClient is the client's own transport and redirect rule with
+// UpdateWriteTimeout.
+func (c *Client) slowClient() *http.Client {
+	return &http.Client{Timeout: UpdateWriteTimeout, Transport: c.http.Transport, CheckRedirect: c.http.CheckRedirect}
 }
 
 func (c *Client) Put(path string, body interface{}) ([]byte, error) {
@@ -632,6 +683,14 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 
 // doWith is doLimited through a given HTTP client (PostUpdate's waits longer).
 func (c *Client) doWith(httpClient *http.Client, method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
+	if err := checkAPIPath(path); err != nil {
+		return nil, err
+	}
+	readsAsPost := method == http.MethodPost && readOnlyPost[strings.TrimLeft(path, "/")]
+	if readOnlyMode && method != http.MethodGet && method != http.MethodHead && !readsAsPost {
+		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
+			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
+	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.
 	baseURL := c.currentBaseURL()

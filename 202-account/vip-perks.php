@@ -59,9 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				// The answers are with the VIP Perks service; this only stops
 				// the reminder. Say so when it did not land, rather than
 				// reporting a success the next page load contradicts (#1).
-				if (!$db->query("UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='" . $mysql['user_id'] . "'")) {
+				if (!_mysqli_query($db, "UPDATE 202_users SET modal_status='1', vip_perks_status='0' WHERE user_id='" . $mysql['user_id'] . "'")) {
 					error_log('vip-perks.php: the reminder state was not saved: ' . $db->error);
-					p202_account_flash('warn', 'The VIP Perks reminder could not be switched off, so it may appear again. Your answers are saved.');
+					p202_account_flash('bad', 'The VIP Perks reminder could not be switched off, so it may appear again. Your answers are saved.');
 				}
 				p202_account_redirect('202-account/vip-perks.php');
 			}

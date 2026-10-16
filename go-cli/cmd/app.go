@@ -161,7 +161,7 @@ func validateAppRegistrationBody(body map[string]string) error {
 			continue
 		}
 		if n, err := strconv.Atoi(v); err != nil || n < r.min || n > r.max || strconv.Itoa(n) != v {
-			return validationError("--%s must be a whole number from %d to %d, got %q", r.flag, r.min, r.max, v).WithHint(r.hint)
+			return validationError("--%s must be a whole number from %d to %d, got %q", r.flag, r.min, r.max, v).WithHint("%s", r.hint)
 		}
 	}
 	// accept-test-signals, trust-client-revenue, integrity-mode,
@@ -361,7 +361,7 @@ var appCreateCmd = &cobra.Command{
 		}
 		if mode, ok := body["integrity_mode"]; ok && mode != "off" {
 			return validationError("--integrity-mode %s needs the app's service account, which can only be set once the app is registered", mode).
-				WithHint("Create the app without it, then `p202 app integrity credential set <id> --file key.json` and `p202 app update <id> --integrity-mode " + mode + "`.")
+				WithHint("%s", "Create the app without it, then `p202 app integrity credential set <id> --file key.json` and `p202 app update <id> --integrity-mode "+mode+"`.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -404,10 +404,10 @@ var appUpdateCmd = &cobra.Command{
 			var apiErr *api.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == 422 {
 				if _, ok := apiErr.FieldErrors["integrity_mode"]; ok {
-					return withHint(err, "Set the service account first: `p202 app integrity credential set "+args[0]+" --file key.json`, then pass --integrity-cloud-project-number with the mode; Play Integrity is Android-only.")
+					return withHint(err, "%s", "Set the service account first: `p202 app integrity credential set "+args[0]+" --file key.json`, then pass --integrity-cloud-project-number with the mode; Play Integrity is Android-only.")
 				}
 				if _, ok := apiErr.FieldErrors["integrity_cloud_project_number"]; ok {
-					return withHint(err, "observe and require need the Google Cloud project NUMBER (digits, on the Cloud project's dashboard): `p202 app update "+args[0]+" --integrity-mode <mode> --integrity-cloud-project-number <number>`. It can be replaced but not cleared; `--integrity-mode off` stops Play Integrity.")
+					return withHint(err, "%s", "observe and require need the Google Cloud project NUMBER (digits, on the Cloud project's dashboard): `p202 app update "+args[0]+" --integrity-mode <mode> --integrity-cloud-project-number <number>`. It can be replaced but not cleared; `--integrity-mode off` stops Play Integrity.")
 				}
 			}
 			return err
@@ -478,7 +478,7 @@ var appSchemaCmd = &cobra.Command{
 		}
 		if envelope.Data.AppToken == "" {
 			return validationError("this registration has no app token").
-				WithHint("The server must advertise features.app_platforms in /capabilities; `p202 app get " + args[0] + "` shows the registration.")
+				WithHint("%s", "The server must advertise features.app_platforms in /capabilities; `p202 app get "+args[0]+"` shows the registration.")
 		}
 		// The token travels as a header, exactly as the SDKs send it — never
 		// as a query parameter, which request logging would capture.

@@ -109,7 +109,13 @@ This is the normal path. CI builds and publishes; you only tag.
    `$version_string` in `202-config/version.php` (e.g. `chore: release
    vX.Y.Z`), and every pull request for that version targets that branch.
    When the version is done, merge the version branch into master in one
-   pull request. See CLAUDE.md, "Branches".
+   pull request. See CLAUDE.md, "Branches". Before opening it, fetch and run
+   `scripts/check-release-merge.sh <version>`: the merge must give exactly
+   the version branch's tree. It would not if master holds a revert of the
+   version's own commits (as it did of 1.9.78's, #218 and #219): git counts
+   those commits as merged and keeps the revert, with nothing in the pull
+   request to show it. Bring master into the version branch with the revert
+   reverted, and run the check again.
 
 2. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 
@@ -123,7 +129,7 @@ This is the normal path. CI builds and publishes; you only tag.
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
-     Go 1.22 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
+     Go 1.25 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
      third-party action touches the release job's PHP, and every action is
      pinned to a commit SHA; Dependabot proposes the updates,
    - runs `build/scripts/package-release.sh` (no build logic is duplicated in
@@ -243,7 +249,7 @@ docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   the runtime code depending on it. The `known_unresolved` list in the
   manifest is for dead references only, each with the reason. It should
   shrink, never grow.
-- **Go build fails** — confirm `go version` is ≥ 1.22 and that
+- **Go build fails** — confirm `go version` is ≥ 1.25 and that
   `make -C go-cli all` succeeds on its own. Cross-compiles use
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping

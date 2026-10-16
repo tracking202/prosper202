@@ -38,19 +38,7 @@ final readonly class Auth
      */
     public static function fromRequest(array $headers, \mysqli $db): self
     {
-        // Header names are case-insensitive per RFC 9110; normalize instead of
-        // probing a couple of hardcoded casings.
-        $headers = array_change_key_case($headers, CASE_LOWER);
-        $authHeader = $headers['authorization'] ?? '';
-        if (is_array($authHeader)) {
-            $authHeader = $authHeader[0] ?? '';
-        }
-
-        $apiKey = '';
-        if (str_starts_with($authHeader, 'Bearer ')) {
-            $apiKey = trim(substr($authHeader, 7));
-        }
-
+        $apiKey = self::bearerKey($headers);
         if ($apiKey === '') {
             throw new AuthException('API key required. Pass via Authorization: Bearer <key> header.', 401);
         }
@@ -94,6 +82,28 @@ final readonly class Auth
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));
 
         return self::loadRoles((int)$row['user_id'], $db, $scopes, \Prosper202\Conversion\Ledger\SourceRef::apiKey($apiKey));
+    }
+
+    /**
+     * The API key a request bears in `Authorization: Bearer <key>`, or ''.
+     * fromRequest() authenticates this value, and POST /connect/revoke
+     * removes exactly the key that was authenticated, so both read it here.
+     *
+     * @param array<string, mixed> $headers
+     */
+    public static function bearerKey(array $headers): string
+    {
+        // Header names are case-insensitive per RFC 9110; normalize instead of
+        // probing a couple of hardcoded casings.
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        $authHeader = $headers['authorization'] ?? '';
+        if (is_array($authHeader)) {
+            $authHeader = $authHeader[0] ?? '';
+        }
+        if (!is_string($authHeader) || !str_starts_with($authHeader, 'Bearer ')) {
+            return '';
+        }
+        return trim(substr($authHeader, 7));
     }
 
     private static function loadRoles(int $userId, \mysqli $db, array $scopes = ['*'], string $apiKeyRef = ''): self
@@ -558,6 +568,24 @@ final readonly class Auth
     }
 
     /**
+     * Whether 202_api_keys has the label column (1.9.78). Between the files
+     * of a release landing and its upgrade running, the API is served with
+     * the older schema (it is not sent to the upgrade page), so the key
+     * lists and the AI connection's key read and write a label only when
+     * this says the column is there. Cached and failing as
+     * apiKeyScopeColumnExists() does: an error throws, never "absent".
+     */
+    public static function apiKeyLabelColumnExists(\mysqli $db): bool
+    {
+        static $cache = null;
+        $cache ??= new \WeakMap();
+        if (!isset($cache[$db])) {
+            $cache[$db] = self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'label'");
+        }
+        return $cache[$db];
+    }
+
+    /**
      * Whether 202_api_keys has a scope column — and only that.
      *
      * Every failure here used to return false, which is the same answer as
@@ -571,11 +599,21 @@ final readonly class Auth
      */
     private static function probeApiKeyScopeColumn(\mysqli $db): bool
     {
+        return self::probeApiKeyColumn($db, "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
+    }
+
+    /**
+     * Runs one literal SHOW COLUMNS statement (MariaDB will not prepare it
+     * with a placeholder): true when it finds the column, false when it
+     * finds none, and a throw when it cannot tell.
+     */
+    private static function probeApiKeyColumn(\mysqli $db, string $showColumns): bool
+    {
         // Fail closed: a DB error here must not silently drop the scope column
         // from the auth query (which would grant the key the full '*' scope).
         // Only a successful probe that finds no column may report false —
         // that is the legitimate pre-upgrade schema case.
-        $stmt = $db->prepare("SHOW COLUMNS FROM 202_api_keys LIKE 'scope'");
+        $stmt = $db->prepare($showColumns);
         if (!$stmt) {
             throw new AuthException('Authentication unavailable', 500);
         }

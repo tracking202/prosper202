@@ -36,7 +36,7 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
+$user_results = _mysqli_query($db, $user_sql);
 if ($user_results === false) {
     record_mysql_error($user_sql);
 }
@@ -211,7 +211,7 @@ if (isset($_POST['database_management'])) {
                 // same statement: this schedule replaces it.
                 $sql = "UPDATE 202_users_pref SET user_delete_data_before = '" . (int) $cutoff . "',"
                     . " user_delete_data_clickid = NULL WHERE user_id = '1'";
-                if ($db->query($sql)) {
+                if (_mysqli_query($db, $sql)) {
                     if ($slack) {
                         $slack->push('click_data_deleted', [
                             'user' => $username,
@@ -244,19 +244,24 @@ if (isset($_POST['auto_database_management'])) {
 		// User 1's row, where AutoOptimizeDatabase() reads it (as
 		// PUT /api/v3/system/retention writes it).
 		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '1'";
-		if ($db->query($sql)) {
+		if (!_mysqli_query($db, $sql)) {
+			p202_account_flash('bad', 'The automatic deletion setting could not be saved; try again.');
+		} else {
 			p202_account_flash('ok', (int) $postedDays === 0
 				? 'Automatic deletion is off; click data is kept.'
 				: 'Click data older than ' . (int) $postedDays . ' days is deleted automatically from now on.');
 			p202_account_redirect('202-account/administration.php#database');
 		}
-		$fieldErrors['auto_database_management'] = 'The setting could not be saved; try again.';
 	}
 }
 
 $cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs";
-$cron_log_result = $db->query($cron_log_query);
-$last_cron_ran = $cron_log_result && $cron_log_result->num_rows > 0;
+$cron_log_result = _mysqli_query($db, $cron_log_query);
+if ($cron_log_result === false) {
+	// Not "never": a cron that ran would read the same.
+	record_mysql_error($db, $cron_log_query);
+}
+$last_cron_ran = $cron_log_result->num_rows > 0;
 if ($last_cron_ran) {
 	$cron_log_row = $cron_log_result->fetch_assoc();
 	$last_cron_job_execution_time = CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
@@ -265,8 +270,12 @@ if ($last_cron_ran) {
 }
 
 $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
-$de_result = $db->query($de_query);
-$de_row = $de_result ? $de_result->fetch_assoc() : null;
+$de_result = _mysqli_query($db, $de_query);
+if ($de_result === false) {
+	// Not "0 of 0": the report rebuild's progress is unknown, not done.
+	record_mysql_error($db, $de_query);
+}
+$de_row = $de_result->fetch_assoc();
 
 if ($de_row && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];
@@ -315,7 +324,8 @@ function p202_admin_scheduled_deletion(): ?array
 {
     global $db;
 
-    $result = $db->query(
+    $result = _mysqli_query(
+        $db,
         "SELECT user_delete_data_before, user_delete_data_clickid FROM 202_users_pref WHERE user_id = '1'"
     );
     $row = $result instanceof mysqli_result ? $result->fetch_assoc() : false;
@@ -337,7 +347,8 @@ function p202_admin_scheduled_deletion(): ?array
         ];
     }
     if ($marker !== null) {
-        $result = $db->query(
+        $result = _mysqli_query(
+            $db,
             'SELECT click_time FROM `202_clicks` WHERE click_id <= ' . (int) $marker . ' ORDER BY click_id DESC LIMIT 1'
         );
         $click = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
@@ -362,7 +373,7 @@ function database_size()
 	$GB = 1024 * 1024 * 1024;
 	$decimals = 2;
 
-	$sql = $db->query("SHOW TABLE STATUS");
+	$sql = _mysqli_query($db, "SHOW TABLE STATUS");
 	if (!$sql) {
 		return 'unknown';
 	}
