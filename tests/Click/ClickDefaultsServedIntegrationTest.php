@@ -273,6 +273,15 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         yield 'a tracker whose campaign is another account\'s' => [3938, false];
     }
 
+    /** A t202id sent as a list names no tracker the account can read: capture off. */
+    public function testAnAdvancedPagesClickWithAListForATrackerCapturesNothing(): void
+    {
+        [$status, $headers] = self::get('/tracking202/static/record_adv.php?lpip=' . (3903 + 100000)
+            . '&t202id[]=' . (3937 + 100000));
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertFalse(self::cookieSet($headers, 'p202vid'), $headers);
+    }
+
     /**
      * record_adv.php, an advanced landing page's click: its tracker's
      * campaign decides capture, as on landing.php.

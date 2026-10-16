@@ -85,7 +85,9 @@ AUTH::set_timezone((string) ($user_row['user_timezone'] ?? 'UTC'));
 // advanced landing page's click takes its campaign and payout from the
 // tracker, so another account's tracker recorded this account's click under
 // that account's campaign, at its payout.
-$raTrackerNamed = ClickRequest::string($_GET, 't202id') !== '';
+// Named is any t202id sent, a list included, as landing.php reads it: one
+// that is not a tracker of the account leaves capture off.
+$raTrackerNamed = ($_GET['t202id'] ?? '') !== '';
 $raTrackerRow = null;
 $raTrackerId = \Prosper202\Click\PublicId::parse(ClickRequest::string($_GET, 't202id'));
 if ($raTrackerId !== null) {
