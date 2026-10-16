@@ -69,6 +69,22 @@ final class AiConnectFailureBudgetTest extends TestCase
         self::assertTrue($store->hasConnectCode(hash('sha256', $live)), 'an approval was spent');
     }
 
+    /** Approvals that cannot be read hold no live one: past its budget, the source is refused. */
+    public function testUnreadableApprovalsLetNoSourcePastItsBudget(): void
+    {
+        $store = new ServerStateStore();
+        $live = AiConnect::approve($store, 7, (string) AiConnect::scopeFor('read'), str_repeat('c', 43), 'Claude');
+        $this->spendTheBudget($store);
+        $files = glob($this->stateDir . '/*/connect.json') ?: [];
+        self::assertCount(1, $files, 'the approvals file');
+        file_put_contents($files[0], '{not json');
+
+        $ran = false;
+        [$status] = $this->call($store, $live, 200, $ran);
+        self::assertSame(429, $status);
+        self::assertFalse($ran, 'the exchange ran past the budget on unreadable approvals');
+    }
+
     public function testALiveApprovalIsExchangedEvenPastTheBudget(): void
     {
         $store = new ServerStateStore();

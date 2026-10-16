@@ -199,6 +199,9 @@ final class StagedChangesControllerTest extends TestCase
         $mine = $this->controller($this->authFor(5, $propose, 'user', 'ai-key'));
         $own = $mine->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
         $this->assertSame('discarded', $mine->discard($own)['data']['status'], 'its own proposal');
+        foreach ($mine->list([])['data'] as $listed) {
+            $this->assertArrayNotHasKey('staged_by_key_ref', $listed, 'a reader sees the key digest');
+        }
 
         $theirs = $this->controller($this->authFor(5, '*', 'user', 'person-key'))
             ->stage('PUT', '/campaigns/43', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];

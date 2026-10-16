@@ -290,8 +290,9 @@ final class AiConnect
             try {
                 $live = is_string($code) && $store->hasConnectCode(hash('sha256', $code));
             } catch (\Throwable $e) {
+                // An approval that cannot be read cannot be exchanged either
+                // (consumeConnectCode reads strictly), so this is no live one.
                 error_log('p202: AI connect: approvals unreadable for the budget check: ' . $e->getMessage());
-                $live = true; // the exchange itself reads them strictly and refuses
             }
             if (!$live) {
                 return $limited($over);

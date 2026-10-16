@@ -691,6 +691,9 @@ final class StagedChangesController
     /** Adds the derived expiry flag; never mutates the stored record. */
     private function present(array $change): array
     {
+        // Which key staged it decides who may withdraw it; readers see the
+        // user (created_by), not a digest of the key.
+        unset($change['staged_by_key_ref']);
         $change['expired'] = ($change['status'] ?? '') === self::STATUS_STAGED
             && time() > (int)($change['expires_at_epoch'] ?? 0);
         if (is_array($change['payload'] ?? null)) {

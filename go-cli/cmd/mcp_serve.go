@@ -219,20 +219,22 @@ func mcpShapeResult(r mcpCallResult, readOnly, staged bool) *mcp.CallToolResult 
 		out = `{"ok":true}`
 	}
 	if size := utf8.RuneCountInString(out) + utf8.RuneCountInString(errText); size > mcpMaxResultChars {
-		if !readOnly && staged {
+		if m := mcpChangeIDInAnswer.FindStringSubmatch(out); !readOnly && staged && m != nil {
 			// Under --staged a write records a proposal; nothing changed yet.
-			id := ""
-			if m := mcpChangeIDInAnswer.FindStringSubmatch(out); m != nil {
-				id = m[1]
-			}
 			body, err := json.Marshal(map[string]interface{}{
-				"ok": true, "staged": true, "change_id": id,
+				"ok": true, "staged": true, "change_id": m[1],
 				"note": fmt.Sprintf("The change was proposed, not made: it waits for the user to apply it. Its answer is %d characters, too long to show; look at the proposal with change_show.", size),
 			})
 			if err != nil {
 				return mcpErrorResult("the proposal was recorded, but its summary could not be encoded", "server", "List proposals with change_list.")
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}
+		}
+		if !readOnly && staged {
+			// No proposal id in the answer: say neither that it was made nor
+			// that it was only proposed.
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+				`{"ok":true,"note":"The command succeeded. Its answer is %d characters, too long to show; change_list shows any proposal it recorded, and the matching get or list tool what it changed."}`, size)}}}
 		}
 		if !readOnly {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(

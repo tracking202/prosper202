@@ -1496,8 +1496,8 @@ try {
             // approver key (`read,campaigns:write`) out of *rejecting* a
             // proposal while leaving it able to approve one — an approval
             // queue that can only be drained by approving. The controller
-            // requires `<area>:stage`, which a proposer's `stage` key and an
-            // approver's `<area>:write` key both satisfy.
+            // requires `<area>:write` (an approver), or `<area>:stage` from
+            // the key that staged the change, withdrawing its own proposal.
             $scopeArea = null;
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/apply$#', $path) === 1) {

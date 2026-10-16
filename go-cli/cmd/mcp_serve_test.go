@@ -185,6 +185,12 @@ func TestMCPStagedWriteTooBigSaysItWasProposed(t *testing.T) {
 	if !json.Valid([]byte(text)) {
 		t.Fatalf("not JSON: %q", text)
 	}
+	// With no proposal id in the answer, it claims neither outcome.
+	noID := mcpShapeResult(mcpCallResult{Stdout: []byte(`{"data":"` + strings.Repeat("x", mcpMaxResultChars) + `"}`)}, false, true)
+	text = mcpResultText(noID)
+	if noID.IsError || strings.Contains(text, "was made") || strings.Contains(text, "not made") || !json.Valid([]byte(text)) {
+		t.Fatalf("staged oversize answer without an id: %v %q", noID.IsError, text)
+	}
 }
 
 func TestMCPUnfinishedWriteIsNotCalledUnrun(t *testing.T) {
