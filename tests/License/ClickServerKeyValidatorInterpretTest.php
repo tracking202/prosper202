@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\License;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\SourceScan;
 use Prosper202\License\ClickServerKeyValidator;
 
 /**
@@ -154,7 +155,7 @@ final class ClickServerKeyValidatorInterpretTest extends TestCase
             self::assertStringContainsString('ClickServerKeyValidator::answer((string) $key)', $m[1], $function);
             self::assertStringNotContainsString('curl_', $m[1], $function);
         }
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        $files = new \RecursiveIteratorIterator(SourceScan::tree($root));
         $offenders = [];
         foreach ($files as $file) {
             $path = substr($file->getPathname(), strlen($root) + 1);

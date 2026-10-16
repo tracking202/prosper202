@@ -78,12 +78,12 @@ final class AccountQueryResultsAreCheckedTest extends TestCase
         $page = (string) file_get_contents(self::root() . '/202-account/account.php');
         $code = (string) preg_replace('/\s+/', '', implode('', array_map(static fn (\PhpToken $t): string => $t->is([T_COMMENT, T_DOC_COMMENT]) ? '' : $t->text, \PhpToken::tokenize($page))));
         foreach ([
-            "\$apiKeySaved=_mysqli_query(\$db,\$user_sql);if(!\$apiKeySaved){error_log('account.php:theTracking202APIkeywasnotsaved:'.\$db->error);p202_account_flash('bad','TheTracking202APIkeycouldnotbesaved;tryagain.');}else{\$_SESSION['user_api_key']=\$_POST['user_api_key'];\$_SESSION['user_cirrus_link']=\$_POST['user_api_key'];p202_account_flash('ok','YouhaveupdatedyourTracking202APIKey.');p202_account_redirect('202-account/account.php');}",
+            "\$apiKeySaved=_mysqli_query(\$db,\$user_sql);if(!\$apiKeySaved){error_log('account.php:theTracking202APIkeywasnotsaved:'.\$db->error);p202_account_flash('bad','TheTracking202APIkeycouldnotbesaved;tryagain.');}else{\$_SESSION['user_api_key']=\$typedKey;\$_SESSION['user_cirrus_link']=\$typedKey;p202_account_flash('ok','YouhaveupdatedyourTracking202APIKey.');p202_account_redirect('202-account/account.php');}",
             "\$statsKeySaved=_mysqli_query(\$db,\$user_sql);if(!\$statsKeySaved){error_log('account.php:theStats202appkeywasnotsaved:'.\$db->error);p202_account_flash('bad','TheStats202AppKeycouldnotbesaved;tryagain.');}else{\$_SESSION['user_stats202_app_key']=\$_POST['user_stats202_app_key'];p202_account_flash('ok','YouhaveupdatedyourStats202AppKey.');p202_account_redirect('202-account/account.php');}",
         ] as $shape) {
             self::assertStringContainsString($shape, $code);
         }
-        self::assertSame(1, substr_count($code, "\$_SESSION['user_api_key']=\$_POST"), 'the session key is set in one place');
+        self::assertSame(1, substr_count($code, "\$_SESSION['user_api_key']=\$typedKey"), 'the session key is set in one place');
         self::assertSame(1, substr_count($code, "\$_SESSION['user_stats202_app_key']=\$_POST"), 'and the app key in one');
         self::assertSame(1, preg_match_all('/\bp202_account_save_currency\(/', $page), 'the currency form saves through the one transaction');
         self::assertDoesNotMatchRegularExpression('/UPDATE\s+`?202_aff_campaigns`?/i', $page, 'no campaign re-priced beside it');

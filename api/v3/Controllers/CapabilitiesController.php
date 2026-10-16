@@ -30,9 +30,10 @@ class CapabilitiesController
 
     /**
      * The requests the Go CLI may make without a licence: the API root and
-     * /capabilities, so it can explain a refusal, and the reads that say
-     * what is wrong with an install (health, version, info). Every other
-     * route, every /system write included, is gated.
+     * /capabilities, so it can explain a refusal, the reads that say what is
+     * wrong with an install (health, version, info), and /system itself,
+     * which no route serves (the router answers it). Exact paths only; every
+     * other route, every /system write included, is gated.
      */
     public static function isCliGateExempt(string $method, string $path): bool
     {
@@ -41,7 +42,7 @@ class CapabilitiesController
             return true;
         }
         return in_array(strtoupper($method), ['GET', 'HEAD'], true)
-            && in_array($path, ['/system/health', '/system/version', '/system/info'], true);
+            && in_array($path, ['/system', '/system/health', '/system/version', '/system/info'], true);
     }
 
     /**

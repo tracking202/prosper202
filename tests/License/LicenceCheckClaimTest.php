@@ -166,7 +166,9 @@ final class LicenceCheckClaimTest extends TestCase
         yield 'deletion' => ['POST', '/system/retention/delete-before', false];
         yield 'retention read' => ['GET', '/system/retention', false];
         yield 'errors' => ['GET', '/system/errors', false];
-        yield 'system root' => ['GET', '/system', false];
+        yield 'system root, which no route serves' => ['GET', '/system', true];
+        yield 'system root write' => ['POST', '/system', false];
+        yield 'a path that starts with system' => ['GET', '/systematic', false];
         yield 'campaigns' => ['GET', '/campaigns', false];
         yield 'info write' => ['POST', '/system/info', false];
         yield 'health prefix' => ['GET', '/system/healthx', false];
