@@ -523,8 +523,8 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-		if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] != '') {
-			$keyErrors['clickserver_api_key'] = 'This API Key appears invalid.';
+		if (($csKeyError = p202_check_clickserver_key((string) $_POST['clickserver_api_key'])) !== null) {
+			$keyErrors['clickserver_api_key'] = $csKeyError;
 		}
 
 		if (!$keyErrors || $mysql['clickserver_api_key'] == '') {

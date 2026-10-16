@@ -71,6 +71,27 @@ function p202_customer_key_error(?array $licence): ?string
     return $licence['valid'] ? null : 'API key is not valid. Check your key and try again!';
 }
 
+/**
+ * Why a ClickServer API key may not be saved, from
+ * clickserver_api_key_validate()'s answer, or null when it may.
+ */
+function p202_clickserver_key_error(?bool $valid): ?string
+{
+    if ($valid === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return $valid ? null : 'This API Key appears invalid.';
+}
+
+/**
+ * The ClickServer key forms: p202_clickserver_key_error() for the key
+ * itself. An empty key removes the stored one and is not checked.
+ */
+function p202_check_clickserver_key(string $key): ?string
+{
+    return $key === '' ? null : p202_clickserver_key_error(clickserver_api_key_validate($key));
+}
+
 /** The account page's customer key form: p202_customer_key_error() for the key itself. */
 function p202_check_customer_key(string $key): ?string
 {

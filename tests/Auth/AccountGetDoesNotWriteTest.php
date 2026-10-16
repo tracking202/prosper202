@@ -47,7 +47,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class AccountGetDoesNotWriteTest extends TestCase
 {
-    private const WRITE = '/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\b|->(?:executeUpdate|executeInsert)\(|validateCustomersApiKey\(|p202_check_(?:typed|customer)_key\(|ClickServerKeyValidator::(?:check|answer|validate)\(|UserDataPurge/i';
+    private const WRITE = '/\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM|REPLACE\s+INTO)\b|->(?:executeUpdate|executeInsert)\(|validateCustomersApiKey\(|p202_check_(?:typed|customer|clickserver)_key\(|clickserver_api_key_validate\(|ClickServerKeyValidator::(?:check|answer|validate)\(|UserDataPurge/i';
 
     /** @return list<array{file: string, line: int, condition: string, body: ?string}> */
     private static function getGuardedBlocks(string $file, string $source): array
@@ -217,6 +217,8 @@ final class AccountGetDoesNotWriteTest extends TestCase
             'validateCustomersApiKey($k);',
             'p202_check_customer_key($k);',
             'p202_check_typed_key($k);',
+            'p202_check_clickserver_key($k);',
+            'clickserver_api_key_validate($k);',
             '\\Prosper202\\License\\ClickServerKeyValidator::check($k);',
         ] as $write) {
             self::assertCount(1, self::violations('s.php', "<?php\nif (isset(\$_GET['x'])) { $write }\n"), $write);

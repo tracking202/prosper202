@@ -8,6 +8,6 @@ include_once(str_repeat("../", 2).'202-config/connect.php');
 AUTH::require_user();
 
 if (isset($_POST['apikey'])) {
-	echo api_key_validate($_POST['apikey']);
+	echo api_key_validate((string) $_POST['apikey']) ?: '{"code":503,"msg":"The key could not be checked; try again."}';
 }
 

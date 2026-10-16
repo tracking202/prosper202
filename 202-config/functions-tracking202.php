@@ -993,28 +993,45 @@ function clickserver_api_upgrade_url($key)
     return $download_url;
 }
 
-function clickserver_api_key_validate($key)
+/**
+ * Whether a ClickServer API key is valid for this install, as
+ * my.tracking202.com's auth answers: true, false, or null when no usable
+ * answer came (an outage, an error page). A caller must not read null as
+ * "invalid". The key and host are encoded into the query, the call is
+ * bounded, and no redirect is followed.
+ */
+function clickserver_api_key_validate($key): ?bool
 {
-    // Initiate curl
     $ch = curl_init();
-    // Disable SSL verification
+    if ($ch === false) {
+        return null;
+    }
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
-    // Execute
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?' . http_build_query([
+        'apiKey' => (string) $key,
+        'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
+    ]));
     $result = curl_exec($ch);
+    return clickserver_auth_answer(is_string($result) ? $result : null);
+}
 
-    $data = json_decode($result, true);
-
-    if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
-        curl_close($ch);
-        return false;
+/**
+ * The auth service's answer read as clickserver_api_key_validate() reports
+ * it: null for no body, a body that is not the service's JSON, or one that
+ * lacks either verdict.
+ */
+function clickserver_auth_answer(?string $body): ?bool
+{
+    $data = $body === null ? null : json_decode($body, true);
+    if (!is_array($data) || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
+        return null;
     }
-    curl_close($ch);
-    return true;
+    return $data['isValidKey'] == 'true' && $data['isValidDomain'] == 'true';
 }
 
 /**

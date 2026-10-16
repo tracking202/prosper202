@@ -547,7 +547,10 @@ class CapabilitiesController
      * What another request recorded for $customerKey, read once it released
      * its claim (checkKey() records the whole answer first): both verdicts,
      * or null when it got no answer, or when it has not finished within
-     * CLAIM_WAIT_MS. Writes no hold-off: the claimant records its own.
+     * CLAIM_WAIT_MS. A claimant that has not finished by then has died (its
+     * own check gives up after 4 s), so the waiter writes the hold-off
+     * itself: later requests then read unknown at once instead of each
+     * waiting while the dead claim lasts.
      *
      * @return array{valid: bool, paid: ?bool}|null
      */
@@ -563,6 +566,8 @@ class CapabilitiesController
                     : ['valid' => $valid, 'paid' => CliAccessCache::readVerdict($customerKey)];
             }
         } while (microtime(true) < $deadline);
+        ShellAccessCache::markUnknown($customerKey);
+        CliAccessCache::markUnknown($customerKey);
         return null;
     }
 

@@ -104,7 +104,7 @@ final class LicenceCheckClaimTest extends TestCase
         }
     }
 
-    public function testAVerdictThatDoesNotLandWritesNoHoldOff(): void
+    public function testAClaimantThatNeverFinishesLeavesTheHoldOff(): void
     {
         self::assertTrue(ShellAccessCache::beginCheck($this->key), 'the test holds the claim');
         try {
@@ -118,8 +118,10 @@ final class LicenceCheckClaimTest extends TestCase
         } finally {
             ShellAccessCache::endCheck($this->key);
         }
-        self::assertFalse(ShellAccessCache::recentlyUnknown($this->key), 'a held check is not an outage');
-        self::assertFalse(CliAccessCache::recentlyUnknown($this->key), 'a held check is not an outage');
+        // A claimant that has not finished by then has died: the hold-off
+        // spares every later request the same wait while its claim lasts.
+        self::assertTrue(ShellAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
+        self::assertTrue(CliAccessCache::recentlyUnknown($this->key), 'the waiter leaves the hold-off');
     }
 
     public function testAKeyRowThatDoesNotComeBackIsUnknown(): void
