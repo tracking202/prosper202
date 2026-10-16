@@ -332,7 +332,7 @@ $mysql['click_cloaking'] = \Prosper202\Click\ClickCloaking::trackerSetting($trac
 
 // Compute site URLs
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ClickRequest::string($_GET, 'referer');
-$click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
+$click_landing_site_url_id = $locationRepo->findOrCreateClickSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 $mysql['click_outbound_site_url_id'] = '0';
 $mysql['click_cloaking_site_url_id'] = '0';

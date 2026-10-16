@@ -329,7 +329,7 @@ if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 
 // Compute site URLs (depend on click_id_public)
 $landing_site_url = $_SERVER['HTTP_REFERER'] ?? ClickRequest::string($_GET, 'referer');
-$click_landing_site_url_id = $locationRepo->findOrCreateSiteUrl($landing_site_url);
+$click_landing_site_url_id = $locationRepo->findOrCreateClickSiteUrl($landing_site_url);
 $mysql['click_landing_site_url_id'] = (string) $click_landing_site_url_id;
 
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::forRequest($_SERVER) . 'tracking202/redirect/pci.php?pci=' . $click_id_public;

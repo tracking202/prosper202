@@ -12,12 +12,12 @@ use PHPUnit\Framework\TestCase;
  * findOrCreateClickSiteUrl(), which leaves the cache alone: through
  * findOrCreateSiteUrl() every click wrote an entry, kept 30 days, that
  * nothing read again. The URLs a visitor's request brings are looked up
- * uncached too: the referer, and the link a click script was reached by
- * (go.php?acip=…, offrtr.php?rpi=…, a tracker's dl.php or rtr.php link),
- * carry the traffic source's per-click values (c1-c4, the keyword, a
- * gclid), so cached they wrote an entry per click that churned the cache
- * the fallback URLs live in. Only the landing page's own URL, which every
- * visitor of the page shares, keeps the cached lookup.
+ * uncached too: the referer, the landing page as the visitor reached it, and
+ * the link a click script was reached by (go.php?acip=…, offrtr.php?rpi=…, a
+ * tracker's dl.php or rtr.php link) carry the traffic source's per-click
+ * values (c1-c4, the keyword, a gclid), so cached they wrote an entry per
+ * click that churned the cache the fallback URLs live in. Their domains are
+ * shared, and still found through the cache (CachedLocationRepository).
  *
  * Which URL a call is handed is a judgement the scan cannot make, so each
  * click script's lookups are listed whole, in order, by method and argument
@@ -64,11 +64,11 @@ final class ClickSiteUrlsAreUncachedTest extends TestCase
         ],
         'tracking202/static/record_adv.php' => [
             [self::CLICK, '$_referer_site_url'],
-            [self::SHARED, '$landing_site_url'],
+            [self::CLICK, '$landing_site_url'],
         ],
         'tracking202/static/record_simple.php' => [
             [self::CLICK, '$_referer_site_url'],
-            [self::SHARED, '$landing_site_url'],
+            [self::CLICK, '$landing_site_url'],
             // pci.php?pci=<the click's public id>
             [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '$cloaking_site_url'],
