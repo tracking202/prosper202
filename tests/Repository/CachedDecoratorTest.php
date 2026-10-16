@@ -139,8 +139,9 @@ final class CachedDecoratorTest extends TestCase
 
     /**
      * A URL only one click has goes to the database alone: its entry would
-     * be written on every click and read by none. The same URL looked up as
-     * an ordinary one is still cached, and the two answer the same row.
+     * be written on every click and read by none. Its domain is shared, and
+     * is found through the cache. The same URL looked up as an ordinary one
+     * is still cached, and the two answer the same row.
      */
     public function testAClicksOwnUrlIsNeitherReadFromNorWrittenToTheCache(): void
     {
@@ -152,11 +153,13 @@ final class CachedDecoratorTest extends TestCase
         $id = $cached->findOrCreateClickSiteUrl($url);
 
         self::assertSame($inner->findOrCreateSiteUrl($url), $id);
-        self::assertSame([], $cache->reads);
-        self::assertSame([], $cache->writes);
+        // Its domain, which every click to it shares, goes through the cache.
+        $domainKey = md5('domain-id' . 'offer.example' . 'h');
+        self::assertSame([$domainKey], $cache->writtenKeys(), 'the domain is cached, the URL is not');
         self::assertSame($id, $cached->findOrCreateClickSiteUrl($url), 'found again, not stored twice');
+        self::assertSame([$domainKey], $cache->writtenKeys(), 'the second lookup reads the domain\'s entry');
         self::assertSame($id, $cached->findOrCreateSiteUrl($url));
-        self::assertSame([md5('url-id' . $url . 'h')], $cache->writtenKeys());
+        self::assertSame([$domainKey, md5('url-id' . $url . 'h')], $cache->writtenKeys());
     }
 
     public function testEmptyValuesSkipCacheAndReturnZero(): void

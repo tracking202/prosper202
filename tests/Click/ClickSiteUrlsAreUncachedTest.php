@@ -46,7 +46,6 @@ final class ClickSiteUrlsAreUncachedTest extends TestCase
         'tracking202/redirect/off.php' => [
             // off.php?acip=…&pci=<the click's public id>, and go.php?acip=…
             [self::CLICK, '$outbound_site_url'],
-            [self::CLICK, '$outbound_site_url'],
             [self::CLICK, '(string) $redirect_site_url'],
         ],
         'tracking202/redirect/offrtr.php' => [

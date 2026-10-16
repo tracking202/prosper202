@@ -28,4 +28,11 @@ interface LocationRepositoryInterface
      * and costs its click this read uncached.
      */
     public function findOrCreateClickSiteUrl(string $url): int;
+
+    /**
+     * The URL's row in a site domain the caller has already found
+     * (findOrCreateSiteDomain()), so a caller that finds domains through the
+     * cache need not find this one again. $url as storedSiteUrl() gives it.
+     */
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int;
 }

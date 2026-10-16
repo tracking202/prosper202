@@ -71,11 +71,18 @@ final class HeldCacheSeamIntegrationTest extends TestCase
         self::assertNull($run['failure'], json_encode($run));
         self::assertSame("https://{$run['host']}/offer?s=$clickId", $run['url'], 'the URL filled from the click');
         self::assertSame($run['url'], self::urlOf($run['answered']), 'the id answered names the URL');
-        self::assertSame([], $run['cached'], 'no entry for a URL no other click has');
+        // Its domain, which every click to it shares, is cached once
+        // committed; the URL itself has no entry.
+        self::assertSame([$run['domain_key']], array_column($run['cached'], 0), json_encode($run['cached']));
         self::assertSame(1, self::rowCount('202_clicks_site', $clickId));
     }
 
-    /** Held or not, a rolled-back click's own URL leaves no entry behind. */
+    /**
+     * A rolled-back click's own URL leaves no entry behind. Its domain goes
+     * through the cache, so it is the hold that keeps a rolled-back domain row
+     * out of it: without one, the entry names a row that is gone, which is
+     * why every click write runs inside it (HeldCacheWritesTest).
+     */
     public function testARolledBackClicksOwnUrlLeavesNothingCached(): void
     {
         foreach (['rollback' => 5, 'rollback_unheld' => 6] as $scenario => $offset) {
@@ -88,7 +95,11 @@ final class HeldCacheSeamIntegrationTest extends TestCase
                 "$scenario: the shadowed site row"
             );
             self::assertNull(self::urlOf($run['answered']), "$scenario: the URL row went with the rollback");
-            self::assertSame([], $run['cached'], $scenario);
+            self::assertSame(
+                $scenario === 'rollback' ? [] : [$run['domain_key']],
+                array_column($run['cached'], 0),
+                $scenario
+            );
         }
     }
 

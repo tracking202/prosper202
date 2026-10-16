@@ -93,6 +93,16 @@ final class InMemoryLocationRepository implements LocationRepositoryInterface
         }
         $url = MysqlLocationRepository::storedSiteUrl($url);
 
+        return $this->findOrCreateSiteUrlInDomain($this->findOrCreateSiteDomain($url), $url);
+    }
+
+    #[\Override]
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int
+    {
+        if ($url === '') {
+            return 0;
+        }
+
         return $this->siteUrls[$url] ??= $this->nextId++;
     }
 

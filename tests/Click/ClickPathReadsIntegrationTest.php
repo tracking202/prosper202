@@ -468,6 +468,21 @@ final class ClickPathReadsIntegrationTest extends TestCase
         }
     }
 
+    /** A capture row for a t202id that names no tracker of the page's account is not kept. */
+    public function testACaptureRowForATrackerNotFoundIsNotKept(): void
+    {
+        $cache = new RecordingRowCache();
+        $reads = self::reads($cache);
+        $sets = static fn (): int => count(array_filter($cache->calls, static fn (array $c): bool => $c[0] === 'set'));
+
+        self::assertNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 77)['tracker_found']);
+        self::assertNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 4)['tracker_found']);
+        self::assertSame(0, $sets(), 'an unknown and another account\'s tracker: nothing kept');
+        self::assertNotNull($reads->landingPageCapture(self::PUBLIC + 1, self::PUBLIC + 1)['tracker_found']);
+        $reads->landingPageCapture(self::PUBLIC + 1, null);
+        self::assertSame(2, $sets(), 'a tracker found, and no tracker named, are kept');
+    }
+
     public function testEachReadAndEachInstallKeepsItsOwnEntries(): void
     {
         $cache = new RecordingRowCache();

@@ -387,7 +387,11 @@ final readonly class ClickPathReads
               LIMIT 1',
             'ii',
             // No tracker named: NULL, which equals nothing.
-            [$trackerPublicId !== null && $trackerPublicId > 0 ? $trackerPublicId : null, $publicId]
+            [$trackerPublicId !== null && $trackerPublicId > 0 ? $trackerPublicId : null, $publicId],
+            // The join answers a row for any t202id: one naming no tracker of
+            // the page's account is not kept, or every id a visitor sends
+            // would hold an entry.
+            static fn (array $row): bool => $trackerPublicId === null || $row['tracker_found'] !== null
         );
     }
 
@@ -462,9 +466,10 @@ final readonly class ClickPathReads
 
     /**
      * @param list<int|null> $params
+     * @param (callable(Row): bool)|null $keep whether a found row is kept
      * @return Row|null
      */
-    private function setupRow(string $sql, string $types, array $params): ?array
+    private function setupRow(string $sql, string $types, array $params, ?callable $keep = null): ?array
     {
         $key = $this->key($sql, $params);
         $hit = $this->cache->get($key);
@@ -482,7 +487,9 @@ final readonly class ClickPathReads
             return null;
         }
         $row = self::text($row);
-        $this->cache->set($key, $row);
+        if ($keep === null || $keep($row)) {
+            $this->cache->set($key, $row);
+        }
 
         return $row;
     }

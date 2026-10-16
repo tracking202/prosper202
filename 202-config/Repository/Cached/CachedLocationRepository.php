@@ -116,9 +116,24 @@ final readonly class CachedLocationRepository implements LocationRepositoryInter
         );
     }
 
+    /**
+     * The URL's row from the database alone, its domain through the cache:
+     * the domain is shared by every click to it, the URL is not.
+     */
     #[\Override]
     public function findOrCreateClickSiteUrl(string $url): int
     {
-        return $this->inner->findOrCreateClickSiteUrl($url);
+        if ($url === '') {
+            return 0;
+        }
+        $url = MysqlLocationRepository::storedSiteUrl($url);
+
+        return $this->inner->findOrCreateSiteUrlInDomain($this->findOrCreateSiteDomain($url), $url);
+    }
+
+    #[\Override]
+    public function findOrCreateSiteUrlInDomain(int $domainId, string $url): int
+    {
+        return $this->inner->findOrCreateSiteUrlInDomain($domainId, $url);
     }
 }
