@@ -127,6 +127,41 @@ final class AiConnectFailureBudgetTest extends TestCase
         ));
     }
 
+    /** A refusal the exchange throws (an unknown key) counts against the budget too. */
+    public function testAThrownRefusalIsCounted(): void
+    {
+        $store = new ServerStateStore();
+        for ($i = 0; $i < AiConnect::FAILURE_BUDGET; $i++) {
+            try {
+                AiConnect::tokenWithFailureBudget($store, str_repeat('t', 43), function (): array {
+                    throw new \Api\V3\Exception\ValidationException('unknown field', ['x' => 'not read']);
+                }, self::PEER);
+                self::fail('the refusal was swallowed');
+            } catch (\Api\V3\Exception\ValidationException) {
+            }
+        }
+        $ran = false;
+        [$status] = $this->call($store, str_repeat('t', 43), 400, $ran);
+        self::assertSame(429, $status);
+        self::assertFalse($ran);
+    }
+
+    /** A bucket that cannot be read is logged and serves, as the other soft limits do. */
+    public function testAnUnreadableBucketServes(): void
+    {
+        $store = new ServerStateStore();
+        $this->spendTheBudget($store);
+        $buckets = glob($this->stateDir . '/rate_limits/*') ?: [];
+        $buckets = array_values(array_filter($buckets, static fn (string $f): bool => !str_ends_with($f, '.lock')));
+        self::assertCount(1, $buckets, 'the source\'s bucket');
+        file_put_contents($buckets[0], '{not json');
+
+        $ran = false;
+        [$status] = $this->call($store, str_repeat('u', 43), 400, $ran);
+        self::assertTrue($ran, 'an unreadable bucket refused the request');
+        self::assertSame(400, $status);
+    }
+
     public function testTheCheckAloneCountsNothing(): void
     {
         $store = new ServerStateStore();

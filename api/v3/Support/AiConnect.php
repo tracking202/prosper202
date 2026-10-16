@@ -301,7 +301,14 @@ final class AiConnect
                 return $limited($over);
             }
         }
-        [$status, $body] = $exchange();
+        try {
+            [$status, $body] = $exchange();
+        } catch (\Throwable $e) {
+            // A refusal thrown (an unknown key in the body, a database
+            // error) is a failure too.
+            $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+            throw $e;
+        }
         if ($status >= 400) {
             $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
         }
