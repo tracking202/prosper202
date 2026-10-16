@@ -6,7 +6,7 @@ AUTH::require_user();
 if (isset($_GET['getProgress'])) {
 	$mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	$user_sql = "SELECT install_hash FROM 202_users WHERE user_id = '".$mysql['user_own_id']."'";
-	$user_results = $db->query($user_sql);
+	$user_results = _mysqli_query($db, $user_sql);
 	if (!$user_results instanceof mysqli_result) {
 		error_log('ajax/dni.php: the install could not be read: ' . $db->error);
 		http_response_code(500);
@@ -39,7 +39,7 @@ if (isset($_GET['updateStatus'])) {
 	$mysql['dni'] = $db->real_escape_string((string)$_GET['dni']);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_dni_networks SET processed = '1' WHERE id = '".$mysql['dni']."' AND user_id = '".$mysql['user_id']."'";
-	if (!$db->query($sql)) {
+	if (!_mysqli_query($db, $sql)) {
 		error_log('ajax/dni.php: the network was not marked processed: ' . $db->error);
 		http_response_code(500);
 		die('The network could not be updated.');
