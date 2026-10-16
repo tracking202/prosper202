@@ -98,7 +98,7 @@ func runUserPrefsUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if len(body) == 0 {
 		return validationError("no preferences specified; pass at least one flag to update").
-			WithHint("`p202 user prefs update --help` lists them; `p202 user prefs get " + userID + "` shows the current values.")
+			WithHint("%s", "`p202 user prefs update --help` lists them; `p202 user prefs get "+userID+"` shows the current values.")
 	}
 	c, err := api.NewFromConfig()
 	if err != nil {

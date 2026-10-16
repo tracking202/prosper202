@@ -33,7 +33,7 @@ Since 2007, Prosper202 has helped marketers take control of their tracking with 
 - MySQL 8.0+ or MariaDB 10.6+ (the installer and the upgrade page refuse older versions)
 - Web server: **Nginx with PHP-FPM (recommended for manual installs)** or **Apache** (as used in the official Docker image)
 - Composer (installs from source only; the release zip bundles `vendor/`)
-- Go 1.22+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
+- Go 1.25+ (optional, to build the Go CLI from source; the release zip bundles its binaries)
 
 ## Installation
 

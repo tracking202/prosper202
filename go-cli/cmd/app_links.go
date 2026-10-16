@@ -84,7 +84,7 @@ var appLinkCmd = &cobra.Command{
 		}
 		updated, err := c.Put("campaigns/"+campaign, body)
 		if err != nil {
-			return withHint(err, "The campaign was not changed. `p202 campaign get "+campaign+"` shows it as it is.")
+			return withHint(err, "%s", "The campaign was not changed. `p202 campaign get "+campaign+"` shows it as it is.")
 		}
 		render(updated)
 		return nil

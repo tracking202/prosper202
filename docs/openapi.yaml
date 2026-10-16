@@ -4052,6 +4052,13 @@ paths:
                         scope:
                           type: string
                           description: The key's scope; `*` for full-access keys
+                        label:
+                          type: string
+                          nullable: true
+                          description: >-
+                            What the key is for, when something named it. A key
+                            an AI app's connection created is labelled "AI:
+                            <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
         "403":
@@ -5684,6 +5691,143 @@ paths:
                         type: array
                         items:
                           type: string
+
+  /connect:
+    get:
+      tags:
+      - System
+      summary: Whether this install offers AI connections
+      description: >-
+        Unauthenticated. Tracking202's MCP server asks it before sending a
+        person to 202-account/connect-ai.php to approve a connection.
+      operationId: connectDiscovery
+      security: []
+      responses:
+        '200':
+          description: The install offers AI connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      connect:
+                        type: integer
+                        example: 1
+
+  /connect/token:
+    post:
+      tags:
+      - System
+      summary: Exchange an AI connection approval for its API key
+      description: >-
+        Called by Tracking202's MCP server, with no API key: the one-time code
+        the approval page sent it, and the verifier whose S256 challenge went
+        with the person (RFC 7636). A code works once and for five minutes.
+        The licence is decided first, as the install's CLI licence gate decides
+        it; the answer is then a new API key of the user who approved, with the
+        access they chose. The key's scope holds it to the areas the MCP
+        server's tools use (never users, system or sync). `?dry_run` and
+        `?staged` are refused.
+      operationId: connectToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, code_verifier]
+              properties:
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+      responses:
+        '200':
+          description: The connection's key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      api_key:
+                        type: string
+                      scope:
+                        type: string
+                        description: >-
+                          `<area>:read` for each area the MCP server's tools read, with
+                          `<area>:stage` (propose) or `<area>:write` (write) for the areas
+                          they change
+                      access:
+                        type: string
+                        enum: [read, propose, write]
+                        description: The access the person chose on the approval page
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                      version:
+                        type: string
+                      licensed:
+                        type: boolean
+                        description: >-
+                          Always true: an approval the install's licence gate refuses
+                          answers 402 and no key is made. The gate lets an approval
+                          through when the licence service cannot answer, as it does for
+                          the CLI, so the MCP server checks licence_key_sha256 itself
+                      licence_key_sha256:
+                        type: string
+                        description: >-
+                          SHA-256 (hex) of the ClickServer API key whose licence decides
+                          for this user (theirs, else the install owner's), trimmed and
+                          lowercased first, as the licence service compares keys. The MCP
+                          server checks it with the licence service; the key itself is
+                          never sent.
+        '400':
+          description: >-
+            invalid_request (a missing or malformed field) or invalid_grant
+            (the code was used, expired or never given, or the verifier does
+            not match)
+        '402':
+          description: >-
+            licence: the approving user's ClickServer API key (or the install
+            owner's) has no Pro licence; no key was made
+        '422':
+          description: An unknown field, or ?dry_run or ?staged
+        '500':
+          description: >-
+            The key or the licence key could not be read or written; nothing
+            was connected, and the approval is spent
+
+  /connect/revoke:
+    post:
+      tags:
+      - System
+      summary: Remove the API key this request bears
+      description: >-
+        Any key may remove itself, whatever its scope; it removes nothing
+        else. Tracking202's MCP server calls it when a connection cannot be
+        completed. `?dry_run` and `?staged` are refused.
+      operationId: connectRevoke
+      responses:
+        '200':
+          description: The key was removed
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '404':
+          description: No key with exactly these characters
+        '422':
+          description: ?dry_run or ?staged
 
   /capabilities:
     get:

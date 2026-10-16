@@ -382,7 +382,7 @@ func runBulkOrSingleDelete(cmd *cobra.Command, args []string, spec deleteSpec) e
 			return perr
 		}
 		if len(ids) == 0 {
-			return validationError("--ids requires at least one ID").WithHint(spec.idsHint())
+			return validationError("--ids requires at least one ID").WithHint("%s", spec.idsHint())
 		}
 		if dryRun {
 			return renderDeletePreviews(c, spec.endpoint, ids)

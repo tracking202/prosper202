@@ -436,6 +436,7 @@ func executeCommand(args ...string) (string, string, error) {
 	csvOutput = false
 	tableOutput = false
 	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
+	mcpToolRun = false
 	profileName = ""
 	groupName = ""
 	_ = rootCmd.PersistentFlags().Set("json", "false")

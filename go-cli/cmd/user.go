@@ -468,14 +468,14 @@ var userAPIKeyRotateCmd = &cobra.Command{
 			}
 			if matches > 1 {
 				return validationError("multiple keys share the prefix %s; cannot infer the old key's scope", prefix).
-					WithHint("Pass --scope explicitly; `p202 user apikey list " + userID + "` shows each key's scope.")
+					WithHint("%s", "Pass --scope explicitly; `p202 user apikey list "+userID+"` shows each key's scope.")
 			}
 			if matches == 0 {
 				// Falling through here would mint an unscoped key: the old
 				// key's scope is unknown, and "unknown" must never resolve
 				// to full access.
 				return validationError("no key for user %s starts with %s; cannot infer the old key's scope", userID, prefix).
-					WithHint("Check the old key value, or pass --scope explicitly; `p202 user apikey list " + userID + "` shows each key's prefix and scope.")
+					WithHint("%s", "Check the old key value, or pass --scope explicitly; `p202 user apikey list "+userID+"` shows each key's prefix and scope.")
 			}
 			if carried != "" && carried != "*" {
 				scope = carried
