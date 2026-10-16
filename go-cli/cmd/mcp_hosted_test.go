@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"p202/internal/api"
 )
 
 // mcpWriteToolInput are the arguments a write tool needs before it sends its
@@ -206,5 +208,98 @@ func TestWhoamiAnswersWithoutTheUserRecord(t *testing.T) {
 	}
 	if _, ok := got.Data["user_name_unavailable"]; !ok {
 		t.Fatalf("whoami did not say the user record was unavailable: %s", stdout)
+	}
+}
+
+// Every *_id argument takes an id only: they go into filters and paths
+// (report_breakeven's into campaigns/<id>).
+func TestMCPIDArgumentsTakeOnlyIDs(t *testing.T) {
+	cat, err := buildMCPCatalog(rootCmd, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range cat.Tools {
+		for name, prop := range tool.InputSchema.Properties {
+			if strings.HasSuffix(name, "_id") && prop.Pattern == "" {
+				t.Errorf("%s: %s has no pattern", tool.Name, name)
+			}
+		}
+	}
+	breakeven, _ := findMCPSpec("report_breakeven")
+	for _, bad := range []string{"../users", "1/../../users", "%2e%2e", "1 OR 1=1", "", "-1", "1x"} {
+		if _, err := mcpToolArgv(rootCmd, breakeven, []byte(`{"aff_campaign_id":`+strconvQuote(bad)+`}`)); err == nil {
+			t.Errorf("report_breakeven took aff_campaign_id %q", bad)
+		}
+	}
+	if _, err := mcpToolArgv(rootCmd, breakeven, []byte(`{"aff_campaign_id":"12"}`)); err != nil {
+		t.Errorf("report_breakeven refused aff_campaign_id 12: %v", err)
+	}
+	summary, _ := findMCPSpec("report_summary")
+	if _, err := mcpToolArgv(rootCmd, summary, []byte(`{"ppc_network_id":"none"}`)); err != nil {
+		t.Errorf("report_summary refused ppc_network_id none: %v", err)
+	}
+	if _, err := mcpToolArgv(rootCmd, summary, []byte(`{"ppc_network_id":"nonex"}`)); err == nil {
+		t.Error("report_summary took ppc_network_id nonex")
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// The optimize reports put --aff-campaign-id into campaigns/<id>: anything
+// but an id is refused before a request is made.
+func TestOptimizeReportsRefuseACampaignIDThatIsNotAnID(t *testing.T) {
+	for _, args := range [][]string{
+		{"report", "breakeven", "--aff-campaign-id", "../users"},
+		{"report", "losers", "--aff-campaign-id", "1%2f..%2fusers"},
+		{"report", "winners", "--aff-campaign-id", "7x"},
+	} {
+		fake := &mcpFakeInstall{}
+		srv := fake.server(t)
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		writeTestConfig(t, tmp, srv.URL, "test-key-123456")
+		_, _, err := executeCommand(args...)
+		if err == nil || exitCodeForError(err) != 1 {
+			t.Errorf("%v: err %v, want a validation refusal", args, err)
+		}
+		if hits := fake.requests(); len(hits) != 0 {
+			t.Errorf("%v sent %q", args, hits)
+		}
+	}
+}
+
+// --read-only holds the client itself for the length of the call: the
+// install sees the mode on while the tool runs, and it is off afterwards.
+func TestMCPReadOnlyCallHoldsTheClient(t *testing.T) {
+	var during []bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		during = append(during, api.ReadOnlyMode())
+		switch r.URL.Path {
+		case "/api/versions":
+			_, _ = w.Write([]byte(`{"data":{"preferred":"v3","supported":["v3"]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	tmp := t.TempDir()
+	setTestHome(t, tmp)
+	writeTestConfig(t, tmp, srv.URL, "test-key-123456")
+	if _, stderr, err := mcpExecute(t, "mcp", "call", "campaign_list", "--input", "{}", "--read-only"); err != nil {
+		t.Fatalf("campaign_list --read-only: %v\n%s", err, stderr)
+	}
+	if len(during) == 0 {
+		t.Fatal("the call reached the install with nothing")
+	}
+	for i, on := range during {
+		if !on {
+			t.Errorf("request %d went out with read-only mode off", i)
+		}
+	}
+	if api.ReadOnlyMode() {
+		t.Error("read-only mode is still on after the call")
 	}
 }

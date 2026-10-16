@@ -103,6 +103,10 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Beneath the tool list: under --read-only the client itself sends
+	// nothing that changes data, whatever the tool's command does.
+	api.SetReadOnlyMode(mcpReadOnly)
+	defer api.SetReadOnlyMode(false)
 	// The tool's command runs in this process, on the same command tree.
 	// Root's persistent flags keep what this invocation parsed (nothing
 	// resets them between the two runs), so --profile and --staged carry

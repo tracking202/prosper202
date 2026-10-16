@@ -51,8 +51,18 @@ func parseFiniteFloat(v interface{}) (float64, error) {
 	return f, nil
 }
 
+// campaignIDError refuses an --aff-campaign-id that is not an internal id:
+// it goes into the campaigns/<id> path (fetchCampaignPayout).
+func campaignIDError(id string) error {
+	return validationError("--aff-campaign-id must be a campaign's internal id (digits), not %q", id).
+		WithHint("`p202 campaign list` shows the internal ids.")
+}
+
 // fetchCampaignPayout returns the default payout for a campaign (internal id).
 func fetchCampaignPayout(c *api.Client, campaignID string) (float64, error) {
+	if !isAllDigits(campaignID) {
+		return 0, campaignIDError(campaignID)
+	}
 	data, err := c.Get("campaigns/"+campaignID, nil)
 	if err != nil {
 		return 0, err
@@ -157,13 +167,16 @@ var reportBreakevenCmd = &cobra.Command{
 		"breakeven_cpc = campaign payout × (conversions / clicks); margin = breakeven_cpc − avg_cpc.\n" +
 		"Requires --aff-campaign-id (the INTERNAL id from `campaign list`) to read the payout.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := api.NewFromConfig()
-		if err != nil {
-			return err
-		}
 		campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 		if campaignID == "" {
 			return validationError("--aff-campaign-id is required (the internal id from `campaign list`)")
+		}
+		if !isAllDigits(campaignID) {
+			return campaignIDError(campaignID)
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
 		}
 		maxCPC, _ := cmd.Flags().GetFloat64("max-cpc")
 
@@ -681,13 +694,16 @@ func triageCmd(use, short string, wantWinners bool) *cobra.Command {
 				return validationError("--payout must be at most %.0f; got %g", maxPayout, payoutFlag).
 					WithHint("Pass your revenue per conversion, like 160 for a $160 average order.")
 			}
+			campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
+			if campaignID != "" && !isAllDigits(campaignID) {
+				return campaignIDError(campaignID)
+			}
 			client, err := api.NewFromConfig()
 			if err != nil {
 				return err
 			}
 			minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
 			maxCPC, _ := cmd.Flags().GetFloat64("max-cpc")
-			campaignID, _ := cmd.Flags().GetString("aff_campaign_id")
 
 			params := collectReportParams(cmd)
 			breakdown, _ := cmd.Flags().GetString("breakdown")

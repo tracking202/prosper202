@@ -35,6 +35,22 @@ const OpDownloadTooLarge = "download_too_large"
 // closed with a 422 rather than executing.
 var stagedMode = false
 
+// readOnlyMode, when set (`p202 mcp call --read-only`, which the hosted MCP
+// server and `p202 mcp --read-only` run each call with), refuses every
+// request that would change data before it is sent, whichever command made
+// it: the read-only tool list is the first check, this one is beneath it.
+var readOnlyMode = false
+
+// SetReadOnlyMode turns read-only mode on or off for every subsequent request.
+func SetReadOnlyMode(on bool) {
+	readOnlyMode = on
+}
+
+// ReadOnlyMode reports whether read-only mode is on.
+func ReadOnlyMode() bool {
+	return readOnlyMode
+}
+
 // SetStagedMode turns proposal mode on or off for every subsequent request.
 func SetStagedMode(on bool) {
 	stagedMode = on
@@ -114,7 +130,9 @@ func (e *RequestError) Error() string {
 // character would move the request to another endpoint or add a query
 // (`change discard chg_1/apply?` applied the change). Ids are numbers, or
 // tokens such as chg_...; none needs any of these. A segment a command
-// percent-escaped itself (url.PathEscape) passes as it is.
+// percent-escaped itself (url.PathEscape) passes as it is, unless it
+// decodes to "." or ".." (%2e%2e, which a server may resolve as ..) or
+// does not decode at all.
 func checkAPIPath(path string) error {
 	trimmed := strings.TrimLeft(path, "/")
 	bad := trimmed == "" || strings.ContainsAny(trimmed, "?#\\")
@@ -124,7 +142,8 @@ func checkAPIPath(path string) error {
 		}
 	}
 	for _, seg := range strings.Split(trimmed, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		decoded, err := url.PathUnescape(seg)
+		if seg == "" || err != nil || decoded == "." || decoded == ".." {
 			bad = true
 		}
 	}
@@ -666,6 +685,11 @@ func (c *Client) doLimited(method, path string, params map[string]string, body i
 func (c *Client) doWith(httpClient *http.Client, method, path string, params map[string]string, body interface{}, headers map[string]string, limit int64, strict bool) ([]byte, error) {
 	if err := checkAPIPath(path); err != nil {
 		return nil, err
+	}
+	readsAsPost := method == http.MethodPost && readOnlyPost[strings.TrimLeft(path, "/")]
+	if readOnlyMode && method != http.MethodGet && method != http.MethodHead && !readsAsPost {
+		return nil, &RequestError{Kind: "validation", Op: "read_only", Err: fmt.Errorf(
+			"%s %s would change data, and this connection is read-only; nothing was sent", method, path)}
 	}
 	// Read once under the lock: version negotiation can rewrite baseURL from
 	// another goroutine, and the URL and the version header below must agree.

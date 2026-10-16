@@ -50,7 +50,20 @@ var (
 	// referers, which anyone can write).
 	mcpNumericID = regexp.MustCompile(`^[0-9]{1,20}$`)
 	mcpChangeID  = regexp.MustCompile(`^chg_[A-Za-z0-9]{1,64}$`)
+	// ppc_network_id's report filters also take none, for the clicks with
+	// no traffic source.
+	mcpNumericOrNone = regexp.MustCompile(`^(?:[0-9]{1,20}|none)$`)
 )
+
+// mcpIDFlagPattern is what an *_id flag takes. An id goes into a filter or
+// a request path (report_breakeven's into campaigns/<id>), so a model can
+// send nothing else there.
+func mcpIDFlagPattern(property string) (*regexp.Regexp, string) {
+	if property == "ppc_network_id" {
+		return mcpNumericOrNone, "a numeric id, or none"
+	}
+	return mcpNumericID, "a numeric id"
+}
 
 // mcpArg is a positional argument of a tool's command, in order.
 type mcpArg struct {
@@ -250,6 +263,9 @@ type mcpParam struct {
 	kind       string // string, boolean, integer, number, array
 	required   bool
 	positional bool
+	// pattern and form: an *_id flag's values (mcpIDFlagPattern).
+	pattern *regexp.Regexp
+	form    string
 }
 
 type mcpCatalog struct {
@@ -347,7 +363,11 @@ func (s mcpToolSpec) params(c *cobra.Command) ([]mcpParam, map[string]*pflag.Fla
 		}
 		seen[prop] = true
 		flags[prop] = f
-		params = append(params, mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name]})
+		p := mcpParam{property: prop, flag: f.Name, kind: kind, required: required[f.Name]}
+		if kind == "string" && strings.HasSuffix(prop, "_id") {
+			p.pattern, p.form = mcpIDFlagPattern(prop)
+		}
+		params = append(params, p)
 	})
 	for name := range required {
 		if c.LocalFlags().Lookup(name) == nil || omit[name] {
@@ -417,6 +437,9 @@ func (s mcpToolSpec) tool(root *cobra.Command) (mcpTool, error) {
 			schema.Required = append(schema.Required, p.property)
 		}
 		prop := mcpProperty{Type: p.kind, Description: mcpText(info.Usage)}
+		if p.pattern != nil {
+			prop.Pattern = p.pattern.String()
+		}
 		if p.kind == "array" {
 			prop.Items = &mcpProperty{Type: "string"}
 		}
@@ -656,6 +679,9 @@ func mcpValueWords(s mcpToolSpec, names []string, p mcpParam, raw json.RawMessag
 		}
 		if p.positional {
 			return []string{v}, nil
+		}
+		if p.pattern != nil && !p.pattern.MatchString(v) {
+			return nil, mcpArgError(s, names, "%s: %s must be %s, not %q", s.Name, p.property, p.form, mcpClip(v))
 		}
 		return []string{flagWord(v)}, nil
 	case "boolean":
