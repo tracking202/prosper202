@@ -213,9 +213,9 @@ try {
             $payload,
             fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
         );
-        if ($connectStatus === 429) {
+        if (($connectBody['rate_limited'] ?? false) === true) {
             header('Retry-After: ' . (int) $connectBody['retry_after_seconds']);
-            Bootstrap::errorResponse('Rate limit exceeded', 429, $connectBody);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $connectBody['retry_after_seconds']]);
             exit;
         }
         Bootstrap::jsonResponse($connectBody, $connectStatus);

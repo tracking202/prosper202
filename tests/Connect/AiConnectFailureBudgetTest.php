@@ -64,6 +64,7 @@ final class AiConnectFailureBudgetTest extends TestCase
         $ran = false;
         [$status, $body] = $this->call($store, str_repeat('k', 43), 400, $ran);
         self::assertSame(429, $status);
+        self::assertTrue($body['rate_limited'], 'the limiter marks its own answer');
         self::assertGreaterThan(0, $body['retry_after_seconds']);
         self::assertFalse($ran, 'the exchange ran for a source past its budget');
         self::assertTrue($store->hasConnectCode(hash('sha256', $live)), 'an approval was spent');

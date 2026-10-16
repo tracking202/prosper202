@@ -281,7 +281,7 @@ final class AiConnect
         callable $exchange,
         ?string $peerIp = null
     ): array {
-        $limited = static fn (int $after): array => [429, ['retry_after_seconds' => $after]];
+        $limited = static fn (int $after): array => [429, ['rate_limited' => true, 'retry_after_seconds' => $after]];
         $bucket = 'connect-token-failed';
         $over = $store->softIpRateLimitExceeded($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
         if ($over !== null) {
