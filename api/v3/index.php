@@ -205,17 +205,21 @@ try {
         // Worker egress), so counting every exchange let junk requests turn
         // real ones away. A good exchange is a 256-bit one-time code plus its
         // verifier, so it is never refused; a failure past the limit is
-        // answered 429.
+        // answered 429 (AiConnect::tokenWithFailureBudget: a source past its
+        // budget is refused before the work unless its code is a live one).
+        // The budget check reads only the presented code; the body goes
+        // whole to ConnectController::token, which refuses unknown keys.
         $connectStore = new ServerStateStore();
-        [$connectStatus, $connectBody] = (new \Api\V3\Controllers\ConnectController($db, $connectStore))
-            ->token($payload);
-        if ($connectStatus >= 400) {
-            $retryAfter = $connectStore->softIpRateLimit('connect-token-failed', 30, 60);
-            if ($retryAfter !== null) {
-                header('Retry-After: ' . $retryAfter);
-                Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $retryAfter]);
-                exit;
-            }
+        $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
+            $connectStore,
+            $presentedCode,
+            fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
+        );
+        if (($connectBody['rate_limited'] ?? false) === true) {
+            header('Retry-After: ' . (int) $connectBody['retry_after_seconds']);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $connectBody['retry_after_seconds']]);
+            exit;
         }
         Bootstrap::jsonResponse($connectBody, $connectStatus);
         exit;
@@ -1495,8 +1499,8 @@ try {
             // approver key (`read,campaigns:write`) out of *rejecting* a
             // proposal while leaving it able to approve one — an approval
             // queue that can only be drained by approving. The controller
-            // requires `<area>:stage`, which a proposer's `stage` key and an
-            // approver's `<area>:write` key both satisfy.
+            // requires `<area>:write` (an approver), or `<area>:stage` from
+            // the key that staged the change, withdrawing its own proposal.
             $scopeArea = null;
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/apply$#', $path) === 1) {

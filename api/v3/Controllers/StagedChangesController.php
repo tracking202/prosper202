@@ -181,6 +181,9 @@ final class StagedChangesController
             'created_at' => gmdate('c'),
             'created_at_epoch' => $now,
             'created_by' => $this->auth->userId(),
+            // Which key proposed it (SourceRef::apiKey(), a digest): only
+            // that key may withdraw it without write access to the area.
+            'staged_by_key_ref' => $this->auth->apiKeyRef(),
             'expires_at_epoch' => $now + self::ttlSeconds(),
             'applied_at' => null,
             'applied_by' => null,
@@ -262,16 +265,52 @@ final class StagedChangesController
      */
     private function keyReads(array $change): bool
     {
-        $area = (string)($change['resource_area'] ?? '');
-        if ($area === '') {
-            $area = (string)Auth::scopeAreaForPath((string)($change['path'] ?? ''));
-        }
+        $area = self::changeArea($change);
         if ($area === '') {
             return $this->auth->hasFullScope()
                 || in_array('read', $this->auth->scopes(), true)
                 || in_array('write', $this->auth->scopes(), true);
         }
         return $this->auth->hasScope($area . ':read');
+    }
+
+    /** The area a change touches: as recorded, else read off its path; '' when neither tells. */
+    private static function changeArea(array $change): string
+    {
+        $area = (string)($change['resource_area'] ?? '');
+        if ($area === '') {
+            $area = (string)Auth::scopeAreaForPath((string)($change['path'] ?? ''));
+        }
+        return $area;
+    }
+
+    /**
+     * Requires `<area>:write` of this key for the change's area. A change
+     * whose area cannot be told is not let through unchecked: it needs a key
+     * that writes every area (`*` or `write`).
+     */
+    private function requireChangeWrite(array $change): void
+    {
+        $area = self::changeArea($change);
+        if ($area !== '') {
+            $this->auth->requireScope($area . ':write');
+            return;
+        }
+        if (!$this->auth->hasFullScope() && !in_array('write', $this->auth->scopes(), true)) {
+            throw new AuthException(sprintf(
+                "Insufficient API key scope for this operation: the change's area cannot be told, so it requires "
+                . "'write' for every area (key has: %s).",
+                implode(',', $this->auth->scopes())
+            ), 403);
+        }
+    }
+
+    /** Whether this request bears the key that staged the change (older records name none). */
+    private function stagedByThisKey(array $change): bool
+    {
+        $ref = (string)($change['staged_by_key_ref'] ?? '');
+        $mine = $this->auth->apiKeyRef();
+        return $ref !== '' && $mine !== '' && hash_equals($ref, $mine);
     }
 
     /**
@@ -294,6 +333,12 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
+        // The applier needs write access to the area the change touches; a
+        // propose-only (`stage`) key cannot apply its own proposals. Asked
+        // first: a key that may not apply changes nothing and learns no
+        // status from the refusal.
+        $this->requireChangeWrite($change);
+
         if (self::isStaleApplying($change)) {
             $this->failInterrupted($ownerId, $changeId);
         }
@@ -310,13 +355,6 @@ final class StagedChangesController
                 $changeId,
                 gmdate('c', (int)($change['expires_at_epoch'] ?? 0))
             ));
-        }
-
-        // The applier needs write access to the area the change touches;
-        // a propose-only (`stage`) key cannot apply its own proposals.
-        $area = (string)($change['resource_area'] ?? '');
-        if ($area !== '') {
-            $this->auth->requireScope($area . ':write');
         }
 
         // Status and expiry are re-checked inside the locked transition so a
@@ -444,19 +482,24 @@ final class StagedChangesController
         $change = $this->requireVisibleChange($changeId);
         $ownerId = (int)$change['created_by'];
 
+        // Rejecting a proposal is for whoever could apply it (`<area>:write`,
+        // including the documented `read,campaigns:write` approver key) and
+        // for the key that proposed it, withdrawing its own proposal with
+        // `<area>:stage`. Another propose-only key (an AI connection's
+        // `campaigns:stage`) cannot discard the user's other proposals. The
+        // router leaves this to the change's own area, not staged-changes.
+        $area = self::changeArea($change);
+        $stageScope = $area === '' ? 'stage' : $area . ':stage';
+        $ownStage = $this->stagedByThisKey($change)
+            && ($this->auth->hasFullScope() || $this->auth->hasScope($stageScope)
+                || ($area === '' && in_array('write', $this->auth->scopes(), true)));
+        if (!$ownStage) {
+            $this->requireChangeWrite($change);
+        }
+        // Only after the scope check: a key that may not discard changes
+        // nothing, a stale claim included.
         if (self::isStaleApplying($change)) {
             $this->failInterrupted($ownerId, $changeId);
-        }
-
-        // Rejecting a proposal is available to whoever could have proposed it
-        // and to whoever could apply it: `<area>:stage` is satisfied by a
-        // propose-only `stage` key, a `write` key, and a granular
-        // `<area>:write` approver key alike. Without this the router's
-        // blanket `staged-changes:stage` let an approver apply but not
-        // discard.
-        $area = (string)($change['resource_area'] ?? '');
-        if ($area !== '') {
-            $this->auth->requireScope($area . ':stage');
         }
 
         $updated = $this->store->updateStagedChange($ownerId, $changeId, function (array $current): ?array {
@@ -651,6 +694,9 @@ final class StagedChangesController
     /** Adds the derived expiry flag; never mutates the stored record. */
     private function present(array $change): array
     {
+        // Which key staged it decides who may withdraw it; readers see the
+        // user (created_by), not a digest of the key.
+        unset($change['staged_by_key_ref']);
         $change['expired'] = ($change['status'] ?? '') === self::STATUS_STAGED
             && time() > (int)($change['expires_at_epoch'] ?? 0);
         if (is_array($change['payload'] ?? null)) {

@@ -287,7 +287,7 @@ for someone who holds it to apply. The lifecycle endpoints:
 | `GET` | `/staged-changes` | `staged-changes:read` | Your staged changes (`?status=`, `?all=1` for every user's — admin only) |
 | `GET` | `/staged-changes/{id}` | `staged-changes:read` | One change, payload and preview included |
 | `POST` | `/staged-changes/{id}/apply` | the write scope of the change's area (e.g. `campaigns:write`) | Perform the recorded write, as the user who proposed it |
-| `POST` | `/staged-changes/{id}/discard` | `staged-changes:stage` | End the proposal without performing it |
+| `POST` | `/staged-changes/{id}/discard` | the write scope of the change's area, or its stage scope from the key that staged it | End the proposal without performing it |
 
 The contract, in the terms of Anthropic's commerce-agents reference:
 

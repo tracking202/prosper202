@@ -257,6 +257,64 @@ final class AiConnect
         return $code;
     }
 
+    /** Failed exchanges counted per source address, and the window they are counted in. */
+    public const FAILURE_BUDGET = 30;
+    public const FAILURE_WINDOW = 60;
+
+    /**
+     * POST /connect/token under its failure budget. Only failures are
+     * counted: the MCP server's exchanges can share an address with anyone
+     * else's (a proxy, Cloudflare's Worker egress), so a good exchange is
+     * never refused. A source past its budget is refused before the work
+     * unless it presents a live approval, so junk spends nothing; an exchange
+     * that runs answers as itself, failure or not (a failed live code says
+     * to start again, not to wait), and its failure is counted. Check and
+     * count are separate steps, so concurrent requests can pass the check
+     * together: the budget bounds the steady rate, not a burst. A limiter
+     * that cannot answer is logged and serves, as the other public intakes'
+     * limiters do: the code and its verifier are the guard, not the count.
+     *
+     * @param mixed $presentedCode the request's `code`, read only to ask
+     *        whether it is a live approval; the exchange reads the body
+     * @param callable(): array{0: int, 1: array<string, mixed>} $exchange
+     * @return array{0: int, 1: array<string, mixed>}
+     */
+    public static function tokenWithFailureBudget(
+        ServerStateStore $store,
+        mixed $presentedCode,
+        callable $exchange,
+        ?string $peerIp = null
+    ): array {
+        $limited = static fn (int $after): array => [429, ['rate_limited' => true, 'retry_after_seconds' => $after]];
+        $bucket = 'connect-token-failed';
+        $over = $store->softIpRateLimitExceeded($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+        if ($over !== null) {
+            $live = false;
+            try {
+                $live = is_string($presentedCode) && $store->hasConnectCode(hash('sha256', $presentedCode));
+            } catch (\Throwable $e) {
+                // An approval that cannot be read cannot be exchanged either
+                // (consumeConnectCode reads strictly), so this is no live one.
+                error_log('p202: AI connect: approvals unreadable for the budget check: ' . $e->getMessage());
+            }
+            if (!$live) {
+                return $limited($over);
+            }
+        }
+        try {
+            [$status, $body] = $exchange();
+        } catch (\Throwable $e) {
+            // A refusal thrown (an unknown key in the body, a database
+            // error) is a failure too.
+            $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+            throw $e;
+        }
+        if ($status >= 400) {
+            $store->softIpRateLimit($bucket, self::FAILURE_BUDGET, self::FAILURE_WINDOW, $peerIp);
+        }
+        return [$status, $body];
+    }
+
     /**
      * POST /connect/token, after ConnectController refused unknown keys.
      * Returns [status, body]. The licence is decided here, before any key
