@@ -704,6 +704,12 @@ container with no `gap` whose children mix text and elements. The sibling
 lesson is that a class name is not a synonym: before using one for
 something that is not what the kit shows it doing, read its rule.
 
+An installer-written config persists across upgrades, including any class it
+defines. `202-config.php` can carry a `DB` class with `getConnection()` alone;
+the current sample having `getConnectionro()` does not add it to that file.
+Check an optional config method before calling it, and exercise a retained
+config as well as the current sample (`DatabaseConfigCompatibilityTest`).
+
 ### 20. A checker only sees the syntax it follows
 
 The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,

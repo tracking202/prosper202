@@ -98,8 +98,9 @@ final class IdCacheTest extends TestCase
 
         (new MemcacheIdCache($read, $write))->set('a', 5);
         (new MemcacheIdCache($read, $write, 604800))->set('b', 6);
+        (new MemcacheIdCache($read, $write))->set('c', 7, 86400);
 
-        self::assertSame([['a', 5, 2592000], ['b', 6, 604800]], $writes);
+        self::assertSame([['a', 5, 2592000], ['b', 6, 604800], ['c', 7, 86400]], $writes);
     }
 
     /** A refused write costs the next lookup a database read, nothing more. */

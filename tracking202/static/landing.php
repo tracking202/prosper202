@@ -69,17 +69,19 @@ $t202ClientParamMap = [
 // Resolve custom variables server-side to eliminate an extra HTTP round-trip.
 // Try t202id first; fall back to lpip → tracker lookup for pages without t202id.
 $t202CustomVars = [];
-$t202id = $_GET['t202id'] ?? '';
-$lpip = $_GET['lpip'] ?? '';
-$t202TrackerId = \Prosper202\Click\PublicId::parse($t202id);
-$t202LandingPageId = \Prosper202\Click\PublicId::parse($lpip);
+// Named is any t202id sent, a list included, as record_adv.php reads it: a
+// list names a tracker no id can be read from. Ids are read only from a
+// string.
+$t202Named = ($_GET['t202id'] ?? '') !== '';
+$t202TrackerId = \Prosper202\Click\PublicId::parse(\Prosper202\Click\ClickRequest::string($_GET, 't202id'));
+$t202LandingPageId = \Prosper202\Click\PublicId::parse(\Prosper202\Click\ClickRequest::string($_GET, 'lpip'));
 try {
     $t202Reads = \Prosper202\Repository\LookupRepositoryFactory::liveReads($db);
     // The traffic source's variables: the named tracker's (on a named page,
     // only when it is the page's account's), or for a page reached without
     // one, a tracker of the page's campaign of the page's account. Each
     // source only when it is the tracker's account's.
-    if ($t202id !== '') {
+    if ($t202Named) {
         if ($t202TrackerId === null) {
             $cv_row = null;
         } elseif ($t202LandingPageId !== null) {
@@ -118,7 +120,7 @@ if ($t202LandingPageId !== null) {
         if ($identityRow !== null) {
             // A t202id that does not parse still named a tracker.
             $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1
-                ? \Prosper202\Identity\RequestSignals::trackerAllows($t202id !== '', $identityRow)
+                ? \Prosper202\Identity\RequestSignals::trackerAllows($t202Named, $identityRow)
                 : \Prosper202\Identity\RequestSignals::campaignAllows($identityRow['lp_setting'] ?? '0');
         }
     } catch (\Throwable $identityError) {
@@ -129,7 +131,7 @@ if ($t202LandingPageId !== null) {
 }
 
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
-$lpip_js = json_encode((string) ($_GET['lpip'] ?? ''));
+$lpip_js = json_encode(\Prosper202\Click\ClickRequest::string($_GET, 'lpip'));
 // p202_beacon=0: a page that only reports events (a thank-you page on the
 // same site as the landing page) loads the script without recording its own
 // view as a click, so p202.track() ties its events to the visitor's landing

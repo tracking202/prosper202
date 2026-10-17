@@ -25,13 +25,15 @@ use Prosper202\Repository\Cache\RowCache;
  * Rows come back as the scripts read them before, every value text or null,
  * and an id a script copies into a click is 0 where the join found nothing,
  * as a tracker that names none always gave. Setup rows are kept in the row
- * cache, a missing one too; a click's row never is, since the click path
- * rewrites it while it is read.
+ * cache; a missing one is not (setupRow()), and a click's row never is,
+ * since the click path rewrites it while it is read.
  *
  * @phpstan-type Row array<string, string|null>
  */
 final readonly class ClickPathReads
 {
+    private const KEY_PREFIX = 'p202-row2-';
+
     private function __construct(
         private Connection $conn,
         private RowCache $cache,
@@ -498,7 +500,9 @@ final readonly class ClickPathReads
 
     /**
      * The statement is part of the key, so a changed select list is never
-     * answered with a row kept for the old one.
+     * answered with a row kept for the old one. The prefix changed when
+     * misses stopped being kept: 1.9.77 kept them under `p202-row-`, and an
+     * upgraded install must not answer "missing" from those until they expire.
      *
      * @param list<int|null> $params
      */
@@ -510,7 +514,7 @@ final readonly class ClickPathReads
             throw new LogicException('Unencodable read parameters', 0, $e);
         }
 
-        return 'p202-row-' . hash('sha256', $this->namespace . "\0" . $sql . "\0" . $values);
+        return self::KEY_PREFIX . hash('sha256', $this->namespace . "\0" . $sql . "\0" . $values);
     }
 
     /**

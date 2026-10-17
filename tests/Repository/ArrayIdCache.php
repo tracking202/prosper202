@@ -19,6 +19,9 @@ final class ArrayIdCache implements IdCache
     /** @var list<array{string, int}> */
     public array $writes = [];
 
+    /** @var array<string, int|null> the lifetime each key was last kept for */
+    public array $ttls = [];
+
     #[\Override]
     public function get(string $key): ?int
     {
@@ -28,12 +31,13 @@ final class ArrayIdCache implements IdCache
     }
 
     #[\Override]
-    public function set(string $key, int $id): void
+    public function set(string $key, int $id, ?int $ttl = null): void
     {
         if ($id < 1) {
             throw new InvalidArgumentException('Only a row id is cached, not ' . $id);
         }
         $this->writes[] = [$key, $id];
+        $this->ttls[$key] = $ttl;
         $this->ids[$key] = $id;
     }
 

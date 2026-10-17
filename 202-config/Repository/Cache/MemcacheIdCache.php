@@ -47,7 +47,7 @@ final readonly class MemcacheIdCache implements IdCache
     }
 
     #[\Override]
-    public function set(string $key, int $id): void
+    public function set(string $key, int $id, ?int $ttl = null): void
     {
         if ($id < 1) {
             throw new InvalidArgumentException(
@@ -56,6 +56,6 @@ final readonly class MemcacheIdCache implements IdCache
         }
         // A write the cache refuses costs a miss on the next lookup, which
         // reads the database; it is not an answer to check.
-        ($this->write)($key, $id, $this->ttl);
+        ($this->write)($key, $id, $ttl ?? $this->ttl);
     }
 }

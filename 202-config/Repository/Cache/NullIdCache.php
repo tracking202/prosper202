@@ -16,7 +16,7 @@ final readonly class NullIdCache implements IdCache
     }
 
     #[\Override]
-    public function set(string $key, int $id): void
+    public function set(string $key, int $id, ?int $ttl = null): void
     {
         if ($id < 1) {
             throw new InvalidArgumentException(
