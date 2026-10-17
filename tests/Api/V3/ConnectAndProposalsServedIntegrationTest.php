@@ -6,6 +6,7 @@ namespace Tests\Api\V3;
 
 use Api\V3\Support\AiConnect;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Database\DataSeeder;
 
 /**
  * Through api/v3/index.php itself, served by `php -S` over the scratch
@@ -106,7 +107,10 @@ final class ConnectAndProposalsServedIntegrationTest extends TestCase
         self::cleanUp();
         self::user(self::USER);
         self::q('INSERT INTO 202_users_pref SET user_id = ' . self::USER);
-        self::q("INSERT IGNORE INTO 202_roles (role_id, role_name) VALUES (1, 'Super user')");
+        $seeder = new DataSeeder(self::requireScratch());
+        $seeder->seedRoles();
+        $seeder->seedPermissions();
+        $seeder->seedRolePermissions();
         self::q('INSERT INTO 202_user_role (user_id, role_id) VALUES (' . self::USER . ', 1)');
         self::q('INSERT INTO 202_aff_campaigns SET aff_campaign_id = ' . self::CAMPAIGN . ', user_id = ' . self::USER
             . ', aff_campaign_id_public = ' . (self::CAMPAIGN + 100000) . ", aff_network_id = 0,"
