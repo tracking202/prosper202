@@ -174,7 +174,10 @@ function p202_account_redirect(string $path): never
 
 /**
  * The flashes a page shows: what the redirect queued, then what this request
- * adds, rendered in the kit's shape (p202_flash()).
+ * adds, rendered in the kit's shape (p202_flash()). They come in one
+ * [data-p202-flashes] block, which p202-ui.js moves into the panel the URL's
+ * fragment names: a redirect to "page.php#section" scrolls past the top of
+ * the page, where they render.
  *
  * @param list<array{kind: string, text: string}> $extra
  */
@@ -184,7 +187,7 @@ function p202_account_render_flashes(array $extra = []): string
     foreach (array_merge(p202_account_take_flashes(), $extra) as $flash) {
         $html .= p202_flash($flash['kind'], $flash['text']);
     }
-    return $html;
+    return $html === '' ? '' : '<div data-p202-flashes>' . $html . '</div>';
 }
 
 /**

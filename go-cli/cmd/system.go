@@ -75,6 +75,10 @@ var systemCronCmd = &cobra.Command{
 		"row a minute, by design). hourl is 'hourly' cut short, as development builds\n" +
 		"between 1.9.55 and 1.9.76 wrote it: their check never matched, so that tier\n" +
 		"ran every minute; past 100 such rows a note says so.\n\n" +
+		"The last execution is a scheduler's run, a cron job's or AutoCron's. From\n" +
+		"1.9.78 the ping every signed-in page sends as it loads runs the tiers (their\n" +
+		"rows move) and records no execution; a note says so when that is all that\n" +
+		"ran.\n\n" +
 		"Like `p202 rotator check`, it exits 5 (partial_failure) when the last\n" +
 		"execution is older than 5 minutes (stale) or none is recorded (never_ran),\n" +
 		"with the summary still printed on stdout.\n\n" +
