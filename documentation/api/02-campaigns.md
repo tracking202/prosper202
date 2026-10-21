@@ -84,6 +84,14 @@ Rows without an `aff_campaign_id` (or `id`) are created and must include all
 required fields. Rows with an existing ID are updated and may send only the
 fields being changed.
 
+Each row is answered in `data` (`created`, `updated`, `skipped` or `error`,
+with `field_errors` for a refused field) and counted in `summary`. A row
+answered `"retryable": true` was not stored, for a reason that is not its own
+(a lock conflict with another write, or a database failure): send it again
+under a new `Idempotency-Key`. One answered `"unconfirmed": true` may or may
+not be stored: look it up first (see
+[Request Bodies](00-api-integrations.md#request-bodies)).
+
 ```bash
 curl -X POST https://your-domain.com/api/v3/campaigns/bulk-upsert \
   -H "Authorization: Bearer YOUR_API_KEY" \

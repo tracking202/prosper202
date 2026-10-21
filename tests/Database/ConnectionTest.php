@@ -274,6 +274,46 @@ final class ConnectionTest extends TestCase
         $this->assertFalse($write->committed);
     }
 
+    /**
+     * An errno, where an exception carries one, decides: the server's words
+     * can repeat a value as it was sent, and a value can read like any error.
+     */
+    public function testAnErrnoIsTheWholeAnswerWhereThereIsOne(): void
+    {
+        $echoes = [
+            'a mysqli exception\'s words' => new \mysqli_sql_exception(
+                "Duplicate entry 'Deadlock found when trying to get lock' for key 'name'",
+                1062
+            ),
+            'a tag inside the words' => new QueryException(
+                "MySQL execute failed: Duplicate entry 'x [errno 1213]' for key 'name' [errno 1062]"
+            ),
+            'English words beside a tag' => new QueryException(
+                "MySQL execute failed: Duplicate entry 'Lock wait timeout' for key 'name' [errno 1062]"
+            ),
+        ];
+        foreach ($echoes as $what => $echo) {
+            $this->assertFalse(Connection::isRetryableLockError($echo), $what);
+            $this->assertFalse(Connection::isRetryableLockError(new RuntimeException('outer', 0, $echo)), $what);
+            $this->assertTrue(Connection::isMysqlError($echo, 1062, 'Duplicate entry'), $what);
+        }
+
+        $this->assertTrue(Connection::isRetryableLockError(new \mysqli_sql_exception('Deadlock', 1213)));
+        $this->assertTrue(Connection::isRetryableLockError(
+            new QueryException('MySQL execute failed: un interblocage [errno 1213]')
+        ), 'the tag, in any language');
+        $this->assertTrue(Connection::isRetryableLockError(
+            new RuntimeException(
+                'Unable to roll back to savepoint [errno 1305]',
+                0,
+                new \mysqli_sql_exception('x', 1213)
+            )
+        ), 'a tag of its own does not hide the previous chain');
+        $this->assertTrue(Connection::isRetryableLockError(
+            new RuntimeException('MySQL execute failed: Lock wait timeout exceeded; try restarting transaction')
+        ), 'words alone, where nothing carries an errno');
+    }
+
     public function testARollbackThatFailsIsThrownAndKeepsTheHandleFromBeginningAgain(): void
     {
         $write = $this->createFakeMysqli();
@@ -290,6 +330,8 @@ final class ConnectionTest extends TestCase
             $this->assertInstanceOf(RuntimeException::class, $e->getPrevious());
             $this->assertSame('boom', $e->getPrevious()->getMessage());
         }
+        $this->assertTrue($conn->rollbackFailed());
+        $this->assertTrue((new Connection($write))->rollbackFailed(), 'it is the handle\'s, not the object\'s');
 
         // The writes may still be pending on the handle: beginning another
         // transaction there would commit them, and joining would add to them.
@@ -316,6 +358,7 @@ final class ConnectionTest extends TestCase
 
         // The error page ends it its own way, and says so.
         Connection::transactionsEnded($write);
+        $this->assertFalse($conn->rollbackFailed());
         $write->rollbackResult = true;
         $this->assertSame('next', $conn->transaction(fn () => 'next'));
     }
@@ -427,6 +470,237 @@ final class ConnectionTest extends TestCase
         $this->assertSame(5, $write->begins);
     }
 
+    // ── Savepoint ────────────────────────────────────────────────────
+
+    public function testASavepointIsRefusedOutsideATransaction(): void
+    {
+        $write = $this->savepointFake();
+        $ran = false;
+        try {
+            (new Connection($write))->withSavepoint(static function () use (&$ran): void {
+                $ran = true;
+            });
+            $this->fail('a savepoint was set outside a transaction');
+        } catch (\LogicException $e) {
+            $this->assertStringContainsString('outside a transaction', $e->getMessage());
+        }
+        $this->assertFalse($ran);
+        $this->assertSame([], $write->boundaries);
+    }
+
+    public function testWhatTheCallbackDidIsReleasedIntoTheTransaction(): void
+    {
+        $write = $this->savepointFake();
+        $conn = new Connection($write);
+
+        $result = $conn->transaction(static fn (): string => $conn->withSavepoint(static fn (): string => 'row'));
+
+        $this->assertSame('row', $result);
+        $name = self::savepointName($write);
+        $this->assertSame(['BEGIN', "SAVEPOINT $name", "RELEASE SAVEPOINT $name", 'COMMIT'], $write->boundaries);
+    }
+
+    public function testAThrowIsUndoneToItsSavepointAndPassedOnAndTheRestCommits(): void
+    {
+        $write = $this->savepointFake();
+        $conn = new Connection($write);
+        $thrown = new \DomainException('row refused');
+
+        $caught = $conn->transaction(static function () use ($conn, $thrown): ?\Throwable {
+            try {
+                $conn->withSavepoint(static function () use ($thrown): void {
+                    throw $thrown;
+                });
+            } catch (\DomainException $e) {
+                return $e;
+            }
+
+            return null;
+        });
+
+        $this->assertSame($thrown, $caught, 'the callback\'s own throwable, not a wrapper');
+        $name = self::savepointName($write);
+        $this->assertSame(['BEGIN', "SAVEPOINT $name", "ROLLBACK TO SAVEPOINT $name", 'COMMIT'], $write->boundaries);
+        $this->assertFalse($conn->isRollbackOnly());
+    }
+
+    public function testNestedSavepointsAreNamedApart(): void
+    {
+        $write = $this->savepointFake();
+        $conn = new Connection($write);
+
+        try {
+            $conn->transaction(static fn () => $conn->withSavepoint(
+                static fn () => $conn->withSavepoint(static function (): void {
+                    throw new \DomainException('inner');
+                })
+            ));
+        } catch (\DomainException) {
+        }
+
+        [, $outer, $inner, $toInner, $toOuter] = $write->boundaries;
+        $this->assertNotSame($outer, $inner);
+        $this->assertSame('ROLLBACK TO ' . $inner, $toInner);
+        $this->assertSame('ROLLBACK TO ' . $outer, $toOuter);
+        $this->assertSame('ROLLBACK', $write->boundaries[5]);
+    }
+
+    /** @return iterable<string, array{bool|\Throwable}> */
+    public static function failedRollbacksToASavepoint(): iterable
+    {
+        yield 'answered false (STRICT reporting)' => [false];
+        // What a deadlock leaves: the server rolled the transaction back, savepoint and all.
+        yield 'thrown (ERROR reporting)' => [
+            new \mysqli_sql_exception('SAVEPOINT p202_savepoint_1 does not exist', 1305),
+        ];
+    }
+
+    /** @dataProvider failedRollbacksToASavepoint */
+    public function testAFailedRollbackToTheSavepointLeavesItOnlyToRollBack(bool|\Throwable $answer): void
+    {
+        $write = $this->savepointFake();
+        $write->rollbackToResult = $answer;
+        $conn = new Connection($write);
+        $deadlock = new \mysqli_sql_exception(
+            'Deadlock found when trying to get lock; try restarting transaction',
+            1213
+        );
+        $failure = null;
+        $refusals = [];
+
+        try {
+            $conn->transaction(static function () use ($conn, $write, $deadlock, &$failure, &$refusals): string {
+                try {
+                    $conn->withSavepoint(static function () use ($deadlock): void {
+                        throw $deadlock;
+                    });
+                } catch (QueryException $e) {
+                    $failure = $e;
+                }
+                $adds = [
+                    'savepoint' => static fn () => $conn->withSavepoint(static fn () => 'ran'),
+                    'join' => static fn () => (new Connection($write))->joinTransaction(static fn () => 'ran'),
+                ];
+                foreach ($adds as $how => $add) {
+                    try {
+                        $refusals[$how] = $add();
+                    } catch (\LogicException $refused) {
+                        $refusals[$how] = $refused->getMessage();
+                    }
+                }
+
+                return 'swallowed';
+            });
+            $this->fail('a transaction whose savepoint could not be undone was committed');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('Transaction not committed', $e->getMessage());
+        }
+
+        $this->assertInstanceOf(QueryException::class, $failure);
+        $this->assertStringContainsString(
+            'Unable to roll back to savepoint after "Deadlock found',
+            $failure->getMessage()
+        );
+        $this->assertSame($deadlock, $failure->getPrevious(), 'the callback\'s throwable is kept');
+        $this->assertTrue(Connection::isRetryableLockError($failure), 'a deadlock still reads as one through it');
+        foreach ($refusals as $how => $refusal) {
+            $this->assertStringContainsString('may only roll back', $refusal, $how);
+        }
+        $this->assertFalse($write->committed);
+        $this->assertSame('ROLLBACK', $write->boundaries[array_key_last($write->boundaries)]);
+        $this->assertFalse($conn->isRollbackOnly(), 'the rollback ends it');
+        $this->assertFalse($conn->inTransaction());
+        $this->assertSame('next', $conn->transaction(static fn () => 'next'));
+    }
+
+    public function testASavepointThatCannotBeReleasedLeavesTheTransactionOnlyToRollBack(): void
+    {
+        $write = $this->savepointFake();
+        $write->releaseResult = false;
+        $conn = new Connection($write);
+
+        try {
+            $conn->transaction(static function () use ($conn): void {
+                try {
+                    $conn->withSavepoint(static fn () => 'row');
+                } catch (QueryException $e) {
+                    self::assertStringContainsString('Unable to release savepoint', $e->getMessage());
+                    self::assertTrue($conn->isRollbackOnly());
+                }
+            });
+            $this->fail('committed over a savepoint that could not be released');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('Transaction not committed', $e->getMessage());
+        }
+        $this->assertFalse($write->committed);
+        $this->assertTrue($write->rolledBack);
+    }
+
+    public function testASavepointThatCannotBeSetRunsNothing(): void
+    {
+        $write = $this->savepointFake();
+        $write->savepointResult = false;
+        $conn = new Connection($write);
+        $ran = false;
+
+        $conn->transaction(static function () use ($conn, &$ran): void {
+            try {
+                $conn->withSavepoint(static function () use (&$ran): void {
+                    $ran = true;
+                });
+                self::fail('a savepoint that was not set was used');
+            } catch (QueryException $e) {
+                self::assertStringContainsString('Unable to set savepoint', $e->getMessage());
+            }
+        });
+
+        $this->assertFalse($ran);
+        $this->assertTrue($write->committed, 'nothing was done that needs undoing');
+    }
+
+    public function testTheErrorPageEndingTheTransactionEndsItsRollbackOnly(): void
+    {
+        $write = $this->savepointFake();
+        $write->releaseResult = false;
+        $conn = new Connection($write);
+
+        $conn->transaction(static function () use ($conn, $write): void {
+            try {
+                $conn->withSavepoint(static fn () => null);
+            } catch (QueryException) {
+            }
+            self::assertTrue($conn->isRollbackOnly());
+            Connection::transactionsEnded($write);
+            self::assertFalse($conn->isRollbackOnly());
+        });
+    }
+
+    /** A FakeMysqli whose release_savepoint(), a native method's name, is mocked: logged, answering $releaseResult. */
+    private function savepointFake(): FakeMysqli
+    {
+        $fake = $this->getMockBuilder(FakeMysqli::class)
+            ->setConstructorArgs([false, true])
+            ->onlyMethods(['release_savepoint'])
+            ->getMock();
+        $fake->method('release_savepoint')->willReturnCallback(static function (string $name) use ($fake): bool {
+            $fake->boundaries[] = 'RELEASE SAVEPOINT ' . $name;
+
+            return $fake->releaseResult;
+        });
+
+        return $fake;
+    }
+
+    private static function savepointName(FakeMysqli $write): string
+    {
+        foreach ($write->boundaries as $boundary) {
+            if (str_starts_with($boundary, 'SAVEPOINT ')) {
+                return substr($boundary, strlen('SAVEPOINT '));
+            }
+        }
+        self::fail('no savepoint was set');
+    }
+
     // ── Connection accessors ─────────────────────────────────────────
 
     public function testWriteConnectionReturnsWriteInstance(): void
@@ -529,6 +803,12 @@ class FakeMysqli extends mysqli
     public int $begins = 0;
     public bool $commitResult = true;
     public bool $rollbackResult = true;
+    public bool $savepointResult = true;
+    public bool $releaseResult = true;
+    /** What ROLLBACK TO SAVEPOINT answers; a throwable is thrown, as ERROR reporting does. */
+    public bool|\Throwable $rollbackToResult = true;
+    /** @var list<string> every boundary asked for, in order */
+    public array $boundaries = [];
     private bool $inTransaction = false;
 
     public function __construct(
@@ -548,6 +828,7 @@ class FakeMysqli extends mysqli
 
     public function begin_transaction(int $flags = 0, ?string $name = null): bool
     {
+        $this->boundaries[] = 'BEGIN';
         $this->begins++;
         if ($this->beginTransactionResult) {
             $this->inTransaction = true;
@@ -558,6 +839,7 @@ class FakeMysqli extends mysqli
 
     public function commit(int $flags = 0, ?string $name = null): bool
     {
+        $this->boundaries[] = 'COMMIT';
         $this->committed = $this->commitResult;
         $this->inTransaction = !$this->commitResult;
 
@@ -566,15 +848,31 @@ class FakeMysqli extends mysqli
 
     public function rollback(int $flags = 0, ?string $name = null): bool
     {
+        $this->boundaries[] = 'ROLLBACK';
         $this->rolledBack = true;
         $this->inTransaction = !$this->rollbackResult;
 
         return $this->rollbackResult;
     }
 
+    public function savepoint(string $name): bool
+    {
+        $this->boundaries[] = 'SAVEPOINT ' . $name;
+
+        return $this->savepointResult;
+    }
+
     public function query(string $query, int $result_mode = MYSQLI_STORE_RESULT): mysqli_result|bool
     {
-        return false;
+        if (!str_starts_with($query, 'ROLLBACK TO SAVEPOINT ')) {
+            return false;
+        }
+        $this->boundaries[] = $query;
+        if ($this->rollbackToResult instanceof \Throwable) {
+            throw $this->rollbackToResult;
+        }
+
+        return $this->rollbackToResult;
     }
 
     public function close(): true
