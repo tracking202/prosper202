@@ -12,11 +12,12 @@ Take a full `mysqldump` of the Prosper202 database (or your host's database snap
 
 Simply follow the instructions, please follow them exactly.
 
-## Upgrading to 1.9.76
+## Upgrading to 1.9.78
 
-The upgrade takes a 1.9.55 (or older) database to 1.9.76 in one pass. The full list of changes is in [`changelogs.txt`](../../changelogs.txt).
+The upgrade takes a 1.9.55 (or older) database to 1.9.78 in one pass. The full list of changes is in [`changelogs.txt`](../../changelogs.txt).
 
-- **Database version.** 1.9.76 needs MySQL 8.0 or newer, or MariaDB 10.6 or newer. The upgrade page checks before changing anything and refuses an older server. A 1-Click Upgrade from 1.9.55 replaces the files and then sends you to that page for the database step, so the same check applies; still check the version first, because the files will already have been replaced when it refuses.
+- **Click data deletion.** From 1.9.77, "Delete click data older than … days" in **Account › Settings** deletes what it says, starting with the first cron run after the upgrade; before, it deleted almost nothing. If you want to keep older clicks, set it to 0 (keep every click) or a larger number before you upgrade.
+- **Database version.** Prosper202 needs MySQL 8.0 or newer, or MariaDB 10.6 or newer. The upgrade page checks before changing anything and refuses an older server. A 1-Click Upgrade from 1.9.55 replaces the files and then sends you to that page for the database step, so the same check applies; still check the version first, because the files will already have been replaced when it refuses.
 - **Large installs.** The upgrade page answers only when the upgrade has finished; at a million conversions that is one to two minutes, which can outlast your proxy's or host's time limit and show a timeout error. The upgrade keeps running on the server regardless: wait a few minutes and reload the page. If it is still running the page says "An upgrade is already running" and changes nothing; once it has finished it sends you to sign in. There is nothing to redo.
 - **Cron.** The attribution worker runs from the minutely cron (`202-cronjobs/index.php`), or on its own as `202-cronjobs/attribution-worker.php`. After the upgrade it brings your existing conversions into multi-touch attribution and builds the report rollup (about 20 minutes of worker time per million conversions); reports compute in full meanwhile and say how far it has got. Check that the minutely cron runs — `p202 attribution queue` should not keep growing — as described in [14-Multi-touch attribution](./14-advanced-attribution-engine.md). A cron job run against a database that still needs the upgrade now exits with "the database needs an upgrade" instead of succeeding silently.
 - **Permissions.** The upgrade adds `view_attribution_reports` and `manage_attribution_models`; review role assignments under **User Management** in the account menu. The Mobile Apps pages use the same two permissions.
