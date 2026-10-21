@@ -15,3 +15,17 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # The Dockerfile pins its PHP base to a patch release, so a PHP security
+  # release reaches the image only through a bump: daily, because one can
+  # follow a disclosure within hours. A move to another minor (8.4) is a
+  # runtime upgrade to make deliberately, not a bump.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: daily
+    ignore:
+      - dependency-name: php
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
