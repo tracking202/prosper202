@@ -42,14 +42,16 @@ if (is_installed() == true) {
 	// it counts), asked of this database's tables: unscoped, MySQL lists every
 	// table's partitions on the server, seconds on a host with many databases.
 	$sql = "SELECT COUNT(*) as partition_support FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_SCHEMA = DATABASE()";
-	$result = $db ? $db->query($sql) : false;
-	
-	if ($result && $result->num_rows > 0) {
-	    $partition_support = 1;
-	}
-	else{
-	    $partition_support = 0;
-	}
+    // null: not known (no database, or the check failed and is logged).
+    $partition_support = null;
+    if ($db) {
+        $result = $db->query($sql);
+        if ($result === false) {
+            p202LogFailedQuery($db, $sql, ['file' => __FILE__, 'line' => __LINE__]);
+        } else {
+            $partition_support = $result->num_rows > 0 ? 1 : 0;
+        }
+    }
  
 $partners_data = getData('https://my.tracking202.com/api/v2/hostings');
 $partners = $partners_data ? json_decode((string) $partners_data, true) : null;
@@ -62,14 +64,14 @@ if ($version_error) {
 	echo p202_standalone_card('Your server is ready', 'Step 1 of 3: Prosper202 checked what it needs from this server. Next, your license key.');
 }
 echo p202_standalone_requirements([
-	['PHP >= ' . PROSPER202_MIN_PHP_VERSION, phpversion(), $tone(!isset($version_error['phpversion']))],
-	[$dbwording, $mysqlversion, $tone(!isset($version_error['mysqlversion']))],
-	['CURL', isset($version_error['curl']) ? $version_error['curl'] : 'Installed', $tone(!isset($version_error['curl']))],
-	['xml_parser_create()', isset($version_error['xml_parser_create']) ? $version_error['xml_parser_create'] : 'Installed', $tone(!isset($version_error['xml_parser_create']))],
-	['MySQL partitioning', $partition_support == 0 ? 'Disabled' : 'Enabled', $tone($partition_support != 0, 'neutral'), 'Recommended for better performance with large datasets'],
-	['PHP Memcache or Memcached', $memcacheInstalled ? 'Installed' : 'Missing', $tone($memcacheInstalled, 'warn'), 'Recommended for BlazerCache'],
-	['PHP ZipArchive', class_exists('ZipArchive') ? 'Available' : 'Not available', $tone(class_exists('ZipArchive'), 'neutral'), 'Required for the 1-Click Upgrade feature'],
-	['PHP OpenSSL', extension_loaded('openssl') ? 'Installed' : 'Missing', $tone(extension_loaded('openssl'), 'warn'), 'Required for Enhanced Account Security and ClickBank sales notifications'],
+    ['PHP >= ' . PROSPER202_MIN_PHP_VERSION, phpversion(), $tone(!isset($version_error['phpversion']))],
+    [$dbwording, $mysqlversion, $tone(!isset($version_error['mysqlversion']))],
+    ['CURL', isset($version_error['curl']) ? $version_error['curl'] : 'Installed', $tone(!isset($version_error['curl']))],
+    ['xml_parser_create()', isset($version_error['xml_parser_create']) ? $version_error['xml_parser_create'] : 'Installed', $tone(!isset($version_error['xml_parser_create']))],
+    ['MySQL partitioning', $partition_support === null ? 'Could not be checked' : ($partition_support === 0 ? 'Disabled' : 'Enabled'), $tone($partition_support === 1, 'neutral'), 'Recommended for better performance with large datasets'],
+    ['PHP Memcache or Memcached', $memcacheInstalled ? 'Installed' : 'Missing', $tone($memcacheInstalled, 'warn'), 'Recommended for BlazerCache'],
+    ['PHP ZipArchive', class_exists('ZipArchive') ? 'Available' : 'Not available', $tone(class_exists('ZipArchive'), 'neutral'), 'Required for the 1-Click Upgrade feature'],
+    ['PHP OpenSSL', extension_loaded('openssl') ? 'Installed' : 'Missing', $tone(extension_loaded('openssl'), 'warn'), 'Required for Enhanced Account Security and ClickBank sales notifications'],
 ]);
 if (!$version_error) { ?>
 	<a href="<?php echo get_absolute_url(); ?>202-config/get_apikey.php" class="btn btn-primary btn-lg w-100 mt-3" target="_blank" id="202_lb_install_btn">Install Prosper202 ClickServer now</a>

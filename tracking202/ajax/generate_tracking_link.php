@@ -221,6 +221,15 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	$mysql['rotator_id'] = $db->real_escape_string((string)($_POST['tracker_rotator'] ?? '0'));
 	$mysql['tracker_time'] = time();
 
+    // The traffic source's variables, for the link: read before anything is
+    // written, so a failed read leaves no link saved that the answer cannot show.
+    $get_variables = "SELECT * FROM 202_ppc_network_variables"
+        . " WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = 0";
+    $get_variables_result = $db->query($get_variables);
+    if ($get_variables_result === false) {
+        record_mysql_error($get_variables);
+    }
+
     // The transaction opens BEFORE the edit path's DELETE. Editing a tracker is
     // implemented as delete-then-recreate, and with the DELETE outside the
     // transaction any failure of the INSERT/UPDATE below (or of begin itself)
@@ -326,9 +335,6 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 	
 	$tracking_variable_string = '&';
 	
-	$get_variables = "SELECT * FROM 202_ppc_network_variables WHERE ppc_network_id = '".$mysql['ppc_network_id']."' AND deleted = 0";
-	$get_variables_result = $db->query($get_variables);
-	
 	// Initialize html array
 	$html = [];
 	
@@ -363,6 +369,27 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
     $tracking_variable_string=rtrim($tracking_variable_string,'&');
 
 
+    // A row a Slack notice of an edit names, read after the edit committed:
+    // null when there is none, false when the read failed. The edit has
+    // landed, and Get Links shows the error page as a failed request, so a
+    // failure is logged, that notice is not sent, and the answer says so
+    // above the link (CLAUDE.md #13).
+    $noticeRow = static function (string $sql) use ($db): array|false|null {
+        static $told = false;
+        $result = $db->query($sql);
+        if ($result === false) {
+            p202LogFailedQuery($db, $sql, debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0] ?? []);
+            if (!$told) {
+                $told = true;
+                echo p202_flash('warn', 'Slack was not told about every change to this link:'
+                    . ' a name for its message could not be read. The server log has the error.');
+            }
+            return false;
+        }
+
+        return p202FetchRow($result, $sql);
+    };
+
 	if ($slack) {
 		$editTracker = !empty($_POST['edit_tracker']);
 
@@ -396,11 +423,12 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 					
 					$mysql['aff_campaign_id'] = $db->real_escape_string((string)$_POST['aff_campaign_id']);
 					$sql = "SELECT aff_network_name, aff_campaign_name FROM 202_aff_campaigns LEFT JOIN 202_aff_networks USING (aff_network_id, user_id) WHERE aff_campaign_id = '".$mysql['aff_campaign_id']."' AND user_id = '".$mysql['user_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
+                    $row = $noticeRow($sql);
 
-					$slack->push('tracking_link_category_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_category' => $get_tracker_row['aff_network_name'], 'new_category' => $row['aff_network_name'], 'user' => $user_row['username']]);
-					$slack->push('tracking_link_campaign_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_campaign' => $get_tracker_row['aff_campaign_name'], 'new_campaign' => $row['aff_campaign_name'], 'user' => $user_row['username']]);
+                    if ($row !== false) {
+                        $slack->push('tracking_link_category_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_category' => $get_tracker_row['aff_network_name'], 'new_category' => $row['aff_network_name'], 'user' => $user_row['username']]);
+                        $slack->push('tracking_link_campaign_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_campaign' => $get_tracker_row['aff_campaign_name'], 'new_campaign' => $row['aff_campaign_name'], 'user' => $user_row['username']]);
+                    }
 				}
 
 				if ($_POST['method_of_promotion'] == 'directlink') {
@@ -421,10 +449,11 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 					
 					$mysql['landing_page_id'] = $db->real_escape_string((string)($_POST['landing_page_id'] ?? '0'));
 					$sql = "SELECT landing_page_nickname FROM 202_landing_pages WHERE landing_page_id = '".$mysql['landing_page_id']."' AND user_id = '".$mysql['user_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
+                    $row = $noticeRow($sql);
 
-					$slack->push('tracking_link_landing_page_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_lp' => $get_tracker_row['landing_page_nickname'], 'new_lp' => $row['landing_page_nickname'], 'user' => $user_row['username']]);
+                    if ($row !== false) {
+                        $slack->push('tracking_link_landing_page_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_lp' => $get_tracker_row['landing_page_nickname'], 'new_lp' => $row['landing_page_nickname'], 'user' => $user_row['username']]);
+                    }
 				}
 			}
 
@@ -433,8 +462,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 				if (!empty($_POST['text_ad_id']) && $get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."' AND user_id = '".$mysql['user_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
+                    $row = $noticeRow($sql);
 
 					if (is_array($row)) {
 						$slack->push('tracking_link_text_ad_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_ad' => $get_tracker_row['text_ad_name'], 'new_ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
@@ -444,8 +472,7 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 				if (!empty($_POST['text_ad_id']) && !$get_tracker_row['text_ad_id']) {
 					$mysql['text_ad_id'] = $db->real_escape_string((string)($_POST['text_ad_id'] ?? '0'));
 					$sql = "SELECT text_ad_name FROM 202_text_ads WHERE text_ad_id = '".$mysql['text_ad_id']."' AND user_id = '".$mysql['user_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
+                    $row = $noticeRow($sql);
 
 					if (is_array($row)) {
 						$slack->push('tracking_link_text_ad_added', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'ad' => $row['text_ad_name'], 'user' => $user_row['username']]);
@@ -482,11 +509,12 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 			if ($_POST['ppc_account_id'] != $get_tracker_row['ppc_account_id']) {
 				$mysql['ppc_account_id'] = $db->real_escape_string((string)$_POST['ppc_account_id']);
 				$sql = "SELECT ppc_account_name, ppc_network_name FROM 202_ppc_accounts LEFT JOIN 202_ppc_networks USING (ppc_network_id, user_id) WHERE ppc_account_id = '".$mysql['ppc_account_id']."' AND user_id = '".$mysql['user_id']."'";
-				$result = $db->query($sql);
-				$row = $result->fetch_assoc();
+                $row = $noticeRow($sql);
 
-				$slack->push('tracking_link_pcc_network_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $row['ppc_network_name'], 'user' => $user_row['username']]);
-				$slack->push('tracking_link_ppc_account_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']]);
+                if ($row !== false) {
+                    $slack->push('tracking_link_pcc_network_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_source' => $get_tracker_row['ppc_network_name'], 'new_source' => $row['ppc_network_name'], 'user' => $user_row['username']]);
+                    $slack->push('tracking_link_ppc_account_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_account' => $get_tracker_row['ppc_account_name'], 'new_account' => $row['ppc_account_name'], 'user' => $user_row['username']]);
+                }
 			}
 
 			if (isset($_POST['cost_type']) && $_POST['cost_type'] == 'cpc') {
@@ -510,10 +538,11 @@ if (!in_array($_POST['click_cloaking'] ?? '-1', ['-1', '0', '1'], true)) {
 				if ($_POST['tracker_rotator'] != $get_tracker_row['rotator_id']) {
 					$mysql['rotator_id'] = $db->real_escape_string((string)$_POST['tracker_rotator']);
 					$sql = "SELECT name FROM 202_rotators WHERE id = '".$mysql['rotator_id']."' AND user_id = '".$mysql['user_id']."'";
-					$result = $db->query($sql);
-					$row = $result->fetch_assoc();
+                    $row = $noticeRow($sql);
 
-					$slack->push('tracking_link_rotator_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_rotator' => $get_tracker_row['name'], 'new_rotator' => $row['name'], 'user' => $user_row['username']]);
+                    if ($row !== false) {
+                        $slack->push('tracking_link_rotator_changed', ['type' => $tracker_type, 'id' => $tracker_row['tracker_id'], 'old_rotator' => $get_tracker_row['name'], 'new_rotator' => $row['name'], 'user' => $user_row['username']]);
+                    }
 				}
 			}
 		}

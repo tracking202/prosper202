@@ -84,6 +84,12 @@ function showCategories($db, $vars, $user = null): void {
 }
 
 function listCategories($db,$user): void {
+    echo legacy_api_json(legacyCategoryList($db, $user));
+}
+
+/** The account's categories, or the database error for a failed read. */
+function legacyCategoryList($db, $user): array
+{
     $cat = ['categories' => []];
     // categories/index.php hands the user id as an int.
     $mysql['user_id'] = $db->real_escape_string((string) $user);
@@ -91,20 +97,17 @@ function listCategories($db,$user): void {
     // `or die()` answered an empty 200, which a client reads as no categories.
     $aff_network_result = $db->query($aff_network_sql);
     if ($aff_network_result === false) {
-        echo legacy_api_json(legacy_api_database_error($db));
-        return;
+        return legacy_api_database_error($db);
     }
     while (($aff_network_row = $aff_network_result->fetch_array(MYSQLI_ASSOC)) !== null) {
         if ($aff_network_row === false) {
-            echo legacy_api_json(legacy_api_database_error($db));
-            return;
+            return legacy_api_database_error($db);
         }
 
         $html['aff_network_name'] = htmlentities((string)($aff_network_row['aff_network_name'] ?? ''), ENT_QUOTES, 'UTF-8');
         $html['aff_network_id'] = htmlentities((string)($aff_network_row['aff_network_id'] ?? ''), ENT_QUOTES, 'UTF-8');
-    $cat['categories'][]=['category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']];    
-}
+        $cat['categories'][] = ['category_id' => $html['aff_network_id'], 'category_name' => $html['aff_network_name']];
+    }
 
-echo legacy_api_json($cat);
-
+    return $cat;
 }
