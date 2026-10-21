@@ -188,6 +188,25 @@ yours is the lookup key of a create, and the row is created with an id of its
 own. The body is a list of rows or `{"rows": [...]}`; any other key is
 refused.
 
+The rows are written up to 100 at a time, each hundred in one transaction. A
+row that fails is undone on its own and answered `error`; the rest are stored.
+A deadlock with another write rolls the whole hundred back, so it is written
+again from the start, up to three more times; if it still cannot be, every row
+of it is answered `error` with `"retryable": true` (counted in
+`summary.retryable`), none of it is stored, and the next hundred is written. A
+lock wait timeout is answered the same way at once, since each attempt would
+wait it out again, and so is a database failure after an earlier hundred was
+stored; the rows after either are not attempted and are answered `retryable`
+too. Send those rows again under a new `Idempotency-Key`, since the one you
+sent replays this answer. A failure before anything was stored is a `500`, and
+the key is not spent.
+
+A hundred whose commit (or rollback) the database did not confirm may or may
+not be stored: each of its rows is answered `error` with `"unconfirmed": true`
+(counted in `summary.unconfirmed`), never `retryable`, and the rows after it
+are not attempted. Look those rows up before sending them again, since a
+create stored already would be stored twice.
+
 `p202 import`, `p202 sync` and the server-side sync jobs leave out the fields
 a write must not carry (ids, owner, public ids, `version`/`etag`, a
 redirector's rules) when they build a body from another record.

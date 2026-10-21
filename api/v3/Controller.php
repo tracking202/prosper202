@@ -14,6 +14,7 @@ use Api\V3\Support\PayloadKeys;
 use Api\V3\Support\QueryInt;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
+use Prosper202\Database\Connection;
 
 /**
  * Base CRUD controller with lifecycle hooks, input validation, and DI.
@@ -34,6 +35,26 @@ abstract class Controller
     private ?array $cachedSelectColumns = null;
     private ?array $cachedFields = null;
     private ?ServerStateStore $stateStore = null;
+
+    /**
+     * While a bulk-upsert chunk is open, recordChange() holds its records
+     * here instead of writing them, and writes them once the rows they name
+     * have committed: the change feed is a file no rollback reaches, and
+     * DimensionSync::markDirty() swallows every failure, a deadlock included,
+     * which inside the chunk would roll it back with its rows answered stored.
+     */
+    private bool $holdingChanges = false;
+
+    /** @var list<array{string, array<string, mixed>}> operation and record */
+    private array $heldChanges = [];
+
+    /**
+     * How many more times a bulk-upsert chunk a deadlock rolled back is run,
+     * before its rows are answered not stored. A lock wait timeout is not
+     * run again: each attempt would wait out innodb_lock_wait_timeout (50
+     * seconds by default) once more.
+     */
+    private const BULK_DEADLOCK_RETRIES = 3;
 
     /**
      * Dictionary tables whose rows feed the Landing Page Optimizer
@@ -1157,104 +1178,51 @@ abstract class Controller
         }
 
         $results = [];
-        $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'error' => 0];
+        $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'error' => 0, 'retryable' => 0, 'unconfirmed' => 0];
         $chunkSize = max(1, min(100, $maxRows));
+        // Once a chunk has committed, every row is answered and the answer
+        // recorded under the key, whatever fails after: a 500 would leave the
+        // key unspent, and the same rows sent again under it would be written
+        // a second time.
+        $mayStand = false;
+        $stoppedBecause = null;
         foreach (array_chunk($rows, $chunkSize, true) as $chunk) {
-            $this->transaction(function () use (&$chunk, &$summary, &$results): void {
-                foreach ($chunk as $index => $row) {
-                    if (!is_array($row)) {
-                        $summary['error']++;
-                        $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Row must be an object'];
-                        continue;
+            if ($stoppedBecause !== null) {
+                $answers = self::notStoredResults($chunk, 'It was not attempted, because ' . $stoppedBecause . '.');
+            } else {
+                try {
+                    [$answers, $outcome] = $this->upsertChunk($chunk);
+                } catch (\Throwable $e) {
+                    if (!$mayStand) {
+                        throw $e;
                     }
-                    if ($row === []) {
-                        $summary['skipped']++;
-                        $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'Row is empty'];
-                        continue;
-                    }
-
-                    try {
-                        $primaryKey = $this->primaryKey();
-                        $named = static fn (string $key): bool => isset($row[$key]) && $row[$key] !== '';
-                        if ($named($primaryKey) && $named('id') && !PayloadKeys::same($row[$primaryKey], $row['id'])) {
-                            $summary['error']++;
-                            $results[] = ['index' => $index, 'status' => 'error', 'message' => "$primaryKey and id name different records: send one"];
-                            continue;
-                        }
-                        $id = $named($primaryKey) ? $row[$primaryKey] : ($named('id') ? $row['id'] : null);
-                        // `id` is this endpoint's lookup key, not a field of
-                        // the record: it is read here and goes no further. An
-                        // empty primary key is "no id", as it always was.
-                        $fields = $row;
-                        unset($fields['id']);
-                        if (!$named($primaryKey)) {
-                            unset($fields[$primaryKey]);
-                        }
-                        if ($id !== null) {
-                            // Strictly validate the ID instead of passing it through
-                            // as a string: binding "12abc" as 's' against an integer
-                            // PK would let MySQL coerce it to 12 and silently
-                            // overwrite the wrong row.
-                            if (is_int($id)) {
-                                // Already an integer.
-                            } elseif (is_string($id) && ctype_digit(trim($id))) {
-                                $id = (int)trim($id);
-                            } elseif (is_float($id) && $id === (float)(int)$id) {
-                                $id = (int)$id;
-                            } else {
-                                $summary['error']++;
-                                $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Invalid primary key value'];
-                                continue;
-                            }
-                            if ($named($primaryKey)) {
-                                // The key as it was read (" 12 " is row 12),
-                                // so update() compares the record's own id.
-                                $fields[$primaryKey] = $id;
-                            }
-                            $exists = true;
-                            try {
-                                $this->get($id);
-                            } catch (NotFoundException) {
-                                $exists = false;
-                            }
-                            if ($exists) {
-                                // The row goes through update() whole, so a
-                                // field it does not write is refused here as
-                                // on a PUT; a row with nothing to change (only
-                                // its id, or read-only values the record
-                                // holds) is skipped.
-                                try {
-                                    $updated = $this->update($id, $fields);
-                                } catch (NothingToUpdateException) {
-                                    $summary['skipped']++;
-                                    $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'No mutable fields provided'];
-                                    continue;
-                                }
-                                $summary['updated']++;
-                                $results[] = ['index' => $index, 'status' => 'updated', 'data' => $updated['data']];
-                                continue;
-                            }
-                            // An id that names none of this account's records
-                            // is the lookup key of a create, not a field of it:
-                            // the row is created with an id of its own, which
-                            // the result carries.
-                            unset($fields[$primaryKey]);
-                        }
-
-                        $created = $this->create($fields);
-                        $summary['created']++;
-                        $results[] = ['index' => $index, 'status' => 'created', 'data' => $created['data']];
-                    } catch (\Throwable $e) {
-                        $summary['error']++;
-                        $failed = ['index' => $index, 'status' => 'error', 'message' => $e->getMessage()];
-                        // "Validation failed" alone does not say which field.
-                        if ($e instanceof ValidationException && $e->getFieldErrors() !== []) {
-                            $failed['field_errors'] = $e->getFieldErrors();
-                        }
-                        $results[] = $failed;
-                    }
+                    self::logBulkFailure('chunk rolled back', $e);
+                    $answers = self::notStoredResults(
+                        $chunk,
+                        'The database failed while the rows written with it were stored, and they were rolled back.'
+                    );
+                    $outcome = 'failed';
                 }
-            });
+                // A deadlocked chunk stored nothing, and every other outcome
+                // stops the chunks after it.
+                $mayStand = $mayStand || $outcome === 'committed';
+                $stoppedBecause = match ($outcome) {
+                    'lock_wait' => 'rows before it waited out the server\'s lock wait timeout',
+                    'unconfirmed' => 'the database did not confirm that rows before it were stored',
+                    'failed' => 'the database failed while rows before it were stored',
+                    default => null,
+                };
+            }
+            foreach ($answers as $result) {
+                $summary[$result['status']]++;
+                if ($result['retryable'] ?? false) {
+                    $summary['retryable']++;
+                }
+                if ($result['unconfirmed'] ?? false) {
+                    $summary['unconfirmed']++;
+                }
+                $results[] = $result;
+            }
         }
 
         $response = [
@@ -1269,6 +1237,300 @@ abstract class Controller
         $this->stateStore()->putIdempotent($scope, $idempotencyKey, $response, $requestHash);
 
         return $response;
+    }
+
+    /**
+     * One chunk of a bulk-upsert, in a transaction of its own: each of its
+     * rows' answers, and how the chunk ended.
+     *
+     * - `committed`: the rows' own answers.
+     * - `deadlocked`: a deadlock is the transaction's, not the row's (it
+     *   rolls the whole of it back on the server), so the chunk was run
+     *   again from nothing, up to BULK_DEADLOCK_RETRIES more times, and then
+     *   every row of it is answered not stored, `retryable`.
+     * - `lock_wait`: a lock wait timeout, answered the same way at once.
+     * - `unconfirmed`: the rows ran, and then the commit, or a savepoint or
+     *   rollback the server should have kept, failed. What the transaction
+     *   holds is not known, so every row is answered `unconfirmed`, never
+     *   `retryable`: sent again, a create stored already would be stored twice.
+     *
+     * Anything else (the transaction could not begin) is thrown, with
+     * nothing of the chunk written.
+     *
+     * @param array<int|string, mixed> $chunk
+     * @return array{list<array<string, mixed>>, 'committed'|'deadlocked'|'lock_wait'|'unconfirmed'}
+     */
+    private function upsertChunk(array $chunk): array
+    {
+        $conn = new Connection($this->db);
+        for ($attempt = 1;; $attempt++) {
+            $this->holdingChanges = true;
+            $ran = false;
+            try {
+                [$results, $changes] = $conn->transaction(function () use ($chunk, &$ran): array {
+                    $ran = true;
+
+                    return $this->upsertChunkRows($chunk);
+                });
+            } catch (\Throwable $e) {
+                if ($conn->rollbackFailed()) {
+                    self::logBulkFailure('chunk unconfirmed', $e);
+
+                    return [self::unconfirmedResults($chunk), 'unconfirmed'];
+                }
+                if (Connection::isMysqlError($e, 1213, 'Deadlock found')) {
+                    if ($attempt <= self::BULK_DEADLOCK_RETRIES) {
+                        continue;
+                    }
+
+                    return [self::notStoredResults($chunk, sprintf(
+                        'A deadlock with another write rolled back the rows written with it, on each of %d attempts.',
+                        $attempt
+                    )), 'deadlocked'];
+                }
+                if (Connection::isMysqlError($e, 1205, 'Lock wait timeout')) {
+                    return [self::notStoredResults(
+                        $chunk,
+                        'Another write held a lock it waited for until the server\'s lock wait timeout, and the rows'
+                            . ' written with it were rolled back.'
+                    ), 'lock_wait'];
+                }
+                if (!$ran) {
+                    throw $e;
+                }
+                self::logBulkFailure('chunk unconfirmed', $e);
+
+                return [self::unconfirmedResults($chunk), 'unconfirmed'];
+            } finally {
+                $this->holdingChanges = false;
+                $this->heldChanges = [];
+            }
+
+            return [$this->recordChunkChanges($results, $changes), 'committed'];
+        }
+    }
+
+    /**
+     * One attempt at a chunk's rows, inside its transaction: each row's
+     * answer, and the change records of the rows written, by answer position.
+     *
+     * @param array<int|string, mixed> $chunk
+     * @return array{list<array<string, mixed>>, list<array{int, string, array<string, mixed>}>}
+     */
+    private function upsertChunkRows(array $chunk): array
+    {
+        $conn = new Connection($this->db);
+        $results = [];
+        $changes = [];
+        foreach ($chunk as $index => $row) {
+            if (!is_array($row)) {
+                $results[] = ['index' => $index, 'status' => 'error', 'message' => 'Row must be an object'];
+                continue;
+            }
+            if ($row === []) {
+                $results[] = ['index' => $index, 'status' => 'skipped', 'message' => 'Row is empty'];
+                continue;
+            }
+
+            $this->heldChanges = [];
+            try {
+                // A row that throws is undone alone: an insert whose
+                // afterCreate() or read-back failed would otherwise commit
+                // with the chunk while the row was answered an error.
+                $results[] = $conn->withSavepoint(fn (): array => $this->upsertRow($index, $row));
+            } catch (\Throwable $e) {
+                if (Connection::isRetryableLockError($e) || $conn->isRollbackOnly()) {
+                    throw $e;
+                }
+                // Undone to its savepoint, and the change records it held with it.
+                $results[] = self::failedRow($index, $e);
+                continue;
+            }
+            foreach ($this->heldChanges as [$operation, $record]) {
+                $changes[] = [array_key_last($results), $operation, $record];
+            }
+        }
+        $this->heldChanges = [];
+
+        return [$results, $changes];
+    }
+
+    /**
+     * One bulk-upsert row, written: its answer, or a throw.
+     *
+     * @param array<mixed> $row
+     * @return array<string, mixed>
+     */
+    private function upsertRow(int|string $index, array $row): array
+    {
+        $primaryKey = $this->primaryKey();
+        $named = static fn (string $key): bool => isset($row[$key]) && $row[$key] !== '';
+        if ($named($primaryKey) && $named('id') && !PayloadKeys::same($row[$primaryKey], $row['id'])) {
+            $message = "$primaryKey and id name different records: send one";
+
+            return ['index' => $index, 'status' => 'error', 'message' => $message];
+        }
+        $id = $named($primaryKey) ? $row[$primaryKey] : ($named('id') ? $row['id'] : null);
+        // `id` is this endpoint's lookup key, not a field of the record: it
+        // is read here and goes no further. An empty primary key is "no id",
+        // as it always was.
+        $fields = $row;
+        unset($fields['id']);
+        if (!$named($primaryKey)) {
+            unset($fields[$primaryKey]);
+        }
+        if ($id !== null) {
+            // Strictly validate the ID instead of passing it through as a
+            // string: binding "12abc" as 's' against an integer PK would let
+            // MySQL coerce it to 12 and silently overwrite the wrong row.
+            if (is_int($id)) {
+                // Already an integer.
+            } elseif (is_string($id) && ctype_digit(trim($id))) {
+                $id = (int)trim($id);
+            } elseif (is_float($id) && $id === (float)(int)$id) {
+                $id = (int)$id;
+            } else {
+                return ['index' => $index, 'status' => 'error', 'message' => 'Invalid primary key value'];
+            }
+            if ($named($primaryKey)) {
+                // The key as it was read (" 12 " is row 12), so update()
+                // compares the record's own id.
+                $fields[$primaryKey] = $id;
+            }
+            $exists = true;
+            try {
+                $this->get($id);
+            } catch (NotFoundException) {
+                $exists = false;
+            }
+            if ($exists) {
+                // The row goes through update() whole, so a field it does
+                // not write is refused here as on a PUT; a row with nothing
+                // to change (only its id, or read-only values the record
+                // holds) is skipped.
+                try {
+                    $updated = $this->update($id, $fields);
+                } catch (NothingToUpdateException) {
+                    return ['index' => $index, 'status' => 'skipped', 'message' => 'No mutable fields provided'];
+                }
+
+                return ['index' => $index, 'status' => 'updated', 'data' => $updated['data']];
+            }
+            // An id that names none of this account's records is the lookup
+            // key of a create, not a field of it: the row is created with an
+            // id of its own, which the result carries.
+            unset($fields[$primaryKey]);
+        }
+
+        $created = $this->create($fields);
+
+        return ['index' => $index, 'status' => 'created', 'data' => $created['data']];
+    }
+
+    /**
+     * The answer for a row that threw, which its savepoint undid. Nothing in
+     * the chunk has committed, so a WriteCommittedException ("the write
+     * landed") is answered as the failure that caused it: in its own words
+     * when they are the client's to read (a 4xx), and otherwise in the log,
+     * since the message reaches the client verbatim.
+     *
+     * @return array<string, mixed>
+     */
+    private static function failedRow(int|string $index, \Throwable $e): array
+    {
+        $message = $e->getMessage();
+        if ($e instanceof WriteCommittedException) {
+            $cause = $e->getPrevious();
+            $told = $cause instanceof HttpException && $cause->getHttpStatus() < 500;
+            if (!$told && $cause !== null) {
+                self::logBulkFailure('row ' . $index . ' undone', $cause);
+            }
+            $message = 'Not stored: a step after the write failed'
+                . ($told ? ' (' . $cause->getMessage() . ')' : ' (the server log has the cause)')
+                . ', so the write was undone';
+            $e = $cause ?? $e;
+        }
+        $failed = ['index' => $index, 'status' => 'error', 'message' => $message];
+        // "Validation failed" alone does not say which field.
+        if ($e instanceof ValidationException && $e->getFieldErrors() !== []) {
+            $failed['field_errors'] = $e->getFieldErrors();
+        }
+
+        return $failed;
+    }
+
+    /**
+     * Every row of a chunk nothing of which was stored, for a reason that is
+     * not the row's own: each may be sent again as it is.
+     *
+     * @param array<int|string, mixed> $chunk
+     * @return list<array<string, mixed>>
+     */
+    private static function notStoredResults(array $chunk, string $why): array
+    {
+        $message = 'Not stored: ' . $why . ' Send it again under a new Idempotency-Key: this one replays this answer.';
+        $results = [];
+        foreach (array_keys($chunk) as $index) {
+            $results[] = ['index' => $index, 'status' => 'error', 'message' => $message, 'retryable' => true];
+        }
+
+        return $results;
+    }
+
+    /**
+     * Every row of a chunk whose transaction may or may not have committed.
+     *
+     * @param array<int|string, mixed> $chunk
+     * @return list<array<string, mixed>>
+     */
+    private static function unconfirmedResults(array $chunk): array
+    {
+        $message = 'Unconfirmed: the database did not confirm whether this row, and the rows written with it, were'
+            . ' stored. Look it up before sending it again: if it was stored, sending it again would store it twice.';
+        $results = [];
+        foreach (array_keys($chunk) as $index) {
+            $results[] = ['index' => $index, 'status' => 'error', 'message' => $message, 'unconfirmed' => true];
+        }
+
+        return $results;
+    }
+
+    /** The server's record of a bulk-upsert failure, its values taken out where the logger can. */
+    private static function logBulkFailure(string $what, \Throwable $e): void
+    {
+        error_log(\function_exists('p202UncaughtLogLine') && \function_exists('p202FailedQueryMessage')
+            ? p202UncaughtLogLine('bulk-upsert ' . $what, $e)
+            : 'p202: bulk-upsert ' . $what . ': ' . $e::class);
+    }
+
+    /**
+     * Write the change records of a chunk that has committed. One that
+     * cannot be written leaves its row stored and the change feed without
+     * it: the row is answered as create() and update() answer that, an
+     * error saying the record exists (WriteCommittedException).
+     *
+     * @param list<array<string, mixed>> $results
+     * @param list<array{int, string, array<string, mixed>}> $changes
+     * @return list<array<string, mixed>>
+     */
+    private function recordChunkChanges(array $results, array $changes): array
+    {
+        foreach ($changes as [$position, $operation, $record]) {
+            try {
+                $this->writeChange($operation, $record);
+            } catch (\Throwable $e) {
+                $index = $results[$position]['index'];
+                error_log('p202: bulk-upsert row ' . $index . ' was stored, but its change record was not: '
+                    . $e->getMessage());
+                $results[$position] = [
+                    'index' => $index,
+                    'status' => 'error',
+                    'message' => (new WriteCommittedException($this->changeEntityName() ?? 'record', $e))->getMessage(),
+                ];
+            }
+        }
+
+        return $results;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────
@@ -1405,6 +1667,16 @@ abstract class Controller
     }
 
     protected function recordChange(string $operation, array $record): void
+    {
+        if ($this->holdingChanges) {
+            $this->heldChanges[] = [$operation, $record];
+            return;
+        }
+        $this->writeChange($operation, $record);
+    }
+
+    /** @param array<string, mixed> $record */
+    private function writeChange(string $operation, array $record): void
     {
         // Landing Page Optimizer (segments-v2 G10): create/update/delete of
         // a synced dictionary through the v3 API changes the dimension
