@@ -51,6 +51,12 @@ var subidTokenRe = regexp.MustCompile(`(?i)\[\[subid\]\]`)
 // cached link with no database to record the click (tracking202/redirect/).
 const noClickSubid = "p202"
 
+// noClickValue: that replacement is case-sensitive (str_replace), so a
+// [[SubID]] in another case comes through it unfilled.
+func noClickValue(v string) bool {
+	return v == noClickSubid || subidTokenRe.MatchString(v)
+}
+
 // clickIDRe is the shape of a click id gpb.php can match
 // (Prosper202\Click\ClickId::parse).
 var clickIDRe = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
@@ -92,13 +98,15 @@ const (
 	subidNotBare                         // the field holds more than the click id
 	subidAmbiguous                       // network fields disagree and nothing says which is ours
 	subidNoClick                         // the redirect recorded no click
+	subidUndecided                       // nothing says which field of the redirect is [[subid]]
 )
 
 type subidError struct {
-	kind subidErrorKind
-	slot offerURL   // the offer URL slot the error is about, when there is one
-	fits []offerURL // subidAmbiguous from the campaign: the slots that fit
-	msg  string
+	kind    subidErrorKind
+	slot    offerURL   // the offer URL slot the error is about, when there is one
+	fits    []offerURL // subidAmbiguous from the campaign: the slots that fit
+	suggest string     // subidUndecided: the one network field that carries a number
+	msg     string
 }
 
 func (e *subidError) Error() string { return e.msg }
@@ -208,9 +216,9 @@ func readSlot(u *url.URL, o offerURL, fields []subidField) slotRead {
 			return slotRead{slot: o, match: subidMatch{ID: v, Field: f.String(), FromCampaign: true},
 				desc: fmt.Sprintf("%s reads %s from %s", o.slot, v, f)}
 		}
-		if v == noClickSubid {
-			return slotRead{slot: o, err: newSubidError(subidNoClick, "the redirect carries %s in %s, which the tracking link sends when it recorded no click (its database was unreachable)", noClickSubid, f),
-				desc: fmt.Sprintf("%s reads %s from %s", o.slot, noClickSubid, f)}
+		if noClickValue(v) {
+			return slotRead{slot: o, err: newSubidError(subidNoClick, "the redirect carries %q in %s, which the tracking link sends when it recorded no click (its database was unreachable)", v, f),
+				desc: fmt.Sprintf("%s reads %q from %s", o.slot, v, f)}
 		}
 		if notBare == nil {
 			e := newSubidError(subidNotBare, "the offer URL's %s carries %q, not the bare click id: a network sends the whole field back, and the postback matches only a click id", f, v)
@@ -467,4 +475,75 @@ func subidFromNetworkFields(loc string) (subidMatch, error) {
 		parts = append(parts, strings.Join(found[id], ",")+"="+id)
 	}
 	return subidMatch{}, newSubidError(subidAmbiguous, "the redirect carries different numbers in SubID fields (%s), and nothing says which one is [[subid]]", strings.Join(parts, "; "))
+}
+
+// subidWithoutCampaign refuses a redirect no campaign URL can read: whatever its
+// network fields carry, nothing says which of them is [[subid]] (HitPath's
+// sid is its campaign), so a lone number is no answer. The refusal says what
+// they carry, and names the one field to try when there is one.
+func subidWithoutCampaign(loc, why string) (subidMatch, error) {
+	m, err := subidFromNetworkFields(loc)
+	if err != nil {
+		return subidMatch{}, err
+	}
+	e := newSubidError(subidUndecided, "nothing says which field of the redirect is [[subid]] (%s); its SubID fields read %s from %s, which may be the network's own number", why, m.ID, m.Field)
+	if fields := strings.Split(m.Field, ","); len(fields) == 1 {
+		e.suggest = fields[0]
+	}
+	return subidMatch{}, e
+}
+
+// subidFromNamedField reads the click id from the field of loc that
+// --subid-field names: a query field (c1), or a path field (/pubref:).
+func subidFromNamedField(loc, field string) (subidMatch, error) {
+	u, err := url.Parse(loc)
+	if err != nil || loc == "" {
+		return subidMatch{}, newSubidError(subidMissing, "could not read the redirect (%q)", loc)
+	}
+	var vals []string
+	if prefix, ok := strings.CutPrefix(field, "/"); ok {
+		for _, seg := range strings.Split(u.EscapedPath(), "/") {
+			if rest, ok := strings.CutPrefix(seg, prefix); ok {
+				if v, err := url.PathUnescape(rest); err == nil {
+					rest = v
+				}
+				vals = append(vals, rest)
+			}
+		}
+	} else {
+		for _, raw := range rawQueryPairs(u.RawQuery)[field] {
+			if v, err := url.QueryUnescape(raw); err == nil {
+				raw = v
+			}
+			vals = append(vals, raw)
+		}
+	}
+	if len(vals) == 0 {
+		return subidMatch{}, newSubidError(subidMissing, "the redirect (%q) has no %s", loc, field)
+	}
+	for _, v := range vals[1:] {
+		if v != vals[0] {
+			return subidMatch{}, newSubidError(subidAmbiguous, "the redirect (%q) carries %s more than once, with different values (%q)", loc, field, vals)
+		}
+	}
+	v := vals[0]
+	switch {
+	case clickIDRe.MatchString(v):
+		return subidMatch{ID: v, Field: field}, nil
+	case noClickValue(v):
+		return subidMatch{}, newSubidError(subidNoClick, "the redirect carries %q in %s, which the tracking link sends when it recorded no click (its database was unreachable)", v, field)
+	}
+	return subidMatch{}, newSubidError(subidNotBare, "the redirect's %s carries %q, not the bare click id: a network sends the whole field back, and the postback matches only a click id", field, v)
+}
+
+// checkSubidFieldFlag refuses a --subid-field that cannot name one field.
+func checkSubidFieldFlag(field string) error {
+	if field == "" {
+		return nil
+	}
+	if strings.ContainsAny(field, "&=?#[] \t") || field == "/" || (strings.HasPrefix(field, "/") && strings.Count(field, "/") > 1) {
+		return validationError("--subid-field %q is not a field name", field).
+			WithHint("Name one field as the offer URL spells it, without = or a value: --subid-field c1, or --subid-field /pubref: for a path field.")
+	}
+	return nil
 }

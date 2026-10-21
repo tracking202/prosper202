@@ -146,6 +146,9 @@ func TestSubidFromCampaignNeverGuesses(t *testing.T) {
 			offers("https://www.awin1.com/cread.php?ued=https%3A%2F%2Fs.example%2F%3Fr%3D[[subid]]"), subidNotBare},
 		{"no click recorded", "https://www.awin1.com/cread.php?awinmid=1&clickref=p202",
 			offers("https://www.awin1.com/cread.php?awinmid=1&clickref=[[subid]]"), subidNoClick},
+		// The outage's replacement of [[subid]] is case-sensitive.
+		{"no click recorded, [[SubID]] left unfilled", "https://www.awin1.com/cread.php?awinmid=1&clickref=[[SubID]]",
+			offers("https://www.awin1.com/cread.php?awinmid=1&clickref=[[SubID]]"), subidNoClick},
 		{"empty redirect", "", offers("https://n.example/?s=[[subid]]"), subidMissing},
 	}
 	for _, tc := range cases {
@@ -719,11 +722,125 @@ func TestConversionSimulateFailsOnAFailedRead(t *testing.T) {
 
 	f := &simulateFake{campaignStatus: http.StatusNotFound, location: "https://www.awin1.com/cread.php?awinmid=1&clickref=4821"}
 	f.server(t)
-	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err != nil {
-		t.Fatalf("campaign 404: %v\nstderr: %s", err, stderr)
+	if _, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err == nil || !strings.Contains(hintFor(err), "--subid-field clickref") {
+		t.Errorf("campaign 404: %v, hint %q: want a refusal naming --subid-field clickref", err, hintFor(err))
+	}
+	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "clickref", "--json"); err != nil {
+		t.Fatalf("campaign 404 with --subid-field: %v\nstderr: %s", err, stderr)
 	}
 	if len(f.postback) != 1 || f.postback[0] != "4821" {
-		t.Errorf("campaign 404: postbacks %v, want [4821] from the network fields", f.postback)
+		t.Errorf("campaign 404: postbacks %v, want [4821] from --subid-field clickref alone", f.postback)
+	}
+}
+
+// With no campaign URL to say which field is [[subid]], a lone number in a
+// network field is no answer: HitPath's sid is its campaign.
+func TestConversionSimulateWithoutACampaignURLNeedsTheField(t *testing.T) {
+	f := &simulateFake{
+		tracker:  `{"tracker_id":7,"aff_campaign_id":3,"rotator_id":9,"landing_page_id":0}`,
+		location: "https://hp.example/rd/r.php?sid=555&pub=12",
+	}
+	f.server(t)
+	_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json")
+	if kind, ok := subidKind(err); !ok || kind != subidUndecided {
+		t.Fatalf("redirector to HitPath: %v, want an undecided refusal", err)
+	}
+	if got := api.ErrorCategory(err); got != "validation" {
+		t.Errorf("category %q, want validation", got)
+	}
+	if hint := hintFor(err); !strings.Contains(hint, "--subid-field sid") || !strings.Contains(hint, "destination campaign") {
+		t.Errorf("hint %q does not offer the destination campaign and --subid-field sid", hint)
+	}
+	if len(f.postback) != 0 {
+		t.Errorf("postback fired with %v", f.postback)
+	}
+
+	_, _, err = executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "c1", "--json")
+	if kind, ok := subidKind(err); !ok || kind != subidMissing {
+		t.Errorf("--subid-field c1 on a redirect without c1: %v", err)
+	}
+	f.location = "https://hp.example/rd/r.php?sid=555&pub=12&c1=4821"
+	f.server(t)
+	stdout, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "c1", "--json")
+	if err != nil {
+		t.Fatalf("--subid-field c1: %v\nstderr: %s", err, stderr)
+	}
+	if len(f.postback) != 1 || f.postback[0] != "4821" {
+		t.Errorf("postbacks %v, want [4821] from c1", f.postback)
+	}
+	if row := simulateRow(t, stdout); row["subid_field"] != "c1" || !strings.Contains(fmt.Sprint(row["subid_source"]), "--subid-field (the tracker is a redirector") {
+		t.Errorf("row %v does not say c1 came from --subid-field and why", row)
+	}
+}
+
+func TestSubidFromNamedField(t *testing.T) {
+	for _, tc := range []struct {
+		loc, field, id string
+		kind           subidErrorKind
+	}{
+		{"https://n.example/r?c1=4821", "c1", "4821", 0},
+		{"https://prf.hn/click/camref:1/pubref:4821/destination:x", "/pubref:", "4821", 0},
+		{"https://n.example/r?c1=4821&c1=4821", "c1", "4821", 0},
+		{"https://n.example/r?c1=4821&c1=4822", "c1", "", subidAmbiguous},
+		{"https://n.example/r?sid=4821", "c1", "", subidMissing},
+		{"https://n.example/r?c1=4821-x", "c1", "", subidNotBare},
+		{"https://n.example/r?c1=p202", "c1", "", subidNoClick},
+		{"https://n.example/r?c1=[[SubID]]", "c1", "", subidNoClick},
+	} {
+		m, err := subidFromNamedField(tc.loc, tc.field)
+		if tc.id != "" {
+			if err != nil || m.ID != tc.id || m.Field != tc.field || m.FromCampaign {
+				t.Errorf("%s from %s: got (%+v, %v)", tc.field, tc.loc, m, err)
+			}
+			continue
+		}
+		if kind, ok := subidKind(err); !ok || kind != tc.kind {
+			t.Errorf("%s from %s: got (%+v, %v), want refusal kind %d", tc.field, tc.loc, m, err, tc.kind)
+		}
+	}
+	for _, bad := range []string{"c1=", "c1&c2", "a b", "/", "/a/b:", "?c1"} {
+		if err := checkSubidFieldFlag(bad); err == nil {
+			t.Errorf("--subid-field %q was accepted", bad)
+		}
+	}
+	for _, good := range []string{"", "c1", "clickref", "/pubref:", "aff_sub1"} {
+		if err := checkSubidFieldFlag(good); err != nil {
+			t.Errorf("--subid-field %q: %v", good, err)
+		}
+	}
+}
+
+func TestConversionSimulateHoldsSubidFieldToTheCampaign(t *testing.T) {
+	f := &simulateFake{
+		campaign: map[string]interface{}{"aff_campaign_url": "https://hp.example/rd/r.php?sid=555&pub=12&c1=[[subid]]"},
+		location: "https://hp.example/rd/r.php?sid=555&pub=12&c1=4821",
+	}
+	f.server(t)
+	_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "sid", "--json")
+	if err == nil || !strings.Contains(err.Error(), "c1") {
+		t.Errorf("--subid-field sid against a campaign that puts [[subid]] in c1: %v", err)
+	}
+	if len(f.postback) != 0 {
+		t.Errorf("postback fired with %v", f.postback)
+	}
+	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "c1", "--json"); err != nil {
+		t.Errorf("--subid-field c1, as the campaign says: %v\nstderr: %s", err, stderr)
+	}
+}
+
+func TestConversionSimulateRefusesStaged(t *testing.T) {
+	f := &simulateFake{
+		campaign: map[string]interface{}{"aff_campaign_url": "https://hp.example/rd/r.php?c1=[[subid]]"},
+		location: "https://hp.example/rd/r.php?c1=4821",
+	}
+	f.server(t)
+	_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--staged", "--json")
+	assertValidationError(t, err)
+	if !strings.Contains(hintFor(err), "without --staged") {
+		t.Errorf("hint = %q", hintFor(err))
+	}
+	if f.clicks != 0 || len(f.postback) != 0 {
+		t.Errorf("under --staged: %d click(s), postbacks %v", f.clicks, f.postback)
 	}
 }
 
@@ -770,11 +887,14 @@ func TestConversionSimulateSaysWhenTheCampaignCannotBeRead(t *testing.T) {
 
 	f.location = "https://www.awin1.com/cread.php?awinmid=1&clickref=4821"
 	f.server(t)
-	stdout, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json")
+	if _, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err == nil {
+		t.Error("one network field was read as [[subid]] with nothing to say it is")
+	}
+	stdout, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--subid-field", "clickref", "--json")
 	if err != nil {
-		t.Fatalf("one network field: %v\nstderr: %s", err, stderr)
+		t.Fatalf("--subid-field clickref: %v\nstderr: %s", err, stderr)
 	}
 	if row := simulateRow(t, stdout); !strings.Contains(fmt.Sprint(row["subid_source"]), "campaign 3 could not be read") {
-		t.Errorf("source %v does not say why the network fields were read", row["subid_source"])
+		t.Errorf("source %v does not say why the field was named", row["subid_source"])
 	}
 }

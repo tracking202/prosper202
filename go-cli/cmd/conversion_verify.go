@@ -41,8 +41,10 @@ var conversionSimulateCmd = &cobra.Command{
 		"(clickref for Awin, aff_sub for TUNE, /pubref: for Partnerize, ...), and an\n" +
 		"offer URL without [[subid]] fails, as does a redirect that more than one\n" +
 		"rotated offer URL fits with a different id. For a redirector, a landing\n" +
-		"page, or a campaign the key cannot read, the networks' usual SubID fields\n" +
-		"are read instead, and every one that carries an id must carry the same one.",
+		"page, or a campaign the key cannot read, nothing says which field is\n" +
+		"[[subid]]: name it with --subid-field (the refusal lists the networks'\n" +
+		"usual SubID fields that carry a number). It is refused under --staged:\n" +
+		"the click and the postback are recorded at once.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		trackerID, _ := cmd.Flags().GetString("tracker")
 		if trackerID == "" {
@@ -51,6 +53,16 @@ var conversionSimulateCmd = &cobra.Command{
 		payout, _ := cmd.Flags().GetString("payout")
 		if payout == "" {
 			payout = "1.00"
+		}
+		field, _ := cmd.Flags().GetString("subid-field")
+		if err := checkSubidFieldFlag(field); err != nil {
+			return err
+		}
+		// The click and the postback go to public endpoints, which record at
+		// once: neither can be staged as a proposal.
+		if api.StagedMode() {
+			return validationError("--staged cannot apply to `conversion simulate`: its click and postback are recorded at once").
+				WithHint("Run it without --staged against a test tracker, or use `p202 conversion postback-url` to see the postback without firing it.")
 		}
 		c, err := api.NewFromConfig()
 		if err != nil {
@@ -92,10 +104,17 @@ var conversionSimulateCmd = &cobra.Command{
 		loc := clickRes.Header.Get("Location")
 		clickRes.Body.Close()
 		var match subidMatch
-		if offers.decides {
+		switch {
+		case offers.decides:
 			match, err = subidFromCampaign(loc, offers.urls)
-		} else {
-			match, err = subidFromNetworkFields(loc)
+			if err == nil && field != "" && !containsString(strings.Split(match.Field, ","), field) {
+				return validationError("--subid-field %s is not where the campaign's offer URL puts [[subid]]: the redirect reads %s from %s", field, match.ID, match.Field).
+					WithHint("Drop --subid-field: the offer URL says which field holds [[subid]] (`p202 campaign get %s`).", offers.campaignID)
+			}
+		case field != "":
+			match, err = subidFromNamedField(loc, field)
+		default:
+			match, err = subidWithoutCampaign(loc, offers.why)
 		}
 		if err != nil {
 			return withHint(err, "%s", subidHint(err, offers))
@@ -103,7 +122,7 @@ var conversionSimulateCmd = &cobra.Command{
 		subid := match.ID
 		source := "campaign URL"
 		if !match.FromCampaign {
-			source = "network SubID fields (" + offers.why + ")"
+			source = "--subid-field (" + offers.why + ")"
 		}
 
 		// 3. Fire the real S2S postback (gpb.php).
@@ -277,7 +296,7 @@ func subidHint(err error, offers trackerOffers) string {
 		return "Make the network's SubID field exactly [[subid]], with nothing else in it (see `p202 campaign get " + id + "`), then " + update + "."
 	case subidNoToken:
 		return "Put [[subid]] in the network's SubID field of the offer URL with " + update + "; the fields are listed in " + page + "."
-	case subidAmbiguous:
+	case subidUndecided, subidAmbiguous:
 		switch {
 		case len(se.fits) > 0:
 			var flags, noSubid []string
@@ -292,12 +311,18 @@ func subidHint(err error, offers trackerOffers) string {
 				return "Put [[subid]] in the network's SubID field of each offer URL without one, with " + strings.Join(noSubid, " or ") + "; the fields are listed in " + page + "."
 			}
 			return "The campaign rotates its offer URLs in turn, so running the simulation again may send the click to a URL whose redirect no other URL fits. To settle it for every click, make the URLs differ outside their [[tokens]] (see `p202 campaign get " + id + "`) with " + strings.Join(flags, " or ") + "."
-		case offers.unreadable:
-			return "The campaign URL, which says which field is [[subid]], could not be read; use a key that can read trackers and campaigns."
-		case offers.redirector:
-			return "Simulate a tracker made for the destination campaign, whose URL says which field is [[subid]]: `p202 tracker create-with-url --aff-campaign-id <id>`."
 		}
-		return "Leave [[subid]] the only click id in the network's SubID fields (" + page + ")."
+		name := "rerun with `--subid-field <field>`, naming the field the offer URL puts [[subid]] in"
+		if se.suggest != "" {
+			name = "if the offer URL puts [[subid]] in " + se.suggest + ", rerun with `--subid-field " + se.suggest + "`"
+		}
+		switch {
+		case offers.unreadable:
+			return "The campaign URL, which says which field is [[subid]], could not be read: use a key that can read trackers and campaigns, or " + name + "."
+		case offers.redirector:
+			return "Simulate a tracker made for the destination campaign, whose URL says which field is [[subid]] (`p202 tracker create-with-url --aff-campaign-id <id>`), or " + name + "."
+		}
+		return strings.ToUpper(name[:1]) + name[1:] + "; the networks' fields are listed in " + page + "."
 	}
 	if offers.decides {
 		return "The tracking link did not redirect to the campaign's offer URL: check `p202 tracker get <id>` (cloaking, landing page) and `p202 campaign get " + id + "`."
@@ -315,5 +340,6 @@ func scheme(base string) string {
 func init() {
 	conversionSimulateCmd.Flags().String("tracker", "", "Internal tracker_id to simulate a conversion through")
 	conversionSimulateCmd.Flags().String("payout", "1.00", "Conversion payout amount to post")
+	conversionSimulateCmd.Flags().String("subid-field", "", "The redirect's field that holds [[subid]] (c1, clickref, /pubref:), for a tracker whose campaign URL cannot say")
 	conversionCmd.AddCommand(conversionSimulateCmd, conversionPostbackURLCmd)
 }
