@@ -68,17 +68,7 @@ function getDatabaseConnection(): mysqli
         throw new Exception("Database connection failed");
     }
 
-    // The cron job's last run, which Account › Settings, health.php, the
-    // /system routes and `p202 system cron` read: recorded for a scheduler's
-    // run once it holds the lock, whether or not a tier is due. A signed-in
-    // page's ping runs the same work and is not recorded (CronRun).
-    if (\Prosper202\Cron\CronRun::isScheduled(PHP_SAPI, $_GET)) {
-        cronQuery(
-            $db,
-            'REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ' . time() . ')',
-            'the record of this run'
-        );
-    }
+    $startedAt = time();
 
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
@@ -89,6 +79,19 @@ function getDatabaseConnection(): mysqli
     } else {
         AutoOptimizeDatabase();
         ClearOldClicks();
+    }
+
+    // The cron job's last run, which Account › Settings, health.php, the
+    // /system routes and `p202 system cron` read: a scheduler's run that held
+    // the lock and got through its tiers (a tier statement that fails throws past this),
+    // due or not, stamped with the time it started. A signed-in page's ping
+    // runs the same work and is not recorded (CronRun).
+    if (\Prosper202\Cron\CronRun::isScheduled(PHP_SAPI, $_GET)) {
+        cronQuery(
+            $db,
+            'REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ' . $startedAt . ')',
+            'the record of this run'
+        );
     }
 
     // Remove lock file on successful completion

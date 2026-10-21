@@ -19,6 +19,9 @@
 #      in the page's sentence, with the switch unchanged
 #   4. with AutoCron already on, saving On again asks the service again
 #      rather than reading AutoCron's own runs as a cron job
+#   5. a value the form never sends is refused and changes nothing, and a
+#      scheduler's run whose tier fails (a trigger refuses its write) is not
+#      recorded as a run
 #
 # It puts the account's auto_cron back on exit. It deletes 202_cronjob_logs
 # and the minute tier's 202_cronjobs rows, so the database must be a scratch
@@ -128,7 +131,7 @@ eq "$(cat "$OUT/.code")" "200" "Settings answers"
 has "$OUT/settings.html" 'id="autocron"' "signed in, on Settings, with the AutoCron panel"
 OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 ORIG_AUTOCRON=$(Q "SELECT auto_cron FROM 202_users_pref WHERE user_id=$OWNER")
-restore() { Q "UPDATE 202_users_pref SET auto_cron='$ORIG_AUTOCRON' WHERE user_id=$OWNER"; }
+restore() { Q "DROP TRIGGER IF EXISTS acs_fail_tier"; Q "UPDATE 202_users_pref SET auto_cron='$ORIG_AUTOCRON' WHERE user_id=$OWNER"; }
 trap restore EXIT
 Q "UPDATE 202_users_pref SET auto_cron='0' WHERE user_id=$OWNER"
 
@@ -192,6 +195,27 @@ submit "$OUT/settings.html" autocron "202-account/administration.php" "$OUT/on3.
 msgs "$OUT/on3.html"
 hasnt "$OUT/on3.html" "$UNNEEDED" "AutoCron's own runs are not read as a cron job"
 said_an_answer "$OUT/on3.html" "AutoCron On again"
+
+# ─────────────────────────────────────────────────────────────────────
+say "a value the form never sends is refused, and changes nothing"
+Q "UPDATE 202_users_pref SET auto_cron='0' WHERE user_id=$OWNER"
+get "202-account/administration.php" "$OUT/settings.html"
+submit "$OUT/settings.html" autocron "202-account/administration.php" "$OUT/odd.html" autocron=off
+msgs "$OUT/odd.html"
+has "$OUT/odd.html" 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.' "refused in its own sentence"
+said=0; for a in "${ANSWERS[@]}"; do grep -qF -- "$a" "$OUT/odd.html" && said=1; done
+eq "$said" "0" "and the service was not asked"
+eq "$(Q "SELECT auto_cron FROM 202_users_pref WHERE user_id=$OWNER")" "0" "AutoCron unchanged"
+
+say "a scheduler's run whose tier fails is not recorded as a run"
+Q "DELETE FROM 202_cronjob_logs; DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
+mysql_q --delimiter='//' "$DB" -e "DROP TRIGGER IF EXISTS acs_fail_tier// CREATE TRIGGER acs_fail_tier BEFORE INSERT ON 202_cronjobs FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'planted by autocron-switch.sh'; END//"
+curl -sS -o "$OUT/cron-fail.html" "$BASE/202-cronjobs/index.php"
+Q "DROP TRIGGER IF EXISTS acs_fail_tier"
+has "$OUT/cron-fail.html" "Error:" "the run says it failed"
+eq "$(Q "SELECT COUNT(*) FROM 202_cronjob_logs")" "0" "and is not recorded as the cron job's run"
+code=$(curl -sS -o "$OUT/cron-ok.html" -w '%{http_code}' "$BASE/202-cronjobs/index.php")
+eq "$(Q "SELECT COUNT(*) FROM 202_cronjob_logs WHERE id = 1 AND last_execution_time >= UNIX_TIMESTAMP() - 60")" "1" "the next run, which gets through, is ($code)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

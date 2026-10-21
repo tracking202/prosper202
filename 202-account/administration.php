@@ -58,14 +58,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_POST['autocron'])) {
-    if ($_POST['autocron'] == true) {
+    $turnOn = \Prosper202\Cron\AutoCronSwitch::posted($_POST['autocron']);
+    if ($turnOn === null) {
+        p202_account_flash('bad', 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
+    if ($turnOn) {
         $endpoint = 'register';
         // Whether this install has its own cron job: the last run a scheduler
-        // recorded. The footer's ping, which this page sent as it loaded, runs
-        // the cron's work and records nothing (Prosper202\Cron\CronRun), so it
-        // no longer reads as "your own cron job ran". With AutoCron already on
-        // here, the recorded runs may be AutoCron's own, so saving On registers
-        // again, which the service takes as a refresh.
+        // recorded (Prosper202\Cron\AutoCronSwitch). The footer's ping, which
+        // this page sent as it loaded, records nothing (CronRun), so it no
+        // longer reads as "your own cron job ran".
         $unchecked = 'Whether your own cron job is running could not be checked just now,'
             . ' so AutoCron was not changed. Try again in a few minutes.';
         $cron_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
@@ -83,8 +86,9 @@ if (isset($_POST['autocron'])) {
         }
         $cron_row = p202FetchRow($cron_result, $cron_sql);
         $on_row = p202FetchRow($on_result, $on_sql);
+        $lastRun = $cron_row === null ? null : (int) $cron_row['last_execution_time'];
         $alreadyOn = $on_row !== null && (string) $on_row['auto_cron'] === '1';
-        if (!$alreadyOn && $cron_row !== null && (int) $cron_row['last_execution_time'] >= time() - 300) {
+        if (\Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
             p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
             p202_account_redirect('202-account/administration.php#autocron');
         }
@@ -106,11 +110,11 @@ if (isset($_POST['autocron'])) {
 
     $refusal = \Prosper202\Cron\AutoCronAnswer::refusal($cron);
     if ($refusal === null) {
-        $mysql['auto_cron'] = $db->real_escape_string($_POST['autocron'] == true ? '1' : '0');
+        $mysql['auto_cron'] = $turnOn ? '1' : '0';
         $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
         $sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
         if (_mysqli_query($sql)) {
-            p202_account_flash('ok', $_POST['autocron'] == true ? 'AutoCron is on.' : 'AutoCron is off.');
+            p202_account_flash('ok', $turnOn ? 'AutoCron is on.' : 'AutoCron is off.');
         } else {
             p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
         }

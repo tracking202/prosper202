@@ -48,6 +48,7 @@ final class PagePingIsNotACronRunTest extends TestCase
         '202-config/Database/Tables/CoreTables.php' => 'creates the table',
         '202-config/Database/Schema/TableRegistry.php' => 'the name',
         '202-config/Cron/CronRun.php' => 'names it in its docblock',
+        '202-config/Cron/AutoCronSwitch.php' => 'names it in its docblock (Settings reads it)',
     ];
 
     private const GUARD = 'if(\\Prosper202\\Cron\\CronRun::isScheduled(PHP_SAPI,$_GET)){';
@@ -211,5 +212,30 @@ final class PagePingIsNotACronRunTest extends TestCase
         }
         $first = preg_replace('/\s+/', '', $body);
         self::assertSame('cronQuery($db,', $first, 'the write is the first statement of the block');
+
+        // And it is made once the tiers are through: a run whose tier threw
+        // is not recorded as one that ran.
+        $tiers = ['RunSecondsCronjob', 'RunHourlyCronJob', 'RunDailyCronjob', 'AutoOptimizeDatabase', 'ClearOldClicks'];
+        $calls = [];
+        $significant = array_values(array_filter(
+            array_keys($tokens),
+            static fn (int $k): bool => !is_array($tokens[$k])
+                || !in_array($tokens[$k][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+        ));
+        foreach ($significant as $n => $k) {
+            if (!is_array($tokens[$k]) || $tokens[$k][0] !== T_STRING || !in_array($tokens[$k][1], $tiers, true)) {
+                continue;
+            }
+            $before = $significant[$n - 1] ?? null;
+            $after = $significant[$n + 1] ?? null;
+            $declared = $before !== null && is_array($tokens[$before]) && $tokens[$before][0] === T_FUNCTION;
+            if (!$declared && $after !== null && $tokens[$after] === '(') {
+                $calls[$tokens[$k][1]] = max($calls[$tokens[$k][1]] ?? 0, $k);
+            }
+        }
+        self::assertSame($tiers, array_values(array_intersect($tiers, array_keys($calls))), 'every tier is called');
+        foreach ($calls as $tier => $at_) {
+            self::assertLessThan($at, $at_, "the run is recorded after $tier(), not before it");
+        }
     }
 }
