@@ -478,9 +478,12 @@ final class SubidBatch
                         (SELECT COUNT(*) FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0) AS live_conversions
                  FROM 202_clicks AS c
                  WHERE c.user_id = ? AND c.click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')
-                   AND ' . LatestVisit::isLatest('c')
+                   AND ' . LatestVisit::isLatest('c') . '
+                 ORDER BY c.click_time'
             );
             $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
+            // A re-click the backfill has not reached has every visit latest:
+            // the last row kept is its latest by time.
             foreach ($this->conn->fetchAll($stmt) as $row) {
                 $clicks[(int) $row['click_id']] = $row;
             }

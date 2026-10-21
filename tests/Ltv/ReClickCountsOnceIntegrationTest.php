@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlEngagementRepository;
@@ -18,7 +19,7 @@ use Prosper202\Ltv\MysqlRecommendationRepository;
  *
  * A redirector re-click gives the click another 202_clicks row at its own
  * time, with the campaign and landing page it was sent to and the first
- * visit's traffic source and cost. Customer C1 (of company Reclick Co) was
+ * visit's traffic source and cost, and records it as the latest visit. Customer C1 (of company Reclick Co) was
  * acquired by click X, campaign A then campaign B, and X is stamped with C1.
  * Customer C2 was acquired by click V, the same way; C2's stamped click W
  * was re-clicked onto the campaign it was on, B.
@@ -64,7 +65,7 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $u = self::USER;
-        foreach (['202_clicks', '202_clicks_spy', '202_clicks_tracking'] as $table) {
+        foreach (['202_clicks', '202_clicks_spy', '202_clicks_tracking', '202_click_latest_visits'] as $table) {
             self::q("DELETE FROM $table WHERE click_id IN (" . self::X . ', ' . self::V . ', ' . self::W . ')');
         }
         $owned = [
@@ -110,6 +111,9 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
         $visit(self::V, 'B', self::$t + 600);
         $visit(self::W, 'B', self::$t + 1000);
         $visit(self::W, 'B', self::$t + 1100);
+        foreach ([self::X, self::V, self::W] as $reClicked) {
+            LatestVisit::refresh(new Connection(self::$db), $reClicked);
+        }
 
         $customer = static fn (string $ref, int $firstClick, ?string $company): int => self::insert(
             "INSERT INTO 202_customers SET user_id = $u, primary_ref = " . self::str($ref)

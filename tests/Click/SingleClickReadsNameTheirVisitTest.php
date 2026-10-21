@@ -113,12 +113,22 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         // Every visit's row.
         '202-config/Click/MysqlClickRepository.php::accountsClickFirstTime' => [1, 'Reads every visit\'s row'
             . ' (fetchAll): each must be the account\'s, and the earliest time is the click\'s first.'],
+        '202-config/Click/MysqlClickRepository.php::repairVisits' => [1, 'Reads every visit\'s row (fetchAll):'
+            . ' their accounts must agree, and their times name the rows the backfill rewrites.'],
+        '202-config/Click/MysqlClickRepository.php::writeVisitRows' => [1, 'COUNT(*) of the click\'s rows in the'
+            . ' second of the visit being written: whichever they are, they are the rows that visit rewrites.'],
+        '202-config/Click/LatestVisit.php::refresh' => [1, 'MAX(click_time) over every visit\'s row: the latest'
+            . ' visit\'s time is what it records.'],
         '202-config/Report/RollupDirty.php::summedHours' => [1, 'DISTINCT over every visit\'s row of the clicks an'
             . ' id list built at runtime names: each visit\'s hour is marked.'],
         '202-config/Report/RollupDirty.php::clickCost' => [1, 'DISTINCT over every visit\'s row (an INSERT … SELECT):'
             . ' each visit\'s hour is marked.'],
         '202-config/Report/RollupDirty.php::clickOfAnyAccount' => [1, 'DISTINCT user_id and click_id over every'
             . ' visit\'s row (an INSERT … SELECT); both agree across visits.'],
+        '202-config/static-endpoint-helpers.php::p202ClickVisitedCampaign' => [1, 'pb.php\'s campaign check, with'
+            . ' or without an event: whether any visit of the click, of its account, was on the campaign the'
+            . ' postback names, where the sale was made before a re-click moved the visitor on. The conversion and'
+            . ' the goals credit the latest visit, read through LatestVisit::of().'],
         '202-config/Conversion/RevenueUploadImporter.php::preview' => [1, 'Which ids are the account\'s clicks:'
             . ' click_id under user_id, both of which agree across visits, from an id list read at runtime.'],
         '202-config/Ltv/MysqlRecommendationRepository.php::engagedCampaignInterest' => [1, 'The LIMIT 1 takes the'
@@ -127,7 +137,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */
-    private const CEILING = 10;
+    private const CEILING = 14;
 
     /**
      * A table reference: after FROM, a JOIN or a comma; its name, and its

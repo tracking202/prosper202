@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Goals;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Goals\WebEvents;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentityKeys;
@@ -32,7 +33,7 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
     {
         $this->goalSetUp();
         $tables = ['202_clicks_rotator', '202_landing_pages', '202_identity_observations', '202_identity_signals',
-            '202_identity_keys'];
+            '202_identity_keys', '202_click_latest_visits'];
         foreach ($tables as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
@@ -42,7 +43,10 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
         $this->campaign(13, 'replace', '9.00');
     }
 
-    /** A click's visits, in the order given, each at its own time; the last on a route, as a re-click is. */
+    /**
+     * A click's visits, in the order given, each at its own time; the last on
+     * a route, and the latest recorded, as a re-click is.
+     */
     private function visits(int $clickId, array $campaignsAt): void
     {
         $last = array_key_last($campaignsAt);
@@ -55,6 +59,9 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
         }
         self::fixture("INSERT INTO 202_clicks_rotator SET click_id=$clickId, rotator_id=5, rule_id=3,"
             . ' rule_redirect_id=9');
+        if (count($campaignsAt) > 1) {
+            LatestVisit::refresh($this->conn, $clickId);
+        }
     }
 
     private function reClicked(int $clickId = 600): void

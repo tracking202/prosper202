@@ -639,13 +639,20 @@ $rtrResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $use
 // database failure, and the uncaught handler logs it as one.
 $rtrClick = \Prosper202\Click\ClickRecordBuilder::forRedirector($mysql, (int) $click_id, $rtrIdentity);
 try {
-	// The site URL lookup caches the ids of the rows it inserts: held until
-	// the transaction commits, and dropped with a rollback.
-	p202WithHeldCacheWrites(static fn () => $reClick !== null
-		? $clickRepo->recordReClick($rtrClick, $rtrResolveRedirect)
-		: $clickRepo->recordClick($rtrClick, $rtrResolveRedirect));
+    // The site URL lookup caches the ids of the rows it inserts: held until
+    // the transaction commits, and dropped with a rollback.
+    $rtrRedirectAsBuilt = $redirect_site_url;
+    rtr_record_visit(
+        static fn () => p202WithHeldCacheWrites(static fn () => $reClick !== null
+            ? $clickRepo->recordReClick($rtrClick, $rtrResolveRedirect)
+            : $clickRepo->recordClick($rtrClick, $rtrResolveRedirect)),
+        $reClick !== null,
+        static function () use (&$redirect_site_url, $rtrRedirectAsBuilt): void {
+            $redirect_site_url = $rtrRedirectAsBuilt;
+        }
+    );
 } catch (\Throwable $rtrWriteError) {
-	record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
+    record_mysql_error($db, 'recording rotator click ' . $mysql['click_id'], $rtrWriteError->getMessage());
 }
 
 	if ($rule['aff_campaign_id'] != null) {
@@ -785,4 +792,27 @@ try {
 	}
 	return $t202ctx_final_url;
 
+}
+
+/**
+ * The visit's write, and a re-click's once more when it loses a deadlock, as
+ * two re-clicks of different clicks can on a partitioned 202_clicks: each
+ * locks its click (MysqlConversionLedger::lockClick()), which holds a gap in
+ * the current week's partition, and then inserts its row into the other's
+ * gap. The server rolls the loser back whole and $write's held cache writes
+ * are dropped with it, so nothing of the first try stands; $reset puts back
+ * the redirect URL the try may have filled in. A second failure is the
+ * caller's.
+ */
+function rtr_record_visit(callable $write, bool $reClick, callable $reset): void
+{
+    try {
+        $write();
+    } catch (\Throwable $e) {
+        if (!$reClick || !\Prosper202\Database\Connection::isMysqlError($e, 1213, 'Deadlock found')) {
+            throw $e;
+        }
+        $reset();
+        $write();
+    }
 }

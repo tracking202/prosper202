@@ -19,9 +19,18 @@ use Tracking202\Report\ReportFilterInput;
  * Two steps. The check counts the clicks and notes the highest click id
  * among them (preview()). The update carries both back (snapshot()) and runs
  * only if the selection bounded by that id still counts the same, counted
- * again under a lock in the transaction that writes (apply()): a window that
- * includes today keeps gaining clicks, and "Update 4 clicks" must never
- * change a fifth or one the person did not count.
+ * again in the transaction that writes (apply()): a window that includes
+ * today keeps gaining clicks, and "Update 4 clicks" must never change a
+ * fifth or one the person did not count.
+ *
+ * A redirector re-click gives a click another row at its own visit's time,
+ * and a click costs what its first visit cost, copied onto every row
+ * (FirstVisit; the reports read the latest row's copy, the pixels the first
+ * row's). So a click is chosen by its first visit, its time and every
+ * filter, and every row of it is written: choosing rows by their own time
+ * changed the first row of a click re-clicked on a later day, which no
+ * report reads, and repriced a click that arrived on another day when the
+ * range held only its re-click.
  *
  * The days are the account's days: parse() reads them with mktime(), in the
  * process's default time zone, which the caller sets to the account's first
@@ -41,6 +50,36 @@ final class CpcUpdate
         'landing_page_id' => 'landing page',
         'text_ad_id' => 'text ad',
     ];
+
+    /**
+     * Of a click's rows, keeps its first visit. A click visited more than
+     * once has a 202_click_latest_visits record (LatestVisit::refresh()), and
+     * of its rows the one with no earlier row of the account is kept. A click
+     * with no record has one row, or is a re-click written before 1.9.78
+     * that ReClickBackfill has not reached: every report counts such a click
+     * at each of its visits until then (LatestVisit::isLatest()), so each of
+     * its rows is taken as a first visit here too. Only a recorded click pays
+     * for the probe, which reads the click_id index in every partition of
+     * 202_clicks.
+     */
+    private const FIRST_VISIT_JOIN = ' LEFT JOIN 202_click_latest_visits AS cpc_record'
+        . ' ON (cpc_record.click_id = 202_clicks.click_id)'
+        . ' LEFT JOIN 202_clicks AS cpc_earlier ON (cpc_record.click_id IS NOT NULL'
+        . ' AND cpc_earlier.click_id = 202_clicks.click_id AND cpc_earlier.user_id = 202_clicks.user_id'
+        . ' AND cpc_earlier.click_time < 202_clicks.click_time)';
+
+    /** Every visit of a click scope() chose, between two times (bound in that order). */
+    private const VISIT_JOIN = ' INNER JOIN 202_clicks AS cpc_visit ON (cpc_visit.click_id = 202_clicks.click_id'
+        . ' AND cpc_visit.user_id = 202_clicks.user_id AND cpc_visit.click_time >= ? AND cpc_visit.click_time <= ?)';
+
+    /** The rows one read of apply() takes at most, as the lock counted them. */
+    private const WINDOW_ROWS = 20000;
+
+    /** The clicks one write names. */
+    private const CHUNK = 1000;
+
+    /** 202_clicks_spy.click_cpc is DECIMAL(4,2): a CPC above this does not fit it. */
+    private const SPY_MAX = '99.99';
 
     /** The method-of-promotion values, with what each means. */
     public const METHODS = [
@@ -136,9 +175,10 @@ final class CpcUpdate
     }
 
     /**
-     * The clicks a request names, as joins and a WHERE with bound values: the
-     * same clause counts them for the check and updates them on apply, so the
-     * number the person confirms is the number that changes.
+     * The clicks a request names, as joins and a WHERE with bound values that
+     * select each one's first visit (FIRST_VISIT_JOIN): the same clause counts
+     * them for the check and chooses them on apply, so the number the person
+     * confirms is the number that changes.
      *
      * The joins and the method-of-promotion test are the classic handler's
      * (tracking202/ajax/update_cpc2.php before U5): a landing-page click is one
@@ -160,6 +200,22 @@ final class CpcUpdate
      * @return array{joins: string, where: string, types: string, params: list<int>}
      */
     public static function scope(array $values, int $userId, ?int $throughClickId = null): array
+    {
+        $rows = self::rowScope($values, $userId, $throughClickId);
+        $rows['joins'] .= self::FIRST_VISIT_JOIN;
+        $rows['where'] .= ' AND cpc_earlier.click_id IS NULL';
+
+        return $rows;
+    }
+
+    /**
+     * scope() without the first-visit test: every row the range and the
+     * filters name, which apply() locks.
+     *
+     * @param array<string, mixed> $values
+     * @return array{joins: string, where: string, types: string, params: list<int>}
+     */
+    private static function rowScope(array $values, int $userId, ?int $throughClickId): array
     {
         $joins = ' LEFT JOIN 202_clicks_advance ON (202_clicks_advance.click_id = 202_clicks.click_id)'
             . ' LEFT JOIN 202_clicks_site ON (202_clicks_site.click_id = 202_clicks.click_id)'
@@ -264,7 +320,7 @@ final class CpcUpdate
     /**
      * The check: how many clicks match now, and the highest click id among
      * them, which the confirm carries back. Counted with scope()'s clause, the
-     * one the update runs.
+     * one the update chooses its clicks by.
      *
      * @param array<string, mixed> $values parse()'s, with no errors, labels() passed
      * @return array{matching: int, through_click_id: int}
@@ -283,52 +339,375 @@ final class CpcUpdate
     }
 
     /**
-     * The update: the clicks the check counted get the new CPC, in one
-     * transaction with the marks that make the reports rebuild their hours.
+     * The update: every row of the clicks the check counted gets the new
+     * CPC, in one transaction with the marks that make the reports rebuild
+     * the hours those rows are counted in.
      *
      * The confirm names the clicks the check counted: at most the highest id
-     * it saw, and exactly as many. Counted again under a lock and written in
-     * the same transaction, so the number confirmed is the number that
-     * changes; when the selection moved (a click edited into it, or recorded
-     * late below the boundary), nothing is written and null is returned — the
-     * caller checks again (preview()) and asks again.
+     * it saw, and exactly as many. Every row the range and the filters name
+     * is locked first: a click recorded late below the boundary waits for
+     * this to commit, and so does a re-click of a chosen click, which locks
+     * its first visit's row (MysqlConversionLedger::lockClick()). The rest is
+     * read without a lock, from a snapshot that begins after those locks, so
+     * it holds every visit the chosen clicks have: the first-visit test reads
+     * the click_id index in every partition, and a locking read there holds
+     * the gaps the current week's re-clicks insert into (measured: a re-click
+     * of an older click waited out its lock timeout). Each click's rows are
+     * then written by id within the times read. When the clicks read are not
+     * as many as were confirmed (a click edited into the selection, or
+     * recorded late below the boundary), everything is rolled back and null
+     * returned: the caller checks again (preview()) and asks again.
+     *
+     * The report rows are sent back to the data engine's dirty-hours pass in
+     * the same transaction: the range for the request's traffic source
+     * account and campaign, and the hour of every row of these clicks that
+     * pass does not reach (a visit after the range, or one whose own account
+     * or campaign is not the request's) for that row's account. Queued, not
+     * rolled up here by id: a month of clicks is hundreds of thousands of
+     * two-statement rollups inside the request, where the queue is a row per
+     * stretch of hours and the pass rolls each up in one statement.
      *
      * @param array<string, mixed> $values parse()'s, with no errors, labels() passed
      * @param array{count: int, through: int} $snapshot what was confirmed (snapshot())
-     * @return int|null how many clicks' cost changed (MySQL's affected rows: a
-     *                  click that already cost this much is not counted), or
-     *                  null when the selection no longer counts what was
-     *                  confirmed and nothing was written
+     * @return int|null how many clicks' cost changed (a click whose every row
+     *                  already cost this much is not counted), or null when
+     *                  the selection no longer counts what was confirmed and
+     *                  nothing was written
      */
     public static function apply(Connection $conn, array $values, int $userId, array $snapshot): ?int
     {
+        $rows = self::rowScope($values, $userId, $snapshot['through']);
         $scope = self::scope($values, $userId, $snapshot['through']);
-        return $conn->transaction(static function () use ($conn, $scope, $values, $userId, $snapshot): ?int {
-            $stmt = $conn->prepareWrite('SELECT COUNT(DISTINCT 202_clicks.click_id) AS matching FROM 202_clicks' . $scope['joins'] . $scope['where'] . ' FOR UPDATE');
-            $conn->bind($stmt, $scope['types'], $scope['params']);
-            $row = $conn->fetchOne($stmt);
-            if ($row === null) {
-                // A COUNT always answers one row; none means the read failed.
-                throw new \RuntimeException('Update CPC: counting the clicks returned no row');
-            }
-            if ((int) $row['matching'] !== $snapshot['count']) {
-                return null;
+        // Thrown to roll the writes back; told apart from a failure by identity.
+        $moved = new \RuntimeException('Update CPC: the clicks read are not the clicks confirmed');
+        try {
+            return $conn->transaction(static function () use (
+                $conn,
+                $rows,
+                $scope,
+                $values,
+                $userId,
+                $snapshot,
+                $moved
+            ): int {
+                $stmt = $conn->prepareWrite(
+                    'SELECT 202_clicks.click_time DIV 3600 AS h, COUNT(*) AS n FROM 202_clicks' . $rows['joins']
+                    . $rows['where'] . ' GROUP BY h FOR UPDATE'
+                );
+                $conn->bind($stmt, $rows['types'], $rows['params']);
+                $from = (int) $values['from_time'];
+                $to = (int) $values['to_time'];
+                $windows = self::windows($conn->fetchAll($stmt), $from, $to);
+
+                $cpc = (string) $values['cpc'];
+                $counted = 0;
+                $changed = 0;
+                $uncovered = [];
+                $afterRange = [];
+                $last = $windows === [] ? 0 : self::latestVisitTime($conn, $userId);
+                $spyFrom = $windows === [] ? PHP_INT_MAX : self::spyFrom($conn, $userId);
+                // A click with no record is chosen at each of its rows, and
+                // the first window that chose it wrote every row after.
+                $written = [];
+                foreach ($windows as [$start, $end]) {
+                    $read = self::visits($conn, $scope, $values, [$start, $end, $last, $spyFrom], $written);
+                    $counted += count($read['clicks']);
+                    if ($counted > $snapshot['count']) {
+                        throw $moved;
+                    }
+                    $changed += count($read['changing']);
+                    foreach ($read['uncovered'] as $account => $hours) {
+                        $uncovered[$account] = ($uncovered[$account] ?? []) + $hours;
+                    }
+                    $afterRange += $read['after_range'];
+                    foreach (array_chunk(array_keys($read['clicks']), self::CHUNK) as $chunk) {
+                        self::writeVisits($conn, $cpc, $userId, $chunk, $start, $end);
+                    }
+                    foreach (array_chunk(array_keys($read['spied']), self::CHUNK) as $chunk) {
+                        self::writeSpy($conn, $cpc, $userId, $chunk);
+                    }
+                    foreach (array_chunk($read['later'], self::CHUNK, true) as $chunk) {
+                        self::writeVisits($conn, $cpc, $userId, array_keys($chunk), $end + 1, max($chunk));
+                    }
+                    $written += $read['later'];
+                }
+                if ($counted !== $snapshot['count']) {
+                    throw $moved;
+                }
+
+                self::queueRollup($conn, $values, $userId, $uncovered);
+                // And the attribution report rollup, which sums click_cpc by
+                // hour (AttributionRollup rule 2).
+                RollupDirty::timeRange($conn, $userId, $from, $to);
+                RollupDirty::hourRuns($conn, [$userId => array_keys($afterRange)]);
+
+                return $changed;
+            });
+        } catch (\RuntimeException $e) {
+            if ($e !== $moved) {
+                throw $e;
             }
 
-            $stmt = $conn->prepareWrite('UPDATE 202_clicks' . $scope['joins'] . ' SET 202_clicks.click_cpc = ?' . $scope['where']);
-            $conn->bind($stmt, 's' . $scope['types'], array_merge([(string) $values['cpc']], $scope['params']));
-            $updated = $conn->executeUpdate($stmt);
+            return null;
+        }
+    }
 
-            // The data engine rebuilds the hours these clicks fall in, for
-            // the slice they were chosen by.
-            $dirty = $conn->prepareWrite('INSERT IGNORE INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?, click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?');
-            $conn->bind($dirty, 'iiiiiiiii', [(int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'], (int) $values['to_time'],
-                (int) $values['aff_network_id'], (int) $values['text_ad_id'], (int) $values['landing_page_id'], (int) $values['ppc_network_id']]);
-            $conn->executeUpdate($dirty);
-            // And the attribution report rollup, which sums click_cpc by
-            // hour, for the same range (AttributionRollup rule 2).
-            RollupDirty::timeRange($conn, $userId, (int) $values['from_time'], (int) $values['to_time']);
-            return $updated;
-        });
+    /**
+     * The stretches apply() reads the clicks in: each hour of the range the
+     * lock found rows in, cut into parts of about WINDOW_ROWS rows at most.
+     *
+     * @param list<array<string, mixed>> $hours h (unix time DIV 3600) and n, the rows in it
+     * @return list<array{int, int}> first and last second, in order
+     */
+    private static function windows(array $hours, int $from, int $to): array
+    {
+        $windows = [];
+        foreach ($hours as $row) {
+            $hour = self::int($row, 'h');
+            $start = max($from, $hour * 3600);
+            $end = min($to, $hour * 3600 + 3599);
+            $parts = intdiv(self::int($row, 'n') + self::WINDOW_ROWS - 1, self::WINDOW_ROWS);
+            $span = intdiv($end - $start + $parts, $parts);
+            for ($at = $start; $at <= $end; $at += $span) {
+                $windows[] = [$at, min($end, $at + $span - 1)];
+            }
+        }
+        sort($windows);
+
+        return $windows;
+    }
+
+    /** The account's latest visit time, which bounds every row apply() reads. */
+    private static function latestVisitTime(Connection $conn, int $userId): int
+    {
+        $stmt = $conn->prepareWrite('SELECT MAX(click_time) AS t FROM 202_clicks WHERE user_id = ?');
+        $conn->bind($stmt, 'i', [$userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('Update CPC: reading the latest visit returned no row');
+        }
+
+        return self::int($row, 't');
+    }
+
+    /**
+     * The time of the account's oldest 202_clicks_spy row (PHP_INT_MAX for
+     * none): the Spy view holds a visit's copy, at the visit's time, for a
+     * day, so a visit older than this has none to write.
+     */
+    private static function spyFrom(Connection $conn, int $userId): int
+    {
+        $stmt = $conn->prepareWrite('SELECT MIN(click_time) AS t FROM 202_clicks_spy WHERE user_id = ?');
+        $conn->bind($stmt, 'i', [$userId]);
+        $row = $conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new \RuntimeException('Update CPC: reading the Spy view\'s oldest row returned no row');
+        }
+
+        return ($row['t'] ?? null) === null ? PHP_INT_MAX : self::int($row, 't');
+    }
+
+    /**
+     * Every row of the clicks whose first visit is in [$start, $end], read
+     * with what the writes and the marks need, but those in $written.
+     *
+     * @param array{joins: string, where: string, types: string, params: list<int>} $scope
+     * @param array<string, mixed> $values
+     * @param array{int, int, int, int} $times the window's first and last second, the account's
+     *                                        latest visit, and its oldest Spy row (spyFrom())
+     * @param array<int, int> $written clicks an earlier window read and wrote every row of
+     * @return array{clicks: array<int, true>, changing: array<int, true>, later: array<int, int>,
+     *               uncovered: array<int, array<int, true>>, after_range: array<int, true>,
+     *               spied: array<int, true>}
+     *         spied: the clicks with a visit the Spy view may hold;
+     *         later: click => its latest visit after $end; uncovered: traffic source account => the
+     *         hours of the rows the request's dirty hour does not reach; after_range: the hours of
+     *         the rows after the request's range (hours are unix time DIV 3600)
+     */
+    private static function visits(
+        Connection $conn,
+        array $scope,
+        array $values,
+        array $times,
+        array $written
+    ): array {
+        [$start, $end, $last, $spyFrom] = $times;
+        $joins = $scope['joins'] . self::VISIT_JOIN;
+        $stmt = $conn->prepareWrite(
+            'SELECT 202_clicks.click_id, cpc_visit.click_time, cpc_visit.ppc_account_id, cpc_visit.aff_campaign_id,'
+            . ' cpc_visit.click_cpc <> CAST(? AS DECIMAL(7,5)) AS differs FROM 202_clicks' . $joins
+            . $scope['where'] . ' AND 202_clicks.click_time >= ? AND 202_clicks.click_time <= ?'
+        );
+        $conn->bind(
+            $stmt,
+            'sii' . $scope['types'] . 'ii',
+            array_merge([(string) $values['cpc'], $start, $last], $scope['params'], [$start, $end])
+        );
+        $from = (int) $values['from_time'];
+        $to = (int) $values['to_time'];
+        $account = (int) $values['ppc_account_id'];
+        $campaign = (int) $values['aff_campaign_id'];
+        $read = [
+            'clicks' => [], 'changing' => [], 'later' => [], 'uncovered' => [], 'after_range' => [], 'spied' => [],
+        ];
+        foreach ($conn->fetchAll($stmt) as $row) {
+            $click = self::int($row, 'click_id');
+            if (isset($written[$click])) {
+                continue;
+            }
+            $time = self::int($row, 'click_time');
+            $rowAccount = self::int($row, 'ppc_account_id');
+            $read['clicks'][$click] = true;
+            if (self::int($row, 'differs') === 1) {
+                $read['changing'][$click] = true;
+            }
+            if ($time > $end) {
+                $read['later'][$click] = max($read['later'][$click] ?? 0, $time);
+            }
+            if ($time >= $spyFrom) {
+                $read['spied'][$click] = true;
+            }
+            if ($time > $to) {
+                $read['after_range'][intdiv($time, 3600)] = true;
+            }
+            // DataEngine::processDirtyHours() reaches the rows in the range of
+            // the request's traffic source account and campaign.
+            $reached = $time >= $from && $time <= $to
+                && ($account === 0 || $rowAccount === $account)
+                && ($campaign === 0 || self::int($row, 'aff_campaign_id') === $campaign);
+            if (!$reached) {
+                $read['uncovered'][$rowAccount][intdiv($time, 3600)] = true;
+            }
+        }
+
+        return $read;
+    }
+
+    /**
+     * The clicks' rows in [$from, $to]: bounded by time as well as by id, so
+     * a write reaches only the partitions those rows are in.
+     *
+     * @param list<int> $clicks
+     */
+    private static function writeVisits(
+        Connection $conn,
+        string $cpc,
+        int $userId,
+        array $clicks,
+        int $from,
+        int $to
+    ): void {
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_clicks SET click_cpc = ? WHERE user_id = ? AND click_time >= ? AND click_time <= ?'
+            . ' AND click_id IN ('
+            . implode(', ', array_fill(0, count($clicks), '?')) . ')'
+        );
+        $conn->bind($stmt, 'siii' . str_repeat('i', count($clicks)), array_merge([$cpc, $userId, $from, $to], $clicks));
+        $conn->executeUpdate($stmt);
+    }
+
+    /**
+     * The clicks' 202_clicks_spy copies: written by the ids it holds, since
+     * an UPDATE by an id it lacks locks the gap that id falls in, where a
+     * re-click writes its row.
+     *
+     * @param list<int> $clicks
+     */
+    private static function writeSpy(Connection $conn, string $cpc, int $userId, array $clicks): void
+    {
+        $in = implode(', ', array_fill(0, count($clicks), '?'));
+        $stmt = $conn->prepareWrite(
+            "SELECT DISTINCT click_id FROM 202_clicks_spy WHERE user_id = ? AND click_id IN ($in)"
+        );
+        $conn->bind($stmt, 'i' . str_repeat('i', count($clicks)), array_merge([$userId], $clicks));
+        $held = array_map(static fn (array $row): int => self::int($row, 'click_id'), $conn->fetchAll($stmt));
+        if ($held === []) {
+            return;
+        }
+        $stmt = $conn->prepareWrite(
+            'UPDATE 202_clicks_spy SET click_cpc = LEAST(CAST(? AS DECIMAL(7,5)), ' . self::SPY_MAX . ')'
+            . ' WHERE user_id = ? AND click_id IN (' . implode(', ', array_fill(0, count($held), '?')) . ')'
+        );
+        $conn->bind($stmt, 'si' . str_repeat('i', count($held)), array_merge([$cpc, $userId], $held));
+        $conn->executeUpdate($stmt);
+    }
+
+    /**
+     * The data engine's queue (DataEngine::processDirtyHours(), which reads a
+     * row's traffic source account and campaign and no other filter): the
+     * request's range for its account and campaign, and each stretch of
+     * hours of the rows that does not reach, for their own account. A row
+     * already queued is armed again, so a pass that has just rolled it up
+     * runs it once more.
+     *
+     * @param array<string, mixed> $values
+     * @param array<int, array<int, true>> $uncovered traffic source account => hours
+     */
+    private static function queueRollup(Connection $conn, array $values, int $userId, array $uncovered): void
+    {
+        $stmt = $conn->prepareWrite(
+            'INSERT INTO 202_dirty_hours SET ppc_account_id = ?, aff_campaign_id = ?, user_id = ?, click_time_from = ?,'
+            . ' click_time_to = ?, aff_network_id = ?, text_ad_id = ?, landing_page_id = ?, ppc_network_id = ?'
+            . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
+        );
+        $conn->bind($stmt, 'iiiiiiiii', [
+            (int) $values['ppc_account_id'], (int) $values['aff_campaign_id'], $userId, (int) $values['from_time'],
+            (int) $values['to_time'], (int) $values['aff_network_id'], (int) $values['text_ad_id'],
+            (int) $values['landing_page_id'], (int) $values['ppc_network_id'],
+        ]);
+        $conn->executeUpdate($stmt);
+
+        $rows = [];
+        foreach ($uncovered as $account => $hours) {
+            foreach (self::runs(array_keys($hours)) as [$first, $last]) {
+                array_push($rows, $account, $userId, $first * 3600, $last * 3600 + 3599);
+            }
+        }
+        foreach (array_chunk($rows, 4 * 500) as $chunk) {
+            $count = intdiv(count($chunk), 4);
+            $stmt = $conn->prepareWrite(
+                'INSERT INTO 202_dirty_hours (ppc_account_id, aff_campaign_id, user_id, click_time_from, click_time_to,'
+                . ' landing_page_id) VALUES ' . implode(', ', array_fill(0, $count, '(?, 0, ?, ?, ?, 0)'))
+                . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
+            );
+            $conn->bind($stmt, str_repeat('iiii', $count), $chunk);
+            $conn->executeUpdate($stmt);
+        }
+    }
+
+    /**
+     * Hours as runs of consecutive hours.
+     *
+     * @param list<int> $hours any order, repeats allowed
+     * @return list<array{int, int}> first and last hour of each run
+     */
+    private static function runs(array $hours): array
+    {
+        $hours = array_values(array_unique($hours));
+        sort($hours);
+        $runs = [];
+        foreach ($hours as $hour) {
+            $at = count($runs) - 1;
+            if ($at >= 0 && $runs[$at][1] === $hour - 1) {
+                $runs[$at][1] = $hour;
+            } else {
+                $runs[] = [$hour, $hour];
+            }
+        }
+
+        return $runs;
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function int(array $row, string $column): int
+    {
+        $value = $row[$column] ?? null;
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/\A-?\d+\z/', $value) === 1) {
+            return (int) $value;
+        }
+        throw new \UnexpectedValueException("Update CPC: $column read as " . get_debug_type($value));
     }
 }

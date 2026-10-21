@@ -28,7 +28,9 @@ use RuntimeException;
  * key is (click_id, click_time) and it is partitioned by click_time, so the
  * key cannot be the click alone: a rollup writes the latest visit's row and
  * then deletes the click's rows at its earlier visits (deleteEarlierVisits()),
- * which an earlier rollup wrote.
+ * which an earlier rollup wrote. Both are keyed on the latest visit, so a
+ * click's rows change only where its latest visit is rolled up: by its id,
+ * or by a window and conditions that hold the latest visit.
  */
 final class ClickRollupSql
 {
@@ -45,15 +47,12 @@ final class ClickRollupSql
      * column list and the SELECT list are generated from the same map, so
      * they can never drift out of alignment.
      *
-     * click_filtered and click_bot are the first visit's: the redirector's
-     * duplicate filter flags almost every re-click, and a re-click written
-     * before 1.9.78 carries that flag rather than its first visit's. Only the
-     * redirector re-clicks a click, and every row it writes, like every route
-     * an exit rewrites onto a click's rows, names a rotator (RotatorRoute's
-     * id is positive; rtr.php always wrote its rotator's), so a latest row
-     * naming none is its click's one visit and its own flags are read without
-     * a lookup. Of two first visits in one second, a flag is set when it is
-     * set on both.
+     * Every value is the latest visit's row's own, as every other reader of
+     * a click reads it: a re-click's row carries what the click keeps from
+     * its first visit (MysqlClickRepository::recordReClick(), and
+     * ReClickBackfill for the rows written before 1.9.78). A click the
+     * backfill has not reached has no record (LatestVisit) and a row at each
+     * visit, each with that row's values.
      */
     private const COLUMNS = [
         'user_id' => '2c.user_id',
@@ -89,12 +88,8 @@ final class ClickRollupSql
         'rule_id' => '2rc.rule_id',
         'rule_redirect_id' => '2rc.rule_redirect_id',
         'click_lead' => '2c.`click_lead`',
-        'click_filtered' => 'IF(2c.rotator_id = 0, 2c.`click_filtered`,'
-            . " (SELECT SUBSTRING(MIN(CONCAT(LPAD(fv.click_time, 10, '0'), fv.click_filtered)), 11)"
-            . ' FROM 202_clicks AS fv WHERE fv.click_id = 2c.click_id AND fv.user_id = 2c.user_id)) AS click_filtered',
-        'click_bot' => 'IF(2c.rotator_id = 0, 2c.`click_bot`,'
-            . " (SELECT SUBSTRING(MIN(CONCAT(LPAD(fv.click_time, 10, '0'), fv.click_bot)), 11)"
-            . ' FROM 202_clicks AS fv WHERE fv.click_id = 2c.click_id AND fv.user_id = 2c.user_id)) AS click_bot',
+        'click_filtered' => '2c.`click_filtered`',
+        'click_bot' => '2c.`click_bot`',
         'click_alp' => '2c.`click_alp`',
         'clicks' => '1 AS clicks',
         'click_out' => '2cr.click_out AS click_out',
@@ -147,33 +142,12 @@ LEFT OUTER JOIN 202_clicks_rotator AS 2rc ON (2c.click_id = 2rc.click_id)
 SQL;
 
     /**
-     * The 1.9.78 upgrade's queue (functions-upgrade.php). A rollup before it
-     * wrote a report row per visit, and a re-click's own row carried the
-     * redirector's duplicate-filter flag. For every click with a row at a
-     * visit that is not its latest, that row's hour and the latest visit's
-     * hour are queued for the cron's dirty-hours pass, whose rollup removes
-     * the earlier row and gives the latest its first visit's flags. Once the
-     * pass has run no such row is left, so the statement then queues nothing.
-     */
-    public const QUEUE_EARLIER_VISIT_ROWS = 'INSERT INTO 202_dirty_hours'
-        . ' (ppc_account_id, aff_campaign_id, user_id, click_time_from, click_time_to, landing_page_id)'
-        . ' SELECT DISTINCT 0, 0, s.user_id, s.hour_start, s.hour_start + 3599, 0 FROM ('
-        . 'SELECT de.user_id, IF(w.latest_hour = 1, v.latest - v.latest % 3600,'
-        . ' de.click_time - de.click_time % 3600) AS hour_start'
-        . ' FROM (SELECT c.click_id, c.click_time, c.user_id,'
-        . ' MAX(c.click_time) OVER (PARTITION BY c.click_id) AS latest FROM 202_clicks AS c) AS v'
-        . ' INNER JOIN 202_dataengine AS de'
-        . ' ON (de.click_id = v.click_id AND de.click_time = v.click_time AND de.user_id = v.user_id)'
-        . ' CROSS JOIN (SELECT 0 AS latest_hour UNION ALL SELECT 1) AS w'
-        . ' WHERE v.click_time < v.latest) AS s'
-        . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0';
-
-    /**
      * The rollup row's key (202_dataengine's PRIMARY KEY): the click and
-     * the time of the visit it is rolled up at. Two visits in one second are
-     * both latest and fold into one row, which holds every column of
-     * whichever the SELECT returns last: the table has no per-visit key to
-     * tell them apart.
+     * the time of the visit it is rolled up at. Two rows in one second
+     * (written before 1.9.78; a re-click in that second now rewrites the
+     * visit's rows) are both latest and fold into one row, which holds every
+     * column of whichever the SELECT returns last: the table has no
+     * per-visit key to tell them apart.
      */
     private const KEY = ['click_id', 'click_time'];
 
@@ -226,23 +200,36 @@ SQL;
     }
 
     /**
-     * The DELETE that follows insertSelect($table, $whereClause): the rows
-     * of the visits $whereClause names that are not their click's latest,
-     * written by a rollup before the click was visited again. Bounded by the
-     * same conditions, so a dirty hour of one account removes that
-     * account's rows in that hour and no others.
+     * The DELETE that follows insertSelect($table, $whereClause): for each
+     * click whose latest visit the insert wrote (the same condition and
+     * LatestVisit::isLatest()), its rows at earlier visits, in whatever hour
+     * they are. A window or condition that holds a click's earlier visit and
+     * not its latest writes nothing of it and deletes nothing of it, so a
+     * rebuild of the earlier visit's hour or campaign cannot remove a row it
+     * does not replace.
      *
-     * $whereClause may name 2c and 2ac (the click and its campaign), as
-     * every caller's does; another alias of insertSelect()'s is refused by
+     * A row is at an earlier visit when it is before the latest visit the
+     * click's record names: a click with no record keeps a row at each
+     * visit, as the insert writes one at each.
+     *
+     * The join order is fixed: the latest visits the condition names, then
+     * their records, then their rows. Left to the server, it began from the
+     * records and read every recorded click's rows, by an id that probes
+     * every partition of the table (partitioned by click_time): a one-hour
+     * rebuild took 6 s rather than 0.1 s.
+     *
+     * $whereClause may name 2c and 2ac (the latest visit and its campaign),
+     * as every caller's does; another alias of insertSelect()'s is refused by
      * the server.
      */
     public static function deleteEarlierVisits(string $table, string $whereClause): string
     {
-        return 'DELETE de FROM ' . $table . " AS de\n"
-            . 'INNER JOIN 202_clicks AS 2c ON (2c.click_id = de.click_id AND 2c.click_time = de.click_time'
-            . " AND 2c.user_id = de.user_id)\n"
+        return "DELETE de FROM 202_clicks AS 2c\n"
+            . "STRAIGHT_JOIN 202_click_latest_visits AS lv ON (lv.click_id = 2c.click_id)\n"
+            . 'STRAIGHT_JOIN ' . $table . ' AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id'
+            . " AND de.click_time < lv.click_time)\n"
             . self::CAMPAIGN_JOIN . "\n"
-            . 'WHERE (' . $whereClause . ') AND NOT ' . LatestVisit::isLatest('2c');
+            . 'WHERE (' . $whereClause . ') AND ' . LatestVisit::isLatest('2c');
     }
 
     /**
@@ -281,6 +268,59 @@ SQL;
                 );
             }
         }
+    }
+
+    /**
+     * After a rollup of the click failed: queue its latest visit's hour for
+     * the cron job's dirty-hours pass (DataEngine::processDirtyHours()),
+     * which rolls the account's hour up again on each run until it succeeds.
+     * Nothing else re-rolls such a click: the click path and the conversion
+     * writers have gone on. Between a deploy and its upgrade every rollup
+     * fails (it reads 202_click_latest_visits, which the upgrade makes), and
+     * without the queue the clicks of that window were left out of the
+     * reports for good.
+     *
+     * The click's rows are read by a plain read and the queue row is written
+     * after it: an INSERT … SELECT holds shared locks on the rows it reads
+     * and the gap after them, where new clicks are inserted. Answers the
+     * clause the caller's log line ends with, and never throws: the caller is
+     * already on its failure path.
+     */
+    public static function queueRetry(Connection $conn, int $clickId): string
+    {
+        try {
+            $read = $conn->prepareWrite(
+                'SELECT user_id, MAX(click_time) AS latest FROM 202_clicks WHERE click_id = ? GROUP BY user_id'
+            );
+            $conn->bind($read, 'i', [$clickId]);
+            $rows = $conn->fetchAll($read);
+            foreach ($rows as $row) {
+                $userId = self::whole($row['user_id'] ?? null, 'user_id');
+                $hour = intdiv(self::whole($row['latest'] ?? null, 'click_time'), 3600) * 3600;
+                $queue = $conn->prepareWrite(
+                    'INSERT INTO 202_dirty_hours (ppc_account_id, aff_campaign_id, user_id, click_time_from,'
+                    . ' click_time_to, landing_page_id) VALUES (0, 0, ?, ?, ?, 0)'
+                    . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0'
+                );
+                $conn->bind($queue, 'iii', [$userId, $hour, $hour + 3599]);
+                $conn->executeUpdate($queue);
+            }
+        } catch (\Throwable $e) {
+            return 'its latest visit\'s hour could not be queued for the cron job (' . $e::class . ': '
+                . $e->getMessage() . '), so its report rows are out of date until it or that hour is rolled up again';
+        }
+
+        return $rows === []
+            ? 'no row of the click was found to queue'
+            : 'its latest visit\'s hour is queued for the cron job to roll up again';
+    }
+
+    private static function whole(mixed $value, string $column): int
+    {
+        if (is_int($value) || (is_string($value) && preg_match('/\A\d+\z/', $value) === 1)) {
+            return (int) $value;
+        }
+        throw new \UnexpectedValueException('202_clicks.' . $column . ' read as ' . get_debug_type($value));
     }
 
     /**

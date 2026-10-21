@@ -54,6 +54,7 @@ final class RtrReClickValuesIntegrationTest extends TestCase
             [
                 '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_rotator',
                 '202_clicks_record', '202_clicks_site', '202_attribution_rollup_dirty_clicks',
+                '202_click_latest_visits',
             ] as $table
         ) {
             self::q("DELETE FROM $table WHERE click_id = " . self::CLICK);

@@ -472,6 +472,30 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
+if (!function_exists('_upgrade_reclick_backfill_mark')) {
+    /**
+     * ReClickBackfill's marker: the newest click, read by a statement of its
+     * own (a plain read, which locks nothing), then the marker written with
+     * it. Read inside an INSERT ... SELECT, 202_clicks would be read under
+     * shared locks, the gap after the newest click among them, where every
+     * new click goes.
+     */
+    function _upgrade_reclick_backfill_mark(): bool
+    {
+        $newest = _upgrade_query(\Prosper202\Click\ReClickBackfill::NEWEST_CLICK_SQL);
+        if (!$newest instanceof \mysqli_result) {
+            return false;
+        }
+        $row = $newest->fetch_assoc();
+        $id = is_array($row) ? ($row['newest'] ?? null) : null;
+        if (!is_int($id) && !(is_string($id) && preg_match('/\A\d+\z/', $id) === 1)) {
+            return false;
+        }
+
+        return _upgrade_query(\Prosper202\Click\ReClickBackfill::markSql((int) $id)) !== false;
+    }
+}
+
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -499,22 +523,14 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * statement) fails the step like a failed CREATE: the version stays,
      * and the next run drops what is left.
      *
-     * $queues are the step's report repairs, each a statement from the code
-     * (ClickRollupSql) that queues the hours whose 202_dataengine rows a
-     * change made wrong for the cron's dirty-hours pass to roll up again,
-     * rather than this request. Each queues only what is still wrong, so a
-     * re-run after the pass queues nothing. They run last, and one that
-     * fails fails the step.
-     *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
-     * @param  list<string> $queues
      * @return bool True when every table exists and matches its definition,
-     *         every retired table is gone and every queue was written. False
-     *         leaves the version where it is, so the next run retries the
-     *         whole step.
+     *         every marker is written and every retired table is gone.
+     *         False leaves the version where it is, so the next run retries
+     *         the whole step.
      */
-    function _upgrade_measurement_tables(array $definitions, array $retirements = [], array $queues = []): bool
+    function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -584,6 +600,21 @@ if (!function_exists('_upgrade_measurement_tables')) {
             }
         }
 
+        // The clicks re-clicked before 1.9.78 (Prosper202\Click\ReClickBackfill),
+        // the same way: the marker here, the walk from the cron.
+        if ($ok) {
+            foreach ($definitions as $definition) {
+                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::RECLICK_BACKFILL) {
+                    if (!_upgrade_reclick_backfill_mark()) {
+                        $ok = false;
+                        error_log('Prosper202 upgrade: failed to mark the clicks re-clicked before 1.9.78'
+                            . ' for their backfill');
+                    }
+                    break;
+                }
+            }
+        }
+
         if ($ok) {
             foreach ($retirements as $retirement) {
                 if (preg_match('/^DROP TABLE IF EXISTS `202_[a-z0-9_]+`(?:, `202_[a-z0-9_]+`)*$/', $retirement) !== 1) {
@@ -594,15 +625,6 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if (_upgrade_query($retirement) === false) {
                     $ok = false;
                     error_log('Prosper202 upgrade: failed to remove a retired table: ' . $retirement);
-                }
-            }
-        }
-
-        if ($ok) {
-            foreach ($queues as $queue) {
-                if (_upgrade_query($queue) === false) {
-                    $ok = false;
-                    error_log('Prosper202 upgrade: failed to queue report rows for the cron to roll up again');
                 }
             }
         }
@@ -4372,16 +4394,16 @@ class UPGRADE
             // A schema change for 1.9.78 belongs in this block, reconciled
             // before the version is written.
             //
-            // The reports count a re-clicked click once, at its latest visit
-            // (ClickRollupSql). The rows a rollup before 1.9.78 wrote at its
-            // earlier visits are left to the cron: their hours, and the latest
-            // visit's, are queued for the dirty-hours pass, which rolls them up
-            // again (ClickRollupSql::QUEUE_EARLIER_VISIT_ROWS).
-            $step_ok = _upgrade_measurement_tables(
-                [\Prosper202\Database\Tables\UserTables::apiKeys()],
-                [],
-                [\Prosper202\DataEngine\ClickRollupSql::QUEUE_EARLIER_VISIT_ROWS]
-            );
+            // A re-clicked click counts once, at its latest visit, which
+            // 202_click_latest_visits records (Prosper202\Click\LatestVisit).
+            // The clicks re-clicked before 1.9.78 have no record, and rows
+            // written by an older rule: the step marks the newest click, and
+            // the cron walks the clicks up to it (Prosper202\Click\ReClickBackfill).
+            $step_ok = _upgrade_measurement_tables([
+                \Prosper202\Database\Tables\UserTables::apiKeys(),
+                \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
+                \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+            ]);
 
             if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
@@ -4391,8 +4413,8 @@ class UPGRADE
                         . 'leaving version at 1.9.77 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled or the report rows'
-                    . ' to roll up again could not be queued; leaving version at 1.9.77 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_api_keys and the re-click tables could not be reconciled, or'
+                    . ' the re-click backfill marked; leaving version at 1.9.77 so the next run retries.');
             }
         }
 

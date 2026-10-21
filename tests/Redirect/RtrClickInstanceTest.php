@@ -285,9 +285,9 @@ final class RtrClickInstanceTest extends TestCase
         );
         $clickId = (int) $plain[1];
 
-        // The re-clicks a second after the first visit: two visits of one
-        // click in one second share a time, and nothing orders them once an
-        // exit has written its route on every row (LatestVisit says so).
+        // The re-clicks a second after the first visit, so it keeps a row of
+        // its own: a re-click in the second of a row the click has rewrites
+        // that row (MysqlClickRepository::writeVisitRows()).
         $first = time();
         while (time() === $first) {
             usleep(20000);

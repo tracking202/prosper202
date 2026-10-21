@@ -14,7 +14,10 @@ use Prosper202\Database\Connection;
  * order gets whichever row the database reads first, usually the first visit.
  *
  * Two visits in one second share a time, and the table has no per-visit key
- * to order them by. The one on the route the click holds now
+ * to order them by. Since 1.9.78 a re-click in a second the click already
+ * has a row at rewrites that row rather than adding one
+ * (MysqlClickRepository::writeVisitRows()), so such pairs are rows written
+ * before it. Of those, the one on the route the click holds now
  * (202_clicks_rotator, written with the latest visit) is taken first, which
  * tells them apart only while their routes differ: two visits on one route,
  * or any after an exit (MysqlClickRepository::recordExit() writes the exit's
@@ -42,9 +45,9 @@ final class LatestVisit
      * visit, for a statement that reads many clicks' rows (a report, a
      * rollup): no visit of the click is later, as 202_click_latest_visits
      * records it. A click then counts once, under its latest visit, except
-     * that two visits in one second are both latest: the table has no
-     * per-visit key to tell them apart. A rollup keyed by click and time
-     * folds them into one row.
+     * that two rows in one second (written before 1.9.78) are both latest:
+     * the table has no per-visit key to tell them apart. A rollup keyed by
+     * click and time folds them into one row.
      *
      * The record is read by its primary key. A probe of 202_clicks itself
      * reads its click_id index in every partition (installs partition it by

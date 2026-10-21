@@ -34,9 +34,9 @@ $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
 	p202RespondJsonError(404, 'Click data not found');
 }
-// The traffic source and cost, whose pixels announce it: the first visit's
-// (p202ClickSourceSql()).
-$source_sql = p202ClickSourceSql($parsedClickId);
+// The traffic source and cost, whose pixels announce it: the first visit's,
+// when it is the same account's (p202ClickSourceSql()).
+$source_sql = p202ClickSourceSql($parsedClickId, (int) $cvar_sql_row['user_id']);
 $source_result = $db->query($source_sql);
 if ($source_result === false) {
     record_mysql_error($db, $source_sql);

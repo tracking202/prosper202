@@ -193,14 +193,16 @@ final class InstallReportIntegrationTest extends TestCase
 
     /**
      * A redirector re-click gives U1's click another 202_clicks row, an hour
-     * on, on campaign 31: the install is one install, under the click's
-     * latest visit, in every grouping, the totals and the goal rows.
+     * on, on campaign 31, and records it as the latest visit: the install is
+     * one install, under the click's latest visit, in every grouping, the
+     * totals and the goal rows.
      */
     public function testAnInstallOnAReClickedClickCountsOnceUnderItsLatestVisit(): void
     {
         $this->seed();
         $this->campaign(31, null);
         $this->click(100, 31, 1, self::CLICK_TIME + 3600);
+        \Prosper202\Click\LatestVisit::refresh($this->conn, 100);
 
         $byCampaign = self::jsonRound($this->report(['platform' => 'android', 'group_by' => 'campaign']))['data'];
         $campaigns = [];

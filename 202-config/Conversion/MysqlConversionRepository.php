@@ -1049,17 +1049,19 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *
      * Post-commit and best-effort: the write has landed, so a failure here
      * must not read as a failed write (CLAUDE.md #13). It is logged with the
-     * click id and the step that failed, and the next change to the click
-     * re-rolls it: a failed rollup leaves the report row as it was, and a
-     * failed removal of the earlier visits' rows leaves them beside the
-     * latest visit's, so the click counts once per visit until then.
+     * click id and the step that failed, and the click's hour is queued for
+     * the cron job to roll up again (ClickRollupSql::queueRetry()): a failed
+     * rollup leaves the report row as it was, and a failed removal of the
+     * earlier visits' rows leaves them beside the latest visit's, so the
+     * click counts once per visit until then.
      */
     private function refreshReportRollup(int $clickId): void
     {
         try {
             ClickRollupSql::rollUpClick($this->conn, $clickId);
         } catch (Throwable $e) {
-            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
+            error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: '
+                . $e->getMessage() . '; ' . ClickRollupSql::queueRetry($this->conn, $clickId));
         }
     }
 

@@ -7,6 +7,7 @@ namespace Tests\Conversion;
 use Api\V3\Controllers\ConversionsController;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Attribution\ConversionBackfill;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\ClickBreakdown;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -91,7 +92,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
             '202_clicks_advance', '202_clicks_site', '202_google', '202_cpa_trackers', '202_tracking_c1',
             '202_aff_campaigns', '202_attribution_pending', '202_attribution_backfill', '202_dataengine',
             '202_ppc_account_pixels', '202_notification_pending', '202_identity_observations', '202_identity_signals',
-            '202_identity_keys',
+            '202_identity_keys', '202_click_latest_visits',
         ];
         foreach ($tables as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
@@ -147,11 +148,13 @@ final class ReClickedConversionIntegrationTest extends TestCase
         }
     }
 
+    /** Both visits, and the latest recorded, as a re-click records it. */
     private static function reClicked(bool $latestFirst = false): void
     {
         foreach ($latestFirst ? [true, false] : [false, true] as $latest) {
             self::visit($latest);
         }
+        LatestVisit::refresh(new Connection(self::$db), self::CLICK);
     }
 
     /** @return array<string, mixed> */
@@ -199,7 +202,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
             ]),
             'gpb.php and upx.php credit the latest visit'
         );
-        $source = self::one(p202ClickSourceSql(self::CLICK));
+        $source = self::one(p202ClickSourceSql(self::CLICK, 1));
         self::assertSame(
             ['21', '0.25000'],
             [(string) $source['ppc_account_id'], (string) $source['click_cpc']],
@@ -258,15 +261,17 @@ final class ReClickedConversionIntegrationTest extends TestCase
         );
     }
 
-    public function testALegacyConversionComparesAndCreditsTheLatestVisitsCampaign(): void
+    /** pb.php's campaign check: any visit's campaign, the sale the visitor made before a re-click moved them on. */
+    public function testALegacyConversionTakesAnyVisitsCampaignAndCreditsTheLatestVisit(): void
     {
         self::reClicked();
+        self::campaign(13, '5.00');
 
-        $refused = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 11]);
-        self::assertSame('campaign_mismatch', $refused['reason'], 'pb.php naming the first visit\'s campaign');
-        $recorded = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 12, 'user_id' => 1]);
-        self::assertTrue($recorded['recorded'], (string) json_encode($recorded));
-        self::assertSame([self::credited() + ['source' => 'legacy_pixel']], self::conversions());
+        $refused = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 13]);
+        self::assertSame('campaign_mismatch', $refused['reason'], 'pb.php naming a campaign no visit was on');
+        $recorded = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['campaign_id' => 11, 'user_id' => 1]);
+        self::assertTrue($recorded['recorded'], 'pb.php naming the first visit\'s campaign: ' . json_encode($recorded));
+        self::assertSame([self::credited() + ['source' => 'legacy_pixel']], self::conversions(), 'credited to the latest visit');
     }
 
     public function testAnApiConversionCreditsTheLatestVisit(): void
@@ -300,7 +305,8 @@ final class ReClickedConversionIntegrationTest extends TestCase
      * written before 1.9.78 stored its row as no lead, so a click converted
      * on its first visit converts once more on that visit; a re-click since
      * carries the click's lead (MysqlClickRepository::leadValue(), held by
-     * ReClickOfAConvertedClickIntegrationTest).
+     * ReClickOfAConvertedClickIntegrationTest). Such a click has no record of
+     * its latest visit until the 1.9.78 backfill reaches it, and none here.
      *
      * @dataProvider storedOrders
      */

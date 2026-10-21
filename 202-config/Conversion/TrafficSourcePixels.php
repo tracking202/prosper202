@@ -193,7 +193,8 @@ final class TrafficSourcePixels
      * values, keyword, click ids, UTM values, CPC, referrer), plus the
      * click's traffic source. The source and the CPC are the click's first
      * visit's (FirstVisit): a re-click keeps the source the visitor came
-     * from. Null when the click is not this user's.
+     * from. A traffic source account of another account is no source (0).
+     * Null when the click is not this user's.
      *
      * $inTransaction reads through the write connection: the notification
      * outbox resolves a postback inside the transaction that records the
@@ -204,9 +205,10 @@ final class TrafficSourcePixels
     public static function clickTokens(Connection $conn, int $userId, int $clickId, bool $inTransaction = false): ?array
     {
         $sql =
-            'SELECT c.click_id, c.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
+            'SELECT c.click_id, pa.ppc_account_id, c.click_cpc, c1.c1, c2.c2, c3.c3, c4.c4, kw.keyword, g.gclid,
                     us.utm_source, um.utm_medium, uca.utm_campaign, ut.utm_term, uco.utm_content, su.site_url_address
              FROM ' . FirstVisit::of('?') . ' AS c
+             LEFT JOIN 202_ppc_accounts AS pa ON (pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id)
              LEFT JOIN 202_clicks_tracking AS ct ON ct.click_id = c.click_id
              LEFT JOIN 202_clicks_advance AS ca ON ca.click_id = c.click_id
              LEFT JOIN 202_google AS g ON g.click_id = c.click_id

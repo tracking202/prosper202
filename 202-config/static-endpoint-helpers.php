@@ -747,12 +747,18 @@ if (!function_exists('p202ClickSourceSql')) {
     /**
      * The click's traffic source and cost, whose pixels gpb.php and upx.php
      * fire with that cost as [[cpc]]: the first visit's (FirstVisit), the
-     * source the visitor came from.
+     * source the visitor came from. $userId is the click's owner as its
+     * latest visit names it (p202PostbackClickSql()), the account the
+     * conversion is recorded for: a first visit of another account reads as
+     * none, and a traffic source account of another account as no source
+     * (a NULL ppc_account_id), whose pixels are not fired.
      */
-    function p202ClickSourceSql(int $clickId): string
+    function p202ClickSourceSql(int $clickId, int $userId): string
     {
-        return 'SELECT fv.ppc_account_id, fv.click_cpc FROM '
-            . \Prosper202\Click\FirstVisit::of((string) $clickId) . ' AS fv';
+        return 'SELECT pa.ppc_account_id, fv.click_cpc FROM '
+            . \Prosper202\Click\FirstVisit::of((string) $clickId) . ' AS fv'
+            . ' LEFT JOIN 202_ppc_accounts AS pa ON (pa.ppc_account_id = fv.ppc_account_id AND pa.user_id = fv.user_id)'
+            . ' WHERE fv.user_id = ' . $userId;
     }
 }
 
@@ -774,6 +780,33 @@ if (!function_exists('p202PixelClickSql')) {
     }
 }
 
+if (!function_exists('p202ClickVisitedCampaign')) {
+    /**
+     * Whether a visit of the click, among $userId's rows of it, was on
+     * $campaignId, a campaign of that account: the check of a postback that
+     * names its campaign (pb.php, with or without an event). A network posts
+     * back for the offer the visitor bought, and a redirector re-click may
+     * have sent the visitor on to another offer since; what it records still
+     * credits the click's latest visit.
+     */
+    function p202ClickVisitedCampaign(
+        \Prosper202\Database\Connection $conn,
+        int $clickId,
+        int $userId,
+        int $campaignId
+    ): bool {
+        $stmt = $conn->prepareRead(
+            'SELECT 1 AS visited FROM 202_clicks AS v'
+            . ' INNER JOIN 202_aff_campaigns AS ac'
+            . ' ON (ac.aff_campaign_id = v.aff_campaign_id AND ac.user_id = v.user_id)'
+            . ' WHERE v.click_id = ? AND v.user_id = ? AND v.aff_campaign_id = ? LIMIT 1'
+        );
+        $conn->bind($stmt, 'iii', [$clickId, $userId, $campaignId]);
+
+        return $conn->fetchOne($stmt) !== null;
+    }
+}
+
 if (!function_exists('p202RecordLegacyConversion')) {
     /**
      * Record a conversion for one of the legacy endpoints — the per-campaign
@@ -790,8 +823,9 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * The click is loaded here, once, with everything the writer needs, and
      * the two ownership checks a caller may ask for are applied before any
      * write: `user_id` (px: the click must belong to the campaign's owner)
-     * and `campaign_id` (pb: the click must belong to the campaign the
-     * postback names). Both were implicit or absent before.
+     * and `campaign_id` (pb: some visit of the click, a redirector re-click
+     * being another, must be on the campaign the postback names, and the
+     * campaign the click's account's). Both were implicit or absent before.
      *
      * @param array{
      *     user_id?: int, campaign_id?: int, transaction_id?: string,
@@ -832,7 +866,10 @@ if (!function_exists('p202RecordLegacyConversion')) {
         if (isset($opts['user_id']) && (int) $click['user_id'] !== (int) $opts['user_id']) {
             return $none + ['reason' => 'foreign_click'];
         }
-        if (isset($opts['campaign_id']) && (int) $click['aff_campaign_id'] !== (int) $opts['campaign_id']) {
+        if (
+            isset($opts['campaign_id'])
+            && !p202ClickVisitedCampaign($conn, $clickId, (int) $click['user_id'], (int) $opts['campaign_id'])
+        ) {
             return $none + ['reason' => 'campaign_mismatch'];
         }
 
@@ -932,8 +969,9 @@ if (!function_exists('p202RecordWebEvent')) {
      *
      * @param array<string, mixed> $get the request's query
      * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
-     *        user_id / campaign_id: the click must belong to that owner /
-     *        campaign (px / pb scopes). browser: a browser renders the
+     *        user_id: the click must belong to that owner (px scope);
+     *        campaign_id: some visit of it must be on that campaign (pb
+     *        scope, p202ClickVisitedCampaign()). browser: a browser renders the
      *        response, so image, iframe and script pixels are returned for
      *        it to load. trusted: whether `amount` may set a paid value, as it
      *        does for this endpoint's plain conversions (default true).
@@ -953,9 +991,13 @@ if (!function_exists('p202RecordWebEvent')) {
         if (isset($opts['user_id']) && $click['user_id'] !== (int) $opts['user_id']) {
             return ['status' => 'not_found', 'reason' => 'foreign_click'];
         }
-        if (isset($opts['campaign_id']) && $click['campaign_id'] !== (int) $opts['campaign_id']) {
+        if (
+            isset($opts['campaign_id'])
+            && !p202ClickVisitedCampaign($conn, $clickId, $click['user_id'], (int) $opts['campaign_id'])
+        ) {
             return ['status' => 'not_found', 'reason' => 'campaign_mismatch'];
         }
+        // The goals and the conversion are the latest visit's campaign's.
         $now = time();
         if (!$events->campaignEvaluatesGoals($click['user_id'], $click['campaign_id'], $now)) {
             return ['status' => 'no_goals', 'event_name' => \Prosper202\Goals\WebEvents::nameFrom($get)];

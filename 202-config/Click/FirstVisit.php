@@ -13,8 +13,10 @@ use InvalidArgumentException;
  * rule carry the redirector link's own source and cost on the later rows, so
  * whatever reads a click's source reads the first visit's row.
  *
- * Two first visits in one second are read in whatever order the database
- * gives: the table has no per-visit key to tell them apart.
+ * Two rows in the first visit's second (written before 1.9.78, when a
+ * re-click in that second added a row rather than rewriting the visit's)
+ * are read in whatever order the database gives: the table has no
+ * per-visit key to tell them apart.
  */
 final class FirstVisit
 {

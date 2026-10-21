@@ -12,6 +12,7 @@ use Prosper202\Attribution\DefaultModel;
 use Prosper202\Attribution\ModelRepository;
 use Prosper202\Attribution\ModelType;
 use Prosper202\Click\ClickRetention;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Report\RollupDirty;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Attribution\Support\AttributionDatabase;
@@ -435,6 +436,7 @@ final class RollupMatchesFullComputationTest extends TestCase
             $this->conn->transaction(function () use ($clicks, $q): void {
                 $q('INSERT INTO 202_clicks SET click_id = 14, user_id = 1, aff_campaign_id = 3, ppc_account_id = 0, click_payout = 0, click_cpc = 0.5, click_lead = 0, click_filtered = 0, click_bot = 0, click_time = ' . ($clicks[14] + 90_000));
                 $q('REPLACE INTO 202_clicks_advance SET click_id = 14, keyword_id = 77, ip_id = 0, country_id = 3, region_id = 0, city_id = 0, device_id = 0, browser_id = 3, platform_id = 0');
+                LatestVisit::refresh($this->conn, 14);
                 RollupDirty::click($this->conn, 1, 14);
             });
             self::assertSame('77', self::scalar('SELECT keyword_id FROM 202_clicks_advance WHERE click_id = 14'));
@@ -1007,6 +1009,9 @@ final class RollupMatchesFullComputationTest extends TestCase
         }
 
         $this->bulk('202_clicks', ['click_id', 'user_id', 'aff_campaign_id', 'ppc_account_id', 'landing_page_id', 'click_cpc', 'click_bot', 'click_time'], $clickRows);
+        // Each re-clicked click's latest visit, as the re-click records it.
+        self::fixture('INSERT INTO 202_click_latest_visits (click_id, click_time) SELECT click_id, MAX(click_time)'
+            . ' FROM 202_clicks GROUP BY click_id HAVING COUNT(*) > 1');
         $this->bulk('202_clicks_advance', ['click_id', 'keyword_id', 'country_id', 'device_id', 'browser_id'], $advance);
         $this->bulk('202_clicks_tracking', ['click_id', 'c1_id', 'c2_id', 'c3_id', 'c4_id'], $tracking);
         $this->bulk('202_conversion_logs', ['conv_id', 'click_id', 'campaign_id', 'click_payout', 'user_id', 'click_time', 'conv_time', 'dedupe_key'], $convRows);

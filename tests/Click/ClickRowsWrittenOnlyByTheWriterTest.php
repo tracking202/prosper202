@@ -77,8 +77,9 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
             '202_clicks_spy' => "p202ApplyConversionClickSide(), the click's 202_clicks_spy copy",
         ],
         '202-config/Update/CpcUpdate.php' => [
-            'UPDATE 202_clicks… SET 202_clicks.click_cpc = ?' => "Update CPC: 202_clicks, the cost of an account's"
-                . ' clicks, its scope joined on the account (the page and POST /api/v3/clicks/cpc)',
+            '202_clicks' => "Update CPC: the cost on every visit of an account's clicks, WHERE user_id = ?, chosen by"
+                . ' their first visit through a scope joined on the account (the page and POST /api/v3/clicks/cpc)',
+            '202_clicks_spy' => 'Update CPC: the 202_clicks_spy copies of the same clicks, WHERE user_id = ?',
         ],
         '202-config/Update/SubidBatch.php' => [
             '202_clicks' => "a subid upload's click filter flag, WHERE click_id = ? AND user_id = ?",
@@ -89,8 +90,9 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
                 . ' expired clicks',
         ],
         '202-config/DataEngine/ClickRollupSql.php' => [
-            'DELETE de FROM … AS de INNER JOIN 202_clicks AS 2c ON' => 'deleteEarlierVisits(): deletes `de` alone, the'
-                . ' rollup table its caller names, at a click\'s earlier visits, which it reads from the joined 202_clicks',
+            'DELETE de FROM 202_clicks AS 2c STRAIGHT_JOIN' => 'deleteEarlierVisits(): deletes `de` alone, the'
+                . ' rollup table its caller names, at a click\'s earlier visits, which it reads from 202_clicks and'
+                . ' 202_click_latest_visits',
             '202_clicks' => 'deleteEarlierVisits(), as above: 202_clicks is joined, not written',
         ],
         '202-config/User/UserDataPurge.php' => [
@@ -126,7 +128,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
     ];
 
     /** How many rewrites OTHER_REWRITERS holds. Lower it when one goes. */
-    private const REWRITE_CEILING = 23;
+    private const REWRITE_CEILING = 24;
 
     /** An UPDATE's table references, to SET. */
     private const UPDATE = '/\A\s*UPDATE\b(?:\s+(?:LOW_PRIORITY|IGNORE))*\s+(.+?)\s+SET\b/is';
@@ -135,7 +137,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
     private const DELETE = '/\A\s*DELETE\b.*?\bFROM\s+(.+?)(?:\s+(?:WHERE|ORDER|LIMIT|USING)\b|\z)/is';
 
     /** Each table a reference list names: the first, and each after JOIN or a comma. */
-    private const TABLE_REF = '/(?:\A|\bJOIN\b|,)\s*\(?\s*(?:`?[\w\x00]+`?\.)?`?((?:[\w\x00]|%(?:\d+\$)?s)+)/i';
+    private const TABLE_REF = '/(?:\A|\b(?:STRAIGHT_)?JOIN\b|,)\s*\(?\s*(?:`?[\w\x00]+`?\.)?`?((?:[\w\x00]|%(?:\d+\$)?s)+)/i';
 
     private const SITE_BYTES = 60;
 
@@ -248,6 +250,10 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
             '202_clicks_advance',
         ];
         yield 'a delete' => ['$db->query("DELETE FROM 202_clicks_record WHERE click_id = 5");', '202_clicks_record'];
+        yield 'a straight join' => [
+            '$db->query("DELETE o FROM 202_offers o STRAIGHT_JOIN 202_google g ON g.click_id = o.id");',
+            '202_google',
+        ];
         yield 'a multi-table delete' => [
             '$db->query("DELETE o FROM 202_offers o JOIN 202_google g ON g.click_id = o.id");',
             '202_google',

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 
 if (!isset($_SESSION['user_timezone'])) {
@@ -74,8 +75,8 @@ if (!class_exists('DataEngine')) {
             // The click is recorded before this runs, and on the click path
             // the visitor goes on whatever the rollup does: a lock lost to a
             // concurrent rollup is tried once more, and any other failure is
-            // logged and answered false, the click's report rows out of date
-            // until it or its hour is rolled up again.
+            // logged, the click's hour queued for the cron job to roll up
+            // again (ClickRollupSql::queueRetry()), and answered false.
             foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
                 for ($attempt = 1;; $attempt++) {
                     if ($db->query($dsql)) {
@@ -85,9 +86,9 @@ if (!class_exists('DataEngine')) {
                     if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
                         continue;
                     }
-                    error_log('DataEngine ' . $step . ' of click ' . $clickId . ' failed: '
-                        . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']'
-                        . '; the click\'s report rows are out of date until it or its hour is rolled up again');
+                    $failure = 'DataEngine ' . $step . ' of click ' . $clickId . ' failed: '
+                        . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']';
+                    error_log($failure . '; ' . ClickRollupSql::queueRetry(new Connection($db), $clickId));
 
                     return false;
                 }

@@ -9,12 +9,14 @@ use Prosper202\Attribution\AttributionReports;
 use Prosper202\Attribution\AttributionRollup;
 use Prosper202\Attribution\JourneyBuilder;
 use Prosper202\Attribution\ModelType;
+use Prosper202\Click\LatestVisit;
 use Tests\Attribution\Support\AttributionDatabase;
 
 /**
  * A redirector re-click gives a click a second 202_clicks row (and
  * 202_clicks_spy row), at the re-click's time, with the latest visit's
- * campaign; the first visit's traffic source and cost are copied onto it.
+ * campaign; the first visit's traffic source and cost are copied onto it,
+ * and the latest visit is recorded (LatestVisit::refresh()).
  * The multi-touch reports count that click once, at its latest visit: one
  * touch in a journey, its credits and assists in the latest visit's
  * dimension, its cost once, and in the click cohort at the latest visit's
@@ -48,6 +50,7 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
         $this->click(10, 1, self::BASE, '0.40', 5);
         $this->visit(10, self::BASE, self::cookie('p'));
         $this->click(10, 2, self::BASE + 600, '0.40', 5);
+        LatestVisit::refresh($this->conn, 10);
         $this->click(11, 3, self::BASE + 1200, '0.10', 5);
         $this->visit(11, self::BASE + 1200, self::cookie('p'));
         $rows = (int) self::scalar('SELECT COUNT(*) FROM 202_clicks WHERE click_id IN (10, 11)');
@@ -152,6 +155,8 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
             $this->click(21, 1, self::BASE + 200);
             $this->visit(21, self::BASE + 200, self::cookie('p'));
             $this->click(21, 2, self::BASE + 500, '0.10', 0, 0, 1);
+            LatestVisit::refresh($this->conn, 20);
+            LatestVisit::refresh($this->conn, 21);
         });
 
         self::assertSame([10, 20, 11], self::journeyClicks($this->conv));
@@ -232,13 +237,14 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
     }
 
     /**
-     * A re-click written before the re-click copied the first visit's source
-     * and cost carries the redirector link's: the click is counted once,
-     * under what its latest row holds. Rows already written are not
-     * rewritten, and a figure read from one row keeps the rollup's marks
-     * (a row's own hour) sound.
+     * A re-click written before 1.9.78 carries the redirector link's source
+     * and cost, and its click has no record of its latest visit until the
+     * 1.9.78 backfill (ReClickBackfill) rewrites its rows and records it;
+     * none here. Until then the click counts at each visit, each under what
+     * its own row holds, as every click did before. Each figure is read
+     * from one row, which keeps the rollup's marks (a row's own hour) sound.
      */
-    public function testARowWrittenBeforeTheCopyCountsUnderTheLinksSource(): void
+    public function testARowWrittenBeforeTheBackfillCountsAtEachVisitUnderItsOwnSource(): void
     {
         $this->scenario();
         $this->click(12, 1, self::BASE + 2000, '0.30', 5);
@@ -247,10 +253,10 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
 
         $rows = $this->rows('traffic_source', ...$window);
         self::assertSame(
-            [2, '0.50000'],
+            [3, '0.80000'],
             [$rows['5']['clicks'], $rows['5']['cost']],
-            'click 12 is not under its first visit\'s source'
+            'clicks 10 and 11, and click 12\'s first visit'
         );
-        self::assertSame([1, '0.00000'], [$rows['6']['clicks'], $rows['6']['cost']]);
+        self::assertSame([1, '0.00000'], [$rows['6']['clicks'], $rows['6']['cost']], 'click 12\'s re-click');
     }
 }

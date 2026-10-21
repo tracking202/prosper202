@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Report;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Report\DailyEmailCampaigns;
 use Tracking202\Report\RotatorBreakdown;
@@ -17,8 +18,8 @@ use Tracking202\Report\RotatorBreakdown;
  * A redirector re-click gives the click another 202_clicks and
  * 202_clicks_spy row at the re-click's time, with the route and campaign it
  * was sent to and the first visit's traffic source and cost, and rewrites
- * its one 202_clicks_rotator row (MysqlClickRepository::recordReClick()).
- * Click X is a click on landing page 3 and campaign A through rule A,
+ * its one 202_clicks_rotator row, and records the latest visit
+ * (MysqlClickRepository::recordReClick()). Click X is a click on landing page 3 and campaign A through rule A,
  * re-clicked onto page 2 and campaign B through rule B; it converted (the
  * ledger marks every row). Click Y is an ordinary click on page 1 and
  * campaign A.
@@ -64,7 +65,8 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $u = self::USER;
-        $tables = ['202_clicks', '202_clicks_spy', '202_clicks_rotator', '202_clicks_advance', '202_clicks_record'];
+        $tables = ['202_clicks', '202_clicks_spy', '202_clicks_rotator', '202_clicks_advance', '202_clicks_record',
+            '202_click_latest_visits'];
         foreach ($tables as $table) {
             self::q("DELETE FROM $table WHERE click_id IN (" . self::X . ', ' . self::Y . ')');
         }
@@ -123,6 +125,7 @@ final class ReClickCountsOnceIntegrationTest extends TestCase
         $visit(self::X, ['aff_campaign_id' => $i['campB'], 'landing_page_id' => $i['lp2'], 'rule_id' => 502,
             'click_time' => self::$now + 600] + $lead);
         $route(self::X, $i['ruleB'], 502);
+        LatestVisit::refresh(new Connection(self::$db), self::X);
         $visit(self::Y, ['aff_campaign_id' => $i['campA'], 'landing_page_id' => $i['lp1'],
             'click_time' => self::$now + 60, 'rotator_id' => $i['rot'], 'rule_id' => 501]);
         $route(self::Y, $i['ruleA'], 501);

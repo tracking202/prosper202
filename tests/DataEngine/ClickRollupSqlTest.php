@@ -231,27 +231,65 @@ final class ClickRollupSqlTest extends TestCase
     }
 
     /**
-     * The removal that follows the rollup reads the visits the same
-     * condition names, through the same campaign join, and deletes the rows
-     * of the ones that are not their click's latest from the table it names.
+     * The removal that follows the rollup is keyed on the same rows as the
+     * rollup: the latest visits the caller's condition names, through the
+     * same campaign join, held whole. It deletes, from the table it names,
+     * the rows of those clicks before the latest visit their record names,
+     * whatever their hour, and of the click's own account.
      */
-    public function testTheRemovalOfEarlierVisitsReadsTheRollupsCondition(): void
+    public function testTheRemovalOfEarlierVisitsIsKeyedOnTheRollupsLatestVisits(): void
     {
-        $where = '2c.click_time >= 1 AND 2c.click_time <= 2 AND 2c.user_id = 5 AND 2ac.aff_campaign_id = 7';
+        $where = '2c.click_time >= 1 AND 2c.click_time <= 2 AND 2c.user_id = 5 OR 2ac.aff_campaign_id = 7';
         $sql = ClickRollupSql::deleteEarlierVisits('202_dataengine_new', $where);
+        $insert = ClickRollupSql::insertSelect('202_dataengine', $where);
 
-        self::assertStringStartsWith("DELETE de FROM 202_dataengine_new AS de\n", $sql);
+        self::assertStringEndsWith("WHERE ($where) AND " . LatestVisit::isLatest('2c'), $sql);
+        self::assertStringContainsString("WHERE ($where) AND " . LatestVisit::isLatest('2c') . "\n", $insert);
         self::assertStringContainsString(
-            'INNER JOIN 202_clicks AS 2c ON (2c.click_id = de.click_id AND 2c.click_time = de.click_time'
-                . ' AND 2c.user_id = de.user_id)',
+            'STRAIGHT_JOIN 202_dataengine_new AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id'
+                . ' AND de.click_time < lv.click_time)',
             $sql
         );
-        self::assertStringEndsWith("WHERE ($where) AND NOT " . LatestVisit::isLatest('2c'), $sql);
         self::assertSame(1, substr_count($sql, '202_dataengine'), 'one table is deleted from');
+        self::assertStringStartsWith('DELETE de FROM ', $sql);
 
         preg_match('/^LEFT OUTER JOIN 202_aff_campaigns AS 2ac .*$/m', $sql, $join);
         self::assertNotEmpty($join, 'the removal joins the campaign the condition may name');
-        self::assertStringContainsString($join[0] . "\n", ClickRollupSql::insertSelect('202_dataengine', $where));
+        self::assertStringContainsString($join[0] . "\n", $insert);
+    }
+
+    /**
+     * Read in this order and no other: the latest visits the condition names,
+     * their records, their rows. The rollup table is partitioned by
+     * click_time, so a click's rows read by its id probe every partition;
+     * the server's own order began from the records, and a one-hour rebuild
+     * of a partitioned install took 6 s rather than 0.1 s.
+     */
+    public function testTheRemovalReadsTheLatestVisitsFirst(): void
+    {
+        $sql = ClickRollupSql::deleteEarlierVisits('202_dataengine', '2c.click_id=1');
+
+        self::assertStringStartsWith(
+            "DELETE de FROM 202_clicks AS 2c\n"
+                . "STRAIGHT_JOIN 202_click_latest_visits AS lv ON (lv.click_id = 2c.click_id)\n"
+                . 'STRAIGHT_JOIN 202_dataengine AS de ON ',
+            $sql
+        );
+    }
+
+    /**
+     * Every value is the latest visit's row's own, as the re-click writer
+     * and the backfill leave it: no column looks another visit up.
+     */
+    public function testEveryValueIsTheLatestRowsOwn(): void
+    {
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
+        self::assertNotEmpty($selectMatch, 'Must find the SELECT list');
+
+        self::assertStringNotContainsStringIgnoringCase('SELECT', $selectMatch[1], 'no subquery in the SELECT list');
+        foreach (['click_filtered', 'click_bot', 'click_lead', 'ppc_account_id'] as $column) {
+            self::assertMatchesRegularExpression('/^2c\.`?' . $column . '`?,$/m', $selectMatch[1], $column);
+        }
     }
 
     /** By id: the rollup first, then the removal, both of the one click, on the table named. */

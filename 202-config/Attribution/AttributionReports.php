@@ -793,8 +793,8 @@ final class AttributionReports
         $meta = $this->conn->fetchOne($stmt);
 
         // Each touch's click at its latest visit, as the breakdowns count it.
-        // Two visits in one second are both latest, and the touch is listed
-        // once, with whichever of them the server returns first.
+        // Two rows in one second (written before 1.9.78) are both latest,
+        // and the touch is listed once, with whichever the server returns first.
         $stmt = $this->conn->prepareRead(
             "SELECT j.position, j.click_id, j.click_time, c.aff_campaign_id, ac.aff_campaign_name,
                     c.ppc_account_id, pa.ppc_account_name,

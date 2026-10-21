@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Database\Connection;
 use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
@@ -777,7 +778,9 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
         $clickId = (int) $click_id;
         foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
             if (!$db->query($dsql)) {
-                throw new QueryException(self::failedStep($db, $step . ' of click ' . $clickId));
+                $failure = self::failedStep($db, $step . ' of click ' . $clickId);
+                error_log('DataEngine click ' . $clickId . ': ' . ClickRollupSql::queueRetry(new Connection($db), $clickId));
+                throw new QueryException($failure);
             }
         }
 
@@ -825,9 +828,10 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
     /**
      * Roll up every click in a time window into the dataengine table: each
-     * click whose latest visit is in the window, and the removal of the
-     * window's rows for visits that are not their click's latest
-     * (ClickRollupSql).
+     * click whose latest visit is in the window and meets $params, and the
+     * removal of those clicks' rows at earlier visits, in whatever hour they
+     * are (ClickRollupSql). A click whose latest visit is elsewhere is left
+     * as it is.
      */
     public function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
     {

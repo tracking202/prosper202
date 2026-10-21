@@ -65,9 +65,10 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
     private static function cleanUp(): void
     {
         $range = 'BETWEEN ' . self::FIRST_CLICK . ' AND ' . (self::FIRST_CLICK + 99);
-        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks'] as $table) {
+        foreach ([...self::TABLES, '202_attribution_rollup_dirty_clicks', '202_click_latest_visits'] as $table) {
             self::q("DELETE FROM $table WHERE click_id $range");
         }
+        self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
     }
 
     /** A landing page click as record_simple.php builds one. */
@@ -753,6 +754,92 @@ final class MysqlClickRepositoryIntegrationTest extends TestCase
         self::assertColumns('202_clicks', $clickId, [
             'ppc_account_id' => '3', 'click_cpc' => '0.25000',
         ], "AND click_time = $at");
+    }
+
+    private static function recorded(int $clickId): ?string
+    {
+        $result = self::requireScratch()->query(
+            "SELECT click_time FROM 202_click_latest_visits WHERE click_id = $clickId"
+        );
+        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
+        $row = $result->fetch_row();
+
+        return $row === null ? null : (string) $row[0];
+    }
+
+    /**
+     * A re-click records its click's latest visit, the latest of its rows: a
+     * re-click a web server dated before the visit it follows leaves the
+     * later row the latest.
+     */
+    public function testAReClickRecordsTheClicksLatestVisit(): void
+    {
+        $clickId = self::FIRST_CLICK + 30;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        $at = time() + 60;
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at), static fn (): int => 53);
+        self::assertSame((string) $at, self::recorded($clickId));
+
+        self::repo()->recordReClick(self::reClickBringing($clickId, $at - 30), static fn (): int => 53);
+        self::assertSame((string) $at, self::recorded($clickId), 'an earlier-dated re-click leaves the latest');
+        self::assertSame(['n' => '3'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+    }
+
+    /**
+     * rtr.php does not ask whether the database is upgraded, so a re-click
+     * can run before the 1.9.78 upgrade has created 202_click_latest_visits:
+     * the visit is stored and the click marked, the missing record logged,
+     * and the click counts at each visit until the upgrade's backfill
+     * records it (ReClickRollupUpgradeIntegrationTest).
+     */
+    public function testAReClickBeforeTheUpgradeCreatedTheRecordIsStoredAndLogged(): void
+    {
+        $clickId = self::FIRST_CLICK + 31;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        $log = tempnam(sys_get_temp_dir(), 'p202-reclick-log');
+        self::assertIsString($log);
+        $before = ini_get('error_log');
+        self::q('RENAME TABLE 202_click_latest_visits TO p202_test_latest_visits_away');
+        try {
+            ini_set('error_log', $log);
+            self::repo()->recordReClick(self::reClickBringing($clickId, time() + 60), static fn (): int => 53);
+        } finally {
+            ini_set('error_log', (string) $before);
+            self::q('RENAME TABLE p202_test_latest_visits_away TO 202_click_latest_visits');
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertSame(['n' => '2'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertSame(1, self::marks($clickId));
+        self::assertNull(self::recorded($clickId));
+        self::assertSame(1, substr_count($logged, "\n"), $logged);
+        self::assertStringContainsString(
+            "p202 re-click: click $clickId was re-clicked before the 1.9.78 upgrade",
+            $logged
+        );
+    }
+
+    /** Any other failure to record the latest visit fails the re-click, which leaves nothing. */
+    public function testARecordTheServerRefusesFailsTheReClick(): void
+    {
+        $clickId = self::FIRST_CLICK + 32;
+        self::repo()->recordClick(self::trackedClick($clickId), static fn (): int => 52);
+        self::q("CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW"
+            . " BEGIN IF NEW.click_id = $clickId THEN SIGNAL SQLSTATE '45000'"
+            . " SET MESSAGE_TEXT = 'refused by the test'; END IF; END");
+        try {
+            self::repo()->recordReClick(self::reClickBringing($clickId, time() + 60), static fn (): int => 53);
+            self::fail('the refused record reaches the caller');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('refused by the test', $e->getMessage());
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+
+        self::assertSame(['n' => '1'], self::one("SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id = $clickId"));
+        self::assertSame(0, self::marks($clickId));
     }
 
     public function testAFailedReClickLeavesTheClickAsItWasAndUnmarked(): void

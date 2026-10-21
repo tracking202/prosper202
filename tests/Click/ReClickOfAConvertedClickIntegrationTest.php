@@ -38,6 +38,7 @@ final class ReClickOfAConvertedClickIntegrationTest extends TestCase
     private const CLICK_TABLES = [
         '202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_tracking', '202_clicks_rotator',
         '202_clicks_record', '202_clicks_site', '202_attribution_rollup_dirty_clicks', '202_dataengine',
+        '202_click_latest_visits',
     ];
 
     public static function setUpBeforeClass(): void
