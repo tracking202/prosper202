@@ -233,6 +233,60 @@ func TestSubidFromCampaignHoldsEveryFixedPart(t *testing.T) {
 	}
 }
 
+// An offer URL with no readable [[subid]] can be the redirect's source too:
+// left out, HitPath's sid=555 in slot 2's redirect read as slot 1's click.
+func TestSubidFromCampaignReadsOfferURLsWithoutSubid(t *testing.T) {
+	for _, tc := range []struct {
+		name, loc string
+		urls      []offerURL
+	}{
+		{"a slot without [[subid]]", "https://hp.example/r.php?sid=555&pub=12",
+			offers("https://hp.example/r.php?sid=[[subid]]", "https://hp.example/r.php?sid=555&pub=12")},
+		{"a slot with [[subid]] only in the fragment", "https://n.example/r?sid=555#c1=98765",
+			offers("https://n.example/r?sid=[[subid]]", "https://n.example/r?sid=555#c1=[[subid]]")},
+		{"a slot that is not a URL here", "https://n.example/r?sid=4821",
+			offers("https://n.example/r?sid=[[subid]]", "https://n.example/%zz?c1=[[subid]]")},
+	} {
+		m, err := subidFromCampaign(tc.loc, tc.urls)
+		if kind, ok := subidKind(err); !ok || kind != subidAmbiguous {
+			t.Errorf("%s: got (%+v, %v), want an ambiguity refusal", tc.name, m, err)
+		}
+	}
+
+	m, err := subidFromCampaign("https://hp.example/r.php?sid=4821",
+		offers("https://hp.example/r.php?sid=[[subid]]", "https://hp.example/r.php?sid=555&pub=12"))
+	if err != nil || m.ID != "4821" {
+		t.Errorf("slot 1's own redirect: got (%+v, %v), want 4821", m, err)
+	}
+	_, err = subidFromCampaign("https://hp.example/r.php?sid=555&pub=12",
+		offers("https://hp.example/r.php?sid=[[subid]]", "https://hp.example/r.php?sid=555&pub=12"))
+	if hint := subidHint(err, trackerOffers{campaignID: "3", decides: true}); !strings.Contains(hint, "Put [[subid]]") || !strings.Contains(hint, "--aff-campaign-url-2 <url>") || strings.Contains(hint, "--aff-campaign-url <url>") {
+		t.Errorf("hint %q does not send to slot 2's update alone", hint)
+	}
+}
+
+// url.Query drops a pair holding ";" or a malformed escape, from the
+// template and the redirect alike, which made the pair's fixed value fit
+// anything.
+func TestSubidFitReadsTheQueryAsWritten(t *testing.T) {
+	for _, tc := range []struct{ name, loc, tmpl string }{
+		{"a malformed escape", "https://n.example/r?ref=60%off&c1=4821", "https://n.example/r?ref=50%off&c1=[[subid]]"},
+		{"a semicolon", "https://n.example/r?a=1;b=3&c1=4821", "https://n.example/r?a=1;b=2&c1=[[subid]]"},
+	} {
+		if kind, ok := subidKind(func() error { _, err := subidFromCampaign(tc.loc, offers(tc.tmpl)); return err }()); !ok || kind != subidMissing {
+			t.Errorf("%s: %q was read as the redirect to %q", tc.name, tc.loc, tc.tmpl)
+		}
+		same := strings.Replace(tc.tmpl, "[[subid]]", "4821", 1)
+		if m, err := subidFromCampaign(same, offers(tc.tmpl)); err != nil || m.ID != "4821" {
+			t.Errorf("%s: its own redirect: got (%+v, %v)", tc.name, m, err)
+		}
+	}
+
+	if kind, ok := subidKind(func() error { _, err := subidFromNetworkFields("https://n.example/?s=4821&sub1=4822;x=1"); return err }()); !ok || kind != subidAmbiguous {
+		t.Error("network fields read past a query pair the parser dropped")
+	}
+}
+
 func TestSubidFromNetworkFieldsMustAgree(t *testing.T) {
 	if m, err := subidFromNetworkFields("https://n.example/?s=4821&sub1=4821"); err != nil || m.ID != "4821" || m.Field != "s,sub1" {
 		t.Errorf("agreeing fields: got (%+v, %v)", m, err)
@@ -396,10 +450,14 @@ func TestNetworkSubidFieldsMatchTheParametersPage(t *testing.T) {
 type simulateFake struct {
 	tracker        string // trackers/7's data; default: campaign 3, no rotator
 	campaignStatus int
-	campaign       map[string]interface{}
+	campaign       map[string]interface{} // over what GET /campaigns/{id} always sends
+	campaignBody   string                 // sent as campaigns/3's answer instead, when set
 	location       string
 
+	trackerStatus int
+
 	mu       sync.Mutex
+	clicks   int
 	postback []string
 }
 
@@ -411,6 +469,11 @@ func (f *simulateFake) server(t *testing.T) {
 		case "/api/v3/trackers/7/url":
 			fmt.Fprintf(w, `{"data":{"direct_url":%q}}`, base+"/tracking202/redirect/dl.php?t202id=abc")
 		case "/api/v3/trackers/7":
+			if f.trackerStatus != 0 {
+				w.WriteHeader(f.trackerStatus)
+				fmt.Fprint(w, `{"message":"Internal error"}`)
+				return
+			}
 			tr := f.tracker
 			if tr == "" {
 				tr = `{"tracker_id":7,"aff_campaign_id":3,"rotator_id":0,"landing_page_id":0}`
@@ -422,9 +485,24 @@ func (f *simulateFake) server(t *testing.T) {
 				fmt.Fprint(w, `{"message":"Insufficient scope"}`)
 				return
 			}
-			body, _ := json.Marshal(map[string]interface{}{"data": f.campaign})
+			if f.campaignBody != "" {
+				fmt.Fprint(w, f.campaignBody)
+				return
+			}
+			// Every field CampaignsController selects is in its answer.
+			data := map[string]interface{}{"aff_campaign_rotate": 0}
+			for _, slot := range campaignURLFields[1:] {
+				data[slot] = nil
+			}
+			for k, v := range f.campaign {
+				data[k] = v
+			}
+			body, _ := json.Marshal(map[string]interface{}{"data": data})
 			w.Write(body)
 		case "/tracking202/redirect/dl.php":
+			f.mu.Lock()
+			f.clicks++
+			f.mu.Unlock()
 			w.Header().Set("Location", f.location)
 			w.WriteHeader(http.StatusFound)
 		case "/tracking202/static/gpb.php":
@@ -559,6 +637,53 @@ func TestConversionSimulateRefusesARedirectTwoRotatedURLsFit(t *testing.T) {
 	hint := hintFor(err)
 	if !strings.Contains(hint, "campaign update 3 --aff-campaign-url <url>") || !strings.Contains(hint, "campaign update 3 --aff-campaign-url-2 <url>") {
 		t.Errorf("hint %q does not name both slots' updates", hint)
+	}
+}
+
+// Only a read the key is refused falls back to the network fields; any other
+// failed or malformed read is the error, before a click is recorded.
+func TestConversionSimulateFailsOnAFailedRead(t *testing.T) {
+	hitpath := "https://hp.example/rd/r.php?sid=555&pub=12"
+	for _, tc := range []struct {
+		name     string
+		fake     *simulateFake
+		category string
+		hint     string
+	}{
+		{"campaign read 500", &simulateFake{campaignStatus: http.StatusInternalServerError}, "server", ""},
+		{"tracker read 500", &simulateFake{trackerStatus: http.StatusInternalServerError}, "server", ""},
+		{"campaign without aff_campaign_rotate", &simulateFake{campaignBody: `{"data":{"aff_campaign_url":"https://hp.example/rd/r.php?sid=555&pub=12&c1=[[subid]]"}}`}, "server", "p202 campaign get 3 --json"},
+		{"campaign without a rotated slot", &simulateFake{campaignBody: `{"data":{"aff_campaign_url":"https://a.example/?s=[[subid]]","aff_campaign_rotate":1}}`}, "server", "p202 campaign get 3 --json"},
+		{"campaign with null data", &simulateFake{campaignBody: `{"data":null}`}, "server", "p202 campaign get 3 --json"},
+		{"tracker without rotator_id", &simulateFake{tracker: `{"tracker_id":7,"aff_campaign_id":3,"landing_page_id":0}`}, "server", "p202 tracker get 7 --json"},
+		{"tracker without landing_page_id", &simulateFake{tracker: `{"tracker_id":7,"aff_campaign_id":3,"rotator_id":0}`}, "server", "p202 tracker get 7 --json"},
+	} {
+		f := tc.fake
+		f.location = hitpath
+		f.server(t)
+		_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json")
+		if err == nil {
+			t.Errorf("%s: simulate went on", tc.name)
+			continue
+		}
+		if got := api.ErrorCategory(err); got != tc.category {
+			t.Errorf("%s: category %q, want %s (%v)", tc.name, got, tc.category, err)
+		}
+		if f.clicks != 0 || len(f.postback) != 0 {
+			t.Errorf("%s: %d click(s), postbacks %v", tc.name, f.clicks, f.postback)
+		}
+		if hint := hintFor(err); tc.hint != "" && !strings.Contains(hint, tc.hint) {
+			t.Errorf("%s: hint %q does not name %s", tc.name, hint, tc.hint)
+		}
+	}
+
+	f := &simulateFake{campaignStatus: http.StatusNotFound, location: "https://www.awin1.com/cread.php?awinmid=1&clickref=4821"}
+	f.server(t)
+	if _, stderr, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json"); err != nil {
+		t.Fatalf("campaign 404: %v\nstderr: %s", err, stderr)
+	}
+	if len(f.postback) != 1 || f.postback[0] != "4821" {
+		t.Errorf("campaign 404: postbacks %v, want [4821] from the network fields", f.postback)
 	}
 }
 

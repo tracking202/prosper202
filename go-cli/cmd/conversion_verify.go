@@ -78,6 +78,11 @@ var conversionSimulateCmd = &cobra.Command{
 		if !strings.HasPrefix(link, "http") {
 			link = scheme(base) + "://" + link
 		}
+		// Read before the click, so a failed read records no click.
+		offers, err := trackerOffersFor(c, trackerID)
+		if err != nil {
+			return err
+		}
 
 		// 2. Fire a click and capture the subid from the redirect.
 		clickRes, err := probeClient().Get(withLinkParam(link, "t202kw", "simulate"))
@@ -86,7 +91,6 @@ var conversionSimulateCmd = &cobra.Command{
 		}
 		loc := clickRes.Header.Get("Location")
 		clickRes.Body.Close()
-		offers := trackerOffersFor(c, trackerID)
 		var match subidMatch
 		if offers.decides {
 			match, err = subidFromCampaign(loc, offers.urls)
@@ -143,58 +147,112 @@ type trackerOffers struct {
 // trackerOffersFor reads the tracker and its campaign. Only a tracker that
 // sends the click straight to a campaign it can read lets that campaign's
 // URLs decide which field is [[subid]]; a redirector's rules, a landing page,
-// or a failed read leave the redirect to the network fields, and why says so.
-func trackerOffersFor(c *api.Client, trackerID string) trackerOffers {
-	data, err := c.Get("trackers/"+trackerID, nil)
+// or a read the key is refused (403, 404) leave the redirect to the network
+// fields, and why says so. Any other failed read, or a record without the
+// fields that decide, is an error: it says nothing about the redirect.
+func trackerOffersFor(c *api.Client, trackerID string) (trackerOffers, error) {
+	tr, refused, err := readRecord(c, "tracker", trackerID)
 	if err != nil {
-		return trackerOffers{why: "tracker " + trackerID + " could not be read: " + err.Error(), unreadable: true}
+		return trackerOffers{}, err
 	}
-	var tr struct {
-		Data struct {
-			AffCampaignID json.Number `json:"aff_campaign_id"`
-			RotatorID     json.Number `json:"rotator_id"`
-			LandingPageID json.Number `json:"landing_page_id"`
-		} `json:"data"`
+	if refused != "" {
+		return trackerOffers{why: refused, unreadable: true}, nil
 	}
-	if err := json.Unmarshal(data, &tr); err != nil {
-		return trackerOffers{why: "tracker " + trackerID + " could not be read: " + err.Error(), unreadable: true}
+	var ids [3]int64
+	for i, key := range []string{"aff_campaign_id", "rotator_id", "landing_page_id"} {
+		if ids[i], err = recordInt(tr, key); err != nil {
+			return trackerOffers{}, malformedRecord("tracker", trackerID, err)
+		}
 	}
-	id := tr.Data.AffCampaignID.String()
+	campaignID, rotatorID, landingPageID := ids[0], ids[1], ids[2]
+	id := fmt.Sprint(campaignID)
 	switch {
-	case positiveNumber(tr.Data.RotatorID):
-		return trackerOffers{campaignID: id, why: "the tracker is a redirector, whose rules choose the campaign", redirector: true}
-	case positiveNumber(tr.Data.LandingPageID):
-		return trackerOffers{campaignID: id, why: "the tracker sends the click to a landing page first"}
-	case !positiveNumber(tr.Data.AffCampaignID):
-		return trackerOffers{why: "the tracker names no campaign"}
+	case rotatorID > 0:
+		return trackerOffers{campaignID: id, why: "the tracker is a redirector, whose rules choose the campaign", redirector: true}, nil
+	case landingPageID > 0:
+		return trackerOffers{campaignID: id, why: "the tracker sends the click to a landing page first"}, nil
+	case campaignID <= 0:
+		return trackerOffers{why: "the tracker names no campaign"}, nil
 	}
-	data, err = c.Get("campaigns/"+id, nil)
+	camp, refused, err := readRecord(c, "campaign", id)
 	if err != nil {
-		return trackerOffers{campaignID: id, why: "campaign " + id + " could not be read: " + err.Error(), unreadable: true}
+		return trackerOffers{}, err
 	}
-	var camp struct {
-		Data map[string]interface{} `json:"data"`
+	if refused != "" {
+		return trackerOffers{campaignID: id, why: refused, unreadable: true}, nil
 	}
-	if err := json.Unmarshal(data, &camp); err != nil {
-		return trackerOffers{campaignID: id, why: "campaign " + id + " could not be read: " + err.Error(), unreadable: true}
+	// dl.php takes slots 2-5 only when the campaign rotates, and only the
+	// ones PHP reads as true (rotateTrackerUrl).
+	rotate, err := recordInt(camp, "aff_campaign_rotate")
+	if err != nil {
+		return trackerOffers{}, malformedRecord("campaign", id, err)
 	}
-	// dl.php takes slots 2-5 only when the campaign rotates (rotateTrackerUrl).
 	slots := campaignURLFields[:1]
-	if rotate := fmt.Sprint(camp.Data["aff_campaign_rotate"]); rotate == "1" || rotate == "true" {
+	if rotate != 0 {
 		slots = campaignURLFields
 	}
 	out := trackerOffers{campaignID: id, decides: true}
 	for _, f := range slots {
-		if s, ok := camp.Data[f].(string); ok && s != "" {
-			out.urls = append(out.urls, offerURL{slot: f, url: s})
+		raw, ok := camp[f]
+		if !ok {
+			return trackerOffers{}, malformedRecord("campaign", id, fmt.Errorf("it has no %s", f))
+		}
+		var s *string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return trackerOffers{}, malformedRecord("campaign", id, fmt.Errorf("%s is not text: %w", f, err))
+		}
+		if s != nil && *s != "" && *s != "0" {
+			out.urls = append(out.urls, offerURL{slot: f, url: *s})
 		}
 	}
-	return out
+	return out, nil
 }
 
-func positiveNumber(n json.Number) bool {
+// readRecord GETs a tracker's or a campaign's data. refused says why when
+// the key may not read it (403, 404); any other failure is err.
+func readRecord(c *api.Client, kind, id string) (rec map[string]json.RawMessage, refused string, err error) {
+	what := kind + " " + id
+	data, err := c.Get(kind+"s/"+id, nil)
+	if err != nil {
+		var ae *api.APIError
+		if errors.As(err, &ae) && (ae.Status == http.StatusForbidden || ae.Status == http.StatusNotFound) {
+			return nil, what + " could not be read: " + err.Error(), nil
+		}
+		return nil, "", fmt.Errorf("reading %s, which says where the click is sent: %w", what, err)
+	}
+	var body struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, "", malformedRecord(kind, id, err)
+	}
+	if body.Data == nil {
+		return nil, "", malformedRecord(kind, id, errors.New("it has no data"))
+	}
+	return body.Data, "", nil
+}
+
+// recordInt reads a whole-number field the record must have.
+func recordInt(rec map[string]json.RawMessage, key string) (int64, error) {
+	raw, ok := rec[key]
+	if !ok {
+		return 0, fmt.Errorf("it has no %s", key)
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, fmt.Errorf("%s is not a number: %w", key, err)
+	}
 	v, err := n.Int64()
-	return err == nil && v > 0
+	if err != nil {
+		return 0, fmt.Errorf("%s is not a whole number (%s)", key, raw)
+	}
+	return v, nil
+}
+
+func malformedRecord(kind, id string, err error) error {
+	return &CLIError{Category: "server", ExitCode: ExitServer,
+		Message: fmt.Sprintf("the server's answer for %s %s is not one it sends (%v)", kind, id, err),
+		Hint:    fmt.Sprintf("Check the server with `p202 system health`, and see what it sends with `p202 %s get %s --json`.", kind, id)}
 }
 
 func subidHint(err error, offers trackerOffers) string {
@@ -222,9 +280,16 @@ func subidHint(err error, offers trackerOffers) string {
 	case subidAmbiguous:
 		switch {
 		case len(se.fits) > 0:
-			flags := make([]string, 0, len(se.fits))
+			var flags, noSubid []string
 			for _, o := range se.fits {
-				flags = append(flags, "`p202 campaign update "+id+" "+o.slotFlag()+" <url>`")
+				update := "`p202 campaign update " + id + " " + o.slotFlag() + " <url>`"
+				if fields, ok := templateSubidFields(o.url); !ok || len(fields) == 0 {
+					noSubid = append(noSubid, update)
+				}
+				flags = append(flags, update)
+			}
+			if len(noSubid) > 0 {
+				return "Put [[subid]] in the network's SubID field of each offer URL without one, with " + strings.Join(noSubid, " or ") + "; the fields are listed in " + page + "."
 			}
 			return "The campaign rotates its offer URLs in turn, so running the simulation again may send the click to a URL whose redirect no other URL fits. To settle it for every click, make the URLs differ outside their [[tokens]] (see `p202 campaign get " + id + "`) with " + strings.Join(flags, " or ") + "."
 		case offers.unreadable:

@@ -124,9 +124,9 @@ type subidMatch struct {
 // subidFromCampaign reads the click id from loc, the redirect to one of
 // offers, in the field that offer puts [[subid]] in. It never falls back to
 // the network fields: the campaign's URLs are known, so a field they do not
-// name is not ours whatever it is called. When more than one offer URL fits
-// loc and they read it differently, it refuses: nothing says which one the
-// tracking link chose.
+// name is not ours whatever it is called. Every offer URL that fits loc is
+// read, those without a readable [[subid]] too, and when they read it
+// differently it refuses: nothing says which one the tracking link chose.
 func subidFromCampaign(loc string, offers []offerURL) (subidMatch, error) {
 	u, err := url.Parse(loc)
 	if err != nil || loc == "" {
@@ -134,32 +134,41 @@ func subidFromCampaign(loc string, offers []offerURL) (subidMatch, error) {
 	}
 	var reads []slotRead
 	var named []string
-	unreadable := ""
-	for _, o := range offers {
-		if !subidTokenRe.MatchString(o.url) {
-			continue
-		}
-		fields, ok := templateSubidFields(o.url)
-		if !ok || len(fields) == 0 {
-			unreadable = o.slot
-			continue
-		}
+	var outside *offerURL
+	for i, o := range offers {
+		fields, readable := templateSubidFields(o.url)
+		hasToken := subidTokenRe.MatchString(o.url)
 		for _, f := range fields {
 			named = append(named, f.String())
+		}
+		if hasToken && readable && len(fields) == 0 && outside == nil {
+			outside = &offers[i]
+		}
+		if !readable {
+			// Not a URL here, so it cannot be ruled out as the source.
+			reads = append(reads, noTokenRead(o, "the campaign's %s cannot be read as a URL", "%s cannot be read as a URL"))
+			continue
 		}
 		if !fitsTemplate(o.url, u) {
 			continue
 		}
-		reads = append(reads, readSlot(u, o, fields))
+		switch {
+		case !hasToken:
+			reads = append(reads, noTokenRead(o, "the campaign's %s has no [[subid]], so the network is given no click id to send back", "%s has no [[subid]]"))
+		case len(fields) == 0:
+			reads = append(reads, noTokenRead(o, "the campaign's %s puts [[subid]] outside its query and path, where a network does not read it", "%s puts [[subid]] outside its query and path"))
+		default:
+			reads = append(reads, readSlot(u, o, fields))
+		}
 	}
 	switch {
 	case len(reads) > 0:
 		return oneReading(loc, reads)
 	case len(named) > 0:
 		return subidMatch{}, newSubidError(subidMissing, "the redirect (%q) is not one of the campaign's offer URLs with %s in it", loc, strings.Join(named, ", "))
-	case unreadable != "":
-		e := newSubidError(subidNoToken, "the campaign's %s puts [[subid]] outside its query and path, where a network does not read it", unreadable)
-		e.slot = offerURL{slot: unreadable}
+	case outside != nil:
+		e := newSubidError(subidNoToken, "the campaign's %s puts [[subid]] outside its query and path, where a network does not read it", outside.slot)
+		e.slot = *outside
 		return subidMatch{}, e
 	}
 	e := newSubidError(subidNoToken, "the campaign's offer URL has no [[subid]], so the network is given no click id to send back")
@@ -167,6 +176,14 @@ func subidFromCampaign(loc string, offers []offerURL) (subidMatch, error) {
 		e.slot = offers[0]
 	}
 	return subidMatch{}, e
+}
+
+// noTokenRead is the reading of an offer URL that gives the network no
+// [[subid]] it can read; msg and desc take its slot.
+func noTokenRead(o offerURL, msg, desc string) slotRead {
+	e := newSubidError(subidNoToken, msg, o.slot)
+	e.slot = o
+	return slotRead{slot: o, err: e, desc: fmt.Sprintf(desc, o.slot)}
 }
 
 // slotRead is what one offer URL that fits the redirect reads from it: the
@@ -252,7 +269,9 @@ var anyTokenRe = regexp.MustCompile(`\[\[[^\[\]]*\]\]`)
 // each of its path segments and each of its query values are in loc as they
 // are in tmpl, except that a [[token]] in one may have been filled with
 // anything. loc may carry query fields tmpl does not: dl.php appends the
-// tracking link's own (setPrePopVars).
+// tracking link's own (setPrePopVars). The query is compared as written,
+// since the redirect copies tmpl's text: url.Query would drop a pair holding
+// a ";" or a malformed escape from both sides, and with it the comparison.
 func fitsTemplate(tmpl string, loc *url.URL) bool {
 	t, err := url.Parse(tmpl)
 	if err != nil {
@@ -271,8 +290,8 @@ func fitsTemplate(tmpl string, loc *url.URL) bool {
 			return false
 		}
 	}
-	lq := loc.Query()
-	for k, tvs := range t.Query() {
+	lq := rawQueryPairs(loc.RawQuery)
+	for k, tvs := range rawQueryPairs(t.RawQuery) {
 		lvs := lq[k]
 		if len(lvs) < len(tvs) {
 			return false
@@ -284,6 +303,20 @@ func fitsTemplate(tmpl string, loc *url.URL) bool {
 		}
 	}
 	return true
+}
+
+// rawQueryPairs splits a raw query into its values by key, on "&" alone and
+// with nothing unescaped, so that no pair can fail to parse.
+func rawQueryPairs(q string) map[string][]string {
+	out := map[string][]string{}
+	for _, pair := range strings.Split(q, "&") {
+		if pair == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(pair, "=")
+		out[k] = append(out[k], v)
+	}
+	return out
 }
 
 // fitsFilled reports whether got is part filled in: part's text exactly
@@ -389,7 +422,12 @@ func subidFromNetworkFields(loc string) (subidMatch, error) {
 		}
 		found[id] = append(found[id], field)
 	}
-	q := u.Query()
+	// A pair the parser drops (a ";" separator, a malformed escape) may be a
+	// field a network reads, holding another id.
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return subidMatch{}, newSubidError(subidAmbiguous, "the redirect (%q) has a query pair that cannot be read (%v), which may hold another SubID field, and nothing says which one is [[subid]]", loc, err)
+	}
 	for _, name := range networkSubIDQueryFields {
 		for _, v := range q[name] {
 			if v == noClickSubid {
