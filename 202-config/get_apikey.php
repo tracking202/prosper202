@@ -3,11 +3,12 @@ declare(strict_types=1);
 //include mysql settings
 include_once('connect.php');
 
-// Runs only while no account exists; afterwards hand the key to sign-in.
+// Runs only while no account exists. Afterwards a visitor sent back here with
+// a key goes on to sign-in without it: sign-in never read it, and a URL is
+// kept in the web server's access log.
 if (is_installed() == true) {
 	if (isset($_GET['customers_api_key']) && $_GET['customers_api_key'] != '') {
-		// encode value before placing in redirect header, then terminate
-		header('Location: /202-login.php?customers_api_key=' . rawurlencode((string) $_GET['customers_api_key']));
+		header('Location: /202-login.php');
 		exit;
 	} else {
 		_die("<h6>Already Installed</h6>
