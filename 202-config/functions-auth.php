@@ -181,25 +181,37 @@ class AUTH
             return;
         }
 
-        $result = $db->query("SHOW COLUMNS FROM 202_users LIKE 'user_pass'");
-        if ($result) {
-            $column = $result->fetch_assoc();
-            $result->close();
-            if ($column && isset($column['Type'])) {
-                $type = strtolower((string) $column['Type']);
-                if (preg_match('/\\((\\d+)\\)/', $type, $matches)) {
-                    $length = (int) $matches[1];
-                    if ($length < 60) {
-                        $alter = $db->query('ALTER TABLE 202_users MODIFY user_pass VARCHAR(255) NOT NULL');
-                        if ($alter === false && function_exists('prosper_log')) {
-                            prosper_log('login', 'Failed to expand user_pass column: ' . $db->error);
-                        }
+        // A width that cannot be read, or widened, is not wide enough: the
+        // pages' empty sql_mode cuts a longer hash without a word, and the
+        // password then matches nothing. Thrown, authenticate() refuses the
+        // sign-in (SignInNotCompleted).
+        $sql = "SHOW COLUMNS FROM 202_users LIKE 'user_pass'";
+        $result = $db->query($sql);
+        if ($result === false) {
+            throw self::queryFailed($db, 'Reading the width of 202_users.user_pass failed');
+        }
+        $column = p202FetchRow($result, $sql);
+        $result->close();
+        if ($column && isset($column['Type'])) {
+            $type = strtolower((string) $column['Type']);
+            if (preg_match('/\\((\\d+)\\)/', $type, $matches)) {
+                $length = (int) $matches[1];
+                if ($length < 60) {
+                    if ($db->query('ALTER TABLE 202_users MODIFY user_pass VARCHAR(255) NOT NULL') === false) {
+                        throw self::queryFailed($db, 'Widening 202_users.user_pass failed');
                     }
                 }
             }
         }
 
         self::$passwordColumnChecked = true;
+    }
+
+    private static function queryFailed(\mysqli $db, string $what): \Prosper202\Database\Exceptions\QueryException
+    {
+        return new \Prosper202\Database\Exceptions\QueryException(
+            $what . ': ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
     }
 
     /**

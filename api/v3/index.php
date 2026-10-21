@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
+// For p202UncaughtLogLine(): a failure answered as a 500 is logged as the pages log theirs.
+require_once dirname(__DIR__, 2) . '/202-config/mysql-error-args.php';
+require_once dirname(__DIR__, 2) . '/202-config/functions-shared.php';
 
 // Load config at file scope so DB globals ($dbhost, $dbuser, etc.) are
 // available via the 'global' keyword in the DB class constructor.
@@ -31,6 +34,7 @@ try {
     Bootstrap::init();
     $db = Bootstrap::db();
 } catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 could not start, answered 503', $e));
     Bootstrap::errorResponse('Service unavailable', 503);
     exit;
 }
@@ -1617,13 +1621,18 @@ try {
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
 } catch (WriteCommittedException $e) {
-    error_log('p202: ' . $e->getMessage() . ' cause: ' . ($e->getPrevious()?->getMessage() ?? 'unknown'));
+    error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
+    if ($code >= 500) {
+        // The answer names no cause; the log keeps it.
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+    }
     $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
-} catch (\Throwable) {
+} catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 answered 500', $e));
     Bootstrap::errorResponse('Internal server error', 500);
 }
 

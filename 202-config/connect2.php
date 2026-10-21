@@ -65,6 +65,22 @@ try {
     $db = null;
 }
 
+// The click writes are written for this sql_mode. A session that refuses it
+// is one they cannot use: logged, and read as no connection, as an outage is
+// (the URL kept for one, or the 503 page), so nothing is written under
+// another mode.
+if ($db instanceof \mysqli) {
+    // Strict when P202_SQL_STRICT is defined and truthy in config; permissive
+    // by default, for existing installs.
+    $user_sql = defined('P202_SQL_STRICT') && P202_SQL_STRICT
+        ? "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        : "SET session sql_mode= ''";
+    if ($db->query($user_sql) === false) {
+        p202LogFailedQuery($db, $user_sql, ['file' => __FILE__, 'line' => __LINE__]);
+        $db = null;
+    }
+}
+
 /**
  * The answer to a request the database is needed for and out of reach: the
  * outage in the status, so a client or a monitor never reads it as served.
@@ -148,22 +164,6 @@ if (!isset($tid)) {
         $tid = $t202id;
     } else {
         $tid = 1; // Default to user_id 1 if not set
-    }
-}
-
-//set sql mode - only if db connection is available
-if ($db) {
-    // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
-    // defaults to permissive mode for backward compatibility with existing installs.
-    if (defined('P202_SQL_STRICT') && P202_SQL_STRICT) {
-        $user_sql = "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'";
-    } else {
-        $user_sql = "SET session sql_mode= ''";
-    }
-    try {
-        $user_results = $db->query($user_sql);
-    } catch (Exception $e) {
-        error_log('Error setting SQL mode in connect2.php: ' . $e->getMessage());
     }
 }
 

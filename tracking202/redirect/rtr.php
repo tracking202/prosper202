@@ -684,10 +684,10 @@ try {
 				}
 			}
 			if ($t202ctx_pref === false) {
-				// Plain query on purpose (not _mysqli_query): a missing Landing
-				// Page Optimizer column on a pre-upgrade schema must soft-skip the token,
-				// never kill the redirect.
-				$t202ctx_result = $db->query($t202ctx_sql);
+                // Logged by _mysqli_query(): the token is optional, so a failed
+                // read (a pre-upgrade schema without the Landing Page
+                // Optimizer columns) leaves the redirect as it was.
+                $t202ctx_result = _mysqli_query($db, $t202ctx_sql);
 				if ($t202ctx_result instanceof mysqli_result) {
 					$t202ctx_pref = $t202ctx_result->fetch_assoc();
 					if (!empty($GLOBALS['memcacheWorking']) && is_array($t202ctx_pref)) {

@@ -37,6 +37,9 @@ $user_row = p202FetchRow($user_results, $user_sql);
 
 $rotateUrlCampaignsSql = "SELECT * FROM 202_aff_campaigns WHERE user_id = '" . $mysql['user_id'] . "' AND aff_campaign_deleted = 0 AND aff_campaign_rotate = 1";
 $rotateUrlCampaignsResults = $db->query($rotateUrlCampaignsSql);
+if ($rotateUrlCampaignsResults === false) {
+    record_mysql_error($rotateUrlCampaignsSql);
+}
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -301,6 +304,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$goalPost) {
 				$mysql['dni_id'] = $db->real_escape_string((string)$_POST['dni_id']);
 				$dniSql = 'SELECT networkId, apiKey, affiliateId FROM 202_dni_networks WHERE user_id = "' . $mysql['user_id'] . '" AND id = "' . $mysql['dni_id'] . '"';
 				$dniResult = $db->query($dniSql);
+                if ($dniResult === false) {
+                    record_mysql_error($dniSql);
+                }
 
 				if ($dniResult->num_rows > 0) {
 					$dniRow = $dniResult->fetch_assoc();
@@ -339,14 +345,16 @@ if (isset($_GET['delete_aff_campaign_id'])) {
 								`aff_campaign_time`='" . ($mysql['aff_campaign_time'] ?? time()) . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `aff_campaign_id`='" . $mysql['aff_campaign_id'] . "'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_sql)) {
-			$delete_success = true;
+        if ($db->query($delete_sql)) {
+            $delete_success = true;
 
-			// Landing Page Optimizer (segments-v2 G10): deletes change the
-			// synced snapshot too (buildSnapshot omits deleted rows) — flag
-			// dirty so the hourly cron re-pushes. DB-only — no HTTP here.
-			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
-		}
+            // Landing Page Optimizer (segments-v2 G10): deletes change the
+            // synced snapshot too (buildSnapshot omits deleted rows) — flag
+            // dirty so the hourly cron re-pushes. DB-only — no HTTP here.
+            \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+        } else {
+            record_mysql_error($delete_sql);
+        }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');
 	}

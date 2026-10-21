@@ -21,10 +21,16 @@ class Role
     {
         $role = new Role();
         
-        $mysql['role_id'] = self::$db->real_escape_string((string) $role_id);
+        $db = self::$db;
+        $mysql['role_id'] = $db->real_escape_string((string) $role_id);
         $sql = "SELECT 2p.permission_description FROM 202_role_permission AS 2rp INNER JOIN 202_permissions AS 2p ON 2rp.permission_id = 2p.permission_id WHERE 2rp.role_id = '".$mysql['role_id']."'";
-        $results = self::$db->query($sql);
-        
+        $results = $db->query($sql);
+        // A failed read is not a role without permissions: thrown, as User's are.
+        if ($results === false) {
+            throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
+                . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        }
+
         while($row = $results->fetch_assoc())
         {
             $role->permissionList[$row["permission_description"]] = true;

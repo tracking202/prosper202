@@ -10,9 +10,9 @@ $slack = false;
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook as url, 2up.cb_key AS cb_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_id']."'";
 $user_results = $db->query($user_sql);
 if ($user_results === false) {
-    p202RespondJsonError(500, 'User lookup failed');
+    record_mysql_error($db, $user_sql);
 }
-$user_row = $user_results->fetch_assoc();
+$user_row = p202FetchRow($user_results, $user_sql);
 if (!$user_row) {
     p202RespondJsonError(404, 'User not found');
 }
@@ -53,7 +53,7 @@ if (function_exists('openssl_decrypt')) {
                      SET cb_verified=1
                      WHERE user_id='".$mysql['user_id']."'";
         if (!$db->query($user_sql)) {
-            p202RespondJsonError(500, 'Failed to record verification');
+            record_mysql_error($db, $user_sql);
         }
 
         if ($slack)

@@ -35,6 +35,18 @@ final class Connection
      */
     private static ?\WeakMap $open = null;
 
+    /**
+     * The open transactions that may only roll back, with why: a savepoint
+     * whose ROLLBACK TO or RELEASE failed, after which what the transaction
+     * holds is not known.
+     *
+     * @var \WeakMap<mysqli, string>|null
+     */
+    private static ?\WeakMap $rollbackOnly = null;
+
+    /** Names each savepoint apart, so a nested one never replaces another. */
+    private static int $savepoints = 0;
+
     private readonly mysqli $read;
 
     /**
@@ -173,19 +185,31 @@ final class Connection
      * True when the throwable (or anything in its previous-chain) is the
      * given MySQL error, detected locale-independently: mysqli_sql_exception
      * carries the errno as its code (STRICT|ERROR reporting paths), this
-     * class's QueryException carries the [errno N] tag (STRICT-only
-     * paths), and the English message fragment covers exceptions raised
-     * before the tag existed.
+     * class's QueryException carries the [errno N] tag last in its message
+     * (STRICT-only paths), and the English message fragment covers an
+     * exception that carries neither.
+     *
+     * An errno, where there is one, is the whole answer: the server's words
+     * can repeat a value as sent, so `Duplicate entry 'Deadlock found'` is a
+     * 1062 and not a deadlock, and a tag inside the message is the value's.
      */
     public static function isMysqlError(Throwable $e, int $errno, string $englishFragment): bool
     {
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-            if ($current instanceof \mysqli_sql_exception && (int) $current->getCode() === $errno) {
-                return true;
+            if ($current instanceof \mysqli_sql_exception) {
+                if ((int) $current->getCode() === $errno) {
+                    return true;
+                }
+                continue;
             }
             $message = $current->getMessage();
-            if (str_contains($message, '[errno ' . $errno . ']')
-                || ($englishFragment !== '' && str_contains($message, $englishFragment))) {
+            if (preg_match('/ \[errno (\d+)\]\z/', $message, $tag) === 1) {
+                if ((int) $tag[1] === $errno) {
+                    return true;
+                }
+                continue;
+            }
+            if ($englishFragment !== '' && str_contains($message, $englishFragment)) {
                 return true;
             }
         }
@@ -340,6 +364,9 @@ final class Connection
      * rather than beginning, which would commit them, and joinTransaction()
      * rather than adding to them.
      *
+     * A transaction a failed withSavepoint() left rollback-only is rolled back
+     * and a QueryException thrown, even when the callback returned.
+     *
      * @template T
      * @param callable(): T $fn
      * @return T
@@ -366,6 +393,10 @@ final class Connection
 
         try {
             $result = $fn();
+            $why = self::$rollbackOnly[$this->write] ?? null;
+            if ($why !== null) {
+                throw new QueryException('Transaction not committed: it may only roll back (' . $why . ')');
+            }
             if (!$this->write->commit()) {
                 throw $this->boundaryFailed('Unable to commit transaction');
             }
@@ -386,6 +417,9 @@ final class Connection
         } finally {
             if ($rolledBack) {
                 unset($open[$this->write]);
+                if (self::$rollbackOnly !== null) {
+                    unset(self::$rollbackOnly[$this->write]);
+                }
             }
         }
     }
@@ -410,14 +444,119 @@ final class Connection
                     . ' commit on its own. Run it inside Connection::transaction().'
             );
         }
+        $this->refuseRollbackOnly();
 
         return $fn();
+    }
+
+    /**
+     * Run $fn inside the caller's transaction, undone by itself if it throws:
+     * SAVEPOINT before it, RELEASE after it, and on any throwable (passed on)
+     * ROLLBACK TO the savepoint, which keeps the rest of the transaction.
+     * Refused outside a transaction() on this connection, where a savepoint
+     * undoes nothing.
+     *
+     * A deadlock rolls the whole transaction back on the server, savepoint
+     * and all, and the handle's later statements then commit one by one
+     * (measured on MariaDB 10.11). So a ROLLBACK TO or RELEASE that fails
+     * leaves the transaction rollback-only: the transaction() around it rolls
+     * back instead of committing, and joinTransaction() and withSavepoint()
+     * refuse to add to it. The failure is a QueryException with the
+     * callback's throwable as previous, so isRetryableLockError() still reads
+     * a deadlock through it.
+     *
+     * @template T
+     * @param callable(): T $fn
+     * @return T
+     * @throws LogicException outside a transaction, or in one that may only roll back
+     * @throws Throwable re-throws whatever the callback threw, once it is undone
+     * @throws QueryException when the savepoint cannot be set, rolled back to or released
+     */
+    public function withSavepoint(callable $fn): mixed
+    {
+        $this->refuseAfterFailedRollback();
+        if (!$this->inTransaction()) {
+            throw new LogicException(
+                'A savepoint was asked for outside a transaction; there is nothing for it to roll back to.'
+                    . ' Run it inside Connection::transaction().'
+            );
+        }
+        $this->refuseRollbackOnly();
+        $name = 'p202_savepoint_' . ++self::$savepoints;
+        // mysqli's savepoint() and release_savepoint() answer false, and do
+        // not throw, whatever mysqli_report() says.
+        if (!$this->write->savepoint($name)) {
+            throw $this->boundaryFailed('Unable to set savepoint');
+        }
+
+        try {
+            $result = $fn();
+        } catch (Throwable $e) {
+            $this->rollBackTo($name, $e);
+            throw $e;
+        }
+        if (!$this->write->release_savepoint($name)) {
+            throw $this->spoiled('Unable to release savepoint', null);
+        }
+
+        return $result;
+    }
+
+    /** Whether the transaction open on this handle may only roll back (see withSavepoint()). */
+    public function isRollbackOnly(): bool
+    {
+        return self::$rollbackOnly !== null && isset(self::$rollbackOnly[$this->write]);
+    }
+
+    /**
+     * Whether a rollback on this connection's write handle failed, so what
+     * the transaction wrote may still be pending (see transaction()).
+     */
+    public function rollbackFailed(): bool
+    {
+        return is_string(self::$open[$this->write] ?? null);
     }
 
     /** Whether a transaction() is open on this connection's write handle. */
     public function inTransaction(): bool
     {
         return self::$open !== null && isset(self::$open[$this->write]);
+    }
+
+    /**
+     * ROLLBACK TO a savepoint, or leave the transaction rollback-only and
+     * throw why, with $cause (what the step threw) as previous.
+     */
+    private function rollBackTo(string $name, Throwable $cause): void
+    {
+        try {
+            $undone = $this->write->query('ROLLBACK TO SAVEPOINT ' . $name);
+            if ($undone === false) {
+                throw new QueryException('ROLLBACK TO SAVEPOINT answered false');
+            }
+        } catch (Throwable) {
+            throw $this->spoiled('Unable to roll back to savepoint after "' . $cause->getMessage() . '"', $cause);
+        }
+    }
+
+    /** Mark the open transaction rollback-only, and the QueryException that says why. */
+    private function spoiled(string $what, ?Throwable $previous): QueryException
+    {
+        $failed = $this->boundaryFailed($what);
+        $marked = self::$rollbackOnly ??= new \WeakMap();
+        $marked[$this->write] = $failed->getMessage();
+
+        return new QueryException($failed->getMessage(), $failed->getCode(), $previous);
+    }
+
+    private function refuseRollbackOnly(): void
+    {
+        $why = self::$rollbackOnly[$this->write] ?? null;
+        if ($why !== null) {
+            throw new LogicException(
+                'The transaction on this connection may only roll back (' . $why . '); nothing is added to it.'
+            );
+        }
     }
 
     /**
@@ -444,6 +583,9 @@ final class Connection
     {
         if (self::$open !== null) {
             unset(self::$open[$connection]);
+        }
+        if (self::$rollbackOnly !== null) {
+            unset(self::$rollbackOnly[$connection]);
         }
     }
 
