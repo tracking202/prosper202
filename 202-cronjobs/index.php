@@ -156,9 +156,10 @@ function RunDailyCronjob()
         echo 'Processing Daily Jobs...';
         flushOutput();
 
-        //if a cronjob hasn't run today, record it now.
+        // Today's run is recorded once its work is done (below): a run that
+        // fails part way is tried again with the next hour's run (this tier
+        // runs when the hourly one does), and every step is safe to repeat.
         $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-        cronQuery($db, $insert_sql, 'the daily tier\'s record of today\'s run');
 
         /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
         //this function runs everyday at midnight to clear out the temp clicks_memory table
@@ -183,6 +184,7 @@ function RunDailyCronjob()
         // Log the execution
         $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
         cronQuery($db, $log_sql, 'the daily tier\'s execution log');
+        cronQuery($db, $insert_sql, 'the daily tier\'s record of today\'s run');
 
         echo 'Done';
         flush();
@@ -229,9 +231,9 @@ function RunHourlyCronJob()
         echo 'Processing Hourly Jobs...';
         flushOutput();
 
-        //if a cronjob hasn't run this hour, record it now.
+        // Recorded once the work is done (below): a run that fails part way
+        // is tried again the next minute.
         $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-        cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
         // Landing Page Optimizer (segments-v2 G10): push the dimension
         // snapshot for paired users the dictionary CRUD flagged dirty.
@@ -255,6 +257,7 @@ function RunHourlyCronJob()
         // Log the execution
         $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
         cronQuery($db, $log_sql, 'the hourly tier\'s execution log');
+        cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
         echo 'Done<br>';
         ob_flush();
