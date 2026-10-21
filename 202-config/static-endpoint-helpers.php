@@ -702,6 +702,78 @@ if (!function_exists('p202TimeDifference')) {
     }
 }
 
+if (!function_exists('p202PostbackClickSql')) {
+    /**
+     * The read gpb.php and upx.php make of the click a conversion names:
+     * the latest visit's owner, campaign, payout, lead flag and time, which
+     * the conversion credits (LatestVisit), with the click's c1-c4, keyword,
+     * Google and UTM values, tracker CPA and referrer. One row, or none for
+     * an unknown click or one with no tracking row.
+     */
+    function p202PostbackClickSql(int $clickId): string
+    {
+        $id = (string) $clickId;
+
+        return 'SELECT
+            2cid.click_id, 2c.user_id, 2c.aff_campaign_id, 2c.click_payout, 2c.click_lead, 2c.click_time,
+            2c1.c1, 2c2.c2, 2c3.c3, 2c4.c4, 2kw.keyword, 2g.gclid,
+            2us.utm_source, 2um.utm_medium, 2uca.utm_campaign, 2ut.utm_term, 2uco.utm_content,
+            2trc.click_cpa, 2su.site_url_address
+            FROM ' . \Prosper202\Click\LatestVisit::of($id) . ' AS 2c
+            LEFT JOIN `202_clicks_tracking` AS 2cid USING (`click_id`)
+            LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
+            LEFT JOIN `202_google` AS 2g USING (`click_id`)
+            LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
+            LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
+            LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
+            LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
+            LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
+            LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
+            LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
+            LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
+            LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
+            LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
+            LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
+            LEFT JOIN `202_trackers` AS 2trc
+                ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
+            LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id = 2cs.click_id)
+            LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id = 2su.site_url_id)
+            WHERE 2cid.`click_id` = ' . $id . '
+            LIMIT 1';
+    }
+}
+
+if (!function_exists('p202ClickSourceSql')) {
+    /**
+     * The click's traffic source and cost, whose pixels gpb.php and upx.php
+     * fire with that cost as [[cpc]]: the first visit's (FirstVisit), the
+     * source the visitor came from.
+     */
+    function p202ClickSourceSql(int $clickId): string
+    {
+        return 'SELECT fv.ppc_account_id, fv.click_cpc FROM '
+            . \Prosper202\Click\FirstVisit::of((string) $clickId) . ' AS fv';
+    }
+}
+
+if (!function_exists('p202PixelClickSql')) {
+    /**
+     * The read gpx.php makes of the click a pixel names: the latest visit's
+     * owner, campaign, lead flag and time (LatestVisit), and its tracker's
+     * CPA. One row, or none for an unknown click.
+     */
+    function p202PixelClickSql(int $clickId): string
+    {
+        return 'SELECT 2cpa.tracker_id_public, 2trc.click_cpa,
+            2c.user_id, 2c.aff_campaign_id, 2c.click_lead, 2c.click_time
+            FROM ' . \Prosper202\Click\LatestVisit::of((string) $clickId) . ' AS 2c
+            LEFT JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
+            LEFT JOIN 202_trackers AS 2trc
+                ON (2trc.tracker_id_public = 2cpa.tracker_id_public AND 2trc.user_id = 2c.user_id)
+            LIMIT 1';
+    }
+}
+
 if (!function_exists('p202RecordLegacyConversion')) {
     /**
      * Record a conversion for one of the legacy endpoints — the per-campaign
@@ -740,14 +812,14 @@ if (!function_exists('p202RecordLegacyConversion')) {
 
         // The checked wrapper: prepare, bind, execute and get_result are each
         // verified inside Connection (CLAUDE.md #1), and a failure throws
-        // rather than reading as "no such click".
+        // rather than reading as "no such click". The conversion credits the
+        // click's latest visit, whose campaign the pb check compares.
         $conn = new \Prosper202\Database\Connection($db);
         $stmt = $conn->prepareRead(
             'SELECT c.user_id, c.aff_campaign_id, c.click_lead, c.click_time, c.click_payout, t.click_cpa
-             FROM 202_clicks AS c
+             FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c
              LEFT JOIN 202_cpa_trackers AS cp ON cp.click_id = c.click_id
              LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public AND t.user_id = c.user_id
-             WHERE c.click_id = ?
              LIMIT 1'
         );
         $conn->bind($stmt, 'i', [$clickId]);

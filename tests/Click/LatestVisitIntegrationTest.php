@@ -98,6 +98,52 @@ final class LatestVisitIntegrationTest extends TestCase
         self::assertSame([303, 303, 303], self::campaigns());
     }
 
+    /**
+     * isLatest(), as a report reads many clicks' rows: the re-clicked click
+     * counts once, under its latest visit's campaign, whatever its earlier
+     * visit's time window; two visits in one second both count.
+     */
+    public function testIsLatestCountsAClickOnceUnderItsLatestVisit(): void
+    {
+        self::q(self::visit(101, 1000, 0, 0));
+        self::q(self::visit(202, 2000, 0, 0));
+        self::assertSame([['202', '1']], self::counted(''));
+        // A window holding only the earlier visit counts nothing: the click is its latest visit's.
+        self::assertSame([], self::counted(' AND c.click_time < 1500'));
+
+        self::q(self::visit(303, 2000, 0, 0));
+        self::assertSame([['202', '1'], ['303', '1']], self::counted(''));
+    }
+
+    /** @dataProvider insertionOrders */
+    public function testFirstVisitIsTheEarliestRow(bool $latestFirst): void
+    {
+        $latest = self::visit(202, 2000, 0, 0);
+        $earlier = self::visit(101, 1000, 0, 0);
+        foreach ($latestFirst ? [$latest, $earlier] : [$earlier, $latest] as $sql) {
+            self::q($sql);
+        }
+        $db = self::requireScratch();
+        $result = $db->query('SELECT f.aff_campaign_id FROM ' . \Prosper202\Click\FirstVisit::of((string) self::CLICK)
+            . ' AS f');
+        self::assertNotFalse($result, $db->error);
+
+        $rows = array_map(static fn (array $r): array => array_map('strval', $r), $result->fetch_all());
+        self::assertSame([['101']], $rows);
+    }
+
+    /** @return list<array{string, string}> campaign => clicks, over the click's rows that isLatest() keeps */
+    private static function counted(string $window): array
+    {
+        $db = self::requireScratch();
+        $result = $db->query('SELECT c.aff_campaign_id, COUNT(*) FROM 202_clicks AS c WHERE c.click_id = '
+            . self::CLICK . $window . ' AND ' . LatestVisit::isLatest('c')
+            . ' GROUP BY c.aff_campaign_id ORDER BY c.aff_campaign_id');
+        self::assertNotFalse($result, $db->error);
+
+        return array_map(static fn (array $row): array => array_map('strval', $row), $result->fetch_all());
+    }
+
     private static function visit(int $campaign, int $time, int $rotator, int $redirect): string
     {
         return 'INSERT INTO 202_clicks'

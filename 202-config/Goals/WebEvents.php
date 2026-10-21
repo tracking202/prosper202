@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Goals;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentityKeys;
@@ -204,13 +205,16 @@ final class WebEvents
     // ─── Reading the click ──────────────────────────────────────────
 
     /**
-     * The click's owner and campaign, or null when there is no such click.
+     * The click's owner and campaign, or null when there is no such click:
+     * its latest visit's, the visit a conversion credits.
      *
      * @return array{user_id: int, campaign_id: int, click_time: int}|null
      */
     public function click(int $clickId): ?array
     {
-        $stmt = $this->conn->prepareRead('SELECT user_id, aff_campaign_id, click_time FROM 202_clicks WHERE click_id = ? LIMIT 1');
+        $stmt = $this->conn->prepareRead(
+            'SELECT c.user_id, c.aff_campaign_id, c.click_time FROM ' . LatestVisit::of('?') . ' AS c'
+        );
         $this->conn->bind($stmt, 'i', [$clickId]);
         $row = $this->conn->fetchOne($stmt);
 
@@ -247,7 +251,9 @@ final class WebEvents
      * newest click of the page's account that was observed carrying this id
      * (the p202lpid the page sent with its pageview or on a link into the
      * tracker), within VISITOR_LOOKBACK, and — for a page that belongs to
-     * one campaign — on that campaign.
+     * one campaign — on that campaign. A click's time and campaign are its
+     * latest visit's: a click re-clicked onto another campaign is that
+     * campaign's.
      *
      * The id is 128 random bits held in the page's own storage, so a caller
      * can only name the clicks of a browser it controls; a click id, which
@@ -289,7 +295,8 @@ final class WebEvents
 
         $sql = 'SELECT c.click_id, c.aff_campaign_id FROM 202_identity_observations AS o
                 JOIN 202_clicks AS c ON c.click_id = o.click_id
-                WHERE o.signal_type = ? AND o.signal_hash = ? AND c.user_id = ? AND c.click_time >= ?'
+                WHERE o.signal_type = ? AND o.signal_hash = ? AND c.user_id = ? AND c.click_time >= ?
+                  AND ' . LatestVisit::isLatest('c')
             . ($campaignId > 0 ? ' AND c.aff_campaign_id = ?' : '')
             . ' ORDER BY c.click_time DESC, c.click_id DESC LIMIT 1';
         $stmt = $this->conn->prepareRead($sql);

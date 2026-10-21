@@ -7,6 +7,7 @@ namespace Tests\Conversion;
 use Api\V3\Controllers\ConversionsController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -26,6 +27,23 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class ConversionCreateBodyValuesTest extends TestCase
 {
+    /**
+     * The click's lock and the read of its latest visit after it, each
+     * answering $rows, and the read of its latest visit that is a lead
+     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private static function clickVisit(FakeMysqliConnection $db, string $lock, array $rows): void
+    {
+        $db->whenQueryContainsReturnRows($lock, $rows);
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(
+            'AND c.click_lead = 1',
+            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
+        );
+    }
+
     /** @return array<string, mixed> */
     private static function body(string $json): array
     {
@@ -106,7 +124,8 @@ final class ConversionCreateBodyValuesTest extends TestCase
     private static function ledger(): FakeMysqliConnection
     {
         $db = new FakeMysqliConnection();
-        $db->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $db,
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => '0.00000',
                 'click_time' => 1700000000, 'click_lead' => 0]]

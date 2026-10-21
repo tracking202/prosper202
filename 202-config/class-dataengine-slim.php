@@ -37,7 +37,9 @@ if (!class_exists('DataEngine')) {
         }
 
         /**
-         * Roll a single click up into 202_dataengine so reports reflect it.
+         * Roll a single click up into 202_dataengine so reports reflect it:
+         * at its latest visit, its rows at earlier visits removed
+         * (ClickRollupSql).
          *
          * A request that names no click re-rolls none. It used to take "the
          * visitor's latest click": user 1's newest click in the last 24 hours from
@@ -67,27 +69,31 @@ if (!class_exists('DataEngine')) {
 
             // click_id can originate from a caller-supplied cookie/request
             // value; cast to int so it cannot break out of the WHERE clause.
-            $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
+            $clickId = (int) $click_id;
 
             // The click is recorded before this runs, and on the click path
             // the visitor goes on whatever the rollup does: a lock lost to a
             // concurrent rollup is tried once more, and any other failure is
-            // logged and answered false, the click missing from the reports
-            // until its hour is rebuilt.
-            for ($attempt = 1;; $attempt++) {
-                if ($db->query($dsql)) {
-                    return true;
-                }
-                $errno = (int) $db->errno;
-                if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
-                    continue;
-                }
-                error_log('DataEngine rollup of click ' . (int) $click_id . ' failed: '
-                    . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']'
-                    . '; the click is missing from the reports until its hour is rebuilt');
+            // logged and answered false, the click's report rows out of date
+            // until it or its hour is rolled up again.
+            foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
+                for ($attempt = 1;; $attempt++) {
+                    if ($db->query($dsql)) {
+                        continue 2;
+                    }
+                    $errno = (int) $db->errno;
+                    if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
+                        continue;
+                    }
+                    error_log('DataEngine ' . $step . ' of click ' . $clickId . ' failed: '
+                        . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']'
+                        . '; the click\'s report rows are out of date until it or its hour is rolled up again');
 
-                return false;
+                    return false;
+                }
             }
+
+            return true;
         }
 
         /**

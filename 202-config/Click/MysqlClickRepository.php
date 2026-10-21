@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Click;
 
 use LogicException;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Database\Connection;
 use Prosper202\Report\RollupDirty;
 
@@ -52,7 +53,11 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             throw new LogicException('A click carries its redirect URL id or has it resolved, not both');
         }
         $this->conn->transaction(function () use ($click, $redirectSiteUrlId): void {
-            $this->writeClickRows($click);
+            $this->writeClickRows(
+                $click,
+                self::arrivalOf($click),
+                ['click_lead' => 0, 'click_payout' => $click->clickPayout]
+            );
             $this->write(
                 'INSERT INTO 202_clicks_advance (click_id, text_ad_id, keyword_id, ip_id, country_id, region_id,'
                     . ' isp_id, city_id, platform_id, browser_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -109,6 +114,20 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         $this->link($click);
     }
 
+    /**
+     * The visit's row takes the traffic source, cost and filtered and bot
+     * flags of the click's first visit (FirstVisit), not the record's: they
+     * belong to its arrival from the traffic source, and the duplicate filter
+     * reads a re-click, which comes from its click's address, as a second
+     * arrival. A click that is a lead gives the row its lead and value, as
+     * the ledger's recompute leaves every row of it; one that is not gives it
+     * no lead and the record's payout. All of it is read under the click's
+     * lock (MysqlConversionLedger::lockClick()), the one a conversion
+     * rewrites the cost and value under: a caller reading them first could
+     * copy a value already replaced. The click keeps its keyword, and the
+     * c1-c4 the record does not bring (an id of 0); the campaign, landing
+     * page, route and time are the record's.
+     */
     #[\Override]
     public function recordReClick(ClickRecord $click, \Closure $redirectSiteUrlId): void
     {
@@ -120,24 +139,30 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             throw new LogicException('A click carries its redirect URL id or has it resolved, not both');
         }
         $this->conn->transaction(function () use ($click, $route, $redirectSiteUrlId): void {
-            // rtr.php finds the click among its account's: anything else is a caller's mistake.
-            if ($this->accountsClickFirstTime($click->userId, $click->clickId) === null) {
+            // The click's first row in the click_id index, as every ledger
+            // writer locks it: the lock is the transaction's first statement,
+            // so the reads after it see what it holds. rtr.php finds the
+            // click among its account's: anything else is a caller's mistake.
+            $locked = (new MysqlConversionLedger($this->conn))->lockClick($click->clickId, $click->userId);
+            if ($locked === null || $this->accountsClickFirstTime($click->userId, $click->clickId) === null) {
                 throw new LogicException(
                     "A re-click names click {$click->clickId}, which is not account {$click->userId}'s"
                 );
             }
+            $arrival = $this->firstVisitArrival($click->clickId);
+            $value = $this->leadValue($click->clickId) ?? ['click_lead' => 0, 'click_payout' => $click->clickPayout];
             // The rollup has summed the click into its hours and those of
             // every conversion whose journey holds it; the mark sends them
             // back to exact (AttributionRollup rule 2).
             RollupDirty::click($this->conn, $click->userId, $click->clickId);
-            $this->writeClickRows($click);
-            // The redirector records no text ad: the click's is kept unless the re-click brings one.
+            $this->writeClickRows($click, $arrival, $value);
+            // The redirector records no text ad: the click's is kept unless
+            // the re-click brings one. The keyword is the click's.
             $this->write(
                 'INSERT INTO 202_clicks_advance (click_id, text_ad_id, keyword_id, ip_id, country_id, region_id,'
                     . ' isp_id, city_id, platform_id, browser_id, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                     . ' ON DUPLICATE KEY UPDATE'
                     . ' text_ad_id = IF(VALUES(text_ad_id) = 0, text_ad_id, VALUES(text_ad_id)),'
-                    . ' keyword_id = VALUES(keyword_id),'
                     . ' ip_id = VALUES(ip_id), country_id = VALUES(country_id), region_id = VALUES(region_id),'
                     . ' isp_id = VALUES(isp_id), city_id = VALUES(city_id), platform_id = VALUES(platform_id),'
                     . ' browser_id = VALUES(browser_id), device_id = VALUES(device_id)',
@@ -147,8 +172,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             // customer_id is the click's, set by a conversion: kept.
             $this->write(
                 'INSERT INTO 202_clicks_tracking (click_id, c1_id, c2_id, c3_id, c4_id) VALUES (?, ?, ?, ?, ?)'
-                    . ' ON DUPLICATE KEY UPDATE c1_id = VALUES(c1_id), c2_id = VALUES(c2_id),'
-                    . ' c3_id = VALUES(c3_id), c4_id = VALUES(c4_id)',
+                    . ' ON DUPLICATE KEY UPDATE c1_id = IF(VALUES(c1_id) = 0, c1_id, VALUES(c1_id)),'
+                    . ' c2_id = IF(VALUES(c2_id) = 0, c2_id, VALUES(c2_id)),'
+                    . ' c3_id = IF(VALUES(c3_id) = 0, c3_id, VALUES(c3_id)),'
+                    . ' c4_id = IF(VALUES(c4_id) = 0, c4_id, VALUES(c4_id))',
                 'iiiii',
                 [$click->clickId, $click->c1Id, $click->c2Id, $click->c3Id, $click->c4Id]
             );
@@ -298,6 +325,82 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         return $first;
     }
 
+    /**
+     * The first visit's traffic source, cost and filtered and bot flags.
+     *
+     * @return array{ppc_account_id: int, click_cpc: string, click_filtered: int, click_bot: int}
+     */
+    private function firstVisitArrival(int $clickId): array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT fv.ppc_account_id, fv.click_cpc, fv.click_filtered, fv.click_bot FROM '
+                . FirstVisit::of('?') . ' AS fv'
+        );
+        $this->conn->bind($stmt, 'i', [$clickId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            throw new LogicException("Click {$clickId} has no first visit under its lock");
+        }
+        $cpc = $row['click_cpc'] ?? null;
+        if (!is_string($cpc) || preg_match('/\A-?\d+(?:\.\d+)?\z/', $cpc) !== 1) {
+            throw new \UnexpectedValueException('202_clicks.click_cpc read as ' . get_debug_type($cpc));
+        }
+        $flags = [];
+        foreach (['click_filtered', 'click_bot'] as $column) {
+            $flags[$column] = self::intColumn($row, $column);
+            if ($flags[$column] !== 0 && $flags[$column] !== 1) {
+                throw new \UnexpectedValueException("202_clicks.$column read as {$flags[$column]}");
+            }
+        }
+
+        return [
+            'ppc_account_id' => self::intColumn($row, 'ppc_account_id'), 'click_cpc' => $cpc,
+            'click_filtered' => $flags['click_filtered'], 'click_bot' => $flags['click_bot'],
+        ];
+    }
+
+    /**
+     * The click's lead and value when it is a lead: what the ledger's
+     * recompute writes to every row it has (MysqlConversionLedger::recompute()),
+     * from the latest visit that is a lead (a row written since the last
+     * recompute is none), as ensureManaged() takes a pre-ledger lead's. Null
+     * when no row is a lead.
+     *
+     * @return array{click_lead: int, click_payout: string}|null
+     */
+    private function leadValue(int $clickId): ?array
+    {
+        $stmt = $this->conn->prepareWrite(
+            'SELECT c.click_payout FROM 202_clicks AS c'
+            . ' LEFT JOIN 202_clicks_rotator AS r ON r.click_id = c.click_id'
+            . ' WHERE c.click_id = ? AND c.click_lead = 1 ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1'
+        );
+        $this->conn->bind($stmt, 'i', [$clickId]);
+        $row = $this->conn->fetchOne($stmt);
+        if ($row === null) {
+            return null;
+        }
+        $payout = $row['click_payout'] ?? null;
+        if (!is_string($payout) || preg_match('/\A-?\d+(?:\.\d+)?\z/', $payout) !== 1) {
+            throw new \UnexpectedValueException('202_clicks.click_payout read as ' . get_debug_type($payout));
+        }
+
+        return ['click_lead' => 1, 'click_payout' => $payout];
+    }
+
+    /**
+     * A new click's own traffic source, cost and filtered and bot flags.
+     *
+     * @return array{ppc_account_id: int, click_cpc: string, click_filtered: int, click_bot: int}
+     */
+    private static function arrivalOf(ClickRecord $click): array
+    {
+        return [
+            'ppc_account_id' => $click->ppcAccountId, 'click_cpc' => $click->clickCpc,
+            'click_filtered' => $click->clickFiltered, 'click_bot' => $click->clickBot,
+        ];
+    }
+
     /** Whether the offer's campaign and the rotator, its rule and redirect, are the exit's account's. */
     private function namesTheAccountsRecords(ClickExit $exit): bool
     {
@@ -351,31 +454,40 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         throw new \UnexpectedValueException("202_clicks.$column read as " . get_debug_type($value));
     }
 
-    /** 202_clicks (with the route, 0 off the redirector) and its 202_clicks_spy copy. */
-    private function writeClickRows(ClickRecord $click): void
+    /**
+     * 202_clicks (with the route, 0 off the redirector) and its 202_clicks_spy
+     * copy, with the traffic source, cost and filtered and bot flags given
+     * (the record's for a new click, the first visit's for a re-click) and
+     * the lead and value given (none and the record's payout, or the click's
+     * own when a re-click is of a lead).
+     *
+     * @param array{ppc_account_id: int, click_cpc: string, click_filtered: int, click_bot: int} $arrival
+     * @param array{click_lead: int, click_payout: string} $value
+     */
+    private function writeClickRows(ClickRecord $click, array $arrival, array $value): void
     {
         $this->write(
             'INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id,'
-                . ' click_cpc, click_payout, click_filtered, click_bot, click_alp, click_time, rotator_id, rule_id)'
-                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            'iiiiissiiiiii',
+                . ' click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time,'
+                . ' rotator_id, rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'iiiiissiiiiiii',
             [
                 $click->clickId, $click->userId, $click->affCampaignId, $click->landingPageId,
-                $click->ppcAccountId, $click->clickCpc, $click->clickPayout, $click->clickFiltered,
-                $click->clickBot, $click->clickAlp, $click->clickTime,
+                $arrival['ppc_account_id'], $arrival['click_cpc'], $value['click_payout'], $value['click_lead'],
+                $arrival['click_filtered'], $arrival['click_bot'], $click->clickAlp, $click->clickTime,
                 // rule_id holds the rule's redirect, as it always has.
                 $click->rotator->rotatorId ?? 0, $click->rotator->ruleRedirectId ?? 0,
             ]
         );
         $this->write(
             'INSERT INTO 202_clicks_spy (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id,'
-                . ' click_cpc, click_payout, click_filtered, click_bot, click_alp, click_time)'
-                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            'iiiiissiiii',
+                . ' click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time)'
+                . ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'iiiiissiiiii',
             [
                 $click->clickId, $click->userId, $click->affCampaignId, $click->landingPageId,
-                $click->ppcAccountId, $click->clickCpc, $click->clickPayout, $click->clickFiltered,
-                $click->clickBot, $click->clickAlp, $click->clickTime,
+                $arrival['ppc_account_id'], $arrival['click_cpc'], $value['click_payout'], $value['click_lead'],
+                $arrival['click_filtered'], $arrival['click_bot'], $click->clickAlp, $click->clickTime,
             ]
         );
     }

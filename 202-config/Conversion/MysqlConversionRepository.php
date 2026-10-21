@@ -116,8 +116,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * Single owner of the transactional conversion write used by every ingestion
      * path (the V3 API, the static pixel and postback endpoints, both uploads).
      *
-     * In one transaction it: locks the source click (SELECT ... FOR UPDATE) so
-     * concurrent and retried requests serialise; carries a pre-ledger click's
+     * In one transaction it: locks the source click (MysqlConversionLedger::lockClick())
+     * so concurrent and retried requests serialise, and reads the visit the
+     * conversion credits, the click's latest; carries a pre-ledger click's
      * value into the ledger (MysqlConversionLedger::ensureManaged); decides the
      * row's dedupe key and answers a replay as a duplicate; inserts the ledger
      * row; runs the caller's click-side update (CPA cost, the filtered flag —
@@ -316,12 +317,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $wantsReversal = (bool) $prepared['wantsReversal'];
         $ledger = new MysqlConversionLedger($this->conn);
 
-        // Lock the source click so concurrent/retried requests serialise here.
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $click = $this->conn->fetchOne($clickStmt);
+        // Lock the source click so concurrent/retried requests serialise
+        // here; the conversion credits its latest visit.
+        $click = $ledger->lockClick($clickId, $userId);
 
         if ($click === null) {
             return ['convId' => 0, 'duplicate' => false, 'clickFound' => false, 'customerId' => null];
@@ -419,9 +417,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         // One conversion per click for id-less pixels and postbacks. This
-        // is the authoritative check: it reads click_lead from the row
-        // locked FOR UPDATE above, so a second id-less request waits on
-        // the first's commit and then sees click_lead = 1.
+        // is the authoritative check: it reads click_lead after the click's
+        // lock, so a second id-less request waits on the first's commit and
+        // then sees click_lead = 1. A re-click's visit is written as no
+        // lead, so it takes one more.
         $oncePerClick = !empty($data['once_per_click'])
             || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
         if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {
@@ -430,7 +429,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // A click converted before the ledger holds its value only in its
         // cache; carry it into the ledger before this row changes it.
-        $ledger->ensureManaged($click, $userId);
+        $ledger->ensureManaged($clickId, $userId);
 
         if ($reverses !== null) {
             $amountUnits = -abs($explicitPayout ?? Amount::toUnits((string) $reverses['click_payout']));
@@ -810,11 +809,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             );
         }
 
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-        $click = $this->conn->fetchOne($clickStmt);
+        $ledger = new MysqlConversionLedger($this->conn);
+        $click = $ledger->lockClick($clickId, $userId);
         if ($click === null) {
             throw new LedgerIntegrityException('conversion ' . $convId . ' names click ' . $clickId . ', which does not exist');
         }
@@ -872,7 +868,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             return null; // counting as the ledger decides: nothing was retired
         }
 
-        $ledger = new MysqlConversionLedger($this->conn);
         $ledger->recompute($clickId, (int) $click['aff_campaign_id'], $userId);
         $ledger->enqueue([$convId], 'counted_state');
 
@@ -936,12 +931,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
         $clickId = (int) $found['click_id'];
 
-        $clickStmt = $this->conn->prepareWrite(
-            'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
-             WHERE click_id = ? LIMIT 1 FOR UPDATE'
-        );
-        $this->conn->bind($clickStmt, 'i', [$clickId]);
-        $click = $this->conn->fetchOne($clickStmt);
+        $click = $ledger->lockClick($clickId);
 
         // Lock the conversion row so concurrent deletes serialize here.
         $convStmt = $this->conn->prepareWrite(
@@ -959,7 +949,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         if ($click !== null) {
             // A pre-ledger click keeps the value only its cache knows;
             // carry it in first so deleting an old row cannot zero it.
-            $ledger->ensureManaged($click, $userId);
+            $ledger->ensureManaged($clickId, $userId);
         }
 
         if ($engineMark === null) {
@@ -1059,15 +1049,15 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *
      * Post-commit and best-effort: the write has landed, so a failure here
      * must not read as a failed write (CLAUDE.md #13). It is logged with the
-     * click id, and the next change to the click re-rolls it.
+     * click id and the step that failed, and the next change to the click
+     * re-rolls it: a failed rollup leaves the report row as it was, and a
+     * failed removal of the earlier visits' rows leaves them beside the
+     * latest visit's, so the click counts once per visit until then.
      */
     private function refreshReportRollup(int $clickId): void
     {
         try {
-            $stmt = $this->conn->prepareWrite(
-                ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . $clickId)
-            );
-            $this->conn->executeUpdate($stmt);
+            ClickRollupSql::rollUpClick($this->conn, $clickId);
         } catch (Throwable $e) {
             error_log('conversion ledger: click ' . $clickId . ' changed but its report row was not refreshed: ' . $e->getMessage());
         }
@@ -1248,17 +1238,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
                 continue;
             }
             $work = function () use ($clickId, $userId, $ledger): bool {
-                $clickStmt = $this->conn->prepareWrite(
-                    'SELECT click_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
-                     WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-                );
-                $this->conn->bind($clickStmt, 'ii', [$clickId, $userId]);
-                $click = $this->conn->fetchOne($clickStmt);
+                $click = $ledger->lockClick($clickId, $userId);
                 if ($click === null) {
                     return false;
                 }
 
-                $ledger->ensureManaged($click, $userId);
+                $ledger->ensureManaged($clickId, $userId);
 
                 $rowsStmt = $this->conn->prepareWrite(
                     'SELECT conv_id, customer_id FROM 202_conversion_logs

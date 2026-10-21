@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\DataEngine;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\DataEngine\ClickRollupSql;
 
 /**
@@ -75,7 +76,7 @@ final class ClickRollupSqlTest extends TestCase
             explode(',', $insertMatch[1])
         );
 
-        preg_match('/SELECT\s+(.*?)\s+FROM 202_clicks/s', $this->sql, $selectMatch);
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
         self::assertNotEmpty($selectMatch, 'Must find the SELECT list');
         $selectExpressions = array_map('trim', explode(",\n", $selectMatch[1]));
 
@@ -114,7 +115,7 @@ final class ClickRollupSqlTest extends TestCase
             explode(',', $insertMatch[1])
         );
 
-        preg_match('/SELECT\s+(.*?)\s+FROM 202_clicks/s', $this->sql, $selectMatch);
+        preg_match('/SELECT\s+(.*?)\nFROM 202_clicks AS 2c\n/s', $this->sql, $selectMatch);
         $selectExpressions = array_map('trim', explode(",\n", $selectMatch[1]));
 
         $sourcePosition = array_search('utm_source_id', $insertColumns, true);
@@ -211,6 +212,59 @@ final class ClickRollupSqlTest extends TestCase
         $sql = ClickRollupSql::insertSelect('202_dataengine_new', '2c.click_time >= 1 AND 2c.click_time <= 2');
 
         self::assertStringContainsString('insert into 202_dataengine_new(', $sql);
-        self::assertStringContainsString('WHERE 2c.click_time >= 1 AND 2c.click_time <= 2', $sql);
+        self::assertStringContainsString('WHERE (2c.click_time >= 1 AND 2c.click_time <= 2) AND ', $sql);
+    }
+
+    /**
+     * A click has one report row, at its latest visit: the caller's
+     * condition is held whole (an OR in it cannot reach past the latest
+     * visit's), and an earlier visit writes nothing.
+     */
+    public function testOnlyEachClicksLatestVisitIsWritten(): void
+    {
+        $sql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=1 OR 2c.click_id=2');
+
+        self::assertStringContainsString(
+            "WHERE (2c.click_id=1 OR 2c.click_id=2) AND " . LatestVisit::isLatest('2c') . "\non duplicate key update",
+            $sql
+        );
+    }
+
+    /**
+     * The removal that follows the rollup reads the visits the same
+     * condition names, through the same campaign join, and deletes the rows
+     * of the ones that are not their click's latest from the table it names.
+     */
+    public function testTheRemovalOfEarlierVisitsReadsTheRollupsCondition(): void
+    {
+        $where = '2c.click_time >= 1 AND 2c.click_time <= 2 AND 2c.user_id = 5 AND 2ac.aff_campaign_id = 7';
+        $sql = ClickRollupSql::deleteEarlierVisits('202_dataengine_new', $where);
+
+        self::assertStringStartsWith("DELETE de FROM 202_dataengine_new AS de\n", $sql);
+        self::assertStringContainsString(
+            'INNER JOIN 202_clicks AS 2c ON (2c.click_id = de.click_id AND 2c.click_time = de.click_time'
+                . ' AND 2c.user_id = de.user_id)',
+            $sql
+        );
+        self::assertStringEndsWith("WHERE ($where) AND NOT " . LatestVisit::isLatest('2c'), $sql);
+        self::assertSame(1, substr_count($sql, '202_dataengine'), 'one table is deleted from');
+
+        preg_match('/^LEFT OUTER JOIN 202_aff_campaigns AS 2ac .*$/m', $sql, $join);
+        self::assertNotEmpty($join, 'the removal joins the campaign the condition may name');
+        self::assertStringContainsString($join[0] . "\n", ClickRollupSql::insertSelect('202_dataengine', $where));
+    }
+
+    /** By id: the rollup first, then the removal, both of the one click, on the table named. */
+    public function testRollingAClickWritesItsRowBeforeRemovingTheOthers(): void
+    {
+        $steps = ClickRollupSql::forClick('202_dataengine_new', 42);
+
+        self::assertSame([
+            'rollup' => ClickRollupSql::insertSelect('202_dataengine_new', '2c.click_id=42'),
+            'removal of the earlier visits\' rows' => ClickRollupSql::deleteEarlierVisits(
+                '202_dataengine_new',
+                '2c.click_id=42'
+            ),
+        ], $steps);
     }
 }

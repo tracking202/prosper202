@@ -499,13 +499,22 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * statement) fails the step like a failed CREATE: the version stays,
      * and the next run drops what is left.
      *
+     * $queues are the step's report repairs, each a statement from the code
+     * (ClickRollupSql) that queues the hours whose 202_dataengine rows a
+     * change made wrong for the cron's dirty-hours pass to roll up again,
+     * rather than this request. Each queues only what is still wrong, so a
+     * re-run after the pass queues nothing. They run last, and one that
+     * fails fails the step.
+     *
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
+     * @param  list<string> $queues
      * @return bool True when every table exists and matches its definition,
-     *         and every retired table is gone. False leaves the version
-     *         where it is, so the next run retries the whole step.
+     *         every retired table is gone and every queue was written. False
+     *         leaves the version where it is, so the next run retries the
+     *         whole step.
      */
-    function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
+    function _upgrade_measurement_tables(array $definitions, array $retirements = [], array $queues = []): bool
     {
         $reconciler = new \Prosper202\Database\SchemaReconciler(
             static function (string $sql) {
@@ -585,6 +594,15 @@ if (!function_exists('_upgrade_measurement_tables')) {
                 if (_upgrade_query($retirement) === false) {
                     $ok = false;
                     error_log('Prosper202 upgrade: failed to remove a retired table: ' . $retirement);
+                }
+            }
+        }
+
+        if ($ok) {
+            foreach ($queues as $queue) {
+                if (_upgrade_query($queue) === false) {
+                    $ok = false;
+                    error_log('Prosper202 upgrade: failed to queue report rows for the cron to roll up again');
                 }
             }
         }
@@ -4353,9 +4371,19 @@ class UPGRADE
             // labelled with the app (Api\V3\Support\AiConnect).
             // A schema change for 1.9.78 belongs in this block, reconciled
             // before the version is written.
-            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
+            //
+            // The reports count a re-clicked click once, at its latest visit
+            // (ClickRollupSql). The rows a rollup before 1.9.78 wrote at its
+            // earlier visits are left to the cron: their hours, and the latest
+            // visit's, are queued for the dirty-hours pass, which rolls them up
+            // again (ClickRollupSql::QUEUE_EARLIER_VISIT_ROWS).
+            $step_ok = _upgrade_measurement_tables(
+                [\Prosper202\Database\Tables\UserTables::apiKeys()],
+                [],
+                [\Prosper202\DataEngine\ClickRollupSql::QUEUE_EARLIER_VISIT_ROWS]
+            );
 
-            if ($api_keys_ok) {
+            if ($step_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
                     $prosper202_version = '1.9.78';
                 } else {
@@ -4363,8 +4391,8 @@ class UPGRADE
                         . 'leaving version at 1.9.77 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled; '
-                    . 'leaving version at 1.9.77 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled or the report rows'
+                    . ' to roll up again could not be queued; leaving version at 1.9.77 so the next run retries.');
             }
         }
 

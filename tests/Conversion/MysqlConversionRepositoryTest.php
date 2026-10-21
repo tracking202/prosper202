@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Tests\Support\FakeMysqliConnection;
@@ -12,13 +13,34 @@ use Tests\Support\InsertReportingFakeMysqliConnection;
 
 final class MysqlConversionRepositoryTest extends TestCase
 {
+    /**
+     * The click's lock and the read of its latest visit after it, each
+     * answering $rows, and the read of its latest visit that is a lead
+     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private static function clickVisit(
+        FakeMysqliConnection|InsertReportingFakeMysqliConnection $db,
+        string $lock,
+        array $rows
+    ): void {
+        $db->whenQueryContainsReturnRows($lock, $rows);
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(
+            'AND c.click_lead = 1',
+            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
+        );
+    }
+
     public function testCreateUsesWriteConnectionAndLocksClickRow(): void
     {
         // The writer refuses an insert that reports no id, and only the
         // insert-reporting double can report one on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,
@@ -68,7 +90,8 @@ final class MysqlConversionRepositoryTest extends TestCase
         // insert-reporting double can report one on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,

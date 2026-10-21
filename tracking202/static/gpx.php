@@ -58,12 +58,11 @@ if ($requestedClick['click_id'] !== null) {
 
 if (is_numeric($mysql['click_id'])) {
 
-	$cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa, 202_clicks.user_id, 202_clicks.aff_campaign_id, 202_clicks.click_lead, 202_clicks.click_time
-				FROM 202_clicks
-				LEFT JOIN 202_cpa_trackers USING (click_id) 
-				LEFT JOIN 202_trackers ON (202_trackers.tracker_id_public = 202_cpa_trackers.tracker_id_public
-					AND 202_trackers.user_id = 202_clicks.user_id)
-				WHERE click_id = '".$mysql['click_id']."'";
+    if ((int) $mysql['click_id'] <= 0) {
+        return; // nothing named a click, and none from this address
+    }
+    // The click's latest visit, which the conversion credits (p202PixelClickSql()).
+    $cpa_sql = p202PixelClickSql((int) $mysql['click_id']);
     $cpa_result = $db->query($cpa_sql);
     if ($cpa_result === false) {
         record_mysql_error($db, $cpa_sql);

@@ -57,4 +57,26 @@ final class LatestVisitTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         LatestVisit::orderBy('c', $alias);
     }
+
+    /** @dataProvider notAnAlias */
+    public function testIsLatestRefusesAnAliasThatIsNotOne(string $alias): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        LatestVisit::isLatest($alias);
+    }
+
+    public function testIsLatestRefusesItsOwnInnerAlias(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        LatestVisit::isLatest('LV_later');
+    }
+
+    public function testIsLatestComparesTheRowWithItsClicksOtherVisits(): void
+    {
+        self::assertSame(
+            'NOT EXISTS (SELECT 1 FROM 202_clicks AS lv_later WHERE lv_later.click_id = 2c.click_id'
+                . ' AND lv_later.click_time > 2c.click_time)',
+            LatestVisit::isLatest('2c')
+        );
+    }
 }

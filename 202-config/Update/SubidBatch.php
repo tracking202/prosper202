@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Update;
 
 use Prosper202\Click\ClickId;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -457,6 +458,7 @@ final class SubidBatch
     /**
      * The account's clicks among the entries still to be processed, with their
      * lead flag and live conversion count, keyed by click id. Read in chunks.
+     * The lead flag is the latest visit's, the one record() checks.
      *
      * @param list<array<string, mixed>> $entries
      * @return array<int, array<string, mixed>>
@@ -475,7 +477,8 @@ final class SubidBatch
                 'SELECT c.click_id, c.click_lead,
                         (SELECT COUNT(*) FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0) AS live_conversions
                  FROM 202_clicks AS c
-                 WHERE c.user_id = ? AND c.click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')'
+                 WHERE c.user_id = ? AND c.click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')
+                   AND ' . LatestVisit::isLatest('c')
             );
             $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
             foreach ($this->conn->fetchAll($stmt) as $row) {

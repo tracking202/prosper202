@@ -132,6 +132,7 @@ final class RollupMatchesFullComputationTest extends TestCase
     public function testRandomizedTenantsReadTheSameFromTheRollup(int $seed, array $cfg): void
     {
         $t = $this->generate($seed, $cfg);
+        $this->assertEachClickCountsOnce($t, $cfg['conversions'] >= 300);
         $this->buildRollup($t['now']);
         $built = (int) self::scalar('SELECT built_through_hour FROM 202_attribution_rollup_state WHERE user_id = 1');
         self::assertGreaterThan(intdiv($t['first'], 3600), $built, 'the rollup summed the tenant\'s hours');
@@ -411,6 +412,14 @@ final class RollupMatchesFullComputationTest extends TestCase
             self::$db->query('UPDATE 202_attribution_models SET is_default = NULL WHERE user_id = 1');
             self::$db->query("UPDATE 202_attribution_models SET is_default = 1 WHERE model_id = $first");
         });
+        $once = function () use ($window): array {
+            $all = (new AttributionReports($this->conn, false))
+                ->breakdownAll(1, null, null, $this->defaultModelId(), 'campaign', ...$window);
+            $revenue = array_map(self::units(...), array_column($all['rows'], 'attributed_revenue'));
+
+            return [array_sum(array_column($all['rows'], 'clicks')), array_sum($revenue)];
+        };
+        $beforeRewrite = $once();
         $step('one click rewritten', function () use ($clicks): void {
             // What a rotator re-click does to an existing click (rtr.php):
             // the click row again, now, and its keyword, country and browser
@@ -430,6 +439,9 @@ final class RollupMatchesFullComputationTest extends TestCase
             });
             self::assertSame('77', self::scalar('SELECT keyword_id FROM 202_clicks_advance WHERE click_id = 14'));
         });
+        $visits = (int) self::scalar('SELECT COUNT(*) FROM 202_clicks WHERE click_id = 14');
+        self::assertSame(2, $visits, 'click 14 has two visits');
+        self::assertSame($beforeRewrite, $once(), 'the re-clicked click is counted once, and its credits once');
         $step('a CPC range update', function () use ($base): void {
             $this->conn->transaction(function () use ($base): void {
                 self::$db->query('UPDATE 202_clicks SET click_cpc = 0.77 WHERE user_id = 1 AND click_time BETWEEN ' . ($base + 20_000) . ' AND ' . ($base + 60_000));
@@ -759,6 +771,47 @@ final class RollupMatchesFullComputationTest extends TestCase
         $this->comparisons++;
 
         return $reports->lastServedHours();
+    }
+
+    /**
+     * Every click of the tenant counted once by the cost side, however many
+     * visits generate() gave it: the re-clicked clicks' earlier rows are not
+     * counted, and their credits are counted once, as the credit rows hold
+     * them.
+     *
+     * @param array{first: int, last: int, now: int, models: array<string, int>} $t
+     */
+    private function assertEachClickCountsOnce(array $t, bool $reClicked): void
+    {
+        $visits = (int) self::scalar('SELECT COUNT(*) FROM 202_clicks WHERE user_id = 1 AND click_bot = 0');
+        $clicks = (int) self::scalar(
+            'SELECT COUNT(DISTINCT click_id) FROM 202_clicks WHERE user_id = 1 AND click_bot = 0'
+        );
+        // Two visits in one second are both latest: none in the tenants.
+        $ties = 'SELECT COUNT(*) FROM (SELECT click_id FROM 202_clicks'
+            . ' GROUP BY click_id, click_time HAVING COUNT(*) > 1) t';
+        self::assertSame(0, (int) self::scalar($ties));
+        if ($reClicked) {
+            self::assertGreaterThan($clicks, $visits, 'the tenant re-clicks some of its clicks');
+        }
+        $window = [$t['first'] - 7200, $t['last'] + 7200];
+        $linear = $t['models']['linear'];
+        $all = (new AttributionReports($this->conn, false))
+            ->breakdownAll(1, $linear, null, $t['models']['default'], 'campaign', ...$window);
+        self::assertSame($clicks, array_sum(array_column($all['rows'], 'clicks')), 'each click is counted once');
+        $credited = (string) self::scalar("SELECT COALESCE(SUM(cr.revenue), 0) FROM 202_attribution_credits cr
+            WHERE cr.model_id = $linear AND cr.conv_time BETWEEN {$window[0]} AND {$window[1]}
+              AND EXISTS (SELECT 1 FROM 202_clicks c WHERE c.click_id = cr.click_id)");
+        $revenue = array_map(self::units(...), array_column($all['rows'], 'attributed_revenue'));
+        self::assertSame(self::units($credited), array_sum($revenue), 'each credit is counted once');
+    }
+
+    /** A DECIMAL(…, 5) amount as an exact count of its smallest unit. */
+    private static function units(string $amount): int
+    {
+        self::assertMatchesRegularExpression('/^-?\d+\.\d{5}$/D', $amount);
+
+        return (int) str_replace('.', '', $amount);
     }
 
     // --- data ---

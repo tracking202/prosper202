@@ -37,6 +37,25 @@ final class LatestVisit
     }
 
     /**
+     * The condition that the 202_clicks row $clicks is its click's latest
+     * visit, for a statement that reads many clicks' rows (a report, a
+     * rollup): no visit of the click is later. A click then counts once,
+     * under its latest visit, except that two visits in one second are both
+     * latest: the table has no per-visit key to tell them apart. A rollup
+     * keyed by click and time folds them into one row.
+     */
+    public static function isLatest(string $clicks): string
+    {
+        self::alias($clicks);
+        if (strtolower($clicks) === 'lv_later') {
+            throw new InvalidArgumentException('lv_later is the alias isLatest() reads the later visits by');
+        }
+
+        return "NOT EXISTS (SELECT 1 FROM 202_clicks AS lv_later WHERE lv_later.click_id = {$clicks}.click_id"
+            . " AND lv_later.click_time > {$clicks}.click_time)";
+    }
+
+    /**
      * A derived table holding one click's latest 202_clicks row, to stand
      * where the statement read `202_clicks`: $clickId is `?` (bound) or the
      * click id as digits.

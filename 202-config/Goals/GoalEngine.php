@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Goals;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\Ledger\DedupeKey;
@@ -131,12 +132,13 @@ final class GoalEngine
 
     /**
      * The click subject for a click of this user: its time is the `click`
-     * anchor, its campaign decides the goal set and the payouts.
+     * anchor, its campaign decides the goal set and the payouts. Both are
+     * its latest visit's, the visit a conversion credits.
      */
     public function clickSubject(int $userId, int $clickId): GoalSubject
     {
         $stmt = $this->conn->prepareWrite(
-            'SELECT click_id, click_time, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1'
+            'SELECT c.click_id, c.click_time, c.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c WHERE c.user_id = ?'
         );
         $this->conn->bind($stmt, 'ii', [$clickId, $userId]);
         $click = $this->conn->fetchOne($stmt);
@@ -162,7 +164,8 @@ final class GoalEngine
      * anchor, where its ledger rows go, whose campaign's payouts apply) only
      * when the install is attributed AND trusted. Any other install is
      * evaluated for the funnel with no click, so it can reach goals but
-     * never pay or notify.
+     * never pay or notify. The click's time and campaign are its latest
+     * visit's.
      */
     public function installSubject(int $userId, int $installRowId): GoalSubject
     {
@@ -171,7 +174,8 @@ final class GoalEngine
                     c.click_time, c.aff_campaign_id
              FROM 202_app_installs i
              LEFT JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id
-             WHERE i.install_row_id = ? AND i.user_id = ? LIMIT 1'
+             LEFT JOIN 202_clicks_rotator cro ON cro.click_id = c.click_id
+             WHERE i.install_row_id = ? AND i.user_id = ? ' . LatestVisit::orderBy('c', 'cro') . ' LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$installRowId, $userId]);
         $row = $this->conn->fetchOne($stmt);
@@ -219,8 +223,8 @@ final class GoalEngine
      * row, then the subject's lock row, then the click inside the ledger
      * writer) — and a locking read returns the latest committed row, never
      * a snapshot older than the lock. A rejudge that has not committed is
-     * waited for; one that has is seen. A click subject's click and
-     * campaign never change, so it is returned as given.
+     * waited for; one that has is seen. A click subject is returned as
+     * given: what it carries is the click's latest visit when it was read.
      */
     private function current(int $userId, GoalSubject $subject): GoalSubject
     {
@@ -239,9 +243,12 @@ final class GoalEngine
         $row['click_time'] = null;
         $row['aff_campaign_id'] = null;
         if ($row['click_id'] !== null) {
-            // A click's time and campaign are never rewritten, so a plain
-            // read of them is current; only the install's credit moves.
-            $click = $this->conn->prepareWrite('SELECT click_time, aff_campaign_id FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1');
+            // The click's latest visit, read plainly: the lock above is for
+            // the install's credit, and no lock orders a re-click against
+            // this write.
+            $click = $this->conn->prepareWrite(
+                'SELECT c.click_time, c.aff_campaign_id FROM ' . LatestVisit::of('?') . ' AS c WHERE c.user_id = ?'
+            );
             $this->conn->bind($click, 'ii', [(int) $row['click_id'], $userId]);
             $clickRow = $this->conn->fetchOne($click);
             if ($clickRow !== null) {
@@ -613,11 +620,15 @@ final class GoalEngine
                 array_push($binds, ...$campaigns);
             }
             if ($where !== []) {
+                // The click's campaign is its latest visit's (isLatest() holds
+                // for an install with no click); DISTINCT, as two visits in one
+                // second are both latest.
                 $stmt = $this->conn->prepareWrite(
-                    "SELECT s.subject_id FROM 202_goal_subjects s
+                    "SELECT DISTINCT s.subject_id FROM 202_goal_subjects s
                      JOIN 202_app_installs i ON i.install_row_id = s.subject_id AND i.user_id = s.user_id
                      LEFT JOIN 202_clicks c ON c.click_id = i.click_id
-                     WHERE s.subject_type = 'install' AND s.user_id = ? AND s.subject_id > ? AND (" . implode(' OR ', $where) . ')
+                     WHERE s.subject_type = 'install' AND s.user_id = ? AND s.subject_id > ? AND " . LatestVisit::isLatest('c')
+                        . ' AND (' . implode(' OR ', $where) . ')
                      ORDER BY s.subject_id LIMIT ?'
                 );
                 $this->conn->bind($stmt, 'ii' . $types . 'i', [$userId, $after, ...$binds, $limit + 1]);
@@ -626,10 +637,10 @@ final class GoalEngine
         } elseif ($campaigns !== []) {
             $marks = implode(',', array_fill(0, count($campaigns), '?'));
             $stmt = $this->conn->prepareWrite(
-                "SELECT s.subject_id FROM 202_goal_subjects s JOIN 202_clicks c ON c.click_id = s.subject_id
+                "SELECT DISTINCT s.subject_id FROM 202_goal_subjects s JOIN 202_clicks c ON c.click_id = s.subject_id
                  WHERE s.subject_type = 'click' AND s.user_id = ? AND s.subject_id > ? AND s.event_count > 0
-                   AND c.aff_campaign_id IN ($marks)
-                 ORDER BY s.subject_id LIMIT ?"
+                   AND c.aff_campaign_id IN ($marks) AND " . LatestVisit::isLatest('c') . '
+                 ORDER BY s.subject_id LIMIT ?'
             );
             $this->conn->bind($stmt, 'ii' . str_repeat('i', count($campaigns)) . 'i', [$userId, $after, ...$campaigns, $limit + 1]);
             $subjectIds = array_map(static fn (array $r): int => (int) $r['subject_id'], $this->conn->fetchAll($stmt));
@@ -1560,7 +1571,8 @@ final class GoalEngine
         $stmt = $this->conn->prepareWrite(
             'SELECT c.aff_campaign_id FROM 202_app_installs i
              JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id
-             WHERE i.install_row_id = ? AND i.user_id = ? LIMIT 1'
+             LEFT JOIN 202_clicks_rotator cro ON cro.click_id = c.click_id
+             WHERE i.install_row_id = ? AND i.user_id = ? ' . LatestVisit::orderBy('c', 'cro') . ' LIMIT 1'
         );
         $this->conn->bind($stmt, 'ii', [$installRowId, $userId]);
         $click = $this->conn->fetchOne($stmt);

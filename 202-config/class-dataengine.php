@@ -746,7 +746,8 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
     }
 
     /**
-     * Roll a single click up into 202_dataengine so reports reflect it.
+     * Roll a single click up into 202_dataengine so reports reflect it: at
+     * its latest visit, its rows at earlier visits removed (ClickRollupSql).
      *
      * A request that names no click re-rolls none. It used to take "the
      * visitor's latest click": user 1's newest click in the last 24 hours from
@@ -773,10 +774,11 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         // click_id can originate from a caller-supplied cookie/request value;
         // cast to int so it cannot break out of the WHERE clause.
-        $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
-
-        if (!$db->query($dsql)) {
-            throw new QueryException(self::failedStep($db, 'rollup of click ' . (int) $click_id));
+        $clickId = (int) $click_id;
+        foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
+            if (!$db->query($dsql)) {
+                throw new QueryException(self::failedStep($db, $step . ' of click ' . $clickId));
+            }
         }
 
         return true;
@@ -822,7 +824,10 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
     }
 
     /**
-     * Roll up every click in a time window into the dataengine table.
+     * Roll up every click in a time window into the dataengine table: each
+     * click whose latest visit is in the window, and the removal of the
+     * window's rows for visits that are not their click's latest
+     * (ClickRollupSql).
      */
     public function getSummary($start, $end, $params, $user_id = 1, $upgrade = false, $new = false)
     {
@@ -839,14 +844,14 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         $table = $new ? '202_dataengine_new' : '202_dataengine';
 
-        $query = ClickRollupSql::insertSelect(
-            $table,
-            '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params
-        );
+        $where = '2c.click_time >= ' . $from . "\nAND 2c.click_time <= " . $to . ' ' . $params;
+        $query = ClickRollupSql::insertSelect($table, $where);
+        $removal = ClickRollupSql::deleteEarlierVisits($table, $where);
 
         $job = "WHERE time_from = '" . $from . "' AND time_to = '" . $to . "'";
         try {
             $this->doQuery($query, $from, $to, $upgrade, $new);
+            $this->doQuery($removal, $from, $to, $upgrade, $new);
         } catch (RuntimeException $e) {
             // Released, not finished: the next run takes the window again.
             if ($upgrade) {
@@ -871,7 +876,7 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
                 );
             }
         }
-        return $query . "<br><br>";
+        return $query . "<br><br>" . $removal . "<br><br>";
     }
 
     public function doQuery($query, $from, $to, $upgrade = false, $new = false)

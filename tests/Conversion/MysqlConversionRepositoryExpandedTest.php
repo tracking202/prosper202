@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use RuntimeException;
@@ -24,6 +25,26 @@ use Tests\Support\InsertReportingFakeMysqliConnection;
  */
 final class MysqlConversionRepositoryExpandedTest extends TestCase
 {
+    /**
+     * The click's lock and the read of its latest visit after it, each
+     * answering $rows, and the read of its latest visit that is a lead
+     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private static function clickVisit(
+        FakeMysqliConnection|InsertReportingFakeMysqliConnection $db,
+        string $lock,
+        array $rows
+    ): void {
+        $db->whenQueryContainsReturnRows($lock, $rows);
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(
+            'AND c.click_lead = 1',
+            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
+        );
+    }
+
     private function buildRepo(?FakeMysqliConnection $write = null, ?FakeMysqliConnection $read = null): array
     {
         $write ??= new FakeMysqliConnection();
@@ -57,7 +78,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     {
         $write = new FakeMysqliConnection();
         // Return no rows for click lookup
-        $write->whenQueryContainsReturnRows('FROM 202_clicks WHERE click_id = ?', []);
+        self::clickVisit($write, 'FROM 202_clicks WHERE click_id = ?', []);
 
         [$repo] = $this->buildRepo($write);
 
@@ -70,7 +91,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     {
         $write = new FakeMysqliConnection();
         // The query includes user_id in WHERE, so no rows returned for wrong user
-        $write->whenQueryContainsReturnRows('FROM 202_clicks WHERE click_id = ?', []);
+        self::clickVisit($write, 'FROM 202_clicks WHERE click_id = ?', []);
 
         [$repo] = $this->buildRepo($write);
 
@@ -89,7 +110,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // a writable insert_id, while delegating every other prepare/transaction
         // call to the shared fake.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -130,7 +152,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testRecordBindsOneValidAddressOrNothingAsTheIp(string $given, string $bound): void
     {
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -161,7 +184,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -188,7 +212,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -207,7 +232,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -225,7 +251,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // An insert has to report its id (the writer refuses one that does
         // not), which only the insert-reporting double can do on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -240,7 +267,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testCreateDeduplicatesOnTransactionId(): void
     {
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -268,7 +296,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testRecordWritesLegacyColumnsAndRunsClickSideCallbackInTransaction(): void
     {
         $write = new InsertReportingFakeMysqliConnection(5);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -397,7 +426,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // answers "duplicate" and prepares no INSERT, whatever the caller read
         // before it took the lock.
         $write = new FakeMysqliConnection();
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );
@@ -415,7 +445,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
     public function testOncePerClickRecordsWhileTheClickIsNotYetALead(): void
     {
         $write = new InsertReportingFakeMysqliConnection(7);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
@@ -433,7 +464,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         // The gate is opt-in: a conversion carrying a transaction id (a repeat
         // purchase on the same click) records exactly as before.
         $write = new InsertReportingFakeMysqliConnection(8);
-        $write->whenQueryContainsReturnRows(
+        self::clickVisit(
+            $write,
             'FROM 202_clicks WHERE click_id = ?',
             [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );

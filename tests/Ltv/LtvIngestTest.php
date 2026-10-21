@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -45,6 +46,8 @@ final class LtvIngestTest extends TestCase
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [$this->clickRow()]
         );
+        // The click's latest visit, read after its lock.
+        $write->whenQueryContainsReturnRows(LatestVisit::of('?'), [$this->clickRow()]);
 
         return $write;
     }

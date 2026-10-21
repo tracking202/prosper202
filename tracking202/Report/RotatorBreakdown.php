@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tracking202\Report;
 
 use mysqli;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\UserPrefFilters;
 
@@ -77,7 +78,8 @@ final class RotatorBreakdown
 
         // One pass over the window: every click of the account that went
         // through one of its rotators, by the rotator and the rule it
-        // matched (0: no rule matched, the rotator's default).
+        // matched (0: no rule matched, the rotator's default). A re-clicked
+        // click counts once, at its latest visit, under the route it holds.
         $stmt = $this->conn->prepareRead(
             'SELECT cr.rotator_id, cr.rule_id,'
             . ' COUNT(*) AS clicks, SUM(c.click_lead) AS leads,'
@@ -86,6 +88,7 @@ final class RotatorBreakdown
             . ' INNER JOIN 202_clicks_rotator AS cr ON cr.click_id = c.click_id'
             . ' INNER JOIN 202_rotators AS ro ON ro.id = cr.rotator_id AND ro.user_id = c.user_id'
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
+            . ' AND ' . LatestVisit::isLatest('c', max(0, $from))
             . UserPrefFilters::showFilter($show, 'c.')
             . ' GROUP BY cr.rotator_id, cr.rule_id'
         );

@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Prosper202\DataEngine;
 
+use Prosper202\Click\LatestVisit;
+use Prosper202\Database\Connection;
+use Prosper202\Database\Exceptions\QueryException;
+use RuntimeException;
+
 /**
  * Single source of truth for the click-rollup statement that copies a click
  * (and all of its dimension lookups) from the normalized click tables into
@@ -16,13 +21,39 @@ namespace Prosper202\DataEngine;
  * the SELECT list, silently writing each value into the other's column.
  * Generating the statement from one column map makes that class of bug
  * impossible.
+ *
+ * A click has one report row, at its latest visit (LatestVisit): a
+ * redirector re-click gives the click another 202_clicks row, and the
+ * reports count the click once, under the visit it is at now. The table's
+ * key is (click_id, click_time) and it is partitioned by click_time, so the
+ * key cannot be the click alone: a rollup writes the latest visit's row and
+ * then deletes the click's rows at its earlier visits (deleteEarlierVisits()),
+ * which an earlier rollup wrote.
  */
 final class ClickRollupSql
 {
     /**
+     * The campaign join, as JOINS makes it: deleteEarlierVisits() reads the
+     * same conditions the insert's caller wrote, and a dirty hour names its
+     * campaign through it (DataEngine::processDirtyHours()).
+     */
+    private const CAMPAIGN_JOIN = 'LEFT OUTER JOIN 202_aff_campaigns AS 2ac'
+        . ' ON (2c.aff_campaign_id = 2ac.aff_campaign_id AND 2ac.user_id = 2c.user_id)';
+
+    /**
      * Insert column => SELECT expression. Order is significant: the INSERT
      * column list and the SELECT list are generated from the same map, so
      * they can never drift out of alignment.
+     *
+     * click_filtered and click_bot are the first visit's: the redirector's
+     * duplicate filter flags almost every re-click, and a re-click written
+     * before 1.9.78 carries that flag rather than its first visit's. Only the
+     * redirector re-clicks a click, and every row it writes, like every route
+     * an exit rewrites onto a click's rows, names a rotator (RotatorRoute's
+     * id is positive; rtr.php always wrote its rotator's), so a latest row
+     * naming none is its click's one visit and its own flags are read without
+     * a lookup. Of two first visits in one second, a flag is set when it is
+     * set on both.
      */
     private const COLUMNS = [
         'user_id' => '2c.user_id',
@@ -58,8 +89,12 @@ final class ClickRollupSql
         'rule_id' => '2rc.rule_id',
         'rule_redirect_id' => '2rc.rule_redirect_id',
         'click_lead' => '2c.`click_lead`',
-        'click_filtered' => '2c.`click_filtered`',
-        'click_bot' => '2c.`click_bot`',
+        'click_filtered' => 'IF(2c.rotator_id = 0, 2c.`click_filtered`,'
+            . " (SELECT SUBSTRING(MIN(CONCAT(LPAD(fv.click_time, 10, '0'), fv.click_filtered)), 11)"
+            . ' FROM 202_clicks AS fv WHERE fv.click_id = 2c.click_id AND fv.user_id = 2c.user_id)) AS click_filtered',
+        'click_bot' => 'IF(2c.rotator_id = 0, 2c.`click_bot`,'
+            . " (SELECT SUBSTRING(MIN(CONCAT(LPAD(fv.click_time, 10, '0'), fv.click_bot)), 11)"
+            . ' FROM 202_clicks AS fv WHERE fv.click_id = 2c.click_id AND fv.user_id = 2c.user_id)) AS click_bot',
         'click_alp' => '2c.`click_alp`',
         'clicks' => '1 AS clicks',
         'click_out' => '2cr.click_out AS click_out',
@@ -112,8 +147,33 @@ LEFT OUTER JOIN 202_clicks_rotator AS 2rc ON (2c.click_id = 2rc.click_id)
 SQL;
 
     /**
-     * The rollup row's key (202_dataengine's PRIMARY KEY): one row per
-     * 202_clicks row, a rotator re-click being a second row of its click.
+     * The 1.9.78 upgrade's queue (functions-upgrade.php). A rollup before it
+     * wrote a report row per visit, and a re-click's own row carried the
+     * redirector's duplicate-filter flag. For every click with a row at a
+     * visit that is not its latest, that row's hour and the latest visit's
+     * hour are queued for the cron's dirty-hours pass, whose rollup removes
+     * the earlier row and gives the latest its first visit's flags. Once the
+     * pass has run no such row is left, so the statement then queues nothing.
+     */
+    public const QUEUE_EARLIER_VISIT_ROWS = 'INSERT INTO 202_dirty_hours'
+        . ' (ppc_account_id, aff_campaign_id, user_id, click_time_from, click_time_to, landing_page_id)'
+        . ' SELECT DISTINCT 0, 0, s.user_id, s.hour_start, s.hour_start + 3599, 0 FROM ('
+        . 'SELECT de.user_id, IF(w.latest_hour = 1, v.latest - v.latest % 3600,'
+        . ' de.click_time - de.click_time % 3600) AS hour_start'
+        . ' FROM (SELECT c.click_id, c.click_time, c.user_id,'
+        . ' MAX(c.click_time) OVER (PARTITION BY c.click_id) AS latest FROM 202_clicks AS c) AS v'
+        . ' INNER JOIN 202_dataengine AS de'
+        . ' ON (de.click_id = v.click_id AND de.click_time = v.click_time AND de.user_id = v.user_id)'
+        . ' CROSS JOIN (SELECT 0 AS latest_hour UNION ALL SELECT 1) AS w'
+        . ' WHERE v.click_time < v.latest) AS s'
+        . ' ON DUPLICATE KEY UPDATE processed = 0, deleted = 0';
+
+    /**
+     * The rollup row's key (202_dataengine's PRIMARY KEY): the click and
+     * the time of the visit it is rolled up at. Two visits in one second are
+     * both latest and fold into one row, which holds every column of
+     * whichever the SELECT returns last: the table has no per-visit key to
+     * tell them apart.
      */
     private const KEY = ['click_id', 'click_time'];
 
@@ -140,9 +200,12 @@ SQL;
      * rewrites, so every path refreshes it now.
      *
      * A row's dimensions are its click's: a re-click rewrites the click's
-     * one 202_clicks_advance, _tracking, _site and _variable rows, and a
-     * re-roll of the click's earlier row reads them as a fresh rollup of it
-     * always did.
+     * one 202_clicks_advance, _tracking, _site and _variable rows.
+     *
+     * Only each click's latest visit is written: of the visits $whereClause
+     * names, an earlier one writes nothing, so a window holding a click's
+     * earlier visit alone leaves it to the window that holds its latest.
+     * Run deleteEarlierVisits() with the same arguments after it.
      *
      * @param string $table       Target table (202_dataengine or 202_dataengine_new).
      * @param string $whereClause SQL condition on the 202_clicks side, already
@@ -158,8 +221,66 @@ SQL;
         return 'insert into ' . $table . '(' . implode(",\n", array_keys(self::COLUMNS)) . ")\n"
             . "SELECT\n" . implode(",\n", array_values(self::COLUMNS)) . "\n"
             . self::JOINS . "\n"
-            . 'WHERE ' . $whereClause . "\n"
+            . 'WHERE (' . $whereClause . ') AND ' . LatestVisit::isLatest('2c') . "\n"
             . "on duplicate key update\n" . $updates;
+    }
+
+    /**
+     * The DELETE that follows insertSelect($table, $whereClause): the rows
+     * of the visits $whereClause names that are not their click's latest,
+     * written by a rollup before the click was visited again. Bounded by the
+     * same conditions, so a dirty hour of one account removes that
+     * account's rows in that hour and no others.
+     *
+     * $whereClause may name 2c and 2ac (the click and its campaign), as
+     * every caller's does; another alias of insertSelect()'s is refused by
+     * the server.
+     */
+    public static function deleteEarlierVisits(string $table, string $whereClause): string
+    {
+        return 'DELETE de FROM ' . $table . " AS de\n"
+            . 'INNER JOIN 202_clicks AS 2c ON (2c.click_id = de.click_id AND 2c.click_time = de.click_time'
+            . " AND 2c.user_id = de.user_id)\n"
+            . self::CAMPAIGN_JOIN . "\n"
+            . 'WHERE (' . $whereClause . ') AND NOT ' . LatestVisit::isLatest('2c');
+    }
+
+    /**
+     * Rolling one click up, step => statement in the order they run: its
+     * latest visit's row, then the removal of its earlier visits' rows. A
+     * caller stops at the step that fails, so a failed rollup removes no
+     * row it has not replaced.
+     *
+     * @return array<string, string>
+     */
+    public static function forClick(string $table, int $clickId): array
+    {
+        $where = '2c.click_id=' . $clickId;
+
+        return [
+            'rollup' => self::insertSelect($table, $where),
+            'removal of the earlier visits\' rows' => self::deleteEarlierVisits($table, $where),
+        ];
+    }
+
+    /**
+     * forClick() run on $conn, stopping at the first step that fails.
+     *
+     * @throws QueryException naming the step that failed
+     */
+    public static function rollUpClick(Connection $conn, int $clickId, string $table = '202_dataengine'): void
+    {
+        foreach (self::forClick($table, $clickId) as $step => $sql) {
+            try {
+                $conn->executeUpdate($conn->prepareWrite($sql));
+            } catch (RuntimeException $e) {
+                throw new QueryException(
+                    'the ' . $step . ' of click ' . $clickId . ' in ' . $table . ' failed: ' . $e->getMessage(),
+                    (int) $e->getCode(),
+                    $e
+                );
+            }
+        }
     }
 
     /**

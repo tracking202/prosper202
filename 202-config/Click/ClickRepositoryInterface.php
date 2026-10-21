@@ -25,7 +25,11 @@ interface ClickRepositoryInterface
      * A redirector re-click (rtr.php?lpr=) of a click already recorded: a
      * second 202_clicks row at the new time, the columns the redirector sets
      * rewritten and every other column kept, and the click marked for the
-     * attribution rollup, together or not at all. The click must be one of
+     * attribution rollup, together or not at all. The new row takes the
+     * first visit's traffic source, cost and filtered and bot flags, not the
+     * record's, and the click's lead and value when it is a lead (no lead and
+     * the record's payout when it is not); the click keeps its keyword and the
+     * c1-c4 the record does not bring (an id of 0). The click must be one of
      * the record's account's (\LogicException otherwise).
      *
      * @param \Closure(): int $redirectSiteUrlId as for recordClick()

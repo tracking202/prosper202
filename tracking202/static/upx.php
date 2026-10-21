@@ -56,51 +56,8 @@ if(!$mysql['click_id']){
 // integer click_id for safe SQL interpolation
 $clickId = (int) $mysql['click_id'];
 
-//get c1-c4 values etc
-$cvar_sql ="
-SELECT 
-	2cid.click_id,
-	2c.user_id,
-	2c.aff_campaign_id,
-	2c.click_payout,
-	2c.click_cpc,
-	2c.click_lead,
-	2c.click_time,
-	2c1.c1,
-	2c2.c2,
-	2c3.c3,
-	2c4.c4,
-	2kw.keyword,
-	2g.gclid,
-	2us.utm_source,
-	2um.utm_medium,
-	2uca.utm_campaign,
-	2ut.utm_term,
-	2uco.utm_content,
-	2trc.click_cpa,
-    2su.site_url_address
-FROM `202_clicks_tracking` AS 2cid
-LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`)
-LEFT JOIN `202_google` AS 2g USING (`click_id`)
-LEFT JOIN `202_clicks` AS 2c USING (`click_id`)
-LEFT JOIN `202_tracking_c1` AS 2c1 USING (`c1_id`)
-LEFT JOIN `202_tracking_c2` AS 2c2 USING (`c2_id`)
-LEFT JOIN `202_tracking_c3` AS 2c3 USING (`c3_id`)
-LEFT JOIN `202_tracking_c4` AS 2c4 USING (`c4_id`)
-LEFT JOIN `202_utm_source` AS 2us USING (`utm_source_id`)
-LEFT JOIN `202_utm_medium` AS 2um USING (`utm_medium_id`)
-LEFT JOIN `202_utm_campaign` AS 2uca USING (`utm_campaign_id`)
-LEFT JOIN `202_utm_term` AS 2ut USING (`utm_term_id`)
-LEFT JOIN `202_utm_content` AS 2uco USING (`utm_content_id`)
-LEFT JOIN `202_keywords` AS 2kw ON (2ca.`keyword_id` = 2kw.`keyword_id`)
-LEFT JOIN `202_cpa_trackers` AS 2cpa USING (`click_id`)
-LEFT JOIN `202_trackers` AS 2trc
-    ON (2cpa.`tracker_id_public` = 2trc.`tracker_id_public` AND 2trc.`user_id` = 2c.`user_id`)
-LEFT JOIN `202_clicks_site` AS 2cs ON (2c.click_id=2cs.click_id)
-LEFT JOIN `202_site_urls` AS 2su ON (2cs.click_referer_site_url_id=2su.site_url_id)
-WHERE 2c.`click_id` = {$clickId}
-LIMIT 1";
-
+// The click's latest visit, which the conversion credits (p202PostbackClickSql()).
+$cvar_sql = p202PostbackClickSql($clickId);
 $cvar_sql_result = $db->query($cvar_sql);
 if ($cvar_sql_result === false) {
     record_mysql_error($db, $cvar_sql);
@@ -109,6 +66,14 @@ $cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
+// The traffic source and cost, whose pixels announce it: the first visit's
+// (p202ClickSourceSql()).
+$source_sql = p202ClickSourceSql($clickId);
+$source_result = $db->query($source_sql);
+if ($source_result === false) {
+    record_mysql_error($db, $source_sql);
+}
+$source_row = p202FetchRow($source_result, $source_sql);
 // The privacy setting in force for this visitor: the stricter of the
 // install's and this click's account's (p202ApplyOwnerPrivacy()), before
 // the conversion stores the address.
@@ -127,10 +92,11 @@ $mysql['utm_content'] = $db->real_escape_string((string) ($cvar_sql_row['utm_con
 $mysql['click_user_id'] = $db->real_escape_string((string) ($cvar_sql_row['user_id'] ?? ''));
 $mysql['campaign_id'] = $db->real_escape_string((string) ($cvar_sql_row['aff_campaign_id'] ?? ''));
 $mysql['payout'] = $db->real_escape_string((string) ($cvar_sql_row['click_payout'] ?? '0'));
-$mysql['cpc'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpc'] ?? '0'));
+$mysql['cpc'] = $db->real_escape_string((string) ($source_row['click_cpc'] ?? '0'));
 $mysql['click_cpa'] = $db->real_escape_string((string) ($cvar_sql_row['click_cpa'] ?? ''));
 $mysql['click_lead'] = $db->real_escape_string((string) ($cvar_sql_row['click_lead'] ?? '0'));
 $mysql['click_time'] = $db->real_escape_string((string) ($cvar_sql_row['click_time'] ?? '0'));
+$mysql['ppc_account_id'] = $db->real_escape_string((string) ($source_row['ppc_account_id'] ?? ''));
 $mysql['referer'] = urlencode((string) $db->real_escape_string((string) ($cvar_sql_row['site_url_address'] ?? '')));
 
 if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -159,17 +125,6 @@ $tokens = [
 	"random" => mt_rand(1000000, 9999999),
     "referer" => $mysql['referer']
 ];
-
-$account_id_sql="SELECT 202_clicks.ppc_account_id
-				 FROM 202_clicks
-				 WHERE click_id={$clickId}";
-
-$account_id_result = $db->query($account_id_sql);
-if ($account_id_result === false) {
-    record_mysql_error($db, $account_id_sql);
-}
-$account_id_row = p202FetchRow($account_id_result, $account_id_sql);
-$mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id'] ?? '');
 
 if (is_numeric($mysql['click_id'])) {
 
