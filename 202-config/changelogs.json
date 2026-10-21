@@ -19,7 +19,7 @@
       "Fixed: A redirector re-click lost the click's customer, text ad and first values",
       "Fixed: A sign-in the database could not record ended on a blank page, and a right password could be logged as a failed sign-in",
       "Fixed: The legacy reports API (v1 and v2) answered 500 for several reports and filters, and ignored a c1 to c4 filter of 0",
-      "Fixed: The Tracking202 API key page checks the key you type before saving it, and says the key could not be checked, rather than not valid, when Tracking202 does not answer",
+      "Fixed: The Customer API key on Personal Settings is checked with Tracking202 before it is saved, and the page says the key could not be checked, rather than not valid, when Tracking202 does not answer",
       "Fixed: The cron job reports its own database failures, and an hourly or daily job that fails part way is tried again at the next run instead of the next day. A brief database error no longer sends every signed-in page to the upgrade page",
       "Fixed: Bulk upsert (API and CLI) says which rows were stored when the database rolls a batch back, marks the rows to send again, and a retry under the same Idempotency-Key no longer stores a batch twice",
       "Fixed: Turning AutoCron on in Settings was refused on every install because opening a page counted as your cron job. It works now, and when the AutoCron service refuses a local or private address, Settings says to use a cron job",
