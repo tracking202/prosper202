@@ -36,7 +36,16 @@ class User
         $db = self::$db;
         $mysql['user_id'] = $db->real_escape_string((string) $user_id);
         $sql = "SELECT user_id FROM 202_users WHERE user_id = '" . $mysql['user_id'] . "'";
-        $results = $db->query($sql);
+        try {
+            $results = $db->query($sql);
+        } catch (\mysqli_sql_exception $e) {
+            // The same answer under a report mode that throws (connect.php's
+            // STRICT alone answers false), as is_installed() gives.
+            if ((int) $e->getCode() !== 1146) {
+                throw $e;
+            }
+            return;
+        }
         if ($results === false) {
             if ($db->errno !== 1146) {
                 throw self::queryFailed($db);

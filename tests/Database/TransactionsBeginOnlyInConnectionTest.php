@@ -169,7 +169,10 @@ final class TransactionsBeginOnlyInConnectionTest extends TestCase
     /** @return iterable<string, array{string}> */
     public static function notBoundaries(): iterable
     {
-        yield 'Connection' => ['$conn->transaction(fn () => 1); $conn->joinTransaction($f); $conn->inTransaction();'];
+        yield 'Connection' => [
+            '$conn->transaction(fn () => 1); $conn->joinTransaction($f); $conn->inTransaction();'
+                . ' $conn->withSavepoint($f); $conn->isRollbackOnly();',
+        ];
         yield 'a declaration' => ['final class F { public function commit(): bool { return true; } }'];
         yield 'a property' => ['$x = $db->autocommit;'];
         yield 'an array key' => ['$a = [\'commit\' => $sha, "rollback" => 1];'];

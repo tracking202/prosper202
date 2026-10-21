@@ -1502,6 +1502,41 @@ never run it. The ladder's error log carries only what a step could not do
 nothing), and a ladder change runs the script locally before it is pushed
 (see the development notes for PHP 7.4 here).
 
+### 34. A lock error ends the transaction, not the statement
+Bulk-upsert wrote up to 100 rows in one `transaction()` and caught each row's
+throwable inside the callback, answered it as that row's error, and went on.
+A deadlock is not a row's: the server rolls the whole transaction back, so
+the rows before it were answered `created` with nothing stored, and the
+statements after it on the handle ran outside any transaction and committed
+one by one (measured on MariaDB 10.11). A catch inside a transaction that
+carries on has to know the transaction is still there: undo the one step
+with `Connection::withSavepoint()`, and pass a lock error up to whatever
+owns the transaction (a ROLLBACK TO that fails leaves it rollback-only, and
+Connection refuses to commit it). `CatchInsideTransactionPassesItOnTest`
+refuses a catch written in a `transaction()`/`joinTransaction()` callback
+that neither rethrows nor ends the request, unless it catches only types a
+database failure never is. It reads the callback's own text: a catch in a
+function the callback calls, or one that rethrows only part of what it
+caught, is not seen.
+
+The retry needed the same care. A deadlock is safe to run again at once; a
+lock wait timeout means another writer held the lock for the whole timeout
+(50 seconds by default), and three more attempts made one request wait
+about 200 seconds, past any proxy. And what a retry decides by has to be a
+fact the server set: `isMysqlError()` matched the errno tag anywhere in the
+message and the English words anywhere too, so `Duplicate entry 'Deadlock
+found'` read as a deadlock. An errno, where an exception carries one (a
+`mysqli_sql_exception`'s code, the ` [errno N]` Connection puts last), is
+the whole answer; words are read only from an exception that carries
+neither.
+
+A failure after part of a batch committed is #13 at the scale of a request:
+the bulk-upsert answered 500, which left its `Idempotency-Key` unspent, and
+the same rows sent again under it stored the committed hundred twice. Once
+anything may stand, every row is answered and the answer kept under the
+key; a commit the server did not confirm is `unconfirmed`, never
+`retryable`.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

@@ -6025,43 +6025,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6106,43 +6070,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6187,43 +6115,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6268,43 +6160,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6349,43 +6205,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6430,43 +6250,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6511,43 +6295,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6592,43 +6340,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -10390,6 +10102,75 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    # ── Bulk upsert ────────────────────────────────────────────────────
+
+    BulkUpsertResult:
+      type: object
+      properties:
+        data:
+          type: array
+          description: One answer per row, in the order the rows were sent
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+                description: The row's position in the rows sent
+              status:
+                type: string
+                enum: [created, updated, skipped, error]
+              message:
+                type: string
+                description: Why the row was skipped, or not stored
+              field_errors:
+                type: object
+                description: On a refused row, what each refused field was refused for
+                additionalProperties:
+                  type: string
+              retryable:
+                type: boolean
+                description: >-
+                  Present, and true, only on an `error` row nothing of which was stored for a
+                  reason that is not the row's own. The rows are written up to 100 at a time in
+                  one transaction. A deadlock with another write rolls the hundred back, and it
+                  is run again up to three times before every row of it is answered this way.
+                  A lock wait timeout is answered this way at once, as is a database failure
+                  after an earlier hundred was stored, and the rows after either are not
+                  attempted (answered this way too). Send such a row again under a new
+                  Idempotency-Key, since this one replays this answer.
+              unconfirmed:
+                type: boolean
+                description: >-
+                  Present, and true, only on an `error` row written in a hundred the database
+                  did not confirm was stored or rolled back (a commit or rollback that failed):
+                  it may or may not be stored, and the rows after it are not attempted. A row of
+                  that hundred that was skipped or refused keeps its own answer. Look it up
+                  before sending it again, since a create stored already would be stored twice.
+              data:
+                type: object
+                description: On a `created` or `updated` row, the record as stored
+                additionalProperties: true
+        summary:
+          type: object
+          properties:
+            created:
+              type: integer
+            updated:
+              type: integer
+            skipped:
+              type: integer
+            error:
+              type: integer
+            retryable:
+              type: integer
+              description: How many of the `error` rows are `retryable`
+            unconfirmed:
+              type: integer
+              description: How many of the `error` rows are `unconfirmed`
+        idempotent_replay:
+          type: boolean
+          description: True when this is the answer recorded for this Idempotency-Key, and nothing was written
+
     # ── Setup ──────────────────────────────────────────────────────────
 
     LandingPageCode:

@@ -281,6 +281,8 @@ abstract class TestCase extends BaseTestCase
         $db->method('begin_transaction')->willReturn(true);
         $db->method('commit')->willReturn(true);
         $db->method('rollback')->willReturn(true);
+        $db->method('savepoint')->willReturn(true);
+        $db->method('release_savepoint')->willReturn(true);
         $db->method('real_escape_string')->willReturnCallback(
             function (string $str) {
                 return addslashes($str);
