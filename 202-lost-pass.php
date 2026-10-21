@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !$error) {
 				$header .= "Reply-To: " . $from . " \r\n";
 			}
 		} else {
-			prosper_log('lost-pass', 'No tracking domain is set (Account > Settings), so the reset email names the page instead of linking to it.');
+			prosper_log('lost-pass', 'No tracking domain is set (My Account > Settings), so the reset email names the page instead of linking to it.');
 			$subject = "[Prosper202] Password Reset";
 			$message = "
 <p>Someone has asked to reset the password for the following username on your Prosper202.</p>

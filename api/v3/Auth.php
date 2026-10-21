@@ -76,7 +76,7 @@ final readonly class Auth
         // Only 1 is active: the column is int(1) NOT NULL DEFAULT 1, and the
         // sign-in asks for `user_active = 1`, so anything else is refused.
         if ((string) ($row['user_active'] ?? '') !== '1') {
-            throw new AuthException('The account this API key belongs to is deactivated; an Admin can turn it back on in Account › Users.', 401);
+            throw new AuthException('The account this API key belongs to is deactivated; an Admin can turn it back on in My Account › User Management.', 401);
         }
 
         $scopes = self::parseScopes((string)($row['scope'] ?? ''));

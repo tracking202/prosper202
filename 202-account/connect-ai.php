@@ -156,7 +156,8 @@ if ($userObj->hasPermission('access_to_personal_settings')) { ?>
             <?php } ?>
         </fieldset>
         <p class="small text-secondary">
-            This creates an API key for you, shown in Account › API keys. Remove it there to disconnect;
+            This creates an API key for you, shown in
+            My Account › Personal Settings › API keys. Remove it there to disconnect;
             connecting the app again creates another.
         </p>
         <div class="d-flex gap-2">
