@@ -24,11 +24,11 @@ final class ClickServerAuthAnswerTest extends TestCase
     }
 
     /** @return mixed what clickserver_auth_answer() returns, run in a child process */
-    private static function answer(?string $body): mixed
+    private static function answer(?string $body, int $status = 200): mixed
     {
         $code = 'require ' . var_export(self::root() . '/vendor/autoload.php', true) . ';'
             . ' require ' . var_export(self::root() . '/202-config/functions-tracking202.php', true) . ';'
-            . ' echo json_encode(clickserver_auth_answer(' . var_export($body, true) . '));';
+            . ' echo json_encode(clickserver_auth_answer(' . var_export($body, true) . ', ' . $status . '));';
         $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
         return json_decode(trim((string)$out), true, 2, JSON_THROW_ON_ERROR);
     }
@@ -42,6 +42,56 @@ final class ClickServerAuthAnswerTest extends TestCase
         foreach ([null, '', '<html>Bad gateway</html>', '{}', '{"isValidKey":"true"}', '[]', 'null'] as $none) {
             self::assertNull(self::answer($none), var_export($none, true));
         }
+    }
+
+    /** A rejected key reads invalid in any shape; a valid verdict needs a 2xx answer. */
+    public function testARejectedKeyIsInvalidWhateverElseTheAnswerSays(): void
+    {
+        foreach (
+            [
+                ['{"isValidKey":false}', 200],
+                ['{"isValidKey":"false","error":"unknown key"}', 401],
+                ['{"isValidKey":false,"isValidDomain":true}', 403],
+                ['{"isValidKey":0}', 200],
+            ] as [$body, $status]
+        ) {
+            self::assertFalse(self::answer($body, $status), "$status $body");
+        }
+        foreach ([500, 503, 401, 302] as $status) {
+            self::assertNull(self::answer('{"isValidKey":true,"isValidDomain":true}', $status), (string) $status);
+        }
+        self::assertNull(self::answer('{"error":"unknown key"}', 401), 'an error with no verdict is no answer');
+    }
+
+    /** A verdict the service does not send is no answer, not "invalid", on a 2xx too. */
+    public function testAVerdictTheServiceDoesNotSendIsNoAnswer(): void
+    {
+        foreach (
+            [
+                '{"isValidKey":"yes","isValidDomain":"true"}',
+                '{"isValidKey":null,"isValidDomain":"true"}',
+                '{"isValidKey":"true","isValidDomain":"yes"}',
+                '{"isValidKey":"true","isValidDomain":null}',
+                '{"isValidKey":"TRUE","isValidDomain":"true"}',
+                '{"isValidKey":1,"isValidDomain":1}',
+                '{"isValidKey":[],"isValidDomain":"true"}',
+            ] as $body
+        ) {
+            self::assertNull(self::answer($body, 200), $body);
+        }
+        self::assertFalse(self::answer('{"isValidKey":"true","isValidDomain":0}', 200));
+        self::assertFalse(self::answer('{"isValidKey":true,"isValidDomain":false}', 204));
+    }
+
+    /** No caller may read an answer without its status. */
+    public function testTheStatusMustBeGiven(): void
+    {
+        $code = 'require ' . var_export(self::root() . '/vendor/autoload.php', true) . ';'
+            . ' require ' . var_export(self::root() . '/202-config/functions-tracking202.php', true) . ';'
+            . ' try { clickserver_auth_answer(\'{"isValidKey":"true","isValidDomain":"true"}\'); echo "read"; }'
+            . ' catch (ArgumentCountError) { echo "refused"; }';
+        $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        self::assertSame('refused', trim((string) $out));
     }
 
     public function testTheFormsSayWhenAKeyCouldNotBeChecked(): void
@@ -100,7 +150,8 @@ final class ClickServerAuthAnswerTest extends TestCase
                 'curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);',
                 'curl_setopt($ch, CURLOPT_TIMEOUT, 10);',
                 "'https://my.tracking202.com/api/v1/auth/?' . http_build_query([",
-                'return clickserver_auth_answer(is_string($result) ? $result : null);',
+                '$status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);',
+                'return clickserver_auth_answer(is_string($result) ? $result : null, $status);',
             ] as $line
         ) {
             self::assertStringContainsString($line, $m[1]);

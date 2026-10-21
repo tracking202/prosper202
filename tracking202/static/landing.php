@@ -69,17 +69,19 @@ $t202ClientParamMap = [
 // Resolve custom variables server-side to eliminate an extra HTTP round-trip.
 // Try t202id first; fall back to lpip → tracker lookup for pages without t202id.
 $t202CustomVars = [];
-$t202id = $_GET['t202id'] ?? '';
-$lpip = $_GET['lpip'] ?? '';
-$t202TrackerId = \Prosper202\Click\PublicId::parse($t202id);
-$t202LandingPageId = \Prosper202\Click\PublicId::parse($lpip);
+// Named is any t202id sent, a list included, as record_adv.php reads it: a
+// list names a tracker no id can be read from. Ids are read only from a
+// string.
+$t202Named = ($_GET['t202id'] ?? '') !== '';
+$t202TrackerId = \Prosper202\Click\PublicId::parse(\Prosper202\Click\ClickRequest::string($_GET, 't202id'));
+$t202LandingPageId = \Prosper202\Click\PublicId::parse(\Prosper202\Click\ClickRequest::string($_GET, 'lpip'));
 try {
     $t202Reads = \Prosper202\Repository\LookupRepositoryFactory::liveReads($db);
     // The traffic source's variables: the named tracker's (on a named page,
     // only when it is the page's account's), or for a page reached without
     // one, a tracker of the page's campaign of the page's account. Each
     // source only when it is the tracker's account's.
-    if ($t202id !== '') {
+    if ($t202Named) {
         if ($t202TrackerId === null) {
             $cv_row = null;
         } elseif ($t202LandingPageId !== null) {
@@ -118,7 +120,7 @@ if ($t202LandingPageId !== null) {
         if ($identityRow !== null) {
             // A t202id that does not parse still named a tracker.
             $p202CampaignCapture = (int) $identityRow['landing_page_type'] === 1
-                ? \Prosper202\Identity\RequestSignals::trackerAllows($t202id !== '', $identityRow)
+                ? \Prosper202\Identity\RequestSignals::trackerAllows($t202Named, $identityRow)
                 : \Prosper202\Identity\RequestSignals::campaignAllows($identityRow['lp_setting'] ?? '0');
         }
     } catch (\Throwable $identityError) {
@@ -129,12 +131,27 @@ if ($t202LandingPageId !== null) {
 }
 
 $baseUrl = $strProtocol . '://' . getTrackingDomain() . get_absolute_url();
-$lpip_js = json_encode((string) ($_GET['lpip'] ?? ''));
 // p202_beacon=0: a page that only reports events (a thank-you page on the
 // same site as the landing page) loads the script without recording its own
 // view as a click, so p202.track() ties its events to the visitor's landing
 // page click rather than to a new one.
 $p202SendsBeacon = (string) ($_GET['p202_beacon'] ?? '1') !== '0';
+
+// Every value the script is given, encoded before any of it is sent. Text
+// that is not UTF-8 (a query string, a User-Agent, a stored name) is
+// substituted: a failed encode printed nothing, and `var lpip = ;` stopped
+// the whole script. Any other failure throws here, a 500, not half a script.
+$p202Js = static fn (mixed $value, bool $unescapedUnicode = false): string => json_encode(
+    $value,
+    ($unescapedUnicode ? JSON_UNESCAPED_UNICODE : 0) | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
+);
+$lpip_js = $p202Js(\Prosper202\Click\ClickRequest::string($_GET, 'lpip'));
+$p202TrackerHostJs = $p202Js((string) parse_url($baseUrl, PHP_URL_HOST));
+$p202CampaignCaptureJs = $p202Js($p202CampaignCapture);
+$p202CustomVarsJs = $p202Js($t202CustomVars);
+$p202BeaconFinishedJs = $p202Js(!$p202SendsBeacon);
+$p202ServerDataJs = $p202Js($t202ServerData, true);
+$p202ClientParamMapJs = $p202Js($t202ClientParamMap);
 ?>
 
 (function() {
@@ -203,10 +220,10 @@ var utm_campaign = t202GetVar('utm_campaign');
 // URL — deletes the id and tells the tracker to capture nothing.
 var P202_LPID_KEY = 'p202lpid';
 var P202_CONSENT_KEY = 'p202_consent';
-var p202TrackerHost = <?php echo json_encode((string) parse_url($baseUrl, PHP_URL_HOST)); ?>;
+var p202TrackerHost = <?php echo $p202TrackerHostJs; ?>;
 // Off when this page's campaign has identity capture off: no id is read,
 // minted or sent, and links into the tracker are left alone.
-var p202CampaignCapture = <?php echo json_encode($p202CampaignCapture); ?>;
+var p202CampaignCapture = <?php echo $p202CampaignCaptureJs; ?>;
 
 function p202Store(op, key, value) {
 	try {
@@ -296,7 +313,7 @@ function p202SendBeacon() {
 	var language = (navigator.language || '').substring(0, 2);
 
 	// Custom variables resolved server-side — no extra HTTP request needed
-	var customVarNames = <?php echo json_encode($t202CustomVars); ?>;
+	var customVarNames = <?php echo $p202CustomVarsJs; ?>;
 	var customVarValues = [];
 	for (var i = 0; i < customVarNames.length; i++) {
 		customVarValues.push(t202GetVar(customVarNames[i]));
@@ -387,7 +404,7 @@ function p202SendBeacon() {
 // page is stored and reported, never paid. Returns a Promise of the event
 // id ('' when nothing was sent); never throws.
 var p202EventUrl = "<?php echo $baseUrl; ?>tracking202/static/event.php";
-var p202BeaconFinished = <?php echo json_encode(!$p202SendsBeacon); ?>;
+var p202BeaconFinished = <?php echo $p202BeaconFinishedJs; ?>;
 var p202EventQueue = [];
 function p202BeaconDone() {
 	if (p202BeaconFinished) { return; }
@@ -466,8 +483,8 @@ if (document.readyState === 'loading') {
 // --- Dynamic content replacement ---
 (function() {
 	// Build data object: server-side geo/UA + client-side URL params (read once above)
-	var t202DataObj = <?php echo json_encode($t202ServerData, JSON_UNESCAPED_UNICODE); ?>;
-	var clientParamMap = <?php echo json_encode($t202ClientParamMap); ?>;
+	var t202DataObj = <?php echo $p202ServerDataJs; ?>;
+	var clientParamMap = <?php echo $p202ClientParamMapJs; ?>;
 	var clientValues = {t202kw: t202kw, c1: c1, c2: c2, c3: c3, c4: c4, utm_source: utm_source, utm_medium: utm_medium, utm_term: utm_term, utm_content: utm_content, utm_campaign: utm_campaign};
 	for (var urlParam in clientParamMap) {
 		if (clientParamMap.hasOwnProperty(urlParam)) {

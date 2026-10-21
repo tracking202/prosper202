@@ -22,6 +22,25 @@ function p202OnTheClickPath(): bool
 }
 
 /**
+ * Mark the current response uncacheable. Every tracking-redirect response
+ * must send this BEFORE its Location header: a 302 stored by any browser or
+ * intermediary cache can be replayed without reaching the server, so the
+ * repeat click goes uncounted and the stale subid baked into the cached
+ * Location misattributes any later conversion to the wrong click. A click
+ * script's answer with no Location (a 404) sends it too: a stored one keeps
+ * answering after the link starts to work. Here rather than in connect2.php
+ * so a script can answer before the bootstrap loads.
+ */
+function p202NoStore(): void
+{
+    if (!headers_sent()) {
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
+}
+
+/**
  * Keep a value in memcache; 30 days unless told otherwise. Held while
  * p202WithHeldCacheWrites() runs its work.
  */

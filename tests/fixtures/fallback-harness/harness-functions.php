@@ -25,7 +25,7 @@ function setCache($key, $value, $exp = null)
 function getCache(string $key, $default = false)
 {
     global $memcache, $p202Harness;
-    if (str_starts_with($key, 'p202-row-')) {
+    if (str_starts_with($key, 'p202-row2-')) {
         return json_encode(['row' => $p202Harness['row']], JSON_THROW_ON_ERROR);
     }
 
