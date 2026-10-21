@@ -729,6 +729,16 @@ called `getConnectionro()` itself; the replica is now read only through
 `ConnectionFactory::readConnectionOf()`, and the test refuses a call or a
 callable naming the method anywhere else.
 
+A message rendered where the page does not land is not said. Settings'
+forms post back to `administration.php#section`; the flashes rendered at the
+top of the page and the browser scrolled to the section, so the AutoCron
+refusal sat 650px above a 1280x800 screen (1,700px on a phone) and an owner
+refused three times saw nothing. `p202-ui.js` now moves
+`[data-p202-flashes]` into the panel the fragment names. The browser pass
+measures it at two sizes that scroll: at the harness's 1280x1000 the page
+does not, and the old placement passed there. A check of where something
+shows needs a viewport where it could fail to.
+
 ### 20. A checker only sees the syntax it follows
 
 The upgrade-ladder guard walked tokens for `T_IF` `(` … `)` `{`, so `elseif`,
@@ -1198,6 +1208,17 @@ another account's offer URL (found by review, measured on the old code).
 quoted value anywhere in the served tree (the setup pages and the WordPress
 plugin's calls had six more: `12abc` opened, rewrote or made a page on record
 12), and `ClickPathReads` answers nothing for an id below 1 without asking.
+
+A stamp every caller writes is read as proof of one of them. Each tier of
+`202-cronjobs/index.php` stamped `202_cronjob_logs`, and every signed-in
+page's footer pings that file as it loads, so "the cron job last ran" meant
+"anyone ran it": Settings refused AutoCron as unneeded because of the ping its
+own page had just sent, on installs with no cron job at all, and the tile,
+`health.php`, `GET /system/info` and `p202 system cron` reported a cron job
+that did not exist. The ping is marked (`Prosper202\Cron\CronRun`), the one
+write is a scheduler's, and `PagePingIsNotACronRunTest` lists every file that
+names the table with what it reads. When a record answers "did X happen",
+list who else writes it.
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took

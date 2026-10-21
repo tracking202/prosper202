@@ -130,7 +130,7 @@ final class StoredTrackingDomainReadTest extends TestCase
         $source = (string) file_get_contents(SourceScan::repoRoot() . '/202-config/functions-tracking202.php');
         $found = preg_match('/^function p202CronBeaconStatement\(\): string\n\{\n.*?^\}\n/ms', $source, $m);
         self::assertSame(1, $found);
-        $code = <<<'PHP'
+        $code = 'require ' . var_export(SourceScan::repoRoot() . '/vendor/autoload.php', true) . ';' . <<<'PHP'
             function get_absolute_url() { return '/p202/'; }
             function getTrackingDomain(): string {
                 if ($GLOBALS['fail']) {
@@ -152,7 +152,7 @@ final class StoredTrackingDomainReadTest extends TestCase
         proc_close($process);
         $seen = json_decode($out, true);
         self::assertIsArray($seen, "answered: $out $err");
-        self::assertSame('navigator.sendBeacon("//track.example.com/p202/202-cronjobs/");', $seen[0]);
+        self::assertSame('navigator.sendBeacon("//track.example.com/p202/202-cronjobs/?page_ping=1");', $seen[0]);
         self::assertStringStartsWith('/* the cron ping was skipped', $seen[1]);
         self::assertStringNotContainsString('sendBeacon', $seen[1]);
     }

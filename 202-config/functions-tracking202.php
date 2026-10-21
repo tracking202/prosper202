@@ -174,7 +174,9 @@ function p202DashEmailJson(): string
 /**
  * The statement in every signed-in page's footer script (template.php) that
  * has the user's own browser ping this install's cron endpoint:
- * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/");`.
+ * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/?page_ping=1");`.
+ * The query marks the run as a page's, which does the cron's work and is not
+ * recorded as the cron job's last run (Prosper202\Cron\CronRun).
  *
  * The ping is optional and the page above it has rendered, so a tracking
  * domain that cannot be read -- getTrackingDomain() throws rather than guess
@@ -184,7 +186,8 @@ function p202DashEmailJson(): string
 function p202CronBeaconStatement(): string
 {
     try {
-        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/';
+        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/?'
+            . \Prosper202\Cron\CronRun::pagePingQuery();
         $flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
             | JSON_THROW_ON_ERROR;
 

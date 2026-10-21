@@ -145,6 +145,14 @@ my.tracking202.com).
 by `$mchost` answers. `dataengine.minutes_left` counts one task a minute, as
 the page does. `keyword_preference` is the caller's.
 
+`cron_last_ran_at` is the last run a scheduler started: a cron job's or
+AutoCron's, as Settings' "Cron job last ran" tile reads it. Every signed-in
+page pings the cron as it loads, and from 1.9.78 that run does the cron's
+work without being counted, so an install with neither a cron job nor
+AutoCron answers `null`, or an old time, however busy its pages are.
+`GET /system/cron`'s `recent_logs` are the same record; its `jobs` are the
+tiers that ran, whoever started them.
+
 ### Sign-in log
 
 `GET /system/login-log?limit=50&status=not_completed`

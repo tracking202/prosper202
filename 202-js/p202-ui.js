@@ -24,6 +24,10 @@
  *   table[data-p202-sort]         a sortable table (p202_data_table()), wired
  *                                 to tablesort.js; the header says the order
  *                                 in aria-sort after every sort
+ *   [data-p202-flashes]           a page's messages (p202_account_render_flashes()),
+ *                                 moved into the panel the URL's fragment
+ *                                 names, so a form that posts back to its
+ *                                 own section shows what it said there
  *
  * The v2 shell loads this deferred, after tablesort.js, so it runs once the
  * document is parsed; init() still waits for DOMContentLoaded when it has not
@@ -324,10 +328,46 @@
         });
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function () { init(); });
-    } else {
+    /* A form that posts back to "page.php#section" lands on that section, and
+       the messages render at the top of the page, which the browser has
+       scrolled past: Settings' AutoCron answer sat 650px above the viewport
+       at 1280px, and an owner saw none. They are moved to the top of the
+       panel's body, and the panel is scrolled to again, since moving them
+       shifts it. A fragment that names no panel, or one not on screen,
+       leaves them where they are. */
+    function placeFlashes() {
+        var flashes = document.querySelector('[data-p202-flashes]');
+        var id = window.location.hash.slice(1);
+        if (!flashes || id === '') {
+            return;
+        }
+        var panel = null;
+        try {
+            panel = document.getElementById(decodeURIComponent(id));
+        } catch (error) {
+            return;
+        }
+        if (!panel || !panel.classList.contains('p202-panel') || panel.contains(flashes)
+            || panel.getClientRects().length === 0) {
+            return;
+        }
+        var body = panel.querySelector(':scope > .p202-panel__body');
+        if (!body) {
+            return;
+        }
+        body.insertBefore(flashes, body.firstChild);
+        panel.scrollIntoView();
+    }
+
+    function start() {
+        placeFlashes();
         init();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
     }
 
     window.p202ui = { init: init, initHints: initBootstrapHints, copyText: copyText };

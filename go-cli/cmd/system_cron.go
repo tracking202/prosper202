@@ -171,6 +171,7 @@ func summarizeCron(jobs, logs []map[string]interface{}, now time.Time) cronSumma
 	if !found {
 		sum.Status = cronStatusNeverRan
 		sum.Warnings = append(sum.Warnings, "cron has never run: 202_cronjob_logs records no execution")
+		sum.Notes = append(sum.Notes, pagePingNote(byType, 0, now)...)
 		return sum
 	}
 	when, age := rfc3339(last), now.Sub(time.Unix(last, 0))
@@ -180,8 +181,26 @@ func summarizeCron(jobs, logs []map[string]interface{}, now time.Time) cronSumma
 	if age > cronStaleAfter {
 		sum.Status = cronStatusStale
 		sum.Warnings = append(sum.Warnings, fmt.Sprintf("cron is not ticking: the last execution was %s ago (%s); it runs every minute when scheduled", ageStr, cronTime(last)))
+		sum.Notes = append(sum.Notes, pagePingNote(byType, last, now)...)
 	}
 	return sum
+}
+
+// pagePingNote explains a per-minute tier that ran after the last recorded
+// execution. From Prosper202 1.9.78 an execution is a scheduler's run (a cron
+// job or AutoCron): the ping every signed-in page sends as it loads runs the
+// tiers and records none, so a recent 'secon' row with no execution behind it
+// is that ping's work, and the cron is still not scheduled.
+func pagePingNote(byType map[string]*cronTypeSummary, lastExecution int64, now time.Time) []string {
+	minute := byType["secon"]
+	if minute == nil || minute.LastRunUnix == nil || *minute.LastRunUnix <= lastExecution {
+		return nil
+	}
+	age := now.Sub(time.Unix(*minute.LastRunUnix, 0))
+	if age < 0 || age > cronStaleAfter {
+		return nil
+	}
+	return []string{fmt.Sprintf("the per-minute tier ran %s ago with no execution recorded: a signed-in page's ping runs the tiers as it loads, and from Prosper202 1.9.78 that is not recorded as a cron run, so the work stops when nobody has a page open. Schedule 202-cronjobs/index.php every minute, or turn AutoCron on in Account › Settings.", formatAge(age))}
 }
 
 // cronProblemError is the exit-5 finding for a stale or never-run cron.

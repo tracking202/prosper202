@@ -68,6 +68,8 @@ function getDatabaseConnection(): mysqli
         throw new Exception("Database connection failed");
     }
 
+    $startedAt = time();
+
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
             RunDailyCronjob();
@@ -77,6 +79,19 @@ function getDatabaseConnection(): mysqli
     } else {
         AutoOptimizeDatabase();
         ClearOldClicks();
+    }
+
+    // The cron job's last run, which Account › Settings, health.php, the
+    // /system routes and `p202 system cron` read: a scheduler's run that held
+    // the lock and got through its tiers (a tier statement that fails throws past this),
+    // due or not, stamped with the time it started. A signed-in page's ping
+    // runs the same work and is not recorded (CronRun).
+    if (\Prosper202\Cron\CronRun::isScheduled(PHP_SAPI, $_GET)) {
+        cronQuery(
+            $db,
+            'REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ' . $startedAt . ')',
+            'the record of this run'
+        );
     }
 
     // Remove lock file on successful completion
@@ -181,9 +196,6 @@ function RunDailyCronjob()
         $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
         cronQuery($db, $delete_sql, 'the daily clear of old cron records');
 
-        // Log the execution
-        $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-        cronQuery($db, $log_sql, 'the daily tier\'s execution log');
         cronQuery($db, $insert_sql, 'the daily tier\'s record of today\'s run');
 
         echo 'Done';
@@ -254,9 +266,6 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
-        // Log the execution
-        $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-        cronQuery($db, $log_sql, 'the hourly tier\'s execution log');
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
         echo 'Done<br>';
@@ -476,10 +485,6 @@ function RunSecondsCronjob()
                     . p202FailedQueryMessage($db->errno, $db->error) . ' | ' . p202RedactedStatement($update_sql));
             }
         }
-
-        // Log the execution
-        $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-        cronQuery($db, $log_sql, 'the minute tier\'s execution log');
 
         // Process DataEngine tasks: two jobs, so the one that fails does not
         // keep the other from running.
