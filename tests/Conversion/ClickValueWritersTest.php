@@ -18,6 +18,11 @@ use PHPUnit\Framework\TestCase;
  * DUPLICATE KEY UPDATE) whose SET clause assigns either column, outside the
  * one file allowed to.
  *
+ * It reads UPDATEs only. A re-click's INSERT (MysqlClickRepository::
+ * leadValue()) copies onto the new visit's row the lead and value the
+ * recompute last wrote on the click's rows, under the click's lock; it
+ * computes neither.
+ *
  * How it reads SQL, and what it therefore cannot see: the SQL is rebuilt
  * from the file's string literals in token order, with every non-string
  * token between two literals read as a placeholder. So a statement split

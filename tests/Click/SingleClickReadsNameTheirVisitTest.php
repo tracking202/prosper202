@@ -52,8 +52,8 @@ use Tests\Support\SourceScan;
  * What it does not read: a restriction appended in another statement
  * (`$sql .= ' AND c.click_id = ?'`) or handed to a builder. When this was
  * written nine SQL fragments carried one: ClickRollupSql::insertSelect()'s
- * re-derivation of one click (three callers; it writes a report row per
- * visit, keyed by click_id and click_time), the reports' subid filter
+ * re-derivation of one click (three callers; it writes the report row of the
+ * click's latest visit and removes its earlier visits' rows), the reports' subid filter
  * (four), and two API list filters on other tables. Nor does it
  * read one row taken in PHP from a statement with no LIMIT 1 and no
  * click_id restriction (a fetchOne() of a join from another table's row),
@@ -122,8 +122,8 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         '202-config/Conversion/RevenueUploadImporter.php::preview' => [1, 'Which ids are the account\'s clicks:'
             . ' click_id under user_id, both of which agree across visits, from an id list read at runtime.'],
         '202-config/Ltv/MysqlRecommendationRepository.php::engagedCampaignInterest' => [1, 'The LIMIT 1 takes the'
-            . ' top campaign of an aggregate over every visit (COUNT and MAX(click_time) per campaign), not a'
-            . ' visit.'],
+            . ' top campaign of an aggregate over each click\'s latest visit (LatestVisit::isLatest() on the'
+            . ' derived table), not a visit.'],
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */

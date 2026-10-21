@@ -88,6 +88,11 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
             'DELETE FROM `…` WHERE click_id IN (…)' => "click-data retention: every click table, for an account's"
                 . ' expired clicks',
         ],
+        '202-config/DataEngine/ClickRollupSql.php' => [
+            'DELETE de FROM … AS de INNER JOIN 202_clicks AS 2c ON' => 'deleteEarlierVisits(): deletes `de` alone, the'
+                . ' rollup table its caller names, at a click\'s earlier visits, which it reads from the joined 202_clicks',
+            '202_clicks' => 'deleteEarlierVisits(), as above: 202_clicks is joined, not written',
+        ],
         '202-config/User/UserDataPurge.php' => [
             '202_clicks' => "deletes a purged account's identity observations, joined to its clicks; no click row",
         ],
@@ -121,7 +126,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
     ];
 
     /** How many rewrites OTHER_REWRITERS holds. Lower it when one goes. */
-    private const REWRITE_CEILING = 21;
+    private const REWRITE_CEILING = 23;
 
     /** An UPDATE's table references, to SET. */
     private const UPDATE = '/\A\s*UPDATE\b(?:\s+(?:LOW_PRIORITY|IGNORE))*\s+(.+?)\s+SET\b/is';

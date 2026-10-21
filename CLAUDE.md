@@ -1444,7 +1444,7 @@ from, find the other half. Rows already stale in an install heal only when
 they are re-rolled; nothing re-rolls them by itself.
 
 ### 32. A shortcut that returns early skips the work the old path did after
-Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
+Every rollup is an `INSERT … SELECT` (`ClickRollupSql`), and
 `DataEngine::doQuery()` returns at once when the query answers `true`. The
 rows were right; but `doSummary()`, the code that return skips, was also
 where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,

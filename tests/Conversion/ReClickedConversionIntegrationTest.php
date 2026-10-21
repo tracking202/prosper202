@@ -296,9 +296,11 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
-     * The lead flag a conversion checks is the latest visit's. A re-click's
-     * row is written as no lead, so a click converted on its first visit
-     * converts once more on the visit the re-click made.
+     * The lead flag a conversion checks is the latest visit's. A re-click
+     * written before 1.9.78 stored its row as no lead, so a click converted
+     * on its first visit converts once more on that visit; a re-click since
+     * carries the click's lead (MysqlClickRepository::leadValue(), held by
+     * ReClickOfAConvertedClickIntegrationTest).
      *
      * @dataProvider storedOrders
      */
