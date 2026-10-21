@@ -156,6 +156,83 @@ func TestSubidFromCampaignNeverGuesses(t *testing.T) {
 	}
 }
 
+// A token-bearing part of one rotated offer URL can fit the fixed part of
+// another: /click/[[subid]] fits /click/555, and ?sid=[[subid]] fits sid=555.
+func TestSubidFromCampaignRefusesWhenRotatedURLsReadARedirectDifferently(t *testing.T) {
+	cases := []struct {
+		name, loc string
+		urls      []offerURL
+	}{
+		{"path token beside a fixed segment", "https://n.example/click/555?c1=98765",
+			offers("https://n.example/click/[[subid]]", "https://n.example/click/555?c1=[[subid]]")},
+		{"query token beside a fixed value", "https://n.example/r?sid=555&c1=98765",
+			offers("https://n.example/r?sid=[[subid]]", "https://n.example/r?sid=555&c1=[[subid]]")},
+		{"mixed, query slot first", "https://n.example/click/555?c1=98765",
+			offers("https://n.example/click/555?c1=[[subid]]", "https://n.example/click/[[subid]]")},
+		{"mixed, path and query token in different slots", "https://n.example/go/555?s=98765",
+			offers("https://n.example/go/[[subid]]?s=[[c1]]", "https://n.example/go/555?s=[[subid]]")},
+	}
+	for _, tc := range cases {
+		m, err := subidFromCampaign(tc.loc, tc.urls)
+		kind, ok := subidKind(err)
+		if !ok || kind != subidAmbiguous {
+			t.Errorf("%s: got (%+v, %v), want an ambiguity refusal", tc.name, m, err)
+			continue
+		}
+		var se *subidError
+		errors.As(err, &se)
+		if len(se.fits) != 2 || !strings.Contains(se.msg, "555") || !strings.Contains(se.msg, "98765") {
+			t.Errorf("%s: refusal %q (fits %v) does not name both slots' readings", tc.name, se.msg, se.fits)
+		}
+	}
+}
+
+func TestSubidFromCampaignHoldsEveryFixedPart(t *testing.T) {
+	cases := []struct {
+		name, loc, id, field string
+		urls                 []offerURL
+	}{
+		{"path slot's own redirect", "https://n.example/click/98765", "98765", "path segment 2",
+			offers("https://n.example/click/[[subid]]", "https://n.example/click/555?c1=[[subid]]")},
+		{"query slot's own redirect", "https://n.example/r?sid=98765", "98765", "sid",
+			offers("https://n.example/r?sid=[[subid]]", "https://n.example/r?sid=555&c1=[[subid]]")},
+		{"mixed: a fixed segment tells the path slot apart", "https://n.example/b?c1=98765", "98765", "c1",
+			offers("https://n.example/a/[[subid]]", "https://n.example/b?c1=[[subid]]")},
+		{"mixed: and the query slot", "https://n.example/a/98765", "98765", "path segment 2",
+			offers("https://n.example/a/[[subid]]", "https://n.example/b?c1=[[subid]]")},
+		{"the tracking link's own fields appended", "https://n.example/r?c1=98765&utm_source=x", "98765", "c1",
+			offers("https://n.example/r?c1=[[subid]]")},
+		{"appended to a URL with no query", "https://n.example/r/98765?utm_source=x", "98765", "path segment 2",
+			offers("https://n.example/r/[[subid]]")},
+		{"the same URL in two slots", "https://n.example/r?c1=98765", "98765", "c1",
+			offers("https://n.example/r?c1=[[subid]]", "https://n.example/r?c1=[[subid]]")},
+		{"text around another token", "https://n.example/r/x-abc-y?c1=98765", "98765", "c1",
+			offers("https://n.example/r/x-[[c2]]-y?c1=[[subid]]", "https://n.example/r/z-[[c2]]?sid=[[subid]]")},
+		// TrafficSourcePixels::replaceTokens' own output: values rawurlencoded,
+		// a blank token emptied, an unknown one left in place.
+		{"the fills replaceTokens makes", "https://n.example/r/x-a%20b%2Fc-y?c1=98765&kw=&z=[[unknown]]", "98765", "c1",
+			offers("https://n.example/r/x-[[c2]]-y?c1=[[SubID]]&kw=[[t202kw]]&z=[[unknown]]")},
+	}
+	for _, tc := range cases {
+		m, err := subidFromCampaign(tc.loc, tc.urls)
+		if err != nil || m.ID != tc.id || m.Field != tc.field {
+			t.Errorf("%s: got (%+v, %v), want %s from %s", tc.name, m, err, tc.id, tc.field)
+		}
+	}
+
+	for _, tc := range []struct{ name, loc, tmpl string }{
+		{"another fixed query value", "https://n.example/r?sid=556&c1=4821", "https://n.example/r?sid=555&c1=[[subid]]"},
+		{"another fixed segment", "https://n.example/click/556?c1=4821", "https://n.example/click/555?c1=[[subid]]"},
+		{"a segment more", "https://n.example/click/4821/x", "https://n.example/click/[[subid]]"},
+		{"other text after the token", "https://n.example/r?sid=4821-xx", "https://n.example/r?sid=[[subid]]-id"},
+		{"a fixed field missing", "https://n.example/r?c1=4821", "https://n.example/r?sid=555&c1=[[subid]]"},
+	} {
+		if kind, ok := subidKind(func() error { _, err := subidFromCampaign(tc.loc, offers(tc.tmpl)); return err }()); !ok || kind != subidMissing {
+			t.Errorf("%s: %q was read as the redirect to %q", tc.name, tc.loc, tc.tmpl)
+		}
+	}
+}
+
 func TestSubidFromNetworkFieldsMustAgree(t *testing.T) {
 	if m, err := subidFromNetworkFields("https://n.example/?s=4821&sub1=4821"); err != nil || m.ID != "4821" || m.Field != "s,sub1" {
 		t.Errorf("agreeing fields: got (%+v, %v)", m, err)
@@ -455,6 +532,33 @@ func TestConversionSimulateUsesOnlySlotOneWithoutRotation(t *testing.T) {
 	}
 	if len(f.postback) != 1 || f.postback[0] != "4821" {
 		t.Fatalf("postback subids %v, want [4821]", f.postback)
+	}
+}
+
+func TestConversionSimulateRefusesARedirectTwoRotatedURLsFit(t *testing.T) {
+	f := &simulateFake{
+		campaign: map[string]interface{}{
+			"aff_campaign_url":    "https://n.example/click/[[subid]]",
+			"aff_campaign_url_2":  "https://n.example/click/555?c1=[[subid]]",
+			"aff_campaign_rotate": 1,
+		},
+		location: "https://n.example/click/555?c1=98765",
+	}
+	f.server(t)
+
+	_, _, err := executeCommand("conversion", "simulate", "--tracker", "7", "--json")
+	if err == nil {
+		t.Fatal("simulate chose between slot 1's 555 and slot 2's 98765")
+	}
+	if len(f.postback) != 0 {
+		t.Errorf("postback fired with %v", f.postback)
+	}
+	if got := api.ErrorCategory(err); got != "validation" || exitCodeForError(err) != ExitValidation {
+		t.Errorf("category %q exit %d, want validation/1", got, exitCodeForError(err))
+	}
+	hint := hintFor(err)
+	if !strings.Contains(hint, "campaign update 3 --aff-campaign-url <url>") || !strings.Contains(hint, "campaign update 3 --aff-campaign-url-2 <url>") {
+		t.Errorf("hint %q does not name both slots' updates", hint)
 	}
 }
 

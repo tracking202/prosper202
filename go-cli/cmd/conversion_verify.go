@@ -39,9 +39,10 @@ var conversionSimulateCmd = &cobra.Command{
 		"validate the loop before pointing a network's postback at this instance.\n\n" +
 		"The subid is read from the field the campaign's offer URL puts [[subid]] in\n" +
 		"(clickref for Awin, aff_sub for TUNE, /pubref: for Partnerize, ...), and an\n" +
-		"offer URL without [[subid]] fails. For a redirector, a landing page, or a\n" +
-		"campaign the key cannot read, the networks' usual SubID fields are read\n" +
-		"instead, and every one that carries an id must carry the same one.",
+		"offer URL without [[subid]] fails, as does a redirect that more than one\n" +
+		"rotated offer URL fits with a different id. For a redirector, a landing\n" +
+		"page, or a campaign the key cannot read, the networks' usual SubID fields\n" +
+		"are read instead, and every one that carries an id must carry the same one.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		trackerID, _ := cmd.Flags().GetString("tracker")
 		if trackerID == "" {
@@ -220,6 +221,12 @@ func subidHint(err error, offers trackerOffers) string {
 		return "Put [[subid]] in the network's SubID field of the offer URL with " + update + "; the fields are listed in " + page + "."
 	case subidAmbiguous:
 		switch {
+		case len(se.fits) > 0:
+			flags := make([]string, 0, len(se.fits))
+			for _, o := range se.fits {
+				flags = append(flags, "`p202 campaign update "+id+" "+o.slotFlag()+" <url>`")
+			}
+			return "The campaign rotates its offer URLs in turn, so running the simulation again may send the click to a URL whose redirect no other URL fits. To settle it for every click, make the URLs differ outside their [[tokens]] (see `p202 campaign get " + id + "`) with " + strings.Join(flags, " or ") + "."
 		case offers.unreadable:
 			return "The campaign URL, which says which field is [[subid]], could not be read; use a key that can read trackers and campaigns."
 		case offers.redirector:
