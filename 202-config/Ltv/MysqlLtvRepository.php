@@ -239,7 +239,7 @@ final class MysqlLtvRepository implements LtvRepositoryInterface
         // first.
         $latest = LatestVisit::isLatest('ck');
         $spendWhere = 'sc.user_id = ? AND '
-            . LatestVisit::isLatest('sc', $query->timeFrom !== null ? max(0, $query->timeFrom) : null);
+            . LatestVisit::isLatest('sc');
         $spendTypes = 'i';
         $spendBinds = [$query->userId];
         if ($query->timeFrom !== null) {

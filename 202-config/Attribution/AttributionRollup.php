@@ -453,8 +453,6 @@ final class AttributionRollup
         // it: a re-click moves it out of the hour of its earlier rows, which
         // the re-click's mark (RollupDirty::click()) sends back to exact.
         $latest = LatestVisit::isLatest('c');
-        // The cost rows are the window's: a later visit is after its start.
-        $latestFrom = LatestVisit::isLatest('c', $from);
         $rows = [];
         foreach (self::DIMENSION_CODES as $dimension => $code) {
             [$key, $joins] = self::keySql($dimension, 'cr.conv_time');
@@ -496,7 +494,7 @@ final class AttributionRollup
                         COUNT(*) AS n, SUM(c.click_cpc) AS cost
                  FROM 202_clicks c
                  $joins
-                 WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0 AND {$latestFrom}
+                 WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0 AND {$latest}
                  GROUP BY b, k"
             );
             $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);

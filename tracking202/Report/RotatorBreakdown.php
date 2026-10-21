@@ -88,7 +88,7 @@ final class RotatorBreakdown
             . ' INNER JOIN 202_clicks_rotator AS cr ON cr.click_id = c.click_id'
             . ' INNER JOIN 202_rotators AS ro ON ro.id = cr.rotator_id AND ro.user_id = c.user_id'
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
-            . ' AND ' . LatestVisit::isLatest('c', max(0, $from))
+            . ' AND ' . LatestVisit::isLatest('c')
             . UserPrefFilters::showFilter($show, 'c.')
             . ' GROUP BY cr.rotator_id, cr.rule_id'
         );

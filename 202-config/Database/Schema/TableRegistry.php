@@ -53,6 +53,7 @@ final class TableRegistry
     public const string CLICKS_VARIABLE = '202_clicks_variable';
     public const string CLICKS_ROTATOR = '202_clicks_rotator';
     public const string CLICKS_TOTAL = '202_clicks_total';
+    public const string CLICK_LATEST_VISITS = '202_click_latest_visits';
 
     // Tracking tables
     public const string TRACKING_C1 = '202_tracking_c1';

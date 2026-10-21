@@ -157,7 +157,7 @@ final class MysqlEngagementRepository
              JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
              LEFT JOIN 202_landing_pages lp ON lp.landing_page_id = c.landing_page_id AND lp.user_id = c.user_id
-             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c', $since) . '
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c') . '
              GROUP BY c.aff_campaign_id, ac.aff_campaign_name, lp.landing_page_nickname
              ORDER BY last_seen DESC
              LIMIT ?'
@@ -201,7 +201,7 @@ final class MysqlEngagementRepository
                  JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = cu2.user_id AND c.click_time >= ?
                  LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                  WHERE cu2.user_id = ? AND cu2.company IS NOT NULL AND cu2.company <> ''
-                   AND cu2.merged_into_customer_id IS NULL AND " . LatestVisit::isLatest('c', $since) . "
+                   AND cu2.merged_into_customer_id IS NULL AND " . LatestVisit::isLatest('c') . "
                  GROUP BY cu2.company
              ) eng ON eng.company = cu.company
              LEFT JOIN (
@@ -405,7 +405,7 @@ final class MysqlEngagementRepository
             'SELECT COUNT(*) AS clicks, MAX(c.click_time) AS last_click
              FROM 202_clicks_tracking ct
              JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
-             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c', $since)
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c')
         );
         $this->conn->bind($clickStmt, 'iii', [$userId, $customerId, $since]);
         $clicks = $this->conn->fetchOne($clickStmt) ?? [];
@@ -457,7 +457,7 @@ final class MysqlEngagementRepository
                  SELECT ct.customer_id, COUNT(*) AS clicks, MAX(c.click_time) AS last_click
                  FROM 202_clicks_tracking ct
                  JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ? AND c.click_time >= ?
-                 WHERE " . LatestVisit::isLatest('c', $since) . "
+                 WHERE " . LatestVisit::isLatest('c') . "
                  GROUP BY ct.customer_id
              ) eng ON eng.customer_id = cu.customer_id
              LEFT JOIN (

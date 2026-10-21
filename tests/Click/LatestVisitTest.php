@@ -71,11 +71,11 @@ final class LatestVisitTest extends TestCase
         LatestVisit::isLatest('LV_later');
     }
 
-    public function testIsLatestComparesTheRowWithItsClicksOtherVisits(): void
+    public function testIsLatestComparesTheRowWithItsClicksRecordedLatestVisit(): void
     {
         self::assertSame(
-            'NOT EXISTS (SELECT 1 FROM 202_clicks AS lv_later WHERE lv_later.click_id = 2c.click_id'
-                . ' AND lv_later.click_time > 2c.click_time)',
+            'NOT EXISTS (SELECT 1 FROM 202_click_latest_visits AS lv_later'
+                . ' WHERE lv_later.click_id = 2c.click_id AND lv_later.click_time > 2c.click_time)',
             LatestVisit::isLatest('2c')
         );
     }

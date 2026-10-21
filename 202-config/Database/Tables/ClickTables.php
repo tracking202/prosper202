@@ -30,6 +30,7 @@ final class ClickTables
             self::clicksVariable(),
             self::clicksRotator(),
             self::clicksTotal(),
+            self::clickLatestVisits(),
         ];
     }
 
@@ -212,6 +213,24 @@ final class ClickTables
                 `rotator_id` bigint(20) unsigned NOT NULL,
                 `rule_id` bigint(20) unsigned NOT NULL,
                 `rule_redirect_id` bigint(20) unsigned NOT NULL,
+                PRIMARY KEY (`click_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+        );
+    }
+
+    /**
+     * A re-clicked click's latest visit time (LatestVisit::isLatest()): one
+     * row per click with more than one 202_clicks row, kept by the re-click
+     * in its transaction. click_id is 202_clicks.click_id's type: a narrower
+     * key clamps large ids into one row under the app's empty sql_mode.
+     */
+    public static function clickLatestVisits(): SchemaDefinition
+    {
+        return SchemaBuilder::fromRawSql(
+            TableRegistry::CLICK_LATEST_VISITS,
+            "CREATE TABLE IF NOT EXISTS `" . TableRegistry::CLICK_LATEST_VISITS . "` (
+                `click_id` bigint(20) unsigned NOT NULL,
+                `click_time` int(10) unsigned NOT NULL,
                 PRIMARY KEY (`click_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );

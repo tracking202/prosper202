@@ -280,7 +280,7 @@ function reportQuery(
 
     // A click re-clicked through the redirector is one click, its latest
     // visit's: the groups listed and the figures counted read that row.
-    $latest = " AND " . \Prosper202\Click\LatestVisit::isLatest('2c', max(0, $mysql['date_from']));
+    $latest = " AND " . \Prosper202\Click\LatestVisit::isLatest('2c');
     $report_sql .= " WHERE 2c.user_id='" . $mysql['user_id'] . "'"
         . " AND click_time > " . $mysql['date_from'] . " AND click_time < " . $mysql['date_to'] . $latest;
 
