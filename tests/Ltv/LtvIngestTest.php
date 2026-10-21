@@ -30,6 +30,7 @@ final class LtvIngestTest extends TestCase
     {
         return [
             'click_id' => 10,
+            'user_id' => 7,
             'aff_campaign_id' => 44,
             'click_payout' => 2.75,
             'click_time' => 1700000000,

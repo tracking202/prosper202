@@ -108,7 +108,7 @@ final class RequestParamZeroTest extends TestCase
     {
         $db = new FakeMysqliConnection();
         $click = [[
-            'click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => '5.00000',
+            'click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => '5.00000',
             'click_time' => 1700000000, 'click_lead' => 0,
         ]];
         // The click's lock, and its latest visit read after it.

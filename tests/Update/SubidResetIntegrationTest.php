@@ -93,7 +93,8 @@ final class SubidResetIntegrationTest extends TestCase
         self::assertSame($first, $rows[0]['click_time'], 'at the time of its first visit, where the report hours to rebuild begin');
 
         self::assertSame(2, $batch->reset(self::USER, self::$network, self::$campaign), 'two clicks cleared');
-        self::assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE deleted = 0 AND user_id = ' . self::USER)->fetch_row()[0], 'and their sales are gone');
+        self::assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE deleted = 0 AND click_id IN ('
+            . self::CLICK . ', ' . self::OTHER_CLICK . ')')->fetch_row()[0], 'and their sales are gone');
     }
 
     /**
