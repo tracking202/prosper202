@@ -33,8 +33,16 @@ class SystemController
 
     public function version(): array
     {
+        // A version that cannot be read is a 500, not 'unknown': that is what
+        // an install without a version row answers.
         $result = $this->db->query("SELECT version FROM 202_version LIMIT 1");
-        $row = $result ? $result->fetch_assoc() : null;
+        if ($result === false) {
+            throw new DatabaseException('Version query failed [errno ' . $this->db->errno . ']');
+        }
+        $row = $result->fetch_assoc();
+        if ($row === false) {
+            throw new DatabaseException('Version fetch failed');
+        }
 
         return [
             'data' => [
@@ -98,7 +106,13 @@ class SystemController
             FROM information_schema.TABLES
             WHERE table_schema = DATABASE()"
         );
-        $sizeRow = $result ? $result->fetch_assoc() : ['size' => 0];
+        if ($result === false) {
+            throw new DatabaseException('Database size query failed [errno ' . $this->db->errno . ']');
+        }
+        $sizeRow = $result->fetch_assoc();
+        if (!is_array($sizeRow)) {
+            throw new DatabaseException('Database size fetch failed');
+        }
 
         return [
             'data' => [
@@ -111,22 +125,26 @@ class SystemController
 
     public function cronStatus(): array
     {
+        // A read that fails is a 500: answered as no jobs, `p202 system cron`
+        // would report cron as never having run.
         $result = $this->db->query('SELECT cronjob_type, cronjob_time FROM 202_cronjobs ORDER BY cronjob_type');
+        if ($result === false) {
+            throw new DatabaseException('Cron jobs query failed [errno ' . $this->db->errno . ']');
+        }
         $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['last_run_human'] = date('Y-m-d H:i:s', (int)$row['cronjob_time']);
-                $jobs[] = $row;
-            }
+        while ($row = $result->fetch_assoc()) {
+            $row['last_run_human'] = date('Y-m-d H:i:s', (int)$row['cronjob_time']);
+            $jobs[] = $row;
         }
 
         $result = $this->db->query('SELECT id, last_execution_time FROM 202_cronjob_logs ORDER BY id DESC LIMIT 20');
+        if ($result === false) {
+            throw new DatabaseException('Cron log query failed [errno ' . $this->db->errno . ']');
+        }
         $logs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['time_human'] = date('Y-m-d H:i:s', (int)$row['last_execution_time']);
-                $logs[] = $row;
-            }
+        while ($row = $result->fetch_assoc()) {
+            $row['time_human'] = date('Y-m-d H:i:s', (int)$row['last_execution_time']);
+            $logs[] = $row;
         }
 
         return ['data' => ['jobs' => $jobs, 'recent_logs' => $logs]];
@@ -159,24 +177,32 @@ class SystemController
     public function dataengineStatus(): array
     {
         $result = $this->db->query('SELECT time_from, time_to, processing, processed FROM 202_dataengine_job ORDER BY time_from DESC LIMIT 20');
+        if ($result === false) {
+            throw new DatabaseException('Data engine jobs query failed [errno ' . $this->db->errno . ']');
+        }
         $jobs = [];
-        if ($result) {
-            while ($row = $result->fetch_assoc()) {
-                $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
-                $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
-                if ((int)$row['processed'] === 1) {
-                    $row['status'] = 'completed';
-                } elseif ((int)$row['processing'] === 1) {
-                    $row['status'] = 'processing';
-                } else {
-                    $row['status'] = 'pending';
-                }
-                $jobs[] = $row;
+        while ($row = $result->fetch_assoc()) {
+            $row['time_from_human'] = date('Y-m-d H:i:s', (int)$row['time_from']);
+            $row['time_to_human'] = date('Y-m-d H:i:s', (int)$row['time_to']);
+            if ((int)$row['processed'] === 1) {
+                $row['status'] = 'completed';
+            } elseif ((int)$row['processing'] === 1) {
+                $row['status'] = 'processing';
+            } else {
+                $row['status'] = 'pending';
             }
+            $jobs[] = $row;
         }
 
+        // Not 0 when unread: 0 pending hours reads as reports up to date.
         $result = $this->db->query('SELECT COUNT(*) as cnt FROM 202_dirty_hours WHERE processed = 0');
-        $dirtyRow = $result ? $result->fetch_assoc() : ['cnt' => 0];
+        if ($result === false) {
+            throw new DatabaseException('Dirty hours query failed [errno ' . $this->db->errno . ']');
+        }
+        $dirtyRow = $result->fetch_assoc();
+        if (!is_array($dirtyRow)) {
+            throw new DatabaseException('Dirty hours fetch failed');
+        }
 
         return [
             'data' => [

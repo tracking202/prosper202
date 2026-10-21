@@ -97,6 +97,21 @@ whenever the assignment did: the first draft took the first appearance in
 source order, so a test inside one branch of an `if`, or in an `elseif`,
 vouched for the other branch's use of the false (found by review).
 
+`$db->query()` is the same false under another name, and the check read
+only `_mysqli_query()`: 116 more results in 41 files went untested. Among
+them `PROSPER202::prosper202_version()` answered `'1.0.2'` for any failed
+read of `202_version`, not only a missing table, so one database error sent
+every page to the upgrade, and inside the ladder would have started it again
+from its first rung; and the redirector's rule save skipped its rule writes
+when the rotator's `UPDATE` failed and then died on a TypeError. The check
+reads every `->query(` from its receiver now (`$db`, `$this->db`, `$db?->`;
+any other receiver is reported), less a class's own `query()`. A fold still
+asks who is on the other end: on the click path the visitor goes on (a
+session that refuses its `sql_mode` reads as an outage, and a failed rollup
+of a click already recorded is logged), and a write that has landed is not
+answered as failed (#13). The v3 API answered every 500 with nothing logged
+at all; it writes `p202UncaughtLogLine()` now.
+
 The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
 logged and answered false, the click path's showed the error page and died
 — and of `record_mysql_error()`, the cached reads, `setCache()` and five

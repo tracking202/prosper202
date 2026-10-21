@@ -173,15 +173,21 @@ function wpCreateLp($db, $user): array {
 
         $landing_page_id_public = random_int(1,9) . $insert_id . random_int(1,9);
         $landing_page_sql = "UPDATE `202_landing_pages` SET `landing_page_id_public`='".$landing_page_id_public."' WHERE `landing_page_id`='".$insert_id."'";
-        // The failure is read before markDirty() asks the connection again.
-        $failed = $db->query($landing_page_sql) === false ? legacy_api_database_error($db) : null;
+        try {
+            // The error is read from the connection before the finally's
+            // markDirty() asks the connection again.
+            if ($db->query($landing_page_sql) === false) {
+                return legacy_api_database_error($db);
+            }
+        } finally {
+            // Landing Page Optimizer (segments-v2 G10): WP-plugin LP creates
+            // change the synced snapshot like the setup pages — flag this
+            // user's snapshot dirty for the hourly push, the page having been
+            // inserted either way. DB-only, never fatal.
+            \Prosper202\Lpo\DimensionSync::markDirty($db, (int) $user);
+        }
 
-        // Landing Page Optimizer (segments-v2 G10): WP-plugin LP creates
-        // change the synced snapshot like the setup pages — flag this
-        // user's snapshot dirty for the hourly push. DB-only, never fatal.
-        \Prosper202\Lpo\DimensionSync::markDirty($db, (int) $user);
-
-        return $failed ?? ['error' => '0', 'lp_pid' => $landing_page_id_public];
+        return ['error' => '0', 'lp_pid' => $landing_page_id_public];
     } else {
         return ['error' => true];
     }

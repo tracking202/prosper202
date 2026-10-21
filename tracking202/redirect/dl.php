@@ -551,17 +551,18 @@ $click_time = mktime(12, 0, 0, (int)$today_month, (int)$today_day, (int)$today_y
 $mysql['click_time'] = $db->real_escape_string((string)$click_time);
 
 
-if ($mysql['click_cpa'] != NULL) {
-	$insert_sql = "INSERT INTO 202_cpa_trackers
-                                   SET         click_id='" . $mysql['click_id'] . "',
-                                                           tracker_id_public=" . (int) $dlTrackerId;
-	// Post-redirect: the visitor is already gone, so log a failure instead of
-	// dying (which would abandon the remaining bookkeeping below).
-	if ($db->query($insert_sql) === false) {
-		error_log('dl.php: failed to insert cpa_tracker for click ' . $mysql['click_id'] . ': ' . $db->error);
-	}
-}
-
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
+
+// After the rollup, which does not read 202_cpa_trackers: a failure here is
+// the error page, recorded, with the redirect already queued kept and the
+// click's report row already written.
+if ($mysql['click_cpa'] != NULL) {
+    $insert_sql = "INSERT INTO 202_cpa_trackers
+                                   SET         click_id='" . $mysql['click_id'] . "',
+                                                           tracker_id_public=" . (int) $dlTrackerId;
+    if ($db->query($insert_sql) === false) {
+        record_mysql_error($db, $insert_sql);
+    }
+}

@@ -82,8 +82,8 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         // Conversions, pixels and the ledger.
         'tracking202/static/gpb.php::{main}' => [2, self::UNDECIDED . 'the postback\'s traffic source (ppc_account_id:'
             . ' whose pixels fire), and the campaign, payout, CPC, lead flag and click time it records.'],
-        'tracking202/static/gpx.php::{main}' => [2, self::UNDECIDED . 'the pixel\'s campaign, lead flag and click'
-            . ' time, and the payout it records when the pixel names none.'],
+        'tracking202/static/gpx.php::{main}' => [1, self::UNDECIDED . 'the pixel\'s campaign, lead flag and click'
+            . ' time.'],
         'tracking202/static/upx.php::{main}' => [2, self::UNDECIDED . 'as gpb.php: the campaign, payout, CPC, lead'
             . ' flag and click time, and the traffic source whose pixels fire.'],
         '202-config/static-endpoint-helpers.php::p202RecordLegacyConversion' => [1, self::UNDECIDED . 'a px/pb/cb202'
@@ -157,7 +157,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */
-    private const CEILING = 34;
+    private const CEILING = 33;
 
     /**
      * A table reference: after FROM, a JOIN or a comma; its name, and its

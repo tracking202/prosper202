@@ -36,16 +36,14 @@ if (!function_exists('_upgrade_query_run')) {
             $error = '';
 
             try {
-                $result = @$conn->query($sql);
+                $result = $conn->query($sql);
+                if ($result !== false) {
+                    return $result;
+                }
             } catch (\mysqli_sql_exception $e) {
                 // Covers environments that also enable MYSQLI_REPORT_ERROR.
-                $result = false;
                 $errno  = (int) $e->getCode();
                 $error  = $e->getMessage();
-            }
-
-            if ($result !== false) {
-                return $result;
             }
 
             if ($errno === 0) {
@@ -614,12 +612,22 @@ class PROSPER202
         $version_sql = "SELECT version FROM 202_version";
         $version_result = $db->query($version_sql);
 
-        // if the query fails (table doesn't exist), this is an older 1.0.0-1.0.2 release
         if ($version_result === false) {
-            return '1.0.2';
+            // No such table (1146): an older 1.0.0-1.0.2 release. Any other
+            // failure names no version, and read as 1.0.2 it would send the
+            // ladder up from there.
+            if ($db->errno === 1146) {
+                return '1.0.2';
+            }
+            throw new \Prosper202\Database\Exceptions\QueryException(
+                'MySQL query failed: ' . $db->error . ' [errno ' . $db->errno . ']'
+            );
         }
 
         $version_row = $version_result->fetch_assoc();
+        if ($version_row === false) {
+            throw new \Prosper202\Database\Exceptions\QueryException('MySQL fetch failed: ' . $version_sql);
+        }
         $prosper202_version = $version_row['version'] ?? null;
 
         // if there is no mysql version, this is an older 1.0.0-1.0.2 release, just return version 1.0.0 for simplicitly sake

@@ -507,9 +507,17 @@ if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
 if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
+    // Every server version.php accepts has INET6_NTOA: a failure is the
+    // database's, not "no IPv6", which the pages would have read for the
+    // rest of the request.
+    if ($result === false) {
+        p202_cli_fail('the database refused the IPv6 probe: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        record_mysql_error($db, $sql);
+    }
 
-    withWritableSession(static function () use ($result): void {
-        $_SESSION['ipv6'] = $result ? 'ipv6' : '';
+    withWritableSession(static function (): void {
+        $_SESSION['ipv6'] = 'ipv6';
     });
 }
 
@@ -522,25 +530,30 @@ if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {
 }
 
 $user_sql = "SET session sql_mode= ''";
-$user_results = $db->query($user_sql);
+// The pages' SQL is written for the empty sql_mode: under the server's
+// default (strict on MySQL 8) some of their writes are refused or stored
+// differently.
+if ($db->query($user_sql) === false) {
+    p202_cli_fail('the database refused the session\'s sql_mode: '
+        . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    record_mysql_error($db, $user_sql);
+}
 
 function updateBlazerCache(&$mysql, $blazerCacheType = '')
 {
     global $db;
 
-    switch ($blazerCacheType) {
-        case 'ac':
-            $bc_results = ($db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1"));
+    if ($blazerCacheType != 'ac') {
+        return;
+    }
+    $bc_results = $db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1");
+    if ($bc_results === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    }
 
-            while ($bc_row = $bc_results->fetch_assoc()) {
-                $bc_key = "td_" . $bc_row['tracker_id_public'];
-                setCache($bc_key, $mysql['aff_campaign_url']);
-            }
-            break;
-
-        default:
-            # code...
-
-            break;
+    while ($bc_row = $bc_results->fetch_assoc()) {
+        $bc_key = "td_" . $bc_row['tracker_id_public'];
+        setCache($bc_key, $mysql['aff_campaign_url']);
     }
 }

@@ -102,7 +102,10 @@ WHERE 2c.`click_id` = {$clickId}
 LIMIT 1";
 
 $cvar_sql_result = $db->query($cvar_sql);
-$cvar_sql_row = $cvar_sql_result ? $cvar_sql_result->fetch_assoc() : null;
+if ($cvar_sql_result === false) {
+    record_mysql_error($db, $cvar_sql);
+}
+$cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
     p202RespondJsonError(404, 'Click data not found');
 }
@@ -162,7 +165,10 @@ $account_id_sql="SELECT 202_clicks.ppc_account_id
 				 WHERE click_id={$clickId}";
 
 $account_id_result = $db->query($account_id_sql);
-$account_id_row = $account_id_result ? $account_id_result->fetch_assoc() : null;
+if ($account_id_result === false) {
+    record_mysql_error($db, $account_id_sql);
+}
+$account_id_row = p202FetchRow($account_id_result, $account_id_sql);
 $mysql['ppc_account_id'] = $db->real_escape_string($account_id_row['ppc_account_id'] ?? '');
 
 if (is_numeric($mysql['click_id'])) {
