@@ -8,6 +8,7 @@
       "Changed: The sign-in log shows whether each attempt passed, failed or did not complete (also GET /system/login-log and p202 system login-log)",
       "Changed: Get Links refuses a cloaking setting other than the three it offers",
       "Fixed: Security. This release fixes security problems on tracking links, landing pages, redirectors and the account pages. Update as soon as you can, then check Account, User Management for users you do not recognise",
+      "Fixed: A new install stopped on step 2, \"Get your license key\", with a server error, so the key had to be entered by hand. The page now opens on a new install, before Prosper202 has created its database tables. On an install that is already set up, a license key sent back to that page is no longer repeated in the address of the sign-in page it moves you on to",
       "Fixed: When the database refused a change or a read failed, several pages said the change was saved, showed an empty value (a cron job that never ran, no DNI networks, no ClickServer key) or stopped on a PHP error. They now say the save failed or show the database error page, and the error is recorded",
       "Fixed: Direct links filled the offer URL's tokens ([[c1]] to [[c4]], [[t202kw]], [[gclid]], the UTM tokens and others) with nothing, and [[cpc]], [[payout]] and [[cpa]] wrongly. They carry the click's values again",
       "Fixed: A redirector rule that sends visitors to a campaign with URL rotation always sent its first URL",

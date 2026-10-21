@@ -136,10 +136,17 @@ function grab_timeframe($unused = null): array
  * hosted service call it with the hash that authenticates the cron
  * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
  * answered `http://attacker.example/`.
+ *
+ * Before the installer has made an account there is no owner and nothing
+ * stored (its key step, get_apikey.php, runs before any table exists), so
+ * the base is the server's own name. is_installed() decides, not the read's
+ * error: once an account exists, a failed read still throws.
  */
 function p202TrackingBaseUrl(): string
 {
-    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
+    $stored = is_installed() ? p202StoredTrackingDomain(1) : '';
+
+    return \Prosper202\Click\TrackingBaseUrl::build($stored, $_SERVER, dirname(__DIR__));
 }
 
 /**
