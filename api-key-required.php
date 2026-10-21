@@ -5,16 +5,20 @@ include_once(__DIR__ . '/202-config/functions-tracking202.php');
 require_once __DIR__ . '/202-config/functions-account-ui.php';
 
 // Check if API key already exists in database
-$existing_key_check = $db->query("SELECT p202_customer_api_key FROM 202_users WHERE user_id='1' AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''");
+$existing_key_sql = "SELECT p202_customer_api_key FROM 202_users WHERE user_id='1' AND p202_customer_api_key IS NOT NULL AND p202_customer_api_key != ''";
+$existing_key_check = $db->query($existing_key_sql);
+if ($existing_key_check === false) {
+    record_mysql_error($db, $existing_key_sql);
+}
 $has_existing_key = false;
 $existing_api_key = '';
-if ($existing_key_check && $existing_key_check->num_rows > 0) {
-	$existing_key = $existing_key_check->fetch_assoc();
-	if (!empty($existing_key['p202_customer_api_key'])) {
-		$has_existing_key = true;
-		$existing_api_key = $existing_key['p202_customer_api_key'];
+$existing_key = p202FetchRow($existing_key_check, $existing_key_sql);
+if ($existing_key !== null) {
+    if (!empty($existing_key['p202_customer_api_key'])) {
+        $has_existing_key = true;
+        $existing_api_key = $existing_key['p202_customer_api_key'];
 
-	}
+    }
 }
 
 // Process API key submission
@@ -45,20 +49,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['api_key'])) {
 			// Always update user_id=1 as that's what AUTH checks
 			$mysql['user_id'] = '1';
 
-			// Check if user exists
-			$user_check = $db->query("SELECT user_id FROM 202_users WHERE user_id='1'");
-			if ($user_check && $user_check->num_rows > 0) {
-				if ($db->query("UPDATE 202_users SET p202_customer_api_key = '".$mysql['p202_customer_api_key']."' WHERE user_id = '".$mysql['user_id']."'") === false) {
-					// A failed save is said, not shown as a success (error pattern #1).
-					$error = 'The key is valid, but it could not be saved. Please try again.';
-				} else {
-					$success = true;
-					// Set session variable to indicate valid key
-					$_SESSION['valid_key'] = true;
-				}
-			} else {
-				$error = 'No user found. Please complete the installation process first.';
-			}
+            // Check if user exists
+            $user_check_sql = "SELECT user_id FROM 202_users WHERE user_id='1'";
+            $user_check = $db->query($user_check_sql);
+            if ($user_check === false) {
+                record_mysql_error($db, $user_check_sql);
+            }
+            if ($user_check->num_rows > 0) {
+                $key_update_sql = "UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+                // A failed save is said beside the form and logged, never shown
+                // as a success (error pattern #1).
+                if ($db->query($key_update_sql) === false) {
+                    p202LogFailedQuery($db, $key_update_sql, ['file' => __FILE__, 'line' => __LINE__]);
+                    $error = 'The key is valid, but it could not be saved. Please try again.';
+                } else {
+                    $success = true;
+                    // Set session variable to indicate valid key
+                    $_SESSION['valid_key'] = true;
+                }
+            } else {
+                $error = 'No user found. Please complete the installation process first.';
+            }
 		} else {
 			$error = $validation_result === false ? P202_ACCOUNT_KEY_UNCHECKED : 'Invalid API key; check it and retry.';
 		}

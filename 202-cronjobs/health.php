@@ -36,13 +36,19 @@ try {
     // Get last cron execution time
     $log_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
     $log_result = $db->query($log_sql);
+    // A read that failed is an error (the catch below), not "never run".
+    if ($log_result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
     
     $lastRun = null;
     $timeSinceLastRun = null;
     $status = 'unknown';
     
-    if ($log_result && $log_result->num_rows > 0) {
-        $log_row = $log_result->fetch_assoc();
+    $log_row = p202FetchRow($log_result, $log_sql);
+    if ($log_row !== null) {
         $lastRun = (int)$log_row['last_execution_time'];
         $timeSinceLastRun = time() - $lastRun;
         
@@ -61,6 +67,11 @@ try {
     // Get DataEngine job status
     $de_sql = "SELECT COUNT(*) as total, SUM(processed) as done FROM 202_dataengine_job";
     $de_result = $db->query($de_sql);
+    if ($de_result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
     
     $dataEngineStatus = [
         'total' => 0,
@@ -69,8 +80,8 @@ try {
         'percentage' => 0
     ];
     
-    if ($de_result && $de_result->num_rows > 0) {
-        $de_row = $de_result->fetch_assoc();
+    $de_row = p202FetchRow($de_result, $de_sql);
+    if ($de_row !== null) {
         $dataEngineStatus['total'] = (int)($de_row['total'] ?? 0);
         $dataEngineStatus['processed'] = (int)($de_row['done'] ?? 0);
         $dataEngineStatus['pending'] = $dataEngineStatus['total'] - $dataEngineStatus['processed'];

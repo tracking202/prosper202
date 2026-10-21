@@ -87,7 +87,8 @@ try {
     if (!$result) {
         throw new Exception('Failed to check existing events: ' . $db->error);
     }
-    $existing = (int)$result->fetch_assoc()['c'];
+    // A failed fetch read as 0 would seed a second copy of every event.
+    $existing = (int) (p202FetchRow($result, 'SELECT COUNT(*) AS c FROM `202_forecast_events`')['c'] ?? 0);
     if ($existing > 0) {
         echo "Table already contains {$existing} events — skipping seed data.\n";
         $dml = [];
@@ -107,7 +108,10 @@ try {
     // Verify table creation
     echo "\nVerifying table creation...\n";
     $result = $db->query("SHOW TABLES LIKE '202_forecast_events'");
-    if ($result && $result->num_rows > 0) {
+    if ($result === false) {
+        throw new Exception('Failed to verify the table: ' . p202FailedQueryMessage($db->errno, $db->error));
+    }
+    if ($result->num_rows > 0) {
         echo "  ✓ 202_forecast_events\n";
     } else {
         echo "  ✗ 202_forecast_events - NOT FOUND\n";
@@ -116,8 +120,11 @@ try {
     // Show seed data summary
     echo "\nChecking seeded events...\n";
     $result = $db->query("SELECT event_name, COUNT(*) as occurrences FROM 202_forecast_events GROUP BY event_name ORDER BY event_name");
+    if ($result === false) {
+        throw new Exception('Failed to read the seeded events: ' . p202FailedQueryMessage($db->errno, $db->error));
+    }
 
-    if ($result && $result->num_rows > 0) {
+    if ($result->num_rows > 0) {
         echo "Seeded events:\n";
         while ($row = $result->fetch_assoc()) {
             echo "  {$row['event_name']}: {$row['occurrences']} occurrence(s)\n";

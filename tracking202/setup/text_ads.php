@@ -206,11 +206,13 @@ if (isset($_GET['delete_text_ad_id'])) {
 								`text_ad_time`='".$mysql['text_ad_time']."'
 						WHERE   `user_id`='".$mysql['user_id']."'
 						AND     `text_ad_id`='".$mysql['text_ad_id']."'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_sql)) {
-			$delete_success = true;
-			if($slack)
-				$slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
-		}
+        if ($db->query($delete_sql)) {
+            $delete_success = true;
+            if($slack)
+                $slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
+        } else {
+            record_mysql_error($delete_sql);
+        }
 	} else {
 		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');
 	}

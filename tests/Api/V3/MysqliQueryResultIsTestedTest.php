@@ -9,14 +9,26 @@ use Tests\Support\SourceScan;
 use Tests\TestCase;
 
 /**
- * What `_mysqli_query()` answers is tested for false before it is used.
+ * What `_mysqli_query()` and mysqli's `->query()` answer is tested for false
+ * before it is used.
  *
- * It answers false for a statement the server refused (logged by
- * p202LogFailedQuery()), and false read as a result is the silent case
- * CLAUDE.md #1 names: `->num_rows` on it is an \Error naming nothing about
- * the database, a `fetch_assoc()` loop is "no rows", and a write whose
- * answer is never read reports success over nothing. A call standing alone
- * is MysqliQueryResultIsNotDiscardedTest's; this reads every other call.
+ * Each answers false for a statement the server refused (`_mysqli_query()`
+ * logs it by p202LogFailedQuery(); under connect.php's and connect2.php's
+ * report mode, MYSQLI_REPORT_STRICT alone, `->query()` raises nothing, and
+ * where the mode throws, as the v3 API's does, the test costs nothing and
+ * holds if the mode changes), and false read as
+ * a result is the silent case CLAUDE.md #1 names: `->num_rows` on it is an
+ * \Error naming nothing about the database, a `fetch_assoc()` loop is "no
+ * rows", and a write whose answer is never read reports success over
+ * nothing. A `_mysqli_query()` standing alone is
+ * MysqliQueryResultIsNotDiscardedTest's; this reads every other call, and
+ * every `->query()`, alone or not.
+ *
+ * A `->query()` call is read from its receiver: `$db->query(...)`,
+ * `$this->db->query(...)`, `$db?->query(...)`. A receiver the scan does not
+ * read (a call's answer, an element, a static property, a property two
+ * deep) is reported. `$this->query()` in a class that declares its own
+ * `query()` is that method, not mysqli's, and is not read.
  *
  * A call is tested when, read from the tokens, the branch its failure
  * takes refuses:
@@ -26,6 +38,11 @@ use Tests\TestCase;
  *    `_mysqli_query($sql) === false`) and its branch refuses, or tests it
  *    for success (`_mysqli_query($sql)`, `$r = _mysqli_query($sql)`) and an
  *    `else` refuses;
+ *  - or it begins a statement whose `or` ends the request
+ *    (`$r = _mysqli_query($sql) or record_mysql_error($sql);`, `... or
+ *    die();`, `... or throw ...`): `or` binds looser than `=`, so the
+ *    result is assigned and then refused on false (`||` binds tighter and
+ *    would assign the bool, which is reported);
  *  - or it is assigned, `$r = _mysqli_query(...);` as a statement of its
  *    own, and the first appearance of `$r` after it, in the same function,
  *    is the whole condition of an `if` testing it for failure (`!$r`,
@@ -137,6 +154,107 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . ' does, or the page would tell a stranger the account exists. Without the install\'s address the'
             . ' email carries the key and the page, with no link (PasswordResetLink).',
         ],
+        'tracking202/ajax/generate_tracking_link.php::' => [
+            1,
+            'The names a Slack notice of an edit gives, read after the edit committed: a failed read is logged,'
+            . ' that notice is not sent, and the answer says so in a warning above the saved link. The edit has'
+            . ' landed, and Get Links shows the error page as a failed request (CLAUDE.md #13).',
+        ],
+        '202-config/Database/PartitionInstaller.php::executePartitionSql' => [
+            1,
+            'Partitioning is a performance step: a table whose partition statement fails is logged and works'
+            . ' unpartitioned, as on a server without partitioning, and the next table is still partitioned.',
+        ],
+        '202-config/Database/PartitionInstaller.php::disableStrictMode' => [
+            1,
+            'Clearing the session\'s sql_mode for the partitioning: a failure is logged and the partitioning goes'
+            . ' on; a statement that then fails is logged by executePartitionSql(). As'
+            . ' SchemaInstaller::disableStrictMode().',
+        ],
+        '202-config/Database/SchemaVersion.php::mismatch' => [
+            1,
+            'A version that cannot be read is answered as a mismatch naming the failure, never as current'
+            . ' (CLAUDE.md #11): sync-worker.php writes it to stderr and exits 1 before any work.',
+        ],
+        '202-config/functions-upgrade.php::_upgrade_query_run' => [
+            1,
+            'The ladder\'s query runner, as _mysqli_query() is the pages\': it hands a statement\'s answer on (false'
+            . ' for a failure, which the rungs read and an "already applied" step ignores, unlogged since the'
+            . ' ladder\'s log carries only what a step could not do, #33) and stops loudly on a lock that never'
+            . ' clears.',
+        ],
+        '202-config/functions-setup-config.php::p202_setup_config_locked' => [
+            2,
+            'A database that cannot be read answers "locked", the closed answer (CLAUDE.md #11): the configuration'
+            . ' wizard refuses, and editing 202-config.php on the server always works.',
+        ],
+        '202-config/functions.php::is_installed' => [
+            1,
+            'Only a missing 202_users (1146) answers "not installed"; any other failure answers "installed", so the'
+            . ' installer, setup and the key page never run over a database they cannot read, and connect.php goes'
+            . ' on to the version read, which throws.',
+        ],
+        '202-config/functions-shared.php::_mysqli_query' => [
+            1,
+            'The wrapper itself: it logs a failure (p202LogFailedQuery()) and answers the false to its caller,'
+            . ' whose test this check holds.',
+        ],
+        '202-config/requirements.php::' => [
+            1,
+            'The partitioning row is a recommendation on the server check: a check that fails is logged and shown'
+            . ' as "Could not be checked", and the required checks, which do not read the database, still decide'
+            . ' the page.',
+        ],
+        '202-config/User.class.php::__construct' => [
+            1,
+            'Only a missing 202_users (errno 1146) is answered: not installed, as is_installed() reads it, so no'
+            . ' account and no roles; index.php and the setup pages load connect.php before the tables exist. Any'
+            . ' other failure throws.',
+        ],
+        '202-config/sessions.php::write' => [
+            1,
+            'False is PHP\'s save-handler answer for a failed write: PHP warns and the stored session stays as it'
+            . ' was; the failure is logged (p202LogFailedQuery()). A throw runs at shutdown, a fatal after the page.',
+        ],
+        '202-config/sessions.php::gc' => [
+            1,
+            'Cleanup: read() takes no expired row, the next collection deletes them, and the failure is logged. A'
+            . ' throw would end session_start() on a page that had already read its session.',
+        ],
+        'tracking202/redirect/rtr.php::redirect_process' => [
+            1,
+            'The Landing Page Optimizer context token is optional: a failed read of its settings (logged by'
+            . ' _mysqli_query()) leaves the redirect of an already recorded click as it was, as on a pre-upgrade'
+            . ' schema or an unpaired install.',
+        ],
+        '202-cronjobs/index.php::RunSecondsCronjob' => [
+            1,
+            'A stored delayed statement the server refuses is logged (redacted) and dropped: nothing in the tree'
+            . ' queues one any more, the due queue is deleted before it runs so nothing runs twice, and one row'
+            . ' that can never run would otherwise stop the minute tier every minute.',
+        ],
+        '202-cronjobs/index.php::ClearOldClicks' => [
+            1,
+            'The Slack message\'s date for a deletion scheduled by click id: a failed read of the marker click is'
+            . ' logged and the message names the click id instead, which is what the setting held.',
+        ],
+        '202-config/connect2.php::' => [
+            1,
+            'A session that refuses its sql_mode is a connection the click writes cannot use: logged, and read as'
+            . ' no connection, as an outage is (the URL kept for one, or the 503 page), so the visitor goes on'
+            . ' where the link can send them and nothing is written under another mode.',
+        ],
+        'api-key-required.php::' => [
+            1,
+            'The key\'s save: a failure is logged and the page says, above its form, that the valid key could not'
+            . ' be saved and to try again; nothing is marked saved.',
+        ],
+        '202-config/class-dataengine-slim.php::setDirtyHour' => [
+            1,
+            'The click path\'s rollup of a click already recorded: a lock lost to a concurrent rollup is tried'
+            . ' once more, and any other failure is logged and answered false, so the visitor still goes on (the'
+            . ' click is missing from the reports until its hour is rebuilt).',
+        ],
     ];
 
     /**
@@ -157,7 +275,7 @@ final class MysqliQueryResultIsTestedTest extends TestCase
     {
         $found = [];
         foreach (SourceScan::phpFiles() as $path => $source) {
-            if (stripos($source, '_mysqli_query') === false) {
+            if (!self::mayQuery($source)) {
                 continue;
             }
             $folded = [];
@@ -188,7 +306,7 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         $found = self::untested();
 
         $this->assertSame([], $found, sprintf(
-            "These _mysqli_query() results are not tested for false before they are used:\n%s\n"
+            "These _mysqli_query() and ->query() results are not tested for false before they are used:\n%s\n"
             . 'It answers false for a statement the server refused. Assign it and test it in the next'
             . ' condition, refusing there (throw, record_mysql_error(), the page\'s $error[...]);'
             . ' list a fold in FOLDED only when the answer it gives is right.',
@@ -244,7 +362,7 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         $calls = 0;
         $unread = [];
         foreach (SourceScan::phpFiles() as $file => $source) {
-            if (stripos($source, '_mysqli_query') === false) {
+            if (!self::mayQuery($source)) {
                 continue;
             }
             $read = count(self::sitesIn($source));
@@ -254,9 +372,9 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             }
             $calls += $read;
         }
-        $this->assertSame([], $unread, 'the scan did not read every _mysqli_query() call');
-        // 81 when this was written; a walk that found no files passes the rest.
-        $this->assertGreaterThan(60, $calls, 'the scan found too few _mysqli_query() calls to be reading the tree');
+        $this->assertSame([], $unread, 'the scan did not read every _mysqli_query() and ->query() call');
+        // 312 when ->query() joined; a walk that found no files passes the rest.
+        $this->assertGreaterThan(250, $calls, 'the scan found too few calls to be reading the tree');
     }
 
     public function testTheTextCountIsTheCallsWritten(): void
@@ -265,6 +383,25 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . "if (\$r = _mysqli_query(\$c)) {}\n?><p>_mysqli_query(x)</p><?php\n"
             . "// _mysqli_query(\$d)\n\$s = '_mysqli_query(';\n\$o->_mysqli_query(\$e); X::_mysqli_query(\$f);\n"
             . "function _mysqli_query(\$g) {}\nreturn rows(_mysqli_query(\$h));\n"));
+        $this->assertSame(3, self::callsWritten("<?php\n\$db->query(\$a); \$this->db?->QUERY (\$b);\n"
+            . "\$this->query(\$c); X::query(\$d); query(\$e); \$s = '->query(';\n"));
+        $this->assertSame(1, self::callsWritten("<?php\nclass A { public function query() {}\n"
+            . "function m() { \$this->query(\$a); \$this->db->query(\$b); } }\n"));
+    }
+
+    public function testAClassesOwnQueryIsNotMysqlis(): void
+    {
+        $source = "<?php\nclass A { public function query(\$s) {} function m() { \$this->query('x'); } }\n"
+            . "class B { function m() { \$r = \$this->query('x'); \$r->c(); } }\n"
+            . "trait T { function m() { \$r = \$this->db->query('x'); if (!\$r) { throw new E(); } }"
+            . " function query() {} }\n"
+            . "enum E { case X; function m() { return \$this->query('x'); } function query(): int { return 1; } }\n"
+            . "\$o = new class { function m() { \$this->query('x'); } function query() {} };\n";
+
+        $this->assertSame(
+            [[3, 'm', 'unread'], [4, 'm', 'tested']],
+            array_map(static fn (array $s): array => array_slice($s, 0, 3), self::sitesIn($source))
+        );
     }
 
     /**
@@ -280,8 +417,21 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             $code .= $token->is($notCode) ? ' ' : $token->text;
         }
 
+        $methods = (int) preg_match_all('/->\s*query\s*\(/i', $code);
+        if (preg_match('/\b(?:public|protected|private|static)\s+(?:static\s+)?function\s+query\s*\(/i', $code) === 1) {
+            // The class's own query(), read as its own by the scan too.
+            $methods -= (int) preg_match_all('/\$this\s*->\s*query\s*\(/i', $code);
+        }
+
         return (int) preg_match_all('/(?<![\w$>:\\\\])\\\\?_mysqli_query\s*\(/i', $code)
-            - (int) preg_match_all('/\bfunction\s+&?\s*_mysqli_query\s*\(/i', $code);
+            - (int) preg_match_all('/\bfunction\s+&?\s*_mysqli_query\s*\(/i', $code)
+            + $methods;
+    }
+
+    /** Whether a source may hold a call the scan reads. */
+    private static function mayQuery(string $source): bool
+    {
+        return stripos($source, '_mysqli_query') !== false || preg_match('/->\s*query\s*\(/i', $source) === 1;
     }
 
     /** @return iterable<string, array{string, string}> code inside a function => kind */
@@ -356,6 +506,10 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             'unread',
         ];
         yield 'tested after a do loop' => ["do { \$r = $q; } while (\$a); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'tested in a branch, a string piece of one bracket before it' => [
+            "\$r = $q; if (\$a) { \$s = \"\$b)\"; if (!\$r) { throw new E(); } } else { \$r->c(); }",
+            'unread',
+        ];
         yield 'tested after the if that assigned it' => [
             "if (\$a) { \$r = $q; } if (!\$r) { throw new E(); }",
             'tested',
@@ -493,6 +647,41 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             "if ($q) { a(); } else { p202_account_flash('bad', 'x'); } \$r->c();",
             'tested',
         ];
+        yield 'or refuses' => ["\$r = $q or record_mysql_error(\$sql);", 'tested'];
+        yield 'or throws' => ["\$r = $q or throw new E();", 'tested'];
+        yield 'alone, or dies' => ["$q or die();", 'tested'];
+        yield 'or assigns a default' => ["\$r = $q or \$r = null;", 'folded'];
+        yield 'or makes a closure' => ["\$r = $q or record_mysql_error(...);", 'folded'];
+        yield 'or goes on after the refusal' => ["\$r = $q or die() . a();", 'folded'];
+        yield '|| assigns the bool' => ["\$r = $q || die();", 'unread'];
+
+        $m = '$db->query($sql)';
+        yield 'a method call, alone' => ["$m;", 'unread'];
+        yield 'a method call, tested' => ["\$r = $m; if (!\$r) { throw new E(); }", 'tested'];
+        yield 'a method call, other case' => ["\$r = \$db->QUERY(\$sql); if (\$r === false) { die(); }", 'tested'];
+        yield 'through a property, tested' => [
+            "\$r = \$this->db->query(\$sql); if (\$r === false) { throw new E(); }",
+            'tested',
+        ];
+        yield 'nullsafe, tested' => ["\$r = \$db?->query(\$sql); if (!\$r) { exit; }", 'tested'];
+        yield 'nullsafe property, tested' => ["\$r = \$this?->db->query(\$sql); if (!\$r) { exit; }", 'tested'];
+        yield 'a method call, the condition, an else refuses' => ["if ($m) { a(); } else { throw new E(); }", 'tested'];
+        yield 'a method call, negated condition' => ["if (!$m) { record_mysql_error(\$sql); }", 'tested'];
+        yield 'a method call, or dies' => ["$m or die();", 'tested'];
+        yield 'a method call, the condition, no else' => ["if ($m) { a(); }", 'folded'];
+        yield 'a method call, truthy branch' => ["\$r = $m; if (\$r) { a(\$r); }", 'folded'];
+        yield 'a method call, used first' => ["\$r = $m; \$r->fetch_assoc();", 'unread'];
+        yield 'a method call, chained' => ['$row = ' . $m . '->fetch_assoc();', 'unread'];
+        yield 'a method call, passed on' => ["rows($m);", 'unread'];
+        yield 'a method call, returned' => ["return $m;", 'unread'];
+        yield 'a method call, assigned to a property' => ["\$this->r = $m; if (!\$this->r) { die(); }", 'unread'];
+        yield "on a call's answer" => ["\$r = db()->query(\$sql); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'on an element' => ["\$r = \$dbs[0]->query(\$sql); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'on a static property' => ["\$r = self::\$db->query(\$sql); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'on a variable variable' => ["\$r = \$\$name->query(\$sql); if (!\$r) { throw new E(); }", 'unread'];
+        yield 'on a property two deep' => ["\$r = \$this->a->db->query(\$sql); if (!\$r) { die(); }", 'unread'];
+        yield 'on a variable property' => ["\$r = \$this->\$p->query(\$sql); if (!\$r) { die(); }", 'unread'];
+        yield '$this->query, no method of its own' => ["\$r = \$this->query(\$sql); \$r->c();", 'unread'];
     }
 
     /** @dataProvider shapes */
@@ -527,30 +716,155 @@ final class MysqliQueryResultIsTestedTest extends TestCase
      */
     public static function sitesIn(string $source): array
     {
-        $tokens = array_values(array_filter(
-            PhpToken::tokenize($source),
-            static fn (PhpToken $t): bool => !$t->isIgnorable()
-        ));
+        $tokens = [];
+        foreach (PhpToken::tokenize($source) as $t) {
+            if ($t->isIgnorable()) {
+                continue;
+            }
+            // A piece of a double-quoted string is text: `"$a ($b)"` holds
+            // one that is exactly `)`, which every bracket count read as a
+            // bracket.
+            $tokens[] = $t->is(T_ENCAPSED_AND_WHITESPACE)
+                ? new PhpToken($t->id, "\0" . $t->text, $t->line, $t->pos)
+                : $t;
+        }
         $bodies = self::functionBodies($tokens);
+        $ownQuery = self::classesWithTheirOwnQuery($tokens);
         $sites = [];
         foreach ($tokens as $i => $token) {
-            if (
-                SourceScan::callableName($token->id, $token->text) !== '_mysqli_query'
-                || ($tokens[$i + 1]->text ?? '') !== '('
-            ) {
+            if (($tokens[$i + 1]->text ?? '') !== '(') {
                 continue;
             }
             $prev = $tokens[$i - 1] ?? null;
-            $notACall = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NEW, T_CONST];
-            if ($prev !== null && $prev->is($notACall)) {
+            if (SourceScan::callableName($token->id, $token->text) === '_mysqli_query') {
+                $notACall = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NEW, T_CONST];
+                if ($prev !== null && $prev->is($notACall)) {
+                    continue;
+                }
+                $close = self::closing($tokens, $i + 1);
+                [$kind, $why] = self::classify($tokens, $bodies, $i, $close);
+                $sites[] = [$token->line, self::functionAt($tokens, $bodies, $i), $kind, $why];
+                continue;
+            }
+            if (
+                !$token->is(T_STRING)
+                || strtolower($token->text) !== 'query'
+                || !($prev?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR]) ?? false)
+            ) {
+                continue;
+            }
+            $receiver = self::receiverStart($tokens, $i - 2);
+            if ($receiver === $i - 2 && $tokens[$receiver]->text === '$this' && self::inAny($ownQuery, $i)) {
+                // The class's own query(), not mysqli's.
                 continue;
             }
             $close = self::closing($tokens, $i + 1);
-            [$kind, $why] = self::classify($tokens, $bodies, $i, $close);
+            [$kind, $why] = $receiver === null
+                ? ['unread', 'a ->query() on a receiver the scan does not read']
+                : self::classify($tokens, $bodies, $receiver, $close);
+            if ($kind === 'discarded') {
+                // MysqliQueryResultIsNotDiscardedTest reads _mysqli_query() alone.
+                [$kind, $why] = ['unread', 'its answer is thrown away'];
+            }
             $sites[] = [$token->line, self::functionAt($tokens, $bodies, $i), $kind, $why];
         }
 
         return $sites;
+    }
+
+    /**
+     * Where the receiver of `->query(` ends at $at starts: `$db`,
+     * `$this->db`, `$db?->`. Null for one the scan does not read (a call's
+     * answer, an element, a static property).
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function receiverStart(array $tokens, int $at): ?int
+    {
+        $token = $tokens[$at] ?? null;
+        if ($token !== null && $token->is(T_VARIABLE)) {
+            return self::partOfAnother($tokens[$at - 1] ?? null) ? null : $at;
+        }
+        if (
+            $token !== null
+            && $token->is(T_STRING)
+            && ($tokens[$at - 1] ?? null)?->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR])
+            && ($tokens[$at - 2] ?? null)?->is(T_VARIABLE)
+            && !self::partOfAnother($tokens[$at - 3] ?? null)
+        ) {
+            return $at - 2;
+        }
+
+        return null;
+    }
+
+    /** Whether the token before a variable makes it part of a longer one (`$$x`, `X::$x`, `$a->$x`). */
+    private static function partOfAnother(?PhpToken $before): bool
+    {
+        return $before !== null
+            && ($before->is([T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON]) || $before->text === '$');
+    }
+
+    /**
+     * The bodies of the classes (and traits, enums, anonymous classes) that
+     * declare a method named query: `$this->query()` in one is that method.
+     *
+     * @param list<PhpToken> $tokens
+     * @return list<array{int, int}>
+     */
+    private static function classesWithTheirOwnQuery(array $tokens): array
+    {
+        $ranges = [];
+        foreach ($tokens as $i => $token) {
+            if (!$token->is([T_CLASS, T_TRAIT, T_ENUM]) || ($tokens[$i - 1] ?? null)?->is(T_DOUBLE_COLON)) {
+                continue;
+            }
+            $open = null;
+            $count = count($tokens);
+            for ($k = $i + 1; $k < $count; $k++) {
+                if ($tokens[$k]->text === '{') {
+                    $open = $k;
+                    break;
+                }
+                if ($tokens[$k]->text === ';') {
+                    break;
+                }
+            }
+            if ($open === null) {
+                continue;
+            }
+            $close = self::closing($tokens, $open);
+            $depth = 0;
+            for ($k = $open; $k < $close; $k++) {
+                if (self::opens($tokens[$k])) {
+                    $depth++;
+                } elseif (in_array($tokens[$k]->text, [')', ']', '}'], true)) {
+                    $depth--;
+                }
+                if (
+                    $depth === 1
+                    && $tokens[$k]->is(T_FUNCTION)
+                    && strtolower($tokens[$k + 1]->text ?? '') === 'query'
+                ) {
+                    $ranges[] = [$open, $close];
+                    break;
+                }
+            }
+        }
+
+        return $ranges;
+    }
+
+    /** @param list<array{int, int}> $ranges */
+    private static function inAny(array $ranges, int $at): bool
+    {
+        foreach ($ranges as [$open, $close]) {
+            if ($open < $at && $at < $close) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -573,6 +887,15 @@ final class MysqliQueryResultIsTestedTest extends TestCase
 
         $assigned = ($tokens[$call - 1]->text ?? '') === '=' && ($tokens[$call - 2] ?? null)?->is(T_VARIABLE);
         $start = $assigned ? $call - 2 : $call;
+
+        // `$r = Q or record_mysql_error($sql);` assigns first (`or` binds
+        // looser than `=`), then refuses on false. `||` binds tighter, and
+        // would assign the bool.
+        if ($after !== null && $after->is(T_LOGICAL_OR) && self::startsStatement($tokens, $start)) {
+            return self::orRefuses($tokens, $close + 2)
+                ? ['tested', '']
+                : ['folded', 'what follows `or` refuses nothing'];
+        }
 
         // In an if/elseif/while condition: the branch its failure takes has
         // to refuse, as an assigned result's does.
@@ -1111,6 +1434,35 @@ final class MysqliQueryResultIsTestedTest extends TestCase
         }
 
         return false;
+    }
+
+    /**
+     * Whether the expression after `or` at $k, ending the statement, ends
+     * the request: a refusing call, `exit`/`die`, or a `throw`.
+     *
+     * @param list<PhpToken> $tokens
+     */
+    private static function orRefuses(array $tokens, int $k): bool
+    {
+        $token = $tokens[$k] ?? null;
+        if ($token === null) {
+            return false;
+        }
+        if ($token->is(T_THROW)) {
+            $end = self::statementEnd($tokens, $k);
+        } elseif ($token->is(T_EXIT) && ($tokens[$k + 1]->text ?? '') === ';') {
+            return true;
+        } elseif (
+            ($token->is(T_EXIT)
+                || in_array(SourceScan::callableName($token->id, $token->text), self::REFUSING_CALLS, true))
+            && self::isCall($tokens, $k)
+        ) {
+            $end = self::closing($tokens, $k + 1) + 1;
+        } else {
+            return false;
+        }
+
+        return ($tokens[$end]->text ?? '') === ';';
     }
 
     /**

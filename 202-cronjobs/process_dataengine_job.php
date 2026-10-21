@@ -15,11 +15,17 @@ try {
  RollingCurl code Authored by Josh Fraser (www.joshfraser.com)
  */
 
+    // A failed statement ends the job: logged where it fails, printed by the
+    // catch below, and nothing after it claimed or marked.
     $query = "SELECT * FROM 202_dataengine_job WHERE processed = '0' and processing != '1'";
     $result = $db->query($query);
-    $row = $result->fetch_assoc();
+    if ($result === false) {
+        error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        throw new \Prosper202\Database\Exceptions\QueryException('the windows to rebuild could not be read');
+    }
+    $row = p202FetchRow($result, $query);
 
-    if ($result->num_rows) {
+    if ($row !== null) {
         if (! $row['processing']) {
             // The server calls itself: on the install's stored domain (user
             // 1's — never the session's: this URL is public, and every
@@ -43,7 +49,13 @@ try {
             // (affected_rows === 1) may aggregate the hour; the loser bails out
             // instead of double-processing the window into the DataEngine.
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "' AND processing = '0'";
-            $db->query($sql);
+            if (!$db->query($sql)) {
+                error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error)
+                    . ' [errno ' . $db->errno . ']');
+                throw new \Prosper202\Database\Exceptions\QueryException(
+                    'window ' . $mysql['click_time_from'] . '-' . $mysql['click_time_to'] . ' could not be claimed'
+                );
+            }
             // 202_dataengine_job has no PRIMARY/UNIQUE key, so a duplicated
             // window legitimately flips more than one row. Require >= 1 (we
             // won the claim) rather than exactly 1 — bailing out after having
@@ -128,7 +140,16 @@ try {
                 $sql = "UPDATE 202_dataengine_job SET processing = '0' WHERE time_from = '" . $mysql['click_time_from'] . "' AND time_to = '" . $mysql['click_time_to'] . "'";
                 error_log("DataEngine Job: {$failed} of " . count($urls) . " aggregation requests failed for window {$mysql['click_time_from']}-{$mysql['click_time_to']}; left unprocessed for retry." . $firstFailure);
             }
-            $db->query($sql);
+            if (!$db->query($sql)) {
+                // Neither marked nor released: the window stays claimed, and
+                // this job takes no claimed window again.
+                error_log('DataEngine Job: ' . p202FailedQueryMessage($db->errno, $db->error)
+                    . ' [errno ' . $db->errno . ']');
+                throw new \Prosper202\Database\Exceptions\QueryException(
+                    'window ' . $mysql['click_time_from'] . '-' . $mysql['click_time_to'] . ' could not be '
+                    . ($failed === 0 ? 'marked processed' : 'released') . '; it stays claimed (processing = 1)'
+                );
+            }
         }
     }
 } catch (Exception $e) {

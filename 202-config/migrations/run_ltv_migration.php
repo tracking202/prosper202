@@ -213,7 +213,12 @@ try {
     $allOk = true;
     foreach (LtvTables::getDefinitions() as $definition) {
         $result = $db->query("SHOW TABLES LIKE '" . $db->real_escape_string($definition->tableName) . "'");
-        if ($result && $result->num_rows > 0) {
+        if ($result === false) {
+            throw new Exception(
+                "Failed to verify {$definition->tableName}: " . p202FailedQueryMessage($db->errno, $db->error)
+            );
+        }
+        if ($result->num_rows > 0) {
             echo "  ✓ {$definition->tableName}\n";
         } else {
             echo "  ✗ {$definition->tableName} - NOT FOUND\n";

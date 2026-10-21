@@ -81,9 +81,9 @@ LIMIT 1";
 
 $cvar_sql_result = $db->query($cvar_sql);
 if ($cvar_sql_result === false) {
-	p202RespondJsonError(500, 'Click lookup failed');
+    record_mysql_error($db, $cvar_sql);
 }
-$cvar_sql_row = $cvar_sql_result->fetch_assoc();
+$cvar_sql_row = p202FetchRow($cvar_sql_result, $cvar_sql);
 if (!$cvar_sql_row) {
 	p202RespondJsonError(404, 'Click data not found');
 }

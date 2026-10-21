@@ -286,11 +286,18 @@ class CapabilitiesController
 
     private function resolveBuildVersion(): string
     {
+        // 'unknown' is an install without a version row; a read that fails
+        // is the API's 500, as a failed scope-column probe is.
         $result = $this->db->query('SELECT version FROM 202_version LIMIT 1');
         if ($result === false) {
-            return 'unknown';
+            throw new QueryException(
+                'MySQL query failed: ' . $this->db->error . ' [errno ' . $this->db->errno . ']'
+            );
         }
         $row = $result->fetch_assoc();
+        if ($row === false) {
+            throw new QueryException('MySQL fetch failed: SELECT version FROM 202_version');
+        }
         return (string)($row['version'] ?? 'unknown');
     }
 

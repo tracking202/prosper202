@@ -69,12 +69,25 @@ if (!class_exists('DataEngine')) {
             // value; cast to int so it cannot break out of the WHERE clause.
             $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
 
-            if (!$db->query($dsql)) {
-                error_log('DataEngine (slim) setDirtyHour rollup failed: ' . $db->error);
+            // The click is recorded before this runs, and on the click path
+            // the visitor goes on whatever the rollup does: a lock lost to a
+            // concurrent rollup is tried once more, and any other failure is
+            // logged and answered false, the click missing from the reports
+            // until its hour is rebuilt.
+            for ($attempt = 1;; $attempt++) {
+                if ($db->query($dsql)) {
+                    return true;
+                }
+                $errno = (int) $db->errno;
+                if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
+                    continue;
+                }
+                error_log('DataEngine rollup of click ' . (int) $click_id . ' failed: '
+                    . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']'
+                    . '; the click is missing from the reports until its hour is rebuilt');
+
                 return false;
             }
-
-            return true;
         }
 
         /**
