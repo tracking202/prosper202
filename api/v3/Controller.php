@@ -1180,7 +1180,7 @@ abstract class Controller
         $results = [];
         $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'error' => 0, 'retryable' => 0, 'unconfirmed' => 0];
         $chunkSize = max(1, min(100, $maxRows));
-        // Once a chunk has committed, every row is answered and the answer
+        // Once a chunk has stored a row, every row is answered and the answer
         // recorded under the key, whatever fails after: a 500 would leave the
         // key unspent, and the same rows sent again under it would be written
         // a second time.
@@ -1203,9 +1203,10 @@ abstract class Controller
                     );
                     $outcome = 'failed';
                 }
-                // A deadlocked chunk stored nothing, and every other outcome
-                // stops the chunks after it.
-                $mayStand = $mayStand || $outcome === 'committed';
+                // A chunk that stored nothing (deadlocked, or every row
+                // skipped or refused) leaves nothing to stand, and every other
+                // outcome stops the chunks after it.
+                $mayStand = $mayStand || $outcome === 'stored';
                 $stoppedBecause = match ($outcome) {
                     'lock_wait' => 'rows before it waited out the server\'s lock wait timeout',
                     'unconfirmed' => 'the database did not confirm that rows before it were stored',
@@ -1243,7 +1244,8 @@ abstract class Controller
      * One chunk of a bulk-upsert, in a transaction of its own: each of its
      * rows' answers, and how the chunk ended.
      *
-     * - `committed`: the rows' own answers.
+     * - `stored`: the rows' own answers, at least one of them a row written.
+     * - `nothing_stored`: the same, every row skipped or refused.
      * - `deadlocked`: a deadlock is the transaction's, not the row's (it
      *   rolls the whole of it back on the server), so the chunk was run
      *   again from nothing, up to BULK_DEADLOCK_RETRIES more times, and then
@@ -1251,14 +1253,17 @@ abstract class Controller
      * - `lock_wait`: a lock wait timeout, answered the same way at once.
      * - `unconfirmed`: the rows ran, and then the commit, or a savepoint or
      *   rollback the server should have kept, failed. What the transaction
-     *   holds is not known, so every row is answered `unconfirmed`, never
-     *   `retryable`: sent again, a create stored already would be stored twice.
+     *   holds is not known, so every row it wrote, or every row when which
+     *   is not known, is answered `unconfirmed`, never `retryable`: sent
+     *   again, a create stored already would be stored twice. A row skipped
+     *   or refused keeps its answer, since its savepoint undid it whatever
+     *   the commit did.
      *
      * Anything else (the transaction could not begin) is thrown, with
      * nothing of the chunk written.
      *
      * @param array<int|string, mixed> $chunk
-     * @return array{list<array<string, mixed>>, 'committed'|'deadlocked'|'lock_wait'|'unconfirmed'}
+     * @return array{list<array<string, mixed>>, 'stored'|'nothing_stored'|'deadlocked'|'lock_wait'|'unconfirmed'}
      */
     private function upsertChunk(array $chunk): array
     {
@@ -1266,17 +1271,20 @@ abstract class Controller
         for ($attempt = 1;; $attempt++) {
             $this->holdingChanges = true;
             $ran = false;
+            $answered = null;
             try {
-                [$results, $changes] = $conn->transaction(function () use ($chunk, &$ran): array {
+                [$results, $changes] = $conn->transaction(function () use ($chunk, &$ran, &$answered): array {
                     $ran = true;
+                    $rows = $this->upsertChunkRows($chunk);
+                    $answered = $rows[0];
 
-                    return $this->upsertChunkRows($chunk);
+                    return $rows;
                 });
             } catch (\Throwable $e) {
                 if ($conn->rollbackFailed()) {
                     self::logBulkFailure('chunk unconfirmed', $e);
 
-                    return [self::unconfirmedResults($chunk), 'unconfirmed'];
+                    return [self::unconfirmedResults($chunk, $answered), 'unconfirmed'];
                 }
                 if (Connection::isMysqlError($e, 1213, 'Deadlock found')) {
                     if ($attempt <= self::BULK_DEADLOCK_RETRIES) {
@@ -1300,13 +1308,15 @@ abstract class Controller
                 }
                 self::logBulkFailure('chunk unconfirmed', $e);
 
-                return [self::unconfirmedResults($chunk), 'unconfirmed'];
+                return [self::unconfirmedResults($chunk, $answered), 'unconfirmed'];
             } finally {
                 $this->holdingChanges = false;
                 $this->heldChanges = [];
             }
 
-            return [$this->recordChunkChanges($results, $changes), 'committed'];
+            $outcome = array_filter($results, self::wroteItsRow(...)) !== [] ? 'stored' : 'nothing_stored';
+
+            return [$this->recordChunkChanges($results, $changes), $outcome];
         }
     }
 
@@ -1477,22 +1487,35 @@ abstract class Controller
         return $results;
     }
 
+    /** @param array<string, mixed> $answer */
+    private static function wroteItsRow(array $answer): bool
+    {
+        return $answer['status'] === 'created' || $answer['status'] === 'updated';
+    }
+
     /**
-     * Every row of a chunk whose transaction may or may not have committed.
+     * The rows of a chunk whose transaction may or may not have committed:
+     * each row it wrote, by its answer, or every row when the rows' answers
+     * are not known (they did not all run), is unconfirmed.
      *
      * @param array<int|string, mixed> $chunk
+     * @param list<array<string, mixed>>|null $answered
      * @return list<array<string, mixed>>
      */
-    private static function unconfirmedResults(array $chunk): array
+    private static function unconfirmedResults(array $chunk, ?array $answered): array
     {
         $message = 'Unconfirmed: the database did not confirm whether this row, and the rows written with it, were'
             . ' stored. Look it up before sending it again: if it was stored, sending it again would store it twice.';
-        $results = [];
-        foreach (array_keys($chunk) as $index) {
-            $results[] = ['index' => $index, 'status' => 'error', 'message' => $message, 'unconfirmed' => true];
+        $unconfirmed = static fn (int|string $index): array
+            => ['index' => $index, 'status' => 'error', 'message' => $message, 'unconfirmed' => true];
+        if ($answered === null) {
+            return array_map($unconfirmed, array_keys($chunk));
         }
 
-        return $results;
+        return array_map(
+            static fn (array $answer): array => self::wroteItsRow($answer) ? $unconfirmed($answer['index']) : $answer,
+            $answered
+        );
     }
 
     /** The server's record of a bulk-upsert failure, its values taken out where the logger can. */

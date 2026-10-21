@@ -198,14 +198,15 @@ lock wait timeout is answered the same way at once, since each attempt would
 wait it out again, and so is a database failure after an earlier hundred was
 stored; the rows after either are not attempted and are answered `retryable`
 too. Send those rows again under a new `Idempotency-Key`, since the one you
-sent replays this answer. A failure before anything was stored is a `500`, and
+sent replays this answer. A failure before any row was stored is a `500`, and
 the key is not spent.
 
 A hundred whose commit (or rollback) the database did not confirm may or may
-not be stored: each of its rows is answered `error` with `"unconfirmed": true`
-(counted in `summary.unconfirmed`), never `retryable`, and the rows after it
-are not attempted. Look those rows up before sending them again, since a
-create stored already would be stored twice.
+not be stored: each row it wrote is answered `error` with `"unconfirmed": true`
+(counted in `summary.unconfirmed`), never `retryable`, a row it skipped or
+refused keeps its answer, and the rows after it are not attempted. Look the
+unconfirmed rows up before sending them again, since a create stored already
+would be stored twice.
 
 `p202 import`, `p202 sync` and the server-side sync jobs leave out the fields
 a write must not carry (ids, owner, public ids, `version`/`etag`, a

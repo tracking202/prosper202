@@ -362,14 +362,38 @@ final class BulkUpsertLockConflictIntegrationTest extends TestCase
     }
 
     /**
-     * A commit the server did not confirm may have landed (here it did): its
-     * rows are answered unconfirmed, never retryable, since sent again they
-     * would be stored twice, and the chunks after it are not attempted.
+     * A chunk that stored nothing (every row skipped or refused) leaves
+     * nothing a retry could write twice, so a failure after it is still a
+     * 500 with the key unspent.
+     */
+    public function testAFailureAfterAChunkThatStoredNothingIsThrownAndLeavesTheKeyUnspent(): void
+    {
+        $db = self::connectFailing(beginFailsAt: 2);
+        $rows = [...array_fill(0, 99, []), 'not-a-row', ['aff_network_name' => 'chunk2']];
+        $key = 'bulk-lock-it-' . bin2hex(random_bytes(6));
+        try {
+            $this->bulk(new AffNetworksController($db, self::USER), $rows, $key);
+            self::fail('a bulk-upsert nothing of which was stored answered');
+        } catch (QueryException $e) {
+            self::assertStringContainsString('Unable to begin transaction', $e->getMessage());
+        }
+        self::assertSame(2, $db->begins);
+
+        $again = $this->bulk(new AffNetworksController(self::db(), self::USER), $rows, $key);
+        self::assertFalse($again['idempotent_replay'], 'the key was not spent');
+        self::assertSame(self::summary(created: 1, skipped: 99, error: 1), $again['summary']);
+    }
+
+    /**
+     * A commit the server did not confirm may have landed (here it did): the
+     * rows it wrote are answered unconfirmed, never retryable, since sent
+     * again they would be stored twice; a row skipped or refused keeps its
+     * answer; and the chunks after it are not attempted.
      */
     public function testACommitTheServerDidNotConfirmAnswersItsRowsUnconfirmed(): void
     {
         $db = self::connectFailing(commitUnconfirmedAt: 1);
-        $rows = [...self::networkRows('chunk1-', 100), ['aff_network_name' => 'chunk2']];
+        $rows = [...self::networkRows('chunk1-', 98), [], 'not-a-row', ['aff_network_name' => 'chunk2']];
         $key = 'bulk-lock-it-' . bin2hex(random_bytes(6));
         $log = ini_set('error_log', '/dev/null');
         try {
@@ -378,8 +402,16 @@ final class BulkUpsertLockConflictIntegrationTest extends TestCase
             ini_set('error_log', (string) $log);
         }
 
-        self::assertSame(self::summary(error: 101, retryable: 1, unconfirmed: 100), $result['summary']);
-        foreach (array_slice($result['data'], 0, 100) as $row) {
+        self::assertSame(
+            self::summary(skipped: 1, error: 100, retryable: 1, unconfirmed: 98),
+            $result['summary']
+        );
+        self::assertSame('skipped', $result['data'][98]['status']);
+        self::assertSame(
+            ['index' => 99, 'status' => 'error', 'message' => 'Row must be an object'],
+            $result['data'][99]
+        );
+        foreach (array_slice($result['data'], 0, 98) as $row) {
             self::assertSame('error', $row['status']);
             self::assertTrue($row['unconfirmed'] ?? null, json_encode($row));
             self::assertArrayNotHasKey('retryable', $row);
@@ -388,14 +420,14 @@ final class BulkUpsertLockConflictIntegrationTest extends TestCase
         }
         self::assertTrue($result['data'][100]['retryable'] ?? null);
         self::assertStringContainsString('not attempted', $result['data'][100]['message']);
-        self::assertCount(100, self::networkNames(), 'the commit landed');
+        self::assertCount(98, self::networkNames(), 'the commit landed');
         // The feed hears only of rows answered stored.
         self::assertSame([], $this->changes('aff-networks', 'aff_network_id'));
 
         $replay = $this->bulk(new AffNetworksController(self::db(), self::USER), $rows, $key);
         self::assertTrue($replay['idempotent_replay']);
         self::assertSame($result['data'], $replay['data']);
-        self::assertCount(100, self::networkNames());
+        self::assertCount(98, self::networkNames());
     }
 
     public function testARowThatFailsAfterItsInsertIsUndoneAloneAndItsNeighboursStored(): void

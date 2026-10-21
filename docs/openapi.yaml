@@ -10141,9 +10141,10 @@ components:
               unconfirmed:
                 type: boolean
                 description: >-
-                  Present, and true, only on an `error` row whose hundred the database did not
-                  confirm was stored or rolled back (a commit or rollback that failed): it may
-                  or may not be stored, and the rows after it are not attempted. Look it up
+                  Present, and true, only on an `error` row written in a hundred the database
+                  did not confirm was stored or rolled back (a commit or rollback that failed):
+                  it may or may not be stored, and the rows after it are not attempted. A row of
+                  that hundred that was skipped or refused keeps its own answer. Look it up
                   before sending it again, since a create stored already would be stored twice.
               data:
                 type: object
