@@ -839,6 +839,31 @@ final class ReClickRollupIntegrationTest extends TestCase
         return $result->fetch_all();
     }
 
+    /**
+     * A click whose rows name two accounts (written before the account tie):
+     * a rollup of it removes only its latest visit's account's earlier rows
+     * (`de.user_id = 2c.user_id`), never the other account's report row.
+     *
+     * @dataProvider clickRollups
+     */
+    public function testARollupRemovesOnlyTheLatestVisitsAccountsEarlierRows(string $path): void
+    {
+        self::visit(self::CLICK, self::firstVisitTime(), self::OTHERS_CAMPAIGN, self::FIRST_ACCOUNT, '0.75', '1.00', self::OTHER);
+        self::visit(self::CLICK, self::latestVisitTime(), self::LATEST_CAMPAIGN, self::FIRST_ACCOUNT, '0.75', '2.50', self::USER, true);
+        self::rolledUpPerVisit(self::CLICK);
+
+        self::rollUp($path, self::CLICK);
+
+        $result = self::$db->query('SELECT user_id, click_time FROM 202_dataengine WHERE click_id = ' . self::CLICK
+            . ' ORDER BY click_time');
+        self::assertInstanceOf(\mysqli_result::class, $result, self::$db->error);
+        self::assertSame(
+            [[(string) self::OTHER, (string) self::firstVisitTime()], [(string) self::USER, (string) self::latestVisitTime()]],
+            $result->fetch_all(),
+            'the other account\'s row stays'
+        );
+    }
+
     /** rollUpClick() says which step failed, for the conversion repository's log. */
     public function testRollUpClickNamesTheStepThatFailed(): void
     {

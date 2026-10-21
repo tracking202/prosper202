@@ -92,8 +92,8 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      * click_id and user_id agree across its visits: recordReClick() refuses
      * a click of another account, and nothing rewrites either; a re-click's
      * row carries its own campaign, payout and time (and, when written before
-     * a re-click kept the first visit's, its own traffic source and cost),
-     * and click_lead 0 until the ledger next recomputes the click.
+     * 1.9.78, its own traffic source and cost, and click_lead 0 until the
+     * ledger next recomputes the click).
      *
      * @var array<string, array{int, string}>
      */
@@ -134,10 +134,13 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         '202-config/Ltv/MysqlRecommendationRepository.php::engagedCampaignInterest' => [1, 'The LIMIT 1 takes the'
             . ' top campaign of an aggregate over each click\'s latest visit (LatestVisit::isLatest() on the'
             . ' derived table), not a visit.'],
+        '202-config/Goals/WebEvents.php::clickForVisitor' => [1, 'Only when 202_click_latest_visits is missing'
+            . ' (LatestVisit::tableMissing(), deployed before the 1.9.78 upgrade): no click has a record, so every'
+            . ' visit is a latest visit, as isLatest() reads a click with none; the read beside it names the latest.'],
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */
-    private const CEILING = 14;
+    private const CEILING = 15;
 
     /**
      * A table reference: after FROM, a JOIN or a comma; its name, and its
@@ -357,6 +360,10 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             . ' ON c.click_id = l.click_id SET l.campaign_id = c.aff_campaign_id WHERE c.click_id = ?'));
         yield 'read by a delete' => $any($q('DELETE o FROM 202_identity_observations o JOIN 202_clicks c'
             . ' ON c.click_id = o.click_id WHERE c.click_id = ?'));
+        yield 'read by a multi-table delete, first after FROM' => $any($q('DELETE de FROM 202_clicks AS c'
+            . ' STRAIGHT_JOIN 202_dataengine AS de ON de.click_id = c.click_id WHERE c.click_id = ?'));
+        yield 'a multi-table delete from 202_clicks' => $none($q('DELETE c FROM 202_clicks AS c'
+            . ' JOIN 202_users AS u ON u.user_id = c.user_id WHERE c.click_id = ?'));
         yield 'a heredoc, at its first line' => [
             "<?php\n\$s = <<<SQL\n    SELECT click_payout\n    FROM 202_clicks\n"
                 . "    WHERE click_id = {\$id}\n    SQL;\n",
@@ -458,6 +465,20 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             "<?php\n\$s = $list . \\Other\\LatestVisit::isLatest('c');",
             ['2 {main} any'],
         ];
+        yield 'isLatest under NOT' => [$use . "\$s = $list . 'NOT ' . LatestVisit::isLatest('c');", ['3 {main} any']];
+        yield 'isLatest under !' => [$use . "\$s = $list . '!' . LatestVisit::isLatest('c');", ['3 {main} any']];
+        yield 'isLatest or another condition' => [
+            $use . "\$s = $list . LatestVisit::isLatest('c') . ' OR c.click_lead = 1';",
+            ['3 {main} any'],
+        ];
+        yield 'isLatest in parentheses with an OR' => [
+            $use . "\$s = $list . '(c.click_lead = 1 OR ' . LatestVisit::isLatest('c') . ')';",
+            ['3 {main} any'],
+        ];
+        yield 'isLatest in an AND inside an OR' => [
+            $use . "\$s = $list . '(c.click_lead = 1 OR (c.click_time > 0 AND ' . LatestVisit::isLatest('c') . '))';",
+            ['3 {main} any'],
+        ];
         yield 'isLatest beside a second, unordered read' => [
             $use . "\$s = 'SELECT c.click_lead FROM 202_clicks AS c JOIN 202_clicks AS d ON d.click_id = c.click_id"
                 . " WHERE c.click_id = ? AND ' . LatestVisit::isLatest('c');",
@@ -498,6 +519,10 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             ['3 {main} latest'],
         ];
         yield 'isLatest naming the alias' => [$use . "\$s = $list . LatestVisit::isLatest('c');", ['3 {main} latest']];
+        yield 'isLatest in parentheses, ANDed' => [
+            $use . "\$s = $list . '(c.click_time > 0 AND ' . LatestVisit::isLatest('c') . ') AND c.user_id = 1';",
+            ['3 {main} latest'],
+        ];
         yield 'isLatest over a join, one row' => [
             $use . "\$s = 'SELECT c.aff_campaign_id FROM 202_identity_observations AS o JOIN 202_clicks AS c"
                 . " ON c.click_id = o.click_id WHERE o.signal_hash = ? AND ' . LatestVisit::isLatest('c')"
@@ -639,6 +664,19 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             throw new \RuntimeException('Reading a statement failed: ' . preg_last_error_msg());
         }
         $isDelete = preg_match('/\A\s*DELETE\b/i', $text) === 1;
+        // A multi-table DELETE (`DELETE de FROM a JOIN b AS de`) removes from
+        // the tables it names before FROM, read here by alias; a single-table
+        // one (`DELETE FROM t`) from the table after FROM.
+        $targets = [];
+        if (
+            $isDelete
+            && preg_match('/\A\s*DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*(?!FROM\b)([\w`.,\s]+?)\s+FROM\b/i', $text, $m) === 1
+        ) {
+            foreach (explode(',', $m[1]) as $target) {
+                $parts = explode('.', str_replace('`', '', trim($target)));
+                $targets[] = strtolower((string) end($parts));
+            }
+        }
         $clicks = [];
         $routes = [];
         $unread = [];
@@ -647,7 +685,9 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             $keyword = strtolower($ref['kw'][0]);
             $name = $ref['name'][0];
             $alias = isset($ref['alias']) && $ref['alias'][1] >= 0 ? $ref['alias'][0] : $name;
-            $deleted = $isDelete && $keyword === 'from' && $firstFrom;
+            $deleted = $targets === []
+                ? $isDelete && $keyword === 'from' && $firstFrom
+                : in_array(strtolower($alias), $targets, true);
             if ($keyword === 'from') {
                 $firstFrom = false;
             }
@@ -687,7 +727,12 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
             ) {
                 $ordered[] = $clickAlias;
                 $visits[$visit] = true;
-            } elseif ($visit === 'latest' && $method === 'islatest' && in_array($clickAlias, $clicks, true)) {
+            } elseif (
+                $visit === 'latest'
+                && $method === 'islatest'
+                && in_array($clickAlias, $clicks, true)
+                && self::isConjunct($text, $call['offset'])
+            ) {
                 $ordered[] = $clickAlias;
                 $visits[$visit] = true;
             } elseif ($method === 'of') {
@@ -711,6 +756,52 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         return implode(' ', array_keys(array_filter(
             ['latest' => isset($visits['latest']), 'first' => isset($visits['first'])]
         )));
+    }
+
+    /**
+     * Whether the condition at $offset (the one character standing for a
+     * call) is one of the conditions its statement ANDs: right after WHERE,
+     * ON or AND, and no OR, XOR or || in any group around it, up to the
+     * whole statement. Under NOT or beside an OR it does not narrow the rows
+     * to the latest visit (`AND NOT isLatest()` takes every visit but it).
+     * An OR anywhere in a group around it is refused, whatever it joins: the
+     * loud direction.
+     */
+    private static function isConjunct(string $text, int $offset): bool
+    {
+        if (preg_match('/(?<![\w`])(?:AND|WHERE|ON)\s*\z/i', substr($text, 0, $offset)) !== 1) {
+            return false;
+        }
+        $depths = [];
+        $depth = 0;
+        $length = strlen($text);
+        for ($i = 0; $i < $length; $i++) {
+            if ($text[$i] === ')') {
+                $depth--;
+            }
+            $depths[$i] = $depth;
+            if ($text[$i] === '(') {
+                $depth++;
+            }
+        }
+        for ($level = $depths[$offset]; $level >= 0; $level--) {
+            [$from, $to] = [$offset, $offset];
+            while ($from > 0 && $depths[$from - 1] >= $level) {
+                $from--;
+            }
+            while ($to < $length - 1 && $depths[$to + 1] >= $level) {
+                $to++;
+            }
+            $group = '';
+            for ($i = $from; $i <= $to; $i++) {
+                $group .= $depths[$i] === $level ? $text[$i] : ' ';
+            }
+            if (preg_match('/(?<![\w`])(?:OR|XOR)(?![\w`])|\|\|/i', $group) === 1) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

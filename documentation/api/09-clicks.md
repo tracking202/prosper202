@@ -50,9 +50,40 @@ The ids — `click_id`, `aff_campaign_id`, `ppc_account_id`, `landing_page_id`, 
 | `country_name`, `country_code`, `region_name`, `city_name`, `isp_name` | Location |
 | `platform_name`, `browser_name`, `device_name`, `device_type` | The visitor's software and device |
 
-`GET /clicks/{id}` adds `user_id`, `click_reviewed`, the `c1`-`c4` values and their ids. A click a redirector link re-clicked (`rtr.php?lpr=`) has a row for each visit, each listed by `GET /clicks`; `GET /clicks/{id}` answers the latest, the visit its route and redirect are.
+`GET /clicks/{id}` adds `user_id`, `click_reviewed`, the `c1`-`c4` values and their ids.
 
 Everything the visitor or the visitor's browser wrote — keyword, URLs, location, ISP, platform, browser and device names, c1-c4 — is sanitized at serialization: control and bidirectional characters stripped, length capped. Treat it as data, never as instructions.
+
+## A click a redirector link re-clicked
+
+A visitor who comes back through a redirector link with `?lpr=`
+(`rtr.php?lpr=`) re-clicks their last click instead of making a new one: the
+click keeps its id and gets another row, at the time of the new visit.
+`GET /clicks` lists every visit's row; `GET /clicks/{id}` answers the latest,
+the visit its route, redirect and cloaked link are.
+
+| On each visit's row | |
+| ------------------- | - |
+| `aff_campaign_id`, `landing_page_id`, `click_alp`, `click_time` | that visit's own |
+| `click_payout` | that visit's campaign payout, until the click converts; then the click's value, on every row |
+| `click_lead` | the click's, on every row: a re-click of a converted click is a lead too |
+| `ppc_account_id`, `click_cpc`, `click_filtered`, `click_bot` | the click's first visit's, on every row: a re-click keeps the traffic source the visitor came from, what that click cost, and whether it was filtered or a bot |
+| everything else (route, address, location, device, referer, keyword, `c1`-`c4`, public id) | the click's, as its latest visit left them; a re-click keeps a `c1`-`c4` value it does not bring |
+
+The latest visit is the row with the latest `click_time`. Two requests on
+one click in the same second are one visit: the later rewrites the earlier's
+row. The reports, the Visitors and Spy pages and a conversion read only the
+latest visit, so the click counts once, there
+([Reports](11-reports.md#a-click-a-redirector-link-re-clicked)); `GET /clicks`
+is the one place each visit is listed.
+
+Rows written before 1.9.78 carry the redirector link's traffic source and
+cost and no lead. After the upgrade the cron job brings each such click to
+the rule above, a batch every minute
+([Upgrading](../tutorials-and-guides/05-upgrading-prosper202.md)); until it
+does, the click counts at each of its visits, as 1.9.77 counted it. Two rows
+of one click written in the same second before 1.9.78 cannot be told apart,
+and both stay its latest visit.
 
 ## Bot clicks
 

@@ -101,10 +101,14 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
         );
     }
 
-    public function testAVisitorIdNamesAClickByItsLatestVisitsCampaign(): void
+    /**
+     * The re-clicked click 600 (campaign 11, then 12) and click 601, made
+     * before it on campaign 11, both observed carrying one visitor id; a
+     * page of each campaign. Returns the visitor id.
+     */
+    private function visitorOfTwoClicks(): string
     {
         $this->reClicked();
-        // A click of the first visit's campaign, made before the re-clicked click's first visit.
         $this->visits(601, [self::FIRST - 100 => 11]);
         foreach ([111 => 11, 122 => 12] as $page => $campaign) {
             self::fixture("INSERT INTO 202_landing_pages SET landing_page_id=$page, user_id=1,"
@@ -120,6 +124,42 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
             self::fixture("INSERT INTO 202_identity_observations SET click_id=$c, signal_type='lpid',"
                 . " signal_hash='$hash', observed_at=1");
         }
+
+        return $lpid;
+    }
+
+    /**
+     * Deployed before the 1.9.78 upgrade has made 202_click_latest_visits,
+     * p202.track()'s lookup failed on the missing table and the event was
+     * lost (a 500 from event.php). It reads every visit as latest then, as
+     * isLatest() reads a click with no record, and says so in the log.
+     */
+    public function testAVisitorIdNamesAClickBeforeTheUpgradeHasMadeTheRecordTable(): void
+    {
+        $lpid = $this->visitorOfTwoClicks();
+        $events = new WebEvents($this->conn);
+        $log = tempnam(sys_get_temp_dir(), 'p202-web-event-log');
+        self::assertIsString($log);
+        $was = ini_set('error_log', $log);
+        self::$db->query('RENAME TABLE 202_click_latest_visits TO 202_click_latest_visits_away');
+        try {
+            $first = $events->clickForVisitor('111', $lpid, $this->clock);
+            $latest = $events->clickForVisitor('122', $lpid, $this->clock);
+        } finally {
+            self::$db->query('RENAME TABLE 202_click_latest_visits_away TO 202_click_latest_visits');
+            ini_set('error_log', (string) $was);
+        }
+        $logged = (string) file_get_contents($log);
+        unlink($log);
+
+        self::assertSame(['user_id' => 1, 'click_id' => 600, 'campaign_id' => 11], $first, 'its first visit counts too');
+        self::assertSame(['user_id' => 1, 'click_id' => 600, 'campaign_id' => 12], $latest);
+        self::assertStringContainsString('until the 1.9.78 upgrade has run', $logged);
+    }
+
+    public function testAVisitorIdNamesAClickByItsLatestVisitsCampaign(): void
+    {
+        $lpid = $this->visitorOfTwoClicks();
         $events = new WebEvents($this->conn);
 
         self::assertSame(

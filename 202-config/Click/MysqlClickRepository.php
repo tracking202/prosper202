@@ -358,13 +358,16 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             $tie = count(array_keys($times, $latest, true)) > 1;
             $arrival = $this->firstVisitArrival($clickId);
             $value = $this->leadValue($clickId);
-            // Each table's rows named by click and time, and the UPDATE
-            // stopped at as many as were read: it reads and locks nothing
-            // past them (the gap after the newest click's rows is where new
-            // clicks go), nor any partition of 202_clicks that holds none.
-            // The Spy view keeps a day, so an older click has no rows there.
-            $at = array_values(array_unique($times));
-            $in = implode(', ', array_fill(0, count($at), '?'));
+            // Each table's rows named by click and the span of its visits, and
+            // the UPDATE stopped at as many as were read: it reads and locks
+            // nothing past them (the gap after the newest click's rows is
+            // where new clicks go), nor any partition of 202_clicks outside
+            // the span. The span, not a list of the visits' seconds: a click
+            // re-clicked every minute for months has more seconds than a
+            // statement takes placeholders (65,535), and its repair failed on
+            // every run, holding the walk at it. The Spy view keeps a day, so
+            // an older click has no rows there.
+            $span = [min($times), max($times)];
             $spyRows = $this->rowCount('SELECT COUNT(*) AS n FROM 202_clicks_spy WHERE click_id = ?', 'i', [$clickId]);
             $source = [
                 $arrival['ppc_account_id'], $arrival['click_cpc'], $arrival['click_filtered'], $arrival['click_bot'],
@@ -376,20 +379,20 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                 }
                 $sql = match (true) {
                     !$spy && $value === null => 'UPDATE 202_clicks SET ppc_account_id = ?, click_cpc = ?,'
-                        . " click_filtered = ?, click_bot = ? WHERE click_id = ? AND click_time IN ($in) LIMIT ?",
+                        . ' click_filtered = ?, click_bot = ? WHERE click_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
                     !$spy => 'UPDATE 202_clicks SET ppc_account_id = ?, click_cpc = ?, click_filtered = ?,'
-                        . " click_bot = ?, click_lead = 1, click_payout = ? WHERE click_id = ? AND click_time IN ($in)"
+                        . ' click_bot = ?, click_lead = 1, click_payout = ? WHERE click_id = ? AND click_time BETWEEN ? AND ?'
                         . ' LIMIT ?',
                     $value === null => 'UPDATE 202_clicks_spy SET ppc_account_id = ?, click_cpc = ?,'
-                        . " click_filtered = ?, click_bot = ? WHERE click_id = ? AND click_time IN ($in) LIMIT ?",
+                        . ' click_filtered = ?, click_bot = ? WHERE click_id = ? AND click_time BETWEEN ? AND ? LIMIT ?',
                     default => 'UPDATE 202_clicks_spy SET ppc_account_id = ?, click_cpc = ?, click_filtered = ?,'
-                        . " click_bot = ?, click_lead = 1, click_payout = ? WHERE click_id = ? AND click_time IN ($in)"
+                        . ' click_bot = ?, click_lead = 1, click_payout = ? WHERE click_id = ? AND click_time BETWEEN ? AND ?'
                         . ' LIMIT ?',
                 };
                 $this->write(
                     $sql,
-                    'isii' . str_repeat('s', count($lead)) . 'i' . str_repeat('i', count($at)) . 'i',
-                    [...$source, ...$lead, $clickId, ...$at, $rows]
+                    'isii' . str_repeat('s', count($lead)) . 'iiii',
+                    [...$source, ...$lead, $clickId, ...$span, $rows]
                 );
             }
             LatestVisit::refresh($this->conn, $clickId);
@@ -660,28 +663,13 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         try {
             LatestVisit::refresh($this->conn, $clickId);
         } catch (\RuntimeException $e) {
-            if (!self::latestVisitsMissing($e)) {
+            if (!LatestVisit::tableMissing($e)) {
                 throw $e;
             }
             error_log('p202 re-click: click ' . $clickId . ' was re-clicked before the 1.9.78 upgrade created '
                 . TableRegistry::CLICK_LATEST_VISITS . '; its visit is stored, and the upgrade\'s backfill records'
                 . ' which visit is its latest. Until then the reports count it at each visit. Run the upgrade.');
         }
-    }
-
-    /** Whether $e is the server's 1146 for 202_click_latest_visits. */
-    private static function latestVisitsMissing(\Throwable $e): bool
-    {
-        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
-            if (
-                Connection::isMysqlError($current, 1146, '')
-                && preg_match('/\b' . TableRegistry::CLICK_LATEST_VISITS . '\b/', $current->getMessage()) === 1
-            ) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

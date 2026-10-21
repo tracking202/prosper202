@@ -113,7 +113,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         // buildRepo() type-hints FakeMysqliConnection, so wire this bespoke
@@ -155,7 +155,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -187,7 +187,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $write->whenQueryContainsReturnRows(
             'FROM 202_conversion_logs WHERE click_id = ? ORDER BY conv_id',
@@ -215,7 +215,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
@@ -235,7 +235,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
@@ -254,7 +254,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
@@ -270,7 +270,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         // A conversion with this (click_id, transaction_id) already exists.
         // (The dedup lookup also returns the LTV customer link since the
@@ -299,7 +299,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -429,7 +429,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );
         [$repo] = $this->buildRepo($write);
 
@@ -448,7 +448,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 0]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 
@@ -467,7 +467,7 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         self::clickVisit(
             $write,
             'FROM 202_clicks WHERE click_id = ?',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => 2.75, 'click_time' => 1700000000, 'click_lead' => 1]]
         );
         $repo = new MysqlConversionRepository(new Connection($write, new FakeMysqliConnection()));
 

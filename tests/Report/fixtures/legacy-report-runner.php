@@ -33,5 +33,11 @@ if ($db->connect_errno !== 0) {
     fwrite(STDERR, 'connect failed: ' . $db->connect_error . "\n");
     exit(2);
 }
+// The legacy API's sql_mode (connect2.php): the server's own default carries
+// ONLY_FULL_GROUP_BY on MySQL 8.0, which the report statements predate.
+if ($db->query("SET SESSION sql_mode = ''") === false) {
+    fwrite(STDERR, 'could not set the sql_mode: ' . $db->error . "\n");
+    exit(2);
+}
 
 echo json_encode(reportQuery($db, $type, $id, $name, (int) $user, (int) $from, (int) $to), JSON_THROW_ON_ERROR);

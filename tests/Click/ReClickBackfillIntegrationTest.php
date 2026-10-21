@@ -313,6 +313,68 @@ final class ReClickBackfillIntegrationTest extends TestCase
     }
 
     /**
+     * The deadline is asked before each click, not each chunk: a chunk dense
+     * with re-clicks ran 85 s past a 10 s deadline. A run past its deadline
+     * repairs one click and leaves the cursor at the next it did not repair.
+     */
+    public function testARunStopsMidChunkAtItsDeadline(): void
+    {
+        $at = self::NOW - 86400;
+        self::legacyReClicked(self::CONVERTED, $at, 1, '3.00');
+        self::legacyReClicked(self::NOT_A_LEAD, $at, 0, '1.00');
+        self::mark();
+
+        $did = $this->walk(self::NOW);
+
+        self::assertNotNull($did);
+        self::assertSame(
+            [1, self::NOT_A_LEAD, false, null],
+            [$did['reclicked_clicks'], $did['next_click_id'], $did['finished'], $did['failed_click_id']],
+            'one click, and the cursor at the next'
+        );
+        self::assertNull(self::recorded(self::NOT_A_LEAD));
+        self::assertSame('', $this->logged(), 'a stop is not a failure');
+
+        $did = $this->walk(self::NOW);
+        self::assertSame([1, true], [$did['reclicked_clicks'] ?? null, $did['finished'] ?? null]);
+        self::assertSame((string) ($at + 3600), self::recorded(self::NOT_A_LEAD));
+    }
+
+    /**
+     * A click re-clicked every minute for months has more visit seconds than
+     * a statement takes placeholders (65,535): its repair named each second
+     * and failed on every run, and the walk, which never steps over a click,
+     * stopped there for good.
+     */
+    public function testAClickWithMoreVisitsThanAStatementTakesPlaceholdersIsRepaired(): void
+    {
+        $at = self::NOW - 90 * 86400;
+        $visits = 70_000;
+        self::visit(self::CONVERTED, $at, self::first(1, 1, '3.00'));
+        $digit = '(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4'
+            . ' UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)';
+        self::q('INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, ppc_account_id, click_cpc, click_lead,'
+            . ' click_payout, click_filtered, click_bot, click_time, rotator_id, rule_id)'
+            . ' SELECT ' . self::CONVERTED . ', ' . self::USER . ', 2, 13, 0.75, 0, 7.00, 1, 1,'
+            . " $at + 60 * (1 + a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 10000 * f.d), 7, 9"
+            . " FROM $digit AS a, $digit AS b, $digit AS c, $digit AS e, $digit AS f"
+            . ' WHERE a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 10000 * f.d < ' . $visits);
+        self::legacyReClicked(self::NOT_A_LEAD, $at, 0, '1.00');
+        self::mark();
+
+        $did = $this->walk();
+
+        self::assertNotNull($did);
+        self::assertSame([2, true, null], [$did['reclicked_clicks'], $did['finished'], $did['failed_click_id']], $this->logged());
+        $rows = self::$db->query('SELECT COUNT(*), SUM(ppc_account_id = 3 AND click_cpc = 0.25 AND click_lead = 1'
+            . ' AND click_payout = 3.00 AND click_filtered = 0 AND click_bot = 0) FROM 202_clicks WHERE click_id = '
+            . self::CONVERTED)->fetch_row();
+        self::assertSame([(string) ($visits + 1), (string) ($visits + 1)], $rows, 'every visit has the first visit\'s source and the lead');
+        self::assertSame((string) ($at + 60 * $visits), self::recorded(self::CONVERTED));
+        self::assertSame((string) ($at + 3600), self::recorded(self::NOT_A_LEAD), 'and the walk went on past it');
+    }
+
+    /**
      * Two rows in a click's latest second are both its latest visit: counted,
      * and left as they are, since nothing says which the visitor made last.
      */
@@ -403,6 +465,60 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertSame((string) ($at + 3600), self::recorded(22));
         self::assertSame((string) ($at + 3600), self::recorded(23));
         self::assertSame(3, $this->backfill()->state()['reclicked_clicks'] ?? null);
+    }
+
+    /**
+     * A conversion has rewritten the click's cost on every row and not
+     * committed when the repair starts: the repair waits on the click's lock
+     * and copies the cost the conversion committed. A repair that read the
+     * first visit without the lock read the old cost before the commit and
+     * wrote it after, over the conversion's.
+     */
+    public function testARepairCopiesTheCostAConversionCommittedWhileItWaited(): void
+    {
+        self::legacyReClicked(self::NOT_A_LEAD, self::NOW - 86400, 0, '1.00');
+        $lock = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        self::assertTrue($lock->begin_transaction());
+        self::assertNotNull((new \Prosper202\Conversion\Ledger\MysqlConversionLedger(new Connection($lock)))
+            ->lockClick(self::NOT_A_LEAD));
+        self::assertTrue($lock->query("UPDATE 202_clicks SET click_cpc = '0.50000' WHERE click_id = " . self::NOT_A_LEAD));
+        $proc = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/repair-runner.php', (string) self::NOT_A_LEAD],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($proc);
+        try {
+            $thread = trim((string) fgets($pipes[1]));
+            self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread);
+            $deadline = microtime(true) + 15;
+            do {
+                $waiting = self::$db->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
+                    . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
+                self::assertInstanceOf(\mysqli_result::class, $waiting, self::$db->error);
+                $waits = (int) $waiting->fetch_row()[0] === 1;
+                // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
+            } while (!$waits && microtime(true) < $deadline && usleep(250000) === null);
+            self::assertTrue($waits, 'the repair waits on the click\'s lock');
+        } finally {
+            self::assertTrue($lock->commit());
+            $lock->close();
+        }
+        $out = trim((string) stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        self::assertSame(0, proc_close($proc), $out);
+        self::assertSame('repaired', $out);
+
+        $costs = self::$db->query('SELECT click_cpc FROM 202_clicks WHERE click_id = ' . self::NOT_A_LEAD
+            . ' ORDER BY click_time')->fetch_all();
+        self::assertSame([['0.50000'], ['0.50000']], $costs, 'the cost the conversion committed, on every visit');
     }
 
     /**

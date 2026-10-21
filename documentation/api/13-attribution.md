@@ -91,6 +91,16 @@ since a person's second click of the day is one. At most 25 touches, newest
 kept (`truncated` says so). A converting click with no visitor key is a one-touch journey
 (`identified: false`).
 
+A click a redirector link re-clicked has a row for each visit
+([Clicks](09-clicks.md#a-click-a-redirector-link-re-clicked)) and is one
+touch, at the time its visitor row holds (when the graph first linked it). The
+journey names it by its latest visit: that visit's campaign, and the traffic
+source the click keeps from its first visit (`touches[].campaign_id`,
+`ppc_account_id`). It is left out as a bot when its latest visit is one. The
+converting click is the last touch only, even when the conversion credits a
+visit later than its visitor row. A journey built before 1.9.78 could list
+such a click once per visit, and keeps those touches until it is rebuilt.
+
 A conversion counts when its ledger row is payable, not deleted, not
 superseded, and not reversed to nothing; its value is its amount net of the
 reversals that name it. A row that stops counting loses its credits; one
@@ -123,7 +133,12 @@ range), `attributed_conversions` (Σ credit), `attributed_revenue`, `roi`,
 dimension before the converting click). Money is an exact decimal string. The
 credited range is the conversions' `conv_time`; the cost range is the clicks'
 `click_time`. `totals.attributed_revenue` is the counted value of the
-conversions in range, the same under every model.
+conversions in range, the same under every model. A re-clicked click is
+read at its latest visit: its click and cost count once, at that visit's
+time and in its dimension (the cost is its first visit's, which it keeps),
+and the credit and assists that land on it fall in that dimension too; before
+1.9.78 they counted once per visit
+([Reports](11-reports.md#a-click-a-redirector-link-re-clicked)).
 
 Under `group_by=day` a row's `key` (and `name`) is a date, `YYYY-MM-DD`, in
 the account's time zone, which `meta.timezone` names (the user's
@@ -134,8 +149,9 @@ zone. (The days used to be the database connection's, which was the
 server's zone for the API and UTC for an export.)
 
 With `cohort=click` the credited range is the `click_time` of the click each
-credit lands on, and an assist is an assisting touch made in the range, for a
-conversion at any time. A row is then what its own clicks in the range earned
+credit lands on (a re-clicked click's latest visit), and an assist is an
+assisting touch whose click's latest visit is in the range, for a conversion
+at any time. A row is then what its own clicks in the range earned
 against what they cost, which is how the classic reports count: last-touch
 credit in the click cohort is the classic row's revenue. Under `group_by=day`
 credit falls on the click's day. `totals` covers the credit on clicks in range

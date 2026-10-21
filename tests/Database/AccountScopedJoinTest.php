@@ -173,6 +173,9 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/Click/LatestVisit.php' => [
             'condition built at runtime | 202_clicks | lv.click_id = {{$clickId}}'
                 . ' {self::orderBy(\'lv\', \'lvr\')}' => self::LATEST_VISIT,
+            'no user_id tie | 202_clicks | lead_visit.click_id = {$clicks}.click_id AND lead_visit.user_id ='
+                . ' {$clicks}.user_id AND lead_visit.click_lead = 1' => 'anyVisitIsLead(): tied, to the caller\'s'
+                . ' row\'s own user_id, which the scan reads as an interpolation; it reads only that click\'s rows',
         ],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [
             'alias built at runtime | 202_conversion_logs | $t' => self::SAME_CLICK_CONVERSIONS,
@@ -184,6 +187,11 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/DataEngine/ClickRollupSql.php' => [
             'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`.'
                 => self::ROLLUP_TABLE,
+            'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`. #2'
+                => self::ROLLUP_TABLE,
+            'no user_id tie | 202_clicks | `2c`.click_id = lv.click_id' => 'deleteEarlierVisitsOfClick(): the'
+                . ' click\'s rows from its record in 202_click_latest_visits, which has no account; the click is the'
+                . ' one the caller rolls up, and the rollup table is tied to its rows\' account',
         ],
         '202-config/Goals/GoalEngine.php' => [
             'no user_id tie | 202_clicks | c.click_id = i.click_id' => self::INSTALL_CLICK,
@@ -191,6 +199,7 @@ final class AccountScopedJoinTest extends TestCase
         ],
         '202-config/Goals/WebEvents.php' => [
             'no user_id tie | 202_clicks | c.click_id = o.click_id' => self::WHERE_UNREAD,
+            'no user_id tie | 202_clicks | c.click_id = o.click_id #2' => self::WHERE_UNREAD,
         ],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [
             'no user_id tie | 202_customer_fields | f.field_id = v.field_id' => self::FIELD_OF_VALUE,

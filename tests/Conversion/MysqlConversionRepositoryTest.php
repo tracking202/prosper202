@@ -44,6 +44,7 @@ final class MysqlConversionRepositoryTest extends TestCase
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,
+                'user_id' => 7,
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,
@@ -95,6 +96,7 @@ final class MysqlConversionRepositoryTest extends TestCase
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,
+                'user_id' => 7,
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,

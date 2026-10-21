@@ -1537,6 +1537,43 @@ anything may stand, every row is answered and the answer kept under the
 key; a commit the server did not confirm is `unconfirmed`, never
 `retryable`.
 
+### 35. A cleanup chosen by another row than its write removes what nothing replaces
+A click has one report row, at its latest visit, so a rollup writes the
+latest visit's row and deletes the click's rows at earlier visits. The first
+version chose what to delete by the earlier visit: a rebuild of an hour that
+held a re-click's first visit and not its latest deleted the click's row
+there and wrote none, since the latest visit was outside the window, and the
+click was gone from every report until something rolled up its latest hour
+(measured). A write and the cleanup that goes with it are one claim, "this
+row replaces those", and both have to select by the same predicate:
+`ClickRollupSql::deleteEarlierVisits()` takes the insert's own condition and
+`LatestVisit::isLatest()`, so a window that writes nothing of a click removes
+nothing of it. Ask of every "write, then remove the rest" whether the rest is
+chosen by what was written or by something that also holds when nothing was.
+
+The predicate's cost is the other half. "No visit of this click is later"
+was first a `NOT EXISTS` over `202_clicks` by `click_id`. Installs partition
+that table weekly by `click_time`, and a lookup by a column outside the
+partition key is one probe per partition (158 on the measured install): a
+30-day report went from about 1 s to over 80 s. The latest visit is now
+recorded in `202_click_latest_visits` and read by its primary key (about
+2 s). The same layout decided the cleanup's join order: left to the server,
+the delete began from the records and read every recorded click's rows, and
+an hour's rebuild took 6 s rather than 0.1 s, so the order is fixed with
+`STRAIGHT_JOIN`. Time a query on a partitioned table on the layout the
+installer makes, not on the unpartitioned tables a test creates.
+
+A table the upgrade makes is also a table the code reads before the upgrade
+has run: the files are deployed first, and the click path does not wait for
+the upgrade. Every per-click rollup in that window failed on the missing
+table and was logged and dropped, and nothing re-rolls a click whose rollup
+failed, so the window's clicks were missing from every report for good. A
+failed rollup now queues its hour for the cron job
+(`ClickRollupSql::queueRetry()`), which runs nothing while an upgrade is
+needed and rolls the hour up once it has run. When a change adds a table, trace each of its readers
+through the window between deploy and upgrade, and give each a path that
+converges once the table exists.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

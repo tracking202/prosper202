@@ -795,24 +795,43 @@ try {
 }
 
 /**
- * The visit's write, and a re-click's once more when it loses a deadlock, as
- * two re-clicks of different clicks can on a partitioned 202_clicks: each
- * locks its click (MysqlConversionLedger::lockClick()), which holds a gap in
- * the current week's partition, and then inserts its row into the other's
- * gap. The server rolls the loser back whole and $write's held cache writes
- * are dropped with it, so nothing of the first try stands; $reset puts back
- * the redirect URL the try may have filled in. A second failure is the
+ * The visit's write, and a re-click's again when it loses a deadlock, up to
+ * four tries in all, as two re-clicks of different clicks can on a
+ * partitioned 202_clicks: each locks its click
+ * (MysqlConversionLedger::lockClick()), which holds a gap in the current
+ * week's partition, and then inserts its row into the other's gap. The
+ * server rolls the loser back whole and $write's held cache writes are
+ * dropped with it, so nothing of a lost try stands; $reset puts back the
+ * redirect URL the try may have filled in, and $pause waits a jittered while
+ * that grows with each try, so two that deadlocked do not meet again at
+ * once. Measured with eight concurrent re-clickers of older clicks on 158
+ * partitions (MariaDB 10.11): one immediate retry lost 19 and 24 visits of
+ * 1,200 to another deadlock, four tries 3 and 2. The last failure is the
  * caller's.
+ *
+ * @param (callable(int): void)|null $pause given the try that failed; null sleeps 5 to 30 ms times it
  */
-function rtr_record_visit(callable $write, bool $reClick, callable $reset): void
+function rtr_record_visit(callable $write, bool $reClick, callable $reset, ?callable $pause = null): void
 {
-    try {
-        $write();
-    } catch (\Throwable $e) {
-        if (!$reClick || !\Prosper202\Database\Connection::isMysqlError($e, 1213, 'Deadlock found')) {
-            throw $e;
+    for ($try = 1;; $try++) {
+        try {
+            $write();
+
+            return;
+        } catch (\Throwable $e) {
+            if (
+                !$reClick
+                || $try >= 4
+                || !\Prosper202\Database\Connection::isMysqlError($e, 1213, 'Deadlock found')
+            ) {
+                throw $e;
+            }
+            $reset();
+            if ($pause === null) {
+                usleep(random_int(5_000, 30_000) * $try);
+            } else {
+                $pause($try);
+            }
         }
-        $reset();
-        $write();
     }
 }

@@ -29,6 +29,7 @@ final class SubidResetIntegrationTest extends TestCase
     private const USER = 990081;
     private const CLICK = 99008101;
     private const OTHER_CLICK = 99008102;
+    private const MOVED_CLICK = 99008103;
 
     private static int $network = 0;
     private static int $campaign = 0;
@@ -70,8 +71,8 @@ final class SubidResetIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $clicks = self::CLICK . ',' . self::OTHER_CLICK;
-        foreach (['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_record', '202_dataengine'] as $table) {
+        $clicks = self::CLICK . ',' . self::OTHER_CLICK . ',' . self::MOVED_CLICK;
+        foreach (['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_record', '202_dataengine', '202_click_latest_visits'] as $table) {
             self::$db->query("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
         self::$db->query("DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
@@ -93,5 +94,37 @@ final class SubidResetIntegrationTest extends TestCase
 
         self::assertSame(2, $batch->reset(self::USER, self::$network, self::$campaign), 'two clicks cleared');
         self::assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM 202_conversion_logs WHERE deleted = 0 AND user_id = ' . self::USER)->fetch_row()[0], 'and their sales are gone');
+    }
+
+    /**
+     * A click that arrived on one campaign and was re-clicked onto another
+     * is the other's: every report counts it, and its conversion, there. A
+     * reset of the campaign it arrived on cleared that sale.
+     */
+    public function testAReClickedClickIsResetWithItsLatestVisitsCampaign(): void
+    {
+        self::requireScratch();
+        $u = self::USER;
+        $moved = self::insert("INSERT INTO 202_aff_campaigns SET user_id = $u, aff_network_id = " . self::$network
+            . ", aff_campaign_name = 'moved', aff_campaign_url = 'https://moved.example', aff_campaign_payout = 1, aff_campaign_foreign_payout = 0, aff_campaign_time = 0");
+        $now = time();
+        foreach ([[self::$campaign, $now - 1800], [$moved, $now - 1200]] as [$campaign, $time]) {
+            self::q('INSERT INTO 202_clicks SET click_id = ' . self::MOVED_CLICK . ", user_id = $u, aff_campaign_id = $campaign,"
+                . " ppc_account_id = 0, landing_page_id = 0, click_cpc = 0, click_payout = 1, click_lead = 0, click_time = $time");
+        }
+        $conn = new Connection(self::$db);
+        \Prosper202\Click\LatestVisit::refresh($conn, self::MOVED_CLICK);
+        $recorded = (new MysqlConversionRepository($conn))->record($u, [
+            'click_id' => self::MOVED_CLICK, 'transaction_id' => 'moved', 'source' => 'api', 'payout' => '1.00',
+        ]);
+        self::assertTrue($recorded['clickFound']);
+
+        $batch = new SubidBatch($conn);
+        self::assertNotContains(self::MOVED_CLICK, array_column($batch->resetClicks($u, 0, self::$campaign), 'click_id'));
+        self::assertSame(
+            [['click_id' => self::MOVED_CLICK, 'click_time' => $now - 1200]],
+            $batch->resetClicks($u, 0, $moved),
+            'the campaign it was re-clicked onto, at that visit'
+        );
     }
 }

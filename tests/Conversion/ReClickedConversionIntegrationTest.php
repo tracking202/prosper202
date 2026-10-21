@@ -301,16 +301,20 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
-     * The lead flag a conversion checks is the latest visit's. A re-click
-     * written before 1.9.78 stored its row as no lead, so a click converted
-     * on its first visit converts once more on that visit; a re-click since
-     * carries the click's lead (MysqlClickRepository::leadValue(), held by
-     * ReClickOfAConvertedClickIntegrationTest). Such a click has no record of
-     * its latest visit until the 1.9.78 backfill reaches it, and none here.
+     * A conversion that counts once per click asks whether any visit of the
+     * click is a lead (LatestVisit::anyVisitIsLead()). A re-click written
+     * before 1.9.78 stored its row as no lead, and such a click has no
+     * record of its latest visit until the 1.9.78 backfill reaches it (none
+     * here): read from its latest visit alone, an id-less retry converted a
+     * click converted on its first visit again (in replace mode, replacing
+     * the sale at the latest visit's payout), where 1.9.77 read the first
+     * visit and refused. Every id-less path refuses it: the fast paths
+     * (pb.php, gpx.php, gpb.php and upx.php, Update Subids) and the check
+     * under the click's lock.
      *
      * @dataProvider storedOrders
      */
-    public function testALeadOnTheFirstVisitDoesNotStopTheLatestVisitConverting(bool $latestFirst): void
+    public function testALeadOnAnEarlierVisitStopsAnIdLessConversion(bool $latestFirst): void
     {
         foreach ($latestFirst ? [true, false] : [false, true] as $latest) {
             self::visit($latest, $latest ? 0 : 1);
@@ -321,14 +325,47 @@ final class ReClickedConversionIntegrationTest extends TestCase
             . ", transaction_id='T-1', campaign_id=11, click_payout=3.00, user_id=1, click_time=" . self::FIRST_TIME
             . ", conv_time=1, time_difference='', ip='', pixel_type=0, user_agent='', deleted=0, source='api',"
             . " payable=1, dedupe_key='tx:T-1'");
+        $before = self::conversions();
 
         $preview = (new SubidBatch(new Connection(self::$db), $repo))->markPreview(1, [(string) self::CLICK]);
-        self::assertSame(1, $preview['would_mark'], (string) json_encode($preview));
+        self::assertSame(0, $preview['would_mark'], (string) json_encode($preview));
+        $legacy = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['user_id' => 1]);
+        self::assertSame('already_lead', $legacy['reason'] ?? null, (string) json_encode($legacy));
+        self::assertSame('1', (string) self::one(p202PixelClickSql(self::CLICK))['click_lead'], 'gpx.php');
+        self::assertSame('1', (string) self::one(p202PostbackClickSql(self::CLICK))['click_lead'], 'gpb.php, upx.php');
 
-        $recorded = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['user_id' => 1]);
-        self::assertTrue($recorded['recorded'], (string) json_encode($recorded));
-        $again = p202RecordLegacyConversion(self::$db, self::CLICK, 1, ['user_id' => 1]);
-        self::assertSame('already_lead', $again['reason'], 'and once: the recompute made every visit a lead');
+        $locked = p202RecordConversion(self::$db, [
+            'click_id' => self::CLICK, 'campaign_id' => '12', 'user_id' => '1', 'click_time' => self::LATEST_TIME,
+            'conv_time' => self::LATEST_TIME + 60, 'time_difference' => '', 'ip' => '', 'pixel_type' => 2,
+            'user_agent' => '', 'click_payout' => '', 'once_per_click' => true,
+        ], '', false, '');
+        self::assertSame(0, $locked['conv_id'], 'the check under the lock: ' . json_encode($locked));
+        self::assertSame($before, self::conversions(), 'no conversion was recorded or replaced');
+    }
+
+    /**
+     * A click whose rows name two accounts (written before the account tie)
+     * and whose latest visit is the other account's row is not this
+     * account's click: its conversion records nothing and changes no row.
+     * The lock is by account; the visit read after it was not, so the
+     * conversion took the other account's campaign, payout and time, and
+     * the recompute wrote that payout onto both accounts' rows.
+     */
+    public function testAClickWhoseLatestVisitIsAnotherAccountsIsNotThisAccounts(): void
+    {
+        self::visit(false);
+        self::fixture('INSERT INTO 202_clicks SET click_id=' . self::CLICK . ', user_id=2, aff_campaign_id=31,'
+            . ' ppc_account_id=0, click_cpc=0, click_payout=9.00, click_lead=0, click_time=' . self::LATEST_TIME);
+        $rows = static fn (): array => self::$db->query('SELECT user_id, click_lead, click_payout FROM 202_clicks'
+            . ' WHERE click_id = ' . self::CLICK . ' ORDER BY click_time')->fetch_all(MYSQLI_ASSOC);
+        $before = $rows();
+
+        $result = (new MysqlConversionRepository(new Connection(self::$db)))
+            ->record(1, ['click_id' => self::CLICK, 'transaction_id' => 'M-1', 'source' => 'api']);
+
+        self::assertSame([0, false], [$result['convId'], $result['clickFound']]);
+        self::assertSame([], self::conversions());
+        self::assertSame($before, $rows());
     }
 
     /**

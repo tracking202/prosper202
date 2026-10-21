@@ -417,10 +417,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         // One conversion per click for id-less pixels and postbacks. This
-        // is the authoritative check: it reads click_lead after the click's
-        // lock, so a second id-less request waits on the first's commit and
-        // then sees click_lead = 1. A re-click's visit is written as no
-        // lead, so it takes one more.
+        // is the authoritative check: it reads whether any visit is a lead
+        // after the click's lock (lockClick()), so a second id-less request
+        // waits on the first's commit and then sees the lead.
         $oncePerClick = !empty($data['once_per_click'])
             || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
         if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {

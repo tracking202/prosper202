@@ -26,7 +26,10 @@ final class MysqlConversionLedger
     /**
      * Lock a click for a ledger write, then read the visit a conversion
      * credits: its latest (LatestVisit). Null when there is no such click
-     * (of that account, when $userId is given).
+     * (of that account, when $userId is given: a click whose latest visit is
+     * another account's row is not this account's, as every other read of
+     * the latest visit ties it). click_lead is whether any visit of it is a
+     * lead (LatestVisit::anyVisitIsLead()).
      *
      * The lock is the click's first row in the click_id index, the row every
      * ledger writer locks, so they serialise on it, as does any UPDATE of the
@@ -53,13 +56,20 @@ final class MysqlConversionLedger
         }
 
         $read = $this->conn->prepareWrite(
-            'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time, c.click_lead FROM '
-            . LatestVisit::of('?') . ' AS c'
+            'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time, '
+            . LatestVisit::anyVisitIsLead('c') . ' AS click_lead FROM ' . LatestVisit::of('?') . ' AS c'
         );
         $this->conn->bind($read, 'i', [$clickId]);
         $click = $this->conn->fetchOne($read);
         if ($click === null) {
             throw new LedgerIntegrityException('click ' . $clickId . ' is locked, and this transaction\'s snapshot holds no visit of it');
+        }
+        $owner = $click['user_id'] ?? null;
+        if (!is_int($owner) && !(is_string($owner) && preg_match('/\A\d+\z/', $owner) === 1)) {
+            throw new LedgerIntegrityException('click ' . $clickId . '\'s user_id read as ' . get_debug_type($owner));
+        }
+        if ($userId !== null && (int) $owner !== $userId) {
+            return null;
         }
 
         return $click;
@@ -114,7 +124,8 @@ final class MysqlConversionLedger
      * cannot come back.
      *
      * The value is the one on the click's latest visit that is a lead, which
-     * need not be its latest visit: a re-click's row is written as no lead.
+     * need not be its latest visit: a re-click written before 1.9.78 stored
+     * its row as no lead.
      * The caller holds the click's lock (lockClick()).
      *
      * @return int|null The baseline's conv_id when one was inserted.

@@ -299,10 +299,29 @@ final class ClickRollupSqlTest extends TestCase
 
         self::assertSame([
             'rollup' => ClickRollupSql::insertSelect('202_dataengine_new', '2c.click_id=42'),
-            'removal of the earlier visits\' rows' => ClickRollupSql::deleteEarlierVisits(
-                '202_dataengine_new',
-                '2c.click_id=42'
-            ),
+            'removal of the earlier visits\' rows' => ClickRollupSql::deleteEarlierVisitsOfClick('202_dataengine_new', 42),
         ], $steps);
+    }
+
+    /**
+     * The per-click removal is the window form's predicate for one click
+     * (its condition and isLatest()), begun from the record: the record and
+     * the tie of the rollup row to the click's rows and account are the
+     * window form's own.
+     */
+    public function testThePerClickRemovalReadsTheWindowFormsPredicate(): void
+    {
+        $sql = ClickRollupSql::deleteEarlierVisitsOfClick('202_dataengine', 42);
+
+        self::assertStringStartsWith('DELETE de FROM 202_click_latest_visits AS lv', $sql);
+        self::assertStringContainsString('WHERE lv.click_id = 42 AND ' . \Prosper202\Click\LatestVisit::isLatest('2c'), $sql);
+        self::assertStringContainsString(
+            '202_dataengine AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id AND de.click_time < lv.click_time)',
+            ClickRollupSql::deleteEarlierVisits('202_dataengine', '2c.click_id=42')
+        );
+        self::assertStringContainsString(
+            '202_dataengine AS de ON (de.click_id = 2c.click_id AND de.user_id = 2c.user_id AND de.click_time < lv.click_time)',
+            $sql
+        );
     }
 }

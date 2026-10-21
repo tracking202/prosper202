@@ -705,17 +705,19 @@ if (!function_exists('p202TimeDifference')) {
 if (!function_exists('p202PostbackClickSql')) {
     /**
      * The read gpb.php and upx.php make of the click a conversion names:
-     * the latest visit's owner, campaign, payout, lead flag and time, which
-     * the conversion credits (LatestVisit), with the click's c1-c4, keyword,
-     * Google and UTM values, tracker CPA and referrer. One row, or none for
-     * an unknown click or one with no tracking row.
+     * the latest visit's owner, campaign, payout and time, which the
+     * conversion credits (LatestVisit), whether any visit is a lead, and the
+     * click's c1-c4, keyword, Google and UTM values, tracker CPA and
+     * referrer. One row, or none for an unknown click or one with no
+     * tracking row.
      */
     function p202PostbackClickSql(int $clickId): string
     {
         $id = (string) $clickId;
 
         return 'SELECT
-            2cid.click_id, 2c.user_id, 2c.aff_campaign_id, 2c.click_payout, 2c.click_lead, 2c.click_time,
+            2cid.click_id, 2c.user_id, 2c.aff_campaign_id, 2c.click_payout,
+            ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('2c') . ' AS click_lead, 2c.click_time,
             2c1.c1, 2c2.c2, 2c3.c3, 2c4.c4, 2kw.keyword, 2g.gclid,
             2us.utm_source, 2um.utm_medium, 2uca.utm_campaign, 2ut.utm_term, 2uco.utm_content,
             2trc.click_cpa, 2su.site_url_address
@@ -765,13 +767,14 @@ if (!function_exists('p202ClickSourceSql')) {
 if (!function_exists('p202PixelClickSql')) {
     /**
      * The read gpx.php makes of the click a pixel names: the latest visit's
-     * owner, campaign, lead flag and time (LatestVisit), and its tracker's
-     * CPA. One row, or none for an unknown click.
+     * owner, campaign and time (LatestVisit), whether any visit is a lead,
+     * and its tracker's CPA. One row, or none for an unknown click.
      */
     function p202PixelClickSql(int $clickId): string
     {
         return 'SELECT 2cpa.tracker_id_public, 2trc.click_cpa,
-            2c.user_id, 2c.aff_campaign_id, 2c.click_lead, 2c.click_time
+            2c.user_id, 2c.aff_campaign_id,
+            ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('2c') . ' AS click_lead, 2c.click_time
             FROM ' . \Prosper202\Click\LatestVisit::of((string) $clickId) . ' AS 2c
             LEFT JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
             LEFT JOIN 202_trackers AS 2trc
@@ -850,7 +853,8 @@ if (!function_exists('p202RecordLegacyConversion')) {
         // click's latest visit, whose campaign the pb check compares.
         $conn = new \Prosper202\Database\Connection($db);
         $stmt = $conn->prepareRead(
-            'SELECT c.user_id, c.aff_campaign_id, c.click_lead, c.click_time, c.click_payout, t.click_cpa
+            'SELECT c.user_id, c.aff_campaign_id, ' . \Prosper202\Click\LatestVisit::anyVisitIsLead('c') . ' AS click_lead,
+                c.click_time, c.click_payout, t.click_cpa
              FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c
              LEFT JOIN 202_cpa_trackers AS cp ON cp.click_id = c.click_id
              LEFT JOIN 202_trackers AS t ON t.tracker_id_public = cp.tracker_id_public AND t.user_id = c.user_id

@@ -67,6 +67,47 @@ final class LatestVisit
     }
 
     /**
+     * The condition that a visit of the click $clicks names, among its
+     * account's rows, is a lead: "converted already", as a conversion that
+     * counts once per click asks it. Since 1.9.78 every visit carries the
+     * click's lead (a re-click copies it, and the ledger's recompute writes
+     * every row), so this is the latest visit's own flag. A re-click written
+     * before stored its row as no lead, and until the backfill reaches the
+     * click its latest visit alone would let an id-less retry convert it
+     * again, where 1.9.77 read the first visit and refused.
+     */
+    public static function anyVisitIsLead(string $clicks): string
+    {
+        self::alias($clicks);
+        if (strtolower($clicks) === 'lead_visit') {
+            throw new InvalidArgumentException('lead_visit is the alias anyVisitIsLead() reads the visits by');
+        }
+
+        return 'EXISTS (SELECT 1 FROM 202_clicks AS lead_visit WHERE lead_visit.click_id = ' . $clicks . '.click_id'
+            . ' AND lead_visit.user_id = ' . $clicks . '.user_id AND lead_visit.click_lead = 1)';
+    }
+
+    /**
+     * Whether $e, or one it wraps, is the server's 1146 for
+     * 202_click_latest_visits: code deployed before the 1.9.78 upgrade has
+     * made the table. A reader that must answer in that window reads every
+     * visit as latest, as isLatest() reads a click with no record.
+     */
+    public static function tableMissing(\Throwable $e): bool
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if (
+                Connection::isMysqlError($current, 1146, '')
+                && preg_match('/\b202_click_latest_visits\b/', $current->getMessage()) === 1
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Record the click's latest visit time, the latest of its 202_clicks
      * rows (not the visit just written: a web server's clock can put a
      * re-click before the visit it follows). Run by whatever adds a visit,
@@ -82,6 +123,9 @@ final class LatestVisit
         $latest = $conn->fetchOne($stmt)['latest'] ?? null;
         if ($latest === null) {
             throw new \UnexpectedValueException("Click {$clickId} has no visit to record");
+        }
+        if (!is_int($latest) && !(is_string($latest) && preg_match('/\A\d+\z/', $latest) === 1)) {
+            throw new \UnexpectedValueException("Click {$clickId}'s latest click_time read as " . get_debug_type($latest));
         }
         $stmt = $conn->prepareWrite(
             'INSERT INTO 202_click_latest_visits (click_id, click_time) VALUES (?, ?)'

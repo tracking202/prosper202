@@ -2438,6 +2438,14 @@ class UPGRADE
             $sql = "RENAME TABLE 202_dataengine_new TO 202_dataengine";
             $result = _upgrade_query($sql);
 
+            // The rebuild below reads 202_click_latest_visits (LatestVisit),
+            // which the 1.9.77 step converges: an install upgrading from
+            // before 1.9.5 reaches this first, and without it the rebuild
+            // failed here on every run. Empty, it reads every visit as
+            // latest, as the rebuild did when this step was written.
+            $sql = \Prosper202\Database\Tables\ClickTables::clickLatestVisits()->createStatement;
+            $result = _upgrade_query($sql);
+
             $de = new DataEngine();
             // PHPStan resolves DataEngine to the slim stub (see note above); the full class
             // loaded here exposes getSummary(), which runs the dataengine rebuild for its side

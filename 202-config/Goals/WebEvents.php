@@ -293,19 +293,40 @@ final class WebEvents
             return null;
         }
 
-        $sql = 'SELECT c.click_id, c.aff_campaign_id FROM 202_identity_observations AS o
-                JOIN 202_clicks AS c ON c.click_id = o.click_id
-                WHERE o.signal_type = ? AND o.signal_hash = ? AND c.user_id = ? AND c.click_time >= ?
-                  AND ' . LatestVisit::isLatest('c')
-            . ($campaignId > 0 ? ' AND c.aff_campaign_id = ?' : '')
-            . ' ORDER BY c.click_time DESC, c.click_id DESC LIMIT 1';
-        $stmt = $this->conn->prepareRead($sql);
         $params = [SignalType::LANDING_PAGE->value, $hash, $userId, $now - self::VISITOR_LOOKBACK];
         if ($campaignId > 0) {
             $params[] = $campaignId;
         }
-        $this->conn->bind($stmt, 'ssii' . ($campaignId > 0 ? 'i' : ''), $params);
-        $row = $this->conn->fetchOne($stmt);
+        $types = 'ssii' . ($campaignId > 0 ? 'i' : '');
+        $campaign = $campaignId > 0 ? ' AND c.aff_campaign_id = ?' : '';
+        try {
+            $stmt = $this->conn->prepareRead(
+                'SELECT c.click_id, c.aff_campaign_id FROM 202_identity_observations AS o
+                JOIN 202_clicks AS c ON c.click_id = o.click_id
+                WHERE o.signal_type = ? AND o.signal_hash = ? AND c.user_id = ? AND c.click_time >= ?
+                  AND ' . LatestVisit::isLatest('c') . $campaign
+                . ' ORDER BY c.click_time DESC, c.click_id DESC LIMIT 1'
+            );
+            $this->conn->bind($stmt, $types, $params);
+            $row = $this->conn->fetchOne($stmt);
+        } catch (\RuntimeException $e) {
+            if (!LatestVisit::tableMissing($e)) {
+                throw $e;
+            }
+            // Deployed before the 1.9.78 upgrade has made the table: no click
+            // has a record, so every visit is a latest visit, as isLatest()
+            // reads a click with none. The event is kept rather than lost.
+            error_log('p202 web event: ' . LatestVisit::class . '\'s table is missing; the visitor\'s click is read'
+                . ' from every visit until the 1.9.78 upgrade has run');
+            $stmt = $this->conn->prepareRead(
+                'SELECT c.click_id, c.aff_campaign_id FROM 202_identity_observations AS o
+                JOIN 202_clicks AS c ON c.click_id = o.click_id
+                WHERE o.signal_type = ? AND o.signal_hash = ? AND c.user_id = ? AND c.click_time >= ?' . $campaign
+                . ' ORDER BY c.click_time DESC, c.click_id DESC LIMIT 1'
+            );
+            $this->conn->bind($stmt, $types, $params);
+            $row = $this->conn->fetchOne($stmt);
+        }
 
         return $row === null ? null : ['user_id' => $userId, 'click_id' => (int) $row['click_id'], 'campaign_id' => (int) $row['aff_campaign_id']];
     }

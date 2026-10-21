@@ -43,14 +43,18 @@ final class ClickValueWritersTest extends TestCase
 
     /**
      * Files that copy a click's lead and value from its own rows onto
-     * another of its rows, with what they copy. Each is checked to still
-     * write them, like ALLOWED.
+     * another of its rows: how many such writes each holds, held exactly so
+     * a write added beside the copies is seen, and what they copy. Each is
+     * checked to still write them, like ALLOWED.
+     *
+     * @var array<string, array{int, string}>
      */
     private const COPIERS = [
-        '202-config/Click/MysqlClickRepository.php' => 'leadValue(), the lead and value of the click\'s latest'
-            . ' row that is a lead, read under the click\'s lock: a re-click in the second of an earlier visit'
-            . ' rewrites that visit\'s row with them (writeVisitRows()), and the 1.9.78 backfill gives them to'
-            . ' every row of a click re-clicked before (repairVisits()), whose re-click rows were written no lead',
+        '202-config/Click/MysqlClickRepository.php' => [2, 'writeVisitRows()\'s rewrite of the 202_clicks and'
+            . ' 202_clicks_spy rows in the second of the visit being written, with leadValue(): the lead and value'
+            . ' of the click\'s latest row that is a lead, read under the click\'s lock. A re-click carries them,'
+            . ' and the 1.9.78 backfill gives them to every row of a click re-clicked before (repairVisits()),'
+            . ' whose re-click rows were written no lead'],
     ];
 
     /**
@@ -77,8 +81,14 @@ final class ClickValueWritersTest extends TestCase
             $source = file_get_contents($path);
             $this->assertIsString($source, $relative . ' could not be read');
             $scanned++;
-            foreach (self::writesOfClickValue($source) as $hit) {
-                if (in_array($relative, self::ALLOWED, true) || isset(self::COPIERS[$relative])) {
+            $writes = self::writesOfClickValue($source);
+            if (isset(self::COPIERS[$relative])) {
+                $this->assertCount(self::COPIERS[$relative][0], $writes, $relative . ' writes a click\'s lead or value'
+                    . ' where COPIERS does not say it copies them: ' . implode("\n", $writes));
+                continue;
+            }
+            foreach ($writes as $hit) {
+                if (in_array($relative, self::ALLOWED, true)) {
                     continue;
                 }
                 if (isset(self::RUNTIME_TARGETS[$relative]) && str_starts_with($hit, self::RUNTIME)) {

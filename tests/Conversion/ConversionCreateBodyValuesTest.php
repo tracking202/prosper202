@@ -127,7 +127,7 @@ final class ConversionCreateBodyValuesTest extends TestCase
         self::clickVisit(
             $db,
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
-            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => '0.00000',
+            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => '0.00000',
                 'click_time' => 1700000000, 'click_lead' => 0]]
         );
 

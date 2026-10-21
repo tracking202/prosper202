@@ -94,6 +94,8 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
                 . ' rollup table its caller names, at a click\'s earlier visits, which it reads from 202_clicks and'
                 . ' 202_click_latest_visits',
             '202_clicks' => 'deleteEarlierVisits(), as above: 202_clicks is joined, not written',
+            'DELETE de FROM 202_click_latest_visits AS lv STRAIGHT_JOIN' => 'deleteEarlierVisitsOfClick(): the'
+                . ' same delete of one click, begun from its record',
         ],
         '202-config/User/UserDataPurge.php' => [
             '202_clicks' => "deletes a purged account's identity observations, joined to its clicks; no click row",
@@ -128,7 +130,7 @@ final class ClickRowsWrittenOnlyByTheWriterTest extends TestCase
     ];
 
     /** How many rewrites OTHER_REWRITERS holds. Lower it when one goes. */
-    private const REWRITE_CEILING = 24;
+    private const REWRITE_CEILING = 25;
 
     /** An UPDATE's table references, to SET. */
     private const UPDATE = '/\A\s*UPDATE\b(?:\s+(?:LOW_PRIORITY|IGNORE))*\s+(.+?)\s+SET\b/is';

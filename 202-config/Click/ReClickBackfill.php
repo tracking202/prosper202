@@ -15,8 +15,9 @@ use Prosper202\DataEngine\ClickRollupSql;
  * cost, no lead and its own filtered and bot flags; and a click's latest
  * visit is now read from 202_click_latest_visits, which nothing wrote for
  * them. So such a click counted at each visit, and once it counts at its
- * latest, a converted click would lose its lead and income everywhere and
- * an id-less postback could convert it again. For every click with more
+ * latest, a converted click would lose its lead and income everywhere (a
+ * conversion's once-per-click check asks every visit,
+ * LatestVisit::anyVisitIsLead()). For every click with more
  * than one 202_clicks row, MysqlClickRepository::repairVisits() gives each
  * row the first visit's source, cost and flags and the click's lead and
  * value, records the latest visit and marks the click for the attribution
@@ -25,10 +26,14 @@ use Prosper202\DataEngine\ClickRollupSql;
  *
  * Bounded and resumable, never in the upgrade request: the upgrade writes
  * the marker (202_reclick_backfill: through_click_id is the newest click at
- * the upgrade), and each cron run walks click ids in chunks of CHUNK ids
- * until its deadline, moving the cursor after each chunk. The clicks of a
- * chunk are found by a plain read, which locks nothing. Idempotent: a click
- * repaired twice is written the same values twice.
+ * the upgrade), and each cron run walks click ids in chunks of CHUNK ids,
+ * moving the cursor after each chunk, until its deadline. The deadline is
+ * asked before each click, not each chunk: a chunk dense with re-clicks
+ * took 85 s (measured, 158 partitions), holding up every job after it in
+ * the cron's minute; a run that stops mid-chunk leaves the cursor at the
+ * first click it did not repair. The clicks of a chunk are found by a plain
+ * read, which locks nothing. Idempotent: a click repaired twice is written
+ * the same values twice.
  *
  * A click that fails is logged, naming it, and the run ends there with the
  * cursor at that click, so the next run starts with it: a failure is
@@ -78,7 +83,7 @@ final class ReClickBackfill
     public const NEWEST_CLICK_SQL = 'SELECT COALESCE(MAX(`click_id`), 0) AS `newest` FROM `202_clicks`';
 
     /**
-     * Walk until $deadline (unix seconds) or the end, at least one chunk.
+     * Walk until $deadline (unix seconds) or the end, at least one click.
      * Null when there is nothing to walk (no marker, or finished).
      *
      * @return array{
@@ -105,11 +110,18 @@ final class ReClickBackfill
             'failed_click_id' => null,
         ];
 
+        $repairs = 0;
         do {
             $end = min($next + self::CHUNK - 1, $through);
             $done = ['reclicked_clicks' => 0, 'same_second_ties' => 0, 'mixed_accounts' => 0];
             $failed = null;
+            $stopped = null;
             foreach ($this->reClickedClicks($next, $end) as $clickId) {
+                if ($repairs > 0 && ($this->clock)() >= $deadline) {
+                    $stopped = $clickId;
+                    break;
+                }
+                $repairs++;
                 try {
                     $repair = $repo->repairVisits($clickId);
                     if ($repair['outcome'] === 'repaired') {
@@ -129,8 +141,8 @@ final class ReClickBackfill
             }
 
             $chunkStart = $next;
-            $next = $failed ?? max($end + 1, $chunkStart);
-            $finished = $failed === null && $next > $through;
+            $next = $failed ?? $stopped ?? max($end + 1, $chunkStart);
+            $finished = $failed === null && $stopped === null && $next > $through;
             $this->moveCursor($chunkStart, $next, $done, $finished);
 
             foreach ($done as $count => $n) {
@@ -139,7 +151,7 @@ final class ReClickBackfill
             $out['next_click_id'] = $next;
             $out['finished'] = $finished;
             $out['failed_click_id'] = $failed;
-        } while ($failed === null && !$finished && ($this->clock)() < $deadline);
+        } while ($failed === null && $stopped === null && !$finished && ($this->clock)() < $deadline);
 
         return $out;
     }

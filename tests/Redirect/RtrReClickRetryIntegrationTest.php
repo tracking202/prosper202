@@ -185,7 +185,7 @@ final class RtrReClickRetryIntegrationTest extends TestCase
     /** @return iterable<string, array{bool, int}> */
     public static function deadlockedWrites(): iterable
     {
-        yield 'a re-click: tried twice' => [true, 2];
+        yield 'a re-click: tried four times' => [true, 4];
         yield 'a new click: no lock of an older click, so not run again' => [false, 1];
     }
 
@@ -194,6 +194,7 @@ final class RtrReClickRetryIntegrationTest extends TestCase
     {
         $tries = 0;
         $resets = 0;
+        $paused = [];
         try {
             p202RtrRetryTest_record(
                 static function () use (&$tries): void {
@@ -203,6 +204,9 @@ final class RtrReClickRetryIntegrationTest extends TestCase
                 $reClick,
                 static function () use (&$resets): void {
                     $resets++;
+                },
+                static function (int $try) use (&$paused): void {
+                    $paused[] = $try;
                 }
             );
             self::fail('the deadlock reaches rtr.php\'s error page');
@@ -210,6 +214,7 @@ final class RtrReClickRetryIntegrationTest extends TestCase
             self::assertSame(1213, $e->getCode());
         }
         self::assertSame([$expectedTries, $expectedTries - 1], [$tries, $resets]);
+        self::assertSame($expectedTries > 1 ? range(1, $expectedTries - 1) : [], $paused, 'a pause after each lost try');
     }
 
     /** @return iterable<string, array{\Throwable}> */
