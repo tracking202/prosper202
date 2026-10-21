@@ -206,7 +206,7 @@ function query(
 {
     $database = DB::getInstance();
     if ($isspy) {
-        $db = $database->getConnectionro();
+        $db = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     } else {
         $db = $database->getConnection();
     }
@@ -1025,24 +1025,34 @@ function clickserver_api_key_validate($key): ?bool
  * The auth service's answer read as clickserver_api_key_validate() reports
  * it. A key the service rejects is invalid whatever else the answer holds or
  * its status says; a verdict of valid counts only on a 2xx answer that holds
- * both verdicts. Anything else (no body, a body that is not the service's
- * JSON, a failure status, a verdict missing) is null: no answer.
+ * both verdicts, each one the service sends. Anything else (no body, a body
+ * that is not the service's JSON, a failure status, a verdict missing or one
+ * it does not send) is null: no answer.
  */
-function clickserver_auth_answer(?string $body, int $status = 200): ?bool
+function clickserver_auth_answer(?string $body, int $status): ?bool
 {
     $data = $body === null ? null : json_decode($body, true);
     if (!is_array($data)) {
         return null;
     }
-    $rejected = static fn ($v): bool => $v === false || $v === 'false' || $v === 0 || $v === '0';
-    if (array_key_exists('isValidKey', $data) && $rejected($data['isValidKey'])) {
+    $verdict = static fn ($v): ?bool => match (true) {
+        $v === true, $v === 'true' => true,
+        $v === false, $v === 'false', $v === 0, $v === '0' => false,
+        default => null,
+    };
+    if (array_key_exists('isValidKey', $data) && $verdict($data['isValidKey']) === false) {
         return false;
     }
     $answered = $status >= 200 && $status <= 299;
     if (!$answered || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
         return null;
     }
-    return $data['isValidKey'] == 'true' && $data['isValidDomain'] == 'true';
+    $key = $verdict($data['isValidKey']);
+    $domain = $verdict($data['isValidDomain']);
+    if ($key === null || $domain === null) {
+        return null;
+    }
+    return $key && $domain;
 }
 
 /**

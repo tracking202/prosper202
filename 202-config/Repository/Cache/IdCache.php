@@ -16,7 +16,8 @@ interface IdCache
     /**
      * Keeps $id for $ttl seconds, or for the cache's own lifetime when null.
      *
-     * @throws \InvalidArgumentException for an id below 1
+     * @throws \InvalidArgumentException for an id below 1, or a lifetime
+     *         CacheLifetime refuses
      */
     public function set(string $key, int $id, ?int $ttl = null): void;
 }

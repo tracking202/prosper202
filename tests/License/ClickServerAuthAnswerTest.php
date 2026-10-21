@@ -63,6 +63,37 @@ final class ClickServerAuthAnswerTest extends TestCase
         self::assertNull(self::answer('{"error":"unknown key"}', 401), 'an error with no verdict is no answer');
     }
 
+    /** A verdict the service does not send is no answer, not "invalid", on a 2xx too. */
+    public function testAVerdictTheServiceDoesNotSendIsNoAnswer(): void
+    {
+        foreach (
+            [
+                '{"isValidKey":"yes","isValidDomain":"true"}',
+                '{"isValidKey":null,"isValidDomain":"true"}',
+                '{"isValidKey":"true","isValidDomain":"yes"}',
+                '{"isValidKey":"true","isValidDomain":null}',
+                '{"isValidKey":"TRUE","isValidDomain":"true"}',
+                '{"isValidKey":1,"isValidDomain":1}',
+                '{"isValidKey":[],"isValidDomain":"true"}',
+            ] as $body
+        ) {
+            self::assertNull(self::answer($body, 200), $body);
+        }
+        self::assertFalse(self::answer('{"isValidKey":"true","isValidDomain":0}', 200));
+        self::assertFalse(self::answer('{"isValidKey":true,"isValidDomain":false}', 204));
+    }
+
+    /** No caller may read an answer without its status. */
+    public function testTheStatusMustBeGiven(): void
+    {
+        $code = 'require ' . var_export(self::root() . '/vendor/autoload.php', true) . ';'
+            . ' require ' . var_export(self::root() . '/202-config/functions-tracking202.php', true) . ';'
+            . ' try { clickserver_auth_answer(\'{"isValidKey":"true","isValidDomain":"true"}\'); echo "read"; }'
+            . ' catch (ArgumentCountError) { echo "refused"; }';
+        $out = shell_exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1');
+        self::assertSame('refused', trim((string) $out));
+    }
+
     public function testTheFormsSayWhenAKeyCouldNotBeChecked(): void
     {
         self::assertNull(p202_clickserver_key_error(true));

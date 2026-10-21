@@ -6,7 +6,9 @@ namespace Tests\Repository;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Repository\Cache\CachedIds;
 use Prosper202\Repository\Cache\MemcacheIdCache;
+use Prosper202\Repository\Cache\MemcacheRowCache;
 use Prosper202\Repository\Cache\NullIdCache;
 use Prosper202\Repository\Cached\CachedTrackingRepository;
 use Prosper202\Repository\InMemory\InMemoryTrackingRepository;
@@ -133,6 +135,67 @@ final class IdCacheTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         $cache->set('k', 0);
+    }
+
+    /** @return array<string, array{int}> */
+    public static function lifetimesMemcacheMisreads(): array
+    {
+        return [
+            'zero (never expire)' => [0],
+            'negative' => [-1],
+            'past 30 days (a Unix time)' => [2592001],
+        ];
+    }
+
+    /**
+     * A lifetime memcache would read as "never expire" or as a time long
+     * past is refused by every cache, before anything is written.
+     *
+     * @dataProvider lifetimesMemcacheMisreads
+     */
+    public function testALifetimeMemcacheWouldMisreadIsRefused(int $ttl): void
+    {
+        $writes = [];
+        $write = static function (string $key, mixed $value, int $ttl) use (&$writes): bool {
+            $writes[] = $ttl;
+            return true;
+        };
+        $read = static fn (string $key): mixed => false;
+        $refusals = 0;
+        $attempts = [
+            static fn () => (new MemcacheIdCache($read, $write))->set('k', 5, $ttl),
+            static fn () => new MemcacheIdCache($read, $write, $ttl),
+            static fn () => new MemcacheRowCache($read, $write, $ttl),
+            static fn () => (new NullIdCache())->set('k', 5, $ttl),
+            static fn () => (new ArrayIdCache())->set('k', 5, $ttl),
+            static fn () => (new CachedIds(new MemcacheIdCache($read, $write), 'ns'))
+                ->remember('subject', static fn (): int => 9, $ttl),
+        ];
+        foreach ($attempts as $i => $attempt) {
+            try {
+                $attempt();
+            } catch (InvalidArgumentException $e) {
+                self::assertStringContainsString("not $ttl", $e->getMessage(), "attempt $i");
+                $refusals++;
+            }
+        }
+
+        self::assertSame(count($attempts), $refusals);
+        self::assertSame([], $writes, 'nothing written');
+    }
+
+    public function testTheLifetimesAtTheEdgesAreKept(): void
+    {
+        $writes = [];
+        $write = static function (string $key, int $id, int $ttl) use (&$writes): bool {
+            $writes[] = $ttl;
+            return true;
+        };
+        $cache = new MemcacheIdCache(static fn (string $key): mixed => false, $write, 1);
+        $cache->set('a', 5);
+        $cache->set('b', 5, 2592000);
+
+        self::assertSame([1, 2592000], $writes);
     }
 
     public function testTheNullCacheKeepsNothing(): void

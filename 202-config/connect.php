@@ -376,7 +376,7 @@ try {
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
     // Retained 202-config.php files may expose only the primary connection.
-    $dbro = method_exists($database, 'getConnectionro') ? $database->getConnectionro() : $db;
+    $dbro = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     if ($dbro === null || $dbro->connect_error) {
         $errno = $dbro ? $dbro->connect_errno : 'N/A';
         $error = $dbro ? $dbro->connect_error : 'DB RO object is null';

@@ -23,5 +23,8 @@ final readonly class NullIdCache implements IdCache
                 'Only a row id is cached, not ' . $id
             );
         }
+        if ($ttl !== null) {
+            CacheLifetime::seconds($ttl);
+        }
     }
 }

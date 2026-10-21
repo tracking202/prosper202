@@ -724,6 +724,10 @@ defines. `202-config.php` can carry a `DB` class with `getConnection()` alone;
 the current sample having `getConnectionro()` does not add it to that file.
 Check an optional config method before calling it, and exercise a retained
 config as well as the current sample (`DatabaseConfigCompatibilityTest`).
+The guard first went into `connect.php` alone while the Spy query still
+called `getConnectionro()` itself; the replica is now read only through
+`ConnectionFactory::readConnectionOf()`, and the test refuses a call or a
+callable naming the method anywhere else.
 
 ### 20. A checker only sees the syntax it follows
 

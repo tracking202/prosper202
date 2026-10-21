@@ -159,12 +159,15 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
     }
 
     /** @return array{int, string, string} status, headers, body */
-    private static function get(string $path, string $referer = ''): array
-    {
+    private static function get(
+        string $path,
+        string $referer = '',
+        string $userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36'
+    ): array {
         $ch = curl_init(self::$base . $path);
         curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true, CURLOPT_TIMEOUT => 20,
             CURLOPT_REFERER => $referer,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36']);
+            CURLOPT_USERAGENT => $userAgent]);
         $out = (string) curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $size = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
@@ -194,6 +197,12 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         }
 
         return $urls;
+    }
+
+    /** An answer no browser or cache in between may keep (p202NoStore()). */
+    private static function assertNotStored(string $headers, string $what): void
+    {
+        self::assertMatchesRegularExpression('~^Cache-Control:[^\r\n]*\bno-store\b~mi', $headers, $what);
     }
 
     private static function cookieSet(string $headers, string $name): bool
@@ -250,6 +259,7 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         $before = self::clicks();
         [$status, $headers] = self::get('/tracking202/redirect/dl.php?t202id=' . (3999 + 100000));
         self::assertSame(404, $status, $headers . $this->serverLog());
+        self::assertNotStored($headers, 'dl.php 404');
         self::assertFalse(self::cookieSet($headers, 'p202vid'), $headers);
         self::assertSame($before, self::clicks());
     }
@@ -288,18 +298,24 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         $before = self::clicks();
         [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . (3933 + 100000));
         self::assertSame(404, $status, $headers . $this->serverLog());
+        self::assertNotStored($headers, 'no default');
         self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers);
         self::assertSame($before, self::clicks());
         self::assertStringContainsString('redirector 3913 has no default this account can send a visitor to', $this->serverLog());
     }
 
-    /** Every exit with nowhere to send the visitor answers 404 and records nothing, as dl.php does. */
+    /**
+     * Every exit with nowhere to send the visitor answers 404, uncacheable,
+     * and records nothing, as dl.php does: an id that is no number (answered
+     * before the bootstrap), no tracker, a tracker with no redirector.
+     */
     public function testALinkThatLeadsNowhereIsNotFound(): void
     {
         foreach (['abc', '0', (string) (3999 + 100000), (string) (3937 + 100000)] as $id) {
             $before = self::clicks();
             [$status, $headers] = self::get('/tracking202/redirect/rtr.php?t202id=' . $id);
             self::assertSame(404, $status, "t202id=$id: " . $headers . $this->serverLog());
+            self::assertNotStored($headers, "t202id=$id");
             self::assertDoesNotMatchRegularExpression('~^Location:~mi', $headers);
             self::assertSame($before, self::clicks(), "t202id=$id");
         }
@@ -356,5 +372,34 @@ final class ClickDefaultsServedIntegrationTest extends TestCase
         [$status, $headers, $body] = self::get('/tracking202/static/landing.php?lpip=' . (3903 + 100000) . $query);
         self::assertSame(200, $status, $headers . $this->serverLog());
         self::assertStringContainsString("var p202CampaignCapture = $capture;", $body, $this->serverLog());
+    }
+
+    /**
+     * Text that is not UTF-8, in the query string or the User-Agent, is
+     * substituted in the script rather than failing its encode: a failed
+     * json_encode() printed nothing, and `var lpip = ;` stopped the script.
+     */
+    public function testTextThatIsNotUtf8LeavesTheScriptWhole(): void
+    {
+        [$status, $headers, $body] = self::get(
+            '/tracking202/static/landing.php?lpip=%FF',
+            '',
+            "Mozilla/5.0 (Linux; Android 10; Pix\xffel 4) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+        );
+        self::assertSame(200, $status, $headers . $this->serverLog());
+        self::assertStringContainsString('var lpip = "\\ufffd";', $body);
+        self::assertStringContainsString('t202Enc("\\ufffd")', $body);
+        self::assertStringContainsString("\"t202Device\":\"Pix\u{FFFD}el 4\"", $body);
+        self::assertDoesNotMatchRegularExpression('~=\s*;|t202Enc\(\s*\)~', $body, 'every value printed');
+        // Where node is on PATH (CI's runners have it), the script must parse.
+        $node = trim((string) shell_exec('command -v node 2>/dev/null'));
+        if ($node !== '') {
+            $file = (string) tempnam(sys_get_temp_dir(), 'p202lp');
+            file_put_contents($file . '.js', $body);
+            exec(escapeshellarg($node) . ' --check ' . escapeshellarg($file . '.js') . ' 2>&1', $out, $rc);
+            @unlink($file . '.js');
+            @unlink($file);
+            self::assertSame(0, $rc, implode("\n", $out));
+        }
     }
 }

@@ -31,8 +31,9 @@ final readonly class MemcacheIdCache implements IdCache
     public function __construct(
         private Closure $read,
         private Closure $write,
-        private int $ttl = 2592000,
+        private int $ttl = CacheLifetime::MAX_SECONDS,
     ) {
+        CacheLifetime::seconds($ttl);
     }
 
     /**
@@ -54,8 +55,9 @@ final readonly class MemcacheIdCache implements IdCache
                 'Only a row id is cached, not ' . $id
             );
         }
+        $ttl = $ttl === null ? $this->ttl : CacheLifetime::seconds($ttl);
         // A write the cache refuses costs a miss on the next lookup, which
         // reads the database; it is not an answer to check.
-        ($this->write)($key, $id, $ttl ?? $this->ttl);
+        ($this->write)($key, $id, $ttl);
     }
 }

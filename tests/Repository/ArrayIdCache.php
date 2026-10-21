@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Repository;
 
 use InvalidArgumentException;
+use Prosper202\Repository\Cache\CacheLifetime;
 use Prosper202\Repository\Cache\IdCache;
 
 /** An IdCache in an array, recording what was asked of it. */
@@ -35,6 +36,9 @@ final class ArrayIdCache implements IdCache
     {
         if ($id < 1) {
             throw new InvalidArgumentException('Only a row id is cached, not ' . $id);
+        }
+        if ($ttl !== null) {
+            CacheLifetime::seconds($ttl);
         }
         $this->writes[] = [$key, $id];
         $this->ttls[$key] = $ttl;
