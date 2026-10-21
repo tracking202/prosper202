@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +61,16 @@ func noClickValue(v string) bool {
 // clickIDRe is the shape of a click id gpb.php can match
 // (Prosper202\Click\ClickId::parse).
 var clickIDRe = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
+
+// isClickID: ClickId::parse also needs the id to fit PHP's int, which 19
+// digits above 9223372036854775807 do not.
+func isClickID(v string) bool {
+	if !clickIDRe.MatchString(v) {
+		return false
+	}
+	_, err := strconv.ParseInt(v, 10, 64)
+	return err == nil
+}
 
 // offerURL is one of a campaign's offer URL slots.
 type offerURL struct {
@@ -212,7 +223,7 @@ func readSlot(u *url.URL, o offerURL, fields []subidField) slotRead {
 		if !ok {
 			continue
 		}
-		if clickIDRe.MatchString(v) {
+		if isClickID(v) {
 			return slotRead{slot: o, match: subidMatch{ID: v, Field: f.String(), FromCampaign: true},
 				desc: fmt.Sprintf("%s reads %s from %s", o.slot, v, f)}
 		}
@@ -449,7 +460,7 @@ func subidFromNetworkFields(loc string) (subidMatch, error) {
 			if v == noClickSubid {
 				return subidMatch{}, newSubidError(subidNoClick, "the redirect carries %s in %s, which the tracking link sends when it recorded no click (its database was unreachable)", noClickSubid, name)
 			}
-			if clickIDRe.MatchString(v) {
+			if isClickID(v) {
 				add(v, name)
 			}
 		}
@@ -459,7 +470,7 @@ func subidFromNetworkFields(loc string) (subidMatch, error) {
 			if !strings.HasPrefix(seg, prefix) {
 				continue
 			}
-			if v, err := url.PathUnescape(seg[len(prefix):]); err == nil && clickIDRe.MatchString(v) {
+			if v, err := url.PathUnescape(seg[len(prefix):]); err == nil && isClickID(v) {
 				add(v, "/"+prefix)
 			}
 		}
@@ -528,7 +539,7 @@ func subidFromNamedField(loc, field string) (subidMatch, error) {
 	}
 	v := vals[0]
 	switch {
-	case clickIDRe.MatchString(v):
+	case isClickID(v):
 		return subidMatch{ID: v, Field: field}, nil
 	case noClickValue(v):
 		return subidMatch{}, newSubidError(subidNoClick, "the redirect carries %q in %s, which the tracking link sends when it recorded no click (its database was unreachable)", v, field)

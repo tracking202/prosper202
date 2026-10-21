@@ -786,6 +786,8 @@ func TestSubidFromNamedField(t *testing.T) {
 		{"https://n.example/r?c1=4821-x", "c1", "", subidNotBare},
 		{"https://n.example/r?c1=p202", "c1", "", subidNoClick},
 		{"https://n.example/r?c1=[[SubID]]", "c1", "", subidNoClick},
+		{"https://n.example/r?c1=9223372036854775807", "c1", "9223372036854775807", 0},
+		{"https://n.example/r?c1=9223372036854775808", "c1", "", subidNotBare},
 	} {
 		m, err := subidFromNamedField(tc.loc, tc.field)
 		if tc.id != "" {
