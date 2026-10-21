@@ -204,6 +204,8 @@ func TestSubidFromCampaignHoldsEveryFixedPart(t *testing.T) {
 			offers("https://n.example/r?c1=[[subid]]")},
 		{"appended to a URL with no query", "https://n.example/r/98765?utm_source=x", "98765", "path segment 2",
 			offers("https://n.example/r/[[subid]]")},
+		{"another scheme", "https://n.example/r?sid=555&c1=98765", "98765", "c1",
+			offers("http://n.example/r?sid=[[subid]]", "https://n.example/r?sid=555&c1=[[subid]]")},
 		{"the same URL in two slots", "https://n.example/r?c1=98765", "98765", "c1",
 			offers("https://n.example/r?c1=[[subid]]", "https://n.example/r?c1=[[subid]]")},
 		{"text around another token", "https://n.example/r/x-abc-y?c1=98765", "98765", "c1",
@@ -284,6 +286,39 @@ func TestSubidFitReadsTheQueryAsWritten(t *testing.T) {
 
 	if kind, ok := subidKind(func() error { _, err := subidFromNetworkFields("https://n.example/?s=4821&sub1=4822;x=1"); return err }()); !ok || kind != subidAmbiguous {
 		t.Error("network fields read past a query pair the parser dropped")
+	}
+}
+
+func TestFitsFilled(t *testing.T) {
+	for _, tc := range []struct {
+		part, got  string
+		fold, want bool
+	}{
+		{"555", "555", false, true},
+		{"555", "556", false, false},
+		{"[[subid]]", "", false, true},
+		{"[[subid]]", "anything/at all", false, true},
+		{"x-[[c1]]-y", "x--y", false, true},
+		{"x-[[c1]]-y", "x-a-b-y", false, true},
+		{"x-[[c1]]-y", "x-a-b-z", false, false},
+		{"ab[[x]]ba", "aba", false, false},
+		{"a[[x]]b[[y]]c", "a1b2c", false, true},
+		{"a[[x]]b[[y]]c", "a12c", false, false},
+		{"a[[x]]b[[y]]c", "abbc", false, true},
+		{"[[c1]].Example.com", "go.example.COM", true, true},
+		{"Example.com", "example.org", true, false},
+		{"r[[subid]]", "R4821", false, false},
+	} {
+		if got := fitsFilled(tc.part, tc.got, tc.fold); got != tc.want {
+			t.Errorf("fitsFilled(%q, %q, %v) = %v, want %v", tc.part, tc.got, tc.fold, got, tc.want)
+		}
+	}
+}
+
+func TestSubidFromCampaignReadsTheOccurrenceThatHoldsSubid(t *testing.T) {
+	m, err := subidFromCampaign("https://n.example/r?a=1&a=4821", offers("https://n.example/r?a=1&a=[[subid]]"))
+	if err != nil || m.ID != "4821" {
+		t.Errorf("got (%+v, %v), want 4821 from a's second value, not its fixed 1", m, err)
 	}
 }
 
@@ -497,7 +532,12 @@ func (f *simulateFake) server(t *testing.T) {
 			for k, v := range f.campaign {
 				data[k] = v
 			}
-			body, _ := json.Marshal(map[string]interface{}{"data": data})
+			body, err := json.Marshal(map[string]interface{}{"data": data})
+			if err != nil {
+				t.Errorf("campaign body: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			w.Write(body)
 		case "/tracking202/redirect/dl.php":
 			f.mu.Lock()

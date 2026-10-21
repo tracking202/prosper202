@@ -69,6 +69,7 @@ func (o offerURL) slotFlag() string {
 // that starts with prefix.
 type subidField struct {
 	query      string
+	queryIndex int // which of the query field's values, as written
 	pathPrefix string
 	pathIndex  int
 }
@@ -265,19 +266,20 @@ func oneReading(loc string, reads []slotRead) (subidMatch, error) {
 // know and leave the rest in place (TrafficSourcePixels::replaceTokens).
 var anyTokenRe = regexp.MustCompile(`\[\[[^\[\]]*\]\]`)
 
-// fitsTemplate reports whether loc can be the redirect to tmpl: tmpl's host,
-// each of its path segments and each of its query values are in loc as they
-// are in tmpl, except that a [[token]] in one may have been filled with
-// anything. loc may carry query fields tmpl does not: dl.php appends the
-// tracking link's own (setPrePopVars). The query is compared as written,
-// since the redirect copies tmpl's text: url.Query would drop a pair holding
-// a ";" or a malformed escape from both sides, and with it the comparison.
+// fitsTemplate reports whether loc can be the redirect to tmpl: tmpl's
+// scheme, host, each of its path segments and each of its query values are
+// in loc as they are in tmpl, except that a [[token]] in one may have been
+// filled with anything. loc may carry query fields tmpl does not: dl.php
+// appends the tracking link's own (setPrePopVars). The query is compared as
+// written, since the redirect copies tmpl's text: url.Query would drop a pair
+// holding a ";" or a malformed escape from both sides, and with it the
+// comparison.
 func fitsTemplate(tmpl string, loc *url.URL) bool {
 	t, err := url.Parse(tmpl)
 	if err != nil {
 		return false
 	}
-	if !fitsFilled(t.Host, loc.Host, true) {
+	if !fitsFilled(t.Scheme, loc.Scheme, true) || !fitsFilled(t.Host, loc.Host, true) {
 		return false
 	}
 	tsegs := strings.Split(t.EscapedPath(), "/")
@@ -320,30 +322,30 @@ func rawQueryPairs(q string) map[string][]string {
 }
 
 // fitsFilled reports whether got is part filled in: part's text exactly
-// (in any case when fold), each [[token]] in it any run of text.
+// (in any case when fold), each [[token]] in it any run of text. The text
+// between tokens is found in order, leftmost first, which for wildcards that
+// match anything finds a fit whenever there is one.
 func fitsFilled(part, got string, fold bool) bool {
-	tokens := anyTokenRe.FindAllStringIndex(part, -1)
-	if tokens == nil {
-		if fold {
-			return strings.EqualFold(part, got)
-		}
+	if fold {
+		part, got = strings.ToLower(part), strings.ToLower(got)
+	}
+	pieces := anyTokenRe.Split(part, -1)
+	if len(pieces) == 1 {
 		return part == got
 	}
-	var b strings.Builder
-	if fold {
-		b.WriteString("(?i)")
+	first, last := pieces[0], pieces[len(pieces)-1]
+	if len(got) < len(first)+len(last) || !strings.HasPrefix(got, first) || !strings.HasSuffix(got, last) {
+		return false
 	}
-	b.WriteString("^")
-	last := 0
-	for _, m := range tokens {
-		b.WriteString(regexp.QuoteMeta(part[last:m[0]]))
-		b.WriteString("(?s:.*)")
-		last = m[1]
+	rest := got[len(first) : len(got)-len(last)]
+	for _, p := range pieces[1 : len(pieces)-1] {
+		i := strings.Index(rest, p)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(p):]
 	}
-	b.WriteString(regexp.QuoteMeta(part[last:]))
-	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	return err == nil && re.MatchString(got)
+	return true
 }
 
 // templateSubidFields lists the fields of tmpl that hold [[subid]]; false
@@ -354,16 +356,18 @@ func templateSubidFields(tmpl string) ([]subidField, bool) {
 		return nil, false
 	}
 	var out []subidField
-	q := u.Query()
+	// As written, as the redirects fill it: the pairs and their order are
+	// the ones fitsTemplate compares.
+	q := rawQueryPairs(u.RawQuery)
 	keys := make([]string, 0, len(q))
 	for k := range q {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		for _, v := range q[k] {
+		for i, v := range q[k] {
 			if subidTokenRe.MatchString(v) {
-				out = append(out, subidField{query: k})
+				out = append(out, subidField{query: k, queryIndex: i})
 				break
 			}
 		}
@@ -384,15 +388,19 @@ func templateSubidFields(tmpl string) ([]subidField, bool) {
 	return out, true
 }
 
-// fieldValue reads f from u: the first value of a query field, or the rest of
-// the path segment at f's index after its prefix.
+// fieldValue reads f from u: the value of a query field at f's place among
+// its values, or the rest of the path segment at f's index after its prefix.
 func fieldValue(u *url.URL, f subidField) (string, bool) {
 	if f.query != "" {
-		vs, ok := u.Query()[f.query]
-		if !ok || len(vs) == 0 {
+		vs := rawQueryPairs(u.RawQuery)[f.query]
+		if f.queryIndex >= len(vs) {
 			return "", false
 		}
-		return vs[0], true
+		v, err := url.QueryUnescape(vs[f.queryIndex])
+		if err != nil {
+			return "", false
+		}
+		return v, true
 	}
 	segs := strings.Split(u.EscapedPath(), "/")
 	if f.pathIndex >= len(segs) || !strings.HasPrefix(segs[f.pathIndex], f.pathPrefix) {
