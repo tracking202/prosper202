@@ -8,7 +8,9 @@ import "testing"
 func TestNativeSearchChoosesItsOutput(t *testing.T) {
 	t.Cleanup(func() {
 		mcpToolRun = false
-		jsonOutput, compactJSON, tableOutput, csvOutput = false, false, false, false
+		jsonOutput, ndjsonOutput, csvOutput, quietOutput, tableOutput = false, false, false, false, false
+		compactJSON, outputImplicit, outputSource = false, false, sourceDefault
+		activeCommandPath = ""
 	})
 	if err := rootCmd.PersistentPreRunE(searchCmd, []string{"hour"}); err != nil {
 		t.Fatalf("search refused: %v", err)

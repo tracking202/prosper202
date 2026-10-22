@@ -2,25 +2,59 @@
 
 package cmd
 
-import "github.com/spf13/cobra"
-
-// hostedJSONOnly: in the hosted engine `p202 search` answers compact JSON,
-// as `p202 mcp` does, whatever P202_OUTPUT, the config or the environment
-// would choose (root's PersistentPreRunE): its reader is the relay.
-func hostedJSONOnly(cmd *cobra.Command) bool { return cmd == searchCmd }
-
-// hostedArgsRefusal is the js/wasm build's entry check. That build is the
-// hosted relay's engine, which runs one command per instance: anything but
-// `p202 mcp call`, `p202 mcp tools`, `p202 search` (offline: the relay's
-// get_more_tools ranks tools with it) or --version is refused before a
-// command runs, so a fault in the host cannot reach the rest of the CLI.
+// hostedArgsRefusal is the js/wasm build's entry check, run by Execute before
+// cobra. That build is the hosted relay's engine, which runs one command per
+// instance: `p202 mcp call`, `p202 mcp tools`, --version, and `p202 search` in
+// the one shape the relay sends (hostedSearchArgs). Anything else is refused
+// before a command runs, so a fault in the host cannot reach the rest of the
+// CLI.
 func hostedArgsRefusal(args []string) error {
 	if len(args) == 1 && args[0] == "--version" {
 		return nil
 	}
-	if c, _, err := rootCmd.Find(args); err == nil && (c == mcpCallCmd || c == mcpToolsCmd || c == searchCmd) {
+	if c, _, err := rootCmd.Find(args); err == nil && (c == mcpCallCmd || c == mcpToolsCmd) {
 		return nil
 	}
-	return validationError("a hosted run takes `p202 mcp call <tool> --input <json>`, `p202 mcp tools` or `p202 search <words>` only").
+	if hostedSearchArgs(args) {
+		// The relay reads the answer: compact JSON, as for `p202 mcp`, and set
+		// here because cobra's help, Args and flag errors come before root's
+		// PersistentPreRunE, where `p202 mcp` gets it.
+		mcpToolRun = true
+		return resolveOutputMode(outputFlags{})
+	}
+	return validationError("a hosted run takes `p202 mcp call <tool> --input <json>`, `p202 mcp tools` or `p202 search --json [--limit <n>] -- <words>` only").
 		WithHint("Run other commands with the p202 CLI on your computer.")
+}
+
+// hostedSearchArgs reports whether args are `search [--json] [--limit <n>] --
+// <words>`: the words after "--", so none is read as a flag, and no other flag
+// (no help) before it.
+func hostedSearchArgs(args []string) bool {
+	if len(args) < 2 || args[0] != "search" {
+		return false
+	}
+	for i := 1; i < len(args); i++ {
+		switch {
+		case args[i] == "--":
+			return true
+		case args[i] == "--json":
+		case args[i] == "--limit" && i+1 < len(args) && hostedDigits(args[i+1]):
+			i++
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func hostedDigits(s string) bool {
+	if s == "" || len(s) > 3 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
