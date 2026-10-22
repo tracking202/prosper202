@@ -255,14 +255,27 @@ final class GoalEngine
         if ($subject->type !== GoalSubject::INSTALL) {
             return $subject;
         }
+
+        return $this->lockedInstallSubject($userId, $subject->id, $subject->fastGoals);
+    }
+
+    /**
+     * An install subject read under its install row's lock and its click's
+     * (current()), both taken before anything is read plainly: a click
+     * locked after a plain read is refused (MysqlConversionLedger::lockClick()).
+     * The click is locked whether or not the install is credited, since its
+     * goal rows sit on it either way.
+     */
+    private function lockedInstallSubject(int $userId, int $installRowId, ?FastGoalPolicy $fastGoals): GoalSubject
+    {
         $stmt = $this->conn->prepareWrite(
             'SELECT install_row_id, registration_id, match_state, trusted, click_id, install_begin_server_at, received_at
              FROM 202_app_installs WHERE install_row_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
         );
-        $this->conn->bind($stmt, 'ii', [$subject->id, $userId]);
+        $this->conn->bind($stmt, 'ii', [$installRowId, $userId]);
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
-            throw new GoalEngineException('Install ' . $subject->id . ' not found', GoalEngineException::NOT_FOUND);
+            throw new GoalEngineException('Install ' . $installRowId . ' not found', GoalEngineException::NOT_FOUND);
         }
         $row['click_time'] = null;
         $row['aff_campaign_id'] = null;
@@ -281,9 +294,9 @@ final class GoalEngine
         // caller's subject carries stands; a subject built without one reads
         // it now.
         return self::installSubjectFrom(
-            $subject->id,
+            $installRowId,
             $row,
-            $subject->fastGoals ?? $this->fastGoalPolicy($userId, (int) $row['registration_id'])
+            $fastGoals ?? $this->fastGoalPolicy($userId, (int) $row['registration_id'])
         );
     }
 
@@ -1497,7 +1510,7 @@ final class GoalEngine
     {
         $now = $this->now();
         $post = ['ledger' => [], 'clicks' => [], 'notices' => []];
-        $subject = $this->installSubject($userId, $installRowId);
+        $subject = $this->lockedInstallSubject($userId, $installRowId, null);
         $row = $this->lockSubject($userId, $subject, $now);
         $subject = $subject->withRebases(self::decodeRebases($row));
         $events = $this->loadEvents($subject);

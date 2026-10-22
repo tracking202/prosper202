@@ -93,7 +93,18 @@ final class PendingClickSettler
     /** The state the install ended in, or null when it was no longer pending. */
     public function settleOne(int $installRowId): ?MatchState
     {
-        $work = function () use ($installRowId): array {
+        // The install-token key is read before the transaction: read inside
+        // it, it would come before the click's lock, which is then refused
+        // (MysqlConversionLedger::lockClick()). A key that does not read
+        // stops only an install that still needs it.
+        $keyFailure = null;
+        try {
+            $key = $this->key();
+        } catch (Throwable $e) {
+            $key = null;
+            $keyFailure = $e;
+        }
+        $work = function () use ($installRowId, $key, $keyFailure): array {
             $row = LockedInstall::read($this->conn, $installRowId);
             if ($row === null || (string) $row['match_state'] !== MatchState::PENDING_CLICK->value) {
                 return ['state' => null, 'post' => self::NOTHING, 'user' => 0, 'customer' => null];
@@ -103,7 +114,10 @@ final class PendingClickSettler
             // gives the classifier the same payload the intake had.
             $payload = InstallPayload::fromDecoded(json_decode((string) $row['raw_payload'], true, 16, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING));
             $parsed = ReferrerParser::parse((string) $payload->installReferrer);
-            $first = InstallClassifier::fromReferrer($payload, $parsed, $this->key());
+            if ($key === null) {
+                throw $keyFailure ?? new MissingInstallKey();
+            }
+            $first = InstallClassifier::fromReferrer($payload, $parsed, $key);
             if ($first['state'] !== null || $first['click_id'] === null) {
                 throw new \RuntimeException('install ' . $installRowId . ' is pending_click but its stored referrer no longer names a verified click');
             }

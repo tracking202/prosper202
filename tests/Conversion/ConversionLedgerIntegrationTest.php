@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\Ledger\ReversalException;
 use Prosper202\Conversion\Ledger\SupersededReason;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -769,13 +770,23 @@ final class ConversionLedgerIntegrationTest extends TestCase
         $this->assertLtv('rev-ltv-4', '0.00');
 
         $conn = new Connection(self::$db);
-        $retire = fn () => $this->repo->retireGoalRowInTransaction($goalId, 1, SupersededReason::REEVALUATION);
+        // As the goals engine does: the click's lock first in each transaction.
+        $lock = fn () => (new MysqlConversionLedger($conn))->lockClick(100);
+        $retire = function () use ($lock, $goalId) {
+            $lock();
+
+            return $this->repo->retireGoalRowInTransaction($goalId, 1, SupersededReason::REEVALUATION);
+        };
         $conn->transaction($retire);
         self::assertSame('0.00000', $this->clickState(100)['payout']);
         $this->assertLtv('rev-ltv-4', '0.00', 'retired: neither row counts');
 
         $dedupeKey = (string) $goal['dedupeKey'];
-        $conn->transaction(fn () => $this->repo->reviveGoalRowInTransaction($goalId, 1, 100, $dedupeKey));
+        $conn->transaction(function () use ($lock, $goalId, $dedupeKey) {
+            $lock();
+
+            return $this->repo->reviveGoalRowInTransaction($goalId, 1, 100, $dedupeKey);
+        });
         self::assertSame('0.00000', $this->clickState(100)['payout'], 'revived: the sale counts, net of its reversal');
         $this->assertLtv('rev-ltv-4', '0.00', 'and so does LTV');
 
