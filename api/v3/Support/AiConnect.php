@@ -439,12 +439,12 @@ final class AiConnect
             $removed = $conn->executeUpdate($stmt);
         } catch (QueryException $e) {
             error_log('p202: AI connect: revoke: ' . $e->getMessage());
-            $message = 'The key could not be removed; remove it in Account › API keys.';
+            $message = 'The key could not be removed; remove it in My Account › Personal Settings › API keys.';
             return [500, ['error' => true, 'message' => $message]];
         }
         if ($removed < 1) {
             return [404, ['error' => true, 'message' => 'No key with exactly these characters was found; '
-                . 'remove it in Account › API keys.']];
+                . 'remove it in My Account › Personal Settings › API keys.']];
         }
         return [200, ['data' => ['revoked' => true]]];
     }
