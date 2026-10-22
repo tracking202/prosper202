@@ -24,28 +24,31 @@ final class MysqlConversionLedger
     }
 
     /**
-     * Lock a click for a ledger write, then read the visit a conversion
-     * credits: its latest (LatestVisit). Null when there is no such click
-     * (of that account, when $userId is given: a click whose latest visit is
-     * another account's row is not this account's, as every other read of
-     * the latest visit ties it). click_lead is whether any visit of it is a
-     * lead, as LatestVisit::anyVisitIsLead() asks it.
+     * Lock a click for a ledger write inside a transaction that may have read
+     * before, then read the visit a conversion credits: its latest
+     * (LatestVisit). Null when there is no such click (of that account, when
+     * $userId is given: a click whose latest visit is another account's row
+     * is not this account's, as every other read of the latest visit ties
+     * it). click_lead is whether any visit of it is a lead, as
+     * LatestVisit::anyVisitIsLead() asks it. A transaction that locks the
+     * click first takes clickTransaction() instead.
      *
      * The lock is the click's first row in the click_id index, the row every
-     * ledger writer locks, so they serialise on it, as does any UPDATE of the
-     * click's rows. A re-click's new row is not covered: locking every row
-     * also locks the index gap after the click, and on the newest click that
-     * holds every new click's insert until this commits.
+     * ledger writer locks, so they serialise on it, as does an UPDATE of the
+     * click's rows by click_id.
      *
-     * The visit is read with locking reads, which see the click as it is once
-     * the lock is granted. A plain read after the lock would read the
-     * transaction's snapshot, which every caller that reads before locking
-     * (the conversion a delete names, the goals engine's transaction) took
-     * before a re-click committed in the wait: the conversion would be valued
-     * under the previous visit's campaign, and an id-less retry would read the
-     * click as no lead. The share locks hold the gap after the click's rows,
-     * where a re-click inserts, as the recompute's UPDATE does after; a
-     * re-click takes clickTransaction() instead.
+     * The visit is read with share locks, which see the click as it is once
+     * the lock is granted. A plain read after the lock answers from the
+     * transaction's snapshot, which begins at its first plain read: a caller
+     * that read first (a delete reads the conversion to find its click, the
+     * goals engine its own rows) read the click as it was before a re-click
+     * committed in the wait, and valued the conversion under the previous
+     * visit's campaign. The share locks also hold the gap after the click's
+     * rows, so a re-click's new row and the next click's insert wait for this
+     * transaction. The route is read, and its row locked, only for two
+     * visits in one second (written before 1.9.78): a share lock on a click
+     * with no route row holds 202_clicks_rotator's gap, and on a click newer
+     * than every redirector click every new one's route waits on it.
      *
      * @return array<string, mixed>|null click_id, user_id, aff_campaign_id, click_payout, click_time, click_lead
      */
@@ -55,9 +58,15 @@ final class MysqlConversionLedger
             return null;
         }
 
-        $read = $this->conn->prepareWrite(self::lockedVisitSql());
+        $read = $this->conn->prepareWrite(self::lockedVisitsSql());
         $this->conn->bind($read, 'i', [$clickId]);
-        $click = $this->conn->fetchOne($read);
+        $latest = $this->conn->fetchAll($read);
+        $click = $latest[0] ?? null;
+        if (isset($latest[1]) && (string) $latest[1]['click_time'] === (string) $latest[0]['click_time']) {
+            $tie = $this->conn->prepareWrite(self::lockedVisitSql());
+            $this->conn->bind($tie, 'i', [$clickId]);
+            $click = $this->conn->fetchOne($tie);
+        }
         if ($click !== null) {
             $lead = $this->conn->prepareWrite(self::lockedLeadSql());
             $this->conn->bind($lead, 'ii', [$clickId, self::owner($clickId, $click)]);
@@ -67,7 +76,14 @@ final class MysqlConversionLedger
         return $this->ownedVisit($clickId, $userId, $click);
     }
 
-    /** lockClick()'s read of the click's latest visit, with share locks. */
+    /** lockClick()'s read of the click's two latest visits by time, with share locks. */
+    public static function lockedVisitsSql(): string
+    {
+        return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time FROM 202_clicks AS c'
+            . ' WHERE c.click_id = ? ' . LatestVisit::byTime('c') . ' LIMIT 2 LOCK IN SHARE MODE';
+    }
+
+    /** lockClick()'s read of the latest visit when two share its second: the route decides. */
     public static function lockedVisitSql(): string
     {
         return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time FROM 202_clicks AS c'
@@ -91,9 +107,10 @@ final class MysqlConversionLedger
      * Run $fn in a transaction whose first statement locks the click, handing
      * it what lockClick() returns. Nothing is read before the lock, so plain
      * reads see every commit made before it was granted, and take no locks:
-     * a re-click inserts its row, and with lockClick()'s share locks two
-     * re-clicks held each other's gaps (eight concurrent re-clickers lost 468
-     * of 1,200 visits to deadlocks, against 0 to 3 without).
+     * with lockClick()'s share locks two re-clicks held each other's insert
+     * gaps (eight concurrent re-clickers lost 468 of 1,200 visits to
+     * deadlocks, against 0 to 3 without). A re-click's new row and the next
+     * click's insert do not wait for this lock.
      *
      * @template T
      * @param callable(array<string, mixed>|null): T $fn

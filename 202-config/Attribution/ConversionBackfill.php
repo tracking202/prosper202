@@ -98,8 +98,10 @@ final class ConversionBackfill
 
             $baselines = 0;
             foreach ($clicks as $clickId) {
-                $baselines += $this->conn->transaction(function () use ($clickId, $ledger): int {
-                    $click = $ledger->lockClick($clickId);
+                $baselines += $ledger->clickTransaction($clickId, null, function (?array $click) use (
+                    $clickId,
+                    $ledger
+                ): int {
                     if ($click === null) {
                         return 0;
                     }

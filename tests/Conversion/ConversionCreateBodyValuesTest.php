@@ -7,6 +7,7 @@ namespace Tests\Conversion;
 use Api\V3\Controllers\ConversionsController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Support\FakeMysqliConnection;
 
@@ -37,6 +38,10 @@ final class ConversionCreateBodyValuesTest extends TestCase
     private static function clickVisit(FakeMysqliConnection $db, string $lock, array $rows): void
     {
         $db->whenQueryContainsReturnRows($lock, $rows);
+        // record() reads the click as clickTransaction() does, the other
+        // writers as lockClick() does.
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
         $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
         $db->whenQueryContainsReturnRows(
             MysqlConversionLedger::lockedLeadSql(),

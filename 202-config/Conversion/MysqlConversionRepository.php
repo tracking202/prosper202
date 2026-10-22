@@ -116,7 +116,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * Single owner of the transactional conversion write used by every ingestion
      * path (the V3 API, the static pixel and postback endpoints, both uploads).
      *
-     * In one transaction it: locks the source click (MysqlConversionLedger::lockClick())
+     * In one transaction it: locks the source click (MysqlConversionLedger::clickTransaction())
      * so concurrent and retried requests serialise, and reads the visit the
      * conversion credits, the click's latest; carries a pre-ledger click's
      * value into the ledger (MysqlConversionLedger::ensureManaged); decides the
@@ -174,18 +174,25 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     public function record(int $userId, array $data, ?callable $clickSideUpdate = null): array
     {
         $prepared = $this->prepareRecord($data);
-        $work = fn (): array => $this->recordLocked($userId, $prepared, $clickSideUpdate);
+        $ledger = new MysqlConversionLedger($this->conn);
+        // The click's lock opens the transaction, so what is read after it
+        // is current without locking it (clickTransaction()).
+        $work = fn (): array => $ledger->clickTransaction(
+            (int) $prepared['clickId'],
+            $userId,
+            fn (?array $click): array => $this->recordLocked($userId, $prepared, $clickSideUpdate, $click)
+        );
 
         // Unique-key upserts on 202_customer_aliases under concurrency make a
         // deadlock reachable, not theoretical. The transaction callback is a
         // pure function of its arguments, so one full retry is safe.
         try {
-            $result = $this->conn->transaction($work);
+            $result = $work();
         } catch (Throwable $e) {
             if (!self::isRetryableLockError($e)) {
                 throw $e;
             }
-            $result = $this->conn->transaction($work);
+            $result = $work();
         }
 
         $this->afterRecordCommit($userId, $prepared, $result);
@@ -217,7 +224,8 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     {
         return $this->conn->joinTransaction(function () use ($userId, $data): array {
             $prepared = $this->prepareRecord($data);
-            $result = $this->recordLocked($userId, $prepared, null);
+            $click = (new MysqlConversionLedger($this->conn))->lockClick((int) $prepared['clickId'], $userId);
+            $result = $this->recordLocked($userId, $prepared, null, $click);
             $result['_prepared'] = $prepared;
 
             return $result;
@@ -298,12 +306,16 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     /**
      * The transactional body of record(): runs inside a transaction someone
-     * else opened.
+     * else opened, which holds the source click's lock so concurrent and
+     * retried requests serialise there. $click is the click as the lock
+     * read it (clickTransaction() or lockClick()): the conversion credits
+     * its latest visit.
      *
      * @param array<string, mixed> $prepared from prepareRecord()
+     * @param array<string, mixed>|null $click
      * @return array<string, mixed>
      */
-    private function recordLocked(int $userId, array $prepared, ?callable $clickSideUpdate): array
+    private function recordLocked(int $userId, array $prepared, ?callable $clickSideUpdate, ?array $click): array
     {
         $clickId = (int) $prepared['clickId'];
         $transactionId = $prepared['transactionId'];
@@ -316,10 +328,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $payable = (bool) $prepared['payable'];
         $wantsReversal = (bool) $prepared['wantsReversal'];
         $ledger = new MysqlConversionLedger($this->conn);
-
-        // Lock the source click so concurrent/retried requests serialise
-        // here; the conversion credits its latest visit.
-        $click = $ledger->lockClick($clickId, $userId);
 
         if ($click === null) {
             return ['convId' => 0, 'duplicate' => false, 'clickFound' => false, 'customerId' => null];
@@ -418,8 +426,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
         // One conversion per click for id-less pixels and postbacks. This
         // is the authoritative check: it reads whether any visit is a lead
-        // after the click's lock (lockClick()), so a second id-less request
-        // waits on the first's commit and then sees the lead.
+        // after the click's lock, which opened record()'s transaction
+        // (clickTransaction()), so a second id-less request waits on the
+        // first's commit and then sees the lead.
         $oncePerClick = !empty($data['once_per_click'])
             || (!empty($data['once_per_click_unkeyed']) && $keyedByOwnRow);
         if ($oncePerClick && (int) ($click['click_lead'] ?? 0) === 1) {
@@ -1238,8 +1247,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             if ($clickId <= 0) {
                 continue;
             }
-            $work = function () use ($clickId, $userId, $ledger): bool {
-                $click = $ledger->lockClick($clickId, $userId);
+            $work = function (?array $click) use ($clickId, $userId, $ledger): bool {
                 if ($click === null) {
                     return false;
                 }
@@ -1274,12 +1282,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             };
 
             try {
-                $ok = $this->conn->transaction($work);
+                $ok = $ledger->clickTransaction($clickId, $userId, $work);
             } catch (Throwable $e) {
                 if (!self::isRetryableLockError($e)) {
                     throw $e;
                 }
-                $ok = $this->conn->transaction($work);
+                $ok = $ledger->clickTransaction($clickId, $userId, $work);
             }
             if ($ok) {
                 $cleared++;

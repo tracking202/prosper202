@@ -1610,30 +1610,39 @@ The ledger's click lock read the click's values with the locking read itself,
 which answers the row as it is. Re-click crediting split it: lock the first
 row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
 read answers from the transaction's snapshot, which begins at its first plain
-read, not at the lock, and most callers read before they lock (a delete reads
-the conversion to find its click, the goals engine its own rows). A re-click
-committed while one waited was invisible after the lock was granted: the
-conversion was valued under the previous visit's campaign, and an id-less
-retry read the click as no lead (found by review, reproduced with two
-connections). `lockClick()` reads with share locks now. The re-click path
-keeps plain reads through `clickTransaction()`, which opens the transaction
-itself, so the lock is its first statement and nothing can have read before
-it.
+read, not at the lock or at `BEGIN` (measured: neither a locking read nor an
+INSERT starts one). A caller that read first (a delete reads the conversion
+to find its click, the goals engine its own rows) read the click as it was
+before a re-click committed while it waited, and valued the conversion under
+the previous visit's campaign (found by review, reproduced with two
+connections). A transaction whose first statement is the lock needs nothing:
+`clickTransaction()` opens the transaction itself and locks first, and
+`record()`, the re-click and the backfills take it. `lockClick()`, for a
+transaction that read before, reads with share locks.
 
-A locking read is a lock on whatever its plan scans, so measure it on the
-path it runs on. On re-clicks the share locks held the gaps two re-clicks
-insert into: 468 of 1,200 visits were lost to deadlocks, against 0 to 3
-without. And the lead read's plan went through the `click_lead` index, whose
-share lock covered every lead in the partition, so two recomputes setting
-`click_lead` deadlocked (4 of 600 conversions lost in one run); it names
-`FORCE INDEX (click_id)`, and `ReClickedConversionIntegrationTest` fails
-without it.
+A locking read locks whatever its plan scans, so measure it on the path it
+runs on. On re-clicks the share locks held the gaps two re-clicks insert
+into: 468 of 1,200 visits were lost to deadlocks, against 0 to 3 without.
+The lead read's plan went through the `click_lead` index, whose share lock
+covered every lead in the partition, and two recomputes setting `click_lead`
+deadlocked (it names `FORCE INDEX (click_id)`). And a join locks the joined
+table too: on a click with no route row the share lock held
+`202_clicks_rotator`'s gap, and on a click newer than every redirector click
+each new redirector click's route waited for the conversion's commit (found
+by review); the route is read only for two visits in one second.
+`ReClickedConversionIntegrationTest` fails on each.
 
-The rows the recompute reads after the lock (`loadRows()`) are still plain
-reads, older than 1.9.78: a conversion committed in the wait is missed, and
-the recompute left `click_lead = 0` under a counted $9 sale (measured). Before
-relying on "the reads after the lock see what it holds", find the
-transaction's first read, not the lock.
+The reads after `lockClick()` in those same transactions are plain, older
+than 1.9.78, and stale the same way, each measured by review with two
+connections: the conversions the recompute reads (`loadRows()`; the click
+was left `click_lead = 0` under a counted $9 sale), the reversals a delete
+voids (the reversal was left unvoided: the customer's total came out 0 where
+the same steps without the wait gave 10), the revenue generation a void is
+keyed by (a revived conversion's void was swallowed, and the customer kept
+$10 and an order for a deleted conversion), and the lead
+`ensureManaged()` carries in (a second baseline row, and the delete failed
+on the duplicate key). Before relying on "the reads after the lock see what
+it holds", find the transaction's first read, not the lock.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

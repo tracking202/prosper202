@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
@@ -26,6 +27,10 @@ final class MysqlConversionRepositoryTest extends TestCase
         array $rows
     ): void {
         $db->whenQueryContainsReturnRows($lock, $rows);
+        // record() reads the click as clickTransaction() does, the other
+        // writers as lockClick() does.
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
         $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
         $db->whenQueryContainsReturnRows(
             MysqlConversionLedger::lockedLeadSql(),

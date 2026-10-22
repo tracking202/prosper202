@@ -474,8 +474,71 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
+     * Two visits in one second, written before 1.9.78: the one on the route
+     * the click holds now is its latest, as LatestVisit::orderBy() reads it,
+     * whichever is stored first.
+     *
+     * @dataProvider storedOrders
+     */
+    public function testALockTakenAfterAReadTellsTwoVisitsInOneSecondByTheirRoute(bool $routeFirst): void
+    {
+        $visits = $routeFirst ? [[12, 5, 9], [11, 0, 0]] : [[11, 0, 0], [12, 5, 9]];
+        foreach ($visits as [$campaign, $rotator, $redirect]) {
+            self::fixture('INSERT INTO 202_clicks SET click_id=' . self::CLICK . ", user_id=1,"
+                . " aff_campaign_id=$campaign, ppc_account_id=21, click_cpc=0.25, click_payout=3.00,"
+                . ' click_time=' . self::LATEST_TIME . ", rotator_id=$rotator, rule_id=$redirect");
+        }
+        self::fixture('INSERT INTO 202_clicks_rotator SET click_id=' . self::CLICK
+            . ', rotator_id=5, rule_id=3, rule_redirect_id=9');
+        $conn = new Connection(self::$db);
+
+        $visit = $conn->transaction(function () use ($conn): ?array {
+            $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
+
+            return (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1);
+        });
+
+        self::assertSame('12', (string) ($visit['aff_campaign_id'] ?? ''));
+    }
+
+    /**
+     * lockClick() locks the route row only for two visits in one second: on
+     * a click with none, a share lock holds 202_clicks_rotator's gap, and on
+     * a click newer than every redirector click every new one's route
+     * would wait for the conversion's commit.
+     */
+    public function testALockedClickWithNoRouteHoldsNoRouteGap(): void
+    {
+        self::fixture('INSERT INTO 202_clicks_rotator SET click_id=' . (self::CLICK - 100)
+            . ', rotator_id=5, rule_id=3, rule_redirect_id=9');
+        self::visit(false);
+        $conn = new Connection(self::$db);
+        $other = self::otherConnection();
+        $other->query('SET SESSION innodb_lock_wait_timeout = 1');
+        mysqli_report(MYSQLI_REPORT_OFF);
+        try {
+            $answer = $conn->transaction(function () use ($conn, $other): string {
+                $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
+                self::assertNotNull((new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1));
+                self::assertTrue($other->begin_transaction());
+                $sql = 'INSERT INTO 202_clicks_rotator SET click_id=' . (self::CLICK + 1)
+                    . ', rotator_id=5, rule_id=3, rule_redirect_id=9';
+                $answer = $other->query($sql) === true ? 'ran' : 'waited (' . $other->errno . ')';
+                self::assertTrue($other->rollback());
+
+                return $answer;
+            });
+        } finally {
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $other->close();
+        }
+
+        self::assertSame('ran', $answer);
+    }
+
+    /**
      * What the click's lock holds. Taken by clickTransaction(), the first
-     * statement of its transaction, an UPDATE of any of the click's rows
+     * statement of its transaction, an UPDATE of the click's rows by click_id
      * waits for it; a re-click's new row and the next click's insert do not.
      * lockClick() also holds the gap after the click's rows, for the reads
      * that see the click as it is, so both inserts wait for it; another

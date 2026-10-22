@@ -8,6 +8,7 @@ use Api\V3\Controllers\CampaignsController;
 use Api\V3\Controllers\ConversionsController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Support\FakeMysqliConnection;
 
@@ -116,7 +117,8 @@ final class RequestParamZeroTest extends TestCase
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             $click
         );
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $click);
+        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $click);
+        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $click);
         $db->whenQueryContainsReturnRows(
             MysqlConversionLedger::lockedLeadSql(),
             array_values(array_filter($click, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))

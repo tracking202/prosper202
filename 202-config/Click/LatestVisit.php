@@ -33,11 +33,22 @@ final class LatestVisit
      */
     public static function orderBy(string $clicks, string $route): string
     {
-        self::alias($clicks);
         self::alias($route);
 
-        return "ORDER BY {$clicks}.click_time DESC,"
+        return self::byTime($clicks) . ','
             . " ({$clicks}.rotator_id = {$route}.rotator_id AND {$clicks}.rule_id = {$route}.rule_redirect_id) DESC";
+    }
+
+    /**
+     * The ORDER BY that puts a click's latest second first, for a read that
+     * tells two visits in one second apart itself (orderBy() does it by
+     * their route).
+     */
+    public static function byTime(string $clicks): string
+    {
+        self::alias($clicks);
+
+        return "ORDER BY {$clicks}.click_time DESC";
     }
 
     /**
