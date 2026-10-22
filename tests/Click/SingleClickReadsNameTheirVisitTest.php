@@ -99,9 +99,12 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      */
     private const ANY_VISIT = [
         // The ledger's click lock.
-        '202-config/Conversion/Ledger/MysqlConversionLedger.php::lockClick' => [1, 'The lock: it selects click_id,'
+        '202-config/Conversion/Ledger/MysqlConversionLedger.php::lockClickRow' => [1, 'The lock: it selects click_id,'
             . ' which agrees across visits, from the click\'s first row in the click_id index (LIMIT 1 FOR UPDATE),'
             . ' the row every ledger writer locks; the visit is read through LatestVisit after it.'],
+        '202-config/Conversion/Ledger/MysqlConversionLedger.php::lockedLeadSql' => [1, 'Any visit by design: whether'
+            . ' any of the click\'s rows of the account is a lead, as LatestVisit::anyVisitIsLead() asks it, with'
+            . ' share locks, so a lead committed while the lock was awaited is read.'],
         // Shown only.
         '202-account/administration.php::p202_admin_scheduled_deletion' => [1, 'Shown only: the day of the click'
             . ' an earlier version\'s scheduled deletion names by id (the newest at or below it, LIMIT 1). The'
@@ -140,7 +143,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
     ];
 
     /** How many reads ANY_VISIT holds. Lower it when one goes. */
-    private const CEILING = 15;
+    private const CEILING = 16;
 
     /**
      * A table reference: after FROM, a JOIN or a comma; its name, and its

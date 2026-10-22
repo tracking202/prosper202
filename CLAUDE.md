@@ -1605,6 +1605,36 @@ needed and rolls the hour up once it has run. When a change adds a table, trace 
 through the window between deploy and upgrade, and give each a path that
 converges once the table exists.
 
+### 36. A lock does not move the snapshot
+The ledger's click lock read the click's values with the locking read itself,
+which answers the row as it is. Re-click crediting split it: lock the first
+row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
+read answers from the transaction's snapshot, which begins at its first plain
+read, not at the lock, and most callers read before they lock (a delete reads
+the conversion to find its click, the goals engine its own rows). A re-click
+committed while one waited was invisible after the lock was granted: the
+conversion was valued under the previous visit's campaign, and an id-less
+retry read the click as no lead (found by review, reproduced with two
+connections). `lockClick()` reads with share locks now. The re-click path
+keeps plain reads through `clickTransaction()`, which opens the transaction
+itself, so the lock is its first statement and nothing can have read before
+it.
+
+A locking read is a lock on whatever its plan scans, so measure it on the
+path it runs on. On re-clicks the share locks held the gaps two re-clicks
+insert into: 468 of 1,200 visits were lost to deadlocks, against 0 to 3
+without. And the lead read's plan went through the `click_lead` index, whose
+share lock covered every lead in the partition, so two recomputes setting
+`click_lead` deadlocked (4 of 600 conversions lost in one run); it names
+`FORCE INDEX (click_id)`, and `ReClickedConversionIntegrationTest` fails
+without it.
+
+The rows the recompute reads after the lock (`loadRows()`) are still plain
+reads, older than 1.9.78: a conversion committed in the wait is missed, and
+the recompute left `click_lead = 0` under a counted $9 sale (measured). Before
+relying on "the reads after the lock see what it holds", find the
+transaction's first read, not the lock.
+
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
 The CLI is built for AI agents as much as humans. An agent reads a failure

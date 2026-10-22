@@ -10,7 +10,7 @@ use Api\V3\RequestContext;
 use Api\V3\Support\IdempotentCreate;
 use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
-use Prosper202\Click\LatestVisit;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -38,7 +38,11 @@ final class ConversionCreateDuplicateTest extends TestCase
     private static function clickVisit(FakeMysqliConnection $db, string $lock, array $rows): void
     {
         $db->whenQueryContainsReturnRows($lock, $rows);
-        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
+        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
+        $db->whenQueryContainsReturnRows(
+            MysqlConversionLedger::lockedLeadSql(),
+            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
+        );
         $db->whenQueryContainsReturnRows(
             'AND c.click_lead = 1',
             array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))

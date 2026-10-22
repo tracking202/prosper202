@@ -347,7 +347,7 @@ final class CpcUpdate
      * it saw, and exactly as many. Every row the range and the filters name
      * is locked first: a click recorded late below the boundary waits for
      * this to commit, and so does a re-click of a chosen click, which locks
-     * its first visit's row (MysqlConversionLedger::lockClick()). The rest is
+     * its first visit's row (MysqlConversionLedger::clickTransaction()). The rest is
      * read without a lock, from a snapshot that begins after those locks, so
      * it holds every visit the chosen clicks have: the first-visit test reads
      * the click_id index in every partition, and a locking read there holds

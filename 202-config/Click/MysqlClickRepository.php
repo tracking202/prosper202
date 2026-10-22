@@ -125,7 +125,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
      * arrival. A click that is a lead gives the row its lead and value, as
      * the ledger's recompute leaves every row of it; one that is not gives it
      * no lead and the record's payout. All of it is read under the click's
-     * lock (MysqlConversionLedger::lockClick()), the one a conversion
+     * lock (MysqlConversionLedger::clickTransaction()), the one a conversion
      * rewrites the cost and value under: a caller reading them first could
      * copy a value already replaced. The click keeps its keyword, and the
      * c1-c4 the record does not bring (an id of 0); the campaign, landing
@@ -145,12 +145,16 @@ final class MysqlClickRepository implements ClickRepositoryInterface
         if ($click->clickRedirectSiteUrlId !== 0) {
             throw new LogicException('A click carries its redirect URL id or has it resolved, not both');
         }
-        $this->conn->transaction(function () use ($click, $route, $redirectSiteUrlId): void {
-            // The click's first row in the click_id index, as every ledger
-            // writer locks it: the lock is the transaction's first statement,
-            // so the reads after it see what it holds. rtr.php finds the
-            // click among its account's: anything else is a caller's mistake.
-            $locked = (new MysqlConversionLedger($this->conn))->lockClick($click->clickId, $click->userId);
+        $ledger = new MysqlConversionLedger($this->conn);
+        $ledger->clickTransaction($click->clickId, $click->userId, function (?array $locked) use (
+            $click,
+            $route,
+            $redirectSiteUrlId
+        ): void {
+            // The click's lock, as every ledger writer takes it, is the
+            // transaction's first statement, so the reads after it see what
+            // it holds. rtr.php finds the click among its account's: anything
+            // else is a caller's mistake.
             if ($locked === null || $this->accountsClickFirstTime($click->userId, $click->clickId) === null) {
                 throw new LogicException(
                     "A re-click names click {$click->clickId}, which is not account {$click->userId}'s"
@@ -239,12 +243,17 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             throw new LogicException('A click exit that writes nothing');
         }
 
-        return $this->conn->transaction(function () use ($exit, $redirectSiteUrlId): bool {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        return $ledger->clickTransaction($exit->clickId, $exit->userId, function (?array $locked) use (
+            $exit,
+            $redirectSiteUrlId
+        ): bool {
             // The click's lock first, as recordReClick() and the ledger take
             // it: a re-click holds it while it upserts the route, so an exit
             // that took the route first and the click's rows after could
             // deadlock with it.
-            if ((new MysqlConversionLedger($this->conn))->lockClick($exit->clickId, $exit->userId) === null) {
+            if ($locked === null) {
                 return false;
             }
             $firstClickTime = $this->accountsClickFirstTime($exit->userId, $exit->clickId);
@@ -336,8 +345,10 @@ final class MysqlClickRepository implements ClickRepositoryInterface
      */
     public function repairVisits(int $clickId): array
     {
-        return $this->conn->transaction(function () use ($clickId): array {
-            if ((new MysqlConversionLedger($this->conn))->lockClick($clickId) === null) {
+        $ledger = new MysqlConversionLedger($this->conn);
+
+        return $ledger->clickTransaction($clickId, null, function (?array $locked) use ($clickId): array {
+            if ($locked === null) {
                 return ['outcome' => 'gone', 'tie' => false];
             }
             $stmt = $this->conn->prepareWrite('SELECT user_id, click_time FROM 202_clicks WHERE click_id = ?');

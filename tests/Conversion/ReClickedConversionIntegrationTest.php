@@ -429,13 +429,103 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
-     * What the click's lock holds: an UPDATE of any of its rows waits for
-     * it; a re-click's new row and the next click's insert do not.
+     * A transaction that read before it locked the click (a delete reads the
+     * conversion first, the goals engine its own rows) holds a snapshot from
+     * before the lock. A re-click and a sale committed in between are what
+     * lockClick() answers: the visit the conversion credits, and the lead an
+     * id-less retry is refused by.
+     */
+    public function testALockTakenAfterAReadSeesWhatCommittedBeforeIt(): void
+    {
+        self::visit(false);
+        $conn = new Connection(self::$db);
+        $other = self::otherConnection();
+        try {
+            $visit = $conn->transaction(function () use ($conn, $other): ?array {
+                $read = $conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs');
+                self::assertSame([], $conn->fetchAll($read));
+                $reClickAndSale = [
+                    'INSERT INTO 202_clicks SET click_id=' . self::CLICK . ', user_id=1, aff_campaign_id=12,'
+                        . ' ppc_account_id=21, click_cpc=0.25, click_payout=7.00, click_lead=1,'
+                        . ' click_time=' . self::LATEST_TIME . ', rotator_id=5, rule_id=9',
+                    'INSERT INTO 202_clicks_rotator SET click_id=' . self::CLICK
+                        . ', rotator_id=5, rule_id=3, rule_redirect_id=9',
+                    'INSERT INTO 202_click_latest_visits SET click_id=' . self::CLICK
+                        . ', click_time=' . self::LATEST_TIME,
+                ];
+                foreach ($reClickAndSale as $sql) {
+                    self::assertTrue($other->query($sql), $other->error);
+                }
+
+                return (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1);
+            });
+        } finally {
+            $other->close();
+        }
+
+        $read = array_flip(['aff_campaign_id', 'click_payout', 'click_time', 'click_lead']);
+        self::assertSame(
+            [
+                'aff_campaign_id' => '12', 'click_payout' => '7.00000',
+                'click_time' => (string) self::LATEST_TIME, 'click_lead' => '1',
+            ],
+            array_map('strval', array_intersect_key($visit ?? [], $read))
+        );
+    }
+
+    /**
+     * What the click's lock holds. Taken by clickTransaction(), the first
+     * statement of its transaction, an UPDATE of any of the click's rows
+     * waits for it; a re-click's new row and the next click's insert do not.
+     * lockClick() also holds the gap after the click's rows, for the reads
+     * that see the click as it is, so both inserts wait for it; another
+     * click's lead does not.
      */
     public function testTheClickLockHoldsItsRowsAndNotTheNextClick(): void
     {
         self::reClicked();
+        self::fixture('INSERT INTO 202_clicks SET click_id=' . (self::CLICK + 400) . ', user_id=1, aff_campaign_id=11,'
+            . ' ppc_account_id=21, click_cpc=0.25, click_payout=3.00, click_time=' . self::FIRST_TIME);
         $conn = new Connection(self::$db);
+        $ledger = new MysqlConversionLedger($conn);
+        $other = self::otherConnection();
+        $other->query('SET SESSION innodb_lock_wait_timeout = 1');
+        $probe = function (?array $visit) use ($other): array {
+            self::assertSame('12', (string) ($visit['aff_campaign_id'] ?? ''));
+            $later = ', user_id = 1, ppc_account_id = 21, click_cpc = 0, click_time = ' . (self::LATEST_TIME + 60);
+            $probes = [
+                'UPDATE 202_clicks SET click_lead = 1 WHERE click_id = ' . self::CLICK
+                    . ' AND click_time = ' . self::LATEST_TIME,
+                'INSERT INTO 202_clicks SET click_id = ' . self::CLICK . $later,
+                'INSERT INTO 202_clicks SET click_id = ' . (self::CLICK + 1) . $later,
+                // Another click becoming a lead: the lead read takes no lock
+                // on the click_lead index, where this inserts.
+                'UPDATE 202_clicks SET click_lead = 1 WHERE click_id = ' . (self::CLICK + 400),
+            ];
+            $answers = [];
+            foreach ($probes as $sql) {
+                self::assertTrue($other->begin_transaction());
+                $answers[] = $other->query($sql) === true ? 'ran' : 'waited (' . $other->errno . ')';
+                self::assertTrue($other->rollback());
+            }
+
+            return $answers;
+        };
+        mysqli_report(MYSQLI_REPORT_OFF);
+        try {
+            $opening = $ledger->clickTransaction(self::CLICK, 1, $probe);
+            $joined = $conn->transaction(fn (): array => $probe($ledger->lockClick(self::CLICK, 1)));
+        } finally {
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $other->close();
+        }
+
+        self::assertSame(['waited (1205)', 'ran', 'ran', 'ran'], $opening);
+        self::assertSame(['waited (1205)', 'waited (1205)', 'waited (1205)', 'ran'], $joined);
+    }
+
+    private static function otherConnection(): \mysqli
+    {
         $other = @mysqli_connect(
             (string) getenv('P202_TEST_DB_HOST'),
             (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
@@ -444,34 +534,8 @@ final class ReClickedConversionIntegrationTest extends TestCase
             (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
         );
         self::assertInstanceOf(\mysqli::class, $other);
-        $other->query('SET SESSION innodb_lock_wait_timeout = 1');
         $other->query("SET SESSION sql_mode=''");
-        mysqli_report(MYSQLI_REPORT_OFF);
-        try {
-            $answers = $conn->transaction(function () use ($conn, $other): array {
-                $visit = (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1);
-                self::assertSame('12', (string) ($visit['aff_campaign_id'] ?? ''));
-                $later = ', user_id = 1, ppc_account_id = 21, click_cpc = 0, click_time = ' . (self::LATEST_TIME + 60);
-                $probes = [
-                    'UPDATE 202_clicks SET click_lead = 1 WHERE click_id = ' . self::CLICK
-                        . ' AND click_time = ' . self::LATEST_TIME,
-                    'INSERT INTO 202_clicks SET click_id = ' . self::CLICK . $later,
-                    'INSERT INTO 202_clicks SET click_id = ' . (self::CLICK + 1) . $later,
-                ];
-                $answers = [];
-                foreach ($probes as $sql) {
-                    self::assertTrue($other->begin_transaction());
-                    $answers[] = $other->query($sql) === true ? 'ran' : 'waited (' . $other->errno . ')';
-                    self::assertTrue($other->rollback());
-                }
 
-                return $answers;
-            });
-        } finally {
-            mysqli_report(MYSQLI_REPORT_STRICT);
-            $other->close();
-        }
-
-        self::assertSame(['waited (1205)', 'ran', 'ran'], $answers);
+        return $other;
     }
 }

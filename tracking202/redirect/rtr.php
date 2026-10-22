@@ -810,7 +810,7 @@ try {
  * The visit's write, and a re-click's again when it loses a deadlock, up to
  * four tries in all, as two re-clicks of different clicks can on a
  * partitioned 202_clicks: each locks its click
- * (MysqlConversionLedger::lockClick()), which holds a gap in the current
+ * (MysqlConversionLedger::clickTransaction()), which holds a gap in the current
  * week's partition, and then inserts its row into the other's gap. The
  * server rolls the loser back whole and $write's held cache writes are
  * dropped with it, so nothing of a lost try stands; $reset puts back the
