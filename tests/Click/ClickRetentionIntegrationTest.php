@@ -48,7 +48,6 @@ final class ClickRetentionIntegrationTest extends TestCase
         '202_dataengine' => 'user_id = {u}, click_time = {t}',
         '202_identity_observations' => "signal_type = 'cookie', signal_hash = SHA2('{id}', 256), observed_at = {t}",
         '202_clicks_visitor' => 'user_id = {u}, visitor_key = {id}, click_time = {t}',
-        '202_click_latest_visits' => 'click_time = {t}',
     ];
 
     /** Rows in tables ClickRetention keeps, naming a click it deletes. */
@@ -448,7 +447,7 @@ final class ClickRetentionIntegrationTest extends TestCase
         // The next-to-last table the batch deletes from is missing: what the
         // batch deleted before it must come back.
         $missing = ClickRetention::TABLES[count(ClickRetention::TABLES) - 2];
-        self::assertSame('202_click_latest_visits', $missing);
+        self::assertSame('202_clicks_visitor', $missing);
         self::q("RENAME TABLE $missing TO p202_retention_hidden");
         try {
             $this->retention()->runAutomatic(PHP_INT_MAX);

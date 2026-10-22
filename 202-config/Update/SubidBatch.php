@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Prosper202\Update;
 
 use Prosper202\Click\ClickId;
-use Prosper202\Click\LatestVisit;
 use Prosper202\Conversion\BatchInterrupted;
 use Prosper202\Conversion\Ledger\ConversionSource;
 use Prosper202\Conversion\MysqlConversionRepository;
@@ -362,14 +361,9 @@ final class SubidBatch
      * another account's before the API checked linked ids, 229df10): that
      * account's row never decides which of this account's sales are cleared.
      *
-     * A click is the campaign's when its latest visit is
-     * (LatestVisit::isLatest()), as every report counts it and a conversion
-     * credits it: a click that arrived on the campaign and was re-clicked
-     * onto another is that one's. Each click once, at the earliest of those
-     * rows: a click visited again (a rotator re-click) has a row per visit
-     * under one click_id, and reading rows counted it once per visit in the
-     * preview and in reset()'s answer; a re-click the 1.9.78 backfill has
-     * not reached has every visit latest.
+     * Each click once, at its first visit: a click visited again (a rotator
+     * re-click) has a row per visit under one click_id, and reading rows
+     * counted it once per visit in the preview and in reset()'s answer.
      *
      * @return list<array{click_id: int, click_time: int}>
      */
@@ -379,7 +373,6 @@ final class SubidBatch
             $select = "SELECT c.click_id, MIN(c.click_time) AS click_time FROM 202_clicks AS c
                 WHERE c.user_id = ? AND c.aff_campaign_id = ?
                 AND (c.click_lead = 1 OR EXISTS (SELECT 1 FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0))
-                AND " . LatestVisit::isLatest('c') . "
                 GROUP BY c.click_id ORDER BY c.click_id";
             $scopeId = $campaignId;
         } else {
@@ -387,7 +380,6 @@ final class SubidBatch
                 INNER JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                 WHERE c.user_id = ? AND ac.aff_network_id = ?
                 AND (c.click_lead = 1 OR EXISTS (SELECT 1 FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0))
-                AND " . LatestVisit::isLatest('c') . "
                 GROUP BY c.click_id ORDER BY c.click_id";
             $scopeId = $networkId;
         }
@@ -465,7 +457,6 @@ final class SubidBatch
     /**
      * The account's clicks among the entries still to be processed, with their
      * lead flag and live conversion count, keyed by click id. Read in chunks.
-     * The lead flag is the latest visit's, the one record() checks.
      *
      * @param list<array<string, mixed>> $entries
      * @return array<int, array<string, mixed>>
@@ -481,16 +472,12 @@ final class SubidBatch
         $clicks = [];
         foreach (array_chunk($ids, self::PREVIEW_CHUNK) as $chunk) {
             $stmt = $this->conn->prepareWrite(
-                'SELECT c.click_id, ' . LatestVisit::anyVisitIsLead('c') . ' AS click_lead,
+                'SELECT c.click_id, c.click_lead,
                         (SELECT COUNT(*) FROM 202_conversion_logs AS cl WHERE cl.click_id = c.click_id AND cl.deleted = 0) AS live_conversions
                  FROM 202_clicks AS c
-                 WHERE c.user_id = ? AND c.click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')
-                   AND ' . LatestVisit::isLatest('c') . '
-                 ORDER BY c.click_time'
+                 WHERE c.user_id = ? AND c.click_id IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')'
             );
             $this->conn->bind($stmt, 'i' . str_repeat('i', count($chunk)), array_merge([$userId], $chunk));
-            // A re-click the backfill has not reached has every visit latest:
-            // the last row kept is its latest by time.
             foreach ($this->conn->fetchAll($stmt) as $row) {
                 $clicks[(int) $row['click_id']] = $row;
             }

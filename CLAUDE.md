@@ -1475,7 +1475,7 @@ from, find the other half. Rows already stale in an install heal only when
 they are re-rolled; nothing re-rolls them by itself.
 
 ### 32. A shortcut that returns early skips the work the old path did after
-Every rollup is an `INSERT … SELECT` (`ClickRollupSql`), and
+Every rollup is one `INSERT … SELECT` (`ClickRollupSql`), and
 `DataEngine::doQuery()` returns at once when the query answers `true`. The
 rows were right; but `doSummary()`, the code that return skips, was also
 where a rebuild window in `202_dataengine_job` was marked done. `getSummary()` still marked the window `processing` before the query,
@@ -1567,82 +1567,6 @@ the same rows sent again under it stored the committed hundred twice. Once
 anything may stand, every row is answered and the answer kept under the
 key; a commit the server did not confirm is `unconfirmed`, never
 `retryable`.
-
-### 35. A cleanup chosen by another row than its write removes what nothing replaces
-A click has one report row, at its latest visit, so a rollup writes the
-latest visit's row and deletes the click's rows at earlier visits. The first
-version chose what to delete by the earlier visit: a rebuild of an hour that
-held a re-click's first visit and not its latest deleted the click's row
-there and wrote none, since the latest visit was outside the window, and the
-click was gone from every report until something rolled up its latest hour
-(measured). A write and the cleanup that goes with it are one claim, "this
-row replaces those", and both have to select by the same predicate:
-`ClickRollupSql::deleteEarlierVisits()` takes the insert's own condition and
-`LatestVisit::isLatest()`, so a window that writes nothing of a click removes
-nothing of it. Ask of every "write, then remove the rest" whether the rest is
-chosen by what was written or by something that also holds when nothing was.
-
-The predicate's cost is the other half. "No visit of this click is later"
-was first a `NOT EXISTS` over `202_clicks` by `click_id`. Installs partition
-that table weekly by `click_time`, and a lookup by a column outside the
-partition key is one probe per partition (158 on the measured install): a
-30-day report went from about 1 s to over 80 s. The latest visit is now
-recorded in `202_click_latest_visits` and read by its primary key (about
-2 s). The same layout decided the cleanup's join order: left to the server,
-the delete began from the records and read every recorded click's rows, and
-an hour's rebuild took 6 s rather than 0.1 s, so the order is fixed with
-`STRAIGHT_JOIN`. Time a query on a partitioned table on the layout the
-installer makes, not on the unpartitioned tables a test creates.
-
-A table the upgrade makes is also a table the code reads before the upgrade
-has run: the files are deployed first, and the click path does not wait for
-the upgrade. Every per-click rollup in that window failed on the missing
-table and was logged and dropped, and nothing re-rolls a click whose rollup
-failed, so the window's clicks were missing from every report for good. A
-failed rollup now queues its hour for the cron job
-(`ClickRollupSql::queueRetry()`), which runs nothing while an upgrade is
-needed and rolls the hour up once it has run. When a change adds a table, trace each of its readers
-through the window between deploy and upgrade, and give each a path that
-converges once the table exists.
-
-### 36. A lock does not move the snapshot
-The ledger's click lock read the click's values with the locking read itself,
-which answers the row as it is. Re-click crediting split it: lock the first
-row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
-read answers from the transaction's snapshot, which begins at its first plain
-read, not at the lock or at `BEGIN` (measured: neither a locking read nor an
-INSERT starts one). A caller that read first (a delete reads the conversion
-to find its click, the goals engine its own rows) read the click as it was
-before a re-click committed while it waited, and valued the conversion under
-the previous visit's campaign (found by review, reproduced with two
-connections). A transaction whose first statement is the lock needs nothing:
-`clickTransaction()` opens the transaction itself and locks first, and
-`record()`, the re-click and the backfills take it. `lockClick()`, for a
-transaction that read before, reads with share locks.
-
-A locking read locks whatever its plan scans, so measure it on the path it
-runs on. On re-clicks the share locks held the gaps two re-clicks insert
-into: 468 of 1,200 visits were lost to deadlocks, against 0 to 3 without.
-The lead read's plan went through the `click_lead` index, whose share lock
-covered every lead in the partition, and two recomputes setting `click_lead`
-deadlocked (it names `FORCE INDEX (click_id)`). And a join locks the joined
-table too: on a click with no route row the share lock held
-`202_clicks_rotator`'s gap, and on a click newer than every redirector click
-each new redirector click's route waited for the conversion's commit (found
-by review); the route is read only for two visits in one second.
-`ReClickedConversionIntegrationTest` fails on each.
-
-The reads after `lockClick()` in those same transactions are plain, older
-than 1.9.78, and stale the same way, each measured by review with two
-connections: the conversions the recompute reads (`loadRows()`; the click
-was left `click_lead = 0` under a counted $9 sale), the reversals a delete
-voids (the reversal was left unvoided: the customer's total came out 0 where
-the same steps without the wait gave 10), the revenue generation a void is
-keyed by (a revived conversion's void was swallowed, and the customer kept
-$10 and an order for a deleted conversion), and the lead
-`ensureManaged()` carries in (a second baseline row, and the delete failed
-on the duplicate key). Before relying on "the reads after the lock see what
-it holds", find the transaction's first read, not the lock.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 

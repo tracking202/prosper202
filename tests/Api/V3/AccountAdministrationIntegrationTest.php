@@ -211,11 +211,11 @@ final class AccountAdministrationIntegrationTest extends TestCase
         // An id an earlier version scheduled: the state shows it, and the
         // write replaces it.
         self::q('UPDATE 202_users_pref SET user_delete_data_clickid = 103 WHERE user_id = 1');
-        $legacy = ['before' => '2001-03-10', 'cutoff_time' => null, 'through_click_id' => 103, 'clicks_remaining' => 2];
+        $legacy = ['before' => '2001-03-10', 'cutoff_time' => null, 'through_click_id' => 103, 'clicks_remaining' => 3];
         self::assertSame(
             $legacy,
             $this->admin()->retention()['data']['scheduled_deletion'],
-            'the clicks below 103 (101 once, though it has two visits, and 102), and the day of the click the id names'
+            'the clicks below 103, and the day of the click the id names'
         );
 
         $cutoff = gmmktime(0, 0, 0, 3, 1, 2001);

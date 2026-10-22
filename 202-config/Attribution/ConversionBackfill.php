@@ -88,24 +88,25 @@ final class ConversionBackfill
                 break;
             }
             $end = min($next + self::CHUNK - 1, $through);
-            // DISTINCT: a re-clicked click has a row per visit.
             $stmt = $this->conn->prepareWrite(
-                'SELECT DISTINCT click_id FROM 202_clicks'
-                . ' WHERE click_id BETWEEN ? AND ? AND click_lead = 1 ORDER BY click_id'
+                'SELECT click_id FROM 202_clicks WHERE click_id BETWEEN ? AND ? AND click_lead = 1 ORDER BY click_id'
             );
             $this->conn->bind($stmt, 'ii', [$next, $end]);
             $clicks = array_map(static fn (array $r): int => (int) $r['click_id'], $this->conn->fetchAll($stmt));
 
             $baselines = 0;
             foreach ($clicks as $clickId) {
-                $baselines += $ledger->clickTransaction($clickId, null, function (?array $click) use (
-                    $clickId,
-                    $ledger
-                ): int {
+                $baselines += $this->conn->transaction(function () use ($clickId, $ledger): int {
+                    $lock = $this->conn->prepareWrite(
+                        'SELECT click_id, user_id, aff_campaign_id, click_payout, click_time, click_lead FROM 202_clicks
+                         WHERE click_id = ? LIMIT 1 FOR UPDATE'
+                    );
+                    $this->conn->bind($lock, 'i', [$clickId]);
+                    $click = $this->conn->fetchOne($lock);
                     if ($click === null) {
                         return 0;
                     }
-                    $baselineId = $ledger->ensureManaged($clickId, (int) $click['user_id']);
+                    $baselineId = $ledger->ensureManaged($click, (int) $click['user_id']);
                     if ($baselineId === null) {
                         return 0; // not a lead any more, or already managed: its writer queued it
                     }

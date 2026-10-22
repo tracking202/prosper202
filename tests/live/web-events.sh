@@ -123,7 +123,6 @@ DELETE FROM 202_clicks_spy WHERE click_id IN ($CLICKS);
 DELETE FROM 202_clicks_tracking WHERE click_id IN ($CLICKS);
 DELETE FROM 202_landing_pages WHERE landing_page_id_public = $LP_PUBLIC;
 DELETE FROM 202_ppc_account_pixels WHERE ppc_account_id IN ($PPC, $PPC2);
-DELETE FROM 202_ppc_accounts WHERE ppc_account_id IN ($PPC, $PPC2) AND user_id = $OWNER;
 DELETE FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R);
 DELETE FROM 202_aff_networks WHERE aff_network_name = 'web events pass';
 TRUNCATE 202_goals; TRUNCATE 202_goal_versions; TRUNCATE 202_campaign_goals; TRUNCATE 202_goal_subjects;
@@ -146,12 +145,6 @@ CAMP_G=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_
 CAMP_N=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$ACIP_N")
 CAMP_R=$(Q "SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public=$ACIP_R")
 [ -n "$CAMP_G" ] && [ -n "$CAMP_N" ] && [ -n "$CAMP_R" ] || { echo "seeding campaigns failed" >&2; exit 2; }
-# The clicks' traffic source accounts, the owner's: a click's pixels are read
-# through its own account's traffic source account, and one that names no
-# account row of the owner's is no source (CLAUDE.md #27).
-mysql_q "$DB" -e "INSERT INTO 202_ppc_accounts (ppc_account_id, user_id, ppc_network_id, ppc_account_name, ppc_account_time)
-  VALUES ($PPC, $OWNER, 0, 'web events pass', $NOW), ($PPC2, $OWNER, 0, 'web events pass 2', $NOW)" \
-  || { echo "seeding traffic source accounts failed" >&2; exit 2; }
 seed_click() { # id campaign
   mysql_q "$DB" -e "
     INSERT INTO 202_clicks (click_id, user_id, aff_campaign_id, landing_page_id, ppc_account_id, click_cpc, click_payout, click_lead, click_filtered, click_bot, click_alp, click_time, rotator_id, rule_id)

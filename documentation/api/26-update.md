@@ -54,18 +54,6 @@ Sets the cost of past clicks: every click of the account between `from`
 00:00:00 and `to` 23:59:59 **in the account's time zone** (`user_timezone`,
 answered as `timezone`), narrowed by any filter. Two steps.
 
-A click a redirector link re-clicked has a row for each visit, and every row
-carries the cost of its first visit
-([Clicks](09-clicks.md#a-click-a-redirector-link-re-clicked)). Such a click is
-chosen by its first visit — that visit's time must be in the range, and its
-campaign, traffic source and the other filters must match — and the new CPC
-is written on every visit of it. Before 1.9.78 each visit was chosen by its
-own time, so a range holding only a re-click repriced that visit of a click
-that arrived on another day. A click re-clicked before 1.9.78 that the cron
-job has not yet brought to one visit
-([Upgrading](../tutorials-and-guides/05-upgrading-prosper202.md)) is taken at
-each of its visits in the range, and written from that visit on.
-
 **1. Check** (`?dry_run=1`): count the clicks, and name the highest click id
 among them.
 
@@ -106,14 +94,11 @@ curl -X POST "$P202/api/v3/clicks/cpc" -H "Authorization: Bearer $KEY" \
        "expect_clicks": 418, "through_click_id": 940418}'
 ```
 
-In one transaction, the rows the range and the filters name are locked and
-the clicks up to `through_click_id` are counted again. Only if they still
-number `expect_clicks` does every one of them get the new CPC, with the data
-engine's dirty hours (every hour a visit of them is in, a visit after the
-range included) and the attribution rollup marked. The answer adds
-`updated`: the clicks whose cost changed (one every visit of which already
-cost this much is not counted). It counted rows before 1.9.78, a re-clicked
-click once per visit. A click recorded after the check
+In one transaction, the clicks up to `through_click_id` are counted again
+under a lock. Only if they still number `expect_clicks` does every one of them
+get the new CPC, with the data engine's dirty hours and the attribution
+rollup marked. The answer adds `updated`: the clicks whose cost changed (one
+that already cost this much is not counted). A click recorded after the check
 has a higher id and is never changed, however long the confirmation took.
 
 When the count moved — a click edited into or out of the selection — nothing
@@ -169,10 +154,6 @@ run), `already_converted` (the click is already a lead: nothing is added),
 digits, no leading zero), `duplicate_in_list`. Every status is counted, 0
 included.
 
-A click a redirector link re-clicked is marked on its latest visit's campaign,
-at that visit's payout, and its lead flag is that visit's, as for every
-conversion ([Conversions](10-conversions.md#a-click-a-redirector-link-re-clicked)).
-
 A dry run reads each click's lead flag. The ledger can still answer
 `already_converted` for a click the dry run called `would_mark`: one in an
 accumulate-mode campaign whose conversion was deleted, because a deleted
@@ -195,9 +176,7 @@ total), which is what the delete removes.
 Clears every conversion of a category, or of one campaign in it, so a report
 uploaded by mistake can be uploaded again. Each converted click (a lead, or
 one holding a live conversion) is cleared through the ledger, and the data
-engine is told to rebuild the hours from the earliest of them to now. A click
-a redirector link re-clicked is the campaign's when its latest visit is, as
-every report counts it and its conversion.
+engine is told to rebuild the hours from the earliest of them to now.
 
 ```bash
 curl -X POST "$P202/api/v3/conversions/subids/reset?dry_run=1" -H "Authorization: Bearer $KEY" \

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
-use Prosper202\Click\LatestVisit;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Tests\Support\FakeMysqliConnection;
@@ -14,46 +12,16 @@ use Tests\Support\InsertReportingFakeMysqliConnection;
 
 final class MysqlConversionRepositoryTest extends TestCase
 {
-    /**
-     * The click's lock and the read of its latest visit after it, each
-     * answering $rows, and the read of its latest visit that is a lead
-     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
-     *
-     * @param list<array<string, mixed>> $rows
-     */
-    private static function clickVisit(
-        FakeMysqliConnection|InsertReportingFakeMysqliConnection $db,
-        string $lock,
-        array $rows
-    ): void {
-        $db->whenQueryContainsReturnRows($lock, $rows);
-        // record() reads the click as clickTransaction() does, the other
-        // writers as lockClick() does.
-        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
-        $db->whenQueryContainsReturnRows(
-            MysqlConversionLedger::lockedLeadSql(),
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
-        $db->whenQueryContainsReturnRows(
-            'AND c.click_lead = 1',
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
-    }
-
     public function testCreateUsesWriteConnectionAndLocksClickRow(): void
     {
         // The writer refuses an insert that reports no id, and only the
         // insert-reporting double can report one on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
-        self::clickVisit(
-            $write,
+        $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,
-                'user_id' => 7,
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,
@@ -100,12 +68,10 @@ final class MysqlConversionRepositoryTest extends TestCase
         // insert-reporting double can report one on PHP 8.4.
         $write = new InsertReportingFakeMysqliConnection(21);
         $read = new FakeMysqliConnection();
-        self::clickVisit(
-            $write,
+        $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [[
                 'click_id' => 10,
-                'user_id' => 7,
                 'aff_campaign_id' => 44,
                 'click_payout' => 2.75,
                 'click_time' => 1700000000,

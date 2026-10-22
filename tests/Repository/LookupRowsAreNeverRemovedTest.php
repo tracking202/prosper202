@@ -48,6 +48,7 @@ final class LookupRowsAreNeverRemovedTest extends TestCase
         '202-config/Crud/MysqlCrudRepository.php' => [3, 'its TableConfig (LookupTablesWrittenOnlyByRepositoriesTest'
             . '::testTheUnreadWritesReachNoLookupTable)'],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [2, 'the customer tables it lists, by name'],
+        '202-config/Update/CpcUpdate.php' => [1, '202_clicks, with joins appended'],
         'api/v3/Apps/AppRetention.php' => [1, 'its retention classes\' tables, the app event tables'],
         'api/v3/Controller.php' => [4, 'each CRUD controller\'s tableName() (LookupTablesWrittenOnlyByRepositoriesTest'
             . '::testTheUnreadWritesReachNoLookupTable)'],

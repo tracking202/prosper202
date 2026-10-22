@@ -44,10 +44,6 @@ The v1 API supports a single `reports` method.
 - `carriers` — Carrier and ISP report
 - `landing_pages` — Landing page report
 
-A click a redirector link re-clicked counts once, at its latest visit, as in
-every report ([Reports](11-reports.md#a-click-a-redirector-link-re-clicked));
-it counted at each visit before 1.9.78.
-
 ### Example
 
 ```

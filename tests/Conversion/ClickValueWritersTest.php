@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * A click's lead flag and value are a cache of its conversion ledger rows,
- * and only MysqlConversionLedger::recompute() may compute them.
+ * and only MysqlConversionLedger::recompute() may write them.
  *
  * Before the ledger, six places set click_lead or click_payout directly:
  * the static endpoints' click update, the repository's own click update, the
@@ -17,11 +17,6 @@ use PHPUnit\Framework\TestCase;
  * test walks every PHP file in the tree and fails on any UPDATE (or ON
  * DUPLICATE KEY UPDATE) whose SET clause assigns either column, outside the
  * one file allowed to.
- *
- * Others may copy them, and only from the click's own rows: the lead and
- * value the recompute last wrote there, read under the click's lock, onto
- * another row of the same click (COPIERS). A re-click's INSERT does this
- * too; the scan reads UPDATEs only, so it is not listed.
  *
  * How it reads SQL, and what it therefore cannot see: the SQL is rebuilt
  * from the file's string literals in token order, with every non-string
@@ -39,22 +34,6 @@ final class ClickValueWritersTest extends TestCase
 
     private const ALLOWED = [
         '202-config/Conversion/Ledger/MysqlConversionLedger.php',
-    ];
-
-    /**
-     * Files that copy a click's lead and value from its own rows onto
-     * another of its rows: how many such writes each holds, held exactly so
-     * a write added beside the copies is seen, and what they copy. Each is
-     * checked to still write them, like ALLOWED.
-     *
-     * @var array<string, array{int, string}>
-     */
-    private const COPIERS = [
-        '202-config/Click/MysqlClickRepository.php' => [2, 'writeVisitRows()\'s rewrite of the 202_clicks and'
-            . ' 202_clicks_spy rows in the second of the visit being written, with leadValue(): the lead and value'
-            . ' of the click\'s latest row that is a lead, read under the click\'s lock. A re-click carries them,'
-            . ' and the 1.9.78 backfill gives them to every row of a click re-clicked before (repairVisits()),'
-            . ' whose re-click rows were written no lead'],
     ];
 
     /**
@@ -81,13 +60,7 @@ final class ClickValueWritersTest extends TestCase
             $source = file_get_contents($path);
             $this->assertIsString($source, $relative . ' could not be read');
             $scanned++;
-            $writes = self::writesOfClickValue($source);
-            if (isset(self::COPIERS[$relative])) {
-                $this->assertCount(self::COPIERS[$relative][0], $writes, $relative . ' writes a click\'s lead or value'
-                    . ' where COPIERS does not say it copies them: ' . implode("\n", $writes));
-                continue;
-            }
-            foreach ($writes as $hit) {
+            foreach (self::writesOfClickValue($source) as $hit) {
                 if (in_array($relative, self::ALLOWED, true)) {
                     continue;
                 }
@@ -104,8 +77,7 @@ final class ClickValueWritersTest extends TestCase
             [],
             $offenders,
             "click_lead and click_payout are derived from the click's ledger rows by "
-            . 'MysqlConversionLedger::recompute(); nothing else may write them but a copier listed in COPIERS.'
-            . ' Record or delete a '
+            . 'MysqlConversionLedger::recompute(); nothing else may write them. Record or delete a '
             . "conversion through MysqlConversionRepository instead:\n" . implode("\n", $offenders)
         );
     }
@@ -125,7 +97,7 @@ final class ClickValueWritersTest extends TestCase
     public function testTheAllowedWriterIsStillWhereTheListSays(): void
     {
         $root = dirname(__DIR__, 2);
-        foreach ([...self::ALLOWED, ...array_keys(self::COPIERS)] as $relative) {
+        foreach (self::ALLOWED as $relative) {
             $source = file_get_contents($root . '/' . $relative);
             $this->assertIsString($source, $relative . ' is on the allow-list but does not exist');
             $this->assertNotSame([], self::writesOfClickValue($source), $relative . ' is allowed to write the click value but no longer does');

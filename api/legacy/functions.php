@@ -278,11 +278,8 @@ function reportQuery(
         }
     }
 
-    // A click re-clicked through the redirector is one click, its latest
-    // visit's: the groups listed and the figures counted read that row.
-    $latest = " AND " . \Prosper202\Click\LatestVisit::isLatest('2c');
     $report_sql .= " WHERE 2c.user_id='" . $mysql['user_id'] . "'"
-        . " AND click_time > " . $mysql['date_from'] . " AND click_time < " . $mysql['date_to'] . $latest;
+        . " AND click_time > " . $mysql['date_from'] . " AND click_time < " . $mysql['date_to'] . "";
 
     //If C variables are set
     if ($mysql['c1'] !== '') {
@@ -378,8 +375,7 @@ function reportQuery(
             //If any other
             $click_sql .= " LEFT OUTER JOIN 202_clicks_record AS 2cr ON (2cr.click_id = 2c.click_id)"
                 . " WHERE 2c.user_id='" . $mysql['user_id'] . "'"
-                . " AND click_time > '" . $mysql['date_from'] . "' AND click_time < '" . $mysql['date_to'] . "'"
-                . $latest;
+                . " AND click_time > '" . $mysql['date_from'] . "' AND click_time < '" . $mysql['date_to'] . "'";
 
             //If C variables are set
             if ($mysql['c1'] !== '') {
