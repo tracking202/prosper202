@@ -1065,7 +1065,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     {
         try {
             $stmt = $this->conn->prepareWrite(
-                ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . $clickId)
+                ClickRollupSql::forClick('202_dataengine', $clickId)
             );
             $this->conn->executeUpdate($stmt);
         } catch (Throwable $e) {
