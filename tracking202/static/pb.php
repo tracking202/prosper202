@@ -52,10 +52,9 @@ if ($webEvent !== null && $webEvent['status'] !== 'no_goals') {
 }
 
 try {
-    // campaign_id: the postback names a campaign, and only a click one of
-    // whose visits was on it (a redirector re-click is another visit) may
-    // convert for it, checked before anything is written; the conversion
-    // credits the click's latest visit.
+	// campaign_id: the postback names a campaign, and only a click on that
+	// campaign may convert for it — the scope the old click update applied
+	// in its WHERE clause, now checked before anything is written.
 	// status=reversed with the transaction id of an earlier conversion
 	// records a reversal row that nets against it (see p202ExtractReversal).
 	$outcome = p202RecordLegacyConversion($db, $click_id, 2, [

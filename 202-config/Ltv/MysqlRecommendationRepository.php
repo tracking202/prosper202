@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Prosper202\Ltv;
 
-use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -583,8 +582,7 @@ final class MysqlRecommendationRepository
     /**
      * The campaign this customer most recently BROWSED but never bought:
      * customer-stamped clicks (beacon/conversion stamping) plus the
-     * acquisition click, each at its latest visit (a redirector re-click's
-     * row), live campaigns only. This is the cold-start signal
+     * acquisition click, live campaigns only. This is the cold-start signal
      * for the majority of customers — the ones whose revenue arrives via
      * /ltv/revenue, subscriptions or imports and who therefore have no
      * conversion-linked history for the transition model.
@@ -595,25 +593,24 @@ final class MysqlRecommendationRepository
     private function engagedCampaignInterest(int $userId, int $customerId, array $exclude): ?array
     {
         [$notIn, $types, $binds] = $this->excludeClause($exclude, 's.campaign_id');
-        $latest = LatestVisit::isLatest('s');
 
         $stmt = $this->conn->prepareRead(
             "SELECT s.campaign_id, ac.aff_campaign_name AS name, ac.aff_campaign_url AS url,
                     COUNT(*) AS clicks, MAX(s.click_time) AS last_at
              FROM (
-                 SELECT ck.click_id, ck.aff_campaign_id AS campaign_id, ck.click_time, ck.user_id
+                 SELECT ck.aff_campaign_id AS campaign_id, ck.click_time, ck.user_id
                  FROM 202_clicks_tracking ct
                  JOIN 202_clicks ck ON ck.click_id = ct.click_id AND ck.user_id = ?
                  WHERE ct.customer_id = ?
                  UNION ALL
-                 SELECT ck.click_id, ck.aff_campaign_id, ck.click_time, ck.user_id
+                 SELECT ck.aff_campaign_id, ck.click_time, ck.user_id
                  FROM 202_customers c
                  JOIN 202_clicks ck ON ck.click_id = c.first_click_id AND ck.user_id = ?
                  WHERE c.customer_id = ? AND c.user_id = ?
              ) s
              JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = s.campaign_id AND ac.user_id = s.user_id
                 AND ac.aff_campaign_deleted = 0
-             WHERE {$latest} {$notIn}
+             WHERE 1 = 1 {$notIn}
              GROUP BY s.campaign_id, ac.aff_campaign_name, ac.aff_campaign_url
              ORDER BY last_at DESC, s.campaign_id ASC
              LIMIT 1"

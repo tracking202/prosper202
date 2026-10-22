@@ -50,11 +50,6 @@ final class WebEventsIntegrationTest extends TestCase
         foreach (['202_ppc_account_pixels', '202_landing_pages', '202_identity_observations', '202_identity_signals', '202_identity_keys', '202_goals', '202_notification_pending'] as $t) {
             self::$db->query('TRUNCATE TABLE ' . $t);
         }
-        // The traffic source account the clicks name, the account's own: one
-        // of another account's is no source (TrafficSourcePixels::clickTokens()).
-        self::fixture('DELETE FROM 202_ppc_accounts WHERE ppc_account_id=' . self::PPC);
-        self::fixture('INSERT INTO 202_ppc_accounts SET ppc_account_id=' . self::PPC . ", user_id=1, ppc_network_id=0,"
-            . " ppc_account_name='p" . self::PPC . "', ppc_account_time=0");
         $this->fetched = [];
         $this->refusing = null;
     }

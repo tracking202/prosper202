@@ -99,26 +99,6 @@ click's plain conversion) is refused with `409`, naming it in
 `transaction_id`. A `409` without `details` is about the `Idempotency-Key`
 instead: a request holding it is still in flight, or one did not finish.
 
-### A click a redirector link re-clicked
-
-A click a visitor came back to through a redirector link has a row for each
-visit ([Clicks](09-clicks.md#a-click-a-redirector-link-re-clicked)). A
-conversion on it is credited to its latest visit: `campaign_id` is the
-campaign that visit was on, whose payout mode applies and whose payout is
-the default, and `click_time` is that visit's. Before
-1.9.78 it took whichever visit the database read first, usually the first.
-The same holds for the pixels and postbacks, Update Subids, revenue uploads,
-goals and app installs, and `GET /clicks/{id}/conversions` shows the latest
-visit's value.
-
-The per-campaign postback (`pb.php?acip=…&subid=…`, with or without `event=`)
-accepts a click any of whose visits was on the campaign it names, when that
-campaign is the click's account's, and credits the latest visit: the network
-posts back for the offer it sold, which may be on any visit of the click.
-Before 1.9.78 only the campaign of the visit the database read first was
-accepted. Any other click is answered `404` "Unknown subid for this
-campaign", as before.
-
 ### Line items need a customer
 
 `items` are stored on the customer's revenue event and `customer_crm` on the

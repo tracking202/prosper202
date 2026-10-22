@@ -178,53 +178,6 @@ final class LastClickFromAddressIntegrationTest extends TestCase
         }
     }
 
-    /**
-     * A re-click written before re-clicks kept the first visit's traffic
-     * source carries the link's: the click's is still its first visit's,
-     * though that visit is outside the window. 970005's first visit, 40 days
-     * back, is from source 7; a re-click 10 days back came through 9.
-     */
-    public function testTheTrafficSourceIsTheFirstVisitsThoughItIsOutsideTheWindow(): void
-    {
-        $revisit = time() - 10 * 86400;
-        self::insertClick(970005, self::USER, $revisit, 9);
-        try {
-            self::assertSame(
-                ['click_id' => 970005, 'ppc_account_id' => 7, 'click_id_public' => '1970005', 'keyword_id' => 11],
-                LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 30 * 86400, false)
-            );
-        } finally {
-            self::q("DELETE FROM 202_clicks WHERE click_id = 970005 AND click_time = $revisit");
-        }
-    }
-
-    /** Inside the window too: 970004's later visit came through 2, its first through 7. */
-    public function testTheTrafficSourceIsTheFirstVisitsNotALaterOnes(): void
-    {
-        $revisit = time() - 300;
-        self::insertClick(970004, self::USER, $revisit, 2);
-        try {
-            $row = LastClickFromAddress::find(self::$conn, '2001:db8:abcd:12::9', self::USER, time() - 86400, false);
-            self::assertSame([970004, 7], [$row['click_id'] ?? null, $row['ppc_account_id'] ?? null]);
-        } finally {
-            self::q("DELETE FROM 202_clicks WHERE click_id = 970004 AND click_time = $revisit");
-        }
-    }
-
-    /** A click whose first row is another account's is not this account's to answer. */
-    public function testAClickFirstVisitedByAnotherAccountIsNotFound(): void
-    {
-        // 970003 is the other account's, from the address, a minute ago.
-        $revisit = time() - 30;
-        self::insertClick(970003, self::USER, $revisit);
-        try {
-            $row = LastClickFromAddress::find(self::$conn, '203.0.113.9', self::USER, time() - 120, false);
-            self::assertNull($row);
-        } finally {
-            self::q("DELETE FROM 202_clicks WHERE click_id = 970003 AND click_time = $revisit");
-        }
-    }
-
     public function testNoClickIsNull(): void
     {
         self::assertNull(LastClickFromAddress::find(self::$conn, '192.0.2.1', self::USER, 0, false));
@@ -246,14 +199,13 @@ final class LastClickFromAddressIntegrationTest extends TestCase
         }
     }
 
-    private static function insertClick(int $click, int $user, int $time, int $source = 7): void
+    private static function insertClick(int $click, int $user, int $time): void
     {
         self::q(sprintf(
-            'INSERT INTO 202_clicks SET click_id = %d, user_id = %d, click_time = %d, ppc_account_id = %d',
+            'INSERT INTO 202_clicks SET click_id = %d, user_id = %d, click_time = %d, ppc_account_id = 7',
             $click,
             $user,
-            $time,
-            $source
+            $time
         ));
     }
 

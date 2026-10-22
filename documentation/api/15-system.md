@@ -62,7 +62,7 @@ System health checks, diagnostics, and administration.
 
 ## Data Engine
 
-`GET /system/dataengine` — returns data engine job status, the count of pending dirty hours to process, and `reclick_backfill`: how far the cron job has brought the clicks re-clicked before 1.9.78 to one visit each (`percent`, `reclicked_clicks`, and a `note` saying what reports show meanwhile), or `null` when there is nothing left to bring over.
+`GET /system/dataengine` — returns data engine job status and count of pending dirty hours to process.
 
 ## Metrics
 

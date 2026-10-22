@@ -251,9 +251,9 @@ class ClicksController
      * A redirector re-click gives the click a second 202_clicks row, at the
      * new visit's time; the click as it is now is its latest row, the one its
      * rotator route, redirect URL and cl.php link are. The list shows each.
-     * Two rows in one second (written before 1.9.78) share a time, and the
-     * table has nothing else to order them by: the one on the route the click
-     * holds now (202_clicks_rotator) is the latest.
+     * Two visits in one second share a time, and the table has nothing else
+     * to order them by: the one on the route the click holds now
+     * (202_clicks_rotator) is the latest.
      */
     public function get(int $id): array
     {

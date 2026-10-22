@@ -462,14 +462,9 @@ final class AdministrationController
         } elseif ($marker !== null) {
             // An id an earlier version scheduled: the day of the click it
             // names (the newest at or below it, which the deletion keeps),
-            // and the clicks below it, each once however many visits a
-            // re-click gave it, as ClickRetention counts them.
+            // and the clicks below it.
             $at = $this->one('SELECT click_time FROM 202_clicks WHERE click_id <= ? ORDER BY click_id DESC LIMIT 1', 'i', [$marker]);
-            $remaining = $this->one(
-                'SELECT COUNT(DISTINCT click_id) AS n FROM 202_clicks WHERE click_id < ?',
-                'i',
-                [$marker]
-            );
+            $remaining = $this->one('SELECT COUNT(*) AS n FROM 202_clicks WHERE click_id < ?', 'i', [$marker]);
             $scheduled = [
                 'before' => $at === null ? null : (new \DateTimeImmutable('@' . (int) $at['click_time']))
                     ->setTimezone($this->accountZone())->format('Y-m-d'),

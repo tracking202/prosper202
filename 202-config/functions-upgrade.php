@@ -472,30 +472,6 @@ if (!function_exists('_upgrade_conversion_ledger_probe')) {
     }
 }
 
-if (!function_exists('_upgrade_reclick_backfill_mark')) {
-    /**
-     * ReClickBackfill's marker: the newest click, read by a statement of its
-     * own (a plain read, which locks nothing), then the marker written with
-     * it. Read inside an INSERT ... SELECT, 202_clicks would be read under
-     * shared locks, the gap after the newest click among them, where every
-     * new click goes.
-     */
-    function _upgrade_reclick_backfill_mark(): bool
-    {
-        $newest = _upgrade_query(\Prosper202\Click\ReClickBackfill::NEWEST_CLICK_SQL);
-        if (!$newest instanceof \mysqli_result) {
-            return false;
-        }
-        $row = $newest->fetch_assoc();
-        $id = is_array($row) ? ($row['newest'] ?? null) : null;
-        if (!is_int($id) && !(is_string($id) && preg_match('/\A\d+\z/', $id) === 1)) {
-            return false;
-        }
-
-        return _upgrade_query(\Prosper202\Click\ReClickBackfill::markSql((int) $id)) !== false;
-    }
-}
-
 if (!function_exists('_upgrade_measurement_tables')) {
     /**
      * Create the measurement tables — the app registry and the Apple
@@ -526,9 +502,8 @@ if (!function_exists('_upgrade_measurement_tables')) {
      * @param  array<int, \Prosper202\Database\Schema\SchemaDefinition> $definitions
      * @param  list<string> $retirements
      * @return bool True when every table exists and matches its definition,
-     *         every marker is written and every retired table is gone.
-     *         False leaves the version where it is, so the next run retries
-     *         the whole step.
+     *         and every retired table is gone. False leaves the version
+     *         where it is, so the next run retries the whole step.
      */
     function _upgrade_measurement_tables(array $definitions, array $retirements = []): bool
     {
@@ -594,21 +569,6 @@ if (!function_exists('_upgrade_measurement_tables')) {
                         $ok = false;
                         error_log('Prosper202 upgrade: failed to mark the pre-upgrade conversions'
                             . ' for the attribution backfill');
-                    }
-                    break;
-                }
-            }
-        }
-
-        // The clicks re-clicked before 1.9.78 (Prosper202\Click\ReClickBackfill),
-        // the same way: the marker here, the walk from the cron.
-        if ($ok) {
-            foreach ($definitions as $definition) {
-                if ($definition->tableName === \Prosper202\Database\Schema\TableRegistry::RECLICK_BACKFILL) {
-                    if (!_upgrade_reclick_backfill_mark()) {
-                        $ok = false;
-                        error_log('Prosper202 upgrade: failed to mark the clicks re-clicked before 1.9.78'
-                            . ' for their backfill');
                     }
                     break;
                 }
@@ -2436,14 +2396,6 @@ class UPGRADE
             $result = _upgrade_query($sql);
 
             $sql = "RENAME TABLE 202_dataengine_new TO 202_dataengine";
-            $result = _upgrade_query($sql);
-
-            // The rebuild below reads 202_click_latest_visits (LatestVisit),
-            // which the 1.9.77 step converges: an install upgrading from
-            // before 1.9.5 reaches this first, and without it the rebuild
-            // failed here on every run. Empty, it reads every visit as
-            // latest, as the rebuild did when this step was written.
-            $sql = \Prosper202\Database\Tables\ClickTables::clickLatestVisits()->createStatement;
             $result = _upgrade_query($sql);
 
             $de = new DataEngine();
@@ -4401,19 +4353,9 @@ class UPGRADE
             // labelled with the app (Api\V3\Support\AiConnect).
             // A schema change for 1.9.78 belongs in this block, reconciled
             // before the version is written.
-            //
-            // A re-clicked click counts once, at its latest visit, which
-            // 202_click_latest_visits records (Prosper202\Click\LatestVisit).
-            // The clicks re-clicked before 1.9.78 have no record, and rows
-            // written by an older rule: the step marks the newest click, and
-            // the cron walks the clicks up to it (Prosper202\Click\ReClickBackfill).
-            $step_ok = _upgrade_measurement_tables([
-                \Prosper202\Database\Tables\UserTables::apiKeys(),
-                \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
-                \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
-            ]);
+            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
 
-            if ($step_ok) {
+            if ($api_keys_ok) {
                 if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
                     $prosper202_version = '1.9.78';
                 } else {
@@ -4421,8 +4363,8 @@ class UPGRADE
                         . 'leaving version at 1.9.77 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: 202_api_keys and the re-click tables could not be reconciled, or'
-                    . ' the re-click backfill marked; leaving version at 1.9.77 so the next run retries.');
+                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled; '
+                    . 'leaving version at 1.9.77 so the next run retries.');
             }
         }
 

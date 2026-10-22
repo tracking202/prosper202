@@ -50,7 +50,7 @@ final class LatestVisitIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        foreach (['202_clicks', '202_clicks_record', '202_clicks_rotator', '202_click_latest_visits'] as $table) {
+        foreach (['202_clicks', '202_clicks_record', '202_clicks_rotator'] as $table) {
             self::q("DELETE FROM $table WHERE click_id = " . self::CLICK);
         }
     }
@@ -96,99 +96,6 @@ final class LatestVisitIntegrationTest extends TestCase
         self::record();
 
         self::assertSame([303, 303, 303], self::campaigns());
-    }
-
-    /**
-     * isLatest(), as a report reads many clicks' rows: the re-clicked click
-     * counts once, under its latest visit's campaign, whatever its earlier
-     * visit's time window; two visits in one second both count.
-     */
-    public function testIsLatestCountsAClickOnceUnderItsLatestVisit(): void
-    {
-        self::q(self::visit(101, 1000, 0, 0));
-        self::q(self::visit(202, 2000, 0, 0));
-        self::refresh();
-        self::assertSame([['202', '1']], self::counted(''));
-        // A window holding only the earlier visit counts nothing: the click is its latest visit's.
-        self::assertSame([], self::counted(' AND c.click_time < 1500'));
-
-        self::q(self::visit(303, 2000, 0, 0));
-        self::refresh();
-        self::assertSame([['202', '1'], ['303', '1']], self::counted(''));
-    }
-
-    /**
-     * A re-click not yet recorded (written before 1.9.78, ahead of the
-     * backfill) counts at each visit, as every click did before.
-     */
-    public function testAReClickWithNoRecordCountsAtEachVisit(): void
-    {
-        self::q(self::visit(101, 1000, 0, 0));
-        self::q(self::visit(202, 2000, 0, 0));
-
-        self::assertSame([['101', '1'], ['202', '1']], self::counted(''));
-    }
-
-    /**
-     * refresh() records the latest of the click's rows, not the visit just
-     * written: a re-click a web server dated before the visit it follows
-     * leaves the later row the latest. It never moves the record back.
-     */
-    public function testRefreshRecordsTheLatestRowWhateverWasWrittenLast(): void
-    {
-        self::q(self::visit(101, 2000, 0, 0));
-        self::q(self::visit(202, 1000, 0, 0));
-        self::refresh();
-        self::assertSame([['101', '1']], self::counted(''));
-        self::assertSame('2000', self::recorded());
-
-        self::q('UPDATE 202_click_latest_visits SET click_time = 3000 WHERE click_id = ' . self::CLICK);
-        self::refresh();
-        self::assertSame('3000', self::recorded(), 'a later record stays');
-    }
-
-    /** @dataProvider insertionOrders */
-    public function testFirstVisitIsTheEarliestRow(bool $latestFirst): void
-    {
-        $latest = self::visit(202, 2000, 0, 0);
-        $earlier = self::visit(101, 1000, 0, 0);
-        foreach ($latestFirst ? [$latest, $earlier] : [$earlier, $latest] as $sql) {
-            self::q($sql);
-        }
-        $db = self::requireScratch();
-        $result = $db->query('SELECT f.aff_campaign_id FROM ' . \Prosper202\Click\FirstVisit::of((string) self::CLICK)
-            . ' AS f');
-        self::assertNotFalse($result, $db->error);
-
-        $rows = array_map(static fn (array $r): array => array_map('strval', $r), $result->fetch_all());
-        self::assertSame([['101']], $rows);
-    }
-
-    private static function refresh(): void
-    {
-        LatestVisit::refresh(new \Prosper202\Database\Connection(self::requireScratch()), self::CLICK);
-    }
-
-    private static function recorded(): ?string
-    {
-        $db = self::requireScratch();
-        $result = $db->query('SELECT click_time FROM 202_click_latest_visits WHERE click_id = ' . self::CLICK);
-        self::assertNotFalse($result, $db->error);
-        $row = $result->fetch_row();
-
-        return $row === null ? null : (string) $row[0];
-    }
-
-    /** @return list<array{string, string}> campaign => clicks, over the click's rows that isLatest() keeps */
-    private static function counted(string $window): array
-    {
-        $db = self::requireScratch();
-        $result = $db->query('SELECT c.aff_campaign_id, COUNT(*) FROM 202_clicks AS c WHERE c.click_id = '
-            . self::CLICK . $window . ' AND ' . LatestVisit::isLatest('c')
-            . ' GROUP BY c.aff_campaign_id ORDER BY c.aff_campaign_id');
-        self::assertNotFalse($result, $db->error);
-
-        return array_map(static fn (array $row): array => array_map('strval', $row), $result->fetch_all());
     }
 
     private static function visit(int $campaign, int $time, int $rotator, int $redirect): string

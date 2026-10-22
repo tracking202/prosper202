@@ -28,7 +28,7 @@ final class DataEngineTest extends TestCase
     public function testSlimEngineUsesTheSharedRollupBuilder(): void
     {
         self::assertStringContainsString(
-            'ClickRollupSql::forClick',
+            'ClickRollupSql::insertSelect',
             $this->source,
             'The slim engine must not carry its own copy of the rollup SQL'
         );
@@ -72,7 +72,7 @@ final class DataEngineTest extends TestCase
         foreach (['slim' => $this->source, 'full' => $full] as $engine => $source) {
             $body = self::methodBody($source, 'setDirtyHour');
             $read = "$engine: the body read is setDirtyHour()'s";
-            self::assertStringContainsString('ClickRollupSql::forClick', $body, $read);
+            self::assertStringContainsString('ClickRollupSql::insertSelect', $body, $read);
             foreach (['$ip_address', '202_ips', 'user_id'] as $read) {
                 self::assertStringNotContainsString($read, $body, "$engine: setDirtyHour() reads $read");
             }

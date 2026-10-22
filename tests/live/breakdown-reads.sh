@@ -152,18 +152,8 @@ eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition
 G_LEVEL=$(field "d['data']['goal_id']")
 eq "$(api POST /goals "{\"scope\":\"campaign\",\"scope_id\":$CAMP_A,\"definition\":{\"name\":\"Tutorial\",\"trigger\":{\"event\":\"tutorial_complete\"},\"value\":{\"type\":\"none\"}}}")" 201 "a tracked, unpaid Tutorial goal"
 G_TUT=$(field "d['data']['goal_id']")
-# The events occur at T+1..T+3 and are received now. An event dated after its
-# arrival is placed at its arrival (GoalEvent::effectiveAt()), and events in
-# one second are taken in event-id order, so when T is just after a click made
-# a moment ago (scheduled-deletion.sh's, run just before) "l1" < "t1" writes
-# Level 3 before Tutorial. Wait until T+3 has passed; the check after the
-# ingest fails by name if this wait is lost (as android-intake.sh does).
-wait_s=$(( T + 3 - $(date +%s) ))
-if [ "$wait_s" -gt 0 ]; then sleep "$wait_s"; fi
 ingest $A "[{\"event_id\":\"f1\",\"name\":\"first_open\",\"occurred_at\":$((T + 1))},{\"event_id\":\"t1\",\"name\":\"tutorial_complete\",\"occurred_at\":$((T + 2))},{\"event_id\":\"l1\",\"name\":\"level_reached\",\"occurred_at\":$((T + 3))}]"
 eq "$(pyf "$OUT/ingest" "d['outcomes_written']")" 3 "three outcomes: install, tutorial, level 3"
-eq "$(Q "SELECT COUNT(*) FROM 202_goal_events WHERE subject_type='click' AND subject_id=$A AND occurred_at > received_at")" 0 \
-   "no event was received before it occurred, so each keeps its own second"
 eq "$(gpb "subid=$A&amount=5&txid=A-1")" 200 "postback A-1 \$5 on the accumulate click"
 eq "$(gpb "subid=$A&amount=2&txid=A-2")" 200 "postback A-2 \$2"
 eq "$(api POST /conversions "{\"click_id\":$A,\"transaction_id\":\"A-1\",\"status\":\"reversed\"}")" 201 "A-1 reversed through the API"

@@ -396,10 +396,8 @@ p202 conversion upload-revenue march.csv --subid-column 'Sub ID 2' --amount-colu
   server changes the clicks only if they still number the same — so a click
   recorded after the check is never changed, and when the selection moved
   nothing is written (exit 1, "run the same command again"). `--force` skips
-  the question, never the check. A click a redirector link re-clicked is
-  chosen by its first visit (its time and the filters) and every visit of it
-  gets the new cost. Reports show the new cost once the data engine rebuilds
-  those hours (its cron job).
+  the question, never the check. Reports show the new cost once the data
+  engine rebuilds those hours (its cron job).
 - **`conversion mark-subids`** records each subid's click as converted at its
   campaign's payout (source `subid_upload`), once per click.
   **`conversion delete-subids`** clears each subid's conversions (the clicks

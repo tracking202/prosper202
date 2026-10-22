@@ -16,7 +16,6 @@ use Api\V3\Apps\AppToken;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\QuotaStore;
 use Api\V3\Support\ServerStateStore;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Database\Connection;
 use Prosper202\Goals\GoalEngine;
 use Prosper202\Goals\MysqlGoalRepository;
@@ -533,36 +532,30 @@ final class InstallIntake
 
     /**
      * Step 2 of the classification: the click the verified token names,
-     * locked (the ledger's click lock), against this registration. The
-     * install is attributed to the click's latest visit: its campaign, owner
-     * and time.
+     * locked, against this registration.
      *
      * @return array{state: MatchState, reason: string, click_id: int|null}
      */
     public function classifyWithClick(AppRegistration $registration, InstallPayload $payload, int $clickId, int $rowId, int $receivedAt, int $now): array
     {
-        $click = null;
-        $row = (new MysqlConversionLedger($this->conn))->lockClick($clickId);
-        if ($row !== null) {
-            // The campaign's app link counts only when the campaign is the
-            // click's own account's: a tracker could name another account's
-            // before the API checked linked ids (229df10), and its link says
-            // nothing about the click owner's apps — such a click reads as
-            // having no campaign, never as a foreign app's. Its row is
-            // locked after the click's.
-            $link = $this->conn->prepareWrite(
-                'SELECT app_registration_id FROM 202_aff_campaigns WHERE aff_campaign_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
-            );
-            $this->conn->bind($link, 'ii', [(int) $row['aff_campaign_id'], (int) $row['user_id']]);
-            $campaign = $this->conn->fetchOne($link);
-            $click = [
-                'user_id' => (int) $row['user_id'],
-                'campaign_id' => (int) $row['aff_campaign_id'],
-                'click_time' => (int) $row['click_time'],
-                'campaign_registration_id' => $campaign !== null && $campaign['app_registration_id'] !== null
-                    ? (int) $campaign['app_registration_id'] : null,
-            ];
-        }
+        // The campaign's app link counts only when the campaign is the
+        // click's own account's: a tracker could name another account's
+        // before the API checked linked ids (229df10), and its link says
+        // nothing about the click owner's apps — such a click reads as
+        // having no campaign, never as a foreign app's.
+        $stmt = $this->conn->prepareWrite(
+            'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_time, ac.app_registration_id
+             FROM 202_clicks c LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
+             WHERE c.click_id = ? LIMIT 1 FOR UPDATE'
+        );
+        $this->conn->bind($stmt, 'i', [$clickId]);
+        $row = $this->conn->fetchOne($stmt);
+        $click = $row === null ? null : [
+            'user_id' => (int) $row['user_id'],
+            'campaign_id' => (int) $row['aff_campaign_id'],
+            'click_time' => (int) $row['click_time'],
+            'campaign_registration_id' => $row['app_registration_id'] !== null ? (int) $row['app_registration_id'] : null,
+        ];
 
         $hasInstall = false;
         if ($click !== null) {

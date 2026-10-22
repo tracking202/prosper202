@@ -69,6 +69,7 @@ final class AccountScopedJoinTest extends TestCase
     // Why a site in HARMLESS cannot cross accounts. Each names the writer
     // that makes it so; when that writer changes, so must the entry.
 
+    private const SAME_CLICK = 'one click\'s own rows, joined on the click\'s id: they are written with the click, by the same redirect, so they are its account\'s';
     private const LATEST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
         . ' latest visit: the derived table stands where the statement read `202_clicks` as its driving row, and'
         . ' the click\'s owner is what its callers check (p202ClickOwner() returns it, offrtr.php compares it with'
@@ -110,20 +111,6 @@ final class AccountScopedJoinTest extends TestCase
     private const DATA_SCOPE = 'ranks an install-wide region or ISP by the clicks the report reads: `2st.user_id = ` the integer DataScope::userId() returns, or every account\'s for the session that sees every campaign (DataScope); it names nothing an account owns';
     private const INSTALL_LICENCE_KEY = 'the install\'s licence key, read across the users of one install on purpose: the lowest active user on the requesting user\'s install_hash that holds a key, as AUTH::determineAccountOwnerId() resolves it for the web app; the key only asks my.tracking202.com whether the install is licensed for the Go CLI, and nothing of that row is answered to the caller';
     private const UPGRADE = 'an upgrade or migration step over every account\'s rows: it serves nothing on one account\'s behalf';
-    private const FIRST_VISIT = 'one click\'s own rows by its id (`?` or its digits, checked), ordered to its'
-        . ' first visit, standing where the statement read `202_clicks` as its driving row; each caller ties it to'
-        . ' an account: `fv.user_id = ?` (LastClickFromAddress::find()), `c.user_id = ?`'
-        . ' (TrafficSourcePixels::clickTokens()), the click locked and every row of it one account\'s'
-        . ' (MysqlClickRepository::firstVisitArrival(), after recordReClick()\'s lockClick($clickId, $userId) and'
-        . ' accountsClickFirstTime(), or repairVisits()\'s count of the accounts), `fv.user_id = ` the owner of'
-        . ' the click\'s latest visit, the account the conversion is recorded for (p202ClickSourceSql(), for'
-        . ' gpb.php and upx.php)';
-    private const ROLLUP_TABLE = 'the rollup table the caller names (202_dataengine, or 202_dataengine_new in the'
-        . ' upgrade), tied in the same ON (`de.user_id = 2c.user_id`): the scan cannot read a table name to check it'
-        . ' against';
-    private const ENGAGEMENT_LATEST = 'the subquery\'s WHERE is `cu2.user_id = ?`, the account; its runtime part is'
-        . ' LatestVisit::isLatest(\'c\'), a NOT EXISTS over the click\'s own record in 202_click_latest_visits, which'
-        . ' has no account';
 
     /**
      * Category (b): reads that join an account-owned table without tying
@@ -167,15 +154,9 @@ final class AccountScopedJoinTest extends TestCase
         '202-config/Click/ClickRetention.php' => [
             'no user_id tie | 202_clicks | n.click_id = c.click_id AND n.click_time >= ?' => self::RETENTION_SKIP,
         ],
-        '202-config/Click/FirstVisit.php' => [
-            'no user_id tie | 202_clicks | fv.click_id = {{$clickId}}' => self::FIRST_VISIT,
-        ],
         '202-config/Click/LatestVisit.php' => [
             'condition built at runtime | 202_clicks | lv.click_id = {{$clickId}}'
                 . ' {self::orderBy(\'lv\', \'lvr\')}' => self::LATEST_VISIT,
-            'no user_id tie | 202_clicks | lead_visit.click_id = {$clicks}.click_id AND lead_visit.user_id ='
-                . ' {$clicks}.user_id AND lead_visit.click_lead = 1' => 'anyVisitIsLead(): tied, to the caller\'s'
-                . ' row\'s own user_id, which the scan reads as an interpolation; it reads only that click\'s rows',
         ],
         '202-config/Conversion/Ledger/LedgerReportSql.php' => [
             'alias built at runtime | 202_conversion_logs | $t' => self::SAME_CLICK_CONVERSIONS,
@@ -184,22 +165,12 @@ final class AccountScopedJoinTest extends TestCase
             'subquery with runtime text before its WHERE | 202_conversion_logs | $goalId' => self::SAME_CLICK_CONVERSIONS,
             'condition built at runtime | 202_dataengine | {$clickScope}' => self::CALLER_SCOPE,
         ],
-        '202-config/DataEngine/ClickRollupSql.php' => [
-            'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`.'
-                => self::ROLLUP_TABLE,
-            'table built at runtime | $table | click_id ) STRAIGHT_JOIN {$table} AS de ON ( de.click_id = `2c`. #2'
-                => self::ROLLUP_TABLE,
-            'no user_id tie | 202_clicks | `2c`.click_id = lv.click_id' => 'deleteEarlierVisitsOfClick(): the'
-                . ' click\'s rows from its record in 202_click_latest_visits, which has no account; the click is the'
-                . ' one the caller rolls up, and the rollup table is tied to its rows\' account',
-        ],
         '202-config/Goals/GoalEngine.php' => [
             'no user_id tie | 202_clicks | c.click_id = i.click_id' => self::INSTALL_CLICK,
             'no user_id tie | 202_clicks | c.click_id = s.subject_id' => self::SUBJECT_CLICK,
         ],
         '202-config/Goals/WebEvents.php' => [
             'no user_id tie | 202_clicks | c.click_id = o.click_id' => self::WHERE_UNREAD,
-            'no user_id tie | 202_clicks | c.click_id = o.click_id #2' => self::WHERE_UNREAD,
         ],
         '202-config/Ltv/MysqlCustomerCrmRepository.php' => [
             'no user_id tie | 202_customer_fields | f.field_id = v.field_id' => self::FIELD_OF_VALUE,
@@ -213,11 +184,6 @@ final class AccountScopedJoinTest extends TestCase
             'no user_id tie | 202_revenue_events | re.event_id = li.event_id {{$customerJoin}} {{$pcWhereClause}}' => self::EVENT_LINES,
             'condition built at runtime | 202_products | p.product_id = pc.product_id {{$mrrSubquery}}' => self::LTV_PRODUCTS,
             'alias built at runtime | 202_customer_field_values | {$alias}' => self::CUSTOMER_FIELD_FILTER,
-        ],
-        '202-config/Ltv/MysqlEngagementRepository.php' => [
-            'condition built at runtime | 202_customers | cu2.user_id = ? AND cu2.company IS NOT NULL AND'
-                . ' cu2.company <> \'\' AND cu2.merged_into_customer_id IS NULL AND {LatestVisit::isLatest(\'c\')}'
-                => self::ENGAGEMENT_LATEST,
         ],
         '202-config/Ltv/MysqlPersonalizationRepository.php' => [
             'no user_id tie | 202_customer_field_values | v.field_id = f.field_id AND v.customer_id = ?' => self::FIELD_VALUES_OF_OWN_FIELD,
@@ -316,6 +282,12 @@ final class AccountScopedJoinTest extends TestCase
         ],
         'tracking202/redirect/off.php' => [
             'no user_id tie | 202_clicks | `2c`.click_id = `2cr`.click_id' => self::OFFER_CLICK,
+        ],
+        'tracking202/static/gpb.php' => [
+            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
+        ],
+        'tracking202/static/upx.php' => [
+            'USING without user_id | 202_clicks | ) LEFT JOIN `202_clicks` AS `2c` USING ( `click_id` ) LEFT JOIN `202_tracking_c1` AS' => self::SAME_CLICK,
         ],
     ];
 

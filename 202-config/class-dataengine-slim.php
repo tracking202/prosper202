@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Prosper202\Database\Connection;
 use Prosper202\DataEngine\ClickRollupSql;
 
 if (!isset($_SESSION['user_timezone'])) {
@@ -38,9 +37,7 @@ if (!class_exists('DataEngine')) {
         }
 
         /**
-         * Roll a single click up into 202_dataengine so reports reflect it:
-         * at its latest visit, its rows at earlier visits removed
-         * (ClickRollupSql).
+         * Roll a single click up into 202_dataengine so reports reflect it.
          *
          * A request that names no click re-rolls none. It used to take "the
          * visitor's latest click": user 1's newest click in the last 24 hours from
@@ -70,31 +67,27 @@ if (!class_exists('DataEngine')) {
 
             // click_id can originate from a caller-supplied cookie/request
             // value; cast to int so it cannot break out of the WHERE clause.
-            $clickId = (int) $click_id;
+            $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
 
             // The click is recorded before this runs, and on the click path
             // the visitor goes on whatever the rollup does: a lock lost to a
             // concurrent rollup is tried once more, and any other failure is
-            // logged, the click's hour queued for the cron job to roll up
-            // again (ClickRollupSql::queueRetry()), and answered false.
-            foreach (ClickRollupSql::forClick('202_dataengine', $clickId) as $step => $dsql) {
-                for ($attempt = 1;; $attempt++) {
-                    if ($db->query($dsql)) {
-                        continue 2;
-                    }
-                    $errno = (int) $db->errno;
-                    if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
-                        continue;
-                    }
-                    $failure = 'DataEngine ' . $step . ' of click ' . $clickId . ' failed: '
-                        . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']';
-                    error_log($failure . '; ' . ClickRollupSql::queueRetry(new Connection($db), $clickId));
-
-                    return false;
+            // logged and answered false, the click missing from the reports
+            // until its hour is rebuilt.
+            for ($attempt = 1;; $attempt++) {
+                if ($db->query($dsql)) {
+                    return true;
                 }
-            }
+                $errno = (int) $db->errno;
+                if ($attempt === 1 && ($errno === 1205 || $errno === 1213)) {
+                    continue;
+                }
+                error_log('DataEngine rollup of click ' . (int) $click_id . ' failed: '
+                    . p202FailedQueryMessage($errno, (string) $db->error) . ' [errno ' . $errno . ']'
+                    . '; the click is missing from the reports until its hour is rebuilt');
 
-            return true;
+                return false;
+            }
         }
 
         /**

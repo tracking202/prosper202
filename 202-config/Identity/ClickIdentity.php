@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Prosper202\Identity;
 
-use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -158,12 +157,11 @@ final class ClickIdentity
     /**
      * Link a click that is converting now to the signed customer id the
      * conversion carries: the cross-device join (plan §6.2). The click's
-     * owner, time and campaign setting come from its latest visit, the one
-     * the conversion credits — the setting only from a campaign of the
-     * click's own account: a tracker could name another account's campaign
-     * before the API checked linked ids (229df10), and that account's
-     * setting does not govern this one's clicks (such a click reads as
-     * having no campaign, which links).
+     * owner, time and campaign setting come from the click itself — the
+     * setting only from a campaign of the click's own account: a tracker
+     * could name another account's campaign before the API checked linked
+     * ids (229df10), and that account's setting does not govern this one's
+     * clicks (such a click reads as having no campaign, which links).
      */
     public function attachToStoredClick(Connection $conn, int $clickId): ?int
     {
@@ -173,8 +171,9 @@ final class ClickIdentity
         try {
             $stmt = $conn->prepareRead(
                 'SELECT c.user_id, c.click_time, ac.identity_signals
-                 FROM ' . LatestVisit::of('?') . ' AS c
-                 LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id'
+                 FROM 202_clicks AS c
+                 LEFT JOIN 202_aff_campaigns AS ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
+                 WHERE c.click_id = ? LIMIT 1'
             );
             $conn->bind($stmt, 'i', [$clickId]);
             $row = $conn->fetchOne($stmt);

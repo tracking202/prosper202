@@ -10,8 +10,6 @@ use Api\V3\RequestContext;
 use Api\V3\Support\IdempotentCreate;
 use Api\V3\Support\ServerStateStore;
 use PHPUnit\Framework\TestCase;
-use Prosper202\Click\LatestVisit;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -29,31 +27,6 @@ use Tests\Support\FakeMysqliConnection;
  */
 final class ConversionCreateDuplicateTest extends TestCase
 {
-    /**
-     * The click's lock and the read of its latest visit after it, each
-     * answering $rows, and the read of its latest visit that is a lead
-     * (MysqlConversionLedger::ensureManaged()) answering those of them that are.
-     *
-     * @param list<array<string, mixed>> $rows
-     */
-    private static function clickVisit(FakeMysqliConnection $db, string $lock, array $rows): void
-    {
-        $db->whenQueryContainsReturnRows($lock, $rows);
-        // record() reads the click as clickTransaction() does, the other
-        // writers as lockClick() does.
-        $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
-        $db->whenQueryContainsReturnRows(
-            MysqlConversionLedger::lockedLeadSql(),
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
-        $db->whenQueryContainsReturnRows(
-            'AND c.click_lead = 1',
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
-    }
-
     private string $stateDir;
 
     protected function setUp(): void
@@ -80,10 +53,9 @@ final class ConversionCreateDuplicateTest extends TestCase
     private function ledgerWithRow(int $deleted): FakeMysqliConnection
     {
         $db = new FakeMysqliConnection();
-        self::clickVisit(
-            $db,
+        $db->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
-            [['click_id' => 10, 'user_id' => 1, 'aff_campaign_id' => 44, 'click_payout' => '5.00000', 'click_time' => 1700000000, 'click_lead' => 1]]
+            [['click_id' => 10, 'aff_campaign_id' => 44, 'click_payout' => '5.00000', 'click_time' => 1700000000, 'click_lead' => 1]]
         );
         $db->whenQueryContainsReturnRows(
             'FROM 202_conversion_logs WHERE click_id = ? AND dedupe_key = ?',

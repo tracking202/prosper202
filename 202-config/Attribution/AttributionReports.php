@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Prosper202\Attribution;
 
-use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\Report\AccountZone;
 use Prosper202\Report\LocalTime;
@@ -27,12 +26,6 @@ use Prosper202\Report\LocalTime;
  * - assisted conversions: conversions in range whose journey has a touch in
  *   the dimension that is not the converting click. Journey-wide, so the
  *   same under every model.
- *
- * A click is read at its latest visit (LatestVisit::isLatest()): a
- * redirector re-click gives it another 202_clicks row, and the click counts
- * once, in the dimension, at the time and for the cost of that row. Its
- * traffic source and cost are that row's too: a re-click copies the first
- * visit's, and a row written before it did carries the redirector link's.
  *
  * That is the conversion cohort, the default: the sales made in the range.
  * The click cohort (COHORT_CLICK) reads credits and assists by the clock of
@@ -295,14 +288,13 @@ final class AttributionReports
         $time = $byClick ? 'c.click_time' : 'cr.conv_time';
         [$key, $name, $joins] = self::dimensionSql($groupBy, $time, $timezone);
         [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to, $time);
-        $latest = LatestVisit::isLatest('c');
 
         $stmt = $this->conn->prepareRead(
             "SELECT COALESCE($key, 0) AS k, " . self::nameColumn($key, $name) . " AS n, SUM(cr.credit) AS conversions, SUM(cr.revenue) AS revenue
              FROM $source
              JOIN 202_clicks c ON c.click_id = cr.click_id
              $joins
-             WHERE $where AND $latest
+             WHERE $where
              GROUP BY k"
         );
         $this->conn->bind($stmt, $types, $binds);
@@ -380,7 +372,6 @@ final class AttributionReports
              FROM 202_clicks c
              $joins
              WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ? AND c.click_bot = 0
-               AND " . LatestVisit::isLatest('c') . "
              GROUP BY k"
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
@@ -394,24 +385,22 @@ final class AttributionReports
     }
 
     /**
-     * In the click cohort an assist is an assisting touch whose click's
-     * latest visit is in the range, for a conversion at any time: the clock
-     * its credits and cost are read by.
+     * In the click cohort an assist is an assisting touch made in the range,
+     * for a conversion at any time.
      *
      * @return array<string, array{name: string|null, assists: int}>
      */
     private function assistsBy(int $userId, string $groupBy, int $from, int $to, bool $byClick, ?string $timezone): array
     {
-        $time = $byClick ? 'c.click_time' : 'jm.conv_time';
+        $time = $byClick ? 'j.click_time' : 'jm.conv_time';
         [$key, $name, $joins] = self::dimensionSql($groupBy, $time, $timezone);
-        $latest = LatestVisit::isLatest('c');
         $stmt = $this->conn->prepareRead(
             "SELECT COALESCE($key, 0) AS k, " . self::nameColumn($key, $name) . " AS n, COUNT(DISTINCT j.conv_id) AS assists
              FROM 202_attribution_journey_meta jm
              JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
              JOIN 202_clicks c ON c.click_id = j.click_id
              $joins
-             WHERE jm.user_id = ? AND $time >= ? AND $time <= ? AND $latest
+             WHERE jm.user_id = ? AND $time >= ? AND $time <= ?
              GROUP BY k"
         );
         $this->conn->bind($stmt, 'iii', [$userId, $from, $to]);
@@ -434,10 +423,9 @@ final class AttributionReports
     {
         [$source, $where, $types, $binds] = $this->creditSource($userId, $modelId, $defaultModelId, $from, $to, $byClick ? 'c.click_time' : 'cr.conv_time');
         $clicks = $byClick ? 'JOIN 202_clicks c ON c.click_id = cr.click_id' : '';
-        $latest = $byClick ? ' AND ' . LatestVisit::isLatest('c') : '';
         $stmt = $this->conn->prepareRead(
             "SELECT COUNT(DISTINCT cr.conv_id) AS conversions, COALESCE(SUM(cr.credit), 0) AS credit, COALESCE(SUM(cr.revenue), 0) AS revenue
-             FROM $source $clicks WHERE $where$latest"
+             FROM $source $clicks WHERE $where"
         );
         $this->conn->bind($stmt, $types, $binds);
         $r = $this->conn->fetchOne($stmt) ?? [];
@@ -792,9 +780,6 @@ final class AttributionReports
         $this->conn->bind($stmt, 'i', [$convId]);
         $meta = $this->conn->fetchOne($stmt);
 
-        // Each touch's click at its latest visit, as the breakdowns count it.
-        // Two rows in one second (written before 1.9.78) are both latest,
-        // and the touch is listed once, with whichever the server returns first.
         $stmt = $this->conn->prepareRead(
             "SELECT j.position, j.click_id, j.click_time, c.aff_campaign_id, ac.aff_campaign_name,
                     c.ppc_account_id, pa.ppc_account_name,
@@ -804,23 +789,19 @@ final class AttributionReports
              LEFT JOIN 202_clicks c ON c.click_id = j.click_id
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
              LEFT JOIN 202_ppc_accounts pa ON pa.ppc_account_id = c.ppc_account_id AND pa.user_id = c.user_id
-             WHERE j.conv_id = ? AND " . LatestVisit::isLatest('c') . " ORDER BY j.position"
+             WHERE j.conv_id = ? ORDER BY j.position"
         );
         $this->conn->bind($stmt, 'i', [$convId]);
-        $touches = [];
-        foreach ($this->conn->fetchAll($stmt) as $r) {
-            $touches[(int) $r['position']] ??= [
-                'position' => (int) $r['position'],
-                'click_id' => (int) $r['click_id'],
-                'click_time' => (int) $r['click_time'],
-                'campaign_id' => $r['aff_campaign_id'] !== null ? (int) $r['aff_campaign_id'] : null,
-                'campaign_name' => $r['aff_campaign_name'],
-                'ppc_account_id' => $r['ppc_account_id'] !== null ? (int) $r['ppc_account_id'] : null,
-                'ppc_account_name' => $r['ppc_account_name'],
-                'signals' => $r['signals'] !== null && $r['signals'] !== '' ? explode(',', (string) $r['signals']) : [],
-            ];
-        }
-        $touches = array_values($touches);
+        $touches = array_map(static fn (array $r): array => [
+            'position' => (int) $r['position'],
+            'click_id' => (int) $r['click_id'],
+            'click_time' => (int) $r['click_time'],
+            'campaign_id' => $r['aff_campaign_id'] !== null ? (int) $r['aff_campaign_id'] : null,
+            'campaign_name' => $r['aff_campaign_name'],
+            'ppc_account_id' => $r['ppc_account_id'] !== null ? (int) $r['ppc_account_id'] : null,
+            'ppc_account_name' => $r['ppc_account_name'],
+            'signals' => $r['signals'] !== null && $r['signals'] !== '' ? explode(',', (string) $r['signals']) : [],
+        ], $this->conn->fetchAll($stmt));
 
         $stmt = $this->conn->prepareRead(
             'SELECT cr.model_id, m.model_name, m.model_type, cr.position, cr.click_id, cr.credit, cr.revenue
@@ -1230,8 +1211,7 @@ final class AttributionReports
         $branches = self::rollupBranches($plan, AttributionRollup::PART_CREDITS, AttributionRollup::DIMENSION_CODES[$groupBy],
             $modelId ?? AttributionRollup::EFFECTIVE, ["$rk AS k", "$rnamed AS named", 'r.credit AS credit', 'r.revenue AS revenue', 'NULL AS guard']);
         $branches[] = "SELECT COALESCE($key, 0), " . self::exactNamed($plan, $key) . ", cr.credit, cr.revenue, NULL
-                       FROM $source JOIN 202_clicks c ON c.click_id = cr.click_id $joins
-                       WHERE $where AND " . LatestVisit::isLatest('c');
+                       FROM $source JOIN 202_clicks c ON c.click_id = cr.click_id $joins WHERE $where";
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, $modelId === null);
 
         $stmt = $this->conn->prepareRead(
@@ -1262,13 +1242,11 @@ final class AttributionReports
         $u = (int) $plan['user'];
         [$rk, $rnamed] = self::rolledKey($plan);
         [$key, , $joins] = AttributionRollup::keySqlWithTime($groupBy, 'c.click_time', $plan['zone']);
-        $latest = LatestVisit::isLatest('c');
         $branches = self::rollupBranches($plan, AttributionRollup::PART_COST, AttributionRollup::DIMENSION_CODES[$groupBy],
             AttributionRollup::EFFECTIVE, ["$rk AS k", "$rnamed AS named", 'r.n AS n', 'r.cost AS cost', 'NULL AS guard']);
         $branches[] = "SELECT COALESCE($key, 0), " . self::exactNamed($plan, $key) . ", 1, c.click_cpc, NULL
                        FROM 202_clicks c $joins
-                       WHERE c.user_id = $u AND " . self::rangesSql('c.click_time', $plan['exact'])
-            . ' AND c.click_bot = 0 AND ' . $latest;
+                       WHERE c.user_id = $u AND " . self::rangesSql('c.click_time', $plan['exact']) . ' AND c.click_bot = 0';
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
@@ -1306,8 +1284,7 @@ final class AttributionReports
                        JOIN 202_attribution_journeys j ON j.conv_id = jm.conv_id AND j.position + 1 < jm.touches
                        JOIN 202_clicks c ON c.click_id = j.click_id
                        $joins
-                       WHERE jm.user_id = $u AND " . self::rangesSql('jm.conv_time', $plan['exact'])
-            . ' AND ' . LatestVisit::isLatest('c');
+                       WHERE jm.user_id = $u AND " . self::rangesSql('jm.conv_time', $plan['exact']);
         $branches[] = 'SELECT NULL, 0, NULL, NULL, ' . self::guardSql($plan, false);
 
         $stmt = $this->conn->prepareRead(
