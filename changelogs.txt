@@ -1,6 +1,7 @@
 Release notes
 
 Version 1.9.78
+-- Fixed: On a new install running MariaDB, clicks that arrived at the same moment could go unrecorded (the visitor was still redirected, or a landing page showed an error). They are all recorded now: the report rollup of a single click reads that click through its index instead of scanning the click table
 -- Fixed: Turning AutoCron on in My Account › Settings was refused with "Your own cron job ran in the last five minutes" on every install, even one with no cron job, because opening a page counted as a cron job. Pages still help run the cron's work, but no longer count as a cron job. The "Cron job last ran" tile, the cron health check, GET /system/info, GET /system/cron and p202 system cron now show when a cron job or AutoCron last ran
 -- Fixed: When the AutoCron service refuses an install's address (localhost, a private address or an IP address), Settings said the service "could not be reached". It now says AutoCron works only for installs at a public web address, and to use a cron job instead. Saving On while AutoCron is already on registers the install again
 -- Fixed: After saving a setting on the My Account pages, the message appeared at the top of the page while the page scrolled down to the setting, so it was out of sight. It now appears in the section you saved

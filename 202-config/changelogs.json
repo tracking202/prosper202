@@ -24,7 +24,8 @@
       "Fixed: Bulk upsert (API and CLI) says which rows were stored when the database rolls a batch back, marks the rows to send again, and a retry under the same Idempotency-Key no longer stores a batch twice",
       "Fixed: Turning AutoCron on in Settings was refused on every install because opening a page counted as your cron job. It works now, and when the AutoCron service refuses a local or private address, Settings says to use a cron job",
       "Fixed: A 202-config.php from an older install, without the read-only connection, no longer stops pages, Spy and the API with a PHP error",
-      "Fixed: p202 conversion simulate reads the click id from the field your offer URL puts [[subid]] in, and refuses instead of guessing when it cannot tell"
+      "Fixed: p202 conversion simulate reads the click id from the field your offer URL puts [[subid]] in, and refuses instead of guessing when it cannot tell",
+      "Fixed: On a new install running MariaDB, clicks that arrived at the same moment could go unrecorded. They are all recorded now"
     ]
   },
   "1.9.77": {
