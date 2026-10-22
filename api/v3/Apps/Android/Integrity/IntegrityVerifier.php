@@ -308,7 +308,18 @@ final class IntegrityVerifier
      */
     private function finish(int $installRowId, int $attempt, array $outcome): ?IntegrityState
     {
-        $work = function () use ($installRowId, $attempt, $outcome): array {
+        // The install-token key is read before the transaction: read inside
+        // it, it would come before the click's lock, which is then refused
+        // (MysqlConversionLedger::lockClick()). A key that does not read
+        // stops only a waiting install, the one that needs it.
+        $keyFailure = null;
+        try {
+            $key = $this->key();
+        } catch (Throwable $e) {
+            $key = null;
+            $keyFailure = $e;
+        }
+        $work = function () use ($installRowId, $attempt, $outcome, $key, $keyFailure): array {
             $none = ['state' => null, 'post' => ['ledger' => [], 'clicks' => []], 'user' => 0];
             $row = LockedInstall::read($this->conn, $installRowId);
             if ($row === null || (string) $row['integrity_state'] !== IntegrityState::PENDING->value || (int) $row['integrity_attempts'] !== $attempt) {
@@ -347,7 +358,10 @@ final class IntegrityVerifier
             // meanwhile (duplicate_click). settle()'s gate reads the verdict
             // just written.
             $payload = self::storedPayload((string) $row['raw_payload']);
-            $first = InstallClassifier::fromReferrer($payload, ReferrerParser::parse((string) $payload->installReferrer), $this->key());
+            if ($key === null) {
+                throw $keyFailure ?? new MissingInstallKey();
+            }
+            $first = InstallClassifier::fromReferrer($payload, ReferrerParser::parse((string) $payload->installReferrer), $key);
             if ($first['state'] !== null || $first['click_id'] === null) {
                 throw new \RuntimeException('install ' . $installRowId . ' is pending_integrity but its stored referrer no longer names a verified click');
             }

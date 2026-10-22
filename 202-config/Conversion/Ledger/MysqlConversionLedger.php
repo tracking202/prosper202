@@ -12,7 +12,8 @@ use Prosper202\Database\Connection;
  * click's `click_lead` and `click_payout` once the click exists.
  *
  * Every method here must run inside the transaction that holds the click's
- * lock (lockClick(), or clickTransaction()). The callers are MysqlConversionRepository::record()
+ * lock (lockClick(), or clickTransaction()), taken before the transaction's
+ * first plain read. The callers are MysqlConversionRepository::record()
  * and ::softDelete() and the bulk clear below; ClickValueWritersTest fails
  * if any other code updates those two columns, which is what keeps the
  * cached value equal to its rows.
@@ -24,93 +25,66 @@ final class MysqlConversionLedger
     }
 
     /**
-     * Lock a click for a ledger write inside a transaction that may have read
-     * before, then read the visit a conversion credits: its latest
-     * (LatestVisit). Null when there is no such click (of that account, when
-     * $userId is given: a click whose latest visit is another account's row
-     * is not this account's, as every other read of the latest visit ties
-     * it). click_lead is whether any visit of it is a lead, as
-     * LatestVisit::anyVisitIsLead() asks it. A transaction that locks the
-     * click first takes clickTransaction() instead.
+     * Lock a click for a ledger write, then read the visit a conversion
+     * credits: its latest (LatestVisit). Null when there is no such click
+     * (of that account, when $userId is given: a click whose latest visit is
+     * another account's row is not this account's, as every other read of
+     * the latest visit ties it). click_lead is whether any visit of it is a
+     * lead, as LatestVisit::anyVisitIsLead() asks it.
      *
      * The lock is the click's first row in the click_id index, the row every
      * ledger writer locks, so they serialise on it, as does an UPDATE of the
      * click's rows by click_id.
      *
-     * The visit is read with share locks, which see the click as it is once
-     * the lock is granted. A plain read after the lock answers from the
-     * transaction's snapshot, which begins at its first plain read: a caller
-     * that read first (a delete reads the conversion to find its click, the
-     * goals engine its own rows) read the click as it was before a re-click
-     * committed in the wait, and valued the conversion under the previous
-     * visit's campaign. The share locks also hold the gap after the click's
-     * rows, so a re-click's new row and the next click's insert wait for this
-     * transaction. The route is read, and its row locked, only for two
-     * visits in one second (written before 1.9.78): a share lock on a click
-     * with no route row holds 202_clicks_rotator's gap, and on a click newer
-     * than every redirector click every new one's route waits on it.
+     * The lock is taken before the transaction's first plain read, and a
+     * lock asked for after one is refused. Under REPEATABLE READ a plain read
+     * answers from the snapshot the transaction's first plain read took, not
+     * from the lock (CLAUDE.md #36): a delete that read the conversion to find
+     * its click, then waited on the lock for a sale to commit, recomputed the
+     * click without the sale, left a reversal recorded in the wait unvoided
+     * and inserted a second legacy baseline. Locked first, every plain read
+     * after sees what committed before the lock was granted, and nothing that
+     * writes the click's ledger rows commits while it is held. A click the
+     * transaction has already locked is read again without a second lock.
      *
      * @return array<string, mixed>|null click_id, user_id, aff_campaign_id, click_payout, click_time, click_lead
+     * @throws \LogicException when the transaction read before this lock
      */
     public function lockClick(int $clickId, ?int $userId = null): ?array
     {
-        if (!$this->lockClickRow($clickId, $userId)) {
-            return null;
+        $lock = 'click:' . $clickId;
+        if (!$this->conn->holdsLock($lock)) {
+            if ($this->conn->snapshotTaken()) {
+                throw new \LogicException(
+                    'Click ' . $clickId . '\'s lock was asked for after its transaction read, and nothing was locked:'
+                        . ' what the transaction reads of the click would be its snapshot from before the lock'
+                        . ' (CLAUDE.md #36). Lock the click first in the transaction'
+                        . ' (MysqlConversionLedger::clickTransaction()), or find what names it before the transaction'
+                        . ' begins.'
+                );
+            }
+            if (!$this->lockClickRow($clickId, $userId)) {
+                return null;
+            }
+            $this->conn->holdLock($lock);
         }
 
-        $read = $this->conn->prepareWrite(self::lockedVisitsSql());
+        $read = $this->conn->prepareWrite(self::latestVisitSql());
         $this->conn->bind($read, 'i', [$clickId]);
-        $latest = $this->conn->fetchAll($read);
-        $click = $latest[0] ?? null;
-        if (isset($latest[1]) && (string) $latest[1]['click_time'] === (string) $latest[0]['click_time']) {
-            $tie = $this->conn->prepareWrite(self::lockedVisitSql());
-            $this->conn->bind($tie, 'i', [$clickId]);
-            $click = $this->conn->fetchOne($tie);
-        }
-        if ($click !== null) {
-            $lead = $this->conn->prepareWrite(self::lockedLeadSql());
-            $this->conn->bind($lead, 'ii', [$clickId, self::owner($clickId, $click)]);
-            $click['click_lead'] = $this->conn->fetchOne($lead) !== null ? 1 : 0;
-        }
 
-        return $this->ownedVisit($clickId, $userId, $click);
+        return $this->ownedVisit($clickId, $userId, $this->conn->fetchOne($read));
     }
 
-    /** lockClick()'s read of the click's two latest visits by time, with share locks. */
-    public static function lockedVisitsSql(): string
+    /** lockClick()'s read of the click's (?) latest visit, after the lock. */
+    public static function latestVisitSql(): string
     {
-        return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time FROM 202_clicks AS c'
-            . ' WHERE c.click_id = ? ' . LatestVisit::byTime('c') . ' LIMIT 2 LOCK IN SHARE MODE';
-    }
-
-    /** lockClick()'s read of the latest visit when two share its second: the route decides. */
-    public static function lockedVisitSql(): string
-    {
-        return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time FROM 202_clicks AS c'
-            . ' LEFT JOIN 202_clicks_rotator AS r ON r.click_id = c.click_id'
-            . ' WHERE c.click_id = ? ' . LatestVisit::orderBy('c', 'r') . ' LIMIT 1 LOCK IN SHARE MODE';
-    }
-
-    /**
-     * lockClick()'s read of whether a visit of the click (?) of the account
-     * (?) is a lead, with share locks, by the click's rows: through the
-     * click_lead index the lock covers every lead of the partition, and two
-     * recomputes setting click_lead deadlock on it.
-     */
-    public static function lockedLeadSql(): string
-    {
-        return 'SELECT 1 FROM 202_clicks FORCE INDEX (click_id)'
-            . ' WHERE click_id = ? AND user_id = ? AND click_lead = 1 LIMIT 1 LOCK IN SHARE MODE';
+        return 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time, '
+            . LatestVisit::anyVisitIsLead('c') . ' AS click_lead FROM ' . LatestVisit::of('?') . ' AS c';
     }
 
     /**
      * Run $fn in a transaction whose first statement locks the click, handing
-     * it what lockClick() returns. Nothing is read before the lock, so plain
-     * reads see every commit made before it was granted, and take no locks:
-     * with lockClick()'s share locks two re-clicks held each other's insert
-     * gaps (eight concurrent re-clickers lost 468 of 1,200 visits to
-     * deadlocks, against 0 to 3 without). A re-click's new row and the next
-     * click's insert do not wait for this lock.
+     * it what lockClick() returns.
      *
      * @template T
      * @param callable(array<string, mixed>|null): T $fn
@@ -118,18 +92,7 @@ final class MysqlConversionLedger
      */
     public function clickTransaction(int $clickId, ?int $userId, callable $fn): mixed
     {
-        return $this->conn->transaction(function () use ($clickId, $userId, $fn): mixed {
-            if (!$this->lockClickRow($clickId, $userId)) {
-                return $fn(null);
-            }
-            $read = $this->conn->prepareWrite(
-                'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_payout, c.click_time, '
-                . LatestVisit::anyVisitIsLead('c') . ' AS click_lead FROM ' . LatestVisit::of('?') . ' AS c'
-            );
-            $this->conn->bind($read, 'i', [$clickId]);
-
-            return $fn($this->ownedVisit($clickId, $userId, $this->conn->fetchOne($read)));
-        });
+        return $this->conn->transaction(fn (): mixed => $fn($this->lockClick($clickId, $userId)));
     }
 
     private function lockClickRow(int $clickId, ?int $userId): bool

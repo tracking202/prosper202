@@ -460,21 +460,70 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
-     * A transaction that read before it locked the click (a delete reads the
-     * conversion first, the goals engine its own rows) holds a snapshot from
-     * before the lock. A re-click and a sale committed in between are what
-     * lockClick() answers: the visit the conversion credits, and the lead an
-     * id-less retry is refused by.
+     * A lock asked for after the transaction read is refused, and nothing is
+     * locked: from that read on the transaction answers from its snapshot,
+     * so a re-click and a sale committed before the lock would be read as
+     * absent. A locking read before the lock takes no snapshot, and a click
+     * the transaction locked first is read again after a plain read.
      */
-    public function testALockTakenAfterAReadSeesWhatCommittedBeforeIt(): void
+    public function testALockAskedForAfterAReadIsRefused(): void
+    {
+        self::visit(false);
+        $conn = new Connection(self::$db);
+        $other = self::otherConnection();
+        $other->query('SET SESSION innodb_lock_wait_timeout = 1');
+        mysqli_report(MYSQLI_REPORT_OFF);
+        try {
+            $refused = null;
+            $answer = $conn->transaction(function () use ($conn, $other, &$refused): string {
+                $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
+                try {
+                    (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1);
+                } catch (\LogicException $e) {
+                    $refused = $e->getMessage();
+                }
+                self::assertTrue($other->begin_transaction());
+                $answer = $other->query('UPDATE 202_clicks SET click_lead = 1 WHERE click_id = ' . self::CLICK) === true
+                    ? 'ran' : 'waited (' . $other->errno . ')';
+                self::assertTrue($other->rollback());
+
+                return $answer;
+            });
+        } finally {
+            mysqli_report(MYSQLI_REPORT_STRICT);
+            $other->close();
+        }
+
+        self::assertIsString($refused);
+        self::assertStringContainsString(
+            'Click ' . self::CLICK . '\'s lock was asked for after its transaction read',
+            $refused
+        );
+        self::assertSame('ran', $answer, 'the refused lock locked nothing');
+
+        $locked = $conn->transaction(function () use ($conn): array {
+            $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs FOR UPDATE'));
+            $ledger = new MysqlConversionLedger($conn);
+            $first = $ledger->lockClick(self::CLICK, 1);
+            $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
+
+            return [$first, $ledger->lockClick(self::CLICK, 1)];
+        });
+        self::assertSame('11', (string) ($locked[0]['aff_campaign_id'] ?? ''), 'a locking read takes no snapshot');
+        self::assertSame($locked[0], $locked[1], 'a click locked first is read again after a plain read');
+    }
+
+    /**
+     * A re-click and a sale committed while the transaction was open, before
+     * its first statement: the lock, first, reads both.
+     */
+    public function testALockTakenFirstSeesWhatCommittedBeforeIt(): void
     {
         self::visit(false);
         $conn = new Connection(self::$db);
         $other = self::otherConnection();
         try {
             $visit = $conn->transaction(function () use ($conn, $other): ?array {
-                $read = $conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs');
-                self::assertSame([], $conn->fetchAll($read));
                 $reClickAndSale = [
                     'INSERT INTO 202_clicks SET click_id=' . self::CLICK . ', user_id=1, aff_campaign_id=12,'
                         . ' ppc_account_id=21, click_cpc=0.25, click_payout=7.00, click_lead=1,'
@@ -511,7 +560,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
      *
      * @dataProvider storedOrders
      */
-    public function testALockTakenAfterAReadTellsTwoVisitsInOneSecondByTheirRoute(bool $routeFirst): void
+    public function testTheLockTellsTwoVisitsInOneSecondByTheirRoute(bool $routeFirst): void
     {
         $visits = $routeFirst ? [[12, 5, 9], [11, 0, 0]] : [[11, 0, 0], [12, 5, 9]];
         foreach ($visits as [$campaign, $rotator, $redirect]) {
@@ -523,20 +572,16 @@ final class ReClickedConversionIntegrationTest extends TestCase
             . ', rotator_id=5, rule_id=3, rule_redirect_id=9');
         $conn = new Connection(self::$db);
 
-        $visit = $conn->transaction(function () use ($conn): ?array {
-            $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
-
-            return (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1);
-        });
+        $visit = $conn->transaction(fn (): ?array => (new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1));
 
         self::assertSame('12', (string) ($visit['aff_campaign_id'] ?? ''));
     }
 
     /**
-     * lockClick() locks the route row only for two visits in one second: on
-     * a click with none, a share lock holds 202_clicks_rotator's gap, and on
-     * a click newer than every redirector click every new one's route
-     * would wait for the conversion's commit.
+     * The lock holds no gap of 202_clicks_rotator: on a click with no route
+     * row, a share-locked read of the route held it, and on a click newer
+     * than every redirector click every new one's route waited for the
+     * conversion's commit.
      */
     public function testALockedClickWithNoRouteHoldsNoRouteGap(): void
     {
@@ -549,7 +594,6 @@ final class ReClickedConversionIntegrationTest extends TestCase
         mysqli_report(MYSQLI_REPORT_OFF);
         try {
             $answer = $conn->transaction(function () use ($conn, $other): string {
-                $conn->fetchAll($conn->prepareWrite('SELECT conv_id FROM 202_conversion_logs'));
                 self::assertNotNull((new MysqlConversionLedger($conn))->lockClick(self::CLICK, 1));
                 self::assertTrue($other->begin_transaction());
                 $sql = 'INSERT INTO 202_clicks_rotator SET click_id=' . (self::CLICK + 1)
@@ -568,12 +612,10 @@ final class ReClickedConversionIntegrationTest extends TestCase
     }
 
     /**
-     * What the click's lock holds. Taken by clickTransaction(), the first
-     * statement of its transaction, an UPDATE of the click's rows by click_id
-     * waits for it; a re-click's new row and the next click's insert do not.
-     * lockClick() also holds the gap after the click's rows, for the reads
-     * that see the click as it is, so both inserts wait for it; another
-     * click's lead does not.
+     * What the click's lock holds, taken first in its transaction by
+     * clickTransaction() or by lockClick(): an UPDATE of the click's rows by
+     * click_id waits for it; a re-click's new row, the next click's insert
+     * and another click becoming a lead do not.
      */
     public function testTheClickLockHoldsItsRowsAndNotTheNextClick(): void
     {
@@ -592,8 +634,6 @@ final class ReClickedConversionIntegrationTest extends TestCase
                     . ' AND click_time = ' . self::LATEST_TIME,
                 'INSERT INTO 202_clicks SET click_id = ' . self::CLICK . $later,
                 'INSERT INTO 202_clicks SET click_id = ' . (self::CLICK + 1) . $later,
-                // Another click becoming a lead: the lead read takes no lock
-                // on the click_lead index, where this inserts.
                 'UPDATE 202_clicks SET click_lead = 1 WHERE click_id = ' . (self::CLICK + 400),
             ];
             $answers = [];
@@ -615,7 +655,7 @@ final class ReClickedConversionIntegrationTest extends TestCase
         }
 
         self::assertSame(['waited (1205)', 'ran', 'ran', 'ran'], $opening);
-        self::assertSame(['waited (1205)', 'waited (1205)', 'waited (1205)', 'ran'], $joined);
+        self::assertSame($opening, $joined);
     }
 
     private static function otherConnection(): \mysqli

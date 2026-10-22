@@ -6,7 +6,6 @@ namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -50,11 +49,6 @@ final class LtvIngestTest extends TestCase
         );
         // The click's latest visit, read after its lock.
         $write->whenQueryContainsReturnRows(LatestVisit::of('?'), [$this->clickRow()]);
-        $write->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), [$this->clickRow()]);
-        $write->whenQueryContainsReturnRows(
-            MysqlConversionLedger::lockedLeadSql(),
-            (int) ($this->clickRow()['click_lead'] ?? 0) === 1 ? [['1' => 1]] : []
-        );
 
         return $write;
     }
@@ -240,8 +234,8 @@ final class LtvIngestTest extends TestCase
             [['click_id' => 10]]
         );
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
-            [['conv_id' => 9001, 'customer_id' => 501, 'deleted' => 0, 'reverses_conv_id' => null]]
+            'SELECT conv_id, click_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
+            [['conv_id' => 9001, 'click_id' => 10, 'customer_id' => 501, 'deleted' => 0, 'reverses_conv_id' => null]]
         );
         $write->whenQueryContainsReturnRows(
             'FROM 202_revenue_events WHERE conv_id = ?',
