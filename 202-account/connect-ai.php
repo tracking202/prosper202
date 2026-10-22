@@ -165,8 +165,8 @@ if ($userObj->hasPermission('access_to_personal_settings')) { ?>
             (not the values) of what it passes them, whether they work, with the error when one fails, and the
             app's one-line description of what each request is for, which can repeat what you asked. Email
             addresses, web addresses and long numbers are removed first. The records are kept with this
-            install's ClickServer licence, so Tracking202 sees them for your account. It does not record what
-            the tools return.
+            install's ClickServer licence for up to two years, so Tracking202 sees them for your account. It
+            does not record what the tools return.
         </p>
         <div class="d-flex gap-2">
             <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
