@@ -773,7 +773,7 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         // click_id can originate from a caller-supplied cookie/request value;
         // cast to int so it cannot break out of the WHERE clause.
-        $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
+        $dsql = ClickRollupSql::forClick('202_dataengine', (int) $click_id);
 
         if (!$db->query($dsql)) {
             throw new QueryException(self::failedStep($db, 'rollup of click ' . (int) $click_id));
