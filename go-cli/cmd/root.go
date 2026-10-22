@@ -87,6 +87,9 @@ func Execute() {
 	rootCmd.Long = rootLong + outputHelp + buildAliasHelp()
 	err := hostedArgsRefusal(os.Args[1:])
 	if err == nil {
+		err = hostedPinOutput(os.Args[1:])
+	}
+	if err == nil {
 		err = unknownSubcommandError(rootCmd, os.Args[1:])
 	}
 	if err == nil {

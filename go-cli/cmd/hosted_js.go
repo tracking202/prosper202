@@ -16,14 +16,22 @@ func hostedArgsRefusal(args []string) error {
 		return nil
 	}
 	if hostedSearchArgs(args) {
-		// The relay reads the answer: compact JSON, as for `p202 mcp`, and set
-		// here because cobra's help, Args and flag errors come before root's
-		// PersistentPreRunE, where `p202 mcp` gets it.
-		mcpToolRun = true
-		return resolveOutputMode(outputFlags{})
+		return nil
 	}
 	return validationError("a hosted run takes `p202 mcp call <tool> --input <json>`, `p202 mcp tools` or `p202 search --json [--limit <n>] -- <words>` only").
 		WithHint("Run other commands with the p202 CLI on your computer.")
+}
+
+// hostedPinOutput runs after hostedArgsRefusal has taken args, before cobra:
+// the relay reads a search's answer, so it is compact JSON, as for `p202 mcp`,
+// and pinned here because cobra's help, Args and flag errors come before root's
+// PersistentPreRunE, where `p202 mcp` gets it.
+func hostedPinOutput(args []string) error {
+	if !hostedSearchArgs(args) {
+		return nil
+	}
+	mcpToolRun = true
+	return resolveOutputMode(outputFlags{})
 }
 
 // hostedSearchArgs reports whether args are `search [--json] [--limit <n>] --
