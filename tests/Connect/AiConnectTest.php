@@ -58,7 +58,15 @@ final class AiConnectTest extends TestCase
     public function testTheApprovalPageSaysWhatTheConnectorRecords(): void
     {
         $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php');
-        $page = (string) preg_replace('/\s+/', ' ', $source);
+        // Inside the form the person approves with, and not commented out.
+        $start = strpos($source, '<form method="post" action="">');
+        self::assertNotFalse($start, 'the approval form');
+        $end = strpos($source, '</form>', (int) $start);
+        self::assertNotFalse($end, 'the approval form ends');
+        $form = substr($source, (int) $start, (int) $end - (int) $start);
+        self::assertStringContainsString('value="allow"', $form);
+        self::assertStringNotContainsString('<!--', $form);
+        $page = (string) preg_replace('/\s+/', ' ', $form);
         $sentences = [
             "To improve the connector, Tracking202's MCP server records which tools the app calls, the names"
                 . ' (not the values) of what it passes them, whether they work, with the error when one fails,'

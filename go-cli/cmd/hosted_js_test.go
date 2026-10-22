@@ -6,12 +6,41 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+
+	"p202/internal/api"
+	configpkg "p202/internal/config"
 )
 
 func resetHostedOutput() {
 	mcpToolRun = false
 	jsonOutput, ndjsonOutput, csvOutput, quietOutput, tableOutput = false, false, false, false, false
 	compactJSON, outputImplicit, outputSource = false, false, sourceDefault
+	activeCommandPath = ""
+	configpkg.ResetActiveOverride()
+	api.SetStagedMode(false)
+	rootCmd.SetArgs(nil)
+}
+
+// The whole entry, as the relay's engine runs it: an error cobra raises before
+// root's PersistentPreRunE (Args: a task with no words to search by) reaches
+// stderr as the JSON envelope, whatever P202_OUTPUT says. Without --json, so
+// the pin is what makes it JSON (with it, the error path reads the flag).
+func TestHostedSearchErrorsReachTheRelayAsJSON(t *testing.T) {
+	t.Setenv("P202_OUTPUT", "table")
+	t.Cleanup(resetHostedOutput)
+	var stderr bytes.Buffer
+	if code := run([]string{"search", "--limit", "8", "--", "the"}, &stderr); code == 0 {
+		t.Fatalf("a search with no words answered exit 0: %q", stderr.String())
+	}
+	var envelope struct {
+		Error struct {
+			Category string `json:"category"`
+			Message  string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil || envelope.Error.Category != "validation" {
+		t.Fatalf("stderr is not the JSON envelope: %q (%v)", stderr.String(), err)
+	}
 }
 
 func TestHostedRunTakesToolCallsOnly(t *testing.T) {
