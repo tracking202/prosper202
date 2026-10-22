@@ -2,6 +2,13 @@
 
 package cmd
 
+import "github.com/spf13/cobra"
+
+// hostedJSONOnly: in the hosted engine `p202 search` answers compact JSON,
+// as `p202 mcp` does, whatever P202_OUTPUT, the config or the environment
+// would choose (root's PersistentPreRunE): its reader is the relay.
+func hostedJSONOnly(cmd *cobra.Command) bool { return cmd == searchCmd }
+
 // hostedArgsRefusal is the js/wasm build's entry check. That build is the
 // hosted relay's engine, which runs one command per instance: anything but
 // `p202 mcp call`, `p202 mcp tools`, `p202 search` (offline: the relay's

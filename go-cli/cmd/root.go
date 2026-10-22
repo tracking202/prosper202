@@ -46,7 +46,7 @@ var rootCmd = &cobra.Command{
 		activeCommandPath = cmd.CommandPath()
 		configpkg.SetActiveOverride(profileName)
 		api.SetStagedMode(stagedWrites)
-		if cmd == mcpCmd || cmd.Parent() == mcpCmd {
+		if cmd == mcpCmd || cmd.Parent() == mcpCmd || hostedJSONOnly(cmd) {
 			mcpToolRun = true
 		}
 		if err := resolveOutputMode(parsedOutputFlags()); err != nil {

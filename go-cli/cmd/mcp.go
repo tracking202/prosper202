@@ -15,7 +15,8 @@ import (
 var mcpReadOnly bool
 var mcpCallInput string
 
-// mcpToolRun is set for the `p202 mcp` commands (root's PersistentPreRunE):
+// mcpToolRun is set for the `p202 mcp` commands, and for `p202 search` in the
+// hosted engine (hostedJSONOnly), by root's PersistentPreRunE:
 // their output is compact JSON, or the protocol, whatever P202_OUTPUT, the
 // config default or the environment would choose, because the reader is a
 // program.

@@ -163,9 +163,10 @@ if ($userObj->hasPermission('access_to_personal_settings')) { ?>
         <p class="small text-secondary">
             To improve the connector, Tracking202's MCP server records which tools the app calls, the names
             (not the values) of what it passes them, whether they work, with the error when one fails, and the
-            app's one-line description of what each request is for. Email addresses, web addresses and long
-            numbers are removed first. The records are kept with this install's ClickServer licence, so
-            Tracking202 sees them for your account. It does not record the data the tools read or change.
+            app's one-line description of what each request is for, which can repeat what you asked. Email
+            addresses, web addresses and long numbers are removed first. The records are kept with this
+            install's ClickServer licence, so Tracking202 sees them for your account. It does not record what
+            the tools return.
         </p>
         <div class="d-flex gap-2">
             <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
