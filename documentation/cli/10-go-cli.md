@@ -527,7 +527,7 @@ For claude.ai and other hosted AI apps, Tracking202 runs an MCP server at
 sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
-Account › API keys; remove it there to disconnect. It needs a ClickServer Pro
+My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
 licence.
 
 ## Errors

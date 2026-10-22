@@ -167,7 +167,7 @@ var configTestCmd = &cobra.Command{
 		p, err := fetchPrincipal(c)
 		if err != nil && !errors.Is(err, errNoPrincipal) {
 			return withHint(fmt.Errorf("the instance answers, but the key was not accepted: %w", err),
-				"Set a valid key with `p202 config set-key` (Account > API keys in the UI, or `p202 user apikey create` from a working key).")
+				"Set a valid key with `p202 config set-key` (My Account > Personal Settings > API keys in the UI, or `p202 user apikey create` from a working key).")
 		}
 		var health map[string]interface{}
 		if json.Unmarshal(data, &health) != nil {
