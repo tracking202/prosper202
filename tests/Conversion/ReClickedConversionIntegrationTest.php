@@ -230,6 +230,40 @@ final class ReClickedConversionIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * A postback whose endpoint read the click before a re-click committed:
+     * what it read is not what the conversion credits. The campaign, time
+     * and time_difference are the visit the writer's lock reads, whatever
+     * the caller's log says.
+     */
+    public function testAPostbackReadBeforeAReClickCreditsTheVisitTheLockReads(): void
+    {
+        self::visit(false);
+        $click = self::one(p202PostbackClickSql(self::CLICK));
+        self::assertSame('11', (string) $click['aff_campaign_id']);
+        self::visit(true);
+        LatestVisit::refresh(new Connection(self::$db), self::CLICK);
+
+        $result = p202RecordConversion(self::$db, [
+            'click_id' => self::CLICK,
+            'campaign_id' => (string) $click['aff_campaign_id'],
+            'user_id' => (string) $click['user_id'],
+            'click_time' => (int) $click['click_time'],
+            'conv_time' => self::LATEST_TIME + 3661,
+            'time_difference' => 'from the read before the re-click',
+            'ip' => '',
+            'pixel_type' => 2,
+            'user_agent' => '',
+            'click_payout' => '',
+            'once_per_click' => false,
+        ], '', false, '', 'TX-AFTER-RECLICK');
+
+        self::assertGreaterThan(0, $result['conv_id']);
+        self::assertSame([self::credited() + ['source' => 'postback']], self::conversions());
+        $row = self::one('SELECT time_difference FROM 202_conversion_logs WHERE conv_id = ' . (int) $result['conv_id']);
+        self::assertSame('0 days, 1 hours, 1 min and 1 sec', $row['time_difference']);
+    }
+
     /** gpb.php's conversion, as it records one from what it read. */
     public function testAPostbackConversionCreditsTheLatestVisitAndQueuesTheFirstVisitsPostback(): void
     {
@@ -238,11 +272,8 @@ final class ReClickedConversionIntegrationTest extends TestCase
 
         $result = p202RecordConversion(self::$db, [
             'click_id' => self::CLICK,
-            'campaign_id' => (string) $click['aff_campaign_id'],
             'user_id' => (string) $click['user_id'],
-            'click_time' => (int) $click['click_time'],
             'conv_time' => self::LATEST_TIME + 60,
-            'time_difference' => '',
             'ip' => '',
             'pixel_type' => 2,
             'user_agent' => '',

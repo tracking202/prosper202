@@ -129,11 +129,6 @@ $tokens = [
 if (is_numeric($mysql['click_id'])) {
 
 	$conv_time = time();
-	$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
-	$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
-	$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', (int) $conv_time));
-	$diff = $click_time_to_date->diff($conv_time_to_date);
-	$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
 	$mysql['conv_time'] = $conv_time;
 
 		if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
@@ -170,11 +165,8 @@ if (is_numeric($mysql['click_id'])) {
 		$db,
 		[
 			'click_id'        => $clickId,
-			'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
-			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
-			'time_difference' => $time_difference,
 			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 3,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',

@@ -6,6 +6,7 @@ namespace Tests\Goals;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
+use Prosper202\Goals\GoalEvent;
 use Prosper202\Goals\WebEvents;
 use Prosper202\Identity\IdentityGraph;
 use Prosper202\Identity\IdentityKeys;
@@ -93,6 +94,52 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
 
         $this->ingest(600, [$this->event('s1', 'sale', self::LATEST + 10)]);
 
+        $rows = self::$db->query('SELECT campaign_id, click_payout, click_time FROM 202_conversion_logs'
+            . ' WHERE click_id = 600 AND deleted = 0')->fetch_all(MYSQLI_ASSOC);
+        self::assertSame(
+            [['campaign_id' => '12', 'click_payout' => '4.00000', 'click_time' => (string) self::LATEST]],
+            $rows
+        );
+    }
+
+    /**
+     * A subject read before a re-click committed: the engine reads it again
+     * from the click's lock, so the outcome, its goal and payout, and the
+     * ledger row it writes all take the visit the ledger credits.
+     */
+    public function testAnEventOnASubjectReadBeforeAReClickTakesTheReClicksVisit(): void
+    {
+        $this->visits(600, [self::FIRST => 11]);
+        $sale = static fn (string $name, string $amount): array => [
+            'name' => $name, 'trigger' => ['event' => 'sale'], 'value' => ['type' => 'fixed', 'amount' => $amount],
+        ];
+        $this->goal(11, $sale('Sale on the first', '1.00'));
+        $this->goal(12, $sale('Sale on the latest', '4.00'));
+        $subject = $this->engine->clickSubject(1, 600);
+        self::assertSame(11, $subject->campaignId);
+
+        self::fixture('DELETE FROM 202_clicks_rotator WHERE click_id = 600');
+        self::fixture('INSERT INTO 202_clicks SET click_id=600, user_id=1, aff_campaign_id=12, click_payout=0,'
+            . ' click_cpc=0, click_lead=0, click_time=' . self::LATEST . ', rotator_id=5, rule_id=9');
+        self::fixture('INSERT INTO 202_clicks_rotator SET click_id=600, rotator_id=5, rule_id=3, rule_redirect_id=9');
+        LatestVisit::refresh($this->conn, 600);
+        $this->clock += 10;
+        $e = $this->event('s1', 'sale', self::LATEST + 10);
+        $stamped = new GoalEvent(
+            $e->eventId,
+            $e->name,
+            $e->occurredAt,
+            $this->clock,
+            $e->properties,
+            $e->revenue,
+            $e->revenueTrusted,
+            $e->transactionId
+        );
+        $this->engine->ingest(1, $subject, [$stamped]);
+
+        $outcomes = self::$db->query('SELECT campaign_id, value FROM 202_goal_outcomes'
+            . " WHERE subject_type = 'click' AND subject_id = 600")->fetch_all(MYSQLI_ASSOC);
+        self::assertSame([['campaign_id' => '12', 'value' => '4.00000']], $outcomes);
         $rows = self::$db->query('SELECT campaign_id, click_payout, click_time FROM 202_conversion_logs'
             . ' WHERE click_id = 600 AND deleted = 0')->fetch_all(MYSQLI_ASSOC);
         self::assertSame(

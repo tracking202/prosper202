@@ -202,7 +202,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         '202-config/Click/MysqlClickRepository.php' => ['first' => 1],
         '202-config/Click/LastClickFromAddress.php' => ['first' => 1],
         // orderBy() over a join from the install.
-        '202-config/Goals/GoalEngine.php' => ['latest' => 4],
+        '202-config/Goals/GoalEngine.php' => ['latest' => 3],
         // isLatest() over a list of clicks, and over a join with LIMIT 1.
         '202-config/Update/SubidBatch.php' => ['latest' => 1],
         '202-config/Goals/WebEvents.php' => ['latest' => 2],

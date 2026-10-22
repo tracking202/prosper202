@@ -404,9 +404,10 @@ if (!function_exists('p202RecordConversion')) {
      * happens after commit, only for a newly recorded conversion.
      *
      * @param array<string,int|float|string|bool> $log Conversion_logs column values.
-     *        Required keys: click_id, campaign_id, user_id, click_time, conv_time,
-     *        time_difference, ip, pixel_type, user_agent, and once_per_click
-     *        (bool). Optional: source (a ConversionSource value; defaults
+     *        Required keys: click_id, user_id, conv_time, ip, pixel_type,
+     *        user_agent, and once_per_click (bool); the campaign, click time
+     *        and time_difference are the credited visit's, read under the
+     *        writer's lock. Optional: source (a ConversionSource value; defaults
      *        from pixel_type), reversal and reversal_ref (see
      *        p202ExtractReversal). click_payout is read only when
      *        $usePixelPayout: without an explicit amount the writer applies
@@ -458,13 +459,15 @@ if (!function_exists('p202RecordConversion')) {
         $conn = new \Prosper202\Database\Connection($db);
         $repo = new \Prosper202\Conversion\MysqlConversionRepository($conn);
 
+        // The campaign and click time are the visit the writer's click lock
+        // reads, and time_difference is taken from it: a caller's read of the
+        // click came before the lock, and a re-click committed in between
+        // would name the visit before the one the conversion credits.
         $data = [
             'click_id'        => $clickId,
             'transaction_id'  => trim($transactionId),
-            'campaign_id'     => (int) ($log['campaign_id'] ?? 0),
-            'click_time'      => (int) ($log['click_time'] ?? 0),
             'conv_time'       => (int) ($log['conv_time'] ?? time()),
-            'time_difference' => (string) ($log['time_difference'] ?? ''),
+            'legacy_time_difference' => true,
             'ip'              => (string) ($log['ip'] ?? ''),
             'pixel_type'      => (int) ($log['pixel_type'] ?? 0),
             'user_agent'      => (string) ($log['user_agent'] ?? ''),
@@ -695,10 +698,7 @@ if (!function_exists('p202TimeDifference')) {
      */
     function p202TimeDifference(int $clickTime, int $convTime): string
     {
-        $from = new \DateTime('@' . max(0, $clickTime));
-        $to = new \DateTime('@' . max(0, $convTime));
-        $diff = $from->diff($to);
-        return $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec';
+        return \Prosper202\Conversion\MysqlConversionRepository::legacyTimeDifference($clickTime, $convTime);
     }
 }
 
@@ -890,18 +890,12 @@ if (!function_exists('p202RecordLegacyConversion')) {
 
         $usePixelPayout = (bool) ($opts['use_pixel_payout'] ?? false);
         $payout = $usePixelPayout ? (string) ($opts['payout'] ?? '0') : (string) $click['click_payout'];
-        $convTime = time();
-        $clickTime = (int) $click['click_time'];
-
         $result = p202RecordConversion(
             $db,
             [
                 'click_id'        => $clickId,
-                'campaign_id'     => (int) $click['aff_campaign_id'],
                 'user_id'         => (int) $click['user_id'],
-                'click_time'      => $clickTime,
-                'conv_time'       => $convTime,
-                'time_difference' => p202TimeDifference($clickTime, $convTime),
+                'conv_time'       => time(),
                 'ip'              => (string) ($opts['ip'] ?? ''),
                 'pixel_type'      => $pixelType,
                 'user_agent'      => (string) ($opts['user_agent'] ?? ''),

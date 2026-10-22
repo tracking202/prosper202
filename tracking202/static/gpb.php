@@ -95,11 +95,6 @@ $tokens = [
 ];
 
 $conv_time = time();
-$click_time_raw = (int) ($cvar_sql_row['click_time'] ?? 0);
-$click_time_to_date = new DateTime(date('Y-m-d H:i:s', $click_time_raw));
-$conv_time_to_date = new DateTime(date('Y-m-d H:i:s', $conv_time));
-$diff = $click_time_to_date->diff($conv_time_to_date);
-$time_difference = $diff->d.' days, '.$diff->h.' hours, '.$diff->i.' min and '.$diff->s.' sec';
 $mysql['conv_time'] = $conv_time;
 
 // Record first, then tell the traffic source. The pixel used to fire before
@@ -133,11 +128,8 @@ try {
 		$db,
 		[
 			'click_id'        => (int) $mysql['click_id'],
-			'campaign_id'     => (string) ($cvar_sql_row['aff_campaign_id'] ?? '0'),
 			'user_id'         => (string) ($cvar_sql_row['user_id'] ?? '0'),
-			'click_time'      => $click_time_raw,
 			'conv_time'       => $conv_time,
-			'time_difference' => $time_difference,
 			'ip'              => p202StoredVisitorIp(),
 			'pixel_type'      => 2,
 			'user_agent'      => $_SERVER['HTTP_USER_AGENT'] ?? '',

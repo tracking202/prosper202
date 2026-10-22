@@ -153,7 +153,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *        conversion.recorded) — both for rows that are not new sales, such
      *        as upload lines,
      *        conv_time, campaign_id, click_time, and the legacy columns
-     *        time_difference, ip, pixel_type, user_agent.
+     *        time_difference, ip, pixel_type, user_agent; legacy_time_difference
+     *        (true = store time_difference as the pixels' text, from the
+     *        credited visit's time: legacyTimeDifference()).
      *        LTV keys (all optional): customer_id, customer_ref +
      *        customer_ref_type, customer_crm, items; ltv_requires_customer
      *        (true = refuse items or customer_crm when no customer resolves,
@@ -198,6 +200,17 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         $this->afterRecordCommit($userId, $prepared, $result);
 
         return $result;
+    }
+
+    /**
+     * The time from a click to its conversion as the legacy pixels store it
+     * in time_difference: "D days, H hours, M min and S sec".
+     */
+    public static function legacyTimeDifference(int $clickTime, int $convTime): string
+    {
+        $diff = (new \DateTime('@' . max(0, $clickTime)))->diff(new \DateTime('@' . max(0, $convTime)));
+
+        return $diff->d . ' days, ' . $diff->h . ' hours, ' . $diff->i . ' min and ' . $diff->s . ' sec';
     }
 
     /**
@@ -493,7 +506,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         // default value" — silently dropping the conversion. Always include them,
         // using the caller's value when supplied and a sensible default otherwise.
         $legacyDefaults = [
-            'time_difference' => (string) max(0, $convTime - $clickTime),
+            'time_difference' => !empty($data['legacy_time_difference'])
+                ? self::legacyTimeDifference($clickTime, $convTime)
+                : (string) max(0, $convTime - $clickTime),
             'ip' => '',
             'pixel_type' => 0,
             'user_agent' => '',
