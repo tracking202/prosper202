@@ -160,6 +160,12 @@ if ($userObj->hasPermission('access_to_personal_settings')) { ?>
             My Account › Personal Settings › API keys. Remove it there to disconnect;
             connecting the app again creates another.
         </p>
+        <p class="small text-secondary">
+            To improve the connector, Tracking202's MCP server records which tools the app calls, the names
+            (not the values) of what it passes them, whether they work, with the error when one fails, and the
+            app's one-line description of what each request is for. Email addresses, web addresses and long
+            numbers are removed first. It does not record the data the tools read or change.
+        </p>
         <div class="d-flex gap-2">
             <button class="btn btn-primary" type="submit" name="decision" value="allow">Allow</button>
             <button class="btn btn-outline-secondary" type="submit" name="decision" value="deny">Cancel</button>

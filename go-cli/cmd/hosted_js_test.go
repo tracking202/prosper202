@@ -9,6 +9,7 @@ func TestHostedRunTakesToolCallsOnly(t *testing.T) {
 		{"mcp", "call", "campaign_list"},
 		{"--staged", "mcp", "call", "campaign_delete", "--input", `{"id":"1"}`},
 		{"mcp", "tools", "--read-only"},
+		{"search", "which", "hour", "earns", "most", "--json", "--limit", "8"},
 		{"--version"},
 	} {
 		if err := hostedArgsRefusal(args); err != nil {

@@ -530,6 +530,14 @@ connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
 licence.
 
+To improve the connector, the hosted server records which tools the app calls, the names (not the
+values) of their arguments, whether they work, with the error when one fails, and a one-line
+description the app gives of what each request is for (each tool asks for it as `context`). Email
+addresses, web addresses and long numbers are removed first; the data the tools read or change is not
+recorded. When no tool fits a request, the app can call `get_more_tools`, which answers with the tools
+that may do it (ranked by `p202 search`) and records the request. `p202 mcp` on your own computer
+records nothing.
+
 ## Errors
 
 Every failure is reported on **stderr** with a category, the message, and,
