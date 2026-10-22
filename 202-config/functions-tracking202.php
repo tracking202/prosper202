@@ -136,10 +136,17 @@ function grab_timeframe($unused = null): array
  * hosted service call it with the hash that authenticates the cron
  * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
  * answered `http://attacker.example/`.
+ *
+ * Before the installer has made an account there is no owner and nothing
+ * stored (its key step, get_apikey.php, runs before any table exists), so
+ * the base is the server's own name. is_installed() decides, not the read's
+ * error: once an account exists, a failed read still throws.
  */
 function p202TrackingBaseUrl(): string
 {
-    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
+    $stored = is_installed() ? p202StoredTrackingDomain(1) : '';
+
+    return \Prosper202\Click\TrackingBaseUrl::build($stored, $_SERVER, dirname(__DIR__));
 }
 
 /**
@@ -167,7 +174,9 @@ function p202DashEmailJson(): string
 /**
  * The statement in every signed-in page's footer script (template.php) that
  * has the user's own browser ping this install's cron endpoint:
- * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/");`.
+ * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/?page_ping=1");`.
+ * The query marks the run as a page's, which does the cron's work and is not
+ * recorded as the cron job's last run (Prosper202\Cron\CronRun).
  *
  * The ping is optional and the page above it has rendered, so a tracking
  * domain that cannot be read -- getTrackingDomain() throws rather than guess
@@ -177,7 +186,8 @@ function p202DashEmailJson(): string
 function p202CronBeaconStatement(): string
 {
     try {
-        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/';
+        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/?'
+            . \Prosper202\Cron\CronRun::pagePingQuery();
         $flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
             | JSON_THROW_ON_ERROR;
 
@@ -206,7 +216,7 @@ function query(
 {
     $database = DB::getInstance();
     if ($isspy) {
-        $db = $database->getConnectionro();
+        $db = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     } else {
         $db = $database->getConnection();
     }
@@ -1017,21 +1027,42 @@ function clickserver_api_key_validate($key): ?bool
         'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
     ]));
     $result = curl_exec($ch);
-    return clickserver_auth_answer(is_string($result) ? $result : null);
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    return clickserver_auth_answer(is_string($result) ? $result : null, $status);
 }
 
 /**
  * The auth service's answer read as clickserver_api_key_validate() reports
- * it: null for no body, a body that is not the service's JSON, or one that
- * lacks either verdict.
+ * it. A key the service rejects is invalid whatever else the answer holds or
+ * its status says; a verdict of valid counts only on a 2xx answer that holds
+ * both verdicts, each one the service sends. Anything else (no body, a body
+ * that is not the service's JSON, a failure status, a verdict missing or one
+ * it does not send) is null: no answer.
  */
-function clickserver_auth_answer(?string $body): ?bool
+function clickserver_auth_answer(?string $body, int $status): ?bool
 {
     $data = $body === null ? null : json_decode($body, true);
-    if (!is_array($data) || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
+    if (!is_array($data)) {
         return null;
     }
-    return $data['isValidKey'] == 'true' && $data['isValidDomain'] == 'true';
+    $verdict = static fn ($v): ?bool => match (true) {
+        $v === true, $v === 'true' => true,
+        $v === false, $v === 'false', $v === 0, $v === '0' => false,
+        default => null,
+    };
+    if (array_key_exists('isValidKey', $data) && $verdict($data['isValidKey']) === false) {
+        return false;
+    }
+    $answered = $status >= 200 && $status <= 299;
+    if (!$answered || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
+        return null;
+    }
+    $key = $verdict($data['isValidKey']);
+    $domain = $verdict($data['isValidDomain']);
+    if ($key === null || $domain === null) {
+        return null;
+    }
+    return $key && $domain;
 }
 
 /**

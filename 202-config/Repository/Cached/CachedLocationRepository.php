@@ -15,6 +15,13 @@ use Prosper202\Repository\Mysql\MysqlLocationRepository;
  */
 final readonly class CachedLocationRepository implements LocationRepositoryInterface
 {
+    /**
+     * A day, not the ids' month: the click path keeps one entry per referring
+     * or requested host, and most hosts are seen once. A host seen every day
+     * costs one indexed read a day.
+     */
+    private const DOMAIN_TTL = 86400;
+
     private CachedIds $ids;
 
     public function __construct(
@@ -98,7 +105,8 @@ final readonly class CachedLocationRepository implements LocationRepositoryInter
 
         return $this->ids->remember(
             'domain-id' . $host,
-            fn (): int => $this->inner->findOrCreateSiteDomain($url)
+            fn (): int => $this->inner->findOrCreateSiteDomain($url),
+            self::DOMAIN_TTL
         );
     }
 

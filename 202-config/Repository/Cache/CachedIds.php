@@ -21,11 +21,12 @@ final readonly class CachedIds
 
     /**
      * The id kept for $subject, or the one $lookup finds, kept when it is a
-     * row. A lookup that throws keeps nothing.
+     * row, for $ttl seconds or the cache's own lifetime. A lookup that throws
+     * keeps nothing.
      *
      * @param Closure(): int $lookup
      */
-    public function remember(string $subject, Closure $lookup): int
+    public function remember(string $subject, Closure $lookup, ?int $ttl = null): int
     {
         $key = md5($subject . $this->namespace);
         $hit = $this->cache->get($key);
@@ -35,7 +36,7 @@ final readonly class CachedIds
 
         $id = $lookup();
         if ($id > 0) {
-            $this->cache->set($key, $id);
+            $this->cache->set($key, $id, $ttl);
         }
 
         return $id;

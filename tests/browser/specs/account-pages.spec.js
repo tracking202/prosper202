@@ -269,6 +269,75 @@ module.exports = {
     },
 
     {
+      // The footer pings the cron as every page loads. That run was recorded
+      // as a cron job's, so turning AutoCron on from Settings was refused as
+      // unneeded by the page's own ping; and the refusal rendered at the top
+      // of the page while the redirect scrolled to #autocron, out of view.
+      name: "Settings: AutoCron after the page's own cron ping, said where the switch is",
+      async run(ctx) {
+        const { db, expect, state, withSession } = ctx;
+        const unneeded = /Your own cron job ran in the last five minutes/;
+        const original = db.value('SELECT auto_cron FROM 202_users_pref WHERE user_id=' + state.owner);
+        // Viewports where the page is longer than the screen, so landing on
+        // #autocron scrolls past the top of the page (at 1280x1000 it does not).
+        for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+          const at = viewport.width + 'px: ';
+          await withSession({ viewport }, async ({ app, ui }) => {
+            // Where the person is looking once the redirect lands on #autocron
+            // (the shell scrolls smoothly, so it is waited for, not read at load).
+            const inView = async (what) => {
+              let landed = true;
+              await ui.untilInPage(() => {
+                const y = document.getElementById('autocron').getBoundingClientRect().y;
+                return y >= 0 && y < 120;
+              }, undefined, { describe: 'the redirect to land on #autocron', timeout: 5000 }).catch(() => { landed = false; });
+              const seen = await ui.page.evaluate(() => {
+                const flashes = document.querySelector('[data-p202-flashes]');
+                const r = flashes ? flashes.getBoundingClientRect() : null;
+                return {
+                  scrollY: Math.round(window.scrollY),
+                  panel: Math.round(document.getElementById('autocron').getBoundingClientRect().y),
+                  flash: r ? { y: Math.round(r.y), height: Math.round(r.height) } : null,
+                  inPanel: flashes !== null && flashes.closest('#autocron') !== null,
+                };
+              });
+              expect.ok(landed && seen.scrollY > 0, at + 'the redirect lands on the AutoCron panel', JSON.stringify(seen));
+              expect.ok(seen.flash !== null && seen.flash.y >= 0 && seen.flash.y + seen.flash.height <= viewport.height, at + what + ' is in view', JSON.stringify(seen));
+              expect.ok(seen.inPanel, at + what + ' is in the AutoCron panel', JSON.stringify(seen));
+            };
+            db.write("UPDATE 202_users_pref SET auto_cron='0' WHERE user_id=" + state.owner);
+            db.write('DELETE FROM 202_cronjob_logs');
+            db.write("DELETE FROM 202_cronjobs WHERE cronjob_type='secon'");
+
+            const pinging = ui.page.waitForRequest((r) => r.url().includes('/202-cronjobs/'), { timeout: 20000 });
+            await app.goto('/202-account/administration.php');
+            const ping = await pinging;
+            await ping.response();
+            expect.match(ping.url(), /\/202-cronjobs\/\?page_ping=1$/, at + 'the page pings the cron as it loads');
+            await ui.until(() => db.value("SELECT COUNT(*) FROM 202_cronjobs WHERE cronjob_type='secon'") !== '0', { describe: "the ping's run" });
+            expect.eq(db.value('SELECT COUNT(*) FROM 202_cronjob_logs'), '0', at + 'the ping runs the cron and is not recorded as a cron job');
+
+            await ui.check('#autocron_on');
+            await app.submit('#autocron button[type="submit"]');
+            const said = await app.messages();
+            expect.notMatch(said, unneeded, at + 'turning AutoCron on is not refused by that ping');
+            expect.ok(said !== '', at + 'the switch says what the service answered', said);
+            await inView('what it says');
+
+            // A scheduler's run is still the reason to leave AutoCron off.
+            db.write('REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, UNIX_TIMESTAMP())');
+            await app.goto('/202-account/administration.php');
+            await ui.check('#autocron_on');
+            await app.submit('#autocron button[type="submit"]');
+            expect.match(await app.messages(), unneeded, at + 'a cron job that ran leaves AutoCron off, and says so');
+            await inView('the refusal');
+          });
+        }
+        db.write("UPDATE 202_users_pref SET auto_cron='" + original + "' WHERE user_id=" + state.owner);
+      },
+    },
+
+    {
       name: 'Settings: deleting click data asks first, and saying no schedules nothing',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;

@@ -58,62 +58,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_POST['autocron'])) {
-	$autocron = false;
-	if ($_POST['autocron'] == true) {
-		$endpoint = 'register';
-		$sql = "SELECT * FROM 202_cronjob_logs";
-		$result = _mysqli_query($sql);
-        if ($result === false) {
-            p202_account_flash('bad', 'Whether your own cron job is running could not be checked just now,'
-                . ' so AutoCron was not changed. Try again in a few minutes.');
+    $turnOn = \Prosper202\Cron\AutoCronSwitch::posted($_POST['autocron']);
+    if ($turnOn === null) {
+        p202_account_flash('bad', 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
+    if ($turnOn) {
+        $endpoint = 'register';
+        // Whether this install has its own cron job: the last run a scheduler
+        // recorded (Prosper202\Cron\AutoCronSwitch). The footer's ping, which
+        // this page sent as it loaded, records nothing (CronRun), so it no
+        // longer reads as "your own cron job ran".
+        $unchecked = 'Whether your own cron job is running could not be checked just now,'
+            . ' so AutoCron was not changed. Try again in a few minutes.';
+        $cron_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
+        $cron_result = _mysqli_query($cron_sql);
+        if ($cron_result === false) {
+            p202_account_flash('bad', $unchecked);
             p202_account_redirect('202-account/administration.php#autocron');
         }
-        if ($result->num_rows > 0) {
-            $row = p202FetchRow($result, $sql);
-
-            $last_five_minutes = time() - 300;
-
-            if ($row['last_execution_time'] < $last_five_minutes) {
-                $autocron = true;
-            }
-        } else {
-            $autocron = true;
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $on_sql = "SELECT auto_cron FROM 202_users_pref WHERE user_id = '" . $mysql['user_id'] . "'";
+        $on_result = _mysqli_query($on_sql);
+        if ($on_result === false) {
+            p202_account_flash('bad', $unchecked);
+            p202_account_redirect('202-account/administration.php#autocron');
         }
-	} else {
-		$endpoint = 'deregister';
-		$autocron = true;
-	}
+        $cron_row = p202FetchRow($cron_result, $cron_sql);
+        $on_row = p202FetchRow($on_result, $on_sql);
+        $lastRun = $cron_row === null ? null : (int) $cron_row['last_execution_time'];
+        $alreadyOn = $on_row !== null && (string) $on_row['auto_cron'] === '1';
+        if (\Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
+            p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+    } else {
+        $endpoint = 'deregister';
+    }
 
-	if (!$autocron) {
-		p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
-		p202_account_redirect('202-account/administration.php#autocron');
-	}
+    // Registering needs this install's address, and a read of it that fails
+    // throws rather than register the server's own name
+    // (p202StoredTrackingDomain()): said here, the setting left as it was,
+    // as Personal Settings says it for the daily email.
+    try {
+        $cron = callAutoCron($endpoint);
+    } catch (Throwable $e) {
+        error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
+        p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
 
-	// Registering needs this install's address, and a read of it that fails
-	// throws rather than register the server's own name
-	// (p202StoredTrackingDomain()): said here, the setting left as it was,
-	// as Personal Settings says it for the daily email.
-	try {
-		$cron = callAutoCron($endpoint);
-	} catch (Throwable $e) {
-		error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
-		p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
-		p202_account_redirect('202-account/administration.php#autocron');
-	}
-
-	if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
-		$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron'] == true ? '1' : '0');
-		$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-		$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-		if (_mysqli_query($sql)) {
-			p202_account_flash('ok', $_POST['autocron'] == true ? 'AutoCron is on.' : 'AutoCron is off.');
-		} else {
-			p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
-		}
-	} else {
-		p202_account_flash('bad', 'The AutoCron service could not be reached, so the setting is unchanged. Try again in a few minutes.');
-	}
-	p202_account_redirect('202-account/administration.php#autocron');
+    $refusal = \Prosper202\Cron\AutoCronAnswer::refusal($cron);
+    if ($refusal === null) {
+        $mysql['auto_cron'] = $turnOn ? '1' : '0';
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+        if (_mysqli_query($sql)) {
+            p202_account_flash('ok', $turnOn ? 'AutoCron is on.' : 'AutoCron is off.');
+        } else {
+            p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
+        }
+    } else {
+        p202_account_flash('bad', $refusal);
+    }
+    p202_account_redirect('202-account/administration.php#autocron');
 }
 
 if (isset($_POST['maxmind'])) {
@@ -255,7 +263,9 @@ if (isset($_POST['auto_database_management'])) {
 	}
 }
 
-$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs";
+// The last run a scheduler recorded: a cron job's or AutoCron's, never a
+// signed-in page's ping (Prosper202\Cron\CronRun).
+$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
 $cron_log_result = _mysqli_query($db, $cron_log_query);
 if ($cron_log_result === false) {
 	// Not "never": a cron that ran would read the same.
@@ -456,7 +466,7 @@ echo p202_account_render_flashes($extra);
 <div class="p202-tiles">
 	<div class="p202-tile"><div class="p202-tile__label">Clicks recorded</div><div class="p202-tile__value"><?php echo $clicks === null ? '–' : $e(number_format((float) $clicks)); ?></div><div class="p202-tile__sub">to date</div></div>
 	<div class="p202-tile"><div class="p202-tile__label">Database size</div><div class="p202-tile__value"><?php echo $e(database_size()); ?></div></div>
-	<div class="p202-tile<?php echo $last_cron_ran ? '' : ' is-bad'; ?>"><div class="p202-tile__label">Cron job last ran</div><div class="p202-tile__value"><?php echo $e($last_cron_job_execution_time); ?></div></div>
+	<div class="p202-tile<?php echo $last_cron_ran ? '' : ' is-bad'; ?>"><div class="p202-tile__label">Cron job last ran</div><div class="p202-tile__value"><?php echo $e($last_cron_job_execution_time); ?></div><div class="p202-tile__sub">a cron job or AutoCron</div></div>
 	<div class="p202-tile"><div class="p202-tile__label">DataEngine conversion</div><div class="p202-tile__value"><?php echo $e($de_ratio); ?>%</div><div class="p202-tile__sub"><?php echo $e($de_done . ' of ' . $de_total . ' tasks · ' . "{$d}d {$h}h {$m}m" . ' left'); ?></div></div>
 </div>
 

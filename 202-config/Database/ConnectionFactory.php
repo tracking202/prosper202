@@ -32,17 +32,28 @@ final class ConnectionFactory
             throw new \RuntimeException('Unable to obtain write database connection.');
         }
 
-        $read = method_exists($database, 'getConnectionro')
-            ? $database->getConnectionro()
-            : null;
-
-        if ($read !== null && !$read instanceof \mysqli) {
+        $read = self::readConnectionOf($database);
+        if (!$read instanceof \mysqli) {
             $read = null;
         }
 
         self::$instance = new Connection($write, $read);
 
         return self::$instance;
+    }
+
+    /**
+     * The connection a 202-config.php DB object reads from: its
+     * getConnectionro(), or its primary connection where the config defines
+     * none. An installer-written config is kept across upgrades, so one
+     * written before the replica method existed has getConnection() alone;
+     * every read of the replica asks here rather than calling the method.
+     */
+    public static function readConnectionOf(object $database): mixed
+    {
+        return method_exists($database, 'getConnectionro')
+            ? $database->getConnectionro()
+            : $database->getConnection();
     }
 
     /**

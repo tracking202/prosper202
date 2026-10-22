@@ -35,8 +35,9 @@ ignore_user_abort(true);
 
 function renderErrorPage(int $code, string $title, string $message, string $accentColor, string $svgIcon): void
 {
-	http_response_code($code);
-	die('<!DOCTYPE html>
+    p202NoStore();
+    http_response_code($code);
+    die('<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">

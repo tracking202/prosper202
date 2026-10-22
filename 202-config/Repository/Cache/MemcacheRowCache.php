@@ -28,6 +28,7 @@ final readonly class MemcacheRowCache implements RowCache
         private Closure $write,
         private int $ttl = 180,
     ) {
+        CacheLifetime::seconds($ttl);
     }
 
     #[\Override]

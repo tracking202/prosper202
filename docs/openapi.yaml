@@ -283,7 +283,11 @@ paths:
     get:
       tags: [System]
       summary: Cron job status
-      description: Current cron jobs and recent execution logs. Admin only.
+      description: >-
+        Current cron jobs and recent execution logs. Admin only. `jobs` are the
+        tiers that ran, whoever started the run; `recent_logs` record the runs a
+        scheduler started (a cron job or AutoCron). From 1.9.78 the ping every
+        signed-in page sends as it loads runs the tiers and is not logged.
       operationId: systemCron
       responses:
         "200":
@@ -432,7 +436,10 @@ paths:
                       cron_last_ran_at:
                         type: integer
                         nullable: true
-                        description: Unix seconds; null when the cron job never ran
+                        description: >-
+                          Unix seconds of the last run a scheduler started (a cron job or
+                          AutoCron; from 1.9.78 not the ping a signed-in page sends); null
+                          when none has run
                       cron_last_ran_seconds_ago:
                         type: integer
                         nullable: true

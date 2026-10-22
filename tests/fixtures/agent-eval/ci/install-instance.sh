@@ -105,8 +105,17 @@ RESULT="$RUNTIME_DIR/install-result.html"
 # just carries the key on to install.php. Either way the installer must
 # open with the key, which is the step that was broken.
 log "Taking the license-key step: get_apikey.php, then its Save"
-curl -sS -c "$JAR" -b "$JAR" -G --data-urlencode "customers_api_key=$CUSTOMER_KEY" \
-    "$BASE_URL/202-config/get_apikey.php" -o "$KEYPAGE"
+KEYPAGE_STATUS=$(curl -sS -c "$JAR" -b "$JAR" -G --data-urlencode "customers_api_key=$CUSTOMER_KEY" \
+    -w '%{http_code}' "$BASE_URL/202-config/get_apikey.php" -o "$KEYPAGE" || true)
+# The page runs before any table exists. It once rendered as far as its
+# licence-service pixel and stopped there with a 500, which nothing here
+# read: the whole page, with the key, or the install stops here.
+KEY_SHOWN="value=\"$(php -r 'echo htmlentities($argv[1], ENT_QUOTES, "UTF-8");' "$CUSTOMER_KEY")\""
+if [ "$KEYPAGE_STATUS" != "200" ] || ! grep -q '</html>' "$KEYPAGE" || ! grep -qF "$KEY_SHOWN" "$KEYPAGE"; then
+    log "get_apikey.php answered HTTP ${KEYPAGE_STATUS:-000} without the whole page and the key; last server log lines:"
+    tail -5 "$RUNTIME_DIR/php-server.log" >&2
+    exit 1
+fi
 if grep -q "validate-apikey\.php" "$KEYPAGE"; then
     # jQuery's $.post follows redirects, so -L, and the body is what JSON.parse sees.
     curl -sS -L -b "$JAR" -c "$JAR" --data-urlencode "apikey=$CUSTOMER_KEY" \
