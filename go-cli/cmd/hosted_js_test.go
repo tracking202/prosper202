@@ -23,6 +23,11 @@ func TestHostedRunTakesToolCallsOnly(t *testing.T) {
 		{"shell", "-c", "campaign list"},
 		{"exec", "--all-profiles", "--", "campaign", "list"},
 		{"config", "set-key", "x"},
+		// search is the one offline command it takes; its neighbours are not.
+		{"commands", "--brief"},
+		{"help", "search"},
+		{"completion", "bash"},
+		{"__complete", "search", ""},
 		{},
 	} {
 		if err := hostedArgsRefusal(args); err == nil {
