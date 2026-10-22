@@ -533,8 +533,9 @@ licence.
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails, and a one-line
 description the app gives of what each request is for (each tool asks for it as `context`). Email
-addresses, web addresses and long numbers are removed first; the data the tools read or change is not
-recorded. When no tool fits a request, the app can call `get_more_tools`, which answers with the tools
+addresses, web addresses and long numbers are removed first. The records are kept with the install's
+ClickServer licence, so Tracking202 sees them for that customer's account; the data the tools read or
+change is not recorded. When no tool fits a request, the app can call `get_more_tools`, which answers with the tools
 that may do it (ranked by `p202 search`) and records the request. `p202 mcp` on your own computer
 records nothing.
 
