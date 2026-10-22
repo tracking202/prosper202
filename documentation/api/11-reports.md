@@ -226,6 +226,24 @@ numbers; every report now sends numbers, as this table always said.
 | `roi` | float | Return on investment (%) |
 | `cpa` | float | Cost per action |
 
+## A click a redirector link re-clicked
+
+A visitor who comes back through a redirector link with `?lpr=` re-clicks
+their last click: the click gets another row at the new visit's time
+([Clicks](09-clicks.md#a-click-a-redirector-link-re-clicked)). Every report
+counts it once, under its latest visit: that visit's campaign, landing page,
+rotator route and time, with the traffic source and cost the click keeps from
+its first visit, and its lead and income when it converted. So a click from
+Monday re-clicked on Friday counts in Friday's figures, at Monday's cost, and
+no longer in Monday's. The same holds for the pages (Overview, Analyze, the
+group report, Spy, Visitors), the attribution reports, the LTV reports, the
+daily email and the legacy v1 and v2 reports API.
+
+Before 1.9.78 every report counted such a click at each visit, each with its
+own campaign, traffic source and cost. A click re-clicked before the upgrade
+is counted that way until the cron job has brought it to one visit
+([Upgrading](../tutorials-and-guides/05-upgrading-prosper202.md)).
+
 ## Examples
 
 ### Summary

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prosper202\Ltv;
 
 use Prosper202\Bridge\EventBridge;
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -15,6 +16,9 @@ use Prosper202\Database\Connection;
  * ABM views group customers by the CRM `company` field, turning per-person
  * browsing into account-level interest: which offers is each target account
  * engaging with, how often, and how recently.
+ *
+ * A click is counted once, at its latest visit (LatestVisit::isLatest()): a
+ * redirector re-click is the same click, now on the offer it was sent to.
  */
 final class MysqlEngagementRepository
 {
@@ -150,15 +154,15 @@ final class MysqlEngagementRepository
                     MAX(c.click_time) AS last_seen,
                     SUM(c.click_lead) AS conversions
              FROM 202_clicks_tracking ct
-             JOIN 202_clicks c ON c.click_id = ct.click_id
+             JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
              LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
              LEFT JOIN 202_landing_pages lp ON lp.landing_page_id = c.landing_page_id AND lp.user_id = c.user_id
-             WHERE ct.customer_id = ? AND c.user_id = ? AND c.click_time >= ?
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c') . '
              GROUP BY c.aff_campaign_id, ac.aff_campaign_name, lp.landing_page_nickname
              ORDER BY last_seen DESC
              LIMIT ?'
         );
-        $this->conn->bind($stmt, 'iiii', [$customerId, $userId, $since, $limit]);
+        $this->conn->bind($stmt, 'iiii', [$userId, $customerId, $since, $limit]);
 
         return $this->conn->fetchAll($stmt);
     }
@@ -197,7 +201,7 @@ final class MysqlEngagementRepository
                  JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = cu2.user_id AND c.click_time >= ?
                  LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
                  WHERE cu2.user_id = ? AND cu2.company IS NOT NULL AND cu2.company <> ''
-                   AND cu2.merged_into_customer_id IS NULL
+                   AND cu2.merged_into_customer_id IS NULL AND " . LatestVisit::isLatest('c') . "
                  GROUP BY cu2.company
              ) eng ON eng.company = cu.company
              LEFT JOIN (
@@ -400,10 +404,10 @@ final class MysqlEngagementRepository
         $clickStmt = $this->conn->prepareRead(
             'SELECT COUNT(*) AS clicks, MAX(c.click_time) AS last_click
              FROM 202_clicks_tracking ct
-             JOIN 202_clicks c ON c.click_id = ct.click_id
-             WHERE ct.customer_id = ? AND c.user_id = ? AND c.click_time >= ?'
+             JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ?
+             WHERE ct.customer_id = ? AND c.click_time >= ? AND ' . LatestVisit::isLatest('c')
         );
-        $this->conn->bind($clickStmt, 'iii', [$customerId, $userId, $since]);
+        $this->conn->bind($clickStmt, 'iii', [$userId, $customerId, $since]);
         $clicks = $this->conn->fetchOne($clickStmt) ?? [];
 
         $eventStmt = $this->conn->prepareRead(
@@ -453,6 +457,7 @@ final class MysqlEngagementRepository
                  SELECT ct.customer_id, COUNT(*) AS clicks, MAX(c.click_time) AS last_click
                  FROM 202_clicks_tracking ct
                  JOIN 202_clicks c ON c.click_id = ct.click_id AND c.user_id = ? AND c.click_time >= ?
+                 WHERE " . LatestVisit::isLatest('c') . "
                  GROUP BY ct.customer_id
              ) eng ON eng.customer_id = cu.customer_id
              LEFT JOIN (

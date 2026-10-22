@@ -505,6 +505,20 @@ function RunSecondsCronjob()
             error_log("DataEngine rebuild failed: " . $e->getMessage());
         }
 
+        // The clicks re-clicked through a redirector before 1.9.78, brought
+        // to the rule a re-click is written by since
+        // (Prosper202\Click\ReClickBackfill). Before the attribution worker,
+        // whose rollup takes the clicks this marks. A no-op once done, and on
+        // an install that never had such a click. A click that fails is
+        // logged by the walk and is where the next run starts.
+        try {
+            (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))
+                ->run(time() + \Prosper202\Click\ReClickBackfill::RUN_SECONDS);
+        } catch (\Throwable $e) {
+            $tagged = preg_match('/ \[errno (\d+)\]\z/', $e->getMessage(), $m) === 1 ? (int) $m[1] : 0;
+            error_log('Re-click backfill failed: ' . p202FailedQueryMessage($tagged, $e->getMessage()));
+        }
+
         // Multi-touch attribution: drain the conversion outbox into
         // journeys and credits (202-cronjobs/attribution-worker.php is
         // the same run for deployments that schedule it on its own; the
