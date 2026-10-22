@@ -444,7 +444,7 @@ final class AiConnect
         }
         if ($removed < 1) {
             return [404, ['error' => true, 'message' => 'No key with exactly these characters was found; '
-                . 'remove it in Account › API keys.']];
+                . 'remove it in My Account › Personal Settings › API keys.']];
         }
         return [200, ['data' => ['revoked' => true]]];
     }
