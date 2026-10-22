@@ -67,7 +67,7 @@ if (!class_exists('DataEngine')) {
 
             // click_id can originate from a caller-supplied cookie/request
             // value; cast to int so it cannot break out of the WHERE clause.
-            $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
+            $dsql = ClickRollupSql::forClick('202_dataengine', (int) $click_id);
 
             // The click is recorded before this runs, and on the click path
             // the visitor goes on whatever the rollup does: a lock lost to a
