@@ -84,19 +84,33 @@ const outputHelp = "\n\nOutput: tables for people. When an AI agent runs p202 (a
 	"<format>`, decide. `p202 config show` says which format is in use and why."
 
 func Execute() {
+	if code := run(os.Args[1:], os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// run is Execute without the process: args are the command line after the
+// program's name, an error is printed to stderr, and the answer is the exit
+// code (0 when the command succeeded).
+func run(args []string, stderr io.Writer) int {
 	rootCmd.Long = rootLong + outputHelp + buildAliasHelp()
-	err := hostedArgsRefusal(os.Args[1:])
+	err := hostedArgsRefusal(args)
 	if err == nil {
-		err = unknownSubcommandError(rootCmd, os.Args[1:])
+		err = hostedPinOutput(args)
 	}
 	if err == nil {
+		err = unknownSubcommandError(rootCmd, args)
+	}
+	if err == nil {
+		rootCmd.SetArgs(args)
 		err = rootCmd.Execute()
 	}
 	if err != nil {
-		recoverCommandContext(os.Args[1:])
-		printError(os.Stderr, err)
-		os.Exit(exitCodeForError(err))
+		recoverCommandContext(args)
+		printError(stderr, err)
+		return exitCodeForError(err)
 	}
+	return 0
 }
 
 // unknownSubcommandError refuses a word after a command group that names

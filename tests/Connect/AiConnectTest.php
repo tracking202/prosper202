@@ -50,6 +50,37 @@ final class AiConnectTest extends TestCase
         ];
     }
 
+    /**
+     * The page where a person consents says what the hosted connector records.
+     * The relay that records it is elsewhere; this holds the words here, so a
+     * change to them is made on purpose (and the relay checked against them).
+     */
+    public function testTheApprovalPageSaysWhatTheConnectorRecords(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php');
+        // Inside the form the person approves with, and not commented out.
+        $start = strpos($source, '<form method="post" action="">');
+        self::assertNotFalse($start, 'the approval form');
+        $end = strpos($source, '</form>', (int) $start);
+        self::assertNotFalse($end, 'the approval form ends');
+        $form = substr($source, (int) $start, (int) $end - (int) $start);
+        self::assertStringContainsString('value="allow"', $form);
+        self::assertStringNotContainsString('<!--', $form);
+        $page = (string) preg_replace('/\s+/', ' ', $form);
+        $sentences = [
+            "To improve the connector, Tracking202's MCP server records which tools the app calls, the names"
+                . ' (not the values) of what it passes them, whether they work, with the error when one fails,'
+                . " and the app's one-line description of what each request is for, which can repeat what you asked.",
+            'Email addresses, web addresses and long numbers are removed first.',
+            "The records are kept with this install's ClickServer licence for up to two years, so Tracking202 sees"
+                . ' them for your account.',
+            'It does not record what the tools return.',
+        ];
+        foreach ($sentences as $sentence) {
+            self::assertStringContainsString($sentence, $page);
+        }
+    }
+
     public function testAnApprovalRequestFromTheMcpServerIsRead(): void
     {
         $read = AiConnect::readRequest(self::request());
