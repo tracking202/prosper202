@@ -57,14 +57,18 @@ final class AiConnectTest extends TestCase
      */
     public function testTheApprovalPageSaysWhatTheConnectorRecords(): void
     {
-        $page = preg_replace('/\s+/', ' ', (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php'));
-        foreach ([
-            "To improve the connector, Tracking202's MCP server records which tools the app calls, the names (not the values) of what it passes them, whether they work, with the error when one fails, and the app's one-line description of what each request is for, which can repeat what you asked.",
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php');
+        $page = (string) preg_replace('/\s+/', ' ', $source);
+        $sentences = [
+            "To improve the connector, Tracking202's MCP server records which tools the app calls, the names"
+                . ' (not the values) of what it passes them, whether they work, with the error when one fails,'
+                . " and the app's one-line description of what each request is for, which can repeat what you asked.",
             'Email addresses, web addresses and long numbers are removed first.',
             "The records are kept with this install's ClickServer licence, so Tracking202 sees them for your account.",
             'It does not record what the tools return.',
-        ] as $sentence) {
-            self::assertStringContainsString($sentence, (string) $page);
+        ];
+        foreach ($sentences as $sentence) {
+            self::assertStringContainsString($sentence, $page);
         }
     }
 
