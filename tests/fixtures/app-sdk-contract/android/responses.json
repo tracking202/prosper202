@@ -91,7 +91,7 @@
     },
     {
       "status": 503,
-      "when": "the database, or the key that verifies install tokens, is unavailable",
+      "when": "the database, or the key that verifies install tokens, is unavailable; or the database needs an upgrade (the message names 202-config/upgrade.php, Retry-After 300)",
       "retry": true,
       "headers": {
         "Retry-After": "<seconds>"
@@ -148,7 +148,7 @@
     },
     {
       "status": 503,
-      "when": "the install is still pending (pending_click, pending_integrity): its events wait until it settles",
+      "when": "the install is still pending (pending_click, pending_integrity): its events wait until it settles; or the database needs an upgrade (no match, Retry-After 300)",
       "retry": true,
       "headers": {
         "Retry-After": "60"

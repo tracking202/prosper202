@@ -582,7 +582,8 @@ final class MysqlClickRepository implements ClickRepositoryInterface
      * (LatestVisit), so a second row in that second would be a second
      * latest visit, counted again by every per-row sum. Two requests in one
      * second are the same visit as far as any reader can tell; the one
-     * written last is the visit.
+     * written last is the visit. Known limit: a postback naming the earlier
+     * request's campaign is then refused (p202ClickVisitedCampaign()).
      *
      * The rows are counted with a plain read: the click's lock, taken first,
      * is taken by every writer of its rows, so the read sees each committed

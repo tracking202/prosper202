@@ -154,18 +154,18 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::q(ReClickBackfill::markSql((int) $newest->fetch_assoc()['newest']));
     }
 
-    private function backfill(): ReClickBackfill
+    private function backfill(int $now = self::NOW): ReClickBackfill
     {
-        return new ReClickBackfill(new Connection(self::requireScratch()), static fn (): int => self::NOW);
+        return new ReClickBackfill(new Connection(self::requireScratch()), static fn (): int => $now);
     }
 
-    /** @return array<string, mixed>|null the walk, with what it logged in $this->log */
-    private function walk(int $deadline = PHP_INT_MAX): ?array
+    /** @return array<string, mixed>|null the walk at $now, with what it logged in $this->log */
+    private function walk(int $deadline = PHP_INT_MAX, int $now = self::NOW): ?array
     {
         $before = ini_get('error_log');
         ini_set('error_log', $this->log);
         try {
-            return $this->backfill()->run($deadline);
+            return $this->backfill($now)->run($deadline);
         } finally {
             ini_set('error_log', (string) $before);
         }
@@ -222,7 +222,7 @@ final class ReClickBackfillIntegrationTest extends TestCase
         $did = $this->walk();
 
         self::assertSame([
-            'reclicked_clicks' => 3, 'same_second_ties' => 0, 'mixed_accounts' => 0,
+            'reclicked_clicks' => 3, 'same_second_ties' => 0, 'mixed_accounts' => 0, 'skipped_clicks' => 0,
             'next_click_id' => self::LATER + 1, 'through_click_id' => self::LATER, 'finished' => true,
             'failed_click_id' => null,
         ], $did);
@@ -425,7 +425,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
      * A click that fails is logged once, naming it, without the values the
      * server's words quote; its transaction leaves nothing, the clicks before
      * it in the chunk are done, and the cursor stops at it, so the next run
-     * starts there.
+     * starts there. The walk's progress says it is stopped at that click and
+     * how many runs in a row it failed, until a run gets past it.
      */
     public function testAFailedClickIsLoggedAndIsWhereTheNextRunStarts(): void
     {
@@ -441,15 +442,33 @@ final class ReClickBackfillIntegrationTest extends TestCase
 
         try {
             $did = $this->walk();
+            $stopped = $this->backfill()->progress();
+            $again = $this->walk();
+            $stillStopped = $this->backfill()->progress();
         } finally {
             self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
         }
+        self::assertSame(
+            [22, 1, self::NOW],
+            [$stopped['stalled_at_click_id'] ?? null, $stopped['failed_runs'] ?? null, $stopped['failing_since'] ?? null]
+        );
+        self::assertStringContainsString('stopped at click 22', (string) ($stopped['note'] ?? ''));
+        self::assertSame([0, 22], [$again['reclicked_clicks'] ?? null, $again['failed_click_id'] ?? null]);
+        self::assertSame(
+            [22, 2, self::NOW],
+            [
+                $stillStopped['stalled_at_click_id'] ?? null,
+                $stillStopped['failed_runs'] ?? null,
+                $stillStopped['failing_since'] ?? null,
+            ],
+            'another run in a row, since the first'
+        );
 
         self::assertSame([1, 22, false], [$did['reclicked_clicks'] ?? null, $did['failed_click_id'] ?? null,
             $did['finished'] ?? null]);
         self::assertSame(22, $this->backfill()->state()['next_click_id'] ?? null);
         $lines = array_values(array_filter(explode("\n", $this->logged()), static fn (string $l): bool => $l !== ''));
-        self::assertCount(1, $lines, $this->logged());
+        self::assertCount(2, $lines, $this->logged());
         self::assertStringContainsString('p202 re-click backfill: click 22 ', $lines[0]);
         self::assertStringNotContainsString('v-secret-9', $lines[0]);
         self::assertSame(
@@ -464,7 +483,89 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertTrue($this->walk()['finished'] ?? null);
         self::assertSame((string) ($at + 3600), self::recorded(22));
         self::assertSame((string) ($at + 3600), self::recorded(23));
-        self::assertSame(3, $this->backfill()->state()['reclicked_clicks'] ?? null);
+        $state = $this->backfill()->state();
+        self::assertSame(
+            ['reclicked_clicks' => 3, 'failed_click_id' => null, 'failed_runs' => 0, 'failing_since' => null],
+            array_intersect_key((array) $state, array_flip(['reclicked_clicks', 'failed_click_id', 'failed_runs', 'failing_since'])),
+            'past the click, the failure is cleared'
+        );
+    }
+
+    /**
+     * A click that fails for an hour of runs is the click's to fail (a value
+     * its rows hold), not the moment's: once it has failed in
+     * STEP_OVER_RUNS runs in a row over STEP_OVER_SECONDS it is logged,
+     * counted and stepped over, and the walk goes on and finishes, saying so.
+     * Either condition alone keeps retrying it: ten runs inside a minute (a
+     * lock held that long), or two runs hours apart (a cron run hourly).
+     */
+    public function testAClickThatFailsForAnHourOfRunsIsSteppedOver(): void
+    {
+        $at = self::NOW - 86400;
+        foreach ([31, 32, 33, 34] as $click) {
+            self::legacyReClicked($click, $at, 1, '3.00');
+        }
+        self::mark();
+        self::q("CREATE TRIGGER p202_test_record_refused BEFORE INSERT ON 202_click_latest_visits FOR EACH ROW"
+            . " BEGIN IF NEW.click_id IN (32, 34) THEN SIGNAL SQLSTATE '45000'"
+            . " SET MESSAGE_TEXT = 'refused by the test'; END IF; END");
+        $legacy = self::rows('202_clicks', 32, self::SOURCE);
+        $runs = ReClickBackfill::STEP_OVER_RUNS;
+        try {
+            for ($run = 0; $run < $runs; $run++) {
+                $did = $this->walk(PHP_INT_MAX, self::NOW + $run);
+                self::assertSame(32, $did['failed_click_id'] ?? null, "run $run stops at the click");
+            }
+            $inAMinute = $this->backfill(self::NOW + $runs)->progress();
+            $past = $this->walk(PHP_INT_MAX, self::NOW + ReClickBackfill::STEP_OVER_SECONDS);
+            $next = $this->backfill(self::NOW + ReClickBackfill::STEP_OVER_SECONDS)->state();
+            $hoursLater = $this->walk(PHP_INT_MAX, self::NOW + 3 * ReClickBackfill::STEP_OVER_SECONDS);
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
+        }
+        self::assertSame(
+            [32, $runs],
+            [$inAMinute['stalled_at_click_id'] ?? null, $inAMinute['failed_runs'] ?? null],
+            'ten runs inside a minute retry it'
+        );
+        self::assertSame(
+            [1, 1, 34, false],
+            [
+                $past['skipped_clicks'] ?? null, $past['reclicked_clicks'] ?? null,
+                $past['failed_click_id'] ?? null, $past['finished'] ?? null,
+            ],
+            'an hour on: stepped over, 33 done, stopped at 34'
+        );
+        $fields = ['failed_click_id', 'failed_runs', 'skipped_clicks', 'last_skipped_click_id'];
+        self::assertSame(
+            ['failed_click_id' => 34, 'failed_runs' => 1, 'skipped_clicks' => 1, 'last_skipped_click_id' => 32],
+            array_intersect_key((array) $next, array_flip($fields))
+        );
+        self::assertSame(
+            [34, 2],
+            [$hoursLater['failed_click_id'] ?? null, $this->backfill()->state()['failed_runs'] ?? null],
+            'two runs hours apart retry it'
+        );
+
+        self::assertTrue($this->walk()['finished'] ?? null);
+        self::assertNull(self::recorded(32), 'the stepped-over click keeps no record: it counts at each visit');
+        self::assertSame($legacy, self::rows('202_clicks', 32, self::SOURCE), 'and keeps its rows as they were');
+        self::assertNotNull(self::recorded(33));
+        self::assertNotNull(self::recorded(34));
+        $done = $this->backfill()->progress();
+        self::assertSame(
+            [false, 1, 32],
+            [$done['in_progress'] ?? null, $done['skipped_clicks'] ?? null, $done['last_skipped_click_id'] ?? null],
+            'finished with a click stepped over, the walk still says so'
+        );
+        self::assertStringContainsString('the latest click 32', (string) ($done['note'] ?? ''));
+        $skips = array_values(array_filter(
+            explode("\n", $this->logged()),
+            static fn (string $l): bool => str_contains($l, 'stepped over')
+        ));
+        self::assertCount(1, $skips, $this->logged());
+        self::assertStringContainsString('p202 re-click backfill: click 32 ', $skips[0]);
+        self::assertStringContainsString('after failing in ' . ($runs + 1) . ' runs in a row', $skips[0]);
     }
 
     /**

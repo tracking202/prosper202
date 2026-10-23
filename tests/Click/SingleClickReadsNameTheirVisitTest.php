@@ -660,48 +660,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      */
     private static function verdict(string $text, array $calls): ?string
     {
-        if (preg_match_all(self::TABLE_REF, $text, $refs, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === false) {
-            throw new \RuntimeException('Reading a statement failed: ' . preg_last_error_msg());
-        }
-        $isDelete = preg_match('/\A\s*DELETE\b/i', $text) === 1;
-        // A multi-table DELETE (`DELETE de FROM a JOIN b AS de`) removes from
-        // the tables it names before FROM, read here by alias; a single-table
-        // one (`DELETE FROM t`) from the table after FROM.
-        $targets = [];
-        if (
-            $isDelete
-            && preg_match('/\A\s*DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*(?!FROM\b)([\w`.,\s]+?)\s+FROM\b/i', $text, $m) === 1
-        ) {
-            foreach (explode(',', $m[1]) as $target) {
-                $parts = explode('.', str_replace('`', '', trim($target)));
-                $targets[] = strtolower((string) end($parts));
-            }
-        }
-        $clicks = [];
-        $routes = [];
-        $unread = [];
-        $firstFrom = true;
-        foreach ($refs as $ref) {
-            $keyword = strtolower($ref['kw'][0]);
-            $name = $ref['name'][0];
-            $alias = isset($ref['alias']) && $ref['alias'][1] >= 0 ? $ref['alias'][0] : $name;
-            $deleted = $targets === []
-                ? $isDelete && $keyword === 'from' && $firstFrom
-                : in_array(strtolower($alias), $targets, true);
-            if ($keyword === 'from') {
-                $firstFrom = false;
-            }
-            if (strcasecmp($name, '202_clicks') === 0 && !$deleted) {
-                $clicks[] = $alias;
-            } elseif (strcasecmp($name, '202_clicks_rotator') === 0) {
-                $routes[] = $alias;
-            } elseif ($keyword !== ',' && !$deleted && strpbrk($name, AssembledStrings::UNREAD . '%') !== false) {
-                $readPart = strtolower(substr($name, 0, strcspn($name, AssembledStrings::UNREAD . '%')));
-                if (str_starts_with('202_clicks', $readPart)) {
-                    $unread[] = $ref['name'][1] + strlen($readPart);
-                }
-            }
-        }
+        ['clicks' => $clicks, 'routes' => $routes, 'unread' => $unread] = self::tablesRead($text);
         if ($clicks === [] && $unread === []) {
             return null;
         }
@@ -759,6 +718,73 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
     }
 
     /**
+     * Whether $text reads one click's 202_clicks row (the statements this
+     * test holds), whatever visit it names.
+     *
+     * @param list<array{class: string, method: string, args: list<string|null>, offset: int}> $calls
+     */
+    public static function readsOneClick(string $text, array $calls): bool
+    {
+        return self::verdict($text, $calls) !== null;
+    }
+
+    /**
+     * The tables $text reads: the alias of each bare 202_clicks (never a
+     * DELETE's target), of each 202_clicks_rotator, and the offset just past
+     * the read part of each table it cannot read whose name could begin
+     * `202_clicks`.
+     *
+     * @return array{clicks: list<string>, routes: list<string>, unread: list<int>}
+     */
+    public static function tablesRead(string $text): array
+    {
+        if (preg_match_all(self::TABLE_REF, $text, $refs, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === false) {
+            throw new \RuntimeException('Reading a statement failed: ' . preg_last_error_msg());
+        }
+        $isDelete = preg_match('/\A\s*DELETE\b/i', $text) === 1;
+        // A multi-table DELETE (`DELETE de FROM a JOIN b AS de`) removes from
+        // the tables it names before FROM, read here by alias; a single-table
+        // one (`DELETE FROM t`) from the table after FROM.
+        $targets = [];
+        if (
+            $isDelete
+            && preg_match('/\A\s*DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*(?!FROM\b)([\w`.,\s]+?)\s+FROM\b/i', $text, $m) === 1
+        ) {
+            foreach (explode(',', $m[1]) as $target) {
+                $parts = explode('.', str_replace('`', '', trim($target)));
+                $targets[] = strtolower((string) end($parts));
+            }
+        }
+        $clicks = [];
+        $routes = [];
+        $unread = [];
+        $firstFrom = true;
+        foreach ($refs as $ref) {
+            $keyword = strtolower($ref['kw'][0]);
+            $name = $ref['name'][0];
+            $alias = isset($ref['alias']) && $ref['alias'][1] >= 0 ? $ref['alias'][0] : $name;
+            $deleted = $targets === []
+                ? $isDelete && $keyword === 'from' && $firstFrom
+                : in_array(strtolower($alias), $targets, true);
+            if ($keyword === 'from') {
+                $firstFrom = false;
+            }
+            if (strcasecmp($name, '202_clicks') === 0 && !$deleted) {
+                $clicks[] = $alias;
+            } elseif (strcasecmp($name, '202_clicks_rotator') === 0) {
+                $routes[] = $alias;
+            } elseif ($keyword !== ',' && !$deleted && strpbrk($name, AssembledStrings::UNREAD . '%') !== false) {
+                $readPart = strtolower(substr($name, 0, strcspn($name, AssembledStrings::UNREAD . '%')));
+                if (str_starts_with('202_clicks', $readPart)) {
+                    $unread[] = $ref['name'][1] + strlen($readPart);
+                }
+            }
+        }
+
+        return ['clicks' => $clicks, 'routes' => $routes, 'unread' => $unread];
+    }
+
+    /**
      * Whether the condition at $offset (the one character standing for a
      * call) is one of the conditions its statement ANDs: right after WHERE,
      * ON or AND, and no OR, XOR or || in any group around it, up to the
@@ -767,7 +793,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      * An OR anywhere in a group around it is refused, whatever it joins: the
      * loud direction.
      */
-    private static function isConjunct(string $text, int $offset): bool
+    public static function isConjunct(string $text, int $offset): bool
     {
         if (preg_match('/(?<![\w`])(?:AND|WHERE|ON)\s*\z/i', substr($text, 0, $offset)) !== 1) {
             return false;
@@ -838,7 +864,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      *
      * @return list<array{string, int, int}> name, first line, last line
      */
-    private static function functionRanges(string $source): array
+    public static function functionRanges(string $source): array
     {
         $tokens = array_values(array_filter(
             \PhpToken::tokenize($source),
@@ -884,7 +910,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
      *
      * @param list<array{string, int, int}> $ranges
      */
-    private static function functionAt(array $ranges, int $line): string
+    public static function functionAt(array $ranges, int $line): string
     {
         $name = '{main}';
         foreach ($ranges as [$function, $first, $last]) {
@@ -896,7 +922,7 @@ final class SingleClickReadsNameTheirVisitTest extends TestCase
         return $name;
     }
 
-    private static function folded(string $sql): string
+    public static function folded(string $sql): string
     {
         $folded = trim((string) preg_replace('/\s+/', ' ', str_replace(AssembledStrings::UNREAD, '…', $sql)));
 
