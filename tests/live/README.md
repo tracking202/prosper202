@@ -52,7 +52,7 @@ bash tests/live/analyze-mobile-apps.sh
 | `P202_DB_USER` / `P202_DB_PASS` | `root` / empty | MySQL credentials |
 | `P202_DB_HOST` / `P202_DB_PORT` | empty (the client's default, the local socket) | where MySQL listens; set both for a server reached over TCP, as CI does |
 | `P202_USER` / `P202_PASS` | `evalci` / **required by the two mobile-apps passes** | the account to log in as; `upgrade-csrf.sh` needs no login |
-| `P202_API_KEY` | **required by `app-core.sh`** | the admin's REST API key (`install-instance.sh` prints it) |
+| `P202_API_KEY` | **required by `app-core.sh` and by every pass that sources `privacy.sh`** | the admin's REST API key (`install-instance.sh` prints it) |
 
 `seed-mobile-apps.sh` writes rows and makes no request, so it takes the three
 `P202_DB*` variables only and needs no login. Those three are exported by
@@ -66,19 +66,39 @@ nothing if you do not have one.
 
 A fresh install's account starts at privacy `eu` (1.9.79), which holds back a
 visitor GeoIP cannot place, and that is every click a pass makes from
-127.0.0.1: the address is stored masked (127.0.0.0) and no click or `p202vid`
-cookie is set. A pass whose subject is not privacy expects every visitor
-tracked in full, so set the account to `disabled` before running one
-(`p202 user prefs update 1 --user-pref-privacy disabled`; `seed.sh` does it
-for the eval fixture). Measured on a fresh instance: `legacy-pixels.sh`
-(2 failures) and `identity-graph.sh` (18) fail at `eu` and pass at
-`disabled`; `click-path-reads.sh` passes at either.
+127.0.0.1 or a TEST-NET address: the address is stored masked and no click or
+`p202vid` cookie is set. A pass whose subject is not privacy expects every
+visitor tracked in full, so each pass that records a click, or reads a click
+cookie or a stored address, sets that up itself: it sources `privacy.sh` and
+calls `p202_track_in_full "$BASE" "$P202_API_KEY" [USER_ID...]`, which sets
+user 1 (the install's setting, applied with the link owner's), the key's own
+account and each account named to `disabled` through
+`PUT /users/{id}/preferences`, and puts each back on exit, signals included.
+It runs ahead of the pass's own EXIT trap, so a pass calls it after setting
+that trap; one that sets its trap again later calls `p202_privacy_restore`
+from it (`android-abuse-limits.sh`), and one that ends with the database out
+of reach calls it before the outage (`outage-fallback.sh`). No setting is
+needed by hand, and `legacy-pixels.sh` now needs `P202_API_KEY` for it.
+
+The passes that source it: `click-path-reads.sh`, `legacy-pixels.sh`,
+`identity-graph.sh`, `web-events.sh`, `offer-rotator-routing.sh`,
+`rotator-breakdown.sh`, `scheduled-deletion.sh`, `click-write-failure.sh`,
+`outage-fallback.sh`, `android-intake.sh`, `android-abuse-limits.sh`,
+`android-sdk.sh`, `play-integrity.sh`, `mobile-apps-ui.sh`, `mta-engine.sh`
+and `mta-ui.sh`. The rest record no click through the click path (rows are
+seeded by SQL, or the pass reads pages and the API), or test privacy itself
+(`account-pages.sh`). Measured on fresh, unseeded instances at `eu` before
+the passes sourced it: `legacy-pixels.sh` (2 failures), `identity-graph.sh`
+(18), `android-intake.sh` (4), `mta-engine.sh` (16), `scheduled-deletion.sh`
+(7) and `mta-ui.sh` (7) failed; with it, each passes, and the account is at
+`eu` again after the run.
 
 ## The passes
 
 | script | |
 |---|---|
 | `guard.sh` | the scratch-database check the other passes source. Not a pass. |
+| `privacy.sh` | `p202_track_in_full`: the privacy setting a pass that clicks runs under, set to `disabled` for its run and put back on exit (above). Not a pass. |
 | `seed-mobile-apps.sh` | postbacks spread wide enough that every grouping, signature class and page of the pager has something real to show. Run by the analyze pass; standalone for the browser pass, and it needs no login. |
 | `analyze-mobile-apps.sh` | Analyze › Mobile Apps: the three views, every grouping, the filters and the window each preset means, the totals against `SELECT COUNT(*)`, the CSV, the pager, and the permission gate. |
 | `setup-mobile-apps.sh` | Setup › Mobile Apps: registering (a Play link read as Android, its name asked when no store answers), editing and removing an app, the SKAN encodings, the currency, and CSRF. |

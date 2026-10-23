@@ -8,6 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Database\DataSeeder;
 use Prosper202\Database\SchemaInstaller;
 use Tests\Support\AccountCreationPaths;
+use Tests\Support\ColumnShape;
 
 /**
  * On a fresh install every account starts with privacy 'eu' (Enabled for
@@ -73,8 +74,10 @@ final class NewAccountPrivacyIntegrationTest extends TestCase
         self::assertTrue($installed->success, implode('; ', $installed->errors));
         (new DataSeeder($db))->seed();
 
-        $column = $db->query("SHOW COLUMNS FROM 202_users_pref LIKE 'user_pref_privacy'")->fetch_assoc();
-        self::assertSame(['NO', 'eu'], [$column['Null'], $column['Default']], 'NOT NULL, DEFAULT eu');
+        self::assertSame(
+            ['type' => 'varchar(100)', 'nullable' => false, 'default' => 'eu'],
+            ColumnShape::of($db, '202_users_pref', 'user_pref_privacy')
+        );
 
         $made = AccountCreationPaths::makeOneEach($db, 'fresh');
         self::assertSame(['installer', 'settings-users', 'repository', 'api'], array_keys($made));

@@ -7,6 +7,7 @@ namespace Tests\Upgrade;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Database\Tables\UserTables;
 use Tests\Support\AccountCreationPaths;
+use Tests\Support\ColumnShape;
 
 /**
  * The 1.9.78 -> 1.9.79 rung gives 202_users_pref.user_pref_privacy the
@@ -128,14 +129,16 @@ final class PrivacyDefaultUpgradeIntegrationTest extends TestCase
 
     public function testTheRungStartsNewAccountsAtEuAndLeavesEveryExistingOneAsItWas(): void
     {
+        // The column's shape from information_schema: SHOW CREATE TABLE is
+        // compared only with itself, since MySQL 8 writes a COLLATE on every
+        // text column that MariaDB leaves out.
+        $privacy = static fn (): array => ColumnShape::of(self::$db, '202_users_pref', 'user_pref_privacy');
         $fresh = self::shape();
-        self::assertStringContainsString("`user_pref_privacy` varchar(100) NOT NULL DEFAULT 'eu',", $fresh);
+        self::assertSame(['type' => 'varchar(100)', 'nullable' => false, 'default' => 'eu'], $privacy());
         // A 1.9.78 install's table, and its accounts.
         self::q("ALTER TABLE 202_users_pref ALTER COLUMN user_pref_privacy SET DEFAULT 'disabled'");
-        self::assertStringContainsString(
-            "`user_pref_privacy` varchar(100) NOT NULL DEFAULT 'disabled',",
-            self::shape()
-        );
+        self::assertSame(['type' => 'varchar(100)', 'nullable' => false, 'default' => 'disabled'], $privacy());
+        self::assertNotSame($fresh, self::shape(), 'the DDL text tells the two defaults apart');
         foreach (self::EXISTING as $id => $setting) {
             self::user($id);
             self::q($setting === 'disabled'
@@ -150,6 +153,7 @@ final class PrivacyDefaultUpgradeIntegrationTest extends TestCase
         self::assertSame('RETURNED true', $out, $err);
         self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
         self::assertSame('1.9.79', (string) self::$db->query('SELECT version FROM 202_version')->fetch_row()[0]);
+        self::assertSame(['type' => 'varchar(100)', 'nullable' => false, 'default' => 'eu'], $privacy());
         self::assertSame($fresh, self::shape(), 'the upgraded table is the installed one');
         self::assertSame(
             self::EXISTING,

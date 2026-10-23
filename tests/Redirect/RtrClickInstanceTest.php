@@ -45,6 +45,10 @@ final class RtrClickInstanceTest extends TestCase
 
     public static function setUpBeforeClass(): void
     {
+        // The Agent Evals job runs this suite on composer's --no-dev
+        // autoloader, which maps no Tests\ class
+        // (InstanceSuitesLoadWithoutTheDevAutoloaderTest).
+        require_once __DIR__ . '/../Support/InstancePrivacy.php';
         self::$base = rtrim((string) (getenv('P202_BASE') ?: 'http://localhost:8000'), '/');
         [$status] = self::request(self::$base . '/api/v3/system/health');
         if ($status === 0) {

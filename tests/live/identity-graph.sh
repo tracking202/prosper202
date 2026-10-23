@@ -79,6 +79,10 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The visitor cookie (p202vid) is what this pass follows.
+# shellcheck source=tests/live/privacy.sh
+. "$(dirname "${BASH_SOURCE[0]}")/privacy.sh"
+p202_track_in_full "$BASE" "$P202_API_KEY" "$USER_ID" || exit 2
 
 mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';

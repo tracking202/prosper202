@@ -54,6 +54,10 @@ final class SetupEndpointsInstanceTest extends TestCase
 
     public static function setUpBeforeClass(): void
     {
+        // The Agent Evals job runs this suite on composer's --no-dev
+        // autoloader, which maps no Tests\ class
+        // (InstanceSuitesLoadWithoutTheDevAutoloaderTest).
+        require_once __DIR__ . '/../../Support/InstancePrivacy.php';
         self::$base = rtrim((string) (getenv('P202_BASE') ?: 'http://localhost:8000'), '/');
         self::$key = (string) getenv('P202_API_KEY');
         if (self::$key === '') {
