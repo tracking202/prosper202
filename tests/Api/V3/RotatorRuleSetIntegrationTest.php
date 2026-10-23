@@ -130,15 +130,18 @@ final class RotatorRuleSetIntegrationTest extends TestCase
     private static function stored(int $rotator): string
     {
         $rows = [];
-        foreach ([
+        $reads = [
             "SELECT * FROM 202_rotator_rules WHERE rotator_id = $rotator ORDER BY id",
             "SELECT * FROM 202_rotator_rules_criteria WHERE rotator_id = $rotator ORDER BY id",
             "SELECT rr.* FROM 202_rotator_rules_redirects rr JOIN 202_rotator_rules r ON r.id = rr.rule_id WHERE r.rotator_id = $rotator ORDER BY rr.id",
-        ] as $sql) {
-            $rows[] = self::$db->query($sql)->fetch_all(MYSQLI_ASSOC);
+        ];
+        foreach ($reads as $sql) {
+            $result = self::$db->query($sql);
+            self::assertInstanceOf(\mysqli_result::class, $result, (string) self::$db->error);
+            $rows[] = $result->fetch_all(MYSQLI_ASSOC);
         }
 
-        return (string) json_encode($rows);
+        return json_encode($rows, JSON_THROW_ON_ERROR);
     }
 
     /** @return list<array<string, mixed>> two rules: an IP rule split 70/30, then everyone else to a campaign */

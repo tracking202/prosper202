@@ -1225,10 +1225,11 @@ class RotatorsController
         if ($plan['removed'] !== []) {
             $ids = array_map(static fn (array $rule): int => (int) $rule['id'], $plan['removed']);
             $in = implode(', ', array_fill(0, count($ids), '?'));
-            foreach ([
+            $deletes = [
                 "DELETE FROM 202_rotator_rules_criteria WHERE rule_id IN ($in)" => 'Failed to remove criteria',
                 "DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN ($in)" => 'Failed to remove redirects',
-            ] as $sql => $failed) {
+            ];
+            foreach ($deletes as $sql => $failed) {
                 $stmt = $this->prepare($sql);
                 $this->bind($stmt, str_repeat('i', count($ids)), ...$ids);
                 $this->execute($stmt, $failed);
