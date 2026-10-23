@@ -610,7 +610,8 @@ such as `access_to_update_section` or `access_to_setup_section`, granting a
 role with `p202 user role assign`, and when it says `Admin access required.`, that the key's user needs
 the Admin or Super user role, with `p202 whoami` to see its roles; 404 use
 `list` for ids; 429 back off;
-5xx retry then `p202 system health`; a 402 that is not the licence refusal,
+5xx retry then `p202 system health`, except a 503 saying the database needs an
+upgrade, which names `202-config/upgrade.php`; a 402 that is not the licence refusal,
 retry then check what serves the URL; network check the URL and `p202 config
 test`); and for any remaining validation error, a pointer to `<command>
 --help`.

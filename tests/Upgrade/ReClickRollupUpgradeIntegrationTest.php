@@ -308,6 +308,62 @@ final class ReClickRollupUpgradeIntegrationTest extends TestCase
         self::assertSame([['10800', '0', '1', '3.00000']], self::reportRows(self::LEGACY));
     }
 
+    /**
+     * A 202_reclick_backfill made before the walk kept the click it stopped
+     * at and the clicks it stepped over (a database that ran #246 before
+     * 1.9.78 took it out) gains the five columns from the rung's reconcile,
+     * which logs nothing, and the walk reads them.
+     */
+    public function testTheRungAddsTheStoppedClickColumnsToAnEarlierMarkerTable(): void
+    {
+        self::seed();
+        $earlier = ClickTables::reClickBackfill()->createStatement;
+        foreach (self::STOPPED_CLICK_COLUMNS as $column) {
+            $without = (string) preg_replace('/\n\s*`' . $column . '`[^\n]*,/', '', $earlier, -1, $removed);
+            self::assertSame(1, $removed, $column . ' was in the definition, and is out of the earlier one');
+            $earlier = $without;
+        }
+        self::q($earlier);
+        self::assertSame([], self::backfillColumns(), 'the earlier table has none of the five');
+
+        [$out, $err] = self::upgrade();
+
+        self::assertSame('RETURNED true', $out, $err);
+        self::assertStringNotContainsString('Prosper202 upgrade', $err, 'a rung that converged logs nothing');
+        self::assertSame('1.9.79', self::version());
+        self::assertSame(
+            [
+                ['failed_click_id', 'YES', 'NULL'], ['failed_runs', 'NO', '0'], ['failing_since', 'YES', 'NULL'],
+                ['last_skipped_click_id', 'YES', 'NULL'], ['skipped_clicks', 'NO', '0'],
+            ],
+            self::backfillColumns()
+        );
+        $walk = self::cronWalk();
+        self::assertSame([1, true], [$walk['reclicked_clicks'] ?? null, $walk['finished'] ?? null]);
+        $state = (new ReClickBackfill(new Connection(self::$db)))->state() ?? [];
+        self::assertSame(
+            [
+                'failed_click_id' => null, 'failed_runs' => 0, 'failing_since' => null,
+                'skipped_clicks' => 0, 'last_skipped_click_id' => null,
+            ],
+            array_intersect_key($state, array_flip(self::STOPPED_CLICK_COLUMNS))
+        );
+    }
+
+    private const STOPPED_CLICK_COLUMNS = [
+        'failed_click_id', 'failed_runs', 'failing_since', 'skipped_clicks', 'last_skipped_click_id',
+    ];
+
+    /** @return list<list<string>> name, nullable and default of the backfill's stopped-click columns */
+    private static function backfillColumns(): array
+    {
+        return self::all(
+            "SELECT COLUMN_NAME, IS_NULLABLE, IFNULL(COLUMN_DEFAULT, 'NULL') FROM information_schema.COLUMNS"
+            . " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '202_reclick_backfill'"
+            . " AND COLUMN_NAME IN ('" . implode("', '", self::STOPPED_CLICK_COLUMNS) . "') ORDER BY COLUMN_NAME"
+        );
+    }
+
     /** A marker the server refuses fails the rung: the version stays, for the next run to mark. */
     public function testARefusedMarkerKeepsTheVersion(): void
     {
