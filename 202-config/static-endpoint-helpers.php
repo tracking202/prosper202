@@ -798,7 +798,12 @@ if (!function_exists('p202ClickVisitedCampaign')) {
      * names its campaign (pb.php, with or without an event). A network posts
      * back for the offer the visitor bought, and a redirector re-click may
      * have sent the visitor on to another offer since; what it records still
-     * credits the click's latest visit.
+     * credits the click's latest visit, at that visit's payout when the
+     * postback names no amount. Known limit: which visit a conversion credits
+     * is undecided (CLAUDE.md #26). A second request in the same second
+     * rewrites its visit's campaign (MysqlClickRepository::writeVisitRows()),
+     * so a postback naming the first request's campaign finds no visit on it
+     * and is refused as campaign_mismatch.
      */
     function p202ClickVisitedCampaign(
         \Prosper202\Database\Connection $conn,

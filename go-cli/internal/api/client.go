@@ -305,6 +305,10 @@ func HintFor(err error) string {
 			return "The server rejected the request values; fix what the message names and retry (`--help` lists the flags)."
 		case apiErr.Status == 429:
 			return "Rate limited. Wait and retry with backoff; reduce --concurrency for bulk operations."
+		// The files were deployed and the upgrade has not run (the message
+		// names both versions); `system health` answers healthy meanwhile.
+		case apiErr.Status == 503 && strings.Contains(apiErr.Message, "the database needs an upgrade"):
+			return "Nothing on this request is wrong: the install's files are newer than its database. An admin opens 202-config/upgrade.php on the site (signed in) to run the upgrade; then retry."
 		case apiErr.Status >= 500:
 			return "Server-side failure. Retry after a short wait; if it persists, run `p202 system health` and check the server logs."
 		}

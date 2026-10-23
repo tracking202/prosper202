@@ -306,7 +306,7 @@ and an SDK treats them the same way everywhere:
 | `413` | Body over the route's cap | Does not retry the same body |
 | `422` | The body's app_key is not the token's app; the token is an iOS app's; an install holding 10,000 events | Does not retry |
 | `429` | Rate limited per peer address; `Retry-After` says when | Retries after that many seconds |
-| `5xx` | The server or its database is unavailable, or (`503`, events) the install is still pending; `Retry-After` when sent | Retries with backoff; nothing was stored |
+| `5xx` | The server or its database is unavailable, or needs an upgrade (`503` naming `202-config/upgrade.php`), or (`503`, events) the install is still pending; `Retry-After` when sent | Retries with backoff; nothing was stored |
 
 ## The test flag
 

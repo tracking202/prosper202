@@ -57,7 +57,16 @@ final class PostbackIntake
             $result = $receiver->receive($rawBody, \AUTH::client_ip());
         } catch (\Throwable $e) {
             error_log('p202 apps: postback processing failed: ' . $e->getMessage());
-            Bootstrap::errorResponse('Internal server error', 500);
+            $result = [
+                'status' => 500,
+                'body' => ['error' => true, 'message' => 'Internal server error', 'status' => 500],
+            ];
+        }
+        // Any non-200 has the device send the postback again later, so a
+        // failure may name its likely cause without changing what happens.
+        $pending = $result['status'] >= 500 ? Bootstrap::pendingUpgrade($db) : null;
+        if ($pending !== null) {
+            Bootstrap::errorResponse($pending, 503);
             exit;
         }
 

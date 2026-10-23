@@ -30,6 +30,7 @@ final class SubidResetIntegrationTest extends TestCase
     private const CLICK = 99008101;
     private const OTHER_CLICK = 99008102;
     private const MOVED_CLICK = 99008103;
+    private const PRE_LEDGER_CLICK = 99008104;
 
     private static int $network = 0;
     private static int $campaign = 0;
@@ -71,12 +72,12 @@ final class SubidResetIntegrationTest extends TestCase
 
     private static function cleanUp(): void
     {
-        $clicks = self::CLICK . ',' . self::OTHER_CLICK . ',' . self::MOVED_CLICK;
+        $clicks = implode(',', [self::CLICK, self::OTHER_CLICK, self::MOVED_CLICK, self::PRE_LEDGER_CLICK]);
         foreach (['202_clicks', '202_clicks_spy', '202_clicks_advance', '202_clicks_record', '202_dataengine', '202_click_latest_visits'] as $table) {
             self::$db->query("DELETE FROM $table WHERE click_id IN ($clicks)");
         }
         self::$db->query("DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($clicks))");
-        foreach (['202_conversion_logs', '202_revenue_events', '202_dirty_hours', '202_aff_campaigns', '202_aff_networks', '202_users'] as $table) {
+        foreach (['202_conversion_logs', '202_revenue_events', '202_dirty_hours', '202_attribution_rollup_dirty_clicks', '202_aff_campaigns', '202_aff_networks', '202_users'] as $table) {
             self::$db->query("DELETE FROM $table WHERE user_id = " . self::USER);
         }
     }
@@ -126,6 +127,56 @@ final class SubidResetIntegrationTest extends TestCase
             [['click_id' => self::MOVED_CLICK, 'click_time' => $now - 1200]],
             $batch->resetClicks($u, 0, $moved),
             'the campaign it was re-clicked onto, at that visit'
+        );
+    }
+
+    /**
+     * A click converted before the ledger and re-clicked before 1.9.79: the
+     * lead is on its first row only, no conversion row, no latest-visit
+     * record. A reset finds it where the reports count its lead — at the
+     * first visit until the backfill reaches it, at the latest after.
+     */
+    public function testAPreLedgerLeadOnAnUnwalkedReClickIsResetWhereItsLeadIsCounted(): void
+    {
+        self::requireScratch();
+        $u = self::USER;
+        $click = self::PRE_LEDGER_CLICK;
+        $later = self::insert("INSERT INTO 202_aff_campaigns SET user_id = $u, aff_network_id = " . self::$network
+            . ", aff_campaign_name = 'later', aff_campaign_url = 'https://later.example',"
+            . ' aff_campaign_payout = 1, aff_campaign_foreign_payout = 0, aff_campaign_time = 0');
+        $now = time();
+        foreach ([[self::$campaign, 1, $now - 900], [$later, 0, $now - 600]] as [$campaign, $lead, $time]) {
+            self::q("INSERT INTO 202_clicks SET click_id = $click, user_id = $u, aff_campaign_id = $campaign,"
+                . ' ppc_account_id = 0, landing_page_id = 0, click_cpc = 0, click_payout = 1,'
+                . " click_lead = $lead, click_time = $time");
+        }
+        $logs = self::$db->query("SELECT COUNT(*) FROM 202_conversion_logs WHERE click_id = $click");
+        self::assertSame(0, (int) $logs->fetch_row()[0]);
+
+        $batch = new SubidBatch(new Connection(self::$db));
+        $reset = static fn (int $campaign): array => array_column($batch->resetClicks($u, 0, $campaign), 'click_id');
+        self::assertContains($click, $reset(self::$campaign), 'unwalked: every visit is latest, the lead the first');
+        self::assertNotContains($click, $reset($later));
+
+        self::q('DELETE FROM 202_reclick_backfill');
+        self::q(\Prosper202\Click\ReClickBackfill::markSql($click));
+        self::q("UPDATE 202_reclick_backfill SET next_click_id = $click");
+        try {
+            $walked = (new \Prosper202\Click\ReClickBackfill(new Connection(self::$db)))->run(PHP_INT_MAX);
+        } finally {
+            self::q('DELETE FROM 202_reclick_backfill');
+        }
+        self::assertIsArray($walked);
+        self::assertSame(
+            [1, true, null],
+            [$walked['reclicked_clicks'], $walked['finished'], $walked['failed_click_id']]
+        );
+
+        self::assertNotContains($click, $reset(self::$campaign));
+        self::assertSame(
+            [['click_id' => $click, 'click_time' => $now - 600]],
+            $batch->resetClicks($u, 0, $later),
+            'walked: the latest visit carries the click\'s lead'
         );
     }
 }

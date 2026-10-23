@@ -349,6 +349,9 @@ final class MysqlConversionLedger
      *
      * Locks the click, writes the mark, recomputes the click and queues the
      * row for MTA — inside the caller's transaction, like every method here.
+     * It reads the row before it locks, so it works only for a caller that
+     * locked the row's click first (the goals engine's current() does);
+     * otherwise lockClick() refuses it.
      */
     public function supersedeGoalRow(int $convId, ?int $byConvId, SupersededReason $reason): void
     {
