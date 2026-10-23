@@ -33,9 +33,9 @@ final class PayKickstartKeysTest extends TestCase
     {
         return [
             'too short' => ['good-key-01,short', 'Key 2 is 5' . self::LENGTH],
-            'too long' => [str_repeat('k', 129), 'Key 1 is 129' . self::LENGTH],
-            'not ASCII' => ['clé-secrète-1', 'Key 1 ' . self::NOT_A_CHARACTER],
-            'a control character' => ["bad\x01key-0001", 'Key 1 ' . self::NOT_A_CHARACTER],
+            'too long' => [str_repeat('k', 129), 'The key is 129' . self::LENGTH],
+            'not ASCII' => ['clé-secrète-1', 'The key ' . self::NOT_A_CHARACTER],
+            'a control character' => ["bad\x01key-0001", 'The key ' . self::NOT_A_CHARACTER],
         ];
     }
 
@@ -78,7 +78,7 @@ final class PayKickstartKeysTest extends TestCase
             [
                 ['', 'Paste the IPN secret key of a PayKickstart campaign.'],
                 ['second-key-0002', 'That key is stored already.'],
-                ['short', 'Key 1 is 5' . self::LENGTH],
+                ['short', 'The key is 5' . self::LENGTH],
             ] as [$pasted, $message]
         ) {
             try {

@@ -54,7 +54,8 @@ final class PayKickstartKeys
         foreach ($parts as $i => $key) {
             $problem = self::problem($key);
             if ($problem !== null) {
-                throw new InvalidArgumentException('Key ' . ($i + 1) . ' ' . $problem);
+                $which = count($parts) === 1 ? 'The key' : 'Key ' . ($i + 1);
+                throw new InvalidArgumentException($which . ' ' . $problem);
             }
             if (!in_array($key, $keys, true)) {
                 $keys[] = $key;
