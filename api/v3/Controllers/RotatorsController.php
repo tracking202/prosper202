@@ -799,8 +799,8 @@ class RotatorsController
 
     public function delete(int $id): void
     {
-        $this->get($id);
-
+        // lockRotator() is the read: a redirector that is not the caller's,
+        // or one removed while this waited, is a 404 with nothing deleted.
         $this->transaction(function () use ($id): void {
             $this->lockRotator($id);
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?');
@@ -1408,65 +1408,73 @@ class RotatorsController
             'a redirector rule'
         );
 
-        // get() proves the rotator is the caller's and lists its rules: the
-        // rule must be one of them. It is also what the read-only keys of a
-        // GET body sent back are held to.
-        $rule = null;
-        foreach ($this->get($rotatorId)['data']['rules'] as $candidate) {
-            if ((int) $candidate['id'] === $ruleId) {
-                $rule = $candidate;
-            }
-        }
-        if ($rule === null) {
-            throw new NotFoundException('Rule not found for rotator');
-        }
-        self::refuseChangedReadOnly($payload, $rule, self::RULE_READ_ONLY);
-        self::refuseNestedKeys($payload, $rule);
-
-        $setParts = [];
-        $binds = [];
-        $types = '';
-
-        if (array_key_exists('rule_name', $payload)) {
-            $setParts[] = 'rule_name = ?';
-            $binds[] = self::ruleOrRotatorName($payload, 'rule_name', true);
-            $types .= 's';
-        }
-        if (array_key_exists('splittest', $payload)) {
-            $setParts[] = 'splittest = ?';
-            $binds[] = self::flag($payload, 'splittest', 0);
-            $types .= 'i';
-        }
-        if (array_key_exists('status', $payload)) {
-            $setParts[] = 'status = ?';
-            $binds[] = self::flag($payload, 'status', 1);
-            $types .= 'i';
-        }
-
-        $hasCriteria = array_key_exists('criteria', $payload);
-        $hasRedirects = array_key_exists('redirects', $payload);
-        if ($hasCriteria && !is_array($payload['criteria'])) {
-            throw new ValidationException('criteria must be an array', ['criteria' => 'Expected array']);
-        }
-        if ($hasRedirects && !is_array($payload['redirects'])) {
-            throw new ValidationException('redirects must be an array', ['redirects' => 'Expected array']);
-        }
-        if (empty($setParts) && !$hasCriteria && !$hasRedirects) {
-            throw new ValidationException('No fields to update');
-        }
-        // Every entry checked before the first write: the transaction would
-        // roll a mid-list failure back, but a refusal should not need one.
-        $parts = $this->ruleParts($payload, $rule);
-
-        $this->transaction(function () use ($binds, $hasCriteria, $hasRedirects, $parts, $rotatorId, $ruleId, $setParts, $types): void {
+        $this->transaction(function () use ($payload, $rotatorId, $ruleId): void {
+            // The locks before the first read (CLAUDE.md #36), so the rule is
+            // read as the last writer left it: a set that removed it while
+            // this waited leaves nothing to update, and the call is a 404.
             $this->lockRotator($rotatorId);
-            if (!empty($setParts)) {
-                $binds[] = $ruleId;
+            $this->lockRule($rotatorId, $ruleId);
+
+            // The rule as stored is what the read-only keys of a GET body sent
+            // back, and the ids of its entries, are held to.
+            $rule = null;
+            foreach ($this->get($rotatorId)['data']['rules'] as $candidate) {
+                if ((int) $candidate['id'] === $ruleId) {
+                    $rule = $candidate;
+                }
+            }
+            if ($rule === null) {
+                throw new NotFoundException('Rule not found for rotator');
+            }
+            self::refuseChangedReadOnly($payload, $rule, self::RULE_READ_ONLY);
+            self::refuseNestedKeys($payload, $rule);
+
+            $setParts = [];
+            $binds = [];
+            $types = '';
+            if (array_key_exists('rule_name', $payload)) {
+                $setParts[] = 'rule_name = ?';
+                $binds[] = self::ruleOrRotatorName($payload, 'rule_name', true);
+                $types .= 's';
+            }
+            if (array_key_exists('splittest', $payload)) {
+                $setParts[] = 'splittest = ?';
+                $binds[] = self::flag($payload, 'splittest', 0);
                 $types .= 'i';
-                $update = $this->prepare('UPDATE 202_rotator_rules SET ' . implode(', ', $setParts) . ' WHERE id = ?');
-                $this->bind($update, $types, ...$binds);
+            }
+            if (array_key_exists('status', $payload)) {
+                $setParts[] = 'status = ?';
+                $binds[] = self::flag($payload, 'status', 1);
+                $types .= 'i';
+            }
+            $hasCriteria = array_key_exists('criteria', $payload);
+            $hasRedirects = array_key_exists('redirects', $payload);
+            if ($hasCriteria && !is_array($payload['criteria'])) {
+                throw new ValidationException('criteria must be an array', ['criteria' => 'Expected array']);
+            }
+            if ($hasRedirects && !is_array($payload['redirects'])) {
+                throw new ValidationException('redirects must be an array', ['redirects' => 'Expected array']);
+            }
+            if ($setParts === [] && !$hasCriteria && !$hasRedirects) {
+                throw new ValidationException('No fields to update');
+            }
+            // Every entry checked before the first write.
+            $parts = $this->ruleParts($payload, $rule);
+
+            if ($setParts !== []) {
+                array_push($binds, $ruleId, $rotatorId);
+                $update = $this->prepare(
+                    'UPDATE 202_rotator_rules SET ' . implode(', ', $setParts) . ' WHERE id = ? AND rotator_id = ?'
+                );
+                $this->bind($update, $types . 'ii', ...$binds);
                 $this->execute($update, 'Failed to update rule');
+                $changed = $update->affected_rows;
                 $update->close();
+                // 0 is a rule that matched and kept its values, or no rule:
+                // a current read of it tells which.
+                if ($changed === 0) {
+                    $this->lockRule($rotatorId, $ruleId);
+                }
             }
 
             if ($hasCriteria) {
@@ -1491,6 +1499,24 @@ class RotatorsController
             return $this->get($rotatorId);
         } catch (\Throwable $e) {
             throw new WriteCommittedException('rotator rule', $e);
+        }
+    }
+
+    /**
+     * Hold one of the redirector's rules until the transaction ends, once
+     * lockRotator() holds the redirector. A rule removed while the write
+     * waited, by a set or by Setup › Redirectors' save (which takes neither
+     * lock), is not found.
+     */
+    private function lockRule(int $rotatorId, int $ruleId): void
+    {
+        $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? FOR UPDATE');
+        $this->bind($stmt, 'ii', $ruleId, $rotatorId);
+        $this->execute($stmt, 'Rule lock failed');
+        $row = $this->resultOf($stmt, 'Rule lock failed')->fetch_assoc();
+        $stmt->close();
+        if (!$row) {
+            throw new NotFoundException('Rule not found for rotator');
         }
     }
 
@@ -1527,24 +1553,14 @@ class RotatorsController
 
     public function deleteRule(int $rotatorId, int $ruleId): void
     {
-        $this->get($rotatorId);
-
-        // Verify the rule belongs to this rotator before touching its child
-        // rows: the criteria/redirects deletes below key on rule_id alone, so
-        // without this check a foreign rule_id would have its children
-        // removed even though the final rule delete (scoped to rotator_id)
-        // would no-op. Same ownership check updateRule() already performs.
-        $stmt = $this->prepare('SELECT id FROM 202_rotator_rules WHERE id = ? AND rotator_id = ? LIMIT 1');
-        $this->bind($stmt, 'ii', $ruleId, $rotatorId);
-        $this->execute($stmt, 'Rule lookup failed');
-        $rule = $this->resultOf($stmt, 'Rule lookup failed')->fetch_assoc();
-        $stmt->close();
-        if (!$rule) {
-            throw new NotFoundException('Rule not found for rotator');
-        }
-
         $this->transaction(function () use ($rotatorId, $ruleId): void {
+            // The rule is checked under the locks, before its criteria and
+            // redirects (deleted by rule_id alone) are touched: one of
+            // another redirector, or one a set removed while this waited, is
+            // a 404 with nothing deleted.
             $this->lockRotator($rotatorId);
+            $this->lockRule($rotatorId, $ruleId);
+
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?');
             $this->bind($stmt, 'i', $ruleId);
             $this->execute($stmt, 'Delete criteria failed');
@@ -1558,7 +1574,11 @@ class RotatorsController
             $stmt = $this->prepare('DELETE FROM 202_rotator_rules WHERE id = ? AND rotator_id = ?');
             $this->bind($stmt, 'ii', $ruleId, $rotatorId);
             $this->execute($stmt, 'Delete rule failed');
+            $deleted = $stmt->affected_rows;
             $stmt->close();
+            if ($deleted !== 1) {
+                throw new NotFoundException('Rule not found for rotator');
+            }
         });
     }
 }

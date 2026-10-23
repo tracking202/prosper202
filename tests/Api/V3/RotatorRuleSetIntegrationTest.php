@@ -583,6 +583,201 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         self::assertSame($before, self::stored($id), 'nothing of the set was kept');
     }
 
+    private static function connect(): \mysqli
+    {
+        $db = new \mysqli(
+            (string) getenv('P202_TEST_DB_HOST'),
+            (string) (getenv('P202_TEST_DB_USER') ?: 'root'),
+            (string) (getenv('P202_TEST_DB_PASS') ?: ''),
+            (string) (getenv('P202_TEST_DB_NAME') ?: 'prosper202'),
+            (int) (getenv('P202_TEST_DB_PORT') ?: 3306)
+        );
+        $db->query("SET SESSION sql_mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
+
+        return $db;
+    }
+
+    /**
+     * Start a write of one rule in a child process
+     * (fixtures/rotator-rule-write-runner.php), and answer it once the server
+     * shows the child waiting for a lock.
+     *
+     * @param array<string, mixed> $body
+     * @return array{resource, array<int, resource>}
+     */
+    private static function waitingWrite(string $op, int $rotator, int $rule, array $body): array
+    {
+        $proc = proc_open(
+            [
+                PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/fixtures/rotator-rule-write-runner.php',
+                $op, (string) self::USER, (string) $rotator, (string) $rule, json_encode($body, JSON_THROW_ON_ERROR),
+            ],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        self::assertIsResource($proc);
+        $thread = trim((string) fgets($pipes[1]));
+        self::assertMatchesRegularExpression('/\A[1-9][0-9]*\z/', $thread, 'the runner names its connection');
+        $watch = self::connect();
+        try {
+            $deadline = microtime(true) + 15;
+            do {
+                $waiting = $watch->query('SELECT COUNT(*) FROM information_schema.INNODB_TRX'
+                    . " WHERE trx_mysql_thread_id = $thread AND trx_state = 'LOCK WAIT'");
+                self::assertInstanceOf(\mysqli_result::class, $waiting, $watch->error);
+                if ((int) $waiting->fetch_row()[0] === 1) {
+                    return [$proc, $pipes];
+                }
+                // The server refreshes INNODB_TRX only once it has gone 0.1s unread.
+                usleep(250000);
+            } while (microtime(true) < $deadline);
+        } finally {
+            $watch->close();
+        }
+        self::fail("The $op on connection $thread never waited for a lock: "
+            . stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]));
+    }
+
+    /**
+     * @param array{resource, array<int, resource>}|null $child
+     * @return string the child's outcome: `ok`, or the failure
+     */
+    private static function outcome(?array $child): string
+    {
+        self::assertNotNull($child, 'the write was started');
+        [$proc, $pipes] = $child;
+        $out = trim((string) stream_get_contents($pipes[1]));
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($proc);
+        self::assertSame(0, $exit, "exit $exit\n$out$err");
+
+        return $out;
+    }
+
+    /** @return array{rules: int, criteria: int, redirects: int} the rows a rule id still names */
+    private static function rowsOf(int $rule): array
+    {
+        $counts = [];
+        $tables = [
+            'rules' => "202_rotator_rules WHERE id = $rule",
+            'criteria' => "202_rotator_rules_criteria WHERE rule_id = $rule",
+            'redirects' => "202_rotator_rules_redirects WHERE rule_id = $rule",
+        ];
+        foreach ($tables as $what => $from) {
+            $result = self::$db->query("SELECT COUNT(*) FROM $from");
+            self::assertInstanceOf(\mysqli_result::class, $result, (string) self::$db->error);
+            $counts[$what] = (int) $result->fetch_row()[0];
+        }
+
+        return $counts;
+    }
+
+    /**
+     * A write of one rule that waits while the rule is removed: by a set,
+     * which holds the redirector, or by a statement that holds neither lock,
+     * as Setup › Redirectors' save does.
+     *
+     * @return array<string, array{string, array<string, mixed>, string}>
+     */
+    public static function writesOfARuleRemovedWhileTheyWait(): array
+    {
+        $entries = [
+            'criteria' => [['type' => 'device', 'value' => 'mobile']],
+            'redirects' => [['redirect_url' => 'https://late.example/']],
+        ];
+
+        return [
+            'an update, while a set removes the rule' => ['update', ['rule_name' => 'late'] + $entries, 'set'],
+            'a delete, while a set removes the rule' => ['delete', [], 'set'],
+            'an update of its entries, while the page removes the rule' => ['update', $entries, 'page'],
+            'an update of its name, while the page removes the rule' => ['update', ['rule_name' => 'late'], 'page'],
+            'a delete, while the page removes the rule' => ['delete', [], 'page'],
+        ];
+    }
+
+    /**
+     * @dataProvider writesOfARuleRemovedWhileTheyWait
+     * @param array<string, mixed> $body
+     */
+    public function testAWriteOfARuleRemovedWhileItWaitsIsNotFoundAndLeavesNothing(
+        string $op,
+        array $body,
+        string $remover
+    ): void {
+        $id = $this->rotator();
+        $this->set($id, self::twoRules(self::campaign(self::USER)));
+        [$office, $everyone] = $this->rotators()->listRules($id)['data'];
+        $rule = (int) $office['id'];
+        $child = null;
+        if ($remover === 'set') {
+            // The set holds the redirector from before it reads the rules;
+            // the write starts while it does, and its removal commits once
+            // the write waits.
+            $this->set($id, [$everyone], false, static function () use (&$child, $op, $id, $rule, $body): void {
+                $child = self::waitingWrite($op, $id, $rule, $body);
+            });
+        } else {
+            $holder = self::connect();
+            try {
+                (new \Prosper202\Database\Connection($holder))->transaction(
+                    static function () use (&$child, $holder, $op, $id, $rule, $body): void {
+                        $removals = [
+                            "202_rotator_rules_criteria WHERE rule_id = $rule",
+                            "202_rotator_rules_redirects WHERE rule_id = $rule",
+                            "202_rotator_rules WHERE id = $rule",
+                        ];
+                        foreach ($removals as $from) {
+                            self::assertTrue($holder->query("DELETE FROM $from"), $holder->error);
+                        }
+                        $child = self::waitingWrite($op, $id, $rule, $body);
+                    }
+                );
+            } finally {
+                $holder->close();
+            }
+        }
+
+        self::assertSame('failed: ' . NotFoundException::class . ': Rule not found for rotator', self::outcome($child));
+        self::assertSame(
+            ['rules' => 0, 'criteria' => 0, 'redirects' => 0],
+            self::rowsOf($rule),
+            'nothing names the removed rule'
+        );
+        $left = $this->rotators()->listRules($id)['data'];
+        self::assertSame([(int) $everyone['id']], array_map('intval', array_column($left, 'id')));
+    }
+
+    /** A write that waits on a set that keeps its rule is made on the set's rule, after it. */
+    public function testAnUpdateThatWaitsOnASetIsMadeOnTheSetItCommitted(): void
+    {
+        $id = $this->rotator();
+        $this->set($id, self::twoRules(self::campaign(self::USER)));
+        [$office, $everyone] = $this->rotators()->listRules($id)['data'];
+        $child = null;
+        // A rule the set removes, so it asks for the permission while it
+        // holds the redirector.
+        $extra = $this->set($id, [$office, $everyone, [
+            'rule_name' => 'extra',
+            'criteria' => [['type' => 'device', 'value' => 'bot']],
+            'redirects' => [['redirect_url' => 'https://bot.example/']],
+        ]])['rules'][2];
+        $renamed = [['rule_name' => 'renamed by the set'] + $office, $everyone];
+        $this->set($id, $renamed, false, static function () use (&$child, $id, $office): void {
+            $child = self::waitingWrite('update', $id, (int) $office['id'], ['status' => 0]);
+        });
+
+        self::assertSame('ok', self::outcome($child));
+        $read = $this->rotators()->listRules($id)['data'];
+        self::assertSame(
+            ['renamed by the set', 0],
+            [$read[0]['rule_name'], $read[0]['status']],
+            'the set\'s name, and the update\'s status'
+        );
+        self::assertSame(['rules' => 0, 'criteria' => 0, 'redirects' => 0], self::rowsOf((int) $extra['id']));
+    }
+
     public function testValuesAreStoredAsThePageStoresThem(): void
     {
         $id = $this->rotator();
