@@ -1515,6 +1515,10 @@ request. A free-text flag given `""` clears it.
 | `--user-slack-incoming-webhook`, `--ipqs-api-key`, `--cb-key`, `--zaxaa-api-signature`, `--jvzoo-ipn-secret-key` | Integrations (a value here stays in shell history) |
 | `--user-ltv-customer-cparam`, `--user-ltv-personalization-fields`, `--user-ltv-score-weights`, `--user-ltv-rec-fatigue` | LTV › Settings |
 
+An integration secret is never read back: `prefs get` (and the answer `prefs update`
+prints) shows each one as `cb_key: (stored)` or `(not stored)`, and as
+`{"stored": true}` under `--json`.
+
 ## Export and import
 
 ```bash
