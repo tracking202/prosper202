@@ -78,6 +78,7 @@ $columns = [
 	['key' => 'amount', 'label' => 'Amount', 'num' => true],
 	['key' => 'counts', 'label' => 'In the value'],
 	['key' => 'source', 'label' => 'Source'],
+	['key' => 'matched', 'label' => 'Click found by'],
 	['key' => 'linked', 'label' => 'Linked to'],
 	['key' => 'transaction', 'label' => 'Transaction ID'],
 ];
@@ -105,6 +106,7 @@ foreach ($breakdown['rows'] as $row) {
 		'amount' => ['text' => $money($row['amount']), 'sort' => $masked ? null : (float) $row['amount']],
 		'counts' => ['html' => $counts],
 		'source' => $row['source_label'],
+		'matched' => $row['match_method_label'],
 		'linked' => $linked !== '' ? $linked : '—',
 		'transaction' => $row['transaction_id'] ?? '—',
 	];

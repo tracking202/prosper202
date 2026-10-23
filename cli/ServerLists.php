@@ -8,6 +8,7 @@ use Api\V3\Controllers\AppNotificationsController;
 use Api\V3\Controllers\ReportsController;
 use Api\V3\Support\TimeBound;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\MatchMethod;
 
 /**
  * The value lists this CLI's help and offline checks name — periods,
@@ -18,7 +19,7 @@ use Prosper202\Conversion\Ledger\ConversionSource;
  * took 11, ltv:predict's --by left out product, and the period and
  * dimension lists had each been brought up to date by hand, one commit at a
  * time. Where the server exposes its list (TimeBound::PERIODS,
- * ReportsController::breakdownDimensions(), ConversionSource,
+ * ReportsController::breakdownDimensions(), ConversionSource, MatchMethod,
  * AppNotificationsController::STATUSES and KINDS, AppReportController's
  * groupings) it is read from there; none of these needs a database. Where
  * the server keeps it private, it is written below and
@@ -80,6 +81,12 @@ final class ServerLists
     public static function conversionSources(): array
     {
         return array_map(static fn (ConversionSource $s): string => $s->value, ConversionSource::cases());
+    }
+
+    /** How a conversion's click was found (GET /conversions?match_method=). */
+    public static function conversionMatchMethods(): array
+    {
+        return MatchMethod::values();
     }
 
     /** An app notification's status (GET /apps/notifications?status=). */

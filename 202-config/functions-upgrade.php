@@ -122,7 +122,9 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
      * 202_conversion_logs, in the order it adds them. ConversionTables
      * declares them in the same order after customer_id, so an upgraded
      * table and a fresh one list them alike. dedupe_key is added nullable
-     * here and made NOT NULL once every row holds a key.
+     * here and made NOT NULL once every row holds a key. match_method came
+     * with 1.9.79, last, so a table any earlier step made gets it here too,
+     * every row it holds reading 'unknown'.
      *
      * @return array<int, array{0: string, 1: string}> [column, definition]
      */
@@ -137,6 +139,7 @@ if (!function_exists('_upgrade_conversion_ledger_columns')) {
             ['superseded_by', '`superseded_by` int(11) unsigned DEFAULT NULL'],
             ['superseded_reason', '`superseded_reason` varchar(16) DEFAULT NULL'],
             ['dedupe_key', '`dedupe_key` varchar(320) COLLATE utf8mb4_bin DEFAULT NULL'],
+            ['match_method', "`match_method` varchar(16) NOT NULL DEFAULT 'unknown'"],
         ];
     }
 }
@@ -218,6 +221,12 @@ if (!function_exists('_upgrade_conversion_ledger')) {
             $columns[$column] = 'YES';
         }
 
+        // A dedupe_key that is already NOT NULL holds a key on every row, so
+        // the backfill (rows with none) has nothing to touch: a later step
+        // that reconciles this table again (1.9.79's match_method) is spared
+        // a walk of every row.
+        $backfilled = ($columns['dedupe_key'] ?? 'YES') === 'NO';
+
         // Backfill in primary-key ranges. One statement over the whole table
         // holds a row lock on every row it has passed until it commits, so a
         // write to an old conversion (a delete, a payout change) waited for
@@ -225,28 +234,30 @@ if (!function_exists('_upgrade_conversion_ledger')) {
         // innodb_lock_wait_timeout. A range of 50,000 commits in about a
         // second. Each range touches only rows with no key yet, so a re-run
         // resumes; the final pass takes rows written past the range read.
-        $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
-        $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
-        if (!is_array($range)) {
-            error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
-                . ' the ledger step will retry.');
-            return false;
-        }
-        $bounds->free();
-        $hi = (int) ($range['hi'] ?? 0);
-        $chunk = 50000;
-        for ($from = (int) ($range['lo'] ?? 0); $range['lo'] !== null && $from <= $hi; $from += $chunk) {
-            $to = min($hi, $from + $chunk - 1);
-            $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
-            if (_upgrade_query($range_sql) === false) {
-                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+        if (!$backfilled) {
+            $bounds = _upgrade_query('SELECT MIN(`conv_id`) AS lo, MAX(`conv_id`) AS hi FROM `202_conversion_logs`');
+            $range = $bounds instanceof \mysqli_result ? $bounds->fetch_assoc() : null;
+            if (!is_array($range)) {
+                error_log('Prosper202 upgrade: could not read the conv_id range of 202_conversion_logs;'
                     . ' the ledger step will retry.');
                 return false;
             }
-        }
-        if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
-            error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
-            return false;
+            $bounds->free();
+            $hi = (int) ($range['hi'] ?? 0);
+            $chunk = 50000;
+            for ($from = (int) ($range['lo'] ?? 0); $range['lo'] !== null && $from <= $hi; $from += $chunk) {
+                $to = min($hi, $from + $chunk - 1);
+                $range_sql = _upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` BETWEEN ' . $from . ' AND ' . $to;
+                if (_upgrade_query($range_sql) === false) {
+                    error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns;'
+                        . ' the ledger step will retry.');
+                    return false;
+                }
+            }
+            if (_upgrade_query(_upgrade_conversion_ledger_backfill_sql() . ' AND `conv_id` > ' . $hi) === false) {
+                error_log('Prosper202 upgrade: failed to backfill the conversion ledger columns; the ledger step will retry.');
+                return false;
+            }
         }
 
         if (($columns['dedupe_key'] ?? 'YES') === 'YES') {
@@ -4427,9 +4438,15 @@ class UPGRADE
             // the cron walks the clicks up to it (Prosper202\Click\ReClickBackfill).
             // A schema change for 1.9.79 belongs in this block, reconciled
             // before the version is written.
+            // How each conversion's click was found (Conversion\Ledger\
+            // MatchMethod): 202_conversion_logs.match_method, and the same on
+            // 202_goal_events for the outcomes an event reaches. Every row
+            // already there takes the default, 'unknown'.
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                \Prosper202\Database\Tables\ConversionTables::conversionLogs(),
+                \Prosper202\Database\Tables\GoalTables::goalEvents(),
             ]);
 
             if ($step_ok) {
@@ -4440,8 +4457,9 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables could not be reconciled, or the re-click'
-                    . ' backfill marked; leaving version at 1.9.78 so the next run retries.');
+                error_log('Prosper202 upgrade: the re-click tables, 202_conversion_logs or 202_goal_events could'
+                    . ' not be reconciled, or the re-click backfill marked; leaving version at 1.9.78 so the next'
+                    . ' run retries.');
             }
         }
 

@@ -31,6 +31,13 @@ final class CampaignFigures
     public const array RECORD = ['click_cpc', 'click_payout', 'amount', 'ledger_value'];
 
     /**
+     * GET /conversions/match-methods' figures: how many conversions each
+     * campaign has by match method, how many count, and what they earned —
+     * the counts as a report's leads are, the money as its income.
+     */
+    public const array MATCH_METHODS = ['conversions', 'counted', 'income'];
+
+    /**
      * A goal's money, where a goal's definition is in the answer: what a
      * campaign pays for it (`payout`) and its fixed value (the definition's
      * `value.amount`). Not `value`, which a definition's conditions also use

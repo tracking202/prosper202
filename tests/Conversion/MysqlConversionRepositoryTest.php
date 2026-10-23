@@ -57,7 +57,7 @@ final class MysqlConversionRepositoryTest extends TestCase
         $conn = new Connection($write, $read);
         $repo = new MysqlConversionRepository($conn);
 
-        $id = $repo->create(7, ['click_id' => 10, 'transaction_id' => 'tx-1']);
+        $id = $repo->create(7, ['click_id' => 10, 'transaction_id' => 'tx-1'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertIsInt($id);
 
         // The transactional write path must never touch the read connection —
@@ -108,7 +108,7 @@ final class MysqlConversionRepositoryTest extends TestCase
         $read->whenQueryContainsReturnRows('FROM 202_ltv_webhooks', [['webhook_id' => 5]]);
 
         $repo = new MysqlConversionRepository(new Connection($write, $read));
-        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => $transactionId, 'conv_time' => 1700000100]);
+        $result = $repo->record(7, ['click_id' => 10, 'transaction_id' => $transactionId, 'conv_time' => 1700000100], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $deliveries = $write->statementsContaining('INSERT INTO 202_ltv_webhook_deliveries');
         self::assertCount(1, $deliveries, 'a new conversion with a subscriber must queue exactly one delivery');

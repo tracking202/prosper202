@@ -164,7 +164,7 @@ trait AttributionDatabase
         if ($convTime !== null) {
             $data['conv_time'] = $convTime;
         }
-        $result = $this->ledger->record(1, $data);
+        $result = $this->ledger->record(1, $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertGreaterThan(0, $result['convId'], 'the conversion was recorded');
 
         return $result['convId'];

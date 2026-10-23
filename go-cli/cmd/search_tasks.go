@@ -70,6 +70,9 @@ var searchTasks = []searchTask{
 		Phrases: []string{"postback url", "s2s postback", "server to server postback"}},
 	{Run: "p202 conversion pixel",
 		Phrases: []string{"conversion pixel", "thank you page pixel", "tracking pixel"}},
+	{Run: "p202 conversion match-methods",
+		Phrases: []string{"how conversions were matched", "conversions matched by ip", "guessed conversions",
+			"cookie conversions", "conversions without a subid"}},
 
 	// Overview
 	{Run: "p202 report breakdown --breakdown campaign", Pages: []string{"Overview › Campaign Overview"},

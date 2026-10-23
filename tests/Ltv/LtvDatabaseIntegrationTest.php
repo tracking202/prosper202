@@ -138,7 +138,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(2000);
 
-        $result = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-LTV-1', [
+        $result = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-LTV-1', [
             'customer_ref' => 'cust-100',
             'customer_ref_type' => 'merchant_id',
             'customer_crm' => ['first_name' => 'Jane', 'email' => 'jane@acme.com', 'company' => 'Acme  Corp'],
@@ -178,9 +178,9 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $this->insertClick(2000);
         $customer = ['customer_ref' => 'cust-200', 'customer_ref_type' => 'custom'];
 
-        $first = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-A', $customer, []);
+        $first = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-A', $customer, []);
         // Exact replay: no new conversion, no new ledger event, rollups unchanged.
-        $replay = p202RecordConversion(self::$db, $this->log(2000), '', true, '10.0', 'ORD-A', $customer, []);
+        $replay = p202RecordConversion(self::$db, $this->log(2000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'ORD-A', $customer, []);
         self::assertTrue($replay['duplicate']);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'));
 
@@ -189,7 +189,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // amount comes from the log's payout.
         $secondLog = $this->log(2000);
         $secondLog['click_payout'] = '15.0';
-        $second = p202RecordConversion(self::$db, $secondLog, '', true, '15.0', 'ORD-B', [], []);
+        $second = p202RecordConversion(self::$db, $secondLog, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '15.0', 'ORD-B', [], []);
         self::assertFalse($second['duplicate']);
         self::assertNotSame((int) $first['conv_id'], (int) $second['conv_id']);
 
@@ -293,10 +293,10 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(3000);
         $this->insertClick(3001);
-        p202RecordConversion(self::$db, $this->log(3000), '', true, '10.0', 'M-1', ['customer_ref' => 'merge-src', 'customer_crm' => ['company' => 'Solo Inc']], []);
+        p202RecordConversion(self::$db, $this->log(3000), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'M-1', ['customer_ref' => 'merge-src', 'customer_crm' => ['company' => 'Solo Inc']], []);
         $dstLog = $this->log(3001);
         $dstLog['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $dstLog, '', true, '20.0', 'M-2', ['customer_ref' => 'merge-dst'], []);
+        p202RecordConversion(self::$db, $dstLog, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'M-2', ['customer_ref' => 'merge-dst'], []);
 
         $srcId = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='merge-src'");
         $dstId = (int) $this->scalar("SELECT customer_id FROM 202_customers WHERE primary_ref='merge-dst'");
@@ -417,7 +417,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         $this->insertClick(5001);
         $log = $this->log(5000);
         $log['click_payout'] = '-7.5';
-        p202RecordConversion(self::$db, $log, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '-7.5', 'NEG-1', ['customer_ref' => 'neg-1'], []);
 
         $event = $this->row("SELECT conv_id, event_type, amount FROM 202_revenue_events WHERE event_type='adjustment' LIMIT 1");
         self::assertNotNull($event, 'a negative payout must not ledger as a purchase');
@@ -430,7 +430,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
         // A real purchase for the same customer, then void the negative
         // conversion: its 'void-nc:' marker must not subtract the real order
         // — neither on the immediate path nor when reconciled from scratch.
-        p202RecordConversion(self::$db, $this->log(5001), '', true, '10.0', 'NEG-REAL', ['customer_ref' => 'neg-1'], []);
+        p202RecordConversion(self::$db, $this->log(5001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'NEG-REAL', ['customer_ref' => 'neg-1'], []);
         $customers = new MysqlCustomerRepository(self::$conn);
         $crm = new MysqlCustomerCrmRepository(self::$conn, $customers, new MysqlCustomerFieldRepository(self::$conn));
         (new \Prosper202\Conversion\MysqlConversionRepository(self::$conn))->softDelete((int) $event['conv_id'], 1);
@@ -447,7 +447,7 @@ final class LtvDatabaseIntegrationTest extends TestCase
     public function testSoftDeleteNetsLineItemsOutOfProductRevenue(): void
     {
         $this->insertClick(5100);
-        $res = p202RecordConversion(self::$db, $this->log(5100), '', true, '10.0', 'DEL-1', ['customer_ref' => 'del-1'], [
+        $res = p202RecordConversion(self::$db, $this->log(5100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'DEL-1', ['customer_ref' => 'del-1'], [
             ['sku' => 'SKU-D', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 5.0, 'amount' => 10.0],
         ]);
         $convId = (int) $res['conv_id'];
@@ -919,12 +919,12 @@ final class LtvDatabaseIntegrationTest extends TestCase
     {
         $this->insertClick(5200);
         $this->insertClick(5201);
-        p202RecordConversion(self::$db, $this->log(5200), '', true, '10.0', 'CF-A', ['customer_ref' => 'cf-a'], [
+        p202RecordConversion(self::$db, $this->log(5200), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'CF-A', ['customer_ref' => 'cf-a'], [
             ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 1, 'unit_price' => 10.0, 'amount' => 10.0],
         ]);
         $logB = $this->log(5201);
         $logB['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $logB, '', true, '20.0', 'CF-B', ['customer_ref' => 'cf-b'], [
+        p202RecordConversion(self::$db, $logB, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'CF-B', ['customer_ref' => 'cf-b'], [
             ['sku' => 'SKU-CF', 'name' => 'Widget', 'quantity' => 2, 'unit_price' => 10.0, 'amount' => 20.0],
         ]);
 
@@ -1495,10 +1495,10 @@ CHILD;
         $this->insertClick(8003, 0.0, 2.5);
         $log = $this->log(8000);
         $log['click_payout'] = '20.0';
-        p202RecordConversion(self::$db, $log, '', true, '20.0', 'CAC-1', [
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '20.0', 'CAC-1', [
             'customer_ref' => 'cac-1', 'customer_crm' => ['first_name' => 'Jane', 'last_name' => 'Doe'],
         ], []);
-        p202RecordConversion(self::$db, $this->log(8001), '', true, '10.0', 'CAC-2', ['customer_ref' => 'cac-2'], []);
+        p202RecordConversion(self::$db, $this->log(8001), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', 'CAC-2', ['customer_ref' => 'cac-2'], []);
 
         $ltv = new \Prosper202\Ltv\MysqlLtvRepository(self::$conn);
 
@@ -1557,7 +1557,7 @@ CHILD;
     public function testCohortMonthsAreTheAccountsCalendarMonths(): void
     {
         $this->insertClick(8100);
-        p202RecordConversion(self::$db, $this->log(8100), '', true, '12.0', 'TZ-1', ['customer_ref' => 'tz-1'], []);
+        p202RecordConversion(self::$db, $this->log(8100), \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '12.0', 'TZ-1', ['customer_ref' => 'tz-1'], []);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM 202_revenue_events'), 'the conversion recorded its revenue');
         self::$db->query('UPDATE 202_customers SET first_seen_time = ' . gmmktime(3, 0, 0, 11, 1, 2023));
         // 00:00 on 1 November in New York, an hour after it was first seen there.
@@ -1591,7 +1591,7 @@ CHILD;
             $this->insertClick($clickId, 10.0, 0.0, $campaignId);
             $log = $this->log($clickId);
             $log['conv_time'] = $convTime;
-            $result = p202RecordConversion(self::$db, $log, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
+            $result = p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
 
             return (int) $result['conv_id'];
         };
@@ -1780,7 +1780,7 @@ CHILD;
         $log = $this->log(9201);
         $log['click_time'] = $freshTime;
         $log['conv_time'] = $freshTime + 100; // after first_shown_at — the reward window
-        p202RecordConversion(self::$db, $log, '', true, '25.0', 'FAT-1', ['customer_ref' => 'fat-1'], []);
+        p202RecordConversion(self::$db, $log, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID, '', true, '25.0', 'FAT-1', ['customer_ref' => 'fat-1'], []);
         self::assertGreaterThan(0, $recs->stampRecommendationConversions(1));
         self::assertNotNull($this->scalar("SELECT converted_at FROM 202_offer_recommendations WHERE customer_id=$cid AND campaign_id=7 AND surface='lp'"));
 

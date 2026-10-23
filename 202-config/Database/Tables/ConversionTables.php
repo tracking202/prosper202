@@ -27,6 +27,11 @@ use Prosper202\Database\Schema\TableRegistry;
  * injective), and a reversal naming one transaction id could net the other.
  * The upgrade converges an existing table to the same collations.
  *
+ * `match_method` is how the row's click was found (Ledger\MatchMethod). It
+ * is last, after the ledger columns, because 1.9.79 added it to tables that
+ * already had them (_upgrade_conversion_ledger_columns()); its default,
+ * 'unknown', is what every row from before then holds.
+ *
  * `reverses_conv_id` is indexed because every conversion's counted amount
  * (Attribution\CountedAmount — the worker, the journey drill-down, the
  * recent conversions) looks up the reversals naming it. Without the index
@@ -80,6 +85,7 @@ final class ConversionTables
                 `superseded_by` int(11) unsigned DEFAULT NULL,
                 `superseded_reason` varchar(16) DEFAULT NULL,
                 `dedupe_key` varchar(320) COLLATE utf8mb4_bin NOT NULL,
+                `match_method` varchar(16) NOT NULL DEFAULT 'unknown',
                 PRIMARY KEY (`conv_id`),
                 UNIQUE KEY `uniq_click_dedupe` (`click_id`,`dedupe_key`),
                 KEY `click_transaction` (`click_id`,`transaction_id`),

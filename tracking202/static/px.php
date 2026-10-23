@@ -45,6 +45,8 @@ p202ApplyOwnerPrivacy($aff_campaign_row['user_id'] ?? null);
 // address to a request whose own identity was garbage.
 $cookie = (string) (getCookie202('tracking202subid') ?? '');
 $click_id = 0;
+// How the click was found, kept on the conversion (MatchMethod).
+$matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::COOKIE;
 if ($cookie !== '') {
 	$click_id = p202ParseClickId($cookie) ?? 0;
 	if ($click_id === 0) {
@@ -65,6 +67,7 @@ if ($cookie !== '') {
 	);
 	if ($click_row1 !== null) {
 		$click_id = $click_row1['click_id'];
+		$matchedBy = \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
 	}
 
 }
@@ -76,7 +79,7 @@ if ($click_id > 0) {
 	// below, as always, with the event's name kept on the row.
 	$webEvent = null;
 	try {
-		$webEvent = p202RecordWebEvent($db, $click_id, $_GET, ['user_id' => (int) $mysql['user_id'], 'browser' => false]);
+		$webEvent = p202RecordWebEvent($db, $click_id, $_GET, $matchedBy, ['user_id' => (int) $mysql['user_id'], 'browser' => false]);
 	} catch (\Throwable $webEventError) {
 		error_log('px: event recording failed for click ' . $click_id . ': ' . $webEventError->getMessage());
 		exit;
@@ -90,7 +93,7 @@ if ($click_id > 0) {
 	try {
 		// user_id: a cookie names any click on this install; only one that
 		// belongs to the campaign's owner may convert for this campaign.
-		$outcome = p202RecordLegacyConversion($db, $click_id, 1, [
+		$outcome = p202RecordLegacyConversion($db, $click_id, 1, $matchedBy, [
 			'user_id'    => (int) $mysql['user_id'],
 			'ip'         => p202StoredVisitorIp(),
 			'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),

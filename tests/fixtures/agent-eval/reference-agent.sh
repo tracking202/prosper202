@@ -346,6 +346,23 @@ case "$ask" in
                 "$tx" "$click" "$value" "$click" "$rows"
         fi
         ;;
+    *"guess from the visitor's IP address"*)
+        # How each conversion's click was found is stored on it (match
+        # method); same_ip is a pixel's address fallback, a guess. Read the
+        # campaign's split from the server rather than counting rows by hand.
+        name=$(printf '%s' "$ask" | grep -oE 'EVAL Campaign [A-Z]' | head -1)
+        campaign=$(p202 campaign list --all --json | jq -r --arg n "$name" '[.data[] | select(.aff_campaign_name==$n)][0].aff_campaign_id // empty')
+        if [ -z "$campaign" ]; then
+            printf 'I found no campaign named "%s" in `p202 campaign list`, so there is nothing to count.\n' "$name"
+        else
+            split=$(p202 conversion match-methods --aff-campaign-id "$campaign" --json)
+            guessed=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="same_ip") | .conversions] | add // 0')
+            matched=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="click_id" or .match_method=="cookie" or .match_method=="visitor_id") | .conversions] | add // 0')
+            unknown=$(printf '%s' "$split" | jq -r '[.data[] | select(.match_method=="unknown") | .conversions] | add // 0')
+            printf '%s of %s'"'"'s conversions were guessed from the visitor'"'"'s IP address (match method same_ip, per `p202 conversion match-methods --aff-campaign-id %s`): nothing named their click, so the pixel credited the latest click from that address. %s were matched to the click that made them (by a click id, a cookie or a visitor id), and %s were recorded before Prosper202 kept the method.\n' \
+                "$guessed" "$name" "$campaign" "$matched" "$unknown"
+        fi
+        ;;
     *"EVAL ANDROID"*)
         # Simulate an install: find the registration by its package and the
         # newest click on the campaign by name in real list output, post the
