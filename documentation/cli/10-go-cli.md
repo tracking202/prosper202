@@ -519,6 +519,12 @@ Claude Desktop and Cursor take the same command in their MCP settings:
 - With `--staged`, a write returns a change id and changes nothing; you apply
   it with `p202 change apply <id>`. The assistant is not offered the apply and
   discard tools.
+- A redirector's rules are one tool, `rotator_set_rules` (`p202 rotator
+  set-rules`): it takes the whole rule set as a JSON list, as `rotator_get`
+  answers it under `data.rules`, and the install writes it in one
+  transaction, in the order given. There are no tools for one rule; a rule
+  is added, changed, moved or removed by sending the set without or with it.
+  `dry_run: true` answers what would change.
 - `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
   '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).
 - An error comes back as the same JSON envelope as below, naming CLI flags

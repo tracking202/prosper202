@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"p202/internal/api"
@@ -150,6 +152,10 @@ var rotatorUpdateCmd = &cobra.Command{
 	Short: "Update a redirector/rotator's name or defaults",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := validateID(args[0])
+		if err != nil {
+			return withHint(err, "Pass the redirector's id from `p202 rotator list`.")
+		}
 		body := map[string]interface{}{}
 		for _, f := range []string{"name", "default_url", "default_campaign", "default_lp"} {
 			if v, _ := cmd.Flags().GetString(f); v != "" {
@@ -164,7 +170,7 @@ var rotatorUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		data, err := c.Put("rotators/"+args[0], body)
+		data, err := c.Put("rotators/"+id, body)
 		if err != nil {
 			return err
 		}
@@ -194,6 +200,141 @@ const (
 	criteriaJSONHint  = `A JSON array of {"type","statement","value"}: type country, region, city, isp, ip, platform, device or browser; statement is or is_not; value comma-separated (countries as "United States(US)", see ` + "`p202 rotator criteria-values`" + `; ip as single IPv4 or IPv6 addresses, no ranges).`
 	redirectsJSONHint = `A JSON array of {"redirect_url" | "redirect_campaign" | "redirect_lp", "weight" (0-100), "name"}: one destination each.`
 )
+
+// rotatorRuleSetHint says what a rule set is, for its refusals.
+const rotatorRuleSetHint = "A rule set is every rule the redirector is to have, in the order they are tried: " +
+	"a JSON array of rules as `p202 rotator get <id> --json` shows them under data.rules, or {\"rules\": [...]}. " +
+	"Keep a rule's id to keep the rule, leave the id out to add one, leave a rule out to remove it; --dry-run shows what would change."
+
+// rotatorMaxRuleSetBytes is the API's body limit.
+const rotatorMaxRuleSetBytes = 1 << 20
+
+var rotatorSetRulesCmd = &cobra.Command{
+	Use:   "set-rules <rotator_id>",
+	Short: "Replace a redirector's whole rule set, in the order the rules are tried, in one write",
+	Long: "Sends every rule the redirector is to have to PUT /rotators/{id}/rules, which writes the set in one\n" +
+		"transaction, as Setup › Redirector saves it: all of it, or nothing. The redirects try the rules in the\n" +
+		"order given; the first active rule whose criteria all match sends the visitor.\n\n" +
+		"Read the set with `p202 rotator get <id> --json` (data.rules), change it, and send it back. A rule sent\n" +
+		"with its id keeps the id (its clicks stay its own), one without an id is added, and a rule left out is\n" +
+		"removed (the role needs remove_rotator_rule). Each rule needs a rule_name, at least one criterion\n" +
+		"(value ALL matches everyone) and at least one destination; a split test (splittest 1) needs a weight on\n" +
+		"each destination. --dry-run answers the set as it would be stored and what would change, writing nothing.",
+	Example: "  p202 rotator get 3 --json | jq '.data.rules' > rules.json   # edit rules.json, then:\n" +
+		"  p202 rotator set-rules 3 --file rules.json --dry-run\n" +
+		"  p202 rotator set-rules 3 --file rules.json\n" +
+		"  p202 rotator set-rules 3 --rules '[{\"rule_name\":\"Mobile\",\"criteria\":[{\"type\":\"device\",\"value\":\"mobile\"}],\"redirects\":[{\"redirect_campaign\":12}]}]'",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := validateID(args[0])
+		if err != nil {
+			return withHint(err, "Pass the redirector's id from `p202 rotator list`.")
+		}
+		body, err := readRotatorRuleSet(cmd)
+		if err != nil {
+			return err
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		var data []byte
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			data, err = c.PutDryRun("rotators/"+id+"/rules", body)
+		} else {
+			data, err = c.Put("rotators/"+id+"/rules", body)
+		}
+		if err != nil {
+			return rotatorRuleSetError(err, id)
+		}
+		render(data)
+		return nil
+	},
+}
+
+// readRotatorRuleSet returns the request body --rules or --file gives:
+// {"rules": [...]}. Anything that is not a list of rules, or an object
+// holding one, is refused here, naming the flag.
+func readRotatorRuleSet(cmd *cobra.Command) (map[string]interface{}, error) {
+	raw, _ := cmd.Flags().GetString("rules")
+	file, _ := cmd.Flags().GetString("file")
+	source := "--rules"
+	switch {
+	case raw != "" && file != "":
+		return nil, validationError("--rules and --file are mutually exclusive").
+			WithHint("Give the set once: inline with --rules, or from a file (- for stdin) with --file.")
+	case raw == "" && file == "":
+		return nil, validationError("a rule set is required: --rules '<json>' or --file <path> (- for stdin)").
+			WithHint("%s", rotatorRuleSetHint)
+	case file != "":
+		source = "--file"
+		var data []byte
+		var err error
+		if file == "-" {
+			if isTerminal(os.Stdin) {
+				return nil, validationError("--file - reads the rule set from stdin, and stdin is a terminal").
+					WithHint("Pipe the set in (`p202 rotator set-rules <id> --file - < rules.json`), or pass its path.")
+			}
+			data, err = io.ReadAll(io.LimitReader(os.Stdin, rotatorMaxRuleSetBytes+1))
+		} else {
+			data, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return nil, validationError("reading %s: %v", file, err).WithHint("Pass a readable path, or - to read the set from stdin.")
+		}
+		raw = string(data)
+	}
+	if len(raw) > rotatorMaxRuleSetBytes {
+		return nil, validationError("%s is over the server's 1 MB limit for a request", source).
+			WithHint("A redirector's rule set is far smaller; check that %s holds the set and nothing else.", source)
+	}
+	var value interface{}
+	if err := decodeOneJSON([]byte(raw), &value); errors.Is(err, errTrailingJSON) {
+		return nil, validationError("%s holds more than one JSON value: %v", source, err).WithHint("%s", rotatorRuleSetHint)
+	} else if err != nil {
+		return nil, validationError("%s is not JSON: %v", source, err).WithHint("%s", rotatorRuleSetHint)
+	}
+	var body map[string]interface{}
+	prefix := ""
+	switch v := value.(type) {
+	case []interface{}:
+		body, prefix = map[string]interface{}{"rules": v}, "rules"
+	case map[string]interface{}:
+		if _, ok := v["rules"]; !ok {
+			if _, isAnswer := v["data"]; isAnswer {
+				return nil, validationError("%s holds an API answer, not a rule set", source).
+					WithHint("Send the rules from it: `p202 rotator get <id> --json | jq '.data.rules'` is the set to edit.")
+			}
+			return nil, validationError("%s is an object without \"rules\"", source).WithHint("%s", rotatorRuleSetHint)
+		}
+		body = v
+	default:
+		return nil, validationError("%s must be a JSON array of rules, or {\"rules\": [...]}", source).WithHint("%s", rotatorRuleSetHint)
+	}
+	if dup, err := jsonDuplicateKey([]byte(raw), prefix); err == nil && dup != "" {
+		return nil, validationError("%s gives %s twice; only one would be written", source, dup).
+			WithHint("Give each key once in each rule, criterion and destination.")
+	}
+	return body, nil
+}
+
+// rotatorRuleSetError adds the next step to a refused rule set.
+func rotatorRuleSetError(err error, id string) error {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	switch {
+	case apiErr.Status == 404 && strings.Contains(strings.ToLower(apiErr.Message), "rotator"):
+		return withHint(err, "No redirector %s on this account; `p202 rotator list` shows the ids.", id)
+	case apiErr.Status == 404:
+		// The router's bare 404: a server from before PUT /rotators/{id}/rules.
+		return withHint(err, "This server has no PUT /rotators/{id}/rules; upgrade it to 1.9.79 or later, or change the rules one at a time with `p202 rotator rule-create`, `p202 rotator rule-update` and `p202 rotator rule-delete`.")
+	case apiErr.Status == 422:
+		return withHint(err, "Nothing was written. Fix the fields named (rules.N is the rule at index N of the set) and send the whole set again; `p202 rotator get %s` shows the set as stored, and --dry-run checks a set without writing it.", id)
+	}
+	return err
+}
 
 var rotatorRuleCreateCmd = &cobra.Command{
 	Use:   "rule-create <rotator_id>",
@@ -373,7 +514,11 @@ func init() {
 
 	addReportFilters(rotatorStatsCmd)
 
+	rotatorSetRulesCmd.Flags().String("rules", "", `The rule set as JSON: an array of rules as `+"`p202 rotator get <id> --json`"+` shows them under data.rules, or {"rules": [...]}`)
+	rotatorSetRulesCmd.Flags().StringP("file", "F", "", "Read the rule set JSON from a file (- for stdin)")
+	rotatorSetRulesCmd.Flags().Bool("dry-run", false, "Answer the set as it would be stored and what would change, and write nothing")
+
 	rotatorCmd.AddCommand(rotatorListCmd, rotatorGetCmd, rotatorStatsCmd, rotatorCreateCmd, rotatorUpdateCmd, rotatorDeleteCmd)
-	rotatorCmd.AddCommand(rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd)
+	rotatorCmd.AddCommand(rotatorRuleCreateCmd, rotatorRuleDeleteCmd, rotatorRuleUpdateCmd, rotatorSetRulesCmd)
 	rootCmd.AddCommand(rotatorCmd)
 }

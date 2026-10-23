@@ -97,14 +97,14 @@ $accessChoices = [
     ],
     'propose' => [
         'Read, and propose changes',
-        'It reads the same. A change it makes to campaigns, trackers, landing pages, traffic sources or '
-            . 'categories waits as a proposal until you apply it with the p202 command line '
+        'It reads the same. A change it makes to campaigns, trackers, landing pages, traffic sources, '
+            . 'categories or redirectors waits as a proposal until you apply it with the p202 command line '
             . '(<code>p202 change apply</code>).',
     ],
     'write' => [
         'Read and change',
-        'It reads the same, and can change and delete campaigns, trackers, landing pages, traffic sources and '
-            . 'categories; deleting a tracker stops its links. Your AI app\'s approval prompt is then the only '
+        'It reads the same, and can change and delete campaigns, trackers, landing pages, traffic sources, '
+            . 'categories and redirectors; deleting a tracker stops its links. Your AI app\'s approval prompt is then the only '
             . 'check, so do not set it to always allow deletes.',
     ],
 ];

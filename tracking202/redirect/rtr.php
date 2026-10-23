@@ -67,12 +67,11 @@ $user_id = $db->real_escape_string((string)$rotator_row['user_id']);
 p202ApplyOwnerPrivacy($rotator_row['user_id'] ?? null);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
-//grab rules data
-$mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['rotator_id']);
-$rule_sql = "SELECT ru.id as rule_id
-			 FROM 202_rotator_rules AS ru
-			 WHERE rotator_id='".$mysql['rotator_id']."' AND status='1'";
-$rule_row = foreach_memcache_mysql_fetch_assoc($db, $rule_sql);
+// The active rules, in the order they are tried (RuleOrder).
+$rule_row = \Prosper202\Rotator\RuleOrder::activeRules(
+	static fn (string $sql): array => foreach_memcache_mysql_fetch_assoc($db, $sql),
+	(int) $rotator_row['rotator_id']
+);
 
 AUTH::set_timezone($rotator_row['user_timezone']);
 

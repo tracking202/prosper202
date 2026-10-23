@@ -46,8 +46,8 @@ final class PathIdsAreReadStrictlyTest extends TestCase
         $problems = [];
         $reads = 0;
         foreach ($this->registrations($src) as $route) {
-            if ($route['router'] === '$stageableRouter') {
-                continue; // an allowlist: its handlers read nothing
+            if ($route['router'] === '$stageableRouter' || $route['router'] === '$writePreviewRouter') {
+                continue; // an allowlist, only ever matched: its handlers read nothing
             }
             $where = "{$route['method']} {$route['path']} (line {$route['line']})";
             $handler = $route['handler'];

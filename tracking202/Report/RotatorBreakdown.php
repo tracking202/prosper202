@@ -8,6 +8,7 @@ use mysqli;
 use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 use Prosper202\DataEngine\UserPrefFilters;
+use Prosper202\Rotator\RuleOrder;
 
 /**
  * The figures of Overview › Rotator Breakdown: each of an account's
@@ -68,7 +69,7 @@ final class RotatorBreakdown
         $stmt = $this->conn->prepareRead(
             'SELECT ru.id, ru.rotator_id, ru.rule_name FROM 202_rotator_rules ru'
             . ' INNER JOIN 202_rotators ro ON ro.id = ru.rotator_id'
-            . ' WHERE ro.user_id = ? ORDER BY ru.id ASC'
+            . ' WHERE ro.user_id = ? ' . RuleOrder::orderBy('ru')
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $rulesByRotator = [];

@@ -308,10 +308,13 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
     $criteria_id = [];
     $criteria_added = [];
     $rules_added = [];
+    // The rules are tried in the order the page lists them (RuleOrder).
+    $position = 0;
 
     foreach ($_POST['data'] as $rule) {
         $redirects_ids = [];
         $redirect_changed = false;
+        $position++;
 
         $rule_name = $db->real_escape_string($rule['rule_name']);
         if ($rule['status'] == 'active') {$status = 1;} else {$status = 0;}
@@ -420,7 +423,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 					break;	
 			}*/
 
-            $rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."' WHERE id='".(int)$rule['rule_id']."'";
+            $rule_sql = "UPDATE 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."', position='".$position."' WHERE id='".(int)$rule['rule_id']."'";
             if (!$db->query($rule_sql)) {
                 record_mysql_error($rule_sql);
             }
@@ -500,7 +503,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
                 }
             }
         } else {
-            $rule_sql = "INSERT INTO 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."'";
+            $rule_sql = "INSERT INTO 202_rotator_rules SET rotator_id='".$rotator_id."', rule_name='".$rule_name."', splittest='".$splittest."', status='".$status."', position='".$position."'";
             if (!$db->query($rule_sql)) {
                 record_mysql_error($rule_sql);
             }
