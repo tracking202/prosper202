@@ -1610,39 +1610,47 @@ The ledger's click lock read the click's values with the locking read itself,
 which answers the row as it is. Re-click crediting split it: lock the first
 row, then a plain `SELECT` of the latest visit. Under REPEATABLE READ a plain
 read answers from the transaction's snapshot, which begins at its first plain
-read, not at the lock or at `BEGIN` (measured: neither a locking read nor an
-INSERT starts one). A caller that read first (a delete reads the conversion
-to find its click, the goals engine its own rows) read the click as it was
-before a re-click committed while it waited, and valued the conversion under
-the previous visit's campaign (found by review, reproduced with two
-connections). A transaction whose first statement is the lock needs nothing:
-`clickTransaction()` opens the transaction itself and locks first, and
-`record()`, the re-click and the backfills take it. `lockClick()`, for a
-transaction that read before, reads with share locks.
+read, not at the lock or at `BEGIN` (measured on MariaDB 10.11: neither a
+locking read, an INSERT, an `INSERT … SELECT` nor a SELECT naming no table
+starts one). A caller that read first (a delete reads the conversion to find
+its click, the goals engine its own rows) read the click as it was before a
+re-click committed while it waited, and valued the conversion under the
+previous visit's campaign (found by review, reproduced with two connections).
 
-A locking read locks whatever its plan scans, so measure it on the path it
-runs on. On re-clicks the share locks held the gaps two re-clicks insert
-into: 468 of 1,200 visits were lost to deadlocks, against 0 to 3 without.
-The lead read's plan went through the `click_lead` index, whose share lock
-covered every lead in the partition, and two recomputes setting `click_lead`
-deadlocked (it names `FORCE INDEX (click_id)`). And a join locks the joined
-table too: on a click with no route row the share lock held
-`202_clicks_rotator`'s gap, and on a click newer than every redirector click
-each new redirector click's route waited for the conversion's commit (found
-by review); the route is read only for two visits in one second.
-`ReClickedConversionIntegrationTest` fails on each.
+The first fix read the click with share locks, which made that one read
+current and left every other read after the lock as stale as before: the
+conversions the recompute reads (`loadRows()`; the click was left
+`click_lead = 0` under a counted $9 sale), the reversals a delete voids (left
+standing, a $10 refund of a sale that is gone), the revenue generation a void
+is keyed by (a revived conversion's void was dropped as a repeat, and the
+customer kept $10 of a deleted conversion), and the lead `ensureManaged()`
+carries in (a second baseline, and the delete failed on the duplicate key).
+Locking one read is a fix for one read. What makes every read after a lock
+current is a snapshot younger than the lock, so the lock comes before the
+transaction's first plain read: the delete finds its click before its
+transaction begins, the goals engine and the install paths lock the install
+row and then the click first, and the install settlers read their key
+outside. `Connection` notes each transaction's first plain read
+(`snapshotTaken()`), and `lockClick()` refuses a click asked for after it and
+reads a click locked first again without a second lock.
+`LedgerReadsAfterTheLockIntegrationTest` holds a click's lock, writes, and has
+a child process delete while it waits: each of the four failed against the
+code before.
 
-The reads after `lockClick()` in those same transactions are plain, older
-than 1.9.78, and stale the same way, each measured by review with two
-connections: the conversions the recompute reads (`loadRows()`; the click
-was left `click_lead = 0` under a counted $9 sale), the reversals a delete
-voids (the reversal was left unvoided: the customer's total came out 0 where
-the same steps without the wait gave 10), the revenue generation a void is
-keyed by (a revived conversion's void was swallowed, and the customer kept
-$10 and an order for a deleted conversion), and the lead
-`ensureManaged()` carries in (a second baseline row, and the delete failed
-on the duplicate key). Before relying on "the reads after the lock see what
-it holds", find the transaction's first read, not the lock.
+The share locks were their own lesson: a locking read locks whatever its plan
+scans. On re-clicks they held the gaps two re-clicks insert into (468 of 1,200
+visits lost to deadlocks, against 0 to 3 without); the lead read's plan went
+through the `click_lead` index, whose lock covered every lead in the
+partition; and a join to `202_clicks_rotator` held its gap on a click with no
+route row, so every new redirector click's route waited for the conversion's
+commit. Measure a locking read on the path it runs on, joins included.
+
+What the refusal does not see: a statement run on the raw handle
+(`writeConnection()`), which Connection never classifies; a lock other than a
+click's, where "lock, then read" needs the same question asked by hand; and a
+SELECT the server answers without a snapshot (information_schema on MariaDB),
+which it counts as one, the loud direction. Before relying on "the reads after
+the lock see what it holds", find the transaction's first read, not the lock.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
