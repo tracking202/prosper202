@@ -4428,6 +4428,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // 202_google gains gbraid, wbraid and ttclid (Prosper202\Click\ClickRecord).
+                \Prosper202\Database\Tables\TrackingTables::google(),
             ]);
 
             if ($step_ok) {
@@ -4438,8 +4440,8 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables could not be reconciled, or the re-click'
-                    . ' backfill marked; leaving version at 1.9.78 so the next run retries.');
+                error_log('Prosper202 upgrade: the re-click tables or 202_google could not be reconciled, or the'
+                    . ' re-click backfill marked; leaving version at 1.9.78 so the next run retries.');
             }
         }
 

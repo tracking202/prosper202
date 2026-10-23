@@ -27,8 +27,18 @@ final class ClickUrlTokensInstanceTest extends TestCase
     private const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
         . 'Chrome/120.0 Safari/537.36';
     private const TOKENS = [
-        'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'utm_source', 'utm_term',
+        'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'utm_source', 'utm_term',
         'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout', 'sourceid',
+    ];
+
+    /** Google's iOS click ids and TikTok's, the lengths of real ones (34, 87 and 313 characters). */
+    private const AD_CLICK_IDS = [
+        'gbraid' => '0AAAAAgbraid-Shape_0123456789abcde',
+        'wbraid' => 'Cj8KCQwbraid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345',
+        'ttclid' => 'E.C.P.CrsB' . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012',
     ];
 
     private static string $base = '';
@@ -114,15 +124,20 @@ final class ClickUrlTokensInstanceTest extends TestCase
         $tokens = self::click('tracking202/redirect/dl.php', self::$direct, [
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
             'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
-        ]);
+        ] + self::AD_CLICK_IDS);
 
         $geo = array_intersect_key($tokens, array_flip(['country', 'country_code', 'region', 'city']));
         self::assertSame([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
-            'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
+            'gclid' => "G-$run", ...self::AD_CLICK_IDS, 'utm_source' => 'src1', 'utm_term' => 'term 1',
             'cpc' => '0.37', 'cpc2' => '0.37000', 'cpa' => '', 'payout' => '2.75',
             'sourceid' => (string) self::$account,
         ], array_diff_key($tokens, array_flip(['subid', 'country', 'country_code', 'region', 'city'])));
+        self::assertSame(
+            ['gclid' => "G-$run", ...self::AD_CLICK_IDS],
+            array_intersect_key(self::clickRow($tokens['subid']), ['gclid' => 1] + self::AD_CLICK_IDS),
+            'and the click keeps them'
+        );
 
         // The geo tokens are what the click was stored with.
         $click = self::clickRow($tokens['subid']);
@@ -169,11 +184,11 @@ final class ClickUrlTokensInstanceTest extends TestCase
         $tokens = self::simpleLandingPage([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
             'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
-        ]);
+        ] + self::AD_CLICK_IDS);
 
         self::assertSame([
             't202kw' => "kw $run", 'c1' => "O'Brien", 'c2' => 'two', 'c3' => 'a&b', 'c4' => "c4 $run",
-            'gclid' => "G-$run", 'utm_source' => 'src1', 'utm_term' => 'term 1',
+            'gclid' => "G-$run", ...self::AD_CLICK_IDS, 'utm_source' => 'src1', 'utm_term' => 'term 1',
             'cpc' => '0.37', 'cpc2' => '0.37000', 'cpa' => '', 'payout' => '2.75',
             'sourceid' => (string) self::$account,
         ], array_diff_key($tokens, array_flip(['subid', 'country', 'country_code', 'region', 'city'])));
@@ -183,6 +198,40 @@ final class ClickUrlTokensInstanceTest extends TestCase
             [$tokens['country'], $tokens['country_code'], $tokens['region'], $tokens['city']]
         );
         self::assertSame(1, $click['click_out'], 'pci.php marks the click as gone to the offer');
+    }
+
+    /**
+     * An advanced landing page's click keeps the ad click ids its script
+     * sent, and its offer link (off.php) reads them back from the click's
+     * rows. A redirector records none of them, as it records no UTM values.
+     */
+    public function testAnAdvancedPagesOfferLinkReadsTheIdsBackAndARedirectorKeepsNone(): void
+    {
+        $ids = ['gclid' => 'G-' . self::$run] + self::AD_CLICK_IDS;
+        $advanced = (string) (self::createRow('landing-pages', [
+            'landing_page_nickname' => self::$run . ' advanced ids', 'landing_page_url' => 'https://lp.example/ids',
+            'aff_campaign_id' => self::$campaign, 'landing_page_type' => 1,
+        ])['landing_page_id_public'] ?? '');
+        self::assertNotSame('', $advanced, 'the landing page create answered a landing_page_id_public');
+        $click = self::clickRow(self::advancedLandingPage($advanced, self::$direct, $ids));
+        self::assertSame($ids, array_intersect_key($click, $ids), 'the advanced page\'s click keeps them');
+
+        [$status, , $answer] = self::request(self::$base . '/api/v3/campaigns/' . self::$campaign, [
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . self::$key],
+        ]);
+        self::assertSame(200, $status, $answer);
+        $acip = (string) (json_decode($answer, true)['data']['aff_campaign_id_public'] ?? '');
+        [$status, $headers, $body] = self::request(
+            self::$base . '/tracking202/redirect/off.php?' . http_build_query([
+                'acip' => $acip, 'pci' => (string) $click['click_id_public'],
+            ]),
+            [CURLOPT_USERAGENT => self::UA]
+        );
+        self::assertSame(302, $status, $headers . $body);
+        self::assertSame($ids, array_intersect_key(self::tokens($headers), $ids), 'read back for the offer URL');
+
+        $viaRotator = self::clickRow(self::click('tracking202/redirect/rtr.php', self::$viaRotator, $ids)['subid']);
+        self::assertSame(array_fill_keys(array_keys($ids), null), array_intersect_key($viaRotator, $ids));
     }
 
     /**
@@ -359,10 +408,13 @@ final class ClickUrlTokensInstanceTest extends TestCase
         self::assertSame(1, preg_match('/^Location: (.+?)\r?$/mi', $headers, $location), $headers);
         self::assertStringStartsWith('https://offer.example/' . self::$run . '?', $location[1]);
 
+        // The first of a name is the offer URL's own token: a direct link and a
+        // redirector then pass on the visit's query as sent, gbraid, wbraid and
+        // ttclid among it, which would read as the token filled.
         $tokens = [];
         foreach (explode('&', (string) parse_url($location[1], PHP_URL_QUERY)) as $pair) {
             [$name, $value] = explode('=', $pair, 2) + [1 => ''];
-            $tokens[$name] = rawurldecode($value);
+            $tokens[$name] ??= rawurldecode($value);
         }
         self::assertSame(self::TOKENS, array_keys($tokens), $location[1]);
         self::assertMatchesRegularExpression('/^[1-9][0-9]*$/', $tokens['subid'], $location[1]);

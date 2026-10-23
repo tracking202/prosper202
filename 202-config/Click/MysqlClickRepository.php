@@ -78,15 +78,7 @@ final class MysqlClickRepository implements ClickRepositoryInterface
                     'ii',
                     [$click->clickId, $click->variableSetId]
                 );
-                $this->write(
-                    'INSERT INTO 202_google (click_id, gclid, utm_source_id, utm_medium_id, utm_campaign_id,'
-                        . ' utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    'isiiiii',
-                    [
-                        $click->clickId, $click->gclid, $click->utmSourceId, $click->utmMediumId,
-                        $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
-                    ]
-                );
+                $this->writeGoogleRow($click);
             }
             if ($click->rotator !== null) {
                 $this->write(
@@ -680,6 +672,52 @@ final class MysqlClickRepository implements ClickRepositoryInterface
             error_log('p202 re-click: click ' . $clickId . ' was re-clicked before the 1.9.79 upgrade created '
                 . TableRegistry::CLICK_LATEST_VISITS . '; its visit is stored, and the upgrade\'s backfill records'
                 . ' which visit is its latest. Until then the reports count it at each visit. Run the upgrade.');
+        }
+    }
+
+    /**
+     * The click's ad click ids and UTM values, or, while the 1.9.79 upgrade
+     * has not added gbraid, wbraid and ttclid (AdClickIdColumns), the row
+     * without them: dl.php and the landing pages do not ask whether the
+     * database is upgraded either. A statement the server will not prepare
+     * changes nothing, so the transaction stands and the row is written
+     * after; a click that came with one of the ids says in the log that it
+     * was not kept. Any other failure fails the click.
+     */
+    private function writeGoogleRow(ClickRecord $click): void
+    {
+        try {
+            $this->write(
+                'INSERT INTO 202_google (click_id, gclid, gbraid, wbraid, ttclid, utm_source_id, utm_medium_id,'
+                    . ' utm_campaign_id, utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'issssiiiii',
+                [
+                    $click->clickId, $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid,
+                    $click->utmSourceId, $click->utmMediumId, $click->utmCampaignId, $click->utmTermId,
+                    $click->utmContentId,
+                ]
+            );
+        } catch (\RuntimeException $e) {
+            if (!AdClickIdColumns::missing($e)) {
+                throw $e;
+            }
+            $dropped = array_keys(array_filter(
+                ['gbraid' => $click->gbraid, 'wbraid' => $click->wbraid, 'ttclid' => $click->ttclid],
+                static fn (string $id): bool => $id !== ''
+            ));
+            if ($dropped !== []) {
+                error_log('p202 click: click ' . $click->clickId . ' is stored without the ' . implode(', ', $dropped)
+                    . ' it came with: the 1.9.79 upgrade has not added the 202_google columns yet. Run the upgrade.');
+            }
+            $this->write(
+                'INSERT INTO 202_google (click_id, gclid, utm_source_id, utm_medium_id, utm_campaign_id,'
+                    . ' utm_term_id, utm_content_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'isiiiii',
+                [
+                    $click->clickId, $click->gclid, $click->utmSourceId, $click->utmMediumId,
+                    $click->utmCampaignId, $click->utmTermId, $click->utmContentId,
+                ]
+            );
         }
     }
 

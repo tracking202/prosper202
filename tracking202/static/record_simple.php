@@ -14,26 +14,29 @@ $locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
 $_GET += [
-	't202id' => '',
-	't202b' => '',
-	't202kw' => '',
-	't202ref' => '',
-	'OVKEY' => '',
-	'OVRAW' => '',
-	'target_passthrough' => '',
-	'keyword' => '',
-	'gclid' => '',
-	'c1' => '',
-	'c2' => '',
-	'c3' => '',
-	'c4' => '',
-	'utm_source' => '',
-	'utm_medium' => '',
-	'utm_campaign' => '',
-	'utm_term' => '',
-	'utm_content' => '',
-	'referer' => '',
-	'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+    't202id' => '',
+    't202b' => '',
+    't202kw' => '',
+    't202ref' => '',
+    'OVKEY' => '',
+    'OVRAW' => '',
+    'target_passthrough' => '',
+    'keyword' => '',
+    'gclid' => '',
+    'gbraid' => '',
+    'wbraid' => '',
+    'ttclid' => '',
+    'c1' => '',
+    'c2' => '',
+    'c3' => '',
+    'c4' => '',
+    'utm_source' => '',
+    'utm_medium' => '',
+    'utm_campaign' => '',
+    'utm_term' => '',
+    'utm_content' => '',
+    'referer' => '',
+    'ua' => $_SERVER['HTTP_USER_AGENT'] ?? '',
 ];
 
 // The landing page and its campaign, when the campaign is the page's account's.
@@ -116,9 +119,12 @@ $keyword = ClickRequest::keyword($_GET, $referer_query, $user_row['user_keyword_
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
-// Raw: the writer binds it, so an escaped value was stored with its backslashes.
-$gclid = ClickRequest::text($_GET, 'gclid');
-$mysql['gclid'] = $gclid;
+// The ad platforms' click ids (gclid, gbraid, wbraid, ttclid). Raw: the
+// writer binds them, so an escaped value was stored with its backslashes.
+$adClickIds = ClickRequest::adClickIds($_GET);
+foreach ($adClickIds as $adClickIdName => $adClickId) {
+    $mysql[$adClickIdName] = $adClickId;
+}
 
 $c1 = ClickRequest::text($_GET, 'c1');
 $c1 = str_replace('%20', ' ', $c1);
@@ -354,7 +360,7 @@ $redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $clic
     'c2' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c2),
     'c3' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c3),
     'c4' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($c4),
-    'gclid' => ClickRecord::storedGclid($gclid),
+    ...ClickRecord::storedAdClickIds($adClickIds),
     'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
     'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),
     'utm_campaign' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_campaign),
