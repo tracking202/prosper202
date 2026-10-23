@@ -16,7 +16,10 @@ use Prosper202\Database\Tables\ClickTables;
  * nothing said the upgrade was the remedy. Served by `php -S` over the
  * scratch database: while the schema is behind the code such a failure is a
  * 503 naming the upgrade; with the schema current the same failure claims
- * no cause, and a read that works is untouched.
+ * no cause, and a read that works is untouched. So does every 5xx answered
+ * outside the dispatcher's last catch: the key's roles (an AuthException),
+ * the Android install intake (pre-auth, its own catch) and the Apple
+ * postback receiver (its own entry point).
  *
  * @group integration
  */
@@ -26,11 +29,17 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
 
     private const USER = 3962;
     private const BEHIND = '1.9.55';
+    /** The tables the failures below take away, each for one request. */
+    private const BROKEN = ['202_roles', '202_app_registrations'];
+    /** Stands for the seeded API key in a header a data provider writes. */
+    private const KEY = '{key}';
 
-    /** @var resource|null */
-    private static $server = null;
-    private static string $base = '';
+    /** @var list<resource> */
+    private static array $servers = [];
+    /** @var array<string, string> base URL by mysqli report mode */
+    private static array $base = [];
     private static string $log = '';
+    private static string $prepend = '';
     private static string $key = '';
     private static ?string $stored = null;
 
@@ -56,18 +65,31 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
         }
         self::seed();
 
+        self::$log = (string) tempnam(sys_get_temp_dir(), 'p202srv');
+        // PHP's default report mode throws on a failed statement; with it
+        // off, a failed prepare is a false each caller turns into its own
+        // exception (Auth's is an AuthException), so both are served.
+        self::$prepend = (string) tempnam(sys_get_temp_dir(), 'p202off');
+        file_put_contents(self::$prepend, '<?php mysqli_report(MYSQLI_REPORT_OFF);');
+        self::$base['strict'] = self::serve($root, []);
+        self::$base['off'] = self::serve($root, ['-d', 'auto_prepend_file=' . self::$prepend]);
+    }
+
+    /** @param list<string> $ini */
+    private static function serve(string $root, array $ini): string
+    {
         $probe = stream_socket_server('tcp://127.0.0.1:0');
         $name = (string) stream_socket_get_name($probe, false);
         $port = (int) substr($name, strrpos($name, ':') + 1);
         fclose($probe);
-        self::$log = (string) tempnam(sys_get_temp_dir(), 'p202srv');
-        self::$server = proc_open(
-            [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . self::$log,
+        $server = proc_open(
+            [PHP_BINARY, '-d', 'display_errors=0', '-d', 'log_errors=1', '-d', 'error_log=' . self::$log, ...$ini,
                 '-S', "127.0.0.1:$port", '-t', $root],
             [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
             $pipes
         );
-        self::$base = "http://127.0.0.1:$port";
+        self::assertIsResource($server);
+        self::$servers[] = $server;
         for ($i = 0; $i < 50; $i++) {
             $socket = @fsockopen('127.0.0.1', $port);
             if ($socket !== false) {
@@ -76,16 +98,29 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
             }
             usleep(100000);
         }
+
+        return "http://127.0.0.1:$port";
     }
 
     public static function tearDownAfterClass(): void
     {
-        if (is_resource(self::$server)) {
-            proc_terminate(self::$server);
-            proc_close(self::$server);
+        if (self::$db !== null) {
+            foreach (self::BROKEN as $table) {
+                $moved = self::$db->query("SHOW TABLES LIKE '{$table}\\_window'");
+                if ($moved instanceof \mysqli_result && $moved->num_rows > 0) {
+                    self::q("RENAME TABLE {$table}_window TO $table");
+                }
+            }
         }
-        if (self::$log !== '') {
-            @unlink(self::$log);
+        foreach (self::$servers as $server) {
+            proc_terminate($server);
+            proc_close($server);
+        }
+        self::$servers = [];
+        foreach ([self::$log, self::$prepend] as $file) {
+            if ($file !== '') {
+                @unlink($file);
+            }
         }
         if (self::$db !== null) {
             self::q(ClickTables::clickLatestVisits()->createStatement);
@@ -124,17 +159,105 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
     /** @return array{0: int, 1: array<string, mixed>} status, decoded body */
     private static function get(string $path, bool $bearer = true): array
     {
-        $ch = curl_init(self::$base . $path);
-        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20,
-            CURLOPT_HTTPHEADER => $bearer ? ['Authorization: Bearer ' . self::$key] : []]);
-        $body = (string) curl_exec($ch);
+        [$status, $body] = self::request('GET', $path, $bearer ? ['Authorization: Bearer ' . self::$key] : []);
+
+        return [$status, $body];
+    }
+
+    /**
+     * @param list<string> $headers
+     * @return array{0: int, 1: array<string, mixed>, 2: string} status, decoded body, Retry-After
+     */
+    private static function request(
+        string $method,
+        string $path,
+        array $headers,
+        ?string $body = null,
+        string $mode = 'strict'
+    ): array {
+        $retryAfter = '';
+        $ch = curl_init(self::$base[$mode] . $path);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$retryAfter): int {
+                if (stripos($line, 'Retry-After:') === 0) {
+                    $retryAfter = trim(substr($line, strlen('Retry-After:')));
+                }
+
+                return strlen($line);
+            }]);
+        if ($body !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        }
+        $answer = (string) curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        $decoded = json_decode($body, true);
+        $decoded = json_decode($answer, true);
         $log = (string) @file_get_contents(self::$log);
-        self::assertIsArray($decoded, $path . ': ' . $body . "\nserver log:\n" . $log);
+        self::assertIsArray($decoded, $method . ' ' . $path . ': ' . $answer . "\nserver log:\n" . $log);
 
-        return [$status, $decoded];
+        return [$status, $decoded, $retryAfter];
+    }
+
+    /**
+     * Each request answers a 500 outside the dispatcher's last catch while
+     * $table is away, under each report mode, with the message it gives when
+     * the schema is current. With the mode off, the key's roles fail as an
+     * AuthException; under PHP's default the failed statement throws, as
+     * any other does.
+     *
+     * @return array<string, array{0: string, 1: string, 2: string, 3: string, 4: list<string>, 5: string, 6: string}>
+     */
+    public static function failuresOutsideTheDispatcher(): array
+    {
+        $postback = json_encode([
+            'version' => '4.0', 'ad-network-id' => 'example123.skadnetwork', 'source-identifier' => '5239',
+            'app-id' => 525463029, 'transaction-id' => '6aafb7a5-0170-41b5-bbe4-fe71dedf1e28', 'redownload' => false,
+            'fidelity-type' => 1, 'did-win' => true, 'conversion-value' => 63, 'postback-sequence-index' => 0,
+            'attribution-signature' => 'MEUCIQ==',
+        ], JSON_THROW_ON_ERROR);
+        $install = 'The install could not be recorded; retry later';
+        $cases = [
+            'the key\'s roles' => ['202_roles', 'GET', '/api/v3/campaigns', ['Authorization: Bearer ' . self::KEY], '',
+                ['strict' => 'Internal server error', 'off' => 'Authorization unavailable']],
+            'the Android install intake' => ['202_app_registrations', 'POST', '/api/v3/apps/installs',
+                ['X-P202-App-Token: ' . str_repeat('ab', 32), 'Content-Type: application/json'], '{}',
+                ['strict' => $install, 'off' => $install]],
+            'the Apple postback receiver' => [
+                '202_app_registrations', 'POST', '/.well-known/skadnetwork/report-attribution/index.php',
+                ['Content-Type: application/json'], $postback,
+                ['strict' => 'Failed to store postback', 'off' => 'Failed to store postback']],
+        ];
+        $out = [];
+        foreach ($cases as $name => [$table, $method, $path, $headers, $body, $messages]) {
+            foreach ($messages as $mode => $message) {
+                $out["$name, report mode $mode"] = [$mode, $table, $method, $path, $headers, $body, $message];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param list<string> $headers
+     * @return array{0: int, 1: array<string, mixed>, 2: string}
+     */
+    private static function without(
+        string $mode,
+        string $table,
+        string $method,
+        string $path,
+        array $headers,
+        string $body
+    ): array {
+        self::assertContains($table, self::BROKEN);
+        $headers = str_replace(self::KEY, self::$key, $headers);
+        self::q("RENAME TABLE $table TO {$table}_window");
+        try {
+            return self::request($method, $path, $headers, $method === 'GET' ? null : $body, $mode);
+        } finally {
+            self::q("RENAME TABLE {$table}_window TO $table");
+        }
     }
 
     private static function legacyReport(): array
@@ -168,6 +291,36 @@ final class UpgradePendingAnswerServedIntegrationTest extends TestCase
 
         [$status] = self::get('/api/v3/campaigns');
         self::assertSame(200, $status, 'a read the schema does not decide still answers');
+    }
+
+    /**
+     * @dataProvider failuresOutsideTheDispatcher
+     * @param list<string> $headers
+     */
+    public function testAFailureOutsideTheDispatcherNamesTheUpgradeToo(
+        string $mode,
+        string $table,
+        string $method,
+        string $path,
+        array $headers,
+        string $body,
+        string $message
+    ): void {
+        self::requireScratch();
+        self::deployedOver(self::BEHIND);
+        $sentence = 'the database needs an upgrade: its schema is version ' . self::BEHIND
+            . ' and this code is version ' . PROSPER202_VERSION
+            . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
+
+        [$status, $answer, $retryAfter] = self::without($mode, $table, $method, $path, $headers, $body);
+        self::assertSame([503, $sentence], [$status, $answer['message'] ?? null]);
+        if ($path === '/api/v3/apps/installs') {
+            self::assertSame('300', $retryAfter, 'the SDK waits as for the intake\'s other 503s');
+        }
+
+        self::deployedOver(PROSPER202_VERSION);
+        [$status, $answer] = self::without($mode, $table, $method, $path, $headers, $body);
+        self::assertSame([500, $message], [$status, $answer['message'] ?? null]);
     }
 
     public function testTheSameFailureWithTheSchemaCurrentClaimsNoCause(): void

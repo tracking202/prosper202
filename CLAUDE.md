@@ -1614,9 +1614,16 @@ A read converges by itself, and still has to say why it failed. The API's
 report reads of the new table answered 500 "Internal server error" in the
 window, the legacy reports "Database error", and `/system/health` answered
 healthy (measured: four v3 routes and the legacy reports; the click and
-conversion paths queued and lost nothing). Any 5xx while the schema is not
-the code's version now answers 503 naming the upgrade
-(`SchemaVersion::pendingUpgrade()`, `UpgradePendingAnswerServedIntegrationTest`).
+conversion paths queued and lost nothing). A failure that would answer a
+bare 5xx while the schema is not the code's version now answers 503 naming
+the upgrade (`Bootstrap::pendingUpgrade()`,
+`UpgradePendingAnswerServedIntegrationTest`). The first draft put that in
+the dispatcher's last catches and called it every 5xx: the Android intake,
+the Apple receiver and an `AuthException` answered from ways out of their
+own (found by review). A claim about every answer is a list of the ways
+out, read from the code: `ServerFailureAnswersAreListedTest` lists each
+answer that can be a 5xx with what it says in the window, and a committed
+write keeps its 500 (#13).
 The walk the upgrade starts has the same question one level down: a click
 whose repair always fails held back every click after it, for good (#24's
 batch); one that has failed for an hour of runs is stepped over, counted

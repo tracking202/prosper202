@@ -280,7 +280,8 @@ plausible postback silently:
   work. The report already excludes them from headline metrics by default
   (see Report below); the postback *list* shows every row, filterable with
   `signature=valid|invalid|unverifiable`.
-- Database outages answer `503`/`500` so the device retries later; a
+- Database outages answer `503`/`500` so the device retries later (a
+  failure while the database needs an upgrade is a `503` naming it); a
   per-peer rate limit (600/min per TCP peer address — never a forwarded
   header, fail-open if the limiter itself breaks) answers `429` with
   `Retry-After`. A method other than GET or POST is `405`, and a body that

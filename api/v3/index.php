@@ -105,7 +105,14 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
         // Nothing was committed (every write is one transaction that rolled
         // back), so a 5xx is the truthful answer and the SDK's retry is safe.
         error_log('p202 android intake: ' . $androidError->getMessage());
-        Bootstrap::errorResponse('The install could not be recorded; retry later', 500);
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            header('Retry-After: 300');
+        }
+        Bootstrap::errorResponse(
+            $pending ?? 'The install could not be recorded; retry later',
+            $pending !== null ? 503 : 500
+        );
         exit;
     }
     foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
@@ -1615,7 +1622,16 @@ try {
     }
 
 } catch (AuthException $e) {
-    Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
+    $code = $e->getCode() ?: 401;
+    $message = $e->getMessage();
+    if ($code >= 500) {
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            [$message, $code] = [$pending, 503];
+        }
+    }
+    Bootstrap::errorResponse($message, $code);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
@@ -1629,29 +1645,17 @@ try {
     if ($code >= 500) {
         // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
-        $pending = p202ApiPendingUpgrade($db);
+        $pending = Bootstrap::pendingUpgrade($db);
         [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
     }
     Bootstrap::errorResponse($message, $code);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
-    $pending = p202ApiPendingUpgrade($db);
+    $pending = Bootstrap::pendingUpgrade($db);
     Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────
-/**
- * The answer to a failure while the database's schema is not this code's
- * version (the files deployed, the upgrade not run): the schema is the likely
- * cause, and /system/health still answers healthy. Null otherwise.
- */
-function p202ApiPendingUpgrade(\mysqli $db): ?string
-{
-    require_once dirname(__DIR__, 2) . '/202-config/version.php';
-
-    return \Prosper202\Database\SchemaVersion::pendingUpgrade($db, PROSPER202_VERSION);
-}
-
 /**
  * Execute a side-effect on an object and return null (for DELETE handlers).
  */

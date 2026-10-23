@@ -4,7 +4,7 @@
     "logs": [
       "Changed: A visitor who comes back through a redirector link (a re-click) is counted once in every report, under the visit they made last, with the traffic source and cost of their first visit, and a conversion is credited to that last visit. Update CPC chooses such a click by its first visit and sets the cost of every visit",
       "Changed: After the upgrade, the cron job brings the clicks re-clicked before 1.9.79 to one visit each, a little every minute; until it reaches one, the reports count it at each of its visits. Keep the cron job running. A click it cannot bring over is named in p202 system dataengine; after an hour of failed tries it is skipped, and still counted at each of its visits",
-      "Changed: Between installing the files of a new version and running its upgrade, an API request that fails says the database needs an upgrade and where to run it (a 503), instead of a bare server error; so do the legacy v1 and v2 reports"
+      "Changed: Between installing the files of a new version and running its upgrade, an API request that fails says the database needs an upgrade and where to run it (a 503), instead of a bare server error; so do the legacy v1 and v2 reports, the Android install intake and the Apple postback endpoints"
     ]
   },
   "1.9.78": {
