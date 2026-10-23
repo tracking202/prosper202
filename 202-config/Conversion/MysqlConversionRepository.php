@@ -227,7 +227,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      *
      * Lock order: the caller may hold its own locks, but must take them before
      * this call locks the click and never lock anything after it that another
-     * record() path locks before the click.
+     * record() path locks before the click. The click's lock comes before the
+     * transaction's first plain read, or it is refused
+     * (MysqlConversionLedger::lockClick()).
      *
      * @param array<string, mixed> $data as record()
      * @return array<string, mixed> as record(), plus '_prepared' for afterRecordCommit()
@@ -731,7 +733,20 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      */
     public function softDelete(int $id, int $userId): void
     {
-        $work = fn (): ?int => $this->softDeleteLocked($id, $userId);
+        // The click is found before the transaction, so its lock is the
+        // transaction's first statement and what it reads after is current
+        // (MysqlConversionLedger::lockClick()). A conversion's click never
+        // changes; softDeleteLocked() checks it under the lock.
+        $find = $this->conn->prepareWrite(
+            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
+        );
+        $this->conn->bind($find, 'ii', [$id, $userId]);
+        $found = $this->conn->fetchOne($find);
+        if ($found === null) {
+            return;
+        }
+        $clickId = (int) $found['click_id'];
+        $work = fn (): ?int => $this->softDeleteLocked($id, $userId, $clickId);
 
         try {
             $touched = $this->conn->transaction($work);
@@ -744,17 +759,6 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         if ($touched !== null) {
             $this->refreshReportRollup($touched);
         }
-    }
-
-    /**
-     * softDelete() inside a transaction the caller holds (see
-     * recordInTransaction() for why and for the lock order). Returns the
-     * click whose value changed, or null when nothing was deleted; once the
-     * caller has committed, it hands that to refreshClickReport().
-     */
-    public function softDeleteInTransaction(int $id, int $userId): ?int
-    {
-        return $this->conn->joinTransaction(fn (): ?int => $this->softDeleteLocked($id, $userId));
     }
 
     /**
@@ -777,9 +781,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
         }
 
         return $this->conn->joinTransaction(function () use ($convId, $userId, $reason): ?int {
-            $this->assertGoalRow($convId, $userId);
+            $row = $this->assertGoalRow($convId, $userId);
 
-            return $this->softDeleteLocked($convId, $userId, $reason);
+            return $this->softDeleteLocked($convId, $userId, (int) $row['click_id'], $reason);
         });
     }
 
@@ -925,7 +929,7 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
 
     /**
      * Post-commit: refresh the report row of a click whose value a caller's
-     * committed transaction changed (softDeleteInTransaction(), or a goal
+     * committed transaction changed (retireGoalRowInTransaction(), or a goal
      * row superseded through MysqlConversionLedger).
      */
     public function refreshClickReport(int $clickId): void
@@ -934,31 +938,22 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
     }
 
     /**
+     * $clickId is the conversion's click, found by the caller: lock order is
+     * click, then conversion, on every path that writes both (record() locks
+     * the click first), and the click's lock comes before the transaction's
+     * first plain read.
+     *
      * @param SupersededReason|null $engineMark the goals engine's reason, written with the deletion
      *        (retireGoalRowInTransaction()); null for every other delete
      */
-    private function softDeleteLocked(int $id, int $userId, ?SupersededReason $engineMark = null): ?int
+    private function softDeleteLocked(int $id, int $userId, int $clickId, ?SupersededReason $engineMark = null): ?int
     {
         $ledger = new MysqlConversionLedger($this->conn);
-
-        // Lock order is click, then conversion, on every path that writes
-        // both (record() locks the click first), so find the click before
-        // taking any lock.
-        $findStmt = $this->conn->prepareWrite(
-            'SELECT click_id FROM 202_conversion_logs WHERE conv_id = ? AND user_id = ? LIMIT 1'
-        );
-        $this->conn->bind($findStmt, 'ii', [$id, $userId]);
-        $found = $this->conn->fetchOne($findStmt);
-        if ($found === null) {
-            return null;
-        }
-        $clickId = (int) $found['click_id'];
-
         $click = $ledger->lockClick($clickId);
 
         // Lock the conversion row so concurrent deletes serialize here.
         $convStmt = $this->conn->prepareWrite(
-            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs
+            'SELECT conv_id, click_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs
              WHERE conv_id = ? AND user_id = ? LIMIT 1 FOR UPDATE'
         );
         $this->conn->bind($convStmt, 'ii', [$id, $userId]);
@@ -967,6 +962,12 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
             // Missing or already deleted: nothing to do (matches the
             // historical silent-no-op semantics of this method).
             return null;
+        }
+        if ((int) $conv['click_id'] !== $clickId) {
+            throw new LedgerIntegrityException(
+                'conversion ' . $id . ' is click ' . (int) $conv['click_id'] . '\'s, not click ' . $clickId
+                    . '\'s, whose lock was taken for it'
+            );
         }
 
         if ($click !== null) {

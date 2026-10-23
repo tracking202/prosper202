@@ -189,7 +189,10 @@ final class LedgerReadsIntegrationTest extends TestCase
         $ids['106G2'] = $this->record(106, ['payout' => '2', 'source' => 'goal', 'source_ref' => SourceRef::goal(40, 2), 'dedupe_key' => 'goal:40:2:1:e3']);
         $conn = new Connection(self::$db);
         $conn->transaction(static function () use ($conn, $ids): void {
-            (new MysqlConversionLedger($conn))->supersedeGoalRow($ids['106G1'], $ids['106G2'], SupersededReason::REPLAY);
+            // As the goals engine does: the click's lock first in the transaction.
+            $ledger = new MysqlConversionLedger($conn);
+            $ledger->lockClick(106);
+            $ledger->supersedeGoalRow($ids['106G1'], $ids['106G2'], SupersededReason::REPLAY);
         });
 
         // 107: a pre-ledger lead no write has touched: its value is its cache.

@@ -8,7 +8,6 @@ use Api\V3\Controllers\ConversionsController;
 use Api\V3\Exception\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Tests\Support\FakeMysqliConnection;
 
 /**
@@ -38,15 +37,9 @@ final class ConversionCreateBodyValuesTest extends TestCase
     private static function clickVisit(FakeMysqliConnection $db, string $lock, array $rows): void
     {
         $db->whenQueryContainsReturnRows($lock, $rows);
-        // record() reads the click as clickTransaction() does, the other
-        // writers as lockClick() does.
+        // Every writer reads the click's latest visit after its lock
+        // (MysqlConversionLedger::lockClick()).
         $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
-        $db->whenQueryContainsReturnRows(
-            MysqlConversionLedger::lockedLeadSql(),
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
         $db->whenQueryContainsReturnRows(
             'AND c.click_lead = 1',
             array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))

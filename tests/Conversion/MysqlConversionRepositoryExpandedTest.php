@@ -6,7 +6,6 @@ namespace Tests\Conversion;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\LatestVisit;
-use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use RuntimeException;
@@ -39,15 +38,9 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
         array $rows
     ): void {
         $db->whenQueryContainsReturnRows($lock, $rows);
-        // record() reads the click as clickTransaction() does, the other
-        // writers as lockClick() does.
+        // Every writer reads the click's latest visit after its lock
+        // (MysqlConversionLedger::lockClick()).
         $db->whenQueryContainsReturnRows(LatestVisit::of('?'), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), $rows);
-        $db->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitSql(), $rows);
-        $db->whenQueryContainsReturnRows(
-            MysqlConversionLedger::lockedLeadSql(),
-            array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
-        );
         $db->whenQueryContainsReturnRows(
             'AND c.click_lead = 1',
             array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['click_lead'] ?? 0) === 1))
@@ -371,8 +364,8 @@ final class MysqlConversionRepositoryExpandedTest extends TestCase
             [['click_id' => 10]]
         );
         $write->whenQueryContainsReturnRows(
-            'SELECT conv_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
-            [['conv_id' => 5, 'customer_id' => null, 'deleted' => 0, 'reverses_conv_id' => null]]
+            'SELECT conv_id, click_id, customer_id, deleted, reverses_conv_id FROM 202_conversion_logs',
+            [['conv_id' => 5, 'click_id' => 10, 'customer_id' => null, 'deleted' => 0, 'reverses_conv_id' => null]]
         );
 
         $repo->softDelete(5, 1);
