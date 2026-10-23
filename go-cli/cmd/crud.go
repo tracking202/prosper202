@@ -72,6 +72,16 @@ type crudEntity struct {
 	PublicIDField string   // public-facing id field (e.g. aff_campaign_id_public)
 	URLFields     []string // URL fields `list --url-contains` searches; none means no such flag
 	StatsGroupBy  string   // reports/breakdown dimension `list --with-stats` merges by IDField; "" means no such flag
+	// Check refuses what the entity's Setup page refuses and the API takes.
+	// value(name) is the field as the record will hold it: the body's, else
+	// on an update the stored record's (read once, when first asked), else
+	// "". An update runs it only when the body sets one of CheckFields, so an
+	// edit of anything else is not refused for what the record already holds.
+	Check       func(value func(name string) (string, error)) error
+	CheckFields []string
+	// ExampleFields are optional fields the create example gives too (the
+	// link Check asks for).
+	ExampleFields []string
 }
 
 // resolvePublicID treats id as a public id and returns the matching internal id
@@ -532,7 +542,7 @@ func withIDSource(name, desc string) string {
 func crudCreateExample(entity crudEntity) string {
 	line := "  p202 " + entity.Name + " create"
 	for _, f := range entity.Fields {
-		if !f.Required {
+		if !f.Required && !containsString(entity.ExampleFields, f.Name) {
 			continue
 		}
 		value := "<" + strings.TrimPrefix(strings.TrimPrefix(f.Name, "aff_"), "ppc_") + ">"
@@ -587,6 +597,52 @@ func requireCRUDFields(entity crudEntity, body map[string]string) error {
 		hint = strings.Join(sources, "; ") + ". " + hint
 	}
 	return validationError("%s", msg).WithHint("%s", hint)
+}
+
+func bodySetsAny(body map[string]interface{}, names []string) bool {
+	for _, name := range names {
+		if _, ok := body[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// landingPageTypes are Setup › Landing Pages' two kinds of page: simple (0)
+// and advanced (1).
+var landingPageTypes = []string{"0", "1"}
+
+// textAdTypes are Setup › Text Ads' two kinds of ad: one a campaign's links
+// offer (0) and one an advanced landing page's links offer (1).
+var textAdTypes = []string{"0", "1"}
+
+// checkTextAdLink is Setup › Text Ads' rule: a campaign's ad names its
+// campaign, an advanced landing page's ad its page. The API takes 0 for
+// either link whatever the type, and Get Links never offers an ad that
+// names neither, so that ad was saved with a 201 and could not be used.
+func checkTextAdLink(value func(name string) (string, error)) error {
+	typ, err := value("text_ad_type")
+	if err != nil {
+		return err
+	}
+	field, refusal, hint := "aff_campaign_id",
+		"a campaign's text ad (--text-ad-type 0, the default) needs --aff-campaign-id, the campaign whose links offer it",
+		"Take the id from `p202 campaign list`. An advanced landing page's ad is --text-ad-type 1 with --landing-page-id instead."
+	if typ == "1" {
+		field, refusal, hint = "landing_page_id",
+			"an advanced landing page's text ad (--text-ad-type 1) needs --landing-page-id, the advanced landing page whose links offer it",
+			"Take the id of an advanced page (landing_page_type 1) from `p202 landing-page list`. A campaign's ad is --text-ad-type 0 with --aff-campaign-id instead."
+	}
+	id, err := value(field)
+	if err != nil {
+		return err
+	}
+	// A value that is not a whole number is the API's to refuse, naming it.
+	n, perr := strconv.Atoi(strings.TrimSpace(id))
+	if id == "" || (perr == nil && n == 0) {
+		return validationError("%s", refusal).WithHint("%s", hint)
+	}
+	return nil
 }
 
 func getLongHelp(entity crudEntity) string {
@@ -1090,6 +1146,11 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 					}
 				}
 			}
+			if entity.Check != nil {
+				if err := entity.Check(func(name string) (string, error) { return body[name], nil }); err != nil {
+					return err
+				}
+			}
 			c, err := api.NewFromConfig()
 			if err != nil {
 				return err
@@ -1150,8 +1211,48 @@ func registerCRUD(entity crudEntity) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := api.NewFromConfig()
-			if err != nil {
+			var c *api.Client
+			connect := func() (*api.Client, error) {
+				if c == nil {
+					var err error
+					if c, err = api.NewFromConfig(); err != nil {
+						return nil, err
+					}
+				}
+				return c, nil
+			}
+			if entity.Check != nil && bodySetsAny(body, entity.CheckFields) {
+				var stored map[string]interface{}
+				value := func(name string) (string, error) {
+					if v, ok := body[name]; ok {
+						s, _ := v.(string)
+						return s, nil
+					}
+					if stored == nil {
+						cl, err := connect()
+						if err != nil {
+							return "", err
+						}
+						data, err := cl.Get(entity.Endpoint+"/"+id, nil)
+						if err != nil {
+							return "", err
+						}
+						if stored, err = parseDataObject(data); err != nil {
+							return "", fmt.Errorf("reading %s %s: %w", entity.Name, id, err)
+						}
+					}
+					v, ok := stored[name]
+					if !ok {
+						// "" would read as "none" and decide the check.
+						return "", fmt.Errorf("%s %s as the API answered it has no %s, so this update cannot be checked", entity.Name, id, name)
+					}
+					return scalarString(v), nil
+				}
+				if err := entity.Check(value); err != nil {
+					return err
+				}
+			}
+			if _, err := connect(); err != nil {
 				return err
 			}
 			data, err := c.Put(entity.Endpoint+"/"+id, body)
@@ -1308,7 +1409,7 @@ var crudEntities = []crudEntity{
 			{Name: "aff_campaign_id", Desc: "Campaign ID (from `p202 campaign list`); 0 for an advanced landing page (--landing-page-type 1), which promotes several offers", Required: true},
 			{Name: "landing_page_nickname", Desc: "Landing page nickname", Required: true},
 			{Name: "leave_behind_page_url", Desc: "Leave-behind page URL", Clearable: true},
-			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff-campaign-id 0)"},
+			{Name: "landing_page_type", Desc: "Landing page type: 0 simple (one campaign), 1 advanced (several offers; --aff-campaign-id 0)", Enum: landingPageTypes},
 		},
 		ListParams: []crudField{
 			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
@@ -1319,17 +1420,20 @@ var crudEntities = []crudEntity{
 		Plural:   "text ads (ad creatives with headline, description, and display URL)",
 		Endpoint: "text-ads",
 		Fields: []crudField{
-			{Name: "text_ad_name", Desc: "Text ad name", Required: true},
-			{Name: "text_ad_headline", Desc: "Headline", Required: true},
-			{Name: "text_ad_description", Desc: "Description text", Required: true},
-			{Name: "text_ad_display_url", Desc: "Display URL", Required: true},
-			{Name: "aff_campaign_id", Desc: "Campaign ID"},
-			{Name: "landing_page_id", Desc: "Landing page ID"},
-			{Name: "text_ad_type", Desc: "Text ad type (integer)"},
+			{Name: "text_ad_name", Desc: "Text ad name, up to 100 characters", Required: true},
+			{Name: "text_ad_headline", Desc: "Headline, up to 100 characters", Required: true},
+			{Name: "text_ad_description", Desc: "Description text, up to 100 characters", Required: true},
+			{Name: "text_ad_display_url", Desc: "Display URL, up to 100 characters", Required: true},
+			{Name: "aff_campaign_id", Desc: "Campaign the ad is for (--text-ad-type 0)"},
+			{Name: "landing_page_id", Desc: "Advanced landing page the ad is for (--text-ad-type 1)"},
+			{Name: "text_ad_type", Desc: "0 a campaign's ad (default; needs --aff-campaign-id), 1 an advanced landing page's (needs --landing-page-id)", Enum: textAdTypes},
 		},
 		ListParams: []crudField{
 			{Name: "aff_campaign_id", QueryKey: "filter[aff_campaign_id]", Desc: "Filter by campaign ID"},
 		},
+		Check:         checkTextAdLink,
+		CheckFields:   []string{"text_ad_type", "aff_campaign_id", "landing_page_id"},
+		ExampleFields: []string{"aff_campaign_id"},
 	},
 	{
 		Name: "forecast-event",

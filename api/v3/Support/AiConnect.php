@@ -44,7 +44,7 @@ final class AiConnect
         'aff-networks', 'text-ads', 'rotators', 'clicks', 'conversions', 'staged-changes',
     ];
     public const WRITE_AREAS = [
-        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks',
+        'campaigns', 'trackers', 'landing-pages', 'ppc-networks', 'ppc-accounts', 'aff-networks', 'text-ads',
     ];
 
     /**

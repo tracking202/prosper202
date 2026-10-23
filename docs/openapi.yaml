@@ -11155,6 +11155,11 @@ components:
           type: integer
         text_ad_type:
           type: integer
+          description: >-
+            0 (the default) for a campaign's ad, which names its campaign in aff_campaign_id;
+            1 for an advanced landing page's ad, which names a page with landing_page_type 1 in
+            landing_page_id. A write naming a simple landing page for a type 1 ad is refused
+            with a 422 naming landing_page_id, as Get Links never offers such an ad.
         text_ad_deleted:
           type: integer
           readOnly: true
@@ -11184,6 +11189,11 @@ components:
           type: integer
         text_ad_type:
           type: integer
+          description: >-
+            0 (the default) for a campaign's ad, which names its campaign in aff_campaign_id;
+            1 for an advanced landing page's ad, which names a page with landing_page_type 1 in
+            landing_page_id. A write naming a simple landing page for a type 1 ad is refused
+            with a 422 naming landing_page_id, as Get Links never offers such an ad.
 
     TextAdUpdate:
       type: object
@@ -11206,6 +11216,11 @@ components:
           type: integer
         text_ad_type:
           type: integer
+          description: >-
+            0 (the default) for a campaign's ad, which names its campaign in aff_campaign_id;
+            1 for an advanced landing page's ad, which names a page with landing_page_type 1 in
+            landing_page_id. A write naming a simple landing page for a type 1 ad is refused
+            with a 422 naming landing_page_id, as Get Links never offers such an ad.
 
     TextAdResponse:
       type: object

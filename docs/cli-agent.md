@@ -786,10 +786,10 @@ hint names the new `tracker_id`: run `tracker get-url` for it, never
 | Flag | Create | Type |
 |------|--------|------|
 | `--landing-page-url` | (R) | string |
-| `--aff-campaign-id` | (R) | string |
+| `--aff-campaign-id` | (R) | string (`0` for an advanced page) |
 | `--landing-page-nickname` | (R) | string |
 | `--leave-behind-page-url` | optional | string (`update --leave-behind-page-url ""` clears it) |
-| `--landing-page-type` | optional | integer: 0 simple, 1 advanced |
+| `--landing-page-type` | optional | integer: 0 simple, 1 advanced (with `--aff-campaign-id 0`) |
 
 Landing page code (Setup > Get LP Code):
 
@@ -810,9 +810,13 @@ an advanced page `offers[]` (`position`, `type`, `id`, `public_id`, `name`,
 | `--text-ad-headline` | (R) | string |
 | `--text-ad-description` | (R) | string |
 | `--text-ad-display-url` | (R) | string |
-| `--aff-campaign-id` | optional | string |
-| `--landing-page-id` | optional | string |
-| `--text-ad-type` | optional | integer |
+| `--aff-campaign-id` | (R) for type 0 | string: the campaign the ad is for |
+| `--landing-page-id` | (R) for type 1 | string: the advanced landing page the ad is for |
+| `--text-ad-type` | optional | integer: 0 a campaign's ad (default), 1 an advanced landing page's |
+
+The type's link is refused when missing before any request (exit 1, naming the
+flag), on `create` and on an `update` that would leave the ad without it.
+`p202 tracker update <id> --text-ad-id <id>` puts an ad on a tracker.
 
 ### Clicks
 
@@ -1238,6 +1242,9 @@ claude mcp add prosper202 -- p202 mcp                # reads and writes
   (`https://mcp.tracking202.com/mcp`): the person approves the connection on
   their own install, signed in as their own user, and chooses read only,
   propose changes, or read and change. It needs Prosper202 1.9.78 on https.
+  The text ad writes (`text_ad_create`, `text_ad_update`, `text_ad_delete`)
+  need a connection approved on 1.9.79 or later; an older one answers 403
+  for them until it is connected again.
 
 If you are defining this CLI as a tool for an LLM some other way, here are
 recommendations:
