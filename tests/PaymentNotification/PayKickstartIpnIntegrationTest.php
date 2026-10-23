@@ -382,6 +382,45 @@ final class PayKickstartIpnIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * The files deployed, the upgrade not run: the keys' column is not there
+     * yet, and the answer names the upgrade rather than a bare failure.
+     */
+    public function testAFailureWhileTheUpgradeIsPendingNamesTheUpgrade(): void
+    {
+        $versions = array_column(
+            self::requireScratch()->query('SELECT version FROM 202_version')->fetch_all(MYSQLI_ASSOC),
+            'version'
+        );
+        self::q('DELETE FROM 202_version');
+        self::q("INSERT INTO 202_version SET version = '1.9.78'");
+        self::q('ALTER TABLE 202_users_pref CHANGE paykickstart_ipn_secret_keys pk_keys_not_yet text DEFAULT NULL');
+        try {
+            $outcome = $this->post(self::fields(), self::KEY_1);
+        } finally {
+            self::q('ALTER TABLE 202_users_pref CHANGE pk_keys_not_yet paykickstart_ipn_secret_keys text DEFAULT NULL');
+            self::q('DELETE FROM 202_version');
+            foreach ($versions as $version) {
+                self::q('INSERT INTO 202_version SET version = ' . self::str((string) $version));
+            }
+        }
+
+        self::assertOutcome(OutcomeKind::UPGRADE_PENDING, 503, $outcome);
+        self::assertStringStartsWith(
+            'Nothing was recorded: the database needs an upgrade: its schema is version 1.9.78',
+            $outcome->message
+        );
+        self::assertSame([], self::conversions());
+        // Once the schema is this code's, the same failure is a plain one.
+        self::q('ALTER TABLE 202_users_pref CHANGE paykickstart_ipn_secret_keys pk_keys_not_yet text DEFAULT NULL');
+        try {
+            $outcome = $this->post(self::fields(), self::KEY_1);
+        } finally {
+            self::q('ALTER TABLE 202_users_pref CHANGE pk_keys_not_yet paykickstart_ipn_secret_keys text DEFAULT NULL');
+        }
+        self::assertOutcome(OutcomeKind::FAILED, 500, $outcome);
+    }
+
     /** No adapter sends a currency yet; the processor refuses one it would have to convert. */
     public function testAnAmountInAnotherCurrencyIsRefused(): void
     {

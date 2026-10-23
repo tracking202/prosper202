@@ -30,6 +30,7 @@ final class Response
             OutcomeKind::UNSUPPORTED_BODY => 415,
             OutcomeKind::CURRENCY_MISMATCH => 422,
             OutcomeKind::FAILED => 500,
+            OutcomeKind::UPGRADE_PENDING => 503,
         };
     }
 

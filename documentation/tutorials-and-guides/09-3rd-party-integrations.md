@@ -51,6 +51,8 @@ What each IPN does, and what PayKickstart's IPN log shows for it:
 | a `custom_subid` that is not a click of the account | nothing | `404` |
 | a hash no stored key verifies | nothing | `403` |
 | a malformed field (an amount such as `1,000`, `custom_subid=[[subid]]`) | nothing | `400`, naming the field |
+| an IPN that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+| an IPN that could not be recorded just now | nothing that a retry would double: a transaction id is recorded once | `500` |
 
 Each IPN is logged in the server's error log in one line: the outcome, the
 event, the click, the transaction and the account, never a key or the

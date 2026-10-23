@@ -5,12 +5,17 @@ declare(strict_types=1);
 namespace Prosper202\PaymentNotification;
 
 use Prosper202\Database\Connection;
+use Prosper202\Database\SchemaVersion;
 
 /**
  * One notification endpoint's work, for any provider: refuse what is not
  * a POST, verify the request against every account's stored secrets before
  * anything reads it as a notification, process it, and log one line saying
  * what became of it. Nothing is written before the signature verifies.
+ *
+ * A failure while the files are deployed and the upgrade has not run says
+ * so (a 503 naming the upgrade), as the API's answers do: the older schema
+ * is the likely cause, and the provider's retry will land once it has run.
  */
 final class Receiver
 {
@@ -23,6 +28,14 @@ final class Receiver
     public function receive(InboundRequest $request): Outcome
     {
         [$outcome, $notification] = $this->decide($request);
+        if ($outcome->kind === OutcomeKind::FAILED) {
+            require_once dirname(__DIR__) . '/version.php';
+            $pending = SchemaVersion::pendingUpgrade($this->db, \PROSPER202_VERSION);
+            if ($pending !== null) {
+                $outcome = new Outcome(OutcomeKind::UPGRADE_PENDING, 'Nothing was recorded: ' . $pending
+                    . ' Send it again once it has run.');
+            }
+        }
         error_log($this->logLine($request, $outcome, $notification));
 
         return $outcome;

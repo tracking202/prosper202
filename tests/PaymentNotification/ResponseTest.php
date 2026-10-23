@@ -27,7 +27,7 @@ final class ResponseTest extends TestCase
             'no_click' => 200,
             'malformed' => 400, 'unsupported_body' => 415, 'unverified' => 403, 'unknown_click' => 404,
             'nothing_to_reverse' => 404, 'conflict' => 409, 'currency_mismatch' => 422, 'method_not_allowed' => 405,
-            'failed' => 500,
+            'failed' => 500, 'upgrade_pending' => 503,
         ], $statuses);
     }
 

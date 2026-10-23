@@ -30,4 +30,6 @@ enum OutcomeKind: string
     case CURRENCY_MISMATCH = 'currency_mismatch';
     case METHOD_NOT_ALLOWED = 'method_not_allowed';
     case FAILED = 'failed';
+    /** A failure while the database's schema is behind this code's. */
+    case UPGRADE_PENDING = 'upgrade_pending';
 }
