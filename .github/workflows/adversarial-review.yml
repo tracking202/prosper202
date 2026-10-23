@@ -44,9 +44,18 @@ on:
       - 'tracking202/**'
       - 'tests/fixtures/agent-eval/**'
       - 'phpstan.neon.dist'
+      # The release path: release.yml holds contents: write and publishes the
+      # zip customers install, which build/ and the Dockerfile make and
+      # RELEASING.md runs; the other workflows decide what CI checks.
+      - '.github/workflows/**'
+      - 'build/**'
+      - 'Dockerfile'
+      - 'RELEASING.md'
       # Not this workflow file: the Claude app refuses its token to a workflow
       # that differs from master's copy, so a PR changing it is never reviewed
-      # by it (and would only ever show the "did not run" failure below).
+      # by it (and would only ever show the "did not run" failure below). A PR
+      # changing it with another workflow still runs it, and shows that.
+      - '!.github/workflows/adversarial-review.yml'
 
 concurrency:
   group: adversarial-review-${{ github.event.pull_request.number }}
