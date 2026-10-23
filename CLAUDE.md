@@ -1343,6 +1343,19 @@ redirector) comes back 0 where the joined row is another account's, the
 it. The read is where the account is decided: a writer handed an id another
 account's read produced cannot tell it apart from its own.
 
+The write that names its row by id is the same claim, made by the request.
+Setup › Traffic Sources renamed a source with `UPDATE 202_ppc_networks SET
+user_id = <session>, … WHERE ppc_network_id = <posted id>`: no check at all,
+and the SET moved the source into the renamer's account (measured live: a
+Campaign manager of another account took user 1's source, and user 1's API
+answered 404 for it). Its siblings checked ownership in one statement and
+wrote by id alone in the next, right only while both name the same id on
+every path. `AccountScopedWriteTest` holds every UPDATE and DELETE in the
+served pages and endpoints to `user_id = <the account>` in its own WHERE,
+or, for a table owned through its parent, to a listed check that runs first.
+It reads SQL only: a write a page makes through a class it calls is the
+class's to tie, and a user id is trusted by its name.
+
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
 strings — right at the edge, and every PHP suite stayed green. It broke four

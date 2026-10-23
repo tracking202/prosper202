@@ -299,7 +299,8 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 			break;		
 	}
 
-	$sql = "UPDATE 202_rotators SET ".$default_sql." WHERE id='".$rotator_id."'";
+	$sql = "UPDATE 202_rotators SET ".$default_sql." WHERE id='".$rotator_id."'"
+        . " AND user_id='" . $mysql['user_id'] . "'";
     if (!$db->query($sql)) {
         record_mysql_error($sql);
     }
