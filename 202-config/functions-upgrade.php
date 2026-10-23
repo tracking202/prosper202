@@ -4457,8 +4457,9 @@ class UPGRADE
                         . 'leaving version at 1.9.78 so the next run retries.');
                 }
             } else {
-                error_log('Prosper202 upgrade: the re-click tables could not be reconciled, or the re-click'
-                    . ' backfill marked; leaving version at 1.9.78 so the next run retries.');
+                error_log('Prosper202 upgrade: the re-click tables, 202_conversion_logs or 202_goal_events could'
+                    . ' not be reconciled, or the re-click backfill marked; leaving version at 1.9.78 so the next'
+                    . ' run retries.');
             }
         }
 
