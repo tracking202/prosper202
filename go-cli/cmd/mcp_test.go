@@ -70,9 +70,10 @@ func TestMCPCatalogStaysInBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Characters, about 20k tokens. Most of it is the report tools' filters;
+	// Characters, about 21k tokens. Most of it is the report tools' filters;
 	// a new tool or flag that crosses this should omit what few asks need.
-	const budget = 80000
+	// The text ad writes are about 3,400 of it: Setup › Text Ads' own fields.
+	const budget = 84000
 	if len(body) > budget {
 		t.Fatalf("the tool list is %d characters, over its %d budget; trim notes or omit flags", len(body), budget)
 	}
@@ -161,6 +162,15 @@ func TestMCPToolArgv(t *testing.T) {
 		{"campaign_delete", `{"id":"7","dry_run":true}`, []string{"campaign", "delete", "--dry-run=true", "--force", "--", "7"}, ""},
 		{"campaign_delete", `{"ids":"7,8"}`, []string{"campaign", "delete", "--ids=7,8", "--force"}, ""},
 		{"change_apply", `{"change_id":"chg_abc"}`, []string{"change", "apply", "--force", "--", "chg_abc"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","aff_campaign_id":3}`,
+			[]string{"text-ad", "create", "--aff-campaign-id=3", "--text-ad-description=D", "--text-ad-display-url=example.com", "--text-ad-headline=H", "--text-ad-name=N"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"example.com","text_ad_type":"1","landing_page_id":"7"}`,
+			[]string{"text-ad", "create", "--landing-page-id=7", "--text-ad-description=D", "--text-ad-display-url=example.com", "--text-ad-headline=H", "--text-ad-name=N", "--text-ad-type=1"}, ""},
+		{"text_ad_create", `{"text_ad_name":"N","text_ad_headline":"H","text_ad_description":"D","text_ad_display_url":"x","landing_page_id":"../7"}`, nil, "landing_page_id must be a numeric id"},
+		{"text_ad_update", `{"id":"5","text_ad_type":"1","landing_page_id":"7"}`, []string{"text-ad", "update", "--landing-page-id=7", "--text-ad-type=1", "--", "5"}, ""},
+		{"text_ad_update", `{"text_ad_headline":"H"}`, nil, "text_ad_update needs id"},
+		{"text_ad_delete", `{"id":"5","dry_run":true}`, []string{"text-ad", "delete", "--dry-run=true", "--force", "--", "5"}, ""},
+		{"text_ad_delete", `{"ids":"5,6"}`, []string{"text-ad", "delete", "--ids=5,6", "--force"}, ""},
 		{"report_summary", `{"all_profiles":true}`, nil, "does not take all_profiles"},
 		{"click_list", `{"follow":true}`, nil, "does not take follow"},
 	}

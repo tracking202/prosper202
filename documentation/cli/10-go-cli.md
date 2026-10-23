@@ -530,7 +530,9 @@ sign in and approve the connection on your own install (Prosper202 1.9.78 or
 later, on https), choosing read only, propose changes, or read and change. The
 connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
 My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
-licence.
+licence. A connection keeps the access it was approved with: one approved before the install ran
+1.9.79, to propose or make changes, reads text ads but cannot change them (text_ad_create, text_ad_update and
+text_ad_delete answer 403); connect again for that.
 
 To improve the connector, the hosted server records which tools the app calls, the names (not the
 values) of their arguments, whether they work, with the error when one fails (quoted values taken
