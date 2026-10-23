@@ -293,6 +293,7 @@ final class SameIpFallbackIntegrationTest extends TestCase
         // 203.0.113.9 is a documentation address GeoIP cannot place: 'eu' holds it back.
         yield 'an unplaceable visitor under eu' => ['disabled', 'eu', [], true, 980004];
         yield 'consent withheld' => ['disabled', 'disabled', ['p202_consent' => '0'], true, 980000];
+        yield 'consent withheld as false' => ['disabled', 'disabled', ['p202_consent' => 'false'], true, 980000];
         yield 'the campaign captures no identity' => ['disabled', 'disabled', [], false, 980000];
     }
 

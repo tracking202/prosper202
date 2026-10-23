@@ -77,13 +77,14 @@ is a journey of one.
 
 The privacy setting ([`user_pref_privacy`](../api/14-users.md#privacy-user_pref_privacy))
 withholds the `p202vid` cookie too: a visitor it holds back is neither given
-one nor read for one, as they are given no click cookie. A visitor given no
-`p202vid` — held back by the privacy setting, or by any switch above — is
-not matched to a click by IP address either: a conversion pixel that names
-no click guesses none for them, whatever the account's
-[same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback). The landing-page id
+one nor read for one, as they are given no click cookie. The landing-page id
 and a signed customer id still link that visitor's clicks. `p202.track()` ([web events](../api/23-events.md)) finds
 the visitor's click by the landing-page id alone, so it sends nothing either.
+
+A visitor given no `p202vid`, held back by the privacy setting or by any
+switch above, is not matched to a click by IP address either: a conversion
+pixel that names no click guesses none for them, whatever the account's
+[same-IP fallback](../api/14-users.md#same-ip-fallback-user_pref_same_ip_fallback).
 
 ## Limits
 

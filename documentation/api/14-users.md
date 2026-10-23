@@ -186,8 +186,9 @@ so `GET /conversions?match_method=same_ip` lists them.
   `{"user_pref_same_ip_fallback": 0}` here.
 - **Never for a visitor who is given no `p202vid` cookie**
   ([Visitor identity](../features/visitor-identity.md#consent)): one the
-  privacy setting holds back, one whose pixel request carries
-  `p202_consent=0`, and one on a campaign whose `identity_signals` is `0`.
+  privacy setting holds back, one whose pixel request carries a
+  `p202_consent` other than `1`, and one on a campaign whose
+  `identity_signals` is `0`.
 - **Whose clicks.** The account whose campaign the pixel names: `px.php`'s
   `acip`, and `cid` on `gpx.php` and `upx.php` (the advanced pixel). A
   `gpx.php` or `upx.php` request with no `cid` (the simple pixel, and the

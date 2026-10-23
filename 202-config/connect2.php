@@ -366,8 +366,9 @@ function p202ClickOwner(int $clickId): ?array
  * next: given the p202vid cookie (p202ClickIdentity()), and matched to an
  * earlier click by address when a pixel names none
  * (p202SameIpFallbackClick()). Not under the privacy setting in force
- * (trackingEnabled()), with consent withheld (p202_consent=0) or for a
- * campaign whose identity capture is off (RequestSignals::consentGiven()).
+ * (trackingEnabled()), with consent withheld (a p202_consent other than 1)
+ * or for a campaign whose identity capture is off
+ * (RequestSignals::consentGiven()).
  * One decision for both: a visitor held back from the cookie was still
  * matched by address.
  *

@@ -13039,7 +13039,7 @@ components:
             days, recorded as match_method same_ip; 0 credits none. An account
             made from 1.9.79 on starts at 0, one from before the upgrade at 1.
             Never made for a visitor given no p202vid cookie (the privacy
-            setting, p202_consent=0, a campaign's identity_signals 0).
+            setting, a p202_consent other than 1, a campaign's identity_signals 0).
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:
