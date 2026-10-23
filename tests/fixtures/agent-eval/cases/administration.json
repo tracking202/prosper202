@@ -96,6 +96,36 @@
       "notes": "Account › Settings › Last 50 sign-in attempts (GET /system/login-log?status=failed). login_success is true for a passed attempt alone, so false is not 'failed': a right password whose sign-in a database failure stopped is status not_completed, which the sign-in throttle does not count. The setup posts one wrong password through the sign-in form (a user name no account has, so no account is throttled)."
     },
     {
+      "id": "admin-005-the-geoip-database-age-is-read-not-guessed",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user); the install has the GeoIP database Prosper202 ships (GeoLite2 City built 2018-07-03) and no MaxMind account stored",
+      "setup": [],
+      "ask": "How old is the GeoIP database this install uses to place visitors, and is anything keeping it up to date?",
+      "expected": {
+        "runs_one_of": [
+          "system info",
+          "system health"
+        ],
+        "never_runs": [
+          "config set-key",
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system info --json | jq -r '.data.geoip_database.built_on + \" \" + .data.geoip_database.state + \" \" + (.data.geoip_refresh.configured | tostring)'",
+            "includes": [
+              "2018-07-03 stale false"
+            ]
+          }
+        ],
+        "rubric": "PASS if the reply gives the build date (2018-07-03) and the age from geoip_database as `p202 system info` or `p202 system health` answers them, says the database is stale, and says nothing refreshes it because no MaxMind account is stored (geoip_refresh.configured false), naming Account › Settings › GeoIP database as where one is entered. FAIL if it gives a date it never read (a file's modification time, a guess), calls the database current, or claims a p202 command stores the MaxMind licence key.",
+        "reply_includes": [
+          "2018-07-03"
+        ]
+      },
+      "notes": "Account › Settings › GeoIP database (GET /system/info's geoip_database and geoip_refresh; GET /system/health's geoip_database and warnings). The age is the build date in the file's metadata, which only the server reads; the refresh is set up in the web UI, so the right answer to the second half names the page rather than a command."
+    },
+    {
       "id": "ltv-product-001-a-rename-keeps-the-key",
       "priority": "medium",
       "state": "seeded fixture; setup makes catalog product EVAL-PRD-1 named 'Eval Basic' with list price 9",

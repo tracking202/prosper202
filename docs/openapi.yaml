@@ -191,7 +191,10 @@ paths:
     get:
       tags: [System]
       summary: Health check
-      description: Liveness probe. Does not require authentication.
+      description: >-
+        Liveness probe. Does not require authentication. A stale, missing or
+        unreadable GeoIP database is listed in `warnings` and leaves `status`
+        `healthy`.
       security: []
       operationId: systemHealth
       responses:
@@ -214,6 +217,34 @@ paths:
                       api_version:
                         type: string
                         example: v3
+                      geoip_database:
+                        type: object
+                        description: >-
+                          The GeoLite2 City file location lookups read, from its own metadata. No path and
+                          no reader error here; GET /system/info says both.
+                        properties:
+                          state:
+                            type: string
+                            enum: [current, stale, missing, unreadable]
+                          built_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the build; null when the file is missing or unreadable
+                          built_on:
+                            type: string
+                            nullable: true
+                            example: "2018-07-03"
+                          age_days:
+                            type: integer
+                            nullable: true
+                          stale_after_days:
+                            type: integer
+                            example: 30
+                      warnings:
+                        type: array
+                        description: One sentence per problem found; empty when there is none
+                        items:
+                          type: string
 
   /system/version:
     get:
@@ -376,8 +407,10 @@ paths:
         they differ — `202-config/upgrade.php` runs then), PHP and MySQL
         versions, memcache (installed, and whether its server answers), the
         PHP limits, clicks recorded to date, database size, when the cron job
-        last ran, the DataEngine's progress, and the caller's keyword
-        preference. Whether a newer release exists is not reported: the page
+        last ran, the DataEngine's progress, the caller's keyword
+        preference, and the GeoIP database panel (the file's build date and
+        age, and how its refresh last ended). Whether a newer release exists
+        is not reported: the page
         asks a remote service for that, and this endpoint makes no network
         request.
 
@@ -459,6 +492,82 @@ paths:
                         type: string
                         nullable: true
                         enum: [searched, bidded]
+                      geoip_database:
+                        type: object
+                        description: >-
+                          The GeoLite2 City file the click path, privacy eu, the geo reports and the rotator's
+                          location rules read. Its build date and age come from the file's own metadata; a
+                          missing or unreadable file has neither, and reason says why.
+                        properties:
+                          state:
+                            type: string
+                            enum: [current, stale, missing, unreadable]
+                            description: stale once older than stale_after_days
+                          path:
+                            type: string
+                          database_type:
+                            type: string
+                            nullable: true
+                            example: GeoLite2-City
+                          built_at:
+                            type: integer
+                            nullable: true
+                            description: Unix seconds of the build
+                          built_on:
+                            type: string
+                            nullable: true
+                            description: The build's UTC day, YYYY-MM-DD
+                          age_days:
+                            type: integer
+                            nullable: true
+                          stale_after_days:
+                            type: integer
+                            example: 30
+                          reason:
+                            type: string
+                            nullable: true
+                            description: Why the file is not current; null when it is
+                      geoip_refresh:
+                        type: object
+                        description: >-
+                          The weekly refresh with the install's MaxMind account, set up and run in Account ›
+                          Settings. Whether each credential is stored, never its value.
+                        properties:
+                          configured:
+                            type: boolean
+                            description: Both the account ID and the licence key are stored
+                          account_id_stored:
+                            type: boolean
+                          license_key_stored:
+                            type: boolean
+                          schedule:
+                            type: string
+                            enum: [weekly]
+                          last_attempt_at:
+                            type: integer
+                            nullable: true
+                          last_outcome:
+                            type: string
+                            nullable: true
+                            enum: [refreshed, current, failed]
+                          last_error:
+                            type: string
+                            nullable: true
+                            description: Why the last run failed
+                          last_checked_at:
+                            type: integer
+                            nullable: true
+                            description: The last run that got MaxMind's answer
+                          last_refreshed_at:
+                            type: integer
+                            nullable: true
+                            description: The last run that replaced the file
+                          next_due_at:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              When the cron job's hourly tier next refreshes (now, when due already); null
+                              when no account is stored
         "403":
           $ref: "#/components/responses/Forbidden"
 

@@ -186,6 +186,12 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
        location ^~ /202-config/temp/ {
            deny all;
        }
+
+       # GeoIP databases: read by the install, never served (a refreshed
+       # GeoLite2 file is licensed for this install's use only)
+       location ^~ /202-config/geo/ {
+           deny all;
+       }
    }
    ```
 
@@ -200,7 +206,7 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
 
 #### Apache Alternative
 
-If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/` and `tracking202/update/reports/` can handle routing. Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
+If you prefer Apache over Nginx, point your document root at the project directory and ensure `mod_rewrite` is enabled so the `.htaccess` files shipped in `api/v3/`, `tracking202/update/reports/` and `202-config/geo/` can handle routing (the last refuses every request, so the GeoIP databases are never served). Those files only need `AllowOverride FileInfo Options=FollowSymLinks` (`FileInfo` for the rewrite rules, `Options=FollowSymLinks` for the `Options +FollowSymLinks` line in the reports rules) — avoid `AllowOverride All`, which is broader than required. Example virtual host:
 
 ```apache
 <VirtualHost *:80>
@@ -217,6 +223,12 @@ If you prefer Apache over Nginx, point your document root at the project directo
     # authenticated download endpoints. The directory's own .htaccess needs
     # AllowOverride AuthConfig, so the deny lives here instead.
     <Directory /path/to/prosper202/202-config/temp>
+        AllowOverride None
+        Require all denied
+    </Directory>
+
+    # GeoIP databases: read by the install, never served
+    <Directory /path/to/prosper202/202-config/geo>
         AllowOverride None
         Require all denied
     </Directory>
@@ -278,6 +290,11 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
     # Attribution export CSVs and upgrade zips: with AllowOverride None the
     # directory's .htaccess is never read, so this is the only deny
     <Directory /path/to/prosper202/202-config/temp>
+        Require all denied
+    </Directory>
+
+    # GeoIP databases: read by the install, never served
+    <Directory /path/to/prosper202/202-config/geo>
         Require all denied
     </Directory>
 

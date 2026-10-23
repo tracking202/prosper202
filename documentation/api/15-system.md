@@ -13,7 +13,7 @@ System health checks, diagnostics, and administration.
 | `GET` | `/system/errors` | Admin | Recent MySQL errors |
 | `GET` | `/system/dataengine` | Admin | Data engine job status and pending work |
 | `GET` | `/system/metrics` | Admin | Comprehensive system metrics |
-| `GET` | `/system/info` | Admin + `access_to_settings` | What Account › Settings shows: versions, PHP limits, memcache, clicks, database size, cron, DataEngine |
+| `GET` | `/system/info` | Admin + `access_to_settings` | What Account › Settings shows: versions, PHP limits, memcache, clicks, database size, cron, DataEngine, the GeoIP database and its refresh |
 | `GET` | `/system/login-log` | Admin + `access_to_settings` | Sign-in attempts, newest first: passed, failed or not completed |
 | `GET` `PUT` | `/system/retention` | Admin + `access_to_settings` | Automatic click-data deletion (days), and any scheduled one-off deletion |
 | `POST` | `/system/retention/delete-before` | Admin + `access_to_settings` | Schedule the deletion of click data from before a day (`?dry_run=1` previews) |
@@ -29,7 +29,9 @@ System health checks, diagnostics, and administration.
   "data": {
     "status": "healthy",
     "timestamp": 1709942400,
-    "api_version": "v3"
+    "api_version": "v3",
+    "geoip_database": { "state": "stale", "built_at": 1530653216, "built_on": "2018-07-03", "age_days": 3034, "stale_after_days": 30 },
+    "warnings": ["The GeoIP database was built on 2018-07-03, 3034 days ago (stale after 30): visitors in address blocks allocated or moved since read as unplaced or in the wrong country. Set up its refresh in Account › Settings › GeoIP database."]
   }
 }
 ```
@@ -39,6 +41,14 @@ System health checks, diagnostics, and administration.
 | `status` | string | Health status, e.g. `healthy`. |
 | `timestamp` | integer | Unix timestamp when the check ran. |
 | `api_version` | string | API version this server implements. |
+| `geoip_database` | object | The GeoLite2 City file every location lookup reads, from its own metadata: `state` (`current`, `stale`, `missing`, `unreadable`), `built_at` (unix seconds) and `built_on` (UTC day), `age_days`, and `stale_after_days` (30). The date and age are `null` when the file is missing or cannot be read. Neither its path nor a reader's error is said here; `GET /system/info` says both. |
+| `warnings` | array of strings | A sentence for each problem the probe found; `[]` when there is none. A stale, missing or unreadable GeoIP database is one of them, and leaves `status` `healthy`: a liveness check that restarted the server for it would get the same file back. |
+
+Why 30 days: MaxMind builds GeoLite2 City every Tuesday and Friday and the
+refresh downloads it weekly, so a refreshing install's file is at most about
+11 days old; at 30 the refresh has failed for three weeks running. It is also
+the GeoLite EULA's limit (section 6.3: an old version is destroyed within 30
+days of a new release).
 
 ## Version Info
 
@@ -134,7 +144,29 @@ my.tracking202.com).
     "cron_last_ran_at": 1791357600,
     "cron_last_ran_seconds_ago": 85,
     "dataengine": { "tasks_total": 0, "tasks_done": 0, "percent_done": 0, "minutes_left": 0 },
-    "keyword_preference": "searched"
+    "keyword_preference": "searched",
+    "geoip_database": {
+      "state": "current",
+      "path": "/var/www/prosper202/202-config/geo/GeoLite2-City.mmdb",
+      "database_type": "GeoLite2-City",
+      "built_at": 1792500000,
+      "built_on": "2026-10-20",
+      "age_days": 3,
+      "stale_after_days": 30,
+      "reason": null
+    },
+    "geoip_refresh": {
+      "configured": true,
+      "account_id_stored": true,
+      "license_key_stored": true,
+      "schedule": "weekly",
+      "last_attempt_at": 1792540800,
+      "last_outcome": "refreshed",
+      "last_error": null,
+      "last_checked_at": 1792540800,
+      "last_refreshed_at": 1792540800,
+      "next_due_at": 1793142000
+    }
   }
 }
 ```
@@ -152,6 +184,27 @@ work without being counted, so an install with neither a cron job nor
 AutoCron answers `null`, or an old time, however busy its pages are.
 `GET /system/cron`'s `recent_logs` are the same record; its `jobs` are the
 tiers that ran, whoever started them.
+
+`geoip_database` is the GeoLite2 City file the click path, privacy `eu`, the
+geo reports and the rotator's location rules read, as Settings' GeoIP database
+panel shows it: its `state` (`current`; `stale` once it is older than
+`stale_after_days`; `missing`; `unreadable`), `database_type`, its build date
+(`built_at` in unix seconds, `built_on` the UTC day) and `age_days`, all read
+from the file's own metadata, never its modification time. A missing or
+unreadable file has no date and no age, and `reason` says why; a stale one's
+`reason` says how old. A build date more than a day ahead of the server's clock
+is `unreadable` too, not current.
+
+`geoip_refresh` is the weekly refresh with the install's own MaxMind account:
+`configured` when both the account ID and the licence key are stored
+(`account_id_stored`, `license_key_stored`; the values are never served),
+how the last run ended (`last_attempt_at`, `last_outcome` `refreshed`,
+`current` or `failed`, and `last_error` with the reason), the last run that got
+MaxMind's answer (`last_checked_at`), the last that replaced the file
+(`last_refreshed_at`), and `next_due_at`, when the cron job's hourly tier next
+runs it (now, when it is due already; `null` with no account stored). The
+refresh is set up and run in Account › Settings; no route here makes a
+network request.
 
 ### Sign-in log
 

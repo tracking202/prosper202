@@ -1199,7 +1199,8 @@ function getGeoData($ip)
         ];
     }
 
-    $reader = new Reader(CONFIG_PATH . '/geo/GeoLite2-City.mmdb');
+    // Opened per lookup, so the lookup after a refresh's rename reads the new file.
+    $reader = new Reader(\Prosper202\GeoIp\CityDatabase::PATH);
     try {
         $record = $reader->city($ip_address);
         $country = $record->country->name;

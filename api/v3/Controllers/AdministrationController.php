@@ -12,6 +12,8 @@ use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
+use Prosper202\GeoIp\CityDatabase;
+use Prosper202\GeoIp\RefreshStore;
 use Prosper202\User\SignInOutcome;
 
 /**
@@ -97,7 +99,8 @@ final class AdministrationController
 
     /**
      * The page's tiles (clicks recorded, database size, cron last ran,
-     * DataEngine conversion) and its System and PHP limits panels.
+     * DataEngine conversion), its System and PHP limits panels, and its GeoIP
+     * database panel.
      *
      * @return array{data: array<string, mixed>}
      */
@@ -127,6 +130,9 @@ final class AdministrationController
             $total = (int) ($engine['total'] ?? 0);
             $done = (int) ($engine['done'] ?? 0);
             $lastRun = $cron === null ? null : (int) $cron['last_execution_time'];
+            $now = time();
+            $geoip = CityDatabase::status(CityDatabase::PATH, $now);
+            $geoipRefresh = (new RefreshStore($this->conn))->read();
 
             return ['data' => [
                 'version' => $code,
@@ -156,6 +162,11 @@ final class AdministrationController
                     'minutes_left' => max(0, $total - $done),
                 ],
                 'keyword_preference' => $keyword === null ? null : (string) $keyword['user_keyword_searched_or_bidded'],
+                // The file location lookups read, from its own metadata, and
+                // its refresh: whether each MaxMind credential is stored, never
+                // the credential.
+                'geoip_database' => $geoip->toArray(),
+                'geoip_refresh' => $geoipRefresh->toArray($geoip, $now),
             ]];
         });
     }

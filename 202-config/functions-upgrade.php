@@ -4430,6 +4430,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // The GeoIP database refresh's credentials and last run (Prosper202\GeoIp).
+                \Prosper202\Database\Tables\SecretTables::geoipRefresh(),
             ]);
 
             if ($step_ok) {

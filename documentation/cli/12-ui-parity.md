@@ -98,6 +98,7 @@ Every Update write previews with `?dry_run=1` (`--dry-run`).
 | Attribution: models, reports, journeys, exports | `/attribution/…` | `p202 attribution …` | ✅ |
 | User Management: users, roles, keys | `/users`, `/users/{id}/roles`, `/users/{id}/api-keys` | `p202 user …`, `user role …`, `user apikey …` | ✅ |
 | 1-click upgrade | — | — | ✗ run the upgrade from the page; `p202 system info` says when one is needed |
+| GeoIP database: MaxMind account, refresh now | — | — | ✗ set up and run in Settings › GeoIP database; `p202 system info` reads its age and how the last refresh ended (`geoip_database`, `geoip_refresh`) |
 | ClickServers, VIP Perks, App Store, Hot Deals, TV202, Help | — | — | — hosted services and content |
 
 ## Not on any page
