@@ -27,7 +27,7 @@ final class MobileAppsCountLabelsTest extends TestCase
      */
     public static function setUpBeforeClass(): void
     {
-        require_once dirname(__DIR__, 2) . '/tracking202/setup/MobileAppsController.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/Setup/MobileAppsController.php';
     }
 
     /**
@@ -104,7 +104,7 @@ final class MobileAppsCountLabelsTest extends TestCase
     public function testTheTemplateDerivesNeitherWordingItself(): void
     {
         $template = file_get_contents(
-            dirname(__DIR__, 2) . '/tracking202/setup/templates/mobile_apps.php'
+            dirname(__DIR__, 2) . '/tracking202/Setup/templates/mobile_apps.php'
         );
         $this->assertIsString($template);
 

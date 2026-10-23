@@ -484,6 +484,19 @@ if ($skip_upgrade == false) {
     }
 }
 
+// A page run from a leftover copy of a folder 1.9.79 renamed (an upgrade that
+// copied the files over the old ones keeps the old folder beside the new)
+// answers the 404, with its new address, instead of running its old code.
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    $p202Leftover = \Prosper202\Http\NotFoundPage::leftoverCopy(
+        ROOT_PATH,
+        (string) ($_SERVER['SCRIPT_FILENAME'] ?? '')
+    );
+    if ($p202Leftover !== null) {
+        p202_not_found_page($p202Leftover);
+    }
+}
+
 //if safe mode is turned on, and the user is trying to use offers202, stats202 or alerts202, show the error page
 switch ($navigation[1]) {
     case "offers202":

@@ -182,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$slack->push($lp_type . '_landing_page_url_changed', ['name' => $_POST['landing_page_nickname'] ?? '', 'old_url' => $landing_page_row['landing_page_url'] ?? '', 'new_url' => $_POST['landing_page_url'] ?? '', 'user' => $user_row['username'] ?? '']);
 				}
 			}
-			header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
+			header('location: ' . get_absolute_url() . 'tracking202/Setup/landing_pages.php');
 		} else {
 			if ($slack) {
 				if (isset($_POST['landing_page_type']) && $_POST['landing_page_type'] == '0') {
@@ -217,7 +217,7 @@ if (isset($_GET['delete_landing_page_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/landing_pages.php');
 		die();
 	}
 
@@ -250,7 +250,7 @@ if (isset($_GET['delete_landing_page_id'])) {
 			record_mysql_error($delete_sql);
 		}
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/landing_pages.php');
 	}
 }
 
@@ -313,18 +313,18 @@ if ((($editing == true) or ($add_success != true)) and (isset($mysql['aff_campai
 // Post-redirect-get: a saved or removed landing page answers with a redirect,
 // so a reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/landing_pages.php?' . ($editing ? 'saved=1' : 'added=1'));
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/landing_pages.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/landing_pages.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/landing_pages.php';
+$self = $base . 'tracking202/Setup/landing_pages.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 $canRemove = $userObj->hasPermission("remove_landing_page");
@@ -447,7 +447,7 @@ if ($error) {
 							<?php echo p202_setup_options($campaignOptions, $form['aff_campaign_id'] !== '' ? $form['aff_campaign_id'] : p202_setup_only_option($campaignOptions), $campaignOptions === [] ? 'No campaigns yet' : 'Choose the campaign this page promotes'); ?>
 						</select>
 						<?php if ($campaignOptions === []) { ?>
-							<div class="form-text">A simple landing page promotes one campaign. <a href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a> first.</div>
+							<div class="form-text">A simple landing page promotes one campaign. <a href="<?php echo p202_setup_e($base . 'tracking202/Setup/aff_campaigns.php'); ?>">Add a campaign</a> first.</div>
 						<?php } ?>
 						<?php echo p202_setup_feedback($error, 'aff_campaign_id'); ?>
 					</div>

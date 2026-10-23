@@ -31,7 +31,7 @@ $html = [];
 // The answer is markup for Setup › Get Links (v2): a refusal is a danger
 // flash and stops here; a warning is a warning flash above the link. The
 // sentences are the ones this endpoint always said.
-require_once dirname(__DIR__) . '/setup/_includes/setup_ui.php';
+require_once dirname(__DIR__) . '/Setup/_includes/setup_ui.php';
 
 //check variables
 	// A direct link or simple landing page needs its campaign. This check

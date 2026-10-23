@@ -38,7 +38,7 @@ MYSQL_ARGS=(-u "$DB_USER")
 mysql_q() { mysql "${MYSQL_ARGS[@]}" "$@"; }
 # -----------------------------------------------------------------------
 
-PAGE=$BASE/tracking202/analyze/mobile_apps.php
+PAGE=$BASE/tracking202/Analyze/mobile_apps.php
 JAR=$(mktemp)
 OUT=$(mktemp -d)
 PASS=0; FAIL=0
@@ -107,7 +107,7 @@ for e in "Fatal error" "Parse error" "Warning:" "Notice:" "Deprecated:" "Undefin
   hasnt "$OUT/r.html" "$e" "no PHP $e"
 done
 has "$OUT/r.html" 'aria-label="Mobile app views"' "tabs render"
-has "$OUT/r.html" 'analyze/mobile_apps.php' "sub-menu links the page"
+has "$OUT/r.html" 'Analyze/mobile_apps.php' "sub-menu links the page"
 grep -qE '<li class="active"><a href="[^"]*analyze/mobile_apps\.php"' "$OUT/r.html" \
   && ok "sub-menu marks it current" || bad "sub-menu marks it current"
 

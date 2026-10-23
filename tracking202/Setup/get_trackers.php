@@ -65,7 +65,7 @@ $editRefused = isset($_GET['edit_tracker_id']) && !$showEdit;
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/get_trackers.php';
+$self = $base . 'tracking202/Setup/get_trackers.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = (int) $_SESSION['user_id'];
 
@@ -208,7 +208,7 @@ $nothingToLink = $campaignOptions === [] && $advancedPageOptions === [] && $rota
 				<i class="bi bi-link-45deg p202-empty__icon"></i>
 				<strong class="p202-empty__title">Nothing to link to yet</strong>
 				<div>A tracking link sends visitors to a campaign, a landing page or a redirector. Add a campaign first.</div>
-				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
+				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/Setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
 			</div>
 		<?php } else { ?>
 		<section class="p202-panel">

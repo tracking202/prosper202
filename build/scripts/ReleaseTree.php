@@ -14,6 +14,19 @@ final class ReleaseTree
     private const KEYS = ['ship', 'exclude', 'keep_only', 'exclude_nested', 'go_binaries', 'known_unresolved'];
 
     /**
+     * The paths a file names in another case than the tree on purpose, by
+     * file: the prefixes it may write so, and why. pathCaseProblems() holds
+     * every other path the file writes, and these prefixes in any other file.
+     */
+    public const PATHS_IN_ANOTHER_CASE = [
+        '202-config/Http/NotFoundPage.php' => [
+            'prefixes' => ['tracking202/setup', 'tracking202/analyze'],
+            'why' => 'the folders 1.9.79 renamed to Setup and Analyze, under the names old links and leftover'
+                . ' copies still use (NotFoundPage::MOVED)',
+        ],
+    ];
+
+    /**
      * Directory listings read by existsWithExactCase(), per verification.
      * Cleared by verify() and unresolvedReferences(): a listing kept across
      * two verifications answers the second for a tree that has changed.
@@ -383,13 +396,14 @@ final class ReleaseTree
 
     /**
      * Paths written in the code in another case than the file or directory
-     * they name. A case-insensitive filesystem finds tracking202/Setup/x.php
-     * when the directory is tracking202/setup/, so the code works on a Mac and
+     * they name. A case-insensitive filesystem finds tracking202/setup/x.php
+     * when the directory is tracking202/Setup/, so the code works on a Mac and
      * the include, link or asset is missing on Linux. Every path-like string
      * in a source is read, whatever builds the rest of it (__DIR__, a variable,
      * a host): its longest tail that names a real path when case is ignored
      * must name one exactly. A lone word with no extension is too common to
-     * judge and is not read; nor is a path built from variables alone.
+     * judge and is not read; nor is a path built from variables alone. A
+     * prefix PATHS_IN_ANOTHER_CASE gives a file is not held in that file.
      *
      * @param array<string, string> $sources relative path => text
      * @param list<string> $paths every real file, relative to the same root
@@ -439,7 +453,7 @@ final class ReleaseTree
                     }
                     if ($length > 1 || preg_match('/\.[A-Za-z0-9]{1,5}$/', $tail[0]) === 1) {
                         $written = implode('/', $tail);
-                        if (!in_array($written, $named, true)) {
+                        if (!in_array($written, $named, true) && !self::writtenOnPurpose($source, $written)) {
                             $line = substr_count($text, "\n", 0, $offset) + 1;
                             $problems[] = "{$source}:{$line} writes '{$written}', which is '"
                                 . implode("' or '", array_unique($named)) . "' on disk: found on a Mac,"
@@ -452,6 +466,17 @@ final class ReleaseTree
         }
 
         return $problems;
+    }
+
+    private static function writtenOnPurpose(string $source, string $written): bool
+    {
+        foreach (self::PATHS_IN_ANOTHER_CASE[$source]['prefixes'] ?? [] as $prefix) {
+            if ($written === $prefix || str_starts_with($written, $prefix . '/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -780,9 +805,8 @@ final class ReleaseTree
         }
         // Read every shipped file once: its references, and the classes it
         // declares. A class declared in the shipped tree is present whether or
-        // not PSR-4 can find it; page controllers live beside their pages in
-        // lowercase URL directories (tracking202/setup/) and are loaded by an
-        // explicit require_once, which no autoloader lookup can see.
+        // not PSR-4 can find it: the legacy global classes (AUTH, DataEngine)
+        // are loaded by an explicit include, which no autoloader lookup sees.
         $declared = [];
         $references = [];
         foreach (self::shippedPhpFiles($root) as $relative) {
@@ -870,7 +894,7 @@ final class ReleaseTree
 
     /**
      * is_file() on a case-insensitive filesystem (macOS by default) finds
-     * tracking202/Setup/X.php when the directory is tracking202/setup/, so the
+     * tracking202/setup/X.php when the directory is tracking202/Setup/, so the
      * verifier would pass on a Mac and fail on the Linux hosts that run the
      * zip. Compare each path component against the real directory listing.
      */

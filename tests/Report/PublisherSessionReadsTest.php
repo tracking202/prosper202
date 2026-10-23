@@ -27,7 +27,7 @@ final class PublisherSessionReadsTest extends TestCase
         '202-config/Report/CampaignDataMask.php' => [1, 'exempts a publisher from the figure mask; its rows are already its own'],
         '202-config/class-dataengine.php' => [1, 'drops other accounts\' rows from a publisher\'s totals: narrows, never widens'],
         '202-config/functions-ui-overview.php' => [1, 'hides the traffic-source and offer filters from a publisher'],
-        'tracking202/analyze/AnalyzeReportController.php' => [1, 'hides the traffic-source and offer filters from a publisher'],
+        'tracking202/Analyze/AnalyzeReportController.php' => [1, 'hides the traffic-source and offer filters from a publisher'],
         '202-config/template.php' => [2, 'the shell\'s feedback widget and menu'],
         'tracking202/Report/Json/FlatReportPayloadBuilder.php' => [1, 'tells the report script whether to show publisher-only columns'],
     ];

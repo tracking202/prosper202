@@ -175,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$slack->push('ad_copy_display_url_changed', ['name' => $_POST['text_ad_name'], 'old_url' => $text_ad_row['text_ad_display_url'], 'new_url' => $_POST['text_ad_display_url'], 'user' => $user_row['username']]);
 				}
 			}
-			header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');   
+			header('location: '.get_absolute_url().'tracking202/Setup/text_ads.php');   
 			
 		} else {
 			if($slack)
@@ -192,7 +192,7 @@ if (isset($_GET['delete_text_ad_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/text_ads.php');
 		die();
 	}
 
@@ -214,7 +214,7 @@ if (isset($_GET['delete_text_ad_id'])) {
             record_mysql_error($delete_sql);
         }
 	} else {
-		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');
+		header('location: '.get_absolute_url().'tracking202/Setup/text_ads.php');
 	}
 }
 
@@ -297,18 +297,18 @@ if ((($editing === true) || ($add_success !== true)) && !empty($mysql['aff_campa
 // Post-redirect-get: a saved or removed ad answers with a redirect, so a
 // reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php?' . (!empty($_GET['edit_text_ad_id']) ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/text_ads.php?' . (!empty($_GET['edit_text_ad_id']) ? 'saved=1' : 'added=1'));
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/text_ads.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/text_ads.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/text_ads.php';
+$self = $base . 'tracking202/Setup/text_ads.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 $canRemove = $userObj->hasPermission("remove_text_ad");
@@ -414,7 +414,7 @@ if ($error) {
 				<i class="bi bi-fonts p202-empty__icon"></i>
 				<strong class="p202-empty__title">Add a campaign first</strong>
 				<div>A text ad sends clicks to a campaign or an advanced landing page, and you have neither yet.</div>
-				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
+				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/Setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
 			</div>
 		<?php } else { ?>
 		<section class="p202-panel" id="text-ad-form">

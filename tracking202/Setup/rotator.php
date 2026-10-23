@@ -116,7 +116,7 @@ if (isset($_GET['delete_rotator_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/rotator.php');
 		die();
 	}
 
@@ -164,7 +164,7 @@ if (isset($_GET['delete_rotator_id'])) {
             $slack->push('rotator_deleted', ['name' => $_GET['delete_rotator_name'], 'user' => $user_row['username']]);
         }
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/rotator.php');
 	}
 }
 
@@ -173,18 +173,18 @@ if (isset($_GET['delete_rotator_id'])) {
 // since rules are the next thing it needs; a removal answers with a redirect.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
 	$newId = $editing ? (int) ($_POST['rotator_id'] ?? 0) : (int) ($rotator_id ?? 0);
-	header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php?' . ($newId > 0 ? 'rotator_id=' . $newId . '&' : '') . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/rotator.php?' . ($newId > 0 ? 'rotator_id=' . $newId . '&' : '') . ($editing ? 'saved=1' : 'added=1'));
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/rotator.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/rotator.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/rotator.php';
+$self = $base . 'tracking202/Setup/rotator.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = (int) $_SESSION['user_id'];
 $ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1';

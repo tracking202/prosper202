@@ -3,7 +3,7 @@
 /*
  * Analyze › the thirteen click reports (keywords … custom variables), driven
  * the way a person drives them. They share one controller and one template
- * (tracking202/analyze/AnalyzeReportController.php, templates/report.php),
+ * (tracking202/Analyze/AnalyzeReportController.php, templates/report.php),
  * so most scenarios run on one or two of them and the per-page ones walk
  * checks.ANALYZE_REPORT_PAGES.
  *
@@ -130,7 +130,7 @@ function resetPrefs(db) {
     + ' user_pref_referer=NULL, user_pref_keyword=NULL, user_pref_subid=NULL WHERE user_id=1');
 }
 
-const PAGE = (name) => '/tracking202/analyze/' + name + '.php';
+const PAGE = (name) => '/tracking202/Analyze/' + name + '.php';
 
 /**
  * Open the bar's Advanced section unless it is open already: it remembers

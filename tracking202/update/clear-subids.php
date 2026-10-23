@@ -97,7 +97,7 @@ if ($errors !== []) {
 						<i class="bi bi-grid p202-empty__icon"></i>
 						<strong class="p202-empty__title">No categories yet</strong>
 						<div>There is nothing to reset until a campaign has recorded conversions.</div>
-						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_networks.php'); ?>">Add a category</a></div>
+						<div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/Setup/aff_networks.php'); ?>">Add a category</a></div>
 					</div>
 				<?php } else { ?>
 				<form method="post" action="<?php echo p202_setup_e($base . 'tracking202/update/clear-subids.php'); ?>" id="clear_subids_form" data-p202-confirm="Clear every conversion in this selection? The clicks stay; the income their conversions added comes off your reports until you upload the subids again.">

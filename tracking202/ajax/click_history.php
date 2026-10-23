@@ -146,7 +146,7 @@ if ($incremental) {
 AUTH::set_timezone($_SESSION['user_timezone']);
 
 $empty = $isSpy
-	? ['icon' => 'bi-broadcast', 'title' => 'No clicks in the last 24 hours', 'body' => 'New clicks appear here within a few seconds of arriving. Send traffic through a tracking link to see them.', 'action' => 'Get tracking links', 'href' => get_absolute_url() . 'tracking202/setup/get_trackers.php']
+	? ['icon' => 'bi-broadcast', 'title' => 'No clicks in the last 24 hours', 'body' => 'New clicks appear here within a few seconds of arriving. Send traffic through a tracking link to see them.', 'action' => 'Get tracking links', 'href' => get_absolute_url() . 'tracking202/Setup/get_trackers.php']
 	: p202_overview_empty(get_absolute_url(), 'No clicks match these filters');
 
 if ($click_result->num_rows == 0) {

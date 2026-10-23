@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 use Prosper202\Goals\GoalDefinition;
 
 /**
- * The campaign goal editor (tracking202/setup/_includes/campaign_goals.php)
+ * The campaign goal editor (tracking202/Setup/_includes/campaign_goals.php)
  * must round-trip a stored definition exactly: opening a goal and saving it
  * unchanged stores the same canonical definition, JSON types included.
  *
@@ -23,7 +23,7 @@ final class CampaignGoalFormTest extends TestCase
 {
     public static function setUpBeforeClass(): void
     {
-        require_once dirname(__DIR__, 2) . '/tracking202/setup/_includes/campaign_goals.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/Setup/_includes/campaign_goals.php';
     }
 
     /**

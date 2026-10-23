@@ -96,7 +96,7 @@ get 202-login.php "$OUT/login.html" > /dev/null
 code=$(submit "$OUT/login.html" user_name 202-login.php "$OUT/signed-in.html" "user_name=$P202_USER" "user_pass=$P202_PASS")
 eq "$code" "302" "the sign-in form redirects"
 PAGE="$OUT/categories.html"
-eq "$(get tracking202/setup/aff_networks.php "$PAGE")" "200" "Setup › Categories answers 200 signed in"
+eq "$(get tracking202/Setup/aff_networks.php "$PAGE")" "200" "Setup › Categories answers 200 signed in"
 SID=$(awk '$6=="PHPSESSID"{print $7}' "$JAR" | tail -1)
 SESS="$SESSION_DIR/sess_$SID"
 eq "$([ -n "$SID" ] && [ -f "$SESS" ] && echo yes)" "yes" "the session file is $SESS"
@@ -105,25 +105,25 @@ n=0
 for shape in 's:0:"";' 'b:0;' 'a:1:{i:0;s:1:"x";}'; do
   n=$((n+1))
   say "a session token of $shape"
-  get tracking202/setup/aff_networks.php "$PAGE" > /dev/null
+  get tracking202/Setup/aff_networks.php "$PAGE" > /dev/null
   before=$(form_token "$PAGE" aff_network_name)
   eq "$(printf '%s' "$before" | grep -cE '^[0-9a-f]{32}$')" "1" "the form carries a 32-character token first"
 
   if plant_token "$SESS" "$shape"; then :; else bad "the session file holds a token entry to replace"; continue; fi
   eq "$(session_token "$SESS")" "$shape" "the plant landed: the session file holds $shape"
 
-  eq "$(get tracking202/setup/aff_networks.php "$PAGE")" "200" "the next page answers 200"
+  eq "$(get tracking202/Setup/aff_networks.php "$PAGE")" "200" "the next page answers 200"
   after=$(form_token "$PAGE" aff_network_name)
   eq "$(printf '%s' "$after" | grep -cE '^[0-9a-f]{32}$')" "1" "the form carries a new 32-character token"
   eq "$([ "$after" != "$before" ] && echo new)" "new" "not the one the session held before"
   eq "$(session_token "$SESS")" "s:32:\"$after\";" "the session file holds the token the form carries"
 
-  code=$(submit "$PAGE" aff_network_name tracking202/setup/aff_networks.php "$OUT/add-$n.html" "aff_network_name=RESEED $n")
+  code=$(submit "$PAGE" aff_network_name tracking202/Setup/aff_networks.php "$OUT/add-$n.html" "aff_network_name=RESEED $n")
   eq "$code" "302" "the form, submitted as rendered, is accepted (post-redirect-get)"
   eq "$(Q "SELECT COUNT(*) FROM 202_aff_networks WHERE user_id = '$OWNER' AND aff_network_name = 'RESEED $n' AND aff_network_deleted = 0")" "1" "and its category was written"
 
-  get tracking202/setup/aff_networks.php "$PAGE" > /dev/null
-  code=$(submit "$PAGE" aff_network_name tracking202/setup/aff_networks.php "$OUT/forged-$n.html" "token=" "aff_network_name=RESEED forged $n")
+  get tracking202/Setup/aff_networks.php "$PAGE" > /dev/null
+  code=$(submit "$PAGE" aff_network_name tracking202/Setup/aff_networks.php "$OUT/forged-$n.html" "token=" "aff_network_name=RESEED forged $n")
   eq "$code" "200" "the same form without its token is re-rendered"
   has "$OUT/forged-$n.html" "Invalid token, please reload the page and try again." "in the page's own sentence"
   eq "$(Q "SELECT COUNT(*) FROM 202_aff_networks WHERE user_id = '$OWNER' AND aff_network_name = 'RESEED forged $n'")" "0" "and wrote nothing"

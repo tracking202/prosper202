@@ -348,12 +348,12 @@ if [ -n "$P202_USER" ] && [ -n "$P202_PASS" ]; then
     LT=$(grep -oE 'name="token" value="[^"]+"' "$OUT/login.html" | head -1 | sed 's/.*value="//; s/"//')
     curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" --data-urlencode "token=$LT" \
         --data-urlencode "user_name=$P202_USER" --data-urlencode "user_pass=$P202_PASS" -o "$OUT/pl.html"
-    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/setup/mobile_apps.php?app=$R" -o "$OUT/setup.html"
+    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/Setup/mobile_apps.php?app=$R" -o "$OUT/setup.html"
     for f in ctit_min_seconds ctit_max_seconds install_cap_per_minute event_cap_per_minute fast_goal_seconds fast_goal_policy; do
         has "$OUT/setup.html" "name=\"$f\"" "Setup's settings form carries $f"
     done
     has "$OUT/setup.html" '<option value="hold" selected>' "and shows the app's hold policy"
-    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/analyze/mobile_apps.php?platform=android&registration_id=$R&range=last7" -o "$OUT/an.html"
+    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/Analyze/mobile_apps.php?platform=android&registration_id=$R&range=last7" -o "$OUT/an.html"
     has "$OUT/an.html" "Fraud signals" "Analyze › Mobile Apps has the Fraud signals panel"
     python3 - "$OUT/an.html" <<'PY' && ok "which counts 1 short, 1 long, 3 measured and 2 fast goals" || bad "the panel's counts"
 import re, sys
@@ -364,7 +364,7 @@ want = [('Installs too soon after the click', '1'), ('Installs too long after th
         ('Installs with a click-to-install time', '3'), ('Goals reached too soon after the install', '2')]
 sys.exit(0 if cells == want else print(cells) or 1)
 PY
-    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/analyze/mobile_apps.php?platform=android&registration_id=$R&range=last7&ctit_flag=short" -o "$OUT/an2.html"
+    curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/Analyze/mobile_apps.php?platform=android&registration_id=$R&range=last7&ctit_flag=short" -o "$OUT/an2.html"
     has "$OUT/an2.html" "click-to-install time is <strong>short</strong>" "the ctit filter narrows the page and says so"
 else
     say "the pages: skipped (set P202_USER and P202_PASS)"

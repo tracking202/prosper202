@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * Markup helpers for the LTV AJAX partials, which render inside Analyze ›
- * Customer LTV on the v2 shell (tracking202/analyze/ltv.php).
+ * Customer LTV on the v2 shell (tracking202/Analyze/ltv.php).
  *
  * Each helper returns a component of the Prosper202 standard, parts included,
  * as 202-account/ui-kit.php renders it (error pattern #19): tabs, KPI tiles,
@@ -53,7 +53,7 @@ function p202_ltv_tabs(string $active, ?array $window = null): string
         'settings' => ['bi-gear', 'Settings'],
     ];
     $window ??= p202_ltv_window_query();
-    $base = get_absolute_url() . 'tracking202/analyze/ltv.php';
+    $base = get_absolute_url() . 'tracking202/Analyze/ltv.php';
     $html = '<nav class="nav p202-tabs" aria-label="Customer LTV views">';
     foreach ($tabs as $view => [$icon, $label]) {
         $current = $view === $active;

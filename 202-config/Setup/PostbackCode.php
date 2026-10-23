@@ -6,7 +6,7 @@ namespace Prosper202\Setup;
 
 /**
  * The conversion pixels and postback URLs Setup › Postback / Pixel shows
- * (tracking202/setup/get_postback.php):
+ * (tracking202/Setup/get_postback.php):
  *
  * - simple: an image pixel on gpx.php and a server-to-server postback URL on
  *   gpb.php, each carrying `amount` and `subid`;

@@ -6,16 +6,17 @@
  * 202-js/p202-chrome.js scrolls the active tab into view on narrow screens.
  */
 $p202Nav1 = (string) ($navigation[1] ?? '');
-$p202Nav2 = (string) ($navigation[2] ?? '');
+// Lowercased: the folders are Setup/ and Analyze/, and a case-insensitive host serves either spelling.
+$p202Nav2 = strtolower((string) ($navigation[2] ?? ''));
 $p202E = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 
 // id, path, label, current?
 $p202Tabs = [];
 if ($userObj->hasPermission('access_to_setup_section')) {
-	$p202Tabs[] = ['SetupPage', 'tracking202/setup', 'Setup', $p202Nav2 === 'setup'];
+	$p202Tabs[] = ['SetupPage', 'tracking202/Setup', 'Setup', $p202Nav2 === 'setup'];
 }
 $p202Tabs[] = ['OverviewPage', 'tracking202/overview', 'Overview', ($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview'];
-$p202Tabs[] = ['AnalyzePage', 'tracking202/analyze', 'Analyze', $p202Nav2 === 'analyze'];
+$p202Tabs[] = ['AnalyzePage', 'tracking202/Analyze', 'Analyze', $p202Nav2 === 'analyze'];
 $p202Tabs[] = ['VisitorsPage', 'tracking202/visitors', 'Visitors', $p202Nav2 === 'visitors'];
 $p202Tabs[] = ['SpyPage', 'tracking202/spy', 'Spy', $p202Nav2 === 'spy'];
 if ($userObj->hasPermission('access_to_update_section')) {

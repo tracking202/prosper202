@@ -27,7 +27,7 @@ declare(strict_types=1);
  * no database — so tests/Update/UpdateUiHelpersTest.php calls them directly.
  */
 
-require_once dirname(__DIR__, 2) . '/setup/_includes/setup_ui.php';
+require_once dirname(__DIR__, 2) . '/Setup/_includes/setup_ui.php';
 
 /** The largest CPC 202_clicks.click_cpc (DECIMAL(7,5)) can hold. */
 const P202_UPDATE_CPC_MAX = \Prosper202\Update\CpcUpdate::MAX;

@@ -65,8 +65,8 @@ function p202_setup_landing_code_page(mysqli $db, string $mode, string $title, s
     </div>
 
     <nav class="nav p202-tabs" aria-label="Landing page type">
-        <a class="nav-link<?php echo $simple ? ' active' : ''; ?>" href="<?php echo p202_setup_e($base . 'tracking202/setup/get_simple_landing_code.php'); ?>"<?php echo $simple ? ' aria-current="page"' : ''; ?>>Simple page</a>
-        <a class="nav-link<?php echo $simple ? '' : ' active'; ?>" href="<?php echo p202_setup_e($base . 'tracking202/setup/get_adv_landing_code.php'); ?>"<?php echo $simple ? '' : ' aria-current="page"'; ?>>Advanced page</a>
+        <a class="nav-link<?php echo $simple ? ' active' : ''; ?>" href="<?php echo p202_setup_e($base . 'tracking202/Setup/get_simple_landing_code.php'); ?>"<?php echo $simple ? ' aria-current="page"' : ''; ?>>Simple page</a>
+        <a class="nav-link<?php echo $simple ? '' : ' active'; ?>" href="<?php echo p202_setup_e($base . 'tracking202/Setup/get_adv_landing_code.php'); ?>"<?php echo $simple ? '' : ' aria-current="page"'; ?>>Advanced page</a>
     </nav>
 
     <div class="row g-4">
@@ -76,7 +76,7 @@ function p202_setup_landing_code_page(mysqli $db, string $mode, string $title, s
                     <i class="bi bi-file-earmark p202-empty__icon"></i>
                     <strong class="p202-empty__title">No <?php echo $simple ? 'simple' : 'advanced'; ?> landing pages yet</strong>
                     <div>The code is made for one of your landing pages. Add the page first.</div>
-                    <div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/landing_pages.php'); ?>">Add a landing page</a></div>
+                    <div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/Setup/landing_pages.php'); ?>">Add a landing page</a></div>
                 </div>
             <?php } else { ?>
             <section class="p202-panel">

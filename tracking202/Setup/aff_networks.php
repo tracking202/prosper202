@@ -131,7 +131,7 @@ if (isset($_GET['delete_aff_network_id'])) {
 
 	// validate session token before any state change
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_networks.php');
 		die();
 	}
 
@@ -159,25 +159,25 @@ if (isset($_GET['delete_aff_network_id'])) {
             record_mysql_error($db, $delete_sql);
         }
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_networks.php');
 	}
 }
 
 // Post-redirect-get: a saved or removed category answers with a redirect, so
 // a reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php?' . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_networks.php?' . ($editing ? 'saved=1' : 'added=1'));
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_networks.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/aff_networks.php';
+$self = $base . 'tracking202/Setup/aff_networks.php';
 $canRemove = $userObj->hasPermission("remove_campaign_category");
 $categories = p202_setup_rows($db, "SELECT * FROM `202_aff_networks` WHERE `user_id`='" . $db->real_escape_string((string)$_SESSION['user_id']) . "' AND `aff_network_deleted`='0' ORDER BY `aff_network_name` ASC");
 // What the form shows: the row being edited, or what was just refused.

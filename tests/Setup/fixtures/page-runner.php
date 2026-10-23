@@ -44,7 +44,7 @@ $get = json_decode((string) (getenv('P202_TEST_GET') ?: '{}'), true, 8, JSON_THR
 $post = json_decode((string) (getenv('P202_TEST_POST') ?: '{}'), true, 8, JSON_THROW_ON_ERROR);
 
 // The request.
-$path = '/' . ($isFunction ? 'tracking202/setup/runner.php' : $page);
+$path = '/' . ($isFunction ? 'tracking202/Setup/runner.php' : $page);
 $_SERVER = array_merge($_SERVER, [
     'SERVER_NAME' => 'localhost', 'HTTP_HOST' => 'localhost', 'SERVER_PORT' => '80', 'SERVER_PROTOCOL' => 'HTTP/1.1',
     'REQUEST_URI' => $path . ($get === [] ? '' : '?' . http_build_query($get)),

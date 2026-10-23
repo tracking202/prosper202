@@ -83,7 +83,7 @@ final class NoLegacyBootstrapClassesTest extends TestCase
         'tracking202/_config/sub-menu.php',
         '202-account/ui-kit.php',
         '202-account/ajax/update-needed.php',
-        'tracking202/setup/aff_campaigns.php',
+        'tracking202/Setup/aff_campaigns.php',
         'tracking202/ajax/click_history.php',
         '202-login.php',
         '202-js/p202-chrome.js',

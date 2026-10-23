@@ -104,7 +104,7 @@ final class ReportViewReadersTest extends TestCase
             self::assertGreaterThanOrEqual($reads, $applies, "$file reads the report filters from 202_users_pref $reads time(s) but passes a row through ReportView::apply() $applies time(s); a read around the view draws another tab's filters");
         }
         // The scan must find the readers it exists for, or it proves nothing.
-        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php', 'tracking202/Report/ReportPrefsStore.php', 'tracking202/analyze/keywords_download.php'] as $reader) {
+        foreach (['202-config/functions-tracking202.php', '202-config/class-dataengine.php', '202-config/functions-report-prefs.php', 'tracking202/ajax/account_overview.php', 'tracking202/overview/group_overview_download.php', 'tracking202/Report/ReportPrefsStore.php', 'tracking202/Analyze/keywords_download.php'] as $reader) {
             self::assertContains($reader, $checked, "the scan sees $reader's read of the report filters");
         }
     }
@@ -132,11 +132,11 @@ final class ReportViewReadersTest extends TestCase
 
     public function testEveryAnalyzeDownloadInstallsTheViewItsPageHandsIt(): void
     {
-        require_once $this->root . '/tracking202/analyze/AnalyzeReportController.php';
-        $controller = (string) file_get_contents($this->root . '/tracking202/analyze/AnalyzeReportController.php');
+        require_once $this->root . '/tracking202/Analyze/AnalyzeReportController.php';
+        $controller = (string) file_get_contents($this->root . '/tracking202/Analyze/AnalyzeReportController.php');
         self::assertMatchesRegularExpression("/'downloadUrl' => p202_report_view_url\\(/", $controller, 'the report page hands its download the view it drew');
         foreach (\Tracking202\Analyze\AnalyzeReportController::REPORTS as $type => $report) {
-            $file = 'tracking202/analyze/' . $report['download'];
+            $file = 'tracking202/Analyze/' . $report['download'];
             self::assertFileExists($this->root . '/' . $file);
             self::assertMatchesRegularExpression('/\bp202_report_view_begin\(/', (string) file_get_contents($this->root . '/' . $file),
                 "$file ($type) is handed a view but never installs it, so it exports whatever the stored filters say by then");
@@ -169,8 +169,8 @@ final class ReportViewReadersTest extends TestCase
      */
     public function testTheMobileAppsReportReadsNoStoredFilter(): void
     {
-        $files = ['tracking202/analyze/mobile_apps.php', 'tracking202/analyze/MobileAppsReportController.php', 'tracking202/analyze/templates/mobile_apps.php'];
-        foreach (glob($this->root . '/tracking202/analyze/templates/mobile_apps/*.php') ?: [] as $partial) {
+        $files = ['tracking202/Analyze/mobile_apps.php', 'tracking202/Analyze/MobileAppsReportController.php', 'tracking202/Analyze/templates/mobile_apps.php'];
+        foreach (glob($this->root . '/tracking202/Analyze/templates/mobile_apps/*.php') ?: [] as $partial) {
             $files[] = substr($partial, strlen($this->root) + 1);
         }
         self::assertGreaterThan(5, count($files), 'the page and its partials were found');
@@ -180,7 +180,7 @@ final class ReportViewReadersTest extends TestCase
                 self::assertStringNotContainsString($reader, $code, "$file reads the stored report filters ($reader); this page's filters are its URL's");
             }
         }
-        $template = (string) file_get_contents($this->root . '/tracking202/analyze/templates/mobile_apps/_report.php');
+        $template = (string) file_get_contents($this->root . '/tracking202/Analyze/templates/mobile_apps/_report.php');
         self::assertMatchesRegularExpression("/\\\$link\\(\\['view' => 'report', 'download' => 'csv'\\]\\)/", $template, 'the CSV is this page, under this URL\'s filters');
     }
 

@@ -30,9 +30,9 @@ $base = get_absolute_url();
 $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 
 $gs_steps = [
-    ['done' => $gs_has_traffic, 'href' => $base . 'tracking202/setup/ppc_accounts.php', 'label' => 'Add a traffic source', 'tail' => 'where your clicks come from'],
-    ['done' => $gs_has_campaign, 'href' => $base . 'tracking202/setup/aff_campaigns.php', 'label' => 'Create a campaign', 'tail' => 'the offer you promote'],
-    ['done' => $gs_has_tracker, 'href' => $base . 'tracking202/setup/get_trackers.php', 'label' => 'Generate a tracking link', 'tail' => 'and put it in your traffic source'],
+    ['done' => $gs_has_traffic, 'href' => $base . 'tracking202/Setup/ppc_accounts.php', 'label' => 'Add a traffic source', 'tail' => 'where your clicks come from'],
+    ['done' => $gs_has_campaign, 'href' => $base . 'tracking202/Setup/aff_campaigns.php', 'label' => 'Create a campaign', 'tail' => 'the offer you promote'],
+    ['done' => $gs_has_tracker, 'href' => $base . 'tracking202/Setup/get_trackers.php', 'label' => 'Generate a tracking link', 'tail' => 'and put it in your traffic source'],
 ];
 $gs_next = null;
 foreach ($gs_steps as $gs_step) {

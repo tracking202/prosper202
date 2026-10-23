@@ -82,7 +82,7 @@ final class ForeignRecordNamesIntegrationTest extends TestCase
         (new SchemaInstaller($db))->install();
         self::$db = $db;
         require_once dirname(__DIR__, 3) . '/202-config/functions-ui.php';
-        require_once dirname(__DIR__, 3) . '/tracking202/setup/_includes/setup_ui.php';
+        require_once dirname(__DIR__, 3) . '/tracking202/Setup/_includes/setup_ui.php';
     }
 
     public static function tearDownAfterClass(): void

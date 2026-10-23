@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The Setup routes ask for what the Setup pages ask for (CLAUDE.md #5):
- * access_to_setup_section, which every page under tracking202/setup/ checks
+ * access_to_setup_section, which every page under tracking202/Setup/ checks
  * before anything else, on every route — the landing-page code, the
  * postback code, and a traffic source's variables and an account's pixels —
  * and, on the variables routes, remove_traffic_source first: Setup › Traffic

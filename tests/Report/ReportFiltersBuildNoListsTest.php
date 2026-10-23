@@ -32,7 +32,7 @@ final class ReportFiltersBuildNoListsTest extends TestCase
     /** What the report pages run: directories (every *.php under them) and files. */
     private const REPORT_CODE = [
         'tracking202/ajax',
-        'tracking202/analyze',
+        'tracking202/Analyze',
         'tracking202/overview',
         'tracking202/visitors',
         'tracking202/spy',

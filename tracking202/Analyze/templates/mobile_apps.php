@@ -34,7 +34,7 @@ foreach ($mobileReport['apps'] as $knownApp) {
 }
 
 $setupUrl = rtrim((string)$mobileReport['self'], '/');
-$setupUrl = substr($setupUrl, 0, strrpos($setupUrl, '/tracking202/')) . '/tracking202/setup/mobile_apps.php';
+$setupUrl = substr($setupUrl, 0, strrpos($setupUrl, '/tracking202/')) . '/tracking202/Setup/mobile_apps.php';
 
 /**
  * An empty state, with its parts — the container alone carries none of the

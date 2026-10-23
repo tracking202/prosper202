@@ -94,8 +94,8 @@ final class RequestHostSourceTest extends TestCase
         'tracking202/ajax/generate_tracking_link.php' => [2, 'the tracking link built for the signed-in user'],
         'tracking202/ajax/get_adv_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
         'tracking202/ajax/get_landing_code.php' => [1, 'the landing-page code shown to the signed-in user'],
-        'tracking202/setup/get_postback.php' => [1, 'the pixel and postback URLs shown to the signed-in user'],
-        'tracking202/setup/get_trackers.php' => [2, 'the tracker links listed for the signed-in user'],
+        'tracking202/Setup/get_postback.php' => [1, 'the pixel and postback URLs shown to the signed-in user'],
+        'tracking202/Setup/get_trackers.php' => [2, 'the tracker links listed for the signed-in user'],
         'tracking202/static/landing.php' => [
             1,
             "the landing-page script calls back the host the visitor's browser loaded it from (no-store)",

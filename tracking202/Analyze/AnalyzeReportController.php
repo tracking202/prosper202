@@ -188,8 +188,8 @@ final class AnalyzeReportController
         $analyze = [
             'type' => $this->type,
             'report' => self::REPORTS[$this->type],
-            'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/' . self::REPORTS[$this->type]['page'],
-            'downloadUrl' => p202_report_view_url(rtrim(get_absolute_url(), '/') . '/tracking202/analyze/' . self::REPORTS[$this->type]['download'], $view),
+            'self' => rtrim(get_absolute_url(), '/') . '/tracking202/Analyze/' . self::REPORTS[$this->type]['page'],
+            'downloadUrl' => p202_report_view_url(rtrim(get_absolute_url(), '/') . '/tracking202/Analyze/' . self::REPORTS[$this->type]['download'], $view),
             'offered' => $offered,
             'values' => $values,
             'time' => $time,

@@ -27,7 +27,7 @@
 const path = require('path');
 const checks = require('../lib/checks');
 
-const PAGE = '/tracking202/analyze/mobile_apps.php';
+const PAGE = '/tracking202/Analyze/mobile_apps.php';
 const APP_ID = 990077001;
 const OTHER_APP_ID = 990077002;
 const DAY = 86400;
@@ -170,7 +170,7 @@ module.exports = {
       name: 'Reaching the page the way a user does',
       async run(ctx) {
         const { app, ui, expect } = ctx;
-        await app.goto('/tracking202/analyze/');
+        await app.goto('/tracking202/Analyze/');
         await app.openFromSubMenu('Mobile Apps');
 
         expect.eq(new URL(ui.page.url()).pathname, PAGE, 'the Analyze strip leads to the page');

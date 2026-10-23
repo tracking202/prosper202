@@ -19,7 +19,7 @@ use Prosper202\Notifications\NotificationOutbox;
  * script URL, a server-to-server postback URL, or raw markup — and, for a
  * postback, where the network takes corrections
  * (202_notification_correction_urls). Setup › Traffic Sources edits them
- * under the account form's Advanced (tracking202/setup/ppc_accounts.php).
+ * under the account form's Advanced (tracking202/Setup/ppc_accounts.php).
  *
  *   GET    /ppc-accounts/{id}/pixels
  *   POST   /ppc-accounts/{id}/pixels              {pixel_type_id, pixel_code, correction_url?}

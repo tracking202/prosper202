@@ -38,7 +38,7 @@ final class MobileAppsReportTest extends TestCase
      */
     private static function loadController(): void
     {
-        require_once dirname(__DIR__, 2) . '/tracking202/analyze/MobileAppsReportController.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/Analyze/MobileAppsReportController.php';
     }
 
     public static function setUpBeforeClass(): void
@@ -521,7 +521,7 @@ final class MobileAppsReportTest extends TestCase
      */
     public function testTheReaderTheFormAndTheLinksAskTheSameQuestion(): void
     {
-        $root = dirname(__DIR__, 2) . '/tracking202/analyze/';
+        $root = dirname(__DIR__, 2) . '/tracking202/Analyze/';
         $controller = (string) file_get_contents($root . 'MobileAppsReportController.php');
         self::assertMatchesRegularExpression('/if \(\$signature !== \'\' && !self::signatureApplies\(\$view, \$platform\)\) \{\s*\$this->flashFilterDropped\(/', $controller);
         self::assertStringContainsString('$this->readFilters($apps, $view)', $controller);

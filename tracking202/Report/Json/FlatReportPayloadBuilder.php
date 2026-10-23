@@ -15,51 +15,51 @@ final class FlatReportPayloadBuilder
     private const REPORTS = [
         'keyword' => [
             'featureLabel' => 'Keyword',
-            'downloadPath' => 'tracking202/analyze/keywords_download.php',
+            'downloadPath' => 'tracking202/Analyze/keywords_download.php',
         ],
         'textad' => [
             'featureLabel' => 'Text ad',
-            'downloadPath' => 'tracking202/analyze/text_ads_download.php',
+            'downloadPath' => 'tracking202/Analyze/text_ads_download.php',
         ],
         'referer' => [
             'featureLabel' => 'Referer',
-            'downloadPath' => 'tracking202/analyze/referers_download.php',
+            'downloadPath' => 'tracking202/Analyze/referers_download.php',
         ],
         'ip' => [
             'featureLabel' => 'IP',
-            'downloadPath' => 'tracking202/analyze/ips_download.php',
+            'downloadPath' => 'tracking202/Analyze/ips_download.php',
         ],
         'country' => [
             'featureLabel' => 'Country',
-            'downloadPath' => 'tracking202/analyze/countries_download.php',
+            'downloadPath' => 'tracking202/Analyze/countries_download.php',
         ],
         'region' => [
             'featureLabel' => 'Region',
-            'downloadPath' => 'tracking202/analyze/regions_download.php',
+            'downloadPath' => 'tracking202/Analyze/regions_download.php',
         ],
         'city' => [
             'featureLabel' => 'City',
-            'downloadPath' => 'tracking202/analyze/cities_download.php',
+            'downloadPath' => 'tracking202/Analyze/cities_download.php',
         ],
         'isp' => [
             'featureLabel' => 'ISP/Carrier',
-            'downloadPath' => 'tracking202/analyze/isps_download.php',
+            'downloadPath' => 'tracking202/Analyze/isps_download.php',
         ],
         'landingpage' => [
             'featureLabel' => 'Landing Page',
-            'downloadPath' => 'tracking202/analyze/landing_pages_download.php',
+            'downloadPath' => 'tracking202/Analyze/landing_pages_download.php',
         ],
         'device' => [
             'featureLabel' => 'Device',
-            'downloadPath' => 'tracking202/analyze/device_download.php',
+            'downloadPath' => 'tracking202/Analyze/device_download.php',
         ],
         'browser' => [
             'featureLabel' => 'Browser',
-            'downloadPath' => 'tracking202/analyze/browser_download.php',
+            'downloadPath' => 'tracking202/Analyze/browser_download.php',
         ],
         'platform' => [
             'featureLabel' => 'Platform',
-            'downloadPath' => 'tracking202/analyze/platform_download.php',
+            'downloadPath' => 'tracking202/Analyze/platform_download.php',
         ],
     ];
 

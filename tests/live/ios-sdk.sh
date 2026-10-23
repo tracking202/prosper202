@@ -260,9 +260,9 @@ if [ -n "$P202_PASS" ]; then
   curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" --data-urlencode "token=$LT" \
     --data-urlencode "user_name=$P202_USER" --data-urlencode "user_pass=$P202_PASS" -o /dev/null
   RULE=$(Q "SELECT encoding_id FROM 202_app_skan_encodings WHERE registration_id = $RID AND fine_value = 40")
-  curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/setup/mobile_apps.php?app=$RID&rule_edit=$RULE" -o "$OUT/page.html"
+  curl -sS -b "$JAR" -c "$JAR" "$BASE/tracking202/Setup/mobile_apps.php?app=$RID&rule_edit=$RULE" -o "$OUT/page.html"
   TOK=$(grep -oE 'name="csrf_token" value="[^"]+"' "$OUT/page.html" | head -1 | sed 's/.*value="//; s/"//')
-  curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" --data-urlencode "csrf_token=$TOK" \
+  curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/mobile_apps.php" --data-urlencode "csrf_token=$TOK" \
     --data-urlencode action=rule_save --data-urlencode "registration_id=$RID" --data-urlencode "rule_id=$RULE" \
     --data-urlencode kind=fine --data-urlencode fine_value=40 --data-urlencode event_name=big_purchase --data-urlencode revenue=25 -o "$OUT/edited.html"
   has "$OUT/edited.html" "Conversion value changed." "the edit is confirmed"

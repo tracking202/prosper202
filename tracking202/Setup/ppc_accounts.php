@@ -95,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				if ($slack)
 					$slack->push('traffic_source_name_changed', ['old_name' => $_GET['edit_ppc_network_name'], 'new_name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
 				//if editing true, refresh back with the edit get variable GONE GONE!
-				header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+				header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 			} else {
 				if ($slack)
 					$slack->push('traffic_source_created', ['name' => $_POST['ppc_network_name'], 'user' => $user_row['username']]);
@@ -283,7 +283,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 				$correctionPixels,
 				time()
 			);
-			header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+			header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 		}
 	}
 }
@@ -292,7 +292,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 		die();
 	}
 
@@ -318,7 +318,7 @@ if (isset($_GET['delete_ppc_network_id'])) {
             record_mysql_error($delete_sql);
         }
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 	}
 }
 
@@ -326,7 +326,7 @@ if (isset($_GET['delete_ppc_account_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 		die();
 	}
 
@@ -352,7 +352,7 @@ if (isset($_GET['delete_ppc_account_id'])) {
             record_mysql_error($delete_sql);
 		}
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php');
 	}
 }
 
@@ -421,18 +421,18 @@ if (!empty($error)) {
 // redirect, so a reload cannot submit the form a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
 	$flash = isset($_POST['ppc_network_name']) ? ($network_editing ? 'source_saved' : 'source_added') : ($editing ? 'account_saved' : 'account_added');
-	header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?' . $flash . '=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php?' . $flash . '=1');
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/ppc_accounts.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/ppc_accounts.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/ppc_accounts.php';
+$self = $base . 'tracking202/Setup/ppc_accounts.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 $posted = $_SERVER['REQUEST_METHOD'] == 'POST';

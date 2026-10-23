@@ -12,7 +12,7 @@ use Tests\Api\V3\SetupScratchDatabase;
 
 /**
  * Setup › Traffic Sources' account pixels saved against a real database
- * (AccountPixels, which tracking202/setup/ppc_accounts.php saves and reads
+ * (AccountPixels, which tracking202/Setup/ppc_accounts.php saves and reads
  * them through), and read back by what fires them
  * (TrafficSourcePixels::fire()):
  *

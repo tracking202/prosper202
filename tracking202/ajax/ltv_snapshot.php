@@ -46,7 +46,7 @@ $e = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     <div class="p202-panel__head">
         <h2 class="p202-panel__title" id="ltv-snapshot-title">Customer lifetime value</h2>
         <span class="p202-panel__sub">all time</span>
-        <div class="p202-panel__aside"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . 'tracking202/analyze/ltv.php'); ?>">Full report</a></div>
+        <div class="p202-panel__aside"><a class="btn btn-secondary btn-sm" href="<?php echo $e(get_absolute_url() . 'tracking202/Analyze/ltv.php'); ?>">Full report</a></div>
     </div>
     <div class="p202-panel__body">
         <div class="p202-tiles mb-0">

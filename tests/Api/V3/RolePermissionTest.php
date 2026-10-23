@@ -74,7 +74,7 @@ final class RolePermissionTest extends TestCase
 
     /** [path pattern, why no role permission] for the rest. */
     private const NO_ROLE_CHECK = [
-        ['#^/ltv(/|$)#', 'Analyze › Customer LTV asks for none (tracking202/analyze/ltv.php); keys need ltv scopes'],
+        ['#^/ltv(/|$)#', 'Analyze › Customer LTV asks for none (tracking202/Analyze/ltv.php); keys need ltv scopes'],
         ['#^/events$#', 'goal events, sent by the account\'s own sites; no page'],
         ['#^/staged-changes(/|$)#', 'a proposal; applying runs the target route, its checks included, as the applier'],
         ['#^/capabilities$#', 'what the server offers; no account data'],

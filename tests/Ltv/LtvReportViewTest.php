@@ -45,12 +45,12 @@ final class LtvReportViewTest extends TestCase
     public function testEveryRequestThatCanDrawTheWindowInstallsTheViewFirst(): void
     {
         $files = array_values(self::routedPartials());
-        $files[] = 'tracking202/analyze/ltv_download.php';
+        $files[] = 'tracking202/Analyze/ltv_download.php';
         foreach ($files as $file) {
             $source = (string) file_get_contents(self::root() . '/' . $file);
             $login = strpos($source, "AUTH::require_user();\n");
             self::assertNotFalse($login, "$file checks the login");
-            $expected = $file === 'tracking202/analyze/ltv_download.php'
+            $expected = $file === 'tracking202/Analyze/ltv_download.php'
                 ? "require_once \$rootPath . '/202-config/functions-report-prefs.php';\np202_report_view_begin();"
                 : self::BEGIN;
             $at = strpos($source, $expected);
@@ -73,7 +73,7 @@ final class LtvReportViewTest extends TestCase
 
     public function testThePageHandsItsViewToTheRouterAndTheRouterSendsIt(): void
     {
-        $page = (string) file_get_contents(self::root() . '/tracking202/analyze/ltv.php');
+        $page = (string) file_get_contents(self::root() . '/tracking202/Analyze/ltv.php');
         self::assertStringContainsString("\$view = p202_report_view_query([], [], \$window);\np202_report_view_from_request([\\Prosper202\\DataEngine\\ReportView::PARAM => \$view], \$userId);", $page,
             'the page installs the view it draws');
         self::assertStringContainsString('data-ltv-view="<?php echo $e($view); ?>"', $page, 'and hands it to ltv.js');
@@ -84,9 +84,9 @@ final class LtvReportViewTest extends TestCase
             'and puts it on every request it and the partials make');
 
         $sort = (string) file_get_contents(self::root() . '/tracking202/ajax/sort_ltv.php');
-        self::assertStringContainsString("p202_report_view_url(get_absolute_url() . 'tracking202/analyze/ltv_download.php', \$reportView)", $sort,
+        self::assertStringContainsString("p202_report_view_url(get_absolute_url() . 'tracking202/Analyze/ltv_download.php', \$reportView)", $sort,
             'the download link exports the view on screen');
-        self::assertStringNotContainsString("'tracking202/analyze/ltv_download.php\" ", $sort);
+        self::assertStringNotContainsString("'tracking202/Analyze/ltv_download.php\" ", $sort);
     }
 
     /**
@@ -96,7 +96,7 @@ final class LtvReportViewTest extends TestCase
      */
     public function testAStrayPageOrOrderDoesNotHoldTheWindowBack(): void
     {
-        $page = (string) file_get_contents(self::root() . '/tracking202/analyze/ltv.php');
+        $page = (string) file_get_contents(self::root() . '/tracking202/Analyze/ltv.php');
         self::assertSame(1, preg_match('/^\$errors = array_diff_key\(\$input->errors, \[\'page\' => true, \'order\' => true\]\);$/m', $page),
             'the parse errors of fields the page does not read are set aside');
         self::assertSame(1, substr_count($page, '$input->errors'), 'and nothing else reads the unfiltered errors');

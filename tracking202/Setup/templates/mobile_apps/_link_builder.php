@@ -65,7 +65,7 @@ foreach ((array)($lb['campaigns'] ?? []) as $c) {
                 <i class="bi bi-megaphone p202-empty__icon"></i>
                 <strong class="p202-empty__title">No campaign to point at it yet</strong>
                 <div>Add the campaign that advertises this app with the link above as its offer URL<?php echo $isIos ? '' : ', then come back to link it to the app'; ?>.</div>
-                <div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e($base . 'tracking202/setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
+                <div class="p202-empty__action"><a class="btn btn-secondary btn-sm" href="<?php echo $e($base . 'tracking202/Setup/aff_campaigns.php'); ?>">Add a campaign</a></div>
             </div>
         <?php } else { ?>
             <form method="get" action="<?php echo $e($self); ?>" class="p202-toolbar mb-3">
@@ -103,7 +103,7 @@ foreach ((array)($lb['campaigns'] ?? []) as $c) {
                         </div>
                     </form>
                 <?php } elseif ($lbCampaign['ready']) { ?>
-                    <p class="mb-0">Next: <a href="<?php echo $e($base . 'tracking202/setup/get_trackers.php'); ?>">get the campaign's tracking link</a> and give it to the traffic source.</p>
+                    <p class="mb-0">Next: <a href="<?php echo $e($base . 'tracking202/Setup/get_trackers.php'); ?>">get the campaign's tracking link</a> and give it to the traffic source.</p>
                 <?php } ?>
             <?php } ?>
         <?php } ?>

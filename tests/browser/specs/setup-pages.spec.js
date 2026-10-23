@@ -17,7 +17,7 @@
 const path = require('path');
 const checks = require('../lib/checks');
 
-const SETUP = '/tracking202/setup/';
+const SETUP = '/tracking202/Setup/';
 const SETUP_TABLES = [
   '202_aff_networks', '202_aff_campaigns', '202_ppc_networks', '202_ppc_accounts', '202_ppc_account_pixels',
   '202_ppc_network_variables', '202_landing_pages', '202_text_ads', '202_rotators', '202_rotator_rules',

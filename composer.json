@@ -16,8 +16,6 @@
     "psr-4": {
       "Prosper202\\": "202-config/",
       "Tracking202\\": "tracking202/",
-      "Tracking202\\Analyze\\": "tracking202/analyze/",
-      "Tracking202\\Setup\\": "tracking202/setup/",
       "Prosper202Interfaces\\": "202-interfaces/",
       "Api\\V3\\": "api/v3/",
       "Api\\": "api/",

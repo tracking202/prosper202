@@ -84,7 +84,7 @@ if ($goalPost) {
 		}
 	}
 	if ($goalErrors === []) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?edit_aff_campaign_id=' . $goalCampaignId
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_campaigns.php?edit_aff_campaign_id=' . $goalCampaignId
 			. '&' . ($goalAction === 'archive' ? 'goal_archived' : 'goal_saved') . '=1#campaign-goals');
 		exit;
 	}
@@ -331,7 +331,7 @@ if (isset($_GET['delete_aff_campaign_id'])) {
 
 	// Require a valid session token for this state-changing request.
 	if (!AUTH::csrf_token_matches($_GET['token'] ?? null)) {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_campaigns.php');
 		die();
 	}
 
@@ -356,7 +356,7 @@ if (isset($_GET['delete_aff_campaign_id'])) {
             record_mysql_error($delete_sql);
         }
 	} else {
-		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php');
+		header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_campaigns.php');
 	}
 }
 
@@ -424,18 +424,18 @@ if (($_SERVER['REQUEST_METHOD'] == 'POST') and !$goalPost and (!isset($add_succe
 // Post-redirect-get: a saved or removed campaign answers with a redirect, so
 // a reload cannot submit the form (or the remove link) a second time.
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $add_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?' . ($editing ? 'saved=1' : 'added=1'));
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_campaigns.php?' . ($editing ? 'saved=1' : 'added=1'));
 	exit;
 }
 if ($delete_success == true) {
-	header('location: ' . get_absolute_url() . 'tracking202/setup/aff_campaigns.php?deleted=1');
+	header('location: ' . get_absolute_url() . 'tracking202/Setup/aff_campaigns.php?deleted=1');
 	exit;
 }
 
 require_once __DIR__ . '/_includes/setup_ui.php';
 
 $base = get_absolute_url();
-$self = $base . 'tracking202/setup/aff_campaigns.php';
+$self = $base . 'tracking202/Setup/aff_campaigns.php';
 $token = (string) ($_SESSION['token'] ?? '');
 $uid = $db->real_escape_string((string) $_SESSION['user_id']);
 
@@ -535,7 +535,7 @@ if ($error) {
 				<i class="bi bi-grid p202-empty__icon"></i>
 				<strong class="p202-empty__title">Add a category first</strong>
 				<div>Every campaign sits in a category, such as the network that pays for it.</div>
-				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/setup/aff_networks.php'); ?>">Add a category</a></div>
+				<div class="p202-empty__action"><a class="btn btn-primary btn-sm" href="<?php echo p202_setup_e($base . 'tracking202/Setup/aff_networks.php'); ?>">Add a category</a></div>
 			</div>
 		<?php } else { ?>
 		<section class="p202-panel" id="campaign-form">

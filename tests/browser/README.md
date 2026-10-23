@@ -96,7 +96,7 @@ module.exports = {
     {
       name: 'The report totals only verified postbacks',
       async run({ app, ui, db, expect, state }) {
-        await app.goto('/tracking202/analyze/mobile_apps.php');
+        await app.goto('/tracking202/Analyze/mobile_apps.php');
         expect.eq(await ui.text('.p202-stat__value'), '3', 'it counts the verified ones');
       },
     },

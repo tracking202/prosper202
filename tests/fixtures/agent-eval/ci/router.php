@@ -14,9 +14,16 @@ declare(strict_types=1);
  * is a harness-only concern — production needs no router.
  *
  * For a dotted directory path that has an index.php, run that script with the
- * server variables a direct request carries. Every other request returns
- * false and is served exactly as php -S would on its own.
+ * server variables a direct request carries. A .php file that does not exist
+ * runs 202-404.php, as the Docker image's ErrorDocument and the README's nginx
+ * error_page do (only a .php path: php -S serves a missing directory path,
+ * /api/v3/campaigns, from the nearest index.php above it). Every other
+ * request returns false and is served exactly as php -S would on its own.
  */
+
+// Each php -S worker keeps realpath() answers for 120 seconds, so a folder a
+// live pass removed would still read as there and its pages as found.
+clearstatcache(true);
 
 $p202RouterPath = rawurldecode((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH));
 $p202RouterRoot = realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? getcwd()));
@@ -24,7 +31,16 @@ $p202RouterTarget = ($p202RouterRoot !== false && !str_contains($p202RouterPath,
     ? realpath($p202RouterRoot . '/' . ltrim($p202RouterPath, '/'))
     : false;
 
+$p202RouterScript = null;
 if (
+    $p202RouterRoot !== false
+    && $p202RouterTarget === false
+    && str_ends_with($p202RouterPath, '.php')
+    && is_file($p202RouterRoot . '/202-404.php')
+) {
+    $p202RouterScript = '/202-404.php';
+    $p202RouterFile = $p202RouterRoot . '/202-404.php';
+} elseif (
     $p202RouterRoot !== false
     && $p202RouterTarget !== false
     && str_contains($p202RouterPath, '.')
@@ -33,9 +49,13 @@ if (
     && is_file($p202RouterTarget . '/index.php')
 ) {
     $p202RouterScript = rtrim($p202RouterPath, '/') . '/index.php';
+    $p202RouterFile = $p202RouterTarget . '/index.php';
+}
+
+if ($p202RouterScript !== null) {
     $_SERVER['SCRIPT_NAME'] = $p202RouterScript;
     $_SERVER['PHP_SELF'] = $p202RouterScript;
-    $_SERVER['SCRIPT_FILENAME'] = $p202RouterTarget . '/index.php';
+    $_SERVER['SCRIPT_FILENAME'] = $p202RouterFile;
     // php -S logs nothing for a request its router handles, and the server
     // log is what a red CI run is diagnosed from — so log this one in the
     // server's own format once the script has finished and the status is
@@ -53,7 +73,7 @@ if (
     // The include runs at file (global) scope on purpose — 202-config.php's
     // database globals must land in the global scope — so drop the router's
     // own variables first; anything left here would leak into the script.
-    unset($p202RouterPath, $p202RouterRoot, $p202RouterTarget, $p202RouterScript);
+    unset($p202RouterPath, $p202RouterRoot, $p202RouterTarget, $p202RouterScript, $p202RouterFile);
     require $_SERVER['SCRIPT_FILENAME'];
     return;
 }

@@ -199,7 +199,7 @@ final class OverviewPagesTest extends TestCase
 
         $empty = p202_overview_metrics_table([$totals], $options + ['empty' => p202_overview_empty('/')]);
         self::assertStringContainsString('p202-empty__title', $empty, 'no rows is an empty state, not a table of totals');
-        self::assertStringContainsString('/tracking202/setup/get_trackers.php', $empty, 'which offers the first step');
+        self::assertStringContainsString('/tracking202/Setup/get_trackers.php', $empty, 'which offers the first step');
     }
 
     public function testPageLinksCarryTheirOffsetAndMarkTheCurrentPage(): void

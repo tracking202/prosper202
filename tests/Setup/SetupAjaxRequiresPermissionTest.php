@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
  * rewrite redirectors (rotator.php) or a traffic source's variables
  * (custom_variables.php) by posting to them directly.
  *
- * What it reads: every `ajax/<name>.php` the files under tracking202/setup
+ * What it reads: every `ajax/<name>.php` the files under tracking202/Setup
  * name, and in each, the statement right after the top-level
  * `AUTH::require_user();`. That statement must be a call of
  * `AUTH::require_permissions(...)` whose arguments are string literals
@@ -41,7 +41,7 @@ final class SetupAjaxRequiresPermissionTest extends TestCase
     private static function endpoints(): array
     {
         $names = [];
-        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT . 'tracking202/setup'));
+        $files = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree(self::ROOT . 'tracking202/Setup'));
         foreach ($files as $file) {
             if (!$file->isFile() || !in_array($file->getExtension(), ['php', 'js'], true)) {
                 continue;

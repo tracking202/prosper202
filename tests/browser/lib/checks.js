@@ -292,17 +292,17 @@ const LEGACY_SAMPLE = ['col-xs-12', 'col-xs-6', 'col-md-offset-4', 'panel', 'pan
   'glyphicon', 'label', 'pull-right', 'sr-only', 'input-group-addon', 'radio', 'checkbox'];
 
 const SETUP_PAGES = [
-  { path: '/tracking202/setup/ppc_accounts.php', menu: 'Traffic Sources' },
-  { path: '/tracking202/setup/aff_networks.php', menu: 'Categories' },
-  { path: '/tracking202/setup/aff_campaigns.php', menu: 'Campaigns' },
-  { path: '/tracking202/setup/landing_pages.php', menu: 'Landing Pages' },
-  { path: '/tracking202/setup/text_ads.php', menu: 'Text Ads' },
-  { path: '/tracking202/setup/rotator.php', menu: 'Redirector' },
-  { path: '/tracking202/setup/get_simple_landing_code.php', menu: 'Get LP Code' },
-  { path: '/tracking202/setup/get_adv_landing_code.php', menu: 'Get LP Code' },
-  { path: '/tracking202/setup/get_dynamic_smart_component_code.php', menu: null },
-  { path: '/tracking202/setup/get_trackers.php', menu: 'Get Links' },
-  { path: '/tracking202/setup/get_postback.php', menu: 'Postback/Pixel' },
+  { path: '/tracking202/Setup/ppc_accounts.php', menu: 'Traffic Sources' },
+  { path: '/tracking202/Setup/aff_networks.php', menu: 'Categories' },
+  { path: '/tracking202/Setup/aff_campaigns.php', menu: 'Campaigns' },
+  { path: '/tracking202/Setup/landing_pages.php', menu: 'Landing Pages' },
+  { path: '/tracking202/Setup/text_ads.php', menu: 'Text Ads' },
+  { path: '/tracking202/Setup/rotator.php', menu: 'Redirector' },
+  { path: '/tracking202/Setup/get_simple_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/Setup/get_adv_landing_code.php', menu: 'Get LP Code' },
+  { path: '/tracking202/Setup/get_dynamic_smart_component_code.php', menu: null },
+  { path: '/tracking202/Setup/get_trackers.php', menu: 'Get Links' },
+  { path: '/tracking202/Setup/get_postback.php', menu: 'Postback/Pixel' },
 ];
 
 /**
@@ -394,19 +394,19 @@ module.exports.accountPageBaseline = accountPageBaseline;
  * to the family is a line here, and every pass that walks the list covers it.
  */
 const ANALYZE_REPORT_PAGES = [
-  { path: '/tracking202/analyze/keywords.php', menu: 'Keywords', heading: 'Keywords' },
-  { path: '/tracking202/analyze/text_ads.php', menu: 'Text Ads', heading: 'Text Ads' },
-  { path: '/tracking202/analyze/referers.php', menu: 'Referers', heading: 'Referers' },
-  { path: '/tracking202/analyze/ips.php', menu: 'IPs', heading: 'IP Addresses' },
-  { path: '/tracking202/analyze/countries.php', menu: 'Countries', heading: 'Countries' },
-  { path: '/tracking202/analyze/regions.php', menu: 'Regions', heading: 'Regions' },
-  { path: '/tracking202/analyze/cities.php', menu: 'Cities', heading: 'Cities' },
-  { path: '/tracking202/analyze/isp.php', menu: 'ISP/Carrier', heading: 'ISPs and Carriers' },
-  { path: '/tracking202/analyze/landing_pages.php', menu: 'Landing Pages', heading: 'Landing Pages' },
-  { path: '/tracking202/analyze/devices.php', menu: 'Devices', heading: 'Devices' },
-  { path: '/tracking202/analyze/browsers.php', menu: 'Browsers', heading: 'Browsers' },
-  { path: '/tracking202/analyze/platforms.php', menu: 'Platforms', heading: 'Platforms' },
-  { path: '/tracking202/analyze/variables.php', menu: 'Custom Variables', heading: 'Custom Variables' },
+  { path: '/tracking202/Analyze/keywords.php', menu: 'Keywords', heading: 'Keywords' },
+  { path: '/tracking202/Analyze/text_ads.php', menu: 'Text Ads', heading: 'Text Ads' },
+  { path: '/tracking202/Analyze/referers.php', menu: 'Referers', heading: 'Referers' },
+  { path: '/tracking202/Analyze/ips.php', menu: 'IPs', heading: 'IP Addresses' },
+  { path: '/tracking202/Analyze/countries.php', menu: 'Countries', heading: 'Countries' },
+  { path: '/tracking202/Analyze/regions.php', menu: 'Regions', heading: 'Regions' },
+  { path: '/tracking202/Analyze/cities.php', menu: 'Cities', heading: 'Cities' },
+  { path: '/tracking202/Analyze/isp.php', menu: 'ISP/Carrier', heading: 'ISPs and Carriers' },
+  { path: '/tracking202/Analyze/landing_pages.php', menu: 'Landing Pages', heading: 'Landing Pages' },
+  { path: '/tracking202/Analyze/devices.php', menu: 'Devices', heading: 'Devices' },
+  { path: '/tracking202/Analyze/browsers.php', menu: 'Browsers', heading: 'Browsers' },
+  { path: '/tracking202/Analyze/platforms.php', menu: 'Platforms', heading: 'Platforms' },
+  { path: '/tracking202/Analyze/variables.php', menu: 'Custom Variables', heading: 'Custom Variables' },
 ];
 
 /** Bootstrap 3 classes a migrated page most often keeps by accident. */

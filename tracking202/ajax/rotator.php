@@ -139,7 +139,7 @@ if (isset($_POST['post_rules']) && $_POST['post_rules'] == true && isset($_POST[
 
 	// Saving the set removes every saved rule it leaves out (the DELETE
 	// below), and the page offers a rule's remove button only to a role
-	// with remove_rotator_rule (setup/rotator.php): a save that would remove
+	// with remove_rotator_rule (Setup/rotator.php): a save that would remove
 	// one needs that permission too, checked before anything is written.
 	if (!$userObj->hasPermission('remove_rotator_rule')) {
 		$keptRules = [];

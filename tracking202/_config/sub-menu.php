@@ -15,7 +15,7 @@
  * component layer's parts instead (202-css/p202-components.css).
  */
 $p202Nav1 = (string) ($navigation[1] ?? '');
-$p202Nav2 = (string) ($navigation[2] ?? '');
+$p202Nav2 = strtolower((string) ($navigation[2] ?? '')); // Setup/, Analyze/: see top.php
 $p202Nav3 = (string) ($navigation[3] ?? '');
 $p202Base = get_absolute_url();
 $p202E = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
@@ -26,16 +26,16 @@ $p202StripLabel = '';
 if ($p202Nav2 === 'setup') {
     $p202StripLabel = 'Setup';
     $p202StripItems = [
-        ['Traffic Sources', 'tracking202/setup/ppc_accounts.php', ['ppc_accounts.php', '']],
-        ['Categories', 'tracking202/setup/aff_networks.php', ['aff_networks.php']],
-        ['Campaigns', 'tracking202/setup/aff_campaigns.php', ['aff_campaigns.php']],
-        ['Landing Pages', 'tracking202/setup/landing_pages.php', ['landing_pages.php']],
-        ['Text Ads', 'tracking202/setup/text_ads.php', ['text_ads.php']],
-        ['Redirector', 'tracking202/setup/rotator.php', ['rotator.php']],
-        ['Mobile Apps', 'tracking202/setup/mobile_apps.php', ['mobile_apps.php']],
-        ['Get LP Code', 'tracking202/setup/get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
-        ['Get Links', 'tracking202/setup/get_trackers.php', ['get_trackers.php']],
-        ['Postback/Pixel', 'tracking202/setup/get_postback.php', ['get_postback.php']],
+        ['Traffic Sources', 'tracking202/Setup/ppc_accounts.php', ['ppc_accounts.php', '']],
+        ['Categories', 'tracking202/Setup/aff_networks.php', ['aff_networks.php']],
+        ['Campaigns', 'tracking202/Setup/aff_campaigns.php', ['aff_campaigns.php']],
+        ['Landing Pages', 'tracking202/Setup/landing_pages.php', ['landing_pages.php']],
+        ['Text Ads', 'tracking202/Setup/text_ads.php', ['text_ads.php']],
+        ['Redirector', 'tracking202/Setup/rotator.php', ['rotator.php']],
+        ['Mobile Apps', 'tracking202/Setup/mobile_apps.php', ['mobile_apps.php']],
+        ['Get LP Code', 'tracking202/Setup/get_landing_code.php', ['get_landing_code.php', 'get_simple_landing_code.php', 'get_adv_landing_code.php']],
+        ['Get Links', 'tracking202/Setup/get_trackers.php', ['get_trackers.php']],
+        ['Postback/Pixel', 'tracking202/Setup/get_postback.php', ['get_postback.php']],
     ];
 } elseif (($p202Nav1 === 'account' && $p202Nav2 === '') || $p202Nav2 === 'overview') {
     $p202StripLabel = 'Overview reports';
@@ -49,20 +49,20 @@ if ($p202Nav2 === 'setup') {
 } elseif ($p202Nav2 === 'analyze') {
     $p202StripLabel = 'Analyze reports';
     $p202StripItems = [
-        ['Keywords', 'tracking202/analyze/keywords.php', ['keywords.php', '']],
-        ['Text Ads', 'tracking202/analyze/text_ads.php', ['text_ads.php']],
-        ['Referers', 'tracking202/analyze/referers.php', ['referers.php']],
-        ['IPs', 'tracking202/analyze/ips.php', ['ips.php']],
-        ['Countries', 'tracking202/analyze/countries.php', ['countries.php']],
-        ['Regions', 'tracking202/analyze/regions.php', ['regions.php']],
-        ['Cities', 'tracking202/analyze/cities.php', ['cities.php']],
-        ['ISP/Carrier', 'tracking202/analyze/isp.php', ['isp.php']],
-        ['Landing Pages', 'tracking202/analyze/landing_pages.php', ['landing_pages.php']],
-        ['Devices', 'tracking202/analyze/devices.php', ['devices.php']],
-        ['Browsers', 'tracking202/analyze/browsers.php', ['browsers.php']],
-        ['Platforms', 'tracking202/analyze/platforms.php', ['platforms.php']],
-        ['Custom Variables', 'tracking202/analyze/variables.php', ['variables.php']],
-        ['Customer LTV', 'tracking202/analyze/ltv.php', ['ltv.php']],
+        ['Keywords', 'tracking202/Analyze/keywords.php', ['keywords.php', '']],
+        ['Text Ads', 'tracking202/Analyze/text_ads.php', ['text_ads.php']],
+        ['Referers', 'tracking202/Analyze/referers.php', ['referers.php']],
+        ['IPs', 'tracking202/Analyze/ips.php', ['ips.php']],
+        ['Countries', 'tracking202/Analyze/countries.php', ['countries.php']],
+        ['Regions', 'tracking202/Analyze/regions.php', ['regions.php']],
+        ['Cities', 'tracking202/Analyze/cities.php', ['cities.php']],
+        ['ISP/Carrier', 'tracking202/Analyze/isp.php', ['isp.php']],
+        ['Landing Pages', 'tracking202/Analyze/landing_pages.php', ['landing_pages.php']],
+        ['Devices', 'tracking202/Analyze/devices.php', ['devices.php']],
+        ['Browsers', 'tracking202/Analyze/browsers.php', ['browsers.php']],
+        ['Platforms', 'tracking202/Analyze/platforms.php', ['platforms.php']],
+        ['Custom Variables', 'tracking202/Analyze/variables.php', ['variables.php']],
+        ['Customer LTV', 'tracking202/Analyze/ltv.php', ['ltv.php']],
     ];
     // Gated like every other attribution link (202-config/template.php) and
     // like Delete Subids below: the page itself redirects anyone without the
@@ -70,7 +70,7 @@ if ($p202Nav2 === 'setup') {
     // an account the feature exists when the Attribution tab is hidden from
     // it.
     if (isset($userObj) && $userObj->hasPermission('view_attribution_reports')) {
-        $p202StripItems[] = ['Mobile Apps', 'tracking202/analyze/mobile_apps.php', ['mobile_apps.php']];
+        $p202StripItems[] = ['Mobile Apps', 'tracking202/Analyze/mobile_apps.php', ['mobile_apps.php']];
     }
 } elseif ($p202Nav2 === 'update') {
     $p202StripLabel = 'Update tools';

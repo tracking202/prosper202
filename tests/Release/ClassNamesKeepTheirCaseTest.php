@@ -11,11 +11,11 @@ use PHPUnit\Framework\TestCase;
  * PHP's class names ignore case and Composer's file lookup follows the
  * filesystem's: a class written in another case than any spelling the
  * autoloader can load is found on a Mac and not on Linux, unless something
- * loaded it first. The page controllers in tracking202/analyze/ and
- * tracking202/setup/ were written Tracking202\Analyze and Tracking202\Setup
- * and loaded only because every page required them by hand; composer.json
- * now maps those namespaces onto their lowercase directories.
- * release-tree.php verify asks the same of the zip.
+ * loaded it first. The page controllers declared Tracking202\Analyze and
+ * Tracking202\Setup sat in tracking202/analyze/ and tracking202/setup/ and
+ * loaded only because every page required them by hand; the directories are
+ * Analyze/ and Setup/ since 1.9.79. release-tree.php verify asks the same of
+ * the zip.
  */
 final class ClassNamesKeepTheirCaseTest extends TestCase
 {

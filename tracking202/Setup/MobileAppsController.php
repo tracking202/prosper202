@@ -286,7 +286,7 @@ class MobileAppsController extends SetupController
             'limit' => 1,
         ])['data'];
         if ($mine !== []) {
-            $this->redirect('tracking202/setup/mobile_apps.php?app='
+            $this->redirect('tracking202/Setup/mobile_apps.php?app='
                 . (int)$mine[0]['registration_id'] . '&already=1');
         }
 
@@ -334,7 +334,7 @@ class MobileAppsController extends SetupController
             'app' => $name,
             'app_id' => $identity->appKey,
         ]);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $registrationId . '&registered=1');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $registrationId . '&registered=1');
     }
 
     /**
@@ -369,14 +369,14 @@ class MobileAppsController extends SetupController
         }
         $this->apps->update($id, $payload);
         $this->redirect((string)($_POST['return_to'] ?? '') === 'app'
-            ? 'tracking202/setup/mobile_apps.php?app=' . $id . '&saved=1'
-            : 'tracking202/setup/mobile_apps.php?saved=1');
+            ? 'tracking202/Setup/mobile_apps.php?app=' . $id . '&saved=1'
+            : 'tracking202/Setup/mobile_apps.php?saved=1');
     }
 
     private function removeApp(): void
     {
         $this->apps->delete($this->postedId());
-        $this->redirect('tracking202/setup/mobile_apps.php?removed=1');
+        $this->redirect('tracking202/Setup/mobile_apps.php?removed=1');
     }
 
     /** The nudge's one click, and the Advanced toggle, are the same write. */
@@ -385,14 +385,14 @@ class MobileAppsController extends SetupController
         $id = $this->postedId();
         $accept = (string)($_POST['accept'] ?? '0') === '1';
         $this->apps->update($id, ['accept_test_signals' => $accept ? 1 : 0]);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&dev=' . ($accept ? '1' : '0'));
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&dev=' . ($accept ? '1' : '0'));
     }
 
     private function rotateToken(): void
     {
         $id = $this->postedId();
         $this->apps->rotateAppToken($id);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&rotated=1');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&rotated=1');
     }
 
     // ─── Play Integrity (Android) ────────────────────────────────────
@@ -412,7 +412,7 @@ class MobileAppsController extends SetupController
             $payload['integrity_cloud_project_number'] = $number;
         }
         $this->apps->update($id, $payload);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=mode#integrity');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&integrity=mode#integrity');
     }
 
     /**
@@ -455,14 +455,14 @@ class MobileAppsController extends SetupController
                 array_map('strval', array_values($e->getFieldErrors()))
             )) ?: $e->getMessage()], $e);
         }
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=credential#integrity');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&integrity=credential#integrity');
     }
 
     private function clearIntegrityCredential(): void
     {
         $id = $this->postedId();
         (new AppIntegrityController($this->db, $this->getUserId()))->clearCredential($id);
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&integrity=cleared#integrity');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&integrity=cleared#integrity');
     }
 
     // ─── Goals ───────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ class MobileAppsController extends SetupController
         $this->assertOwnApp($id);
         $errors = p202_app_goal_save($this->db, $this->getUserId(), $id, p202_goal_form_values(null, $_POST));
         if ($errors === []) {
-            $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&goal_saved=1#goals');
+            $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&goal_saved=1#goals');
         }
         $this->fieldErrors = $errors;
         $this->keepForm('goal_save');
@@ -486,7 +486,7 @@ class MobileAppsController extends SetupController
         $this->assertOwnApp($id);
         $refusal = p202_app_goal_archive($this->db, $this->getUserId(), $id, (string)($_POST['goal_id'] ?? ''));
         if ($refusal === null) {
-            $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&goal_archived=1#goals');
+            $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&goal_archived=1#goals');
         }
         $this->flash('bad', $refusal);
         $this->restoreContext('goal_archive');
@@ -517,7 +517,7 @@ class MobileAppsController extends SetupController
         if ($change !== []) {
             (new CampaignsController($this->db, $this->getUserId()))->update((int)$campaign, $change);
         }
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $id . '&link_campaign=' . (int)$campaign . '&linked=' . ($change === [] ? 'already' : '1') . '#link-builder');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $id . '&link_campaign=' . (int)$campaign . '&linked=' . ($change === [] ? 'already' : '1') . '#link-builder');
     }
 
     // ─── Conversion values ───────────────────────────────────────────
@@ -595,7 +595,7 @@ class MobileAppsController extends SetupController
                 throw new ValidationException($e->getMessage(), $errors, $e);
             }
         });
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule=' . ($ruleId > 0 ? 'changed' : '1'));
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $appRowId . '&rule=' . ($ruleId > 0 ? 'changed' : '1'));
     }
 
     /** The app's plain goal for an event, as a field error on the form's Event field when it cannot be. */
@@ -631,7 +631,7 @@ class MobileAppsController extends SetupController
     {
         $appRowId = $this->postedId();
         $this->rules->delete((int)($_POST['rule_id'] ?? 0));
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&rule_removed=1');
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $appRowId . '&rule_removed=1');
     }
 
     /**
@@ -677,7 +677,7 @@ class MobileAppsController extends SetupController
                 // which says what went wrong.
             }
         }
-        $this->redirect('tracking202/setup/mobile_apps.php?app=' . $appRowId . '&starter=' . $added);
+        $this->redirect('tracking202/Setup/mobile_apps.php?app=' . $appRowId . '&starter=' . $added);
     }
 
     // ─── Deriving what the app can derive ────────────────────────────
@@ -737,7 +737,7 @@ class MobileAppsController extends SetupController
             $this->render();
             return;
         }
-        $this->redirect('tracking202/setup/');
+        $this->redirect('tracking202/Setup/');
     }
 
     protected function render(): void

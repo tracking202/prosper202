@@ -207,7 +207,7 @@ abstract class SetupController
             $this->render();
         } else {
             // For other exceptions, redirect to a safe page
-            $this->redirect('tracking202/setup/');
+            $this->redirect('tracking202/Setup/');
         }
     }
     

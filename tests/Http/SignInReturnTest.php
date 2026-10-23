@@ -22,7 +22,7 @@ final class SignInReturnTest extends TestCase
             '/202-account/connect-ai.php?redirect_uri=https%3A%2F%2Fmcp.tracking202.com%2Fcallback'
                 . '&client_name=E2E+client',
         ];
-        yield 'an install in a folder' => ['/p202/tracking202/setup/'];
+        yield 'an install in a folder' => ['/p202/tracking202/Setup/'];
         yield 'the root' => ['/'];
     }
 

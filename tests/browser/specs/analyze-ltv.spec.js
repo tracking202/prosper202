@@ -3,7 +3,7 @@
 /*
  * Analyze › Customer LTV on the v2 shell, driven the way a person drives it.
  *
- * The page is a frame (tracking202/analyze/ltv.php) whose views are partials
+ * The page is a frame (tracking202/Analyze/ltv.php) whose views are partials
  * loaded into it by 202-js/ltv.js, so almost everything worth checking is a
  * browser question: that the router loads the view the URL names, that tabs,
  * pills, rows and Back move between views and the address bar keeps up, that
@@ -18,7 +18,7 @@
 const path = require('path');
 const checks = require('../lib/checks');
 
-const PAGE = '/tracking202/analyze/ltv.php';
+const PAGE = '/tracking202/Analyze/ltv.php';
 const DAY = 86400;
 const CUSTOMERS = 60;
 
@@ -122,7 +122,7 @@ module.exports = {
       name: 'The page is reached from the Analyze strip and loads its report',
       async run(ctx) {
         const { app, ui, expect } = ctx;
-        await app.goto('/tracking202/analyze/keywords.php');
+        await app.goto('/tracking202/Analyze/keywords.php');
         await app.openFromSubMenu('Customer LTV');
         expect.eq(new URL(ui.page.url()).pathname, PAGE, 'the strip leads to the page');
         await viewLoaded(ui);

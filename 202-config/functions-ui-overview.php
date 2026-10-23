@@ -742,7 +742,7 @@ function p202_overview_empty(string $base, string $title = 'No clicks in this ra
         'title' => $title,
         'body' => 'Widen the date range or clear a filter above. If no clicks have arrived yet, send traffic through a tracking link.',
         'action' => 'Get tracking links',
-        'href' => rtrim($base, '/') . '/tracking202/setup/get_trackers.php',
+        'href' => rtrim($base, '/') . '/tracking202/Setup/get_trackers.php',
     ];
 }
 

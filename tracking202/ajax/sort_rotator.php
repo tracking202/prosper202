@@ -169,6 +169,6 @@ echo p202_data_table($columns, $rows, [
 		'title' => 'No rotators yet',
 		'body' => 'A rotator sends each click to a campaign, landing page or URL by rules you set. Its figures appear here once it has one.',
 		'action' => 'Set up a rotator',
-		'href' => $base . 'tracking202/setup/rotator.php',
+		'href' => $base . 'tracking202/Setup/rotator.php',
 	],
 ]);

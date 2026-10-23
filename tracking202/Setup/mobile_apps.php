@@ -14,6 +14,6 @@ try {
     $controller->handleRequest();
 } catch (\Exception $e) {
     error_log('Mobile Apps Setup Error: ' . $e->getMessage());
-    header('location: ' . get_absolute_url() . 'tracking202/setup/?error=mobile_apps_error');
+    header('location: ' . get_absolute_url() . 'tracking202/Setup/?error=mobile_apps_error');
     exit;
 }

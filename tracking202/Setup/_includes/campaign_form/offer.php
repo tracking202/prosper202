@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Campaign form, section 1: the offer. The common case is this whole section
  * — which category, what it is called, where a click goes, what it pays.
  *
- * Rendered inside the one campaign <form> by tracking202/setup/aff_campaigns.php,
+ * Rendered inside the one campaign <form> by tracking202/Setup/aff_campaigns.php,
  * which lists its sections in order. Every name posted here is one the
  * handler at the top of that page reads.
  *

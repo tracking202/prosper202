@@ -27,12 +27,12 @@ final class AnalyzeReportPagesTest extends TestCase
         parent::setUp();
         $root = dirname(__DIR__, 2);
         require_once $root . '/202-config/functions-ui.php';
-        require_once $root . '/tracking202/analyze/AnalyzeReportController.php';
+        require_once $root . '/tracking202/Analyze/AnalyzeReportController.php';
     }
 
     public function testEveryReportPageHandsItsOwnReportToTheController(): void
     {
-        $root = dirname(__DIR__, 2) . '/tracking202/analyze/';
+        $root = dirname(__DIR__, 2) . '/tracking202/Analyze/';
         $pages = [];
         foreach (AnalyzeReportController::REPORTS as $type => $report) {
             $file = $root . $report['page'];
@@ -50,7 +50,7 @@ final class AnalyzeReportPagesTest extends TestCase
     public function testEveryAnalyzeReportInTheSubMenuIsOnePageOrTheTwoWithTheirOwnController(): void
     {
         $menu = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/_config/sub-menu.php');
-        preg_match_all("#'tracking202/analyze/([a-z_]+\\.php)'#", $menu, $m);
+        preg_match_all("#'tracking202/Analyze/([a-z_]+\\.php)'#", $menu, $m);
         $known = array_column(AnalyzeReportController::REPORTS, 'page');
         foreach ($m[1] as $page) {
             if (in_array($page, ['ltv.php', 'mobile_apps.php'], true)) {
@@ -140,7 +140,7 @@ final class AnalyzeReportPagesTest extends TestCase
     {
         // The page is server-rendered: the classic one's loadContent() call
         // and tracking-report.js are gone, and nothing else took their place.
-        $template = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/analyze/templates/report.php');
+        $template = (string) file_get_contents(dirname(__DIR__, 2) . '/tracking202/Analyze/templates/report.php');
         self::assertStringNotContainsString('<script', $template);
         self::assertStringContainsString("template_top((string) \$info['title']);", $template);
     }

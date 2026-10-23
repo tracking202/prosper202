@@ -65,7 +65,7 @@ hasnt "$OUT/home.html" 'name="user_pass"' "session established"
 # signed-in page carries.
 has "$OUT/home.html" '202-account/signout.php' "the signed-in chrome offers a sign-out"
 
-get()  { curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php$1" -o "$2"; }
+get()  { curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/mobile_apps.php$1" -o "$2"; }
 # POST and follow the PRG redirect; -w reports the FIRST status so a 200 where
 # a 302 belongs (the error re-render) is visible rather than hidden by -L.
 post() {
@@ -73,7 +73,7 @@ post() {
   LAST_REDIRECTS=0
   local tok
   tok=$(grep -oE 'name="csrf_token" value="[^"]+"' "$OUT/page.html" | head -1 | sed 's/.*value="//; s/"//')
-  curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" \
+  curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/mobile_apps.php" \
     --data-urlencode "csrf_token=$tok" "$@" -o "$out" \
     -w "%{num_redirects} %{http_code}" > "$OUT/.w"
   LAST_REDIRECTS=$(cut -d' ' -f1 "$OUT/.w")
@@ -89,7 +89,7 @@ hasnt "$OUT/page.html" "Fatal error"  "no PHP fatal"
 hasnt "$OUT/page.html" "Warning:"     "no PHP warning"
 hasnt "$OUT/page.html" "Notice:"      "no PHP notice"
 hasnt "$OUT/page.html" "Deprecated:"  "no PHP deprecation"
-has "$OUT/page.html" "setup/mobile_apps.php" "sub-menu links the page"
+has "$OUT/page.html" "Setup/mobile_apps.php" "sub-menu links the page"
 has "$OUT/page.html" ".well-known/skadnetwork/report-attribution"  "SKAdNetwork receiver URL shown"
 has "$OUT/page.html" ".well-known/appattribution/report-attribution" "AdAttributionKit receiver URL shown"
 
@@ -277,7 +277,7 @@ eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "app removed"
 eq "$(Q "SELECT COUNT(*) FROM 202_app_skan_encodings WHERE registration_id=$ROWID")" "0" "its SKAN encodings went with it"
 
 say "CSRF is enforced"
-curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/mobile_apps.php" \
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/mobile_apps.php" \
   --data-urlencode "csrf_token=wrong" --data-urlencode action=register \
   --data-urlencode "app_reference=id123456789" -o "$OUT/csrf.html"
 eq "$(Q 'SELECT COUNT(*) FROM 202_app_registrations')" "0" "a bad CSRF token writes nothing"

@@ -433,7 +433,7 @@ curl -sS -c "$JAR" -b "$JAR" "$BASE/202-login.php" -o "$OUT/login.html"
 LT=$(grep -oE 'name="token" value="[^"]+"' "$OUT/login.html" | head -1 | sed 's/.*value="//; s/"//')
 curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" --data-urlencode "token=$LT" \
   --data-urlencode "user_name=${P202_USER:-evalci}" --data-urlencode "user_pass=${P202_PASS:-}" -o "$OUT/pl.html"
-PAGE="$BASE/tracking202/setup/aff_campaigns.php?edit_aff_campaign_id=$CAMP_G"
+PAGE="$BASE/tracking202/Setup/aff_campaigns.php?edit_aff_campaign_id=$CAMP_G"
 curl -sS -b "$JAR" -c "$JAR" "$PAGE" -o "$OUT/campaign.html"
 if grep -q 'id="campaign-goals"' "$OUT/campaign.html"; then ok "the campaign's page has its Goals panel"; else bad "the campaign's page has its Goals panel (is P202_PASS set?)"; fi
 # The goal form's own token field, read from inside that form (CLAUDE.md #21).
@@ -479,7 +479,7 @@ has "$OUT/post.html" "cannot be archived" "archiving a goal another waits for is
 code=$(post --data-urlencode goal_action=archive --data-urlencode "goal_id=$G_VIEW")
 case "$code" in *goal_archived=1*) ok "archiving a goal";; *) bad "archiving a goal (got '$code')";; esac
 eq "$(Q "SELECT archived_at IS NOT NULL FROM 202_goals WHERE goal_id=$G_VIEW")" 1 "archives it"
-OTHER_PAGE="$BASE/tracking202/setup/aff_campaigns.php?edit_aff_campaign_id=$CAMP_R"
+OTHER_PAGE="$BASE/tracking202/Setup/aff_campaigns.php?edit_aff_campaign_id=$CAMP_R"
 curl -sS -b "$JAR" -c "$JAR" -o "$OUT/post.html" "$OTHER_PAGE" --data-urlencode "token=$TOKEN" \
   --data-urlencode goal_action=archive --data-urlencode "goal_id=$G_UP"
 has "$OUT/post.html" "not one of this campaign" "another campaign's page cannot archive this campaign's goal"

@@ -334,8 +334,8 @@ function PruneAppRetention(): void
 /**
  * Hourly tier of the Landing Page Optimizer dimension sync (segments-v2 G10).
  *
- * The dictionary CRUD pages (setup/ppc_accounts.php, setup/aff_campaigns.php,
- * setup/aff_networks.php, setup/landing_pages.php) never talk to the SaaS
+ * The dictionary CRUD pages (Setup/ppc_accounts.php, Setup/aff_campaigns.php,
+ * Setup/aff_networks.php, Setup/landing_pages.php) never talk to the SaaS
  * inline — they only set `dims_dirty` inside the lpo_bridge_config JSON
  * pref via DimensionSync::markDirty. This job pushes the fresh snapshot for
  * those flagged users through the exact per-user path the nightly full sync

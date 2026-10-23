@@ -127,7 +127,7 @@ $totalCustomers = (int) ($summary['customers'] ?? 0);
 <?php echo p202_ltv_card_close(); ?>
 
 <!-- LTV by acquisition dimension / product / company -->
-<?php echo p202_ltv_card_open('LTV by', '', '<a href="' . $esc(p202_report_view_url(get_absolute_url() . 'tracking202/analyze/ltv_download.php', $reportView)) . '" target="_blank">'
+<?php echo p202_ltv_card_open('LTV by', '', '<a href="' . $esc(p202_report_view_url(get_absolute_url() . 'tracking202/Analyze/ltv_download.php', $reportView)) . '" target="_blank">'
     . '<i class="bi bi-download"></i> Export customers</a>'); ?>
     <div class="p202-toolbar p202-panel__filter" style="padding-top: 4px;">
         <?php echo p202_ltv_chips('ltv-by-select', $allowedDimensions, $by, 'ltvLoad(0);'); ?>

@@ -102,8 +102,8 @@ post() {
 }
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*|<div class="invalid-feedback d-block">[^<]*' "$1" | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
-SETUP=/tracking202/setup/mobile_apps.php
-ANALYZE=/tracking202/analyze/mobile_apps.php
+SETUP=/tracking202/Setup/mobile_apps.php
+ANALYZE=/tracking202/Analyze/mobile_apps.php
 
 OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
@@ -527,30 +527,30 @@ eq "$(grep -c "data-outbox-destination=\"$PIXEL:0\"" "$OUT/an5.html")" "$(Q "SEL
    "one row per destination: each outbox row names its pixel and URL"
 has "$OUT/an5.html" "Pixel $PIXEL, URL 1" "and says which URL of which pixel it is"
 
-get "/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" "$OUT/ts1.html"
+get "/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" "$OUT/ts1.html"
 has "$OUT/ts1.html" 'name="pixel_correction_url[]"' "Setup › Traffic Sources offers a correction URL per pixel"
 TS_TOK=$(grep -oE 'name="token" value="[^"]+"' "$OUT/ts1.html" | head -1 | sed 's/.*value="//; s/"//')
-curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
     --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=$PIXEL" \
     --data-urlencode "pixel_code[]=$BASE/api/v3/versions?pr11=reached&goal=[[p202_goal]]" --data-urlencode "pixel_correction_url[]=ftp://nope" -o "$OUT/ts2.html"
 has "$OUT/ts2.html" "A correction URL is an http:// or https:// address" "an address that is not http(s) is refused"
-curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
     --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=$PIXEL" \
     --data-urlencode "pixel_code[]=$BASE/api/v3/versions?pr11=reached&goal=[[p202_goal]]" --data-urlencode "pixel_correction_url[]=https://a.example/c https://b.example/c" -o "$OUT/ts3.html"
 has "$OUT/ts3.html" "matched by position" "two correction URLs for a one-URL pixel are refused by count"
 eq "$(Q "SELECT COUNT(*) FROM 202_notification_correction_urls")" 0 "and nothing is stored"
-curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
     --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=$PIXEL" \
     --data-urlencode "pixel_code[]=$BASE/api/v3/versions?pr11=reached&goal=[[p202_goal]]" \
     --data-urlencode "pixel_correction_url[]=$BASE/api/v3/versions?pr11=correction&v=[[p202_goal_value]]&was=[[p202_previous_value]]" -o "$OUT/ts3.html"
 eq "$(Q "SELECT correction_url FROM 202_notification_correction_urls WHERE pixel_id=$PIXEL AND user_id=$OWNER")" \
    "$BASE/api/v3/versions?pr11=correction&v=[[p202_goal_value]]&was=[[p202_previous_value]]" "a server pixel's correction URL is saved"
-get "/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" "$OUT/ts4.html"
+get "/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" "$OUT/ts4.html"
 has "$OUT/ts4.html" "pr11=correction&amp;v=[[p202_goal_value]]" "and shown again on the form"
-curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
+curl -sS -b "$JAR" -c "$JAR" -L "$BASE/tracking202/Setup/ppc_accounts.php?edit_ppc_account_id=$PACC" \
     --data-urlencode "token=$TS_TOK" --data-urlencode do_edit_ppc_account=1 --data-urlencode "ppc_network_id=$PNET" \
     --data-urlencode "ppc_account_name=apps-ui-pass" --data-urlencode "pixel_type_id[]=4" --data-urlencode "pixel_id[]=999999" \
     --data-urlencode "pixel_code[]=$BASE/x" --data-urlencode "pixel_correction_url[]=https://forged.example/c" -o "$OUT/ts5.html"

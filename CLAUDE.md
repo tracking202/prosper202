@@ -1817,7 +1817,11 @@ Check here before burning time on tooling failures.
   page returned the *old* behaviour and read as "the fix does not work" — the
   fix was fine. Put a few seconds of real work (or `php -r 'usleep(3500000);'`)
   between the write and the request, or restart the server. A full live-pass
-  script is slow enough not to hit this; a one-shot probe is not.
+  script is slow enough not to hit this; a one-shot probe is not. Each worker
+  also keeps `realpath()` answers for 120 seconds (`realpath_cache_ttl`), so
+  a folder a pass removed still read as there to the eval router in the
+  workers that had seen it, and requests those workers took after the
+  cleanup got php -S's own 404; the router clears that cache per request.
 - **A live local instance is achievable end to end**: install
   `mariadb-server` via apt, start `mariadbd --user=mysql` manually, create
   a DB/user, then run `tests/fixtures/agent-eval/ci/install-instance.sh`
@@ -2196,10 +2200,34 @@ where a check quietly fails to check what it appears to.
   name to a spelling Composer's autoloader can load (`verify` asks both of
   the zip). The second found the page controllers in `tracking202/analyze/`
   and `tracking202/setup/`, declared `Tracking202\Analyze` and `Setup` and
-  loadable only because each page required them by hand; composer.json maps
-  those namespaces onto the lowercase directories now. Renaming a directory
-  to match was the wrong fix: a server upgraded by copying over the old files
-  keeps the old spelling beside the new one, the pair this entry began with.
+  loadable only because each page required them by hand, and 1.9.79 renamed
+  the folders to match. A rename is not one on a server that is upgraded by
+  copying the new files over the old: on Linux the old folder stays beside
+  the new — the pair this entry began with — and its pages go on running
+  their old code. `connect.php` asks `NotFoundPage::leftoverCopy()` of every
+  page it bootstraps and answers one run from the old folder with the 404,
+  which offers a signed-in visitor the page at its new address; an old
+  address with nothing behind it reaches the same page through the server's
+  `ErrorDocument` or `error_page` (README, Dockerfile). On a disk that
+  ignores case the two spellings are one folder, listed once, and no
+  leftover (an inode number is no test: FUSE gives each name its own,
+  measured on ciopfs), and the menus compare the folder's name lowercased
+  for the same reason. The disk the files pass through decides it too:
+  extracted over the old folder on a case-insensitive disk, the new files
+  keep the old name (unzip and `cp -r` on ciopfs), and uploaded to Linux
+  every menu link and every `require` of `Setup/_includes/` misses (a 404
+  and a 500, measured); and a git pull of the rename on such a disk
+  deleted both folders from the checkout (git 2.43 on ciopfs; `git
+  checkout -- <folder>` put them back).
+  `NotFoundPage::folderProblems()` tells the three states apart, and the
+  upgrade page and the signed-in 404 say what to do about each.
+  `tests/live/renamed-folders.sh` drives them. The old spellings are written
+  in `NotFoundPage` alone (`ReleaseTree::PATHS_IN_ANOTHER_CASE`, held to its
+  `MOVED`); `PathsKeepTheirCaseTest` passed here while that file was new,
+  because it walks the tracked files and an unstaged file is none of them —
+  run a tree-walking test after `git add`. Before renaming anything that
+  ships, ask what the old path does on a server that never deletes it, and
+  what the new one does on a disk that cannot tell them apart.
   SQL has no check: MySQL on Linux (`lower_case_table_names=0`) reads table
   names and table aliases by case and columns not, so `202_Clicks`, or an
   alias `c` written `C.`, runs on a Mac or Windows server and fails on Linux

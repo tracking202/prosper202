@@ -25,7 +25,7 @@ const checks = require('../lib/checks');
 const NET = 950011;
 const CAMP = 950011;
 const LP_PUBLIC = 950311;
-const PAGE = '/tracking202/setup/aff_campaigns.php?edit_aff_campaign_id=' + CAMP;
+const PAGE = '/tracking202/Setup/aff_campaigns.php?edit_aff_campaign_id=' + CAMP;
 const GOAL_TABLES = ['202_goals', '202_goal_versions', '202_campaign_goals', '202_goal_subjects', '202_goal_events', '202_goal_progress', '202_goal_outcomes'];
 
 /**

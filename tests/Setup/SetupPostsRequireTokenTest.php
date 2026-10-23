@@ -52,7 +52,7 @@ final class SetupPostsRequireTokenTest extends TestCase
     private const GUARD = ['AUTH', '::', 'check_csrf_token', '(', ')'];
 
     /** The classic page U4 left alone (the MTA rewrite replaces it). */
-    private const NOT_MIGRATED = ['tracking202/setup/attribution_models.php', 'tracking202/setup/templates/attribution_models.php', 'tracking202/setup/AttributionController.php'];
+    private const NOT_MIGRATED = ['tracking202/Setup/attribution_models.php', 'tracking202/Setup/templates/attribution_models.php', 'tracking202/Setup/AttributionController.php'];
 
     private static function root(): string
     {
@@ -64,7 +64,7 @@ final class SetupPostsRequireTokenTest extends TestCase
     {
         $root = self::root();
         $files = [];
-        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/tracking202/setup'));
+        $iterator = new \RecursiveIteratorIterator(\Tests\Support\SourceScan::tree($root . '/tracking202/Setup'));
         foreach ($iterator as $file) {
             /** @var \SplFileInfo $file */
             if ($file->isFile() && $file->getExtension() === 'php') {

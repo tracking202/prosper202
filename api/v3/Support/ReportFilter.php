@@ -12,7 +12,7 @@ use Api\V3\Exception\ValidationException;
  * 202_dataengine alias `de` by default, or over any source a column map
  * describes (see "Over another table" below).
  *
- * The filters are the Analyze pages' (tracking202/analyze, through
+ * The filters are the Analyze pages' (tracking202/Analyze, through
  * ReportFilterInput and DataEngine's UserPrefFilters), with their meaning:
  *
  *  - the id filters narrow to one row of their table; '' or 0 is "not

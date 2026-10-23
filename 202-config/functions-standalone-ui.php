@@ -254,3 +254,100 @@ function p202_standalone_wizard_token_ok(): bool
 	}
 	return hash_equals($sessionToken, $postedToken);
 }
+
+/**
+ * A warning naming each folder 1.9.79 renamed that this server does not hold
+ * as it ships, and what to do about it; '' when every one is in place.
+ */
+function p202_renamed_folder_warning(): string
+{
+    $items = [];
+    foreach (\Prosper202\Http\NotFoundPage::folderProblems(ROOT_PATH) as $folder) {
+        $old = '<code>' . htmlspecialchars($folder['old'], ENT_QUOTES, 'UTF-8') . '</code>';
+        $new = '<code>' . htmlspecialchars($folder['new'], ENT_QUOTES, 'UTF-8') . '</code>';
+        $items[] = match ($folder['problem']) {
+            'leftover' => "{$old} is left from before 1.9.79, beside {$new}. Delete it: nothing uses it,"
+                . ' and its pages answer &ldquo;Page not found&rdquo;.',
+            'misspelled' => "Since 1.9.79 {$old} is {$new}, and this server tells the two apart,"
+                . ' so its pages are not found. Rename it on the server: files copied over the old'
+                . ' folder on a Mac or Windows computer keep the old name.',
+            'missing' => "{$new} is missing. Upload it from the 1.9.79 files. A git pull on a Mac"
+                . ' or Windows computer can delete it from the checkout; <code>git checkout -- '
+                . htmlspecialchars($folder['new'], ENT_QUOTES, 'UTF-8') . '</code> there puts it back.',
+        };
+    }
+    if ($items === []) {
+        return '';
+    }
+
+    return '<div class="alert alert-warning p202-flash" role="status" id="renamed-folder-warning">'
+        . '<i class="bi bi-exclamation-triangle"></i>'
+        . '<div class="p202-flash__body">'
+        . '<strong>Some folders are not where Prosper202 looks for them.</strong>'
+        . '<ul class="mb-0"><li>' . implode('</li><li>', $items) . '</li></ul>'
+        . '</div></div>';
+}
+
+/**
+ * The 404 page. A signed-in visitor is offered the page they most likely
+ * meant (NotFoundPage) and the dashboard; anyone else gets the plain page,
+ * which names nothing of the install. $requested is the path asked for,
+ * relative to the install, when it is not the request's (a leftover copy of
+ * a renamed folder names its own file).
+ */
+function p202_not_found_page(?string $requested = null): never
+{
+    if (!headers_sent()) {
+        // A download page sets its attachment headers before the bootstrap
+        // sends a leftover copy of it here.
+        header_remove('Content-Disposition');
+        header('Content-Type: text/html; charset=UTF-8');
+    }
+    http_response_code(404);
+    $e = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    $base = get_absolute_url();
+    $signedIn = class_exists('AUTH', false) && AUTH::logged_in_with_remember();
+    $current = null;
+    $target = null;
+    if ($signedIn) {
+        $requestUri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+        $requested ??= \Prosper202\Http\NotFoundPage::requestPath($requestUri, $base);
+        $current = $requested === null ? null : \Prosper202\Http\NotFoundPage::suggestion(ROOT_PATH, $requested);
+        if ($current !== null) {
+            $query = parse_url($requestUri, PHP_URL_QUERY);
+            $target = $base . implode('/', array_map('rawurlencode', explode('/', $current)))
+                . (is_string($query) && $query !== '' ? '?' . $query : '');
+        }
+    }
+    $back = ['Back to the previous page', 'javascript:history.back();'];
+    $dashboard = ['Go to the dashboard', $base . '202-account/'];
+    if (!$signedIn) {
+        [$sentence, $buttons] = [
+            'The link may have expired, or the address may be mistyped.',
+            [['Go to Prosper202', $base], $back],
+        ];
+    } elseif ($target !== null) {
+        [$sentence, $buttons] = [
+            'This page is at another address.',
+            [['Go to ' . $base . $current, $target], $dashboard],
+        ];
+    } else {
+        [$sentence, $buttons] = [
+            'The address may be mistyped, or the page may have moved.',
+            [$dashboard, $back],
+        ];
+    }
+
+    info_top(['title' => 'Page not found - Prosper202 ClickServer']);
+    echo p202_standalone_card('Page not found', $sentence);
+    echo $signedIn ? p202_renamed_folder_warning() : '';
+    echo '<div class="d-grid gap-2">';
+    foreach ($buttons as $i => [$label, $href]) {
+        echo '<a class="btn ' . ($i === 0 ? 'btn-primary' : 'btn-secondary') . '" href="' . $e($href) . '">'
+            . $e($label) . '</a>';
+    }
+    echo '</div>';
+    echo p202_standalone_card_end();
+    info_bottom();
+    exit;
+}

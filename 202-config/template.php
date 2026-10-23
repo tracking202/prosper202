@@ -256,7 +256,7 @@ function template_top($title = 'Prosper202 ClickServer', ...$legacyArgs): void
 			<div class="main">
 
 				<?php if (($navigation[1] ?? '') == 'tracking202') {
-					$nav2 = $navigation[2] ?? '';
+					$nav2 = strtolower((string) ($navigation[2] ?? '')); // Setup/, Analyze/
 					if (($nav2 == 'setup') or ($nav2 == 'bots') or ($nav2 == 'overview') or ($nav2 == 'analyze') or ($nav2 == 'update') or ($nav2 == 'export')) {
 						include_once(substr(__DIR__, 0, -10) . '/tracking202/_config/sub-menu.php');
 					}

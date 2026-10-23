@@ -54,6 +54,10 @@ RUN a2enmod rewrite \
         echo '# balancer), PHP only sees plain HTTP. Surface the forwarded'; \
         echo '# scheme as HTTPS=on so secure cookies and generated URLs work.'; \
         echo 'SetEnvIf X-Forwarded-Proto "^https$" HTTPS=on'; \
+        echo '# A missing page answers 202-404.php, which offers a signed-in'; \
+        echo '# visitor the page at its current address (Setup/ and Analyze/'; \
+        echo '# were setup/ and analyze/ before 1.9.79).'; \
+        echo 'ErrorDocument 404 /202-404.php'; \
     } > /etc/apache2/conf-available/prosper202.conf \
     && a2enconf prosper202
 

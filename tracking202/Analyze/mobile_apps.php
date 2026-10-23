@@ -17,6 +17,6 @@ try {
     $controller->handleRequest();
 } catch (\Exception $e) {
     error_log('Mobile Apps Report Error: ' . $e->getMessage());
-    header('location: ' . get_absolute_url() . 'tracking202/analyze/?error=mobile_apps_error');
+    header('location: ' . get_absolute_url() . 'tracking202/Analyze/?error=mobile_apps_error');
     exit;
 }

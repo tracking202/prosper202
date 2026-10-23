@@ -4,4 +4,4 @@ include_once(substr(__DIR__, 0,-18) . '/202-config/connect.php');
 
 AUTH::require_user();
 
-header('location: '.get_absolute_url().'tracking202/setup/ppc_accounts.php');
+header('location: '.get_absolute_url().'tracking202/Setup/ppc_accounts.php');

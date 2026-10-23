@@ -168,7 +168,13 @@ This stack is a development configuration (PHP `display_errors` is on). For prod
            try_files $uri $uri/ /api/v3/index.php?$query_string;
        }
 
+       # A missing page answers 202-404.php (in a subfolder install,
+       # /subfolder/202-404.php), which offers a signed-in visitor the page
+       # at its current address
+       error_page 404 /202-404.php;
+
        location ~ \.php$ {
+           try_files $uri =404;
            fastcgi_pass php_fpm;
            fastcgi_keep_conn on;
            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
@@ -226,6 +232,11 @@ If you prefer Apache over Nginx, point your document root at the project directo
     <LocationMatch "/\.(?!well-known/)">
         Require all denied
     </LocationMatch>
+
+    # A missing page answers 202-404.php (in a subfolder install,
+    # /subfolder/202-404.php), which offers a signed-in visitor the page at
+    # its current address
+    ErrorDocument 404 /202-404.php
 </VirtualHost>
 ```
 
@@ -285,6 +296,9 @@ This variant sets `AllowOverride None` and inlines the shipped `.htaccess` rules
     <LocationMatch "/\.(?!well-known/)">
         Require all denied
     </LocationMatch>
+
+    # A missing page answers 202-404.php, as in the example above
+    ErrorDocument 404 /202-404.php
 
     # Keep connections open across a visitor's click/redirect chain,
     # but release them quickly so workers aren't pinned by idle clients

@@ -94,7 +94,7 @@ clean() { # file label
   has "$1" "p202-shell-v2" "$2: renders on the v2 shell"
 }
 
-SETUP="$BASE/tracking202/setup"
+SETUP="$BASE/tracking202/Setup"
 AJAX="$BASE/tracking202/ajax"
 get() { curl -sS -b "$JAR" -c "$JAR" -L "$1" -o "$2" -w '%{http_code}' > "$OUT/.code"; }
 token_of() { grep -oE 'name="token" value="[^"]+"' "$1" | head -1 | sed 's/.*value="//; s/"//'; }
@@ -126,7 +126,7 @@ LT=$(token_of "$OUT/login.html")
 curl -sS -c "$JAR" -b "$JAR" -L "$BASE/202-login.php" \
   --data-urlencode "token=$LT" --data-urlencode "user_name=$P202_USER" \
   --data-urlencode "user_pass=$P202_PASS" -o "$OUT/pl.html"
-get "$BASE/tracking202/setup/" "$OUT/home.html"
+get "$BASE/tracking202/Setup/" "$OUT/home.html"
 hasnt "$OUT/home.html" 'name="user_pass"' "session established"
 
 # ─── Every page renders ─────────────────────────────────────────────────

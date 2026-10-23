@@ -16,8 +16,8 @@ use Throwable;
  * Two halves:
  *
  *  - markDirty(): called from the dictionary CRUD save paths
- *    (setup/ppc_accounts.php, setup/aff_campaigns.php, setup/aff_networks.php,
- *    setup/landing_pages.php) after a successful INSERT/UPDATE. It only flips
+ *    (Setup/ppc_accounts.php, Setup/aff_campaigns.php, Setup/aff_networks.php,
+ *    Setup/landing_pages.php) after a successful INSERT/UPDATE. It only flips
  *    `dims_dirty` / `dims_dirty_at` inside the existing lpo_bridge_config
  *    JSON pref on 202_users_pref — deliberately no new column and no HTTP,
  *    and never fatal: an admin save must never break because the pairing is

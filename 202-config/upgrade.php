@@ -227,6 +227,7 @@ if (!empty($version_error)) {
                 <?php /* Said before the button, every time: the upgrade cannot be
                          undone in place (plan §7.5a). The same warning the
                          1-click pages show (functions-ui.php). */ ?>
+                <?php echo p202_renamed_folder_warning(); ?>
                 <?php echo p202_upgrade_backup_warning((string) PROSPER202::prosper202_version()); ?>
                 <button class="btn btn-primary btn-lg w-100" id="upgrade-submit" type="submit"><?php echo $task_202; ?> Prosper202</button>
             </form>

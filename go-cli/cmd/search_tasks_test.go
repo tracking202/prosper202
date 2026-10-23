@@ -103,7 +103,7 @@ func uiMenuLabels(t *testing.T) []string {
 		return string(src)
 	}
 	var labels []string
-	strip := regexp.MustCompile(`\['([^']+)',\s*'tracking202/(setup|overview|analyze|update)\b`).FindAllStringSubmatch(read(repoPath("tracking202", "_config", "sub-menu.php")), -1)
+	strip := regexp.MustCompile(`\['([^']+)',\s*'tracking202/((?i:setup|overview|analyze|update))\b`).FindAllStringSubmatch(read(repoPath("tracking202", "_config", "sub-menu.php")), -1)
 	tabs := regexp.MustCompile(`\$p202Tabs\[\] = \['\w+', '[^']*', '([^']+)'`).FindAllStringSubmatch(read(repoPath("tracking202", "_config", "top.php")), -1)
 	account := regexp.MustCompile(`'label' => '([^']+)'`).FindAllStringSubmatch(read(repoPath("202-config", "template.php")), -1)
 	// A floor on each, so a menu rewritten past these patterns fails here

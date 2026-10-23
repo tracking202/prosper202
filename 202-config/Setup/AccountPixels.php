@@ -8,7 +8,7 @@ use Prosper202\Database\Connection;
 
 /**
  * The pixels a traffic-source account fires on a conversion, as Setup ›
- * Traffic Sources saves them (tracking202/setup/ppc_accounts.php, the
+ * Traffic Sources saves them (tracking202/Setup/ppc_accounts.php, the
  * account form's Advanced): the form posts parallel arrays, one row per
  * pixel shown, and the account is left with exactly the pixels the form
  * listed. The REST API edits the same rows one at a time

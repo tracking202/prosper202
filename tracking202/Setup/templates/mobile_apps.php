@@ -29,7 +29,7 @@ $platformLabel = static fn (mixed $p): string => ['ios' => 'iOS', 'android' => '
 /** What an app key is called on its platform. */
 $keyLabel = static fn (mixed $p): string => strtolower((string)$p) === 'android' ? 'Package' : 'App Store ID';
 $base = (string)$mobileApps['baseUrl'];
-$self = $base . 'tracking202/setup/mobile_apps.php';
+$self = $base . 'tracking202/Setup/mobile_apps.php';
 $canManage = (bool)$mobileApps['canManage'];
 $fieldErrors = $mobileApps['fieldErrors'];
 $form = $mobileApps['form'];
@@ -289,7 +289,7 @@ if (!$canManage) {
     $isIos = (string)($app['platform'] ?? 'ios') === 'ios';
     $token = (string)($app['app_token'] ?? '');
     $masked = $token === '' ? '' : mb_substr($token, 0, 4) . str_repeat('•', max(0, mb_strlen($token) - 8)) . mb_substr($token, -4);
-    $analyzeUrl = $base . 'tracking202/analyze/mobile_apps.php?registration_id=' . $rowId . '&platform=' . ($isIos ? 'ios' : 'android');
+    $analyzeUrl = $base . 'tracking202/Analyze/mobile_apps.php?registration_id=' . $rowId . '&platform=' . ($isIos ? 'ios' : 'android');
     ?>
     <div class="p202-decided mb-3">
         <a href="<?php echo $e($self); ?>">Your apps</a> › <?php echo $appMark($app); ?> <?php echo $e($app['app_name']); ?> ·

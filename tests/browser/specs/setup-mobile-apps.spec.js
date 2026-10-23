@@ -18,7 +18,7 @@ const checks = require('../lib/checks');
 const APP_ID = 990077001;
 const STORE_LINK = 'https://apps.apple.com/us/app/summit-run/id' + APP_ID;
 const PLAY_LINK = 'https://play.google.com/store/apps/details?id=com.example.app';
-const PAGE = '/tracking202/setup/mobile_apps.php';
+const PAGE = '/tracking202/Setup/mobile_apps.php';
 const DOT = String.fromCharCode(0x2022);
 
 /** Classes that are script hooks rather than styling, so legitimately unstyled. */
@@ -57,7 +57,7 @@ module.exports = {
       name: 'Reaching the page the way a user does',
       async run(ctx) {
         const { app, ui, expect } = ctx;
-        await app.goto('/tracking202/setup/');
+        await app.goto('/tracking202/Setup/');
         await app.openFromSubMenu('Mobile Apps');
 
         expect.eq(new URL(ui.page.url()).pathname, PAGE, 'the sub-menu leads to the page');

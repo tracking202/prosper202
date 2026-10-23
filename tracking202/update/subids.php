@@ -102,7 +102,7 @@ if ($success) {
 						<strong class="d-block">Upload a revenue report</strong>
 						<span class="small text-secondary">When your network reports an amount per subid, record the exact amounts from its CSV.</span>
 					</a>
-					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/setup/get_postback.php'); ?>">
+					<a class="list-group-item list-group-item-action" href="<?php echo p202_setup_e($base . 'tracking202/Setup/get_postback.php'); ?>">
 						<strong class="d-block">Set up a postback</strong>
 						<span class="small text-secondary">Let the network tell Prosper202 about each conversion as it happens.</span>
 					</a>

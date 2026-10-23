@@ -242,7 +242,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
 
     public function testGetLinksListsTheAccountsLinksNamingNothingOfAnotherAccount(): void
     {
-        $out = self::page('tracking202/setup/get_trackers.php');
+        $out = self::page('tracking202/Setup/get_trackers.php');
         self::assertStringContainsString((string) self::LINK_ON_THEIRS, $out, 'the link on another account\'s records is still listed');
         self::assertStringContainsString((string) self::LINK_ON_THEIR_REDIRECTOR, $out, 'and so is the one on another account\'s redirector');
         self::assertShowsNothingOfTheOtherAccount($out, 'Get Links');
@@ -262,7 +262,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
      */
     public function testGetLinksGivesALandingPageLinkAsTheApiBuildsIt(): void
     {
-        $out = self::page('tracking202/setup/get_trackers.php');
+        $out = self::page('tracking202/Setup/get_trackers.php');
         $link = 'https://mine.example:8443/lp?x=1&t202id=' . self::LINK_ON_MINE . '&myvar={mine}&t202kw=#top';
         self::assertSame(\Api\V3\Controllers\TrackersController::buildLandingPageUrl('https://mine.example:8443/lp?x=1#top', self::LINK_ON_MINE, '&myvar={mine}&t202kw='), $link);
         self::assertStringContainsString('data-p202-copy="' . htmlspecialchars($link, ENT_QUOTES) . '"', $out, 'the link to copy');
@@ -270,7 +270,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
 
     public function testGetLinksOpensTheAccountsLinkToEdit(): void
     {
-        $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => (string) self::LINK_ON_MINE]);
+        $out = self::page('tracking202/Setup/get_trackers.php', ['edit_tracker_id' => (string) self::LINK_ON_MINE]);
         self::assertStringContainsString('Edit tracking link', $out);
         self::assertStringNotContainsString('That tracking link is not one of yours', $out);
         self::assertStringContainsString('name="tracker_id" value="' . self::LINK_ON_MINE . '"', $out);
@@ -301,7 +301,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
     public function testGetLinksOpensNoLinkForAnythingButItsPublicId(string $format): void
     {
         $id = sprintf($format, self::LINK_ON_MINE);
-        $out = self::page('tracking202/setup/get_trackers.php', ['edit_tracker_id' => $id]);
+        $out = self::page('tracking202/Setup/get_trackers.php', ['edit_tracker_id' => $id]);
         self::assertStringContainsString('Get a tracking link', $out);
         self::assertStringNotContainsString('name="edit_tracker"', $out, 'no link was opened to edit');
         $refused = 'That tracking link is not one of yours, or it was removed';
@@ -330,7 +330,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
      */
     public function testRemovingARedirectorRemovesOnlyTheAccountsOwn(): void
     {
-        $remove = static fn (int $id): string => self::page('tracking202/setup/rotator.php', [
+        $remove = static fn (int $id): string => self::page('tracking202/Setup/rotator.php', [
             'delete_rotator_id' => (string) $id, 'delete_rotator_name' => 'x', 'token' => 'p202pagerunnertoken',
         ]);
         self::assertSame('1/1/1/1', self::redirectorRows(self::OTHER));
@@ -363,7 +363,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
      */
     public function testRenamingARedirectorRenamesOnlyTheAccountsOwn(): void
     {
-        $rename = static fn (int $id): string => self::page('tracking202/setup/rotator.php', [], [
+        $rename = static fn (int $id): string => self::page('tracking202/Setup/rotator.php', [], [
             'edit_rotator' => '1', 'rotator_id' => (string) $id, 'rotator_name' => 'Renamed', 'token' => 'SESSION',
         ]);
         $out = $rename(self::OTHER);
@@ -378,7 +378,7 @@ final class SetupPagesAccountScopeIntegrationTest extends TestCase
 
     public function testCampaignsShowNoOtherAccountsNetworkIntegration(): void
     {
-        $out = self::page('tracking202/setup/aff_campaigns.php');
+        $out = self::page('tracking202/Setup/aff_campaigns.php');
         self::assertStringContainsString('My Category', $out);
         self::assertStringNotContainsString('data-dni-id', $out, 'the category offers no search of another account\'s network integration');
         self::assertStringNotContainsString('offers loading', $out, 'nor says its offers are loading');

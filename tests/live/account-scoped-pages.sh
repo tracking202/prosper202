@@ -127,17 +127,17 @@ post "Visitors list" "tracking202/ajax/click_history.php" "offset=0" "A Offer"
 get "Spy" "tracking202/ajax/click_history.php?spy=1" "A Offer"
 get "Visitors download" "tracking202/visitors/download/" "A Offer"
 get "Rotator Breakdown" "tracking202/ajax/sort_rotator.php" "A Rotator"
-get "Analyze: text ads" "tracking202/analyze/text_ads.php" "A Ad"
-get "Analyze: landing pages" "tracking202/analyze/landing_pages.php"
-get "Analyze: variables" "tracking202/analyze/variables.php"
-get "Analyze: text ads download" "tracking202/analyze/text_ads_download.php" "A Ad"
-get "Analyze: landing pages download" "tracking202/analyze/landing_pages_download.php"
-get "Analyze: variables download" "tracking202/analyze/variables_download.php"
+get "Analyze: text ads" "tracking202/Analyze/text_ads.php" "A Ad"
+get "Analyze: landing pages" "tracking202/Analyze/landing_pages.php"
+get "Analyze: variables" "tracking202/Analyze/variables.php"
+get "Analyze: text ads download" "tracking202/Analyze/text_ads_download.php" "A Ad"
+get "Analyze: landing pages download" "tracking202/Analyze/landing_pages_download.php"
+get "Analyze: variables download" "tracking202/Analyze/variables_download.php"
 get "Visitors page (filter menus)" "tracking202/visitors/" "A Account"
 get "Group Overview page (filter menus)" "tracking202/overview/group-overview.php" "A Account"
 
 say "Setup and Get Links (A's links, category, account and pages name B's records)"
-get "Get Links: the links list" "tracking202/setup/get_trackers.php" "970039"
+get "Get Links: the links list" "tracking202/Setup/get_trackers.php" "970039"
 if [ -z "$ONLY" ] || [[ "Get Links" == *$ONLY* ]]; then
     if grep -qE 't202id=9700[34]9' "$(fname 'Get Links: the links list')"; then
         bad "Get Links offers a link to copy for a link on B's landing page or redirector"
@@ -145,8 +145,8 @@ if [ -z "$ONLY" ] || [[ "Get Links" == *$ONLY* ]]; then
         ok "Get Links offers no link for a link on B's landing page or redirector"
     fi
 fi
-get "Get Links: editing a link on B's records" "tracking202/setup/get_trackers.php?edit_tracker_id=970039" 'name="tracker_id" value="970039"'
-get "Campaigns" "tracking202/setup/aff_campaigns.php" "A Category"
+get "Get Links: editing a link on B's records" "tracking202/Setup/get_trackers.php?edit_tracker_id=970039" 'name="tracker_id" value="970039"'
+get "Campaigns" "tracking202/Setup/aff_campaigns.php" "A Category"
 if [ -z "$ONLY" ] || [[ "Campaigns" == *$ONLY* ]]; then
     if grep -q 'data-dni-id="7002"' "$(fname Campaigns)"; then
         bad "Campaigns offers a search of B's network integration (data-dni-id 7002)"
@@ -156,9 +156,9 @@ if [ -z "$ONLY" ] || [[ "Campaigns" == *$ONLY* ]]; then
     fi
 fi
 get "Update CPC" "tracking202/update/cpc.php" "A Account"
-get "Landing Pages: editing A's page under B's campaign" "tracking202/setup/landing_pages.php?edit_landing_page_id=7003" "A Stray Page"
-get "Text Ads: editing A's ad on B's campaign and page" "tracking202/setup/text_ads.php?edit_text_ad_id=7003" "A Stray Ad"
-get "Get Simple LP Code" "tracking202/setup/get_simple_landing_code.php" "A Page"
+get "Landing Pages: editing A's page under B's campaign" "tracking202/Setup/landing_pages.php?edit_landing_page_id=7003" "A Stray Page"
+get "Text Ads: editing A's ad on B's campaign and page" "tracking202/Setup/text_ads.php?edit_text_ad_id=7003" "A Stray Ad"
+get "Get Simple LP Code" "tracking202/Setup/get_simple_landing_code.php" "A Page"
 get "Home (Get Started)" "202-account/"
 
 # The endpoints whose foreign names went only into Slack notices: the

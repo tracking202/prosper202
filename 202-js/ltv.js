@@ -6,7 +6,7 @@
  * swapped into #m-content; this keeps what the classic router did:
  *
  *  - ltvNav(view, params) renders a view AND records it in the address bar as
- *    analyze/ltv.php?view=..., so a view can be bookmarked and Back/Forward
+ *    Analyze/ltv.php?view=..., so a view can be bookmarked and Back/Forward
  *    move between views (popstate re-renders);
  *  - each history entry remembers how far down it was scrolled, restored once
  *    the partial has arrived (the browser's own restoration fires too early);

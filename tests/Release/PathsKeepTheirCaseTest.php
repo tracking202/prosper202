@@ -6,6 +6,7 @@ namespace Tests\Release;
 
 use P202Build\ReleaseTree;
 use PHPUnit\Framework\TestCase;
+use Prosper202\Http\NotFoundPage;
 use Tests\Support\SourceScan;
 
 /**
@@ -24,8 +25,8 @@ final class PathsKeepTheirCaseTest extends TestCase
         '202-config/connect.php',
         '202-img/flags/pm.png',
         '202-js/p202-ui.js',
-        'tracking202/analyze/keywords.php',
-        'tracking202/setup/aff_campaigns.php',
+        'tracking202/Analyze/keywords.php',
+        'tracking202/Setup/aff_campaigns.php',
     ];
 
     public static function setUpBeforeClass(): void
@@ -59,6 +60,33 @@ final class PathsKeepTheirCaseTest extends TestCase
         self::assertSame([], ReleaseTree::pathCaseProblems($sources, $paths));
     }
 
+    /**
+     * The 404 names the folders 1.9.79 renamed by their old spellings, which
+     * no other file may write.
+     */
+    public function testTheOldSpellingsAreWrittenOnlyWhereTheyAreAllowed(): void
+    {
+        $source = "<?php // tracking202/analyze/keywords.php\n"
+            . "const MOVED = ['tracking202/setup' => 'tracking202/Setup'];";
+        $notFound = '202-config/Http/NotFoundPage.php';
+
+        self::assertSame([], ReleaseTree::pathCaseProblems([$notFound => $source], self::PATHS));
+        self::assertCount(2, ReleaseTree::pathCaseProblems(['page.php' => $source], self::PATHS));
+        self::assertCount(
+            1,
+            ReleaseTree::pathCaseProblems([$notFound => "<?php require '202-config/Connect.php';"], self::PATHS),
+            'another path the 404 writes is held as any other file\'s'
+        );
+    }
+
+    public function testTheAllowanceNamesWhatTheNotFoundPageMaps(): void
+    {
+        self::assertSame(
+            array_keys(NotFoundPage::MOVED),
+            ReleaseTree::PATHS_IN_ANOTHER_CASE['202-config/Http/NotFoundPage.php']['prefixes']
+        );
+    }
+
     /** @return iterable<string, array{string, array<string, string>}> source, written => on disk */
     public static function writtenPaths(): iterable
     {
@@ -67,20 +95,20 @@ final class PathsKeepTheirCaseTest extends TestCase
             ['202-config/http/ClickCookie.php' => '202-config/Http/ClickCookie.php'],
         ];
         yield 'an include from the install root' => [
-            "<?php include_once substr(__DIR__, 0, -21) . '/tracking202/Setup/aff_campaigns.php';",
-            ['tracking202/Setup/aff_campaigns.php' => 'tracking202/setup/aff_campaigns.php'],
+            "<?php include_once substr(__DIR__, 0, -21) . '/tracking202/setup/aff_campaigns.php';",
+            ['tracking202/setup/aff_campaigns.php' => 'tracking202/Setup/aff_campaigns.php'],
         ];
         yield 'an interpolated include' => [
             '<?php require "$root/202-config/Connect.php";',
             ['202-config/Connect.php' => '202-config/connect.php'],
         ];
         yield 'a link' => [
-            '<a href="/tracking202/Analyze/keywords.php">Keywords</a>',
-            ['tracking202/Analyze/keywords.php' => 'tracking202/analyze/keywords.php'],
+            '<a href="/tracking202/analyze/keywords.php">Keywords</a>',
+            ['tracking202/analyze/keywords.php' => 'tracking202/Analyze/keywords.php'],
         ];
         yield 'a directory' => [
-            "<?php header('Location: /tracking202/Setup/');",
-            ['tracking202/Setup' => 'tracking202/setup'],
+            "<?php header('Location: /tracking202/setup/');",
+            ['tracking202/setup' => 'tracking202/Setup'],
         ];
         yield 'a script' => [
             '<script src="/202-js/P202-ui.js"></script>',
@@ -95,7 +123,7 @@ final class PathsKeepTheirCaseTest extends TestCase
             ['ClickCookie.PHP' => 'ClickCookie.php'],
         ];
         yield 'written as on disk' => [
-            "<?php require_once __DIR__ . '/../../202-config/Http/ClickCookie.php'; // tracking202/setup/",
+            "<?php require_once __DIR__ . '/../../202-config/Http/ClickCookie.php'; // tracking202/Setup/",
             [],
         ];
         yield 'a word, not a path' => ['<?php // Setup the Http client', []];

@@ -8,7 +8,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The markup helpers the Setup family renders through on the v2 shell
- * (tracking202/setup/_includes/setup_ui.php).
+ * (tracking202/Setup/_includes/setup_ui.php).
  *
  * The Setup handlers kept their own sentences, stored as the classic
  * `<div class="error">…</div>` strings and sometimes several to a key; these
@@ -21,7 +21,7 @@ final class SetupUiHelpersTest extends TestCase
     public static function setUpBeforeClass(): void
     {
         require_once dirname(__DIR__, 2) . '/202-config/functions-ui.php';
-        require_once dirname(__DIR__, 2) . '/tracking202/setup/_includes/setup_ui.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/Setup/_includes/setup_ui.php';
     }
 
     public function testAStoredClassicErrorBecomesItsSentence(): void
@@ -95,7 +95,7 @@ final class SetupUiHelpersTest extends TestCase
 
     public function testRemoveKeepsTheGetRequestTheHandlerReadsAndAsksFirst(): void
     {
-        $html = p202_setup_remove_form('/tracking202/setup/aff_networks.php', [
+        $html = p202_setup_remove_form('/tracking202/Setup/aff_networks.php', [
             'delete_aff_network_id' => 7,
             'delete_aff_network_name' => 'A "quoted" name',
             'token' => 'abc',

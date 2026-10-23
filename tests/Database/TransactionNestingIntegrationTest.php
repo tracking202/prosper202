@@ -41,7 +41,7 @@ final class TransactionNestingIntegrationTest extends TestCase
     public static function setUpBeforeClass(): void
     {
         // The page controller sits outside the PSR-4 roots.
-        require_once dirname(__DIR__, 2) . '/tracking202/setup/MobileAppsController.php';
+        require_once dirname(__DIR__, 2) . '/tracking202/Setup/MobileAppsController.php';
         $host = getenv('P202_TEST_DB_HOST');
         if ($host === false || $host === '') {
             return;

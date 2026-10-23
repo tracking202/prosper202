@@ -55,8 +55,8 @@ final class PostReadersCheckTokenTest extends TestCase
         'tracking202/ajax/ltv_merge_search.php' => 'a read: the customer search the merge dialog offers',
         'tracking202/ajax/ltv_subscriptions.php' => 'a read: the subscriptions list, filtered and paged',
         'tracking202/ajax/sort_ltv.php' => 'a read: the LTV report, sorted and paged',
-        'tracking202/analyze/AnalyzeReportController.php' => 'a report read: it sets $_POST\'s offset and order for DataEngine, and writes nothing',
-        'tracking202/analyze/MobileAppsReportController.php' => 'a read: the Verify tab checks a pasted postback\'s signature and stores nothing',
+        'tracking202/Analyze/AnalyzeReportController.php' => 'a report read: it sets $_POST\'s offset and order for DataEngine, and writes nothing',
+        'tracking202/Analyze/MobileAppsReportController.php' => 'a read: the Verify tab checks a pasted postback\'s signature and stores nothing',
         'tracking202/static/p13n.php' => 'a public endpoint authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
         'tracking202/static/p13n_event.php' => 'a public beacon authenticated by a personalization bearer token, cross-origin by design (no session to forge a request from)',
     ];

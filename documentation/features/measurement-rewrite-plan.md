@@ -2713,8 +2713,8 @@ The SDK is `sdk/android-attribution/`: `core/` (package
 (Numbered 5.13 because §5.12 is PR 7's.)
 
 What PR 11 settled, where it departs from the rows above, and what is left.
-The pages are `tracking202/setup/MobileAppsController.php` and
-`tracking202/analyze/MobileAppsReportController.php` with their templates
+The pages are `tracking202/Setup/MobileAppsController.php` and
+`tracking202/Analyze/MobileAppsReportController.php` with their templates
 and partials; the API is `AppReportController` (over
 `AppPostbacksController::report()` and `Apps\Android\InstallReport`),
 `AppNotificationsController`, `AppLinksController` and `Apps\StoreLink`;
@@ -3294,7 +3294,7 @@ JourneyLookbackTest, AttributionReportsIntegrationTest}`.
   PR 10's, so this PR has no export endpoint.
 - **The dashboard** (`202-account/attribution.php`) is a v2-shell page that
   says it is being rebuilt, lists the account's models and the worker's
-  backlog, and names the CLI and API reads. (PR 10 replaced it: §6.6.) `tracking202/setup/attribution_models.php`
+  backlog, and names the CLI and API reads. (PR 10 replaced it: §6.6.) `tracking202/Setup/attribution_models.php`
   (the old model editor) redirects there, and its Setup tab is gone. The
   Slim v2 app (`api/v2/app.php`, `index.php`, `.htaccess`) is deleted;
   `api/v2/categories` and `api/v2/reports` are the older key-based API,
@@ -3316,7 +3316,7 @@ snapshots, settings, the two export stacks, analytics) and
 dashboard), `202-account/attribution-export.php`,
 `202-account/ajax/system-checks.php` (only the old dashboard called it; it
 checked the two deleted crons); `202-js/attribution.js`,
-`202-js/attribution-dashboard.js`; `tracking202/setup/AttributionController.php`
+`202-js/attribution-dashboard.js`; `tracking202/Setup/AttributionController.php`
 and its template; the crons `attribution-rebuild.php`,
 `attribution-export.php`, `backfill-conversion-journeys.php`,
 `purge-disabled-journeys.php`; both migration runners and their `.sql`,

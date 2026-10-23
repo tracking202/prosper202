@@ -247,7 +247,7 @@ class MobileAppsReportController
         $apps = $this->listApps();
         $mobileReport = [
             'view' => $view,
-            'self' => rtrim(get_absolute_url(), '/') . '/tracking202/analyze/mobile_apps.php',
+            'self' => rtrim(get_absolute_url(), '/') . '/tracking202/Analyze/mobile_apps.php',
             'filters' => $this->readFilters($apps, $view),
             'apps' => $apps,
             'platforms' => self::PLATFORMS,

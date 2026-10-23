@@ -8,7 +8,7 @@ use Api\V3\Controllers\UsersController;
 use PHPUnit\Framework\TestCase;
 use Tracking202\Setup\MobileAppsController;
 
-require_once dirname(__DIR__, 2) . '/tracking202/setup/MobileAppsController.php';
+require_once dirname(__DIR__, 2) . '/tracking202/Setup/MobileAppsController.php';
 
 /**
  * What Setup › Mobile Apps derives instead of asking for, and what it refuses.
@@ -23,7 +23,7 @@ final class MobileAppsRegistrationTest extends TestCase
 {
     public function testThePageReadsStoreLinksThroughAppIdentityAndHasNoParserOfItsOwn(): void
     {
-        $source = (string)file_get_contents(dirname(__DIR__, 2) . '/tracking202/setup/MobileAppsController.php');
+        $source = (string)file_get_contents(dirname(__DIR__, 2) . '/tracking202/Setup/MobileAppsController.php');
         self::assertStringContainsString('AppIdentity::fromStoreLink(', $source);
         self::assertFalse(method_exists(MobileAppsController::class, 'parseStoreReference'));
         self::assertFalse(method_exists(MobileAppsController::class, 'appStoreId'));
