@@ -105,6 +105,12 @@ if (array_key_exists('amount', $_GET) && is_numeric($_GET['amount'])) {
 	$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 }
 
+// Raw: replaceTokens() encodes them, and no statement here reads them.
+$adClickIds = \Prosper202\Click\AdClickIdColumns::of(
+    \Prosper202\Repository\LookupRepositoryFactory::connection($db),
+    $clickId
+);
+
 $tokens = [
     "subid" => $mysql['click_id'],
     "t202kw" => $mysql['t202kw'],
@@ -113,6 +119,9 @@ $tokens = [
 	"c3" => $mysql['c3'],
 	"c4" => $mysql['c4'],
     "gclid" => $mysql['gclid'],
+    "gbraid" => $adClickIds['gbraid'],
+    "wbraid" => $adClickIds['wbraid'],
+    "ttclid" => $adClickIds['ttclid'],
     "utm_source" => $mysql['utm_source'],
     "utm_medium" => $mysql['utm_medium'],
     "utm_campaign" => $mysql['utm_campaign'],

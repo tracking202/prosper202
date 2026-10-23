@@ -21,9 +21,10 @@ class ClicksController
      * (tracking202/ajax/click_history.php) shows for them — the campaign,
      * traffic source, landing page and text ad by name, the visitor's IP,
      * keyword, device and location, and the referrer, landing and outbound
-     * URLs. The list and the single click share it, so the two cannot drift.
-     * A name is joined only when the record is the click's own account's.
-     * An IPv6 address is decoded from its 202_ips_v6 row, as
+     * URLs; and the ad platforms' click ids the click arrived with, as the
+     * Visitors download lists them. The list and the single click share it,
+     * so the two cannot drift. A name is joined only when the record is the
+     * click's own account's. An IPv6 address is decoded from its 202_ips_v6 row, as
      * Prosper202\DataEngine\IpAddressSql reads it for the Visitors page:
      * served raw it was that row's id ("1").
      */
@@ -42,7 +43,8 @@ class ClicksController
                 lc.country_name, lc.country_code, lr.region_name, lci.city_name, li.isp_name,
                 p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
                 su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
-                su_out.site_url_address AS outbound';
+                su_out.site_url_address AS outbound,
+                g.gclid, g.gbraid, g.wbraid, g.ttclid';
 
     private const DETAIL_JOINS = '
             LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id
@@ -67,7 +69,8 @@ class ClicksController
             LEFT JOIN 202_device_types dt ON dm.device_type = dt.type_id
             LEFT JOIN 202_site_urls su_ref ON cs.click_referer_site_url_id = su_ref.site_url_id
             LEFT JOIN 202_site_urls su_lp ON cs.click_landing_site_url_id = su_lp.site_url_id
-            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id';
+            LEFT JOIN 202_site_urls su_out ON cs.click_outbound_site_url_id = su_out.site_url_id
+            LEFT JOIN 202_google g ON c.click_id = g.click_id';
 
     /**
      * Values the visitor (or the visitor's browser) wrote: stripped of
@@ -190,7 +193,9 @@ class ClicksController
         while ($row = $result->fetch_assoc()) {
             // Resolved names derive from the visitor (user agent, IP): strip
             // control/bidi characters and cap length before serving them.
-            $rows[] = self::numbers(\Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS));
+            $rows[] = self::adClickIds(
+                self::numbers(\Api\V3\Support\ResponseSanitizer::cleanRowFields($row, self::VISITOR_FIELDS))
+            );
         }
         $stmt->close();
 
@@ -284,7 +289,35 @@ class ClicksController
         // control/bidi characters and cap length before serving them.
         $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields($row, [...self::VISITOR_FIELDS, 'c1', 'c2', 'c3', 'c4']);
 
-        return ['data' => self::numbers($row)];
+        return ['data' => self::adClickIds(self::numbers($row))];
+    }
+
+    /**
+     * The ad platforms' click ids (ClickRecord::AD_CLICK_IDS), null for
+     * none: a click stored without one has '', and a redirector's click no
+     * 202_google row at all. The visitor wrote them, so they are cleaned as
+     * the other visitor fields are, but capped at the widest column's width
+     * rather than 512 characters, so no id the click kept is cut on the way
+     * out.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private static function adClickIds(array $row): array
+    {
+        $names = array_keys(\Prosper202\Click\ClickRecord::AD_CLICK_IDS);
+        $row = \Api\V3\Support\ResponseSanitizer::cleanRowFields(
+            $row,
+            $names,
+            max(\Prosper202\Click\ClickRecord::AD_CLICK_IDS)
+        );
+        foreach ($names as $name) {
+            if (array_key_exists($name, $row) && ($row[$name] === null || $row[$name] === '')) {
+                $row[$name] = null;
+            }
+        }
+
+        return $row;
     }
 
     /**

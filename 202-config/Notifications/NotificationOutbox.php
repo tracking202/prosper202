@@ -29,8 +29,8 @@ use Prosper202\Database\Connection;
  * they are not queued (a web intake a browser loads renders them itself,
  * TrafficSourceNotifier; an app install has no page). The URL is resolved
  * at queue time by TrafficSourcePixels (the tracker's rules) with the
- * click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]], the
- * utm_* tokens, [[cpc]], [[referer]], [[timestamp]], [[random]] — and the
+ * click's tokens — [[subid]], [[c1]]–[[c4]], [[t202kw]], [[gclid]],
+ * [[gbraid]], [[wbraid]], [[ttclid]], the utm_* tokens, [[cpc]], [[referer]], [[timestamp]], [[random]] — and the
  * row's own: [[sourceid]], [[payout]] (this row's amount as a network reads
  * money, `4.00`, not the click's total), [[transactionid]] / [[t202txid]]
  * (the network's id, else the ledger key), [[p202_goal]], [[p202_goal_id]]
