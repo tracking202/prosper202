@@ -11348,6 +11348,51 @@ components:
         outbound:
           type: string
           nullable: true
+        gclid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            The Google Ads click id the click arrived with (`?gclid=`), as
+            stored; null when it came with none. Recorded by direct links and
+            landing pages; a redirector click records none of these six.
+        gbraid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Google Ads' click id for iOS traffic measured in an app
+            (`?gbraid=`), as stored, cut to 150 characters; null for none.
+        wbraid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Google Ads' click id for iOS traffic measured on the web
+            (`?wbraid=`), as stored, cut to 150 characters; null for none.
+        ttclid:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            TikTok's click id (`?ttclid=`), as stored, cut to 1,000 characters
+            (real ones run to about 340); null for none.
+        msclkid:
+          type: string
+          nullable: true
+          maxLength: 150
+          description: >-
+            Microsoft Advertising's click id (`?msclkid=`), as stored, cut to
+            150 characters (Microsoft documents a 32-character GUID); null for
+            none. Recorded since 1.9.79: clicks before it have none.
+        fbclid:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: >-
+            Meta's click id (`?fbclid=`), as stored, cut to 1,000 characters
+            (real ones run to about 200); null for none. Recorded since 1.9.79:
+            clicks before it have none.
 
     ClickDetail:
       allOf:

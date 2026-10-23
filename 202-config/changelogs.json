@@ -9,7 +9,9 @@
       "Fixed: A site whose name has www. inside it (awww.example.com) is filed as its own domain, not with the name it makes without it (aexample.com). Clicks already filed stay where they are",
       "Changed: The page that connects an AI assistant shows the app's name and site as what the approval link says, and that whoever started the connection gets the access; it no longer calls them verified. Allow a connection only if you started it yourself",
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read",
-      "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address"
+      "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
+      "New: Clicks record Google Ads' iOS click ids (gbraid, wbraid) and TikTok's click id (ttclid) beside the gclid, from direct links and landing pages. They are in the Visitors download, the API and the CLI, and the new [[gbraid]], [[wbraid]] and [[ttclid]] tokens send them on",
+      "Fixed: Clicks record Microsoft Advertising's msclkid and Meta's fbclid, so [[msclkid]] and [[fbclid]] fill with the click's ids. No version since at least 1.9.55 kept either, and a click recorded before 1.9.79 has neither, which cannot be recovered. Both are in the Visitors download, the API and the CLI"
     ]
   },
   "1.9.78": {

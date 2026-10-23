@@ -20,7 +20,9 @@ var clickListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tracked clicks with optional filters by campaign, time range, or bot status",
 	Long: "Lists clicks newest first, with what the Visitors page shows for each: campaign,\n" +
-		"traffic source, keyword, IP, location, device, referrer and landing URLs. It takes\n" +
+		"traffic source, keyword, IP, location, device, referrer and landing URLs, and the\n" +
+		"ad platforms' click ids it arrived with (gclid, gbraid, wbraid, ttclid, msclkid,\n" +
+		"fbclid; null for none, and none on a redirector's click). It takes\n" +
 		"the Visitors page's filters, as `p202 report` does: --keyword and --referer\n" +
 		"(contains), --ip, --device-type, --show real|filtered|filtered_bot|leads, location,\n" +
 		"browser and platform ids, and --period.\n\n" +
@@ -112,7 +114,11 @@ var clickListCmd = &cobra.Command{
 var clickGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a click by ID",
-	Args:  cobra.ExactArgs(1),
+	Long: "Gets one click with what `click list` shows for it, plus its c1-c4 values. The\n" +
+		"ad platforms' click ids it arrived with are gclid, gbraid and wbraid (Google Ads),\n" +
+		"ttclid (TikTok), msclkid (Microsoft Advertising) and fbclid (Meta), each null for\n" +
+		"none; --json gives them whole.",
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := api.NewFromConfig()
 		if err != nil {
