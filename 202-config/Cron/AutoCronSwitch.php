@@ -16,14 +16,19 @@ final class AutoCronSwitch
 {
     public const WINDOW_SECONDS = 300;
 
+    /**
+     * What Settings says when a recent run leaves AutoCron off. The record is
+     * not proof of a cron job (the cron's address needs no sign-in, so anyone
+     * can make one), so the page then offers to turn AutoCron on anyway.
+     */
+    public const RAN_RECENTLY = 'A cron job ran on this install in the last five minutes, so AutoCron may not be'
+        . ' needed and was left off. Anyone can open this install\'s cron address, so that run may not be your'
+        . ' own cron job\'s: if you have none, turn AutoCron on with the button below.';
+
     /** The switch's own value: '1' (On) or '0' (Off); anything else is no answer. */
     public static function posted(mixed $value): ?bool
     {
-        return match ($value) {
-            '1' => true,
-            '0' => false,
-            default => null,
-        };
+        return \Prosper202\Http\PostedSwitch::read($value, '1', '0');
     }
 
     /** @param ?int $lastScheduledRun unix time of row 1, null when there is none */
