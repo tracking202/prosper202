@@ -36,22 +36,24 @@ final class RuleOrder
 
     /**
      * The ids of a redirector's active rules, in the order the redirects try
-     * them, read with $read (the click path's cached list read).
+     * them, read with the click path's cached list read (or $read).
      *
      * Code served before the 1.9.79 upgrade has added position reads them in
      * id order, as 1.9.78 did, rather than failing the visitor's click: a
      * 1054 can only be that column, since the statement names no other
      * column the schema has ever lacked.
      *
-     * @param callable(string): list<array<string, mixed>> $read
+     * @param (callable(string): list<array<string, mixed>>)|null $read
      * @return list<array<string, mixed>> rows of rule_id
      */
-    public static function activeRules(callable $read, int $rotatorId): array
+    public static function activeRules(\mysqli $db, int $rotatorId, ?callable $read = null): array
     {
         $sql = 'SELECT ru.id AS rule_id FROM 202_rotator_rules AS ru'
             . ' WHERE ru.rotator_id = ' . $rotatorId . " AND ru.status = '1'";
+        $ordered = $sql . ' ' . self::orderBy('ru');
+        $read ??= static fn (string $sql): array => foreach_memcache_mysql_fetch_assoc($db, $sql);
         try {
-            return $read($sql . ' ' . self::orderBy('ru'));
+            return $read($ordered);
         } catch (\Throwable $e) {
             if (!Connection::isMysqlError($e, 1054, 'Unknown column')) {
                 throw $e;

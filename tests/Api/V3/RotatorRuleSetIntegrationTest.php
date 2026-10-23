@@ -213,7 +213,7 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         // The redirects try them in that order, the new rule's id being the highest.
         self::assertSame(
             array_map('intval', array_column($read, 'id')),
-            array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::reader(), $id))
+            array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::$db, $id, self::reader()))
         );
         self::assertGreaterThan($office['id'], $read[0]['id']);
     }
@@ -522,12 +522,12 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         $this->set($id, self::twoRules(self::campaign(self::USER)));
         $ids = array_map('intval', array_column($this->rotators()->listRules($id)['data'], 'id'));
         self::$db->query("UPDATE 202_rotator_rules SET position = 9 - position WHERE rotator_id = $id");
-        $ordered = array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::reader(), $id));
+        $ordered = array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::$db, $id, self::reader()));
         self::assertSame(array_reverse($ids), $ordered, 'position decides');
 
         self::assertTrue(self::$db->query('ALTER TABLE 202_rotator_rules DROP COLUMN position'), (string) self::$db->error);
         try {
-            $fallback = array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::reader(), $id));
+            $fallback = array_map(static fn (array $r): int => (int) $r['rule_id'], RuleOrder::activeRules(self::$db, $id, self::reader()));
         } finally {
             self::$db->query("ALTER TABLE 202_rotator_rules ADD COLUMN `position` int(11) unsigned NOT NULL DEFAULT '0' AFTER `status`");
         }
@@ -536,8 +536,8 @@ final class RotatorRuleSetIntegrationTest extends TestCase
 
         // Any other failure is the click's to report.
         $this->expectException(\RuntimeException::class);
-        RuleOrder::activeRules(static function (string $sql): array {
+        RuleOrder::activeRules(self::$db, $id, static function (string $sql): array {
             throw new \RuntimeException("Table '202_rotator_rules' doesn't exist [errno 1146]");
-        }, $id);
+        });
     }
 }

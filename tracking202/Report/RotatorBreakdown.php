@@ -66,10 +66,11 @@ final class RotatorBreakdown
             return [];
         }
 
+        $ruleOrder = RuleOrder::orderBy('ru');
         $stmt = $this->conn->prepareRead(
             'SELECT ru.id, ru.rotator_id, ru.rule_name FROM 202_rotator_rules ru'
             . ' INNER JOIN 202_rotators ro ON ro.id = ru.rotator_id'
-            . ' WHERE ro.user_id = ? ' . RuleOrder::orderBy('ru')
+            . ' WHERE ro.user_id = ? ' . $ruleOrder
         );
         $this->conn->bind($stmt, 'i', [$userId]);
         $rulesByRotator = [];

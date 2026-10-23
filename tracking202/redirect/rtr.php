@@ -68,10 +68,7 @@ p202ApplyOwnerPrivacy($rotator_row['user_id'] ?? null);
 $user_keyword_searched_or_bidded = $db->real_escape_string($rotator_row['user_keyword_searched_or_bidded']);
 
 // The active rules, in the order they are tried (RuleOrder).
-$rule_row = \Prosper202\Rotator\RuleOrder::activeRules(
-	static fn (string $sql): array => foreach_memcache_mysql_fetch_assoc($db, $sql),
-	(int) $rotator_row['rotator_id']
-);
+$rule_row = \Prosper202\Rotator\RuleOrder::activeRules($db, (int) $rotator_row['rotator_id']);
 
 AUTH::set_timezone($rotator_row['user_timezone']);
 

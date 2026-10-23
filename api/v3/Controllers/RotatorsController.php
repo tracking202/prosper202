@@ -1288,7 +1288,7 @@ class RotatorsController
             $kept[] = $c['id'];
         }
         $update?->close();
-        $this->removeEntriesBut('202_rotator_rules_criteria', $ruleId, $kept, 'Failed to remove criteria');
+        $this->removeEntriesBut('criteria', $ruleId, $kept, 'Failed to remove criteria');
         $this->insertCriteria($rotatorId, $ruleId, $new);
     }
 
@@ -1316,19 +1316,21 @@ class RotatorsController
             $kept[] = $r['id'];
         }
         $update?->close();
-        $this->removeEntriesBut('202_rotator_rules_redirects', $ruleId, $kept, 'Failed to remove redirects');
+        $this->removeEntriesBut('redirects', $ruleId, $kept, 'Failed to remove redirects');
         $this->insertRedirects($ruleId, $new);
     }
 
     /**
      * Remove a rule's criteria or destinations, all but $kept.
      *
-     * @param '202_rotator_rules_criteria'|'202_rotator_rules_redirects' $table
+     * @param 'criteria'|'redirects' $list
      * @param list<int> $kept
      */
-    private function removeEntriesBut(string $table, int $ruleId, array $kept, string $failed): void
+    private function removeEntriesBut(string $list, int $ruleId, array $kept, string $failed): void
     {
-        $sql = "DELETE FROM $table WHERE rule_id = ?"
+        $sql = ($list === 'criteria'
+                ? 'DELETE FROM 202_rotator_rules_criteria WHERE rule_id = ?'
+                : 'DELETE FROM 202_rotator_rules_redirects WHERE rule_id = ?')
             . ($kept === [] ? '' : ' AND id NOT IN (' . implode(', ', array_fill(0, count($kept), '?')) . ')');
         $stmt = $this->prepare($sql);
         $this->bind($stmt, 'i' . str_repeat('i', count($kept)), $ruleId, ...$kept);

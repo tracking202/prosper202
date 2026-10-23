@@ -191,7 +191,8 @@ $ispEnabled = isset($user_row['maxmind_isp']) && $user_row['maxmind_isp'] == '1'
 
 $rotators = p202_setup_rows($db, "SELECT * FROM `202_rotators` WHERE `user_id`='" . $uid . "' ORDER BY `name` ASC");
 $rulesByRotator = [];
-foreach (p202_setup_rows($db, "SELECT r.* FROM 202_rotator_rules AS r INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' " . \Prosper202\Rotator\RuleOrder::orderBy('r')) as $rule) {
+$ruleOrder = \Prosper202\Rotator\RuleOrder::orderBy('r');
+foreach (p202_setup_rows($db, "SELECT r.* FROM 202_rotator_rules AS r INNER JOIN 202_rotators AS ro ON (ro.id = r.rotator_id) WHERE ro.user_id = '" . $uid . "' " . $ruleOrder) as $rule) {
 	$rulesByRotator[(int) $rule['rotator_id']][] = $rule;
 }
 $criteriaByRule = [];

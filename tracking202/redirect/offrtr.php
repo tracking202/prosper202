@@ -89,10 +89,7 @@ if (!$offrtrIsAccountsClick) {
 
 $mysql['rotator_id'] = $db->real_escape_string((string)$rotator_row['id']);
 // The active rules, in the order they are tried (RuleOrder).
-$rule_row = \Prosper202\Rotator\RuleOrder::activeRules(
-	static fn (string $sql): array => foreach_memcache_mysql_fetch_assoc($db, $sql),
-	(int) $rotator_row['id']
-);
+$rule_row = \Prosper202\Rotator\RuleOrder::activeRules($db, (int) $rotator_row['id']);
 
 // The visitor's address by the rule every click endpoint uses (VisitorIp),
 // so the rotator routes on the address dl.php and the pages recorded.
