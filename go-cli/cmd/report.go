@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"p202/internal/api"
@@ -185,8 +186,76 @@ var reportBreakdownCmd = &cobra.Command{
 			return err
 		}
 		render(filtered)
+		note := breakdownMoreRowsNote(data, params, "")
+		if note != "" && breakdownFiltersSet(cmd) {
+			note += " --min-clicks, --min-cost, --zero-leads and --having filter only the rows read."
+		}
+		noteForPeople(cmd, note)
 		return nil
 	},
+}
+
+// breakdownDefaultLimit is the rows a breakdown page holds when the request names no limit.
+const breakdownDefaultLimit = 50
+
+// noteForPeople prints note on stderr under a table, CSV or --quiet. --json and --ndjson carry the flag the note
+// explains (`truncated`), and keep stderr for errors, as they do `masked`.
+func noteForPeople(cmd *cobra.Command, note string) {
+	if note == "" || jsonOutput || ndjsonOutput {
+		return
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), note)
+}
+
+// breakdownMoreRowsNote is the note under one page of a breakdown with rows after it, naming the flags that read
+// them; "" for the last page. A server from before `truncated` cannot say, so a page it filled to the limit may have
+// rows after it. ranked names how the command ordered the page's rows, if not as the server did.
+func breakdownMoreRowsNote(data []byte, params map[string]string, ranked string) string {
+	var resp struct {
+		Data      []json.RawMessage `json:"data"`
+		Truncated *bool             `json:"truncated"`
+		Limit     *int              `json:"limit"`
+		Offset    *int              `json:"offset"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return ""
+	}
+	limit, offset := breakdownDefaultLimit, 0
+	if n, err := strconv.Atoi(params["limit"]); err == nil {
+		limit = n
+	}
+	if n, err := strconv.Atoi(params["offset"]); err == nil {
+		offset = n
+	}
+	if resp.Limit != nil {
+		limit = *resp.Limit
+	}
+	if resp.Offset != nil {
+		offset = *resp.Offset
+	}
+	var lead string
+	switch {
+	case resp.Truncated != nil && *resp.Truncated:
+		lead = "Note: more rows remain after rows %d-%d%s;"
+	case resp.Truncated == nil && len(resp.Data) > 0 && len(resp.Data) >= limit:
+		lead = "Note: this server does not say whether rows remain after rows %d-%d%s;"
+	default:
+		return ""
+	}
+	note := fmt.Sprintf(lead, offset+1, offset+len(resp.Data), ranked) + fmt.Sprintf(" --offset %d reads the next page", offset+len(resp.Data))
+	if limit < breakdownPageSize {
+		note += fmt.Sprintf(" (--limit takes up to %d)", breakdownPageSize)
+	}
+	return note + "."
+}
+
+// breakdownFiltersSet says whether a client-side breakdown filter (applyBreakdownFilters) is set.
+func breakdownFiltersSet(cmd *cobra.Command) bool {
+	minClicks, _ := cmd.Flags().GetFloat64("min-clicks")
+	minCost, _ := cmd.Flags().GetFloat64("min-cost")
+	zeroLeads, _ := cmd.Flags().GetBool("zero-leads")
+	having, _ := cmd.Flags().GetString("having")
+	return minClicks != 0 || minCost != 0 || zeroLeads || strings.TrimSpace(having) != ""
 }
 
 var reportTimeseriesCmd = &cobra.Command{

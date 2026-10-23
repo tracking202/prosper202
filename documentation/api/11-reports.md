@@ -96,6 +96,12 @@ of 1000 came back as 500 rows.)
 
 Rows are ordered by `sort`, then by `id` ascending. Rows tied on the sort column (often many with 0 clicks) therefore come back in the same order on every request, so paging with `offset` over unchanged data neither skips nor repeats a row. A rolling `period` moves with the clock and new traffic changes the sort values between pages; page a fixed `time_from`/`time_to` window for a consistent read.
 
+Next to `data`, `breakdown` and `available_breakdowns` the response carries `limit` and `offset` (the page it answers) and `truncated`: `true` when rows remain after this page, the spelling `/reports/timeseries` uses. Read on with `offset` = `offset` + `limit` until `truncated` is `false`; a page of exactly the rows that remain says `false`. Rows on one page are not the account's figures for the dimension when `truncated` is `true`, so check it before summing or ranking them. The server reads one row past the page to know; it does not count the rows (a count is a second aggregation of the window, which costs more than half the page's own query again). Servers from before `truncated` was added say nothing about the rows after a page.
+
+```json
+{"data": [...50 rows...], "breakdown": "keyword", "available_breakdowns": [...], "truncated": true, "limit": 50, "offset": 0}
+```
+
 **Breakdown dimensions:** `campaign`, `aff_network`, `ppc_account`, `ppc_network`, `landing_page`, `keyword`, `country`, `city`, `region`, `browser`, `platform`, `device`, `isp`, `text_ad`, `ip`, `referer`, `referer_url`, `device_type`, `c1`, `c2`, `c3`, `c4`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `rotator`, `rotator_rule`.
 
 | Dimension | `name` is | Page it mirrors |

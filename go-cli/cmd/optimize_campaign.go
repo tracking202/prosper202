@@ -63,12 +63,13 @@ var campaignOptimizeCmd = &cobra.Command{
 		// 2. Rank other offers by EPC over the same period (the salvage candidates).
 		portParams := collectReportParams(cmd)
 		portParams["breakdown"] = "campaign"
-		// The backend defaults to limit=50 sorted by clicks; raise the limit and
-		// sort by revenue so a high-EPC salvage offer isn't missed on page 1.
-		portParams["limit"] = "500"
+		// Sorted by revenue, so a bound on the rows read keeps the earners.
 		portParams["sort"] = "total_income"
 		portParams["sort_dir"] = "DESC"
-		offers, _ := fetchBreakdownRows(c, portParams)
+		offers, offersCut, err := fetchBreakdownRows(c, portParams, breakdownReadRows)
+		if err != nil {
+			return fmt.Errorf("reading the other campaigns' EPC for campaign %s: %w", id, err)
+		}
 		type cand struct {
 			name string
 			epc  float64
@@ -112,7 +113,10 @@ var campaignOptimizeCmd = &cobra.Command{
 		for _, b := range best {
 			rows = append(rows, map[string]interface{}{"name": b.name, "epc": round(b.epc, 3)})
 		}
-		render(rowsToJSON(rows))
+		render(pageJSON(rows, map[string]interface{}{"truncated": offersCut}))
+		if offersCut {
+			noteForPeople(cmd, coversFirstRowsNote("campaign", "most revenue first"))
+		}
 		return nil
 	},
 }

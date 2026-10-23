@@ -275,6 +275,21 @@ case "$ask" in
         printf 'Clicks on "%s" by IP address (every click, filtered included):\n' "$kw"
         printf '%s' "$rows" | jq -r '.data[] | "\(.name): \(.total_clicks) clicks"'
         ;;
+    *"different keywords containing"*)
+        # A page is 50 rows: read on with --offset until the answer says no
+        # rows remain (truncated false), then count.
+        kw=$(printf '%s' "$ask" | grep -oE "containing '[^']+'" | sed "s/containing '//; s/'\$//")
+        n=0
+        offset=0
+        while :; do
+            page=$(p202 report breakdown --breakdown keyword --keyword "$kw" --period alltime --offset "$offset" --json)
+            rows=$(printf '%s' "$page" | jq '.data | length')
+            n=$((n + rows))
+            [ "$(printf '%s' "$page" | jq -r '.truncated')" = "true" ] && [ "$rows" -gt 0 ] || break
+            offset=$((offset + rows))
+        done
+        printf '%s different keywords containing "%s" have sent clicks: every page of `p202 report breakdown --breakdown keyword --keyword`, read until it said no rows remain.\n' "$n" "$kw"
+        ;;
     *"browser language"*)
         # There is no language dimension: say so with the ones there are,
         # read from the server's own refusal, and give no figures.
