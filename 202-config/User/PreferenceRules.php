@@ -48,6 +48,7 @@ final class PreferenceRules
         'user_pref_referer_data' => ['browser', 't202ref'],
         'user_pref_dynamic_bid' => ['0', '1'],
         'user_pref_privacy' => ['disabled', 'eu', 'all'],
+        'user_pref_same_ip_fallback' => ['0', '1'],
         'user_pref_cloak_referer' => ['origin', 'never'],
         'user_pref_ad_settings' => ['show_all', 'hide_login', 'hide_all'],
         'user_pref_limit' => self::REPORT_ROW_LIMITS,
@@ -58,7 +59,9 @@ final class PreferenceRules
     ];
 
     /** Integer columns among CHOICES: bound as 'i'. */
-    private const INTEGER_COLUMNS = ['user_pref_dynamic_bid', 'user_pref_limit', 'user_ltv_customer_cparam'];
+    private const INTEGER_COLUMNS = [
+        'user_pref_dynamic_bid', 'user_pref_same_ip_fallback', 'user_pref_limit', 'user_ltv_customer_cparam',
+    ];
 
     /**
      * Free-text secrets and settings, column => the column's width. '' is

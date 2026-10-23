@@ -57,7 +57,7 @@ conversion stores one:
 | `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
 | `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
 | `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
-| `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
+| `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess, made only for an account with the [same-IP fallback](14-users.md#same-ip-fallback-user_pref_same_ip_fallback) on and a visitor the privacy setting does not hold back | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
 | `unknown` | not recorded | a conversion recorded before 1.9.79, the `legacy_baseline` row that carries a pre-ledger value, and a goal reached by an event stored before 1.9.79 |
 
 A goal's conversion carries the method of the event that reached it, whenever

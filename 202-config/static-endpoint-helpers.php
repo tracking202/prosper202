@@ -678,6 +678,49 @@ if (!function_exists('p202ClickIdFromRequest')) {
     }
 }
 
+if (!function_exists('p202SameIpFallbackClick')) {
+    /**
+     * The click a pixel credits when its request names none: $account's
+     * latest click from the visitor's address in the last 30 days
+     * (Prosper202\Conversion\SameIpFallback), recorded as
+     * MatchMethod::SAME_IP. Null when nothing says whose pixel this is,
+     * when the account has the fallback off, and when the visitor may not
+     * be recognised (p202MayRecogniseVisitor(), the decision that withholds
+     * the p202vid cookie: held back by the privacy setting, consent
+     * withheld, the campaign's identity capture off).
+     *
+     * Puts the account's privacy setting in force first: the address is
+     * looked up as its clicks were stored.
+     *
+     * @param array{user_id: int, campaign_allows: bool}|null $account the
+     *        pixel's (SameIpFallback::pixelAccount(), ::ofCampaign())
+     * @param array<string, mixed> $get
+     * @return array{click_id: int, ppc_account_id: int, click_id_public: string, keyword_id: int}|null
+     */
+    function p202SameIpFallbackClick(mysqli $db, ?array $account, array $get): ?array
+    {
+        if ($account === null) {
+            return null;
+        }
+        p202ApplyOwnerPrivacy($account['user_id']);
+        if (!p202MayRecogniseVisitor($get, $account['campaign_allows'])) {
+            return null;
+        }
+        $conn = new \Prosper202\Database\Connection($db);
+        if (!\Prosper202\Conversion\SameIpFallback::enabledFor($conn, $account['user_id'])) {
+            return null;
+        }
+
+        return \Prosper202\Click\LastClickFromAddress::find(
+            $conn,
+            p202StoredVisitorIp(),
+            $account['user_id'],
+            time() - \Prosper202\Conversion\SameIpFallback::LOOKBACK,
+            !trackingEnabled()
+        );
+    }
+}
+
 if (!function_exists('p202LegacyConversionGate')) {
     /**
      * Whether a hit on a legacy endpoint (px.php, pb.php, cb202.php) records a

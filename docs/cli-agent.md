@@ -1123,7 +1123,8 @@ p202 user identity-key rotate <user_id> [--force] [--json]
 p202 user prefs get    <user_id> [--json]
 p202 user prefs update <user_id> [--user-tracking-domain S] [--user-daily-email never|00..23]
                        [--user-account-currency CODE] [--user-pref-time-predefined R] [--user-pref-limit N]
-                       [--user-pref-privacy disabled|eu|all] [--cb-key S] [--user-ltv-score-weights S] ... [--json]
+                       [--user-pref-privacy disabled|eu|all] [--user-pref-same-ip-fallback 0|1]
+                       [--cb-key S] [--user-ltv-score-weights S] ... [--json]
                        # every settings-page preference; --help lists each with its values; "" clears free text
 ```
 

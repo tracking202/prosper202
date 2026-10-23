@@ -119,7 +119,7 @@ var searchTasks = []searchTask{
 
 	// Account menu
 	{Run: "p202 user prefs update", Pages: []string{"Personal Settings"},
-		Phrases: []string{"my preferences", "report defaults", "privacy setting"}},
+		Phrases: []string{"my preferences", "report defaults", "privacy setting", "same ip fallback"}},
 	{Run: "p202 system info", Pages: []string{"Settings"},
 		Phrases: []string{"install settings", "versions", "database size"}},
 	{Run: "p202 system integrations", Pages: []string{"3rd Party API Integrations"},

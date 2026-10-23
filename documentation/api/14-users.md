@@ -95,6 +95,7 @@ row.
 | `user_pref_referer_data` | `browser`, `t202ref` | Personal settings |
 | `user_pref_dynamic_bid` | `0` (cost from the tracker), `1` (from the `t202b` parameter: a bid from 0 to 99.99, or the tracker's CPC for any other) | Personal settings |
 | `user_pref_privacy` | `disabled`, `eu`, `all` (see [Privacy](#privacy-user_pref_privacy) below) | Personal settings |
+| `user_pref_same_ip_fallback` | `1` (a pixel that names no click credits your latest click from the visitor's IP address), `0` (it credits none); see [Same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below | Personal settings |
 | `user_pref_cloak_referer` | `origin`, `never` | Personal settings |
 | `user_pref_ad_settings` | `show_all`, `hide_login`, `hide_all` | Personal settings |
 | `user_account_currency` | a supported 3-letter code | Personal settings: **re-prices every campaign's payout** into it through the exchange-rate service, in the same transaction as the rest of the request; `502` and nothing written when the service gives no rate |
@@ -154,15 +155,45 @@ so two visitors in one /24 within a day count as one and the second click is
 filtered. The "don't count my own clicks" filter compares the address a click
 arrived from with the address you signed in from (stored as it arrived; it is
 an operator's record, like the sign-in log), so your own clicks are filtered
-under every setting and nobody else in your /24 is. A conversion pixel or
-`off.php` that names no click and finds no cookie (always the case for a
-visitor held back, who has none) falls back to the visitor's last click by
-address; under privacy that address names a /24, so a click is credited only
-when it is the one click from that block in the look-back window, and with
-two or more none is, and the miss is logged, rather than crediting the sale
-to whichever neighbour clicked last. Pass the subid in the pixel to credit
-every one. Rate limits on the public endpoints key on the connection's
-address as it arrived and are not affected.
+under every setting and nobody else in your /24 is. `off.php` reached with
+no click and no cookie (always the case for a visitor held back, who has
+none) falls back to the visitor's last click by address; under privacy that
+address names a /24, so a click is taken only when it is the one click from
+that block in the look-back window, and with two or more none is, and the
+miss is logged, rather than taking whichever neighbour clicked last. A
+conversion pixel makes no guess by address for a visitor held back (the
+[same-IP fallback](#same-ip-fallback-user_pref_same_ip_fallback) below):
+pass the subid in the pixel to credit every one. Rate limits on the public
+endpoints key on the connection's address as it arrived and are not
+affected.
+
+### Same-IP fallback (`user_pref_same_ip_fallback`)
+
+Personal settings › Advanced › **Match conversions by IP address**. When a
+conversion pixel (`gpx.php`, `upx.php`, `px.php`) names no click, neither by
+a subid nor by a tracking cookie, `1` credits the account's latest click from
+the visitor's IP address in the last 30 days, and `0` credits none. It is a
+guess: behind iCloud Private Relay on iPhones and behind a mobile network's
+shared addresses many visitors arrive from one address, and the latest of
+them takes the sale. Every conversion it finds is recorded with
+`match_method` `same_ip` ([Conversions](10-conversions.md#how-each-conversions-click-was-found)),
+so `GET /conversions?match_method=same_ip` lists them.
+
+- **Default.** An account made from 1.9.79 on starts at `0`, the first
+  account of a new install included. Every account that existed before the
+  1.9.79 upgrade is set to `1`, which is how its pixels converted until then.
+  To stop the guesses on such an account, choose Off on that page or send
+  `{"user_pref_same_ip_fallback": 0}` here.
+- **Never for a visitor who is given no `p202vid` cookie**
+  ([Visitor identity](../features/visitor-identity.md#consent)): one the
+  privacy setting holds back, one whose pixel request carries
+  `p202_consent=0`, and one on a campaign whose `identity_signals` is `0`.
+- **Whose clicks.** The account whose campaign the pixel names: `px.php`'s
+  `acip`, and `cid` on `gpx.php` and `upx.php` (the advanced pixel). A
+  `gpx.php` or `upx.php` request with no `cid` (the simple pixel, and the
+  universal pixel's script) is the account's when only one account of the
+  install has campaigns; on an install where several have, it guesses
+  nothing and logs why. A `cid` that names no campaign guesses nothing.
 
 ## Examples
 

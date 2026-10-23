@@ -6,8 +6,9 @@ include_once(substr(__DIR__, 0,-19) . '/202-config/static-endpoint-helpers.php')
 
 // The per-campaign image pixel: <img src="px.php?acip=..."> on the
 // advertiser's thank-you page. It has no subid of its own, so the click is
-// found from the tracking cookie, and failing that from the campaign owner's
-// most recent click from this IP in the last 30 days.
+// found from the tracking cookie, and failing that, where the campaign
+// owner has the same-IP fallback on, from the owner's most recent click from
+// this IP in the last 30 days.
 //
 // It records a real conversion row (pixel_type 1, like the global pixel)
 // through the same writer every other conversion path uses, so the payout
@@ -55,15 +56,13 @@ if ($cookie !== '') {
 	}
 } else {
 
-	// The visitor's last click by the address the click path stored
-	// (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
-	$daysago = time() - 2592000; // 30 days ago
-	$click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-		new \Prosper202\Database\Connection($db),
-		p202StoredVisitorIp(),
-		(int) $mysql['user_id'],
-		$daysago,
-		!trackingEnabled()
+	// Nothing named a click: the campaign's account's latest click from this
+	// address, when the account has the fallback on and may recognise this
+	// visitor (p202SameIpFallbackClick()). A guess.
+	$click_row1 = p202SameIpFallbackClick(
+		$db,
+		\Prosper202\Conversion\SameIpFallback::ofCampaign($aff_campaign_row, 'px'),
+		$_GET
 	);
 	if ($click_row1 !== null) {
 		$click_id = $click_row1['click_id'];

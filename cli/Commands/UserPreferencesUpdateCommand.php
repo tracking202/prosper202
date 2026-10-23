@@ -24,12 +24,13 @@ class UserPreferencesUpdateCommand extends BaseCommand
             ->addOption('user-account-currency', null, InputOption::VALUE_REQUIRED, 'Currency (3-letter code)')
             ->addOption('user-slack-incoming-webhook', null, InputOption::VALUE_REQUIRED, 'Slack webhook URL')
             ->addOption('user-daily-email', null, InputOption::VALUE_REQUIRED, 'Daily email: on/off')
-            ->addOption('ipqs-api-key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key');
+            ->addOption('ipqs-api-key', null, InputOption::VALUE_REQUIRED, 'IPQS fraud detection API key')
+            ->addOption('user-pref-same-ip-fallback', null, InputOption::VALUE_REQUIRED, 'When a pixel names no click: 1 credits your latest click from the visitor\'s IP address in the last 30 days (a guess), 0 none');
     }
 
     protected function handle(InputInterface $input, OutputInterface $output): int
     {
-        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key']);
+        $body = $this->collectOptions($input, ['user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email', 'ipqs_api_key', 'user_pref_same_ip_fallback']);
         if (empty($body)) {
             $output->writeln('<error>Provide at least one preference to update</error>');
             return Command::FAILURE;

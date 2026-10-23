@@ -12998,6 +12998,10 @@ components:
           type: string
         user_pref_cloak_referer:
           type: string
+        user_pref_same_ip_fallback:
+          type: integer
+          enum: [0, 1]
+          description: Whether a pixel that names no click may credit the latest click from the visitor's IP address.
         user_daily_email:
           type: string
         ipqs_api_key:
@@ -13026,6 +13030,16 @@ components:
         user_pref_referer_data: {type: string, enum: [browser, t202ref]}
         user_pref_dynamic_bid: {type: integer, enum: [0, 1]}
         user_pref_privacy: {type: string, enum: [disabled, eu, all]}
+        user_pref_same_ip_fallback:
+          type: integer
+          enum: [0, 1]
+          description: >-
+            1 lets a pixel that names no click (no subid, no cookie) credit the
+            account's latest click from the visitor's IP address in the last 30
+            days, recorded as match_method same_ip; 0 credits none. An account
+            made from 1.9.79 on starts at 0, one from before the upgrade at 1.
+            Never made for a visitor given no p202vid cookie (the privacy
+            setting, p202_consent=0, a campaign's identity_signals 0).
         user_pref_cloak_referer: {type: string, enum: [origin, never]}
         user_pref_ad_settings: {type: string, enum: [show_all, hide_login, hide_all]}
         user_account_currency:
