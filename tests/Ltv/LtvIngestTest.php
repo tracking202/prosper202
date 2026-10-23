@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Ltv;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Click\LatestVisit;
+use Prosper202\Conversion\Ledger\MysqlConversionLedger;
 use Prosper202\Conversion\MysqlConversionRepository;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\MysqlCustomerRepository;
@@ -29,6 +31,7 @@ final class LtvIngestTest extends TestCase
     {
         return [
             'click_id' => 10,
+            'user_id' => 7,
             'aff_campaign_id' => 44,
             'click_payout' => 2.75,
             'click_time' => 1700000000,
@@ -44,6 +47,13 @@ final class LtvIngestTest extends TestCase
         $write->whenQueryContainsReturnRows(
             'FROM 202_clicks WHERE click_id = ? AND user_id = ? LIMIT 1 FOR UPDATE',
             [$this->clickRow()]
+        );
+        // The click's latest visit, read after its lock.
+        $write->whenQueryContainsReturnRows(LatestVisit::of('?'), [$this->clickRow()]);
+        $write->whenQueryContainsReturnRows(MysqlConversionLedger::lockedVisitsSql(), [$this->clickRow()]);
+        $write->whenQueryContainsReturnRows(
+            MysqlConversionLedger::lockedLeadSql(),
+            (int) ($this->clickRow()['click_lead'] ?? 0) === 1 ? [['1' => 1]] : []
         );
 
         return $write;

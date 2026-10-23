@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Conversion\Ledger;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -41,11 +42,12 @@ final class ClickBreakdown
         if ($clickId <= 0) {
             return null;
         }
+        // The visit the ledger credits and the reports count: the latest.
         $sql = 'SELECT c.click_id, c.user_id, c.aff_campaign_id, c.click_lead, c.click_payout, c.click_time,
                        ac.aff_campaign_name
-                FROM 202_clicks c
+                FROM ' . LatestVisit::of('?') . ' AS c
                 LEFT JOIN 202_aff_campaigns ac ON ac.aff_campaign_id = c.aff_campaign_id AND ac.user_id = c.user_id
-                WHERE c.click_id = ?' . ($ownerUserId !== null ? ' AND c.user_id = ?' : ' AND c.user_id <> 0') . ' LIMIT 1';
+                WHERE ' . ($ownerUserId !== null ? 'c.user_id = ?' : 'c.user_id <> 0');
         $stmt = $this->conn->prepareRead($sql);
         $this->conn->bind($stmt, $ownerUserId !== null ? 'ii' : 'i', $ownerUserId !== null ? [$clickId, $ownerUserId] : [$clickId]);
         $click = $this->conn->fetchOne($stmt);

@@ -674,6 +674,12 @@ failed poll ends it with that error's exit code (2–4); `--all`, `--offset`,
 p202 click get 12345
 ```
 
+A click a redirector link re-clicked (`rtr.php?lpr=`) has a row for each
+visit: `click list` lists each, and `click get` answers the latest, the visit
+the reports count and a conversion credits. Every row carries the first
+visit's traffic source and cost (a row written before 1.9.79 once the cron
+job has reached its click).
+
 ### Explain a click's value
 
 ```bash
@@ -706,8 +712,10 @@ and `--to` 23:59:59 in the account's time zone, narrowed by `--aff-network-id`,
 `--method-of-promotion`. It counts them first and asks (`--force` skips the
 question, `--dry-run` stops after the count); the update changes only the
 clicks it counted, and writes nothing if they changed in between (run it
-again). Needs the `access_to_update_section` role permission; cannot be
-staged. Reports show the new cost once the data engine rebuilds the hours.
+again). A click a redirector link re-clicked is chosen by its first visit
+(its time and the filters) and every visit of it gets the new cost. Needs the
+`access_to_update_section` role permission; cannot be staged. Reports show
+the new cost once the data engine rebuilds the hours.
 
 ## Conversions
 

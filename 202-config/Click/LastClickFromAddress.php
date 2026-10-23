@@ -41,7 +41,10 @@ final class LastClickFromAddress
      * The visitor's most recent click for $userId since $since (a unix time),
      * or null when there is none. $masked says $address is a masked one
      * (p202StoredVisitorIp() under privacy: pass !trackingEnabled()); then a
-     * click is answered only when it is the one click in the window.
+     * click is answered only when it is the one click in the window. Its
+     * ppc_account_id is its first visit's (FirstVisit), the traffic source a
+     * re-click keeps (rows written before it did carry the link's), even when
+     * that visit is before $since.
      *
      * @return array{click_id: int, ppc_account_id: int, click_id_public: string, keyword_id: int}|null
      */
@@ -55,8 +58,7 @@ final class LastClickFromAddress
         $in = implode(',', array_fill(0, count($ipIds), '?'));
         $stmt = $conn->prepareRead(
             // A re-click gives a click another 202_clicks row: one click, not two.
-            'SELECT c.click_id, MAX(c.ppc_account_id) AS ppc_account_id, MAX(a.keyword_id) AS keyword_id,'
-            . ' MAX(r.click_id_public) AS click_id_public'
+            'SELECT c.click_id, MAX(a.keyword_id) AS keyword_id, MAX(r.click_id_public) AS click_id_public'
             . ' FROM 202_clicks_advance AS a'
             . ' INNER JOIN 202_clicks AS c ON (c.click_id = a.click_id)'
             . ' LEFT JOIN 202_clicks_record AS r ON (r.click_id = c.click_id)'
@@ -76,10 +78,20 @@ final class LastClickFromAddress
             return null;
         }
         $row = $rows[0];
+        $clickId = (int) $row['click_id'];
+        $first = $conn->prepareRead(
+            'SELECT fv.ppc_account_id FROM ' . FirstVisit::of('?') . ' AS fv WHERE fv.user_id = ?'
+        );
+        $conn->bind($first, 'ii', [$clickId, $userId]);
+        $firstVisit = $conn->fetchOne($first);
+        if ($firstVisit === null) {
+            // Gone since the read above, or its first row is another account's.
+            return null;
+        }
 
         return [
-            'click_id' => (int) $row['click_id'],
-            'ppc_account_id' => (int) ($row['ppc_account_id'] ?? 0),
+            'click_id' => $clickId,
+            'ppc_account_id' => (int) ($firstVisit['ppc_account_id'] ?? 0),
             'click_id_public' => (string) ($row['click_id_public'] ?? ''),
             'keyword_id' => (int) ($row['keyword_id'] ?? 0),
         ];

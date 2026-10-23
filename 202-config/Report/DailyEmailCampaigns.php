@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Prosper202\Report;
 
+use Prosper202\Click\LatestVisit;
 use Prosper202\Database\Connection;
 
 /**
@@ -21,6 +22,9 @@ use Prosper202\Database\Connection;
  * tracker naming one before 229df10 -- is counted under campaign 0 with the
  * clicks that name none, in both windows alike, so the comparison is of the
  * same rows.
+ *
+ * A click re-clicked through the redirector counts once, at its latest
+ * visit (LatestVisit::isLatest()).
  */
 final class DailyEmailCampaigns
 {
@@ -55,6 +59,7 @@ final class DailyEmailCampaigns
         $stmt = $conn->prepareRead('SELECT ' . self::CAMPAIGN . ' AS aff_campaign_id, MAX(ca.aff_campaign_name) AS aff_campaign_name, '
             . self::FIGURES . ' ' . self::FROM
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
+            . ' AND ' . LatestVisit::isLatest('c')
             . ' GROUP BY ' . self::CAMPAIGN . ' ORDER BY net DESC LIMIT ' . max(1, $limit));
         $conn->bind($stmt, 'iii', [$userId, $from, $to]);
 
@@ -76,6 +81,7 @@ final class DailyEmailCampaigns
         $stmt = $conn->prepareRead('SELECT ' . self::CAMPAIGN . ' AS aff_campaign_id, MAX(ca.aff_campaign_name) AS aff_campaign_name, '
             . self::FIGURES . ' ' . self::FROM
             . ' WHERE c.user_id = ? AND c.click_time >= ? AND c.click_time <= ?'
+            . ' AND ' . LatestVisit::isLatest('c')
             . ' AND ' . self::CAMPAIGN . ' IN (' . implode(', ', array_fill(0, count($ids), '?')) . ')'
             . ' GROUP BY ' . self::CAMPAIGN);
         $conn->bind($stmt, str_repeat('i', 3 + count($ids)), array_merge([$userId, $from, $to], $ids));

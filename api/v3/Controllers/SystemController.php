@@ -8,6 +8,8 @@ use Api\V3\Exception\DatabaseException;
 use Api\V3\Support\ServerStateStore;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\QueryInt;
+use Prosper202\Click\ReClickBackfill;
+use Prosper202\Database\Connection;
 
 class SystemController
 {
@@ -208,6 +210,9 @@ class SystemController
             'data' => [
                 'recent_jobs'        => $jobs,
                 'pending_dirty_hours' => (int)$dirtyRow['cnt'],
+                // How far the cron job has brought the clicks re-clicked
+                // before 1.9.79 to one visit each; null once it is done.
+                'reclick_backfill'   => (new ReClickBackfill(new Connection($this->db)))->progress(),
             ],
         ];
     }

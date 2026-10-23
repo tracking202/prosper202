@@ -834,7 +834,10 @@ paths:
     get:
       tags: [System]
       summary: Data engine status
-      description: Recent data engine jobs and pending dirty hours. Admin only.
+      description: >-
+        Recent data engine jobs, pending dirty hours, and how far the cron job
+        has brought the clicks re-clicked before 1.9.79 to one visit each.
+        Admin only.
       operationId: systemDataengine
       responses:
         "200":
@@ -872,6 +875,31 @@ paths:
                               type: string
                       pending_dirty_hours:
                         type: integer
+                      reclick_backfill:
+                        type: object
+                        nullable: true
+                        description: >-
+                          Null when there is nothing to bring over (a fresh
+                          install) or the walk is done. While it runs, the
+                          reports count a click it has not reached at each
+                          of its visits.
+                        properties:
+                          in_progress:
+                            type: boolean
+                          started_at:
+                            type: integer
+                            description: Unix time of the upgrade that started it
+                          reclicked_clicks:
+                            type: integer
+                            description: Re-clicked clicks brought to one visit so far
+                          same_second_ties:
+                            type: integer
+                            description: Of those, clicks with two visits in their latest second, both counted
+                          percent:
+                            type: integer
+                            description: Share of the click ids up to the newest at the upgrade walked so far
+                          note:
+                            type: string
         "403":
           $ref: "#/components/responses/Forbidden"
 
@@ -1642,7 +1670,16 @@ paths:
     get:
       tags: [Clicks]
       summary: List clicks
-      description: Read-only access to click data with filtering.
+      description: >-
+        Read-only access to click data with filtering. A click a redirector
+        link re-clicked (rtr.php?lpr=) has a row for each visit, and this
+        lists every one, each with its own visit's campaign, landing page,
+        payout and time; `ppc_account_id`, `click_cpc`, `click_filtered` and
+        `click_bot` on every row are the click's first visit's, and a
+        converted click's `click_lead` and `click_payout` are on every row
+        (rows written before 1.9.79 keep what they were written with until
+        the cron job brings the click to one visit). The reports and the
+        Visitors page count such a click once, at its latest visit.
       operationId: listClicks
       parameters:
         - $ref: "#/components/parameters/limit"
@@ -1696,7 +1733,10 @@ paths:
       description: >-
         Full click details including geo, device, and custom variable lookups.
         A click a redirector link re-clicked has a row for each visit, each
-        listed by GET /clicks; this answers the latest.
+        listed by GET /clicks; this answers the latest, the row with the
+        latest `click_time` (the visit its route, redirect and cloaked link
+        are), which the reports count and a conversion credits. Two requests
+        on one click in the same second are one visit.
       operationId: getClick
       responses:
         "200":
@@ -1730,7 +1770,9 @@ paths:
 
         `click` holds the value the reports show (`click_payout`, `lead`)
         beside the value the counted rows add up to (`ledger_value`), and
-        `matches_click` says whether they agree. A click that converted
+        `matches_click` says whether they agree. For a click a redirector
+        link re-clicked, `click` is its latest visit, the one a conversion
+        credits. A click that converted
         before the conversion ledger and has had no conversion since is
         `ledger_state: pre_ledger`: its value is its own figure until its
         next conversion carries it in as a `legacy_baseline` row, and it
@@ -1943,13 +1985,22 @@ paths:
         `method_of_promotion`. Every filter id must be the account's: another
         account's id is a 422, never widened to "every".
 
+        A click a redirector link re-clicked has a row for each visit, each
+        carrying the first visit's cost. It is chosen by its first visit
+        (that visit's time is in the range and it matches the filters) and
+        counted once, and `cpc` is written on every visit of it. One
+        re-clicked before 1.9.79 that the cron job has not yet brought to one
+        visit is taken at each of its visits in the range, and written from
+        that visit on.
+
         **Check** with `?dry_run=1`: nothing is written, and the answer counts
         the clicks (`matching`) and names the highest click id among them
         (`through_click_id`). **Update** by sending the same body with
         `expect_clicks` (the check's `matching`) and `through_click_id`: in
-        one transaction the clicks up to that id are counted again under a
-        lock, and only if they still number `expect_clicks` is every one of
-        them set to `cpc`, with the data engine's dirty hours and the
+        one transaction the rows the range and filters name are locked and
+        the clicks up to that id counted again, and only if they still
+        number `expect_clicks` is every one of them set to `cpc`, with the
+        data engine's dirty hours (every hour a visit of them is in) and the
         attribution rollup marked. A click recorded after the check (a higher
         id) is never changed. When the count moved, nothing is written and the
         answer is a `409` whose `details` carry the new `matching` and
@@ -11551,8 +11602,9 @@ components:
             updated:
               type: integer
               description: |
-                Only on an update: the clicks whose cost changed (a click that
-                already cost this much is not counted).
+                Only on an update: the clicks whose cost changed (a click every
+                visit of which already cost this much is not counted). Clicks,
+                not rows: a re-clicked click counts once.
             cpc: {type: string, description: "The CPC as stored, five decimals.", example: "0.25000"}
             from: {type: string}
             to: {type: string}
