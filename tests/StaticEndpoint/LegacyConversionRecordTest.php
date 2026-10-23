@@ -166,7 +166,7 @@ final class LegacyConversionRecordTest extends TestCase
     {
         $db = new FakeLegacyMysqli();
         try {
-            p202RecordLegacyConversion($db, 0, 1);
+            p202RecordLegacyConversion($db, 0, 1, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
             self::fail('Expected InvalidArgumentException');
         } catch (InvalidArgumentException) {
             self::assertSame(0, $db->prepares, 'No statement may be prepared for an invalid click id');

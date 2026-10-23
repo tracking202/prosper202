@@ -70,7 +70,7 @@ final class InstallSubjectUnderLockTest extends TestCase
         self::assertSame('1', (string) self::installRow(self::U1)['trusted'], 'the window: trust granted and committed');
 
         $this->clock += 5;
-        $engine->ingest(1, $stale, [$this->levelEvent('l1')]);
+        $engine->ingest(1, $stale, [$this->levelEvent('l1')], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(
             1,
@@ -92,7 +92,7 @@ final class InstallSubjectUnderLockTest extends TestCase
         self::assertNull(self::installRow(self::U1)['trusted'], 'the window: trust withdrawn and committed');
 
         $this->clock += 5;
-        $engine->ingest(1, $stale, [$this->levelEvent('l1')]);
+        $engine->ingest(1, $stale, [$this->levelEvent('l1')], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertSame(0, self::rows('202_conversion_logs', "click_id = 100 AND source = 'goal' AND deleted = 0"), 'no live row on the click it no longer has');
         self::assertSame(0, self::rows('202_goal_outcomes', "goal_id = $level AND superseded_at IS NULL AND conversion_id IS NOT NULL"));

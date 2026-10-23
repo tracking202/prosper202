@@ -8,6 +8,7 @@ List, inspect, manually create, and delete conversions.
 | ------ | ---- | ----------- |
 | `GET` | `/conversions` | List conversions (paginated) |
 | `GET` | `/conversions/{id}` | Get conversion details |
+| `GET` | `/conversions/match-methods` | Each campaign's conversions by how their click was found ([below](#how-each-conversions-click-was-found)) |
 | `POST` | `/conversions` | Manually log a conversion |
 | `DELETE` | `/conversions/{id}` | Delete a conversion |
 | `GET` | `/conversions/postback-code` | The conversion pixels and postback URLs Setup › Postback / Pixel shows ([Setup API](27-setup.md)) |
@@ -27,9 +28,10 @@ uploading a revenue report — the UI's Update section — are in the
 | `time_to` | string | — | End, inclusive: the same forms; a date runs through its last second |
 | `click_id` | integer | — | Only this click's conversions |
 | `source` | string | — | Only conversions this source produced (`pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline`) |
+| `match_method` | string | — | Only conversions whose click was found this way (`click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown`; [below](#how-each-conversions-click-was-found)) |
 | `goal` | integer | — | Only this goal's outcomes, under every version of it |
 
-A filter value that cannot be read — `click_id=7x`, an unknown `source`, a
+A filter value that cannot be read — `click_id=7x`, an unknown `source` or `match_method`, a
 `goal` or `campaign_id` that is not a positive id (`campaign_id=0` included,
 which used to list every campaign's conversions) — is a `422` naming the
 field, never ignored. Deleted conversions are not listed; `GET /clicks/{id}/conversions`
@@ -37,12 +39,68 @@ shows them, with whether each row counts toward the click.
 
 ## Response Fields
 
-`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`, and the row's provenance in the ledger: `source`, `source_ref` (`goal:<id>:<version>`, `batch:<upload>`, `conv:<the conversion a reversal reverses>`, `apikey:<digest of the key that wrote it>`), `event_name`, `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and for a goal row its `goal_id` and `goal_version`.
+`conv_id`, `click_id`, `transaction_id`, `campaign_id`, `click_payout`, `user_id`, `click_time`, `conv_time`, `deleted`, `aff_campaign_name`, and the row's provenance in the ledger: `source`, `source_ref` (`goal:<id>:<version>`, `batch:<upload>`, `conv:<the conversion a reversal reverses>`, `apikey:<digest of the key that wrote it>`), `match_method` (how its click was found), `event_name`, `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and for a goal row its `goal_id` and `goal_version`.
 
 A conversion created through this API records `source: "api"` and names the
 key that wrote it in `source_ref` as a truncated SHA-256 digest of the key, so
 the click breakdown can say which key it was without anyone reading the key
-back.
+back. Its `match_method` is `click_id`: the body named the click.
+
+## How each conversion's click was found
+
+`source` says what sent a conversion; `match_method` says how the click it
+credits was found, so a guess never reads as a match. Since 1.9.79 every
+conversion stores one:
+
+| `match_method` | The click was found by | Paths |
+| -------------- | ---------------------- | ----- |
+| `click_id` | the request naming it | a `subid`/`sid` on `gpx.php`, `upx.php`, `gpb.php` and `pb.php`; ClickBank's tracking code (`cb202.php`); `POST /conversions` and `POST /events`; a line of Update Subids or of a revenue upload; an app install's signed token, and the goals its events reach |
+| `cookie` | a tracking cookie in the visitor's browser | `gpx.php` and `upx.php` with no subid (the campaign's `tracking202subid_a_<cid>` cookie, then `tracking202subid`); `px.php` |
+| `visitor_id` | the landing-page script's own visitor id (`p202lpid`), on the click it was last seen on | `p202.track()` events (`event.php`) |
+| `same_ip` | nothing naming a click: the account's latest click from the visitor's address in the last 30 days, a guess | `gpx.php`, `upx.php` and `px.php` with neither a subid nor a cookie |
+| `unknown` | not recorded | a conversion recorded before 1.9.79, the `legacy_baseline` row that carries a pre-ledger value, and a goal reached by an event stored before 1.9.79 |
+
+A goal's conversion carries the method of the event that reached it, whenever
+the row is written (a replay or a re-evaluation writes rows for events stored
+earlier); a reversal carries its own request's. A retry of a conversion
+already recorded changes nothing, its method included. `unknown` is the one
+spelling for "not recorded": it is the column's default, so every row from
+before 1.9.79 holds it, and no reader takes it for a match.
+
+`GET /conversions?match_method=same_ip` lists the guesses, and
+`GET /clicks/{id}/conversions` gives each row's `match_method` with its
+label. `GET /conversions/match-methods` counts them per campaign:
+
+| Parameter | Description |
+| --------- | ----------- |
+| `campaign_id` | Only this campaign (a positive id, or a `422`) |
+| `period` | A named window of conversion times (`today`, `last7`, `last30`, `thismonth`, `alltime`, …) |
+| `time_from`, `time_to` | Conversion-time bounds, as on the list; with `period`, both apply |
+
+```json
+{
+  "data": [
+    {"campaign_id": 3, "campaign_name": "Summer offer", "match_method": "click_id", "match_method_label": "Click id",
+     "conversions": 40, "counted": 38, "income": 190.0},
+    {"campaign_id": 3, "campaign_name": "Summer offer", "match_method": "same_ip", "match_method_label": "Same IP",
+     "conversions": 6, "counted": 6, "income": 30.0}
+  ],
+  "totals": [
+    {"match_method": "click_id", "match_method_label": "Click id", "conversions": 40, "counted": 38, "income": 190.0},
+    {"match_method": "cookie", "match_method_label": "Cookie", "conversions": 0, "counted": 0, "income": 0.0}
+  ],
+  "match_methods": ["click_id", "cookie", "visitor_id", "same_ip", "unknown"]
+}
+```
+
+One row per campaign and method that has conversions; `totals` lists every
+method over every campaign (shortened above). `conversions` counts the live
+conversions that are not reversals, `counted` those that count toward their
+click's value, and `income` what the counting rows add up to, reversals
+netted (a reversal is under its own request's method). A role without access
+to campaign data gets the three figures as `null` and `masked: true`. Group
+Overview's **Match method** level shows the same split by click time, with
+each group's clicks and cost.
 
 ## Create Conversion
 

@@ -417,6 +417,9 @@ if (!function_exists('p202RecordConversion')) {
      *        it double-recorded every id-less retry (gpb.php and upx.php
      *        did). Every caller now says which it wants, and one that says
      *        nothing is refused before any database work.
+     * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
+     *        endpoint found the click: its parameter, a cookie, or the
+     *        visitor's address (stored as match_method).
      * @param array{customer_ref?: string, customer_ref_type?: string} $customer
      *        LTV customer identity (see p202ExtractCustomer); [] = unlinked.
      * @param list<array<string,mixed>> $items Product line items for the
@@ -433,6 +436,7 @@ if (!function_exists('p202RecordConversion')) {
     function p202RecordConversion(
         mysqli $db,
         array $log,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
         string $clickCpa,
         bool $usePixelPayout,
         string $clickPayout,
@@ -539,6 +543,7 @@ if (!function_exists('p202RecordConversion')) {
         $result = $repo->record(
             (int) ($log['user_id'] ?? 0),
             $data,
+            $matchedBy,
             function (int $lockedClickId, float $payout) use ($db, $clickCpa): void {
                 if (!p202ApplyConversionClickSide($db, $lockedClickId, $clickCpa)) {
                     throw new \RuntimeException('p202RecordConversion: click update failed for click ' . $lockedClickId);
@@ -637,36 +642,39 @@ if (!function_exists('p202ClickIdFromRequest')) {
      *
      * @param array<string, mixed> $get
      * @param array<string, mixed> $cookies
-     * @return array{click_id: int|null, malformed: string|null}
+     * @return array{click_id: int|null, malformed: string|null, method: \Prosper202\Conversion\Ledger\MatchMethod|null}
      *         click_id null with malformed null: nothing named a click, the
      *         IP fallback may run. malformed set: the name of the value that
-     *         was present and unreadable; record nothing.
+     *         was present and unreadable; record nothing. method is how the
+     *         click was found (a parameter or a cookie), null when none was.
      */
     function p202ClickIdFromRequest(array $get, array $cookies, int $campaignId): array
     {
+        $parameter = \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID;
+        $cookie = \Prosper202\Conversion\Ledger\MatchMethod::COOKIE;
         $places = [
-            ['subid', $get['subid'] ?? null],
-            ['sid', $get['sid'] ?? null],
+            ['subid', $get['subid'] ?? null, $parameter],
+            ['sid', $get['sid'] ?? null, $parameter],
         ];
         if ($campaignId > 0) {
             $campaignCookie = 'tracking202subid_a_' . $campaignId;
-            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie)];
+            $places[] = [$campaignCookie, \Prosper202\Http\ClickCookie::value($cookies, $campaignCookie), $cookie];
         }
-        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid')];
+        $places[] = ['tracking202subid', \Prosper202\Http\ClickCookie::value($cookies, 'tracking202subid'), $cookie];
 
-        foreach ($places as [$name, $value]) {
+        foreach ($places as [$name, $value, $method]) {
             if ($value === null || $value === '') {
                 continue;
             }
             $clickId = p202ParseClickId(is_string($value) ? $value : (is_int($value) ? $value : null));
             if ($clickId === null) {
-                return ['click_id' => null, 'malformed' => $name];
+                return ['click_id' => null, 'malformed' => $name, 'method' => null];
             }
 
-            return ['click_id' => $clickId, 'malformed' => null];
+            return ['click_id' => $clickId, 'malformed' => null, 'method' => $method];
         }
 
-        return ['click_id' => null, 'malformed' => null];
+        return ['click_id' => null, 'malformed' => null, 'method' => null];
     }
 }
 
@@ -837,12 +845,18 @@ if (!function_exists('p202RecordLegacyConversion')) {
      * } $opts source is the ledger source the row is recorded under
      *     (legacy_pixel for px and pb, clickbank for cb202); event_name is
      *     a campaign-without-goals hit's `event=`, kept on the row.
+     *     $matchedBy is how the endpoint found the click (match_method).
      * @return array{recorded: bool, duplicate: bool, conv_id: int, reason: string}
      *         reason is '' when recorded; otherwise one of unknown_click,
      *         foreign_click, campaign_mismatch, already_lead, duplicate.
      */
-    function p202RecordLegacyConversion(mysqli $db, int $clickId, int $pixelType, array $opts = []): array
-    {
+    function p202RecordLegacyConversion(
+        mysqli $db,
+        int $clickId,
+        int $pixelType,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
+        array $opts = []
+    ): array {
         if ($clickId <= 0) {
             throw new \InvalidArgumentException('p202RecordLegacyConversion: click_id must be a positive integer');
         }
@@ -906,6 +920,7 @@ if (!function_exists('p202RecordLegacyConversion')) {
                 'reversal_ref'    => (string) ($opts['reversal_ref'] ?? ''),
                 'event_name'      => (string) ($opts['event_name'] ?? ''),
             ],
+            $matchedBy,
             (string) ($click['click_cpa'] ?? ''),
             $usePixelPayout,
             $usePixelPayout ? $payout : '',
@@ -966,6 +981,9 @@ if (!function_exists('p202RecordWebEvent')) {
      * retries failures retries, and the event id makes the retry safe.
      *
      * @param array<string, mixed> $get the request's query
+     * @param \Prosper202\Conversion\Ledger\MatchMethod $matchedBy how the
+     *        endpoint found the click, which the event and the ledger rows it
+     *        reaches carry (GoalEngine::ingest())
      * @param array{user_id?: int, campaign_id?: int, browser?: bool, trusted?: bool} $opts
      *        user_id: the click must belong to that owner (px scope);
      *        campaign_id: some visit of it must be on that campaign (pb
@@ -975,8 +993,13 @@ if (!function_exists('p202RecordWebEvent')) {
      *        does for this endpoint's plain conversions (default true).
      * @return array<string, mixed>|null
      */
-    function p202RecordWebEvent(mysqli $db, int $clickId, array $get, array $opts = []): ?array
-    {
+    function p202RecordWebEvent(
+        mysqli $db,
+        int $clickId,
+        array $get,
+        \Prosper202\Conversion\Ledger\MatchMethod $matchedBy,
+        array $opts = []
+    ): ?array {
         if (!\Prosper202\Goals\WebEvents::requested($get)) {
             return null;
         }
@@ -1014,7 +1037,7 @@ if (!function_exists('p202RecordWebEvent')) {
         $notifier = new \Prosper202\Goals\TrafficSourceNotifier($conn, (bool) ($opts['browser'] ?? false));
         $engine = new \Prosper202\Goals\GoalEngine($conn, null, null, null, $notifier);
         try {
-            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event]);
+            $result = $engine->ingest($click['user_id'], $engine->clickSubject($click['user_id'], $clickId), [$event], $matchedBy);
         } catch (\Prosper202\Goals\GoalEngineException $e) {
             if ($e->reason === \Prosper202\Goals\GoalEngineException::EVENT_CONFLICT) {
                 return ['status' => 'refused', 'code' => 409, 'message' => $e->getMessage()];

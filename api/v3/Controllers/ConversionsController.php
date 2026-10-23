@@ -12,11 +12,14 @@ use Api\V3\Exception\ValidationException;
 use Api\V3\Support\AccountTimezone;
 use Api\V3\Support\LtvBody;
 use Api\V3\Support\PayloadKeys;
+use Api\V3\Support\ReportFilter;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
 use Api\V3\Support\QueryInt;
 use Prosper202\Conversion\Ledger\Amount;
 use Prosper202\Conversion\Ledger\DedupeKey;
+use Prosper202\Conversion\Ledger\LedgerReportSql;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Database\Tables\ConversionTables;
 
 class ConversionsController
@@ -39,14 +42,15 @@ class ConversionsController
 
     /**
      * The columns a conversion is served with: the row, its campaign's name,
-     * and its provenance in the ledger (what produced it, what that is,
-     * whether it is paid, and what replaced or reverses it). Whether a row
+     * and its provenance in the ledger (what produced it, what that is, how
+     * its click was found, whether it is paid, and what replaced or reverses
+     * it). Whether a row
      * counts toward its click is a property of the click's rows together,
      * so it is answered by GET /clicks/{id}/conversions, not here.
      */
     private const COLUMNS = 'cl.conv_id, cl.click_id, cl.transaction_id, cl.campaign_id,
                 cl.click_payout, cl.user_id, cl.click_time, cl.conv_time, cl.deleted,
-                cl.source, cl.source_ref, cl.event_name, cl.payable, cl.reverses_conv_id,
+                cl.source, cl.source_ref, cl.match_method, cl.event_name, cl.payable, cl.reverses_conv_id,
                 cl.superseded_by, cl.superseded_reason,
                 ac.aff_campaign_name';
 
@@ -109,6 +113,16 @@ class ConversionsController
             } else {
                 $where[] = 'cl.source = ?';
                 $binds[] = $source->value;
+                $types .= 's';
+            }
+        }
+        if (array_key_exists('match_method', $params)) {
+            $method = is_string($params['match_method']) ? MatchMethod::tryFrom($params['match_method']) : null;
+            if ($method === null) {
+                $errors['match_method'] = 'Must be one of: ' . implode(', ', MatchMethod::values());
+            } else {
+                $where[] = 'cl.match_method = ?';
+                $binds[] = $method->value;
                 $types .= 's';
             }
         }
@@ -182,6 +196,114 @@ class ConversionsController
             throw new NotFoundException('Conversion not found');
         }
         return ['data' => self::present($row)];
+    }
+
+    /**
+     * The account's conversions by campaign and by how each one's click was
+     * found (MatchMethod): GET /conversions/match-methods. Per campaign and
+     * method, `conversions` counts the live conversions (not reversals,
+     * every payable and superseded state), `counted` those that count toward
+     * their click's value, and `income` what the rows that count add up to,
+     * reversals netted; a reversal is under the method of its own request.
+     * The window is conv_time's, as GET /conversions reads it: a period, or
+     * time_from and time_to, or both, each narrowing. `totals` is the same
+     * per method over every campaign, every method listed.
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    public function matchMethods(array $params): array
+    {
+        ReportFilter::rejectUnknown($params, ['campaign_id', 'period', 'time_from', 'time_to']);
+        $where = ['cl.user_id = ?', 'cl.deleted = 0'];
+        $binds = [$this->userId];
+        $types = 'i';
+        if (array_key_exists('campaign_id', $params)) {
+            $campaignId = self::positiveId($params['campaign_id']);
+            if ($campaignId === null) {
+                throw new ValidationException('Invalid campaign_id', ['campaign_id' => 'Must be a positive integer campaign id (see `p202 campaign list`)']);
+            }
+            $where[] = 'cl.campaign_id = ?';
+            $binds[] = $campaignId;
+            $types .= 'i';
+        }
+        $timezone = fn (): string => $this->accountTimezone();
+        $bounds = [TimeBound::window($params, $timezone)];
+        if (($params['period'] ?? '') !== '') {
+            $bounds[] = TimeBound::period($params['period'], $timezone);
+        }
+        foreach ($bounds as [$from, $to]) {
+            if ($from !== null) {
+                $where[] = 'cl.conv_time >= ?';
+                $binds[] = $from;
+                $types .= 'i';
+            }
+            if ($to !== null) {
+                $where[] = 'cl.conv_time <= ?';
+                $binds[] = $to;
+                $types .= 'i';
+            }
+        }
+
+        $counted = LedgerReportSql::countedPredicate('cl');
+        $sql = 'SELECT cl.campaign_id, ac.aff_campaign_name, cl.match_method,
+                SUM(cl.reverses_conv_id IS NULL) AS conversions,
+                SUM(cl.reverses_conv_id IS NULL AND ' . $counted . ') AS counted,
+                SUM(IF(' . $counted . ', cl.click_payout, 0)) AS income
+            FROM 202_conversion_logs cl
+            ' . self::CAMPAIGN_JOIN . '
+            WHERE ' . implode(' AND ', $where) . '
+            GROUP BY cl.campaign_id, ac.aff_campaign_name, cl.match_method';
+        $stmt = $this->prepare($sql);
+        $this->bind($stmt, $types, ...$binds);
+        $this->execute($stmt, 'Match method breakdown failed');
+        $result = $this->result($stmt);
+        $groups = $result->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $order = array_flip(MatchMethod::values());
+        $totals = [];
+        foreach (MatchMethod::cases() as $method) {
+            $totals[$method->value] = ['conversions' => 0, 'counted' => 0, 'income' => 0];
+        }
+        $rows = [];
+        foreach ($groups as $group) {
+            $campaignId = (int) $group['campaign_id'];
+            try {
+                $method = MatchMethod::fromStored($group['match_method'], 'a conversion of campaign ' . $campaignId);
+            } catch (\Prosper202\Conversion\Ledger\LedgerIntegrityException $e) {
+                throw new DatabaseException($e->getMessage(), $e);
+            }
+            $units = Amount::toUnits((string) ($group['income'] ?? '0'));
+            $rows[] = [
+                'campaign_id' => $campaignId,
+                'campaign_name' => $group['aff_campaign_name'] !== null ? (string) $group['aff_campaign_name'] : null,
+                'match_method' => $method->value,
+                'match_method_label' => $method->label(),
+                'conversions' => (int) $group['conversions'],
+                'counted' => (int) $group['counted'],
+                'income' => (float) Amount::fromUnits($units),
+            ];
+            $totals[$method->value]['conversions'] += (int) $group['conversions'];
+            $totals[$method->value]['counted'] += (int) $group['counted'];
+            $totals[$method->value]['income'] += $units;
+        }
+        usort($rows, static fn (array $a, array $b): int => [$a['campaign_id'], $order[$a['match_method']]]
+            <=> [$b['campaign_id'], $order[$b['match_method']]]);
+
+        $byMethod = [];
+        foreach (MatchMethod::cases() as $method) {
+            $t = $totals[$method->value];
+            $byMethod[] = [
+                'match_method' => $method->value,
+                'match_method_label' => $method->label(),
+                'conversions' => $t['conversions'],
+                'counted' => $t['counted'],
+                'income' => (float) Amount::fromUnits($t['income']),
+            ];
+        }
+
+        return ['data' => $rows, 'totals' => $byMethod, 'match_methods' => MatchMethod::values()];
     }
 
     /**
@@ -421,7 +543,8 @@ class ConversionsController
         );
 
         try {
-            $recorded = $repo->record($this->userId, $data);
+            // The body named the click.
+            $recorded = $repo->record($this->userId, $data, \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         } catch (\Prosper202\Conversion\Ledger\ReversalException $e) {
             if ($e->kind === \Prosper202\Conversion\Ledger\ReversalException::NO_TARGET) {
                 throw new NotFoundException($e->getMessage());

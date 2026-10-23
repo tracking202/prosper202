@@ -135,7 +135,7 @@ final class ReClickedClickGoalsIntegrationTest extends TestCase
             $e->revenueTrusted,
             $e->transactionId
         );
-        $this->engine->ingest(1, $subject, [$stamped]);
+        $this->engine->ingest(1, $subject, [$stamped], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         $outcomes = self::$db->query('SELECT campaign_id, value FROM 202_goal_outcomes'
             . " WHERE subject_type = 'click' AND subject_id = 600")->fetch_all(MYSQLI_ASSOC);

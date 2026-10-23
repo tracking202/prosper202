@@ -35,6 +35,9 @@ var conversionListCmd = &cobra.Command{
 		if v, _ := cmd.Flags().GetString("source"); v != "" {
 			params["source"] = v
 		}
+		if v, _ := cmd.Flags().GetString("match_method"); v != "" {
+			params["match_method"] = v
+		}
 		if v, _ := cmd.Flags().GetString("goal"); v != "" {
 			if !positiveIDPattern.MatchString(v) {
 				return validationError("--goal must be a positive integer goal id, got %q", v).
@@ -91,6 +94,103 @@ var conversionListCmd = &cobra.Command{
 // (ConversionSource in 202-config/Conversion/Ledger), in the server's order.
 var conversionSources = []string{"pixel", "postback", "universal_pixel", "api", "subid_upload", "revenue_upload",
 	"legacy_pixel", "clickbank", "app_install", "goal", "legacy_baseline"}
+
+// conversionMatchMethods is how a conversion's click can have been found
+// (MatchMethod in 202-config/Conversion/Ledger), in the server's order.
+var conversionMatchMethods = []string{"click_id", "cookie", "visitor_id", "same_ip", "unknown"}
+
+var conversionMatchMethodsCmd = &cobra.Command{
+	Use:   "match-methods",
+	Short: "Conversions by campaign and by how their click was found (click id, cookie, same IP)",
+	Long: "Counts each campaign's conversions by how the click they credit was found: click_id (the\n" +
+		"postback, pixel, API call or upload named it), cookie (a tracking cookie did), visitor_id (the\n" +
+		"landing-page script's visitor id), same_ip (nothing named a click: the latest click from the\n" +
+		"visitor's address, a guess) or unknown (recorded before 1.9.79). conversions excludes\n" +
+		"reversals, counted is how many count toward their click's value, and income is what those\n" +
+		"add up to. The window is the conversion time's; the table ends with every method's totals.\n\n" +
+		"  p202 conversion match-methods --period last30\n" +
+		"  p202 conversion list --match-method same_ip --aff-campaign-id 3",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		params := map[string]string{}
+		if v, _ := cmd.Flags().GetString("aff_campaign_id"); v != "" {
+			if !positiveIDPattern.MatchString(v) {
+				return validationError("--aff-campaign-id must be a positive integer, got %q", v).
+					WithHint("Find the campaign's id with `p202 campaign list`.")
+			}
+			params["campaign_id"] = v
+		}
+		if v, _ := cmd.Flags().GetString("period"); v != "" {
+			params["period"] = v
+		}
+		for _, f := range []string{"time_from", "time_to"} {
+			if v, _ := cmd.Flags().GetString(f); v != "" {
+				params[f] = v
+			}
+		}
+		c, err := api.NewFromConfig()
+		if err != nil {
+			return err
+		}
+		data, err := c.Get("conversions/match-methods", params)
+		if err != nil {
+			return err
+		}
+		return renderConversionMatchMethods(data)
+	},
+}
+
+// renderConversionMatchMethods draws the breakdown: one line per campaign
+// and method, then every method's totals. JSON and NDJSON pass the API's
+// answer through, totals included.
+func renderConversionMatchMethods(data []byte) error {
+	if jsonOutput || ndjsonOutput || quietOutput {
+		render(data)
+		return nil
+	}
+	var resp struct {
+		Data   []map[string]interface{} `json:"data"`
+		Totals []map[string]interface{} `json:"totals"`
+		Masked bool                     `json:"masked"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("reading the match method breakdown: %w", err)
+	}
+	rows := make([]map[string]interface{}, 0, len(resp.Data))
+	for _, r := range resp.Data {
+		rows = append(rows, map[string]interface{}{
+			"campaign_id":   r["campaign_id"],
+			"campaign_name": r["campaign_name"],
+			"match_method":  r["match_method"],
+			"conversions":   r["conversions"],
+			"counted":       r["counted"],
+			"income":        r["income"],
+		})
+	}
+	encoded, err := json.Marshal(map[string]interface{}{"data": rows, "masked": resp.Masked})
+	if err != nil {
+		return fmt.Errorf("encoding the match method breakdown: %w", err)
+	}
+	render(encoded)
+	if csvOutput || len(rows) == 0 {
+		return nil
+	}
+	totals := make([]map[string]interface{}, 0, len(resp.Totals))
+	for _, t := range resp.Totals {
+		totals = append(totals, map[string]interface{}{
+			"match_method": t["match_method"],
+			"conversions":  t["conversions"],
+			"counted":      t["counted"],
+			"income":       t["income"],
+		})
+	}
+	encoded, err = json.Marshal(map[string]interface{}{"data": totals})
+	if err != nil {
+		return fmt.Errorf("encoding the match method totals: %w", err)
+	}
+	fmt.Println("\nEvery campaign, by match method:")
+	render(encoded)
+	return nil
+}
 
 var conversionGetCmd = &cobra.Command{
 	Use:   "get <id>",
@@ -298,11 +398,14 @@ func init() {
 	conversionListCmd.Flags().String("click_id", "", "Only this click's conversions (see also `p202 click conversions <id>`)")
 	conversionListCmd.Flags().String("source", "", "Only conversions from this source")
 	enumFlag(conversionListCmd, "source", newEnum(conversionSources))
+	conversionListCmd.Flags().String("match_method", "", "Only conversions whose click was found this way (same_ip: guessed from the visitor's address)")
+	enumFlag(conversionListCmd, "match_method", newEnum(conversionMatchMethods))
 	conversionListCmd.Flags().String("goal", "", "Only this goal's outcomes, every version (goal id from `p202 goal list`)")
 	// An empty filter is refused by name (empty_flags.go): read as "not
 	// given" it would list every conversion as though filtered.
 	emptyHint(conversionListCmd, "click_id", "Omit --click-id to list every click's conversions, or pass an internal click id from `p202 click list`.")
 	emptyHint(conversionListCmd, "source", "Omit --source to list every source, or pass one of: "+strings.Join(conversionSources, ", ")+".")
+	emptyHint(conversionListCmd, "match_method", "Omit --match-method to list every conversion, or pass one of: "+strings.Join(conversionMatchMethods, ", ")+".")
 	emptyHint(conversionListCmd, "goal", "Omit --goal to list every goal's conversions, or pass a goal id from `p202 goal list`.")
 	emptyHint(conversionListCmd, "aff_campaign_id", "Omit --aff-campaign-id to list every campaign's conversions, or pass a campaign id from `p202 campaign list`.")
 
@@ -321,6 +424,13 @@ func init() {
 
 	registerDeleteFlags(conversionDeleteCmd, "conversion")
 
-	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd)
+	conversionMatchMethodsCmd.Flags().String("aff_campaign_id", "", "Only this campaign (an id from `p202 campaign list`)")
+	conversionMatchMethodsCmd.Flags().String("period", "", "Range of conversion times")
+	enumFlag(conversionMatchMethodsCmd, "period", newEnum(reportPeriods))
+	conversionMatchMethodsCmd.Flags().String("time_from", "", timeFromHelp)
+	conversionMatchMethodsCmd.Flags().String("time_to", "", timeToHelp)
+	emptyHint(conversionMatchMethodsCmd, "aff_campaign_id", "Omit --aff-campaign-id for every campaign, or pass a campaign id from `p202 campaign list`.")
+
+	conversionCmd.AddCommand(conversionListCmd, conversionGetCmd, conversionCreateCmd, conversionDeleteCmd, conversionMatchMethodsCmd)
 	rootCmd.AddCommand(conversionCmd)
 }

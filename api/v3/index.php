@@ -483,6 +483,7 @@ try {
         };
         $recordMoney = \Api\V3\Support\CampaignFigures::RECORD;
         $reportFigures = \Api\V3\Support\CampaignFigures::REPORT;
+        $matchFigures = \Api\V3\Support\CampaignFigures::MATCH_METHODS;
 
         // ── Clicks (read-only) ───────────────────────────────────────────
         $router->get('/clicks', fn() => $campaignFigures($crud(\Api\V3\Controllers\ClicksController::class)->list($queryParams), $recordMoney));
@@ -505,9 +506,11 @@ try {
         $updateSection = static function () use ($auth, $db): void {
             $auth->requirePermission($db, 'access_to_update_section');
         };
-        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney) {
+        $router->group('/conversions', function (Router $r) use ($crud, $queryParams, $campaignFigures, $recordMoney, $matchFigures) {
             $cls = \Api\V3\Controllers\ConversionsController::class;
             $r->get('',        fn() => $campaignFigures($crud($cls)->list($queryParams), $recordMoney));
+            // Before /{id}, which would read the segment as an id.
+            $r->get('/match-methods', fn() => $campaignFigures($crud($cls)->matchMethods($queryParams), $matchFigures));
             $r->get('/{id}',   fn($ctx) => $campaignFigures($crud($cls)->get(PathId::of($ctx)), $recordMoney));
         });
         $router->group('/conversions', function (Router $r) use ($crud, $idempotent, $payload) {

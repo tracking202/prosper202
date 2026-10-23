@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\StaticEndpoint;
 
 use PHPUnit\Framework\TestCase;
+use Prosper202\Conversion\Ledger\MatchMethod;
 use Prosper202\Conversion\RevenueUploadImporter;
 use Tests\Support\FakeMysqliConnection;
 
@@ -45,7 +46,34 @@ final class LedgerEndpointHelpersTest extends TestCase
      */
     public function testClickIdFromRequest(array $get, array $cookies, int $cid, array $expected): void
     {
-        self::assertSame($expected, p202ClickIdFromRequest($get, $cookies, $cid));
+        $found = p202ClickIdFromRequest($get, $cookies, $cid);
+        self::assertSame($expected, ['click_id' => $found['click_id'], 'malformed' => $found['malformed']]);
+        if ($found['click_id'] === null) {
+            self::assertNull($found['method'], 'no click, no method');
+        }
+    }
+
+    /**
+     * How the click was found, which the conversion keeps (MatchMethod):
+     * the parameter, or a cookie, by where the click id came from.
+     *
+     * @dataProvider methodRequests
+     * @param array<string, mixed> $get
+     * @param array<string, mixed> $cookies
+     */
+    public function testTheClickIsFoundByItsParameterOrACookie(array $get, array $cookies, int $cid, MatchMethod $method): void
+    {
+        self::assertSame($method, p202ClickIdFromRequest($get, $cookies, $cid)['method']);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, array<string, mixed>, int, MatchMethod}> */
+    public static function methodRequests(): iterable
+    {
+        yield 'subid' => [['subid' => '42'], ['tracking202subid' => '9'], 0, MatchMethod::CLICK_ID];
+        yield 'sid' => [['sid' => '7'], [], 0, MatchMethod::CLICK_ID];
+        yield 'the campaign cookie' => [[], ['tracking202subid_a_5' => '8'], 5, MatchMethod::COOKIE];
+        yield 'the general cookie' => [['subid' => ''], ['tracking202subid' => '9'], 0, MatchMethod::COOKIE];
+        yield 'a cookie\'s -legacy twin' => [[], ['tracking202subid-legacy' => '9'], 5, MatchMethod::COOKIE];
     }
 
     /** @return iterable<string, array{array<string, mixed>, array<string, mixed>, int, array{click_id: int|null, malformed: string|null}}> */

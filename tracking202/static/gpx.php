@@ -33,6 +33,9 @@ if ($requestedClick['malformed'] !== null) {
     error_log('gpx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// How the click was found, kept on the conversion (MatchMethod): the
+// parameter or the cookie that named it, or the address it was guessed from.
+$matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
 } else { // nothing named a click: fall back to this address's last click
@@ -80,7 +83,7 @@ if (is_numeric($mysql['click_id'])) {
 	// as it always has, with the event's name kept on the row.
 	$eventName = null;
 	try {
-		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, ['browser' => false]);
+		$webEvent = p202RecordWebEvent($db, (int) $mysql['click_id'], $_GET, $matchedBy, ['browser' => false]);
 	} catch (\Throwable $webEventError) {
 		error_log('gpx: event recording failed for click ' . $mysql['click_id'] . ': ' . $webEventError->getMessage());
 		return;
@@ -142,6 +145,7 @@ if (is_numeric($mysql['click_id'])) {
 				// record one conversion, not two.
 				'once_per_click'  => p202ExtractTransactionId($_GET) === '',
 			],
+			$matchedBy,
 			(string) ($cpa_row['click_cpa'] ?? ''),
 			$mysql['use_pixel_payout'] == 1,
 			($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',

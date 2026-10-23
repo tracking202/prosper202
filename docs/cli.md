@@ -692,7 +692,8 @@ and reversals alike — with its amount, whether it counts toward the click's
 value (and the reason when it does not: `deleted`, `unpaid`, `superseded
 (replace|batch|pre_ledger|replay|reevaluation)`, `not_netted`), its source,
 what that is (a goal and version, an upload, the sale a reversal nets, the API
-key that wrote it), its transaction id and event. The table ends with the
+key that wrote it), how its click was found (`matched_by`: `click_id`,
+`cookie`, `visitor_id`, `same_ip`, `unknown`), its transaction id and event. The table ends with the
 click's value and says so if the counted rows do not add up to it. `--json`
 prints the API's answer unchanged (`GET /clicks/{id}/conversions`). The PHP
 CLI's `click:conversions <id>` prints the same.
@@ -726,6 +727,7 @@ p202 conversion list
 p202 conversion list --campaign-id 3 --time-from 1700000000
 p202 conversion list --click-id 12345
 p202 conversion list --source goal --goal 7
+p202 conversion list --match-method same_ip --campaign-id 3
 p202 conversion list --all
 ```
 
@@ -738,13 +740,33 @@ p202 conversion list --all
 | `--time-to`     |         | End, inclusive: the same forms |
 | `--click-id`    |         | Only this click's conversions |
 | `--source`      |         | Only this source's: `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `app_install`, `goal`, `legacy_baseline` |
+| `--match-method` |        | Only conversions whose click was found this way: `click_id`, `cookie`, `visitor_id`, `same_ip`, `unknown` |
 | `--goal`        |         | Only this goal's outcomes (every version) |
 | `--all`         | false   | Fetch all rows across pages |
 
-Each row carries its provenance: `source`, `source_ref`, `event_name`,
+Each row carries its provenance: `source`, `source_ref`, `match_method`, `event_name`,
 `payable`, `reverses_conv_id`, `superseded_by`, `superseded_reason`, and a
 goal row's `goal_id` and `goal_version`. A filter value that is not one of
 these is refused before any request, with the command that finds a right one.
+
+### Conversions by how their click was found
+
+```bash
+p202 conversion match-methods --period last30
+p202 conversion match-methods --aff-campaign-id 3 --time-from 2026-10-01
+```
+
+Each campaign's conversions by `match_method`, how the click they credit was
+found: `click_id` (the postback, pixel, API call, upload or app install named
+it), `cookie` (a tracking cookie did), `visitor_id` (a landing page's
+`p202.track()` visitor id), `same_ip` (nothing named a click, so the latest
+click from the visitor's address: a guess) or `unknown` (recorded before
+1.9.79). `conversions` leaves out reversals, `counted` is how many count
+toward their click's value and `income` what those add up to. The window is
+the conversions' time (`--period`, `--time-from`, `--time-to`). The table ends
+with every method's totals over all campaigns; `--json` is
+`GET /conversions/match-methods`. The PHP CLI's `conversion:match-methods`
+prints the same.
 
 ### Get a conversion
 

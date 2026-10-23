@@ -214,14 +214,23 @@ final class MysqlConversionLedger
         }
 
         $clickTime = (int) $click['click_time'];
-        $insert = $this->conn->prepareWrite(
+        [$insert, $named] = MatchMethod::prepareInsert(
+            $this->conn,
+            "INSERT INTO 202_conversion_logs
+                (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time,
+                 time_difference, ip, pixel_type, user_agent, deleted,
+                 source, source_ref, event_name, payable, superseded_by, superseded_reason, reverses_conv_id, dedupe_key,
+                 match_method)
+             VALUES (?, NULL, ?, ?, ?, ?, ?, '', '', 0, '', 0, ?, NULL, NULL, 1, NULL, NULL, NULL, ?, ?)",
             "INSERT INTO 202_conversion_logs
                 (click_id, transaction_id, campaign_id, click_payout, user_id, click_time, conv_time,
                  time_difference, ip, pixel_type, user_agent, deleted,
                  source, source_ref, event_name, payable, superseded_by, superseded_reason, reverses_conv_id, dedupe_key)
              VALUES (?, NULL, ?, ?, ?, ?, ?, '', '', 0, '', 0, ?, NULL, NULL, 1, NULL, NULL, NULL, ?)"
         );
-        $this->conn->bind($insert, 'iisiiiss', [
+        // The value stands for pre-ledger rows, whose clicks were found by
+        // ways nothing recorded.
+        $row = [
             $clickId,
             (int) $click['aff_campaign_id'],
             Amount::fromUnits(Amount::toUnits((string) $click['click_payout'])),
@@ -230,7 +239,11 @@ final class MysqlConversionLedger
             $clickTime,
             ConversionSource::LEGACY_BASELINE->value,
             DedupeKey::legacy(),
-        ]);
+        ];
+        if ($named) {
+            $row[] = MatchMethod::UNKNOWN->value;
+        }
+        $this->conn->bind($insert, $named ? 'iisiiisss' : 'iisiiiss', $row);
         $baselineId = $this->conn->executeInsert($insert);
         if ($baselineId <= 0) {
             throw new LedgerIntegrityException('click ' . $clickId . ': the legacy baseline row was not inserted');

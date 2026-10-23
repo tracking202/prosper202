@@ -6,6 +6,7 @@ namespace Tests\Conversion\Ledger;
 
 use PHPUnit\Framework\TestCase;
 use Prosper202\Conversion\Ledger\ConversionSource;
+use Prosper202\Conversion\Ledger\MatchMethod;
 
 /**
  * The two CLIs check `--source` before they send it. The Go CLI keeps a copy
@@ -43,5 +44,18 @@ final class ConversionSourceListsTest extends TestCase
         $php = (string) file_get_contents($root . '/cli/Commands/ConversionListCommand.php');
         self::assertSame(0, preg_match('/\'(postback|legacy_baseline)\'/', $php), 'ConversionListCommand spells no source itself');
         self::assertGreaterThanOrEqual(2, substr_count($php, 'ServerLists::conversionSources()'), 'its help and its check both read the list');
+    }
+
+    public function testBothCliCopiesOfTheMatchMethodListMatchTheLedger(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $go = (string) file_get_contents($root . '/go-cli/cmd/conversion.go');
+        self::assertSame(1, preg_match('/var conversionMatchMethods = \[\]string\{(.*?)\}/s', $go, $m), 'go-cli/cmd/conversion.go declares conversionMatchMethods');
+        self::assertSame(MatchMethod::values(), self::quoted($m[1]), 'the Go CLI\'s --match-method list is the ledger\'s');
+
+        self::assertSame(MatchMethod::values(), \P202Cli\ServerLists::conversionMatchMethods(), 'the PHP CLI\'s --match-method list is the ledger\'s');
+        $php = (string) file_get_contents($root . '/cli/Commands/ConversionListCommand.php');
+        self::assertSame(0, preg_match('/\'(same_ip|visitor_id)\'/', $php), 'ConversionListCommand spells no match method itself');
+        self::assertGreaterThanOrEqual(2, substr_count($php, 'ServerLists::conversionMatchMethods()'), 'its help and its check both read the list');
     }
 }

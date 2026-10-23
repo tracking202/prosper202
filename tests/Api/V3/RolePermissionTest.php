@@ -42,6 +42,7 @@ final class RolePermissionTest extends TestCase
         'GET /clicks/{id}/conversions' => '$recordMoney',
         'GET /conversions' => '$recordMoney',
         'GET /conversions/{id}' => '$recordMoney',
+        'GET /conversions/match-methods' => '$matchFigures',
         'GET /reports/summary' => '$reportFigures',
         'GET /reports/breakdown' => '$reportFigures',
         'GET /reports/timeseries' => '$reportFigures',

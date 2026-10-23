@@ -26,6 +26,9 @@ if ($requestedClick['malformed'] !== null) {
     error_log('upx: refusing malformed ' . $requestedClick['malformed'] . ' click id');
     exit;
 }
+// How the click was found, kept on the conversion (MatchMethod): the
+// parameter or the cookie that named it, or the address it was guessed from.
+$matchedBy = $requestedClick['method'] ?? \Prosper202\Conversion\Ledger\MatchMethod::SAME_IP;
 if ($requestedClick['click_id'] !== null) {
     $mysql['click_id'] = (string) $requestedClick['click_id'];
 } else { // nothing named a click: fall back to this address's last click
@@ -146,7 +149,7 @@ if (is_numeric($mysql['click_id'])) {
 	// browser pixels of that notification are this response. A campaign
 	// without goals records its plain conversion below, as always.
 	try {
-		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, ['browser' => true]);
+		$webEvent = p202RecordWebEvent($db, $clickId, $_GET, $matchedBy, ['browser' => true]);
 	} catch (\Throwable $webEventError) {
 		error_log('upx: event recording failed for click ' . $clickId . ': ' . $webEventError->getMessage());
 		p202RespondJsonError(500, 'Failed to record event');
@@ -179,6 +182,7 @@ if (is_numeric($mysql['click_id'])) {
             // Server postbacks queued with the row, sent below (as gpb.php).
             'notify_traffic_source' => true,
 		],
+		$matchedBy,
 		(string) ($cvar_sql_row['click_cpa'] ?? ''),
 		$mysql['use_pixel_payout'] == 1,
 		($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '') : '',

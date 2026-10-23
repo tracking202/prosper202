@@ -110,13 +110,13 @@ final class AttributionWorkerIntegrationTest extends TestCase
         $this->work();
         self::assertSame('10.00000', self::revenueUnder($this->defaultModelId()));
 
-        $this->ledger->record(1, ['click_id' => 50, 'source' => 'postback', 'transaction_id' => 'S-1', 'payout' => '-4']);
+        $this->ledger->record(1, ['click_id' => 50, 'source' => 'postback', 'transaction_id' => 'S-1', 'payout' => '-4'], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         $this->work();
         self::assertSame('6.00000', self::revenueUnder($this->defaultModelId()), 'a partial reversal leaves the rest');
 
         $this->click(51, 1, time() - 90);
         $other = $this->convert(51, '3', 'S-2');
-        $this->ledger->record(1, ['click_id' => 51, 'source' => 'postback', 'transaction_id' => 'S-2', 'reversal' => true]);
+        $this->ledger->record(1, ['click_id' => 51, 'source' => 'postback', 'transaction_id' => 'S-2', 'reversal' => true], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         $this->work();
         self::assertSame([], self::credits($other, $this->defaultModelId()), 'a fully reversed sale earns nothing');
         self::assertSame('6.00000', self::revenueUnder($this->defaultModelId()));
@@ -130,7 +130,7 @@ final class AttributionWorkerIntegrationTest extends TestCase
         $this->campaign(1, 'accumulate');
         $this->click(55, 1, time() - 100);
         $this->convert(55, '10', 'NP-1');
-        $reversal = $this->ledger->record(1, ['click_id' => 55, 'source' => 'postback', 'transaction_id' => 'NP-1', 'payout' => '-10', 'payable' => false]);
+        $reversal = $this->ledger->record(1, ['click_id' => 55, 'source' => 'postback', 'transaction_id' => 'NP-1', 'payout' => '-10', 'payable' => false], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
         self::assertGreaterThan(0, $reversal['convId']);
         self::assertSame(
             ['reverses' => true, 'payable' => '0'],

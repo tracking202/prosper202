@@ -134,8 +134,8 @@ final class EventOrderTest extends TestCase
         $g = $this->goal(7, ['name' => 'First', 'trigger' => ['event' => 'buy'], 'value' => ['type' => 'fixed', 'amount' => 1]]);
         $subject = $this->engine->clickSubject(1, 100);
         $at = $this->clock + 10;
-        $this->engine->ingest(1, $subject, [$this->eventAt('b', self::T + 5, $at)]);
-        $second = $this->engine->ingest(1, $subject, [$this->eventAt('a', self::T + 5, $at)]);
+        $this->engine->ingest(1, $subject, [$this->eventAt('b', self::T + 5, $at)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
+        $second = $this->engine->ingest(1, $subject, [$this->eventAt('a', self::T + 5, $at)], \Prosper202\Conversion\Ledger\MatchMethod::CLICK_ID);
 
         self::assertTrue($second['replayed']);
         self::assertSame([$g . ':1:1@a=1.00000'], $this->liveOutcomes(100));
