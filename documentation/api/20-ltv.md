@@ -279,7 +279,38 @@ subscribed the hook to every event).
 `GET /ltv/webhooks/{id}/deliveries` is the delivery log, newest first:
 `limit` 1–100 (default 25), `status` `pending`, `delivered` or `failed`,
 each with its attempts, next retry, last HTTP status and the last response
-or error. An unknown webhook is a `404`, never an empty log.
+or error (`curl: …` when the request failed, `blocked: …` when the address
+was refused at sending, `expired: …` below). An unknown webhook is a `404`,
+never an empty log.
+
+### How deliveries are sent
+
+A write only queues its event; the cron job sends it. The minutely
+`202-cronjobs/index.php` — the one job the installer's cron line,
+`install.sh`, both Docker cron services and AutoCron run — sends what is
+due after its other work, oldest first, for up to 15 seconds a run (one
+request begun before the end may take its 15-second timeout past it).
+Nothing else needs scheduling. `202-cronjobs/ltv_webhooks.php` is the same
+run on its own (`--budget=N` seconds, 50 by default), for a deployment that
+runs workers separately (`docker-compose.coolify.yaml`'s worker service
+does); the two take one database lock, and each delivery is claimed before
+it is sent, so a delivery is never sent by two runs.
+
+- A failure is retried 2, 4, 8, 16 and 32 minutes after each attempt; the
+  6th failed attempt fails the delivery and marks the webhook dead. Every
+  attempt is in the log.
+- A receiver that takes 2 seconds or more to fail is tried once a run; the
+  webhook's other deliveries wait, untried, for the next run, so a receiver
+  that times out does not hold up every other webhook on the install.
+- A delivery still unsent 7 days after it was queued is not sent: it is
+  `failed` with 0 attempts and `expired: still unsent 7 days after it was
+  queued, so it was not sent` as its last response. Before 1.9.79 no
+  default install ran the sender, so every delivery stayed queued: after the
+  upgrade a webhook is sent the events of the last 7 days that were waiting,
+  oldest first, and the older ones expire unsent.
+- A delivery is sent at least once: one whose outcome could not be recorded
+  (the database went away mid-run) is sent again 5 minutes later.
+  `X-P202-Delivery` is the same each time; de-duplicate by it.
 
 ```bash
 p202 ltv webhooks create --url https://hooks.example.com/p202 --events revenue.recorded,subscription.changed

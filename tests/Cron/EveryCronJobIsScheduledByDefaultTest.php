@@ -71,6 +71,11 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'attribution-exports.php' => [
             ['new', 'Prosper202\Attribution\ExportRunner', 'run'],
         ],
+        // Every minute in index.php: without it no default deployment sends an
+        // LTV webhook, and every delivery waits for good.
+        'ltv_webhooks.php' => [
+            ['static', 'Prosper202\Ltv\WebhookDispatcher', 'runExclusive'],
+        ],
         // Hourly in index.php: a page closed inside the throttle, or a backlog
         // left by a portal outage, is delivered by nothing else.
         'sync-messaging.php' => [
@@ -87,7 +92,6 @@ final class EveryCronJobIsScheduledByDefaultTest extends TestCase
         'bridge_config.php' => 'LPO remote config; opt-in for paired installs (docs schedule it every 6 hours)',
         'lpo_dimensions.php' => 'LPO nightly full sync; index.php pushes dirty users hourly, this is the backstop',
         'ltv_maintenance.php' => 'LTV rollup reconciliation; opt-in, predates the measurement rewrite',
-        'ltv_webhooks.php' => 'LTV webhook dispatcher; opt-in, predates the measurement rewrite',
         'sync-worker.php' => 'sync job worker; predates the measurement rewrite',
         'daily-email.php' => 'fetched by the hosted mail service with the install hash, not by cron',
         'dni.php' => 'DNI callback fetched by the hosted service with the install hash',
