@@ -1272,6 +1272,11 @@ carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
 `202_clicks` row to it or to a listed reason; the conversion, pixel, goal
 and install reads are listed until it is decided which visit a conversion
 credits. Only `click_id` and `user_id` are the same on every visit's row.
+A read of many clicks counts each once only where every alias of
+`202_clicks` it sums is ANDed with `LatestVisit::isLatest()`; about thirty
+were converted by hand, and `ClickRowCountsTakeTheLatestVisitTest` now holds
+every `SUM`, `COUNT` and `AVG` over the table to it or to a listed function
+(a count that is per visit by design).
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
@@ -1618,6 +1623,26 @@ needed and rolls the hour up once it has run. When a change adds a table, trace 
 through the window between deploy and upgrade, and give each a path that
 converges once the table exists.
 
+A read converges by itself, and still has to say why it failed. The API's
+report reads of the new table answered 500 "Internal server error" in the
+window, the legacy reports "Database error", and `/system/health` answered
+healthy (measured: four v3 routes and the legacy reports; the click and
+conversion paths queued and lost nothing). A failure that would answer a
+bare 5xx while the schema is not the code's version now answers 503 naming
+the upgrade (`Bootstrap::pendingUpgrade()`,
+`UpgradePendingAnswerServedIntegrationTest`). The first draft put that in
+the dispatcher's last catches and called it every 5xx: the Android intake,
+the Apple receiver and an `AuthException` answered from ways out of their
+own (found by review). A claim about every answer is a list of the ways
+out, read from the code: `ServerFailureAnswersAreListedTest` lists each
+answer that can be a 5xx with what it says in the window, and a committed
+write keeps its 500 (#13).
+The walk the upgrade starts has the same question one level down: a click
+whose repair always fails held back every click after it, for good (#24's
+batch); one that has failed for an hour of runs is stepped over, counted
+and named (`ReClickBackfill`, `tests/live/reclick-backfill-cron.sh` through
+the real cron job).
+
 ### 36. A lock does not move the snapshot
 The ledger's click lock read the click's values with the locking read itself,
 which answers the row as it is. Re-click crediting split it: lock the first
@@ -1659,11 +1684,24 @@ route row, so every new redirector click's route waited for the conversion's
 commit. Measure a locking read on the path it runs on, joins included.
 
 What the refusal does not see: a statement run on the raw handle
-(`writeConnection()`), which Connection never classifies; a lock other than a
-click's, where "lock, then read" needs the same question asked by hand; and a
-SELECT the server answers without a snapshot (information_schema on MariaDB),
-which it counts as one, the loud direction. Before relying on "the reads after
-the lock see what it holds", find the transaction's first read, not the lock.
+(`writeConnection()`), which Connection never classifies; a read
+`isPlainRead()` does not recognise from its text (it knows `SELECT` and
+`WITH` with a `FROM` and no locking clause at the end), which leaves the
+snapshot unnoted and the lock allowed, the silent direction; a lock other
+than a click's, where "lock, then read" needs the same question asked by
+hand; and a SELECT the server answers without a snapshot (information_schema
+on MariaDB), which it counts as one, the loud direction. The record of a
+lock held (`holdLock()`) is the transaction's own, not the server's: it
+trusts that a callback never carries on past a lock error (#34, held by its
+check) and that `ROLLBACK TO SAVEPOINT` keeps the row locks taken after the
+savepoint, as InnoDB documents (not measured on MariaDB). And the refusal
+moves a contract onto callers: `supersedeGoalRow()`,
+`retireGoalRowInTransaction()` and `reviveGoalRowInTransaction()` read their
+row before they lock, so each works only for a caller that locked the click
+first, and a transaction that asks for a second click after reading is
+refused with a `LogicException`, never served stale. Before relying on "the
+reads after the lock see what it holds", find the transaction's first read,
+not the lock.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
