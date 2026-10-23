@@ -1625,18 +1625,33 @@ try {
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
+    $message = $e->getMessage();
     if ($code >= 500) {
-        // The answer names no cause; the log keeps it.
+        // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = p202ApiPendingUpgrade($db);
+        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
     }
-    $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
-    Bootstrap::errorResponse('Internal server error', 500);
+    $pending = p202ApiPendingUpgrade($db);
+    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────
+/**
+ * The answer to a failure while the database's schema is not this code's
+ * version (the files deployed, the upgrade not run): the schema is the likely
+ * cause, and /system/health still answers healthy. Null otherwise.
+ */
+function p202ApiPendingUpgrade(\mysqli $db): ?string
+{
+    require_once dirname(__DIR__, 2) . '/202-config/version.php';
+
+    return \Prosper202\Database\SchemaVersion::pendingUpgrade($db, PROSPER202_VERSION);
+}
+
 /**
  * Execute a side-effect on an object and return null (for DELETE handlers).
  */

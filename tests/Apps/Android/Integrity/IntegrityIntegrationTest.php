@@ -467,6 +467,45 @@ final class IntegrityIntegrationTest extends TestCase
         self::assertCount(1, self::outbox());
     }
 
+    /**
+     * The key is read before the settle's transaction (inside it, the read
+     * would come before the click's lock, which is then refused). A key that
+     * does not read stops only an install waiting on its verdict, the one
+     * that needs it: that settle fails with the read's own error and rolls
+     * back with its verdict, while an observed install's verdict is recorded.
+     */
+    public function testAKeyThatDoesNotReadStopsOnlyAWaitingInstall(): void
+    {
+        $this->mode('observe');
+        $this->click(100);
+        $observed = $this->tokenBody(self::U1, 100, 'tok-observed');
+        $this->install($observed);
+        $this->mode('require');
+        $this->click(101);
+        $waiting = $this->tokenBody(self::U2, 101, 'tok-waiting');
+        $this->install($waiting);
+        $this->answers['tok-observed'] = [$this->verdict($observed)];
+        $this->answers['tok-waiting'] = [$this->verdict($waiting)];
+
+        $this->clock += 1;
+        $file = (string) tempnam(sys_get_temp_dir(), 'p202key');
+        $log = ini_set('error_log', $file);
+        try {
+            $run = $this->verifier(static fn (): ?string => throw new \RuntimeException('key read refused by the test'))->run();
+        } finally {
+            ini_set('error_log', $log === false ? '' : $log);
+        }
+        $logged = (string) file_get_contents($file);
+        @unlink($file);
+
+        self::assertSame([['valid' => 1], 1], [$run['verdicts'], $run['failed']]);
+        self::assertSame('valid', self::installRow(self::U1)['integrity_state'], 'the observed verdict needs no key');
+        $row = self::installRow(self::U2);
+        self::assertSame(['pending_integrity', 'pending'], [$row['match_state'], $row['integrity_state']]);
+        self::assertSame([], self::ledger(101));
+        self::assertStringContainsString('install ' . (int) $row['install_row_id'] . ' failed: key read refused by the test', $logged);
+    }
+
     public function testDeletingARegistrationSettlesWhatItsInstallsWereWaitingFor(): void
     {
         $this->mode('require');
