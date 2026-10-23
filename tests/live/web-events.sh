@@ -61,6 +61,8 @@ if [ -z "$SERVER_LOG" ] || [ ! -r "$SERVER_LOG" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
@@ -111,6 +113,7 @@ C_LEG=960008; C_LEG2=960009; C_API=960010; C_APIN=960011; C_STAGE=960012; C_REPL
 CLICKS="$C_GPB,$C_GPX,$C_UPX,$C_PB,$C_PX,$C_BAD,$C_PLAIN,$C_LEG,$C_LEG2,$C_API,$C_APIN,$C_STAGE,$C_REPLAY,$C_OTHER,$C_CLI,$C_TWO"
 
 cleanup() {
+  p202_restore_postbacks
   mysql_q "$DB" <<SQL
 DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS) OR campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_id_public IN ($ACIP_G, $ACIP_N, $ACIP_R)));
@@ -132,7 +135,13 @@ SQL
 }
 cleanup
 # P202_KEEP=1 leaves the seeded rows in place for a look afterwards.
-[ "${P202_KEEP:-}" = 1 ] || trap cleanup EXIT
+if [ "${P202_KEEP:-}" = 1 ]; then
+  trap p202_restore_postbacks EXIT
+else
+  trap cleanup EXIT
+fi
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 
 mysql_q "$DB" -e "INSERT INTO 202_aff_networks SET user_id=$OWNER, aff_network_name='web events pass', aff_network_deleted=0, aff_network_time=$NOW"
 NET=$(Q "SELECT aff_network_id FROM 202_aff_networks WHERE aff_network_name='web events pass'")

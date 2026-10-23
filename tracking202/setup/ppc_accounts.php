@@ -141,6 +141,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		// The pixels the account is left with, read before anything is
 		// written: a code with no type is refused with the rest of the form.
 		$pixelRows = \Prosper202\Setup\AccountPixels::fromForm($_POST, $error);
+        // A Postback URL the server would refuse to call is refused here, as
+        // the API refuses it; what the account's pixels hold now is taken as
+        // it is.
+        $heldPostbacks = $editing
+            ? (new \Prosper202\Setup\AccountPixels(new \Prosper202\Database\Connection($db)))
+                ->storedPostbacks((int) $_SESSION['user_id'], (int) $_GET['edit_ppc_account_id'])
+            : [];
+        \Prosper202\Setup\AccountPixels::refusePostbacks($pixelRows, $heldPostbacks, $error);
 
 		if (empty($error)) {
 			//check to see if this user is the owner of the ppc network hes trying to add an account to
@@ -535,7 +543,7 @@ echo p202_setup_query_flashes([
 ], $_GET);
 if ($error) {
 	echo p202_setup_error_flashes($error, ['ppc_network_name', 'ppc_network_id', 'ppc_account_name']);
-	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id'])) {
+	if (isset($error['pixel_correction_url']) || isset($error['pixel_type_id']) || isset($error['pixel_code'])) {
 		// The pixels sit under a disclosure, so the sentence is said at the
 		// top as well as opening it (below).
 		$hasPixels = true;

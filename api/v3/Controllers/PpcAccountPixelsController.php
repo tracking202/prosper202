@@ -12,6 +12,7 @@ use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
 use Prosper202\Notifications\CorrectionUrls;
 use Prosper202\Notifications\NotificationOutbox;
+use Prosper202\Notifications\PostbackSender;
 
 /**
  * A traffic-source account's pixels (202_ppc_account_pixels): what the
@@ -36,7 +37,11 @@ use Prosper202\Notifications\NotificationOutbox;
  * with its correction URL, as the form erases the pixels it no longer
  * lists. Beyond the form: the type must be one 202_pixel_types names
  * (the form's select only offers those), and a postback's URLs must be
- * http(s) — the only ones PostbackSender will call.
+ * http(s) — the only ones PostbackSender will call. A postback URL or
+ * correction URL the sender would refuse to call, where that shows without
+ * a lookup (a private or metadata address, a local name, a user name or
+ * password: PostbackSender::refusalAtSave(), the form's own check), is
+ * refused too, unless the pixel already holds it.
  */
 final class PpcAccountPixelsController
 {
@@ -201,6 +206,11 @@ final class PpcAccountPixelsController
         }
 
         $isServer = $typeId === CorrectionUrls::SERVER_PIXEL_TYPE;
+        // What a postback pixel holds now is taken as it is (a URL stored
+        // before the sender's checks existed is still refused when sent).
+        $held = $current !== null && (int) $current['pixel_type_id'] === CorrectionUrls::SERVER_PIXEL_TYPE
+            ? ['code' => (string) $current['pixel_code'], 'correction' => (string) $current['correction_url']]
+            : ['code' => '', 'correction' => ''];
         if ($isServer && is_string($code) && $code !== '' && !isset($errors['pixel_code'])) {
             foreach (NotificationOutbox::destinations($code) as $url) {
                 if (preg_match('~^https?://[^\s/?#]+[^\s]*$~iD', $url) !== 1) {
@@ -208,6 +218,10 @@ final class PpcAccountPixelsController
                         . json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . ' is not one, and the postback sender calls nothing else';
                     break;
                 }
+            }
+            $refused = isset($errors['pixel_code']) ? null : PostbackSender::refusalAtSave($code, $held['code']);
+            if ($refused !== null) {
+                $errors['pixel_code'] = $refused;
             }
         }
 
@@ -227,7 +241,8 @@ final class PpcAccountPixelsController
             $correction = '';
         }
         if ($correction !== '' && $isServer && !isset($errors['correction_url']) && is_string($code) && !isset($errors['pixel_code'])) {
-            $problem = CorrectionUrls::problem($correction, $code);
+            $problem = CorrectionUrls::problem($correction, $code)
+                ?? PostbackSender::refusalAtSave($correction, $held['correction']);
             if ($problem !== null) {
                 $errors['correction_url'] = $problem;
             }
