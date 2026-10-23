@@ -172,7 +172,9 @@ function reportDimensionJoin(string $type): string
 /**
  * A report statement the server refused: logged for the operator, and
  * answered as the API's error envelope rather than an HTML error page, under
- * the status the envelope names, which a client reads before the body.
+ * the status the envelope names, which a client reads before the body. While
+ * the database's schema is not this code's version (the files deployed, the
+ * upgrade not run) the answer is a 503 naming the upgrade.
  *
  * @return array{msg: string, error: true, status: int}
  */
@@ -181,11 +183,14 @@ function legacy_api_database_error(mysqli $db): array
     // Without the values the server's words repeat (the statements quote c1-c4).
     error_log('Legacy report API: a report query failed: ' . $db->errno . ' '
         . p202FailedQueryMessage($db->errno, $db->error));
+    require_once dirname(__DIR__, 2) . '/202-config/version.php';
+    $pending = \Prosper202\Database\SchemaVersion::pendingUpgrade($db, PROSPER202_VERSION);
+    $status = $pending !== null ? 503 : 500;
     if (!headers_sent()) {
-        http_response_code(500);
+        http_response_code($status);
     }
 
-    return ['msg' => 'Database error', 'error' => true, 'status' => 500];
+    return ['msg' => $pending ?? 'Database error', 'error' => true, 'status' => $status];
 }
 
 function reportQuery(

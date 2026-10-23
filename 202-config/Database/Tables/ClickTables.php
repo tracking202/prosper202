@@ -257,6 +257,11 @@ final class ClickTables
                 `reclicked_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
                 `same_second_ties` bigint(20) unsigned NOT NULL DEFAULT '0',
                 `mixed_accounts` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `failed_click_id` bigint(20) unsigned DEFAULT NULL,
+                `failed_runs` int(10) unsigned NOT NULL DEFAULT '0',
+                `failing_since` int(10) unsigned DEFAULT NULL,
+                `skipped_clicks` bigint(20) unsigned NOT NULL DEFAULT '0',
+                `last_skipped_click_id` bigint(20) unsigned DEFAULT NULL,
                 PRIMARY KEY (`backfill_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
