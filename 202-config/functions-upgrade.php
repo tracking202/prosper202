@@ -4368,10 +4368,22 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.78', '>')) {
+        if ($prosper202_version == '1.9.78') {
 
-            $prosper202_version = '1.9.78';
+            // 1.9.79 changes no schema yet, so its step only records the
+            // version. A schema change for 1.9.79 belongs in this block,
+            // reconciled before the version is written.
+            if (_upgrade_query("UPDATE 202_version SET version='1.9.79'") !== false) {
+                $prosper202_version = '1.9.79';
+            } else {
+                error_log('Prosper202 upgrade: failed to persist version 1.9.79; leaving version at 1.9.78 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.79', '>')) {
+
+            $prosper202_version = '1.9.79';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }
