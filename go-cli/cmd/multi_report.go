@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
+	"io"
+	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -92,10 +93,12 @@ func resolveMultiProfiles(cmd *cobra.Command) ([]string, error) {
 	return profiles, nil
 }
 
-func fetchMultiProfileObjects(endpoint string, params map[string]string, profiles []string) (map[string]map[string]interface{}, []string, error) {
+// fetchMultiProfileObjects reads endpoint's `data` object from each profile,
+// its numbers kept as the server wrote them (json.Number). A profile whose
+// answer check refuses is a failed profile, named in the errors.
+func fetchMultiProfileObjects(endpoint string, params map[string]string, profiles []string, check func(map[string]interface{}) error) (map[string]map[string]interface{}, []string, error) {
 	results := map[string]map[string]interface{}{}
-	errorsOut := make([]string, 0)
-	rawErrors := make([]error, 0)
+	var failures []multiProfileFetch
 	ch := make(chan multiProfileFetch, len(profiles))
 	var wg sync.WaitGroup
 
@@ -121,9 +124,12 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 				ch <- multiProfileFetch{profile: profile, err: errMaskedFigures("Summing across profiles")}
 				return
 			}
-			obj, err := parseDataObject(data)
+			obj, err := parseDataObjectNumbers(data)
+			if err == nil && check != nil {
+				err = check(obj)
+			}
 			if err != nil {
-				ch <- multiProfileFetch{profile: profile, err: err}
+				ch <- multiProfileFetch{profile: profile, err: notASummary(profile, err)}
 				return
 			}
 			ch <- multiProfileFetch{profile: profile, data: obj}
@@ -135,98 +141,123 @@ func fetchMultiProfileObjects(endpoint string, params map[string]string, profile
 
 	for result := range ch {
 		if result.err != nil {
-			errorsOut = append(errorsOut, fmt.Sprintf("%s: %v", result.profile, result.err))
-			rawErrors = append(rawErrors, result.err)
+			failures = append(failures, result)
 			continue
 		}
 		results[result.profile] = result.data
 	}
 
-	sort.Strings(errorsOut)
+	// By profile, not by arrival: which failure is named first, and which
+	// one the error below unwraps to, must not change between two runs.
+	sort.Slice(failures, func(i, j int) bool { return failures[i].profile < failures[j].profile })
+	errorsOut := make([]string, 0, len(failures))
+	rawErrors := make([]error, 0, len(failures))
+	for _, f := range failures {
+		errorsOut = append(errorsOut, fmt.Sprintf("%s: %v", f.profile, f.err))
+		rawErrors = append(rawErrors, f.err)
+	}
 	if len(results) == 0 && len(errorsOut) > 0 {
 		if refused := licenceRefusal(rawErrors...); refused != nil {
 			// Keep the licence category (exit 6, the trial hint) when every
 			// profile was refused for it, instead of a generic failure.
 			return nil, errorsOut, fmt.Errorf("all profile requests failed: %w", refused)
 		}
-		return nil, errorsOut, fmt.Errorf("all profile requests failed")
+		failed := &allProfilesFailed{msg: "all profile requests failed: " + strings.Join(errorsOut, "; ")}
+		if oneKindOfFailure(rawErrors) {
+			failed.cause = rawErrors[0]
+		}
+		return nil, errorsOut, failed
 	}
 	return results, errorsOut, nil
 }
 
-// aggregateNumericFields sums each numeric field across profiles. A NaN or
-// infinite value (or sum) is an error naming the profile: json.Marshal can't encode it.
-func aggregateNumericFields(rows map[string]map[string]interface{}) (map[string]interface{}, error) {
-	aggregate := map[string]interface{}{}
-	keys := map[string]bool{}
-	names := make([]string, 0, len(rows))
-	for name, row := range rows {
-		names = append(names, name)
-		for key := range row {
-			keys[key] = true
+// oneKindOfFailure reports whether every error would be answered alike: the
+// same category, exit code and hint, as Execute resolves them. Only then may
+// the failure of every profile take one's category and hint (every server
+// unreachable is a network failure); a 422 beside a profile with no URL,
+// both exit 1, is not one kind, nor a refused key beside a masked one.
+func oneKindOfFailure(errs []error) bool {
+	for _, e := range errs[1:] {
+		if api.ErrorCategory(e) != api.ErrorCategory(errs[0]) ||
+			exitCodeForError(e) != exitCodeForError(errs[0]) ||
+			hintFor(e) != hintFor(errs[0]) {
+			return false
 		}
 	}
-	sort.Strings(names)
-
-	keyList := make([]string, 0, len(keys))
-	for key := range keys {
-		keyList = append(keyList, key)
-	}
-	sort.Strings(keyList)
-
-	for _, key := range keyList {
-		total := 0.0
-		seenNumeric := false
-		for _, name := range names {
-			val, ok := parseFloat(rows[name][key])
-			if !ok {
-				continue
-			}
-			if math.IsNaN(val) || math.IsInf(val, 0) {
-				return nil, withHint(fmt.Errorf("profile %s field %s: not a finite number: %v", name, key, rows[name][key]),
-					"`p202 report summary --profile %s --json` shows that server's raw response.", name)
-			}
-			total += val
-			seenNumeric = true
-		}
-		if math.IsInf(total, 0) {
-			return nil, withHint(fmt.Errorf("field %s: the sum across profiles is not a finite number", key),
-				"Read each server separately with `p202 report summary --profile <name> --json`.")
-		}
-		if seenNumeric {
-			aggregate[key] = total
-		}
-	}
-
-	return aggregate, nil
+	return true
 }
 
-func parseFloat(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case string:
-		trimmed := strings.TrimSpace(val)
-		if trimmed == "" {
-			return 0, false
-		}
-		parsed, err := strconv.ParseFloat(trimmed, 64)
-		if err != nil {
-			return 0, false
-		}
-		return parsed, true
-	default:
-		return 0, false
+// notASummary is a profile whose answer cannot be read as a summary: a
+// failed profile, and the server's failure. The hint names no profile, so
+// two such failures are one kind.
+func notASummary(profile string, err error) *CLIError {
+	return &CLIError{
+		Category: "server", ExitCode: ExitServer, Cause: err,
+		Message: fmt.Sprintf("the server's answer is not a summary: %v (`p202 report summary --profile %s --json` shows it)", err, profile),
+		Hint:    "Read the server's raw answer with the `p202 report summary --profile <name> --json` the message names; a proxy in front of it may have answered instead.",
 	}
 }
 
-func buildMultiProfilePayload(profileData map[string]map[string]interface{}, aggregated map[string]interface{}, errorsOut []string) ([]byte, error) {
+// allProfilesFailed names every profile's failure and, when they are all of
+// one kind, unwraps to the first so its category and hint stand.
+type allProfilesFailed struct {
+	msg   string
+	cause error
+}
+
+func (e *allProfilesFailed) Error() string { return e.msg }
+func (e *allProfilesFailed) Unwrap() error { return e.cause }
+
+// parseDataObjectNumbers is parseDataObject with every number a json.Number,
+// so a total is computed from the digits the server sent.
+func parseDataObjectNumbers(data []byte) (map[string]interface{}, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var parsed map[string]interface{}
+	if err := dec.Decode(&parsed); err != nil {
+		return nil, err
+	}
+	// One JSON value and nothing after it, as json.Unmarshal reads one.
+	var more json.RawMessage
+	if err := dec.Decode(&more); err != io.EOF {
+		return nil, fmt.Errorf("the response has more after its JSON value")
+	}
+	if obj, ok := parsed["data"].(map[string]interface{}); ok {
+		return obj, nil
+	}
+	return parsed, nil
+}
+
+// runMultiProfileSummary is `report summary` and `dashboard` across
+// profiles: each profile's row, then the TOTAL. What the TOTAL leaves out,
+// and the profiles that failed, are in `meta` and `errors` under --json and
+// on stderr otherwise.
+func runMultiProfileSummary(params map[string]string, profiles []string) error {
+	profileData, errorsOut, err := fetchMultiProfileObjects("reports/summary", params, profiles, checkSummaryRow)
+	if err != nil {
+		return err
+	}
+	total, err := totalSummaries(profileData)
+	if err != nil {
+		return err
+	}
+	payload, err := buildMultiProfilePayload(profileData, total, errorsOut)
+	if err != nil {
+		return err
+	}
+	render(payload)
+	if !jsonOutput {
+		for _, e := range errorsOut {
+			fmt.Fprintf(os.Stderr, "Warning: the TOTAL leaves out a profile that failed: %s\n", e)
+		}
+		for _, w := range total.warnings() {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+	return nil
+}
+
+func buildMultiProfilePayload(profileData map[string]map[string]interface{}, total summaryTotal, errorsOut []string) ([]byte, error) {
 	names := make([]string, 0, len(profileData))
 	for name := range profileData {
 		names = append(names, name)
@@ -242,15 +273,20 @@ func buildMultiProfilePayload(profileData map[string]map[string]interface{}, agg
 		profiles[name] = cloneMap(profileData[name])
 	}
 
-	totalRow := cloneMap(aggregated)
+	totalRow := cloneMap(total.row)
 	totalRow["profile"] = "TOTAL"
 	rows = append(rows, totalRow)
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"data":       rows,
 		"profiles":   profiles,
-		"aggregated": aggregated,
+		"aggregated": total.row,
 		"errors":     errorsOut,
+		"meta": map[string]interface{}{
+			"currencies":   total.currencies,
+			"not_totalled": total.notTotalled,
+			"warnings":     total.warnings(),
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding output: %w", err)
