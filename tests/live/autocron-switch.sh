@@ -15,15 +15,19 @@
 #      service's answer is said (P202_AUTOCRON_ANSWER=refused requires the
 #      refusal of a local address, the AutoCron service's 402)
 #   3. runs the cron as a scheduler does, over HTTP and on the command line:
-#      each is recorded, and turning AutoCron on is then refused as unneeded,
-#      in the page's sentence, with the switch unchanged
+#      each is recorded, and turning AutoCron on is then left off as maybe
+#      unneeded, in the page's sentence, with the switch unchanged; the page
+#      then offers the owner, and only then, a button saying the run was not
+#      their cron job's, which asks the service (anyone can open the cron's
+#      address, so the record is not proof)
 #   4. with AutoCron already on, saving On again asks the service again
 #      rather than reading AutoCron's own runs as a cron job
-#   5. a value the form never sends is refused and changes nothing, and a
+#   5. a value the form never sends is refused and changes nothing, on the
+#      AutoCron switch and on the ISP lookup switch below it, and a
 #      scheduler's run whose tier fails (a trigger refuses its write) is not
 #      recorded as a run
 #
-# It puts the account's auto_cron back on exit. It deletes 202_cronjob_logs
+# It puts the account's auto_cron and maxmind_isp back on exit. It deletes 202_cronjob_logs
 # and the minute tier's 202_cronjobs rows, so the database must be a scratch
 # one.
 #
@@ -69,7 +73,8 @@ hasnt(){ if grep -qF -- "$2" "$1"; then bad "$3"; else ok "$3"; fi; }
 eq()   { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (got '$1' want '$2')"; fi; }
 msgs() { grep -oE '<div class="p202-flash__body">[^<]*' "$1" | sed -E 's/<[^>]*>//' | sed 's/^/    | /'; }
 
-UNNEEDED='Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.'
+UNNEEDED='A cron job ran on this install in the last five minutes, so AutoCron may not be needed and was left off.'
+NO_OWN_JOB='I have no cron job of my own: turn AutoCron on'
 # Every sentence the switch says once the service has answered (or not).
 ANSWERS=('AutoCron is on.'
          "The AutoCron service refused this install&#039;s address: AutoCron works only for installs at a public web address."
@@ -131,7 +136,11 @@ eq "$(cat "$OUT/.code")" "200" "Settings answers"
 has "$OUT/settings.html" 'id="autocron"' "signed in, on Settings, with the AutoCron panel"
 OWNER=$(Q "SELECT user_id FROM 202_users WHERE user_name='$P202_USER'")
 ORIG_AUTOCRON=$(Q "SELECT auto_cron FROM 202_users_pref WHERE user_id=$OWNER")
-restore() { Q "DROP TRIGGER IF EXISTS acs_fail_tier"; Q "UPDATE 202_users_pref SET auto_cron='$ORIG_AUTOCRON' WHERE user_id=$OWNER"; }
+ORIG_ISP=$(Q "SELECT maxmind_isp FROM 202_users_pref WHERE user_id=$OWNER")
+restore() {
+  Q "DROP TRIGGER IF EXISTS acs_fail_tier"
+  Q "UPDATE 202_users_pref SET auto_cron='$ORIG_AUTOCRON', maxmind_isp='$ORIG_ISP' WHERE user_id=$OWNER"
+}
 trap restore EXIT
 Q "UPDATE 202_users_pref SET auto_cron='0' WHERE user_id=$OWNER"
 
@@ -179,8 +188,14 @@ esac
 submit "$OUT/settings.html" autocron "202-account/administration.php" "$OUT/on2.html" autocron=1
 msgs "$OUT/on2.html"
 eq "$FIRST_STATUS" "303" "the switch redirects"
-has "$OUT/on2.html" "$UNNEEDED" "refused as unneeded, in the page's sentence"
+has "$OUT/on2.html" "$UNNEEDED" "left off as maybe unneeded, in the page's sentence"
 eq "$(Q "SELECT auto_cron FROM 202_users_pref WHERE user_id=$OWNER")" "0" "AutoCron left off"
+hasnt "$OUT/settings.html" "$NO_OWN_JOB" "the page offers no way past it before the owner asked"
+has "$OUT/on2.html" "$NO_OWN_JOB" "then it offers the owner a way past it"
+submit "$OUT/on2.html" autocron_no_own_job "202-account/administration.php" "$OUT/on2b.html"
+msgs "$OUT/on2b.html"
+hasnt "$OUT/on2b.html" "$UNNEEDED" "the owner's word that the run was not theirs is taken"
+said_an_answer "$OUT/on2b.html" "AutoCron On, with no cron job of the owner's"
 
 say "the command line is a scheduler"
 Q "DELETE FROM 202_cronjob_logs; DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
@@ -206,6 +221,13 @@ has "$OUT/odd.html" 'AutoCron is set On or Off, and the form sent neither, so no
 said=0; for a in "${ANSWERS[@]}"; do grep -qF -- "$a" "$OUT/odd.html" && said=1; done
 eq "$said" "0" "and the service was not asked"
 eq "$(Q "SELECT auto_cron FROM 202_users_pref WHERE user_id=$OWNER")" "0" "AutoCron unchanged"
+# The ISP switch posts true or false; `== "true"` read anything else as nothing.
+get "202-account/administration.php" "$OUT/settings.html"
+submit "$OUT/settings.html" maxmind "202-account/administration.php" "$OUT/odd-isp.html" maxmind=on
+msgs "$OUT/odd-isp.html"
+has "$OUT/odd-isp.html" 'ISP and carrier lookup is set On or Off, and the form sent neither, so nothing was changed.' \
+  "the ISP switch refuses it in its own sentence"
+eq "$(Q "SELECT maxmind_isp FROM 202_users_pref WHERE user_id=$OWNER")" "$ORIG_ISP" "ISP lookup unchanged"
 
 say "a scheduler's run whose tier fails is not recorded as a run"
 Q "DELETE FROM 202_cronjob_logs; DELETE FROM 202_cronjobs WHERE cronjob_type='secon'"
