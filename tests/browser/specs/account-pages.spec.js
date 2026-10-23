@@ -236,6 +236,37 @@ module.exports = {
     },
 
     {
+      name: 'API integrations: a PayKickstart IPN key is added from its disclosure, never shown back, and removed only when confirmed',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(paykickstart_ipn_secret_keys, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          expect.ok(!(await ui.page.$eval('#paykickstart details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#paykickstart summary');
+          await ui.fill({ '#paykickstart_ipn_secret_key': 'u6-browser-pk-KEY1' });
+          await app.submit('#paykickstart .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /PayKickstart IPN secret key was saved; 1 key is stored/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'and stores it');
+          expect.ok(!(await ui.page.content()).includes('u6-browser-pk-KEY1'), 'the page never shows the key back');
+          expect.match(await ui.page.textContent('#paykickstart'), /Key ending …KEY1/, 'it lists the key by its last characters');
+
+          const remove = '#paykickstart button:has-text("remove")';
+          const said = await app.confirmAnd('dismiss', remove);
+          expect.match(said, /Remove this key\?/, 'removing asks first', said || '(no dialog)');
+          expect.eq(stored(), 'u6-browser-pk-KEY1', 'saying no keeps it');
+          await app.confirmAnd('accept', remove);
+          expect.eq(stored(), '', 'saying yes removes it');
+        } finally {
+          db.write('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
       name: 'API integrations: a key saves from its disclosure; a DNI network is removed only when confirmed',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;

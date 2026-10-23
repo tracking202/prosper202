@@ -18,6 +18,7 @@ enum ConversionSource: string
     case REVENUE_UPLOAD = 'revenue_upload';
     case LEGACY_PIXEL = 'legacy_pixel';
     case CLICKBANK = 'clickbank';
+    case PAYKICKSTART = 'paykickstart';
     case APP_INSTALL = 'app_install';
     case GOAL = 'goal';
     case LEGACY_BASELINE = 'legacy_baseline';
@@ -50,6 +51,7 @@ enum ConversionSource: string
             self::REVENUE_UPLOAD => 'Revenue upload',
             self::LEGACY_PIXEL => 'Campaign pixel',
             self::CLICKBANK => 'ClickBank',
+            self::PAYKICKSTART => 'PayKickstart',
             self::APP_INSTALL => 'App install',
             self::GOAL => 'Goal',
             self::LEGACY_BASELINE => 'Value before the ledger',

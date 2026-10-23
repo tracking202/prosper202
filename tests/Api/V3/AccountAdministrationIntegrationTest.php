@@ -460,9 +460,24 @@ final class AccountAdministrationIntegrationTest extends TestCase
         self::assertTrue($byKey['clickbank']['verified']);
         self::assertFalse($byKey['jvzoo']['secret_stored']);
         self::assertFalse($byKey['zaxaa']['secret_stored']);
-        self::assertNull($byKey['paykickstart']['secret_stored'], 'PayKickstart needs no secret');
+        self::assertFalse($byKey['paykickstart']['secret_stored']);
+        self::assertSame(0, $byKey['paykickstart']['keys_stored']);
         self::assertStringNotContainsString('cb-secret-xyz', (string) json_encode($answer));
-        self::q("UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0 WHERE user_id = " . self::ADMIN);
+
+        // PayKickstart's keys, one for each of its campaigns: how many, never
+        // which, and an entry that is not a key is not counted.
+        self::q('UPDATE 202_users_pref SET paykickstart_ipn_secret_keys ='
+            . " 'pk-campaign-key-one\npk-campaign-key-two\nshort' WHERE user_id = " . self::ADMIN);
+        $answer = $this->admin()->integrations([
+            'HTTPS' => 'on', 'SERVER_NAME' => 'ignored.example', 'SERVER_PORT' => 443,
+            'DOCUMENT_ROOT' => dirname(__DIR__, 3),
+        ])['data'];
+        $byKey = array_column($answer['integrations'], null, 'integration');
+        self::assertTrue($byKey['paykickstart']['secret_stored']);
+        self::assertSame(2, $byKey['paykickstart']['keys_stored']);
+        self::assertStringNotContainsString('pk-campaign-key', (string) json_encode($answer));
+        self::q('UPDATE 202_users_pref SET cb_key = NULL, cb_verified = 0, paykickstart_ipn_secret_keys = NULL'
+            . ' WHERE user_id = ' . self::ADMIN);
 
         // With no domain stored, the URLs go back to the caller to paste, as
         // the Integrations page shows them: on the host the request used, not

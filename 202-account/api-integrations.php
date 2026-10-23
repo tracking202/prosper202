@@ -11,6 +11,9 @@
  */
 
 declare(strict_types=1);
+
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
+
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/clickserver_api_management.php');
 require_once __DIR__ . '/../202-config/functions-account-ui.php';
@@ -300,6 +303,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		if (processApiKeyUpdate($config, $error, $change_ipqs_api_key, $user_row, $slack, $username, $db)) {
 			p202_account_flash('ok', 'Your IPQualityScore API key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#ipqs');
+		}
+	}
+
+	// PayKickstart IPN secret keys: one for each PayKickstart campaign, added
+	// and removed one at a time, and never shown back (PayKickstartKeys).
+	$pkAction = $_POST['paykickstart_key_action'] ?? null;
+	if ($pkAction === 'add' || $pkAction === 'remove') {
+		$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;
+		$pkOld = PayKickstartKeys::stored(is_string($pkColumn) ? $pkColumn : null)['keys'];
+		$pkErrorKey = $pkAction === 'add' ? 'paykickstart' : 'paykickstart_remove';
+		$pkPosted = static fn (string $name): string => is_string($_POST[$name] ?? null) ? $_POST[$name] : '';
+		$pkKeys = null;
+		try {
+			$pkKeys = $pkAction === 'add'
+				? PayKickstartKeys::added($pkOld, $pkPosted('paykickstart_ipn_secret_key'))
+				: PayKickstartKeys::removed($pkOld, $pkPosted('paykickstart_key_place'), $pkPosted('paykickstart_key_hint'));
+			updateUserPreference(PayKickstartKeys::COLUMN, PayKickstartKeys::serialize($pkKeys), $_SESSION['user_id'], $db);
+		} catch (InvalidArgumentException $pkRefused) {
+			$error[$pkErrorKey] = $pkRefused->getMessage();
+			$pkKeys = null;
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			$error[$pkErrorKey] = 'This could not be saved just now; the stored keys are as they were. Try again.';
+			$pkKeys = null;
+		}
+		if ($pkKeys !== null) {
+			$pkBefore = PayKickstartKeys::serialize($pkOld);
+			$pkAfter = PayKickstartKeys::serialize($pkKeys);
+			sendSlackNotification($slack, 'paykickstart_ipn_keys_updated', $username, $pkBefore, $pkAfter);
+			$pkCount = count($pkKeys) === 1 ? '1 key is stored' : count($pkKeys) . ' keys are stored';
+			$pkDone = $pkAction === 'add' ? 'Your PayKickstart IPN secret key was saved' : 'The key was removed';
+			p202_account_flash('ok', $pkDone . '; ' . $pkCount . '.');
+			p202_account_redirect('202-account/api-integrations.php#paykickstart');
 		}
 	}
 
@@ -965,16 +1001,83 @@ template_top('API Integrations');
 		</div>
 	<?php } ?>
 
+	<?php
+	$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;
+	$pkStored = PayKickstartKeys::stored(is_string($pkColumn) ? $pkColumn : null)['keys'];
+	$pkErrors = isset($error['paykickstart']) ? ['paykickstart_ipn_secret_key' => (string) $error['paykickstart']] : [];
+	?>
 	<div class="col-12 col-lg-6">
 		<section class="p202-panel h-100" id="paykickstart">
 			<div class="p202-panel__head">
 				<img src="<?php echo $e($base . '202-img/icons/integrations/paykickstart.png'); ?>" width="22" height="22" alt="" class="rounded-1">
 				<h2 class="p202-panel__title">PayKickstart</h2>
-				<span class="p202-pill">No setup needed</span>
+				<?php if ($pkStored) { ?>
+					<span class="p202-pill p202-pill--good"><?php
+						echo count($pkStored) === 1 ? '1 key stored' : count($pkStored) . ' keys stored';
+					?></span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
 			</div>
 			<div class="p202-panel__body">
-				<p class="text-secondary">Update conversions from PayKickstart’s Affiliate IPN: paste this URL as your IPN URL in PayKickstart.</p>
+				<p class="text-secondary">Record each sale, rebill and refund of a product you sell through
+					PayKickstart on the click that sent the buyer, from PayKickstart’s product IPN.</p>
+				<?php if (isset($error['paykickstart_remove'])) {
+					echo p202_flash('bad', (string) $error['paykickstart_remove']);
+				} ?>
+				<ol class="ps-3">
+					<li>Make each campaign’s offer URL its PayKickstart checkout link with
+						<code class="text-nowrap">subid=[[subid]]</code> added, such as
+						<code>https://app.paykickstart.com/checkout/123?subid=[[subid]]</code>. PayKickstart sends the
+						subid back in the IPN, and the sale is recorded on that click. For a subscription, set the
+						campaign’s “When a click converts more than once” (under Advanced) to “Add them up”, so each
+						rebill adds to the sale instead of replacing it.</li>
+					<li>In PayKickstart, paste this URL into the IPN Integration tab of each product.</li>
+					<li>Store the IPN secret key of each PayKickstart campaign here (every campaign has its own, in
+						its settings). An IPN that no stored key verifies is refused.</li>
+				</ol>
 				<?php echo $endpoint('IPN URL', $trackingBase . 'tracking202/static/paykickstart.php'); ?>
+				<?php if ($pkStored) { ?>
+					<ul class="p202-list mb-3">
+						<?php foreach ($pkStored as $pkPlace => $pkKey) { ?>
+							<li class="p202-list__item">
+								<span class="p202-list__name">Key ending <?php echo $e(PayKickstartKeys::hint($pkKey)); ?></span>
+								<span class="p202-list__actions"><form method="post"
+									action="<?php echo $e($self . '#paykickstart'); ?>" class="d-inline"
+									data-p202-confirm="Remove this key? PayKickstart IPNs signed with it are refused until it is stored again.">
+									<?php echo p202_account_token_field(); ?>
+									<input type="hidden" name="paykickstart_key_action" value="remove">
+									<input type="hidden" name="paykickstart_key_place" value="<?php echo (int) $pkPlace + 1; ?>">
+									<input type="hidden" name="paykickstart_key_hint" value="<?php echo $e(PayKickstartKeys::hint($pkKey)); ?>">
+									<button type="submit" class="p202-list__action p202-list__action--danger">remove</button>
+								</form></span>
+							</li>
+						<?php } ?>
+					</ul>
+				<?php } ?>
+				<details class="p202-disclosure"<?php echo $pkErrors ? ' open' : ''; ?>>
+					<summary><?php echo $pkStored ? 'Add a key' : 'Connect'; ?>
+						<span class="p202-disclosure__hint">one for each campaign</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#paykickstart'); ?>">
+							<input type="hidden" name="paykickstart_key_action" value="add">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="paykickstart_ipn_secret_key">IPN secret key</label>
+							<div class="input-group">
+								<input type="text"
+									class="form-control<?php echo p202_account_invalid($pkErrors, 'paykickstart_ipn_secret_key'); ?>"
+									id="paykickstart_ipn_secret_key" name="paykickstart_ipn_secret_key"
+									required autocomplete="off" spellcheck="false" value="">
+								<button class="btn btn-secondary" type="submit">Save</button>
+							</div>
+							<?php echo p202_account_field_error($pkErrors, 'paykickstart_ipn_secret_key'); ?>
+						</form>
+					</div>
+				</details>
+				<p class="form-text mb-0 mt-3">Promoting PayKickstart products as an affiliate? PayKickstart’s
+					Affiliate IPN cannot update conversions: it carries no click (PayKickstart allows no custom
+					variables in it, and the tid on your affiliate link shows only in your PayKickstart account), and it
+					is not signed. Leave this URL out of the Affiliate IPN setting.</p>
 			</div>
 		</section>
 	</div>
