@@ -77,7 +77,8 @@ inserts conversions that strict mode refuses or that collide on
 `uniq_click_dedupe` — it can no longer record conversions at all.
 
 Every release's notes, and anyone walking an operator through an upgrade,
-must say so before the upgrade is started. The upgrade page
+must say so before the upgrade is started. The Release workflow refuses to
+publish notes that do not (see "Write the release notes" below). The upgrade page
 (`202-config/upgrade.php`) says it above its button on every upgrade
 (`#upgrade-backup-warning`). A backup means a full `mysqldump` (or the
 host's snapshot) of the Prosper202 database, taken after the site stops
@@ -117,7 +118,18 @@ This is the normal path. CI builds and publishes; you only tag.
    request to show it. Bring master into the version branch with the revert
    reverted, and run the check again.
 
-2. **Tag and push the tag.** The tag must be `v` + the exact version you set:
+2. **Write the release notes, on the version branch.** They are
+   `.github/release-notes/<version>.md`, and the Release workflow publishes
+   that file as the release's notes. It refuses to publish without it, or
+   with notes that do not say an upgrade needs a database backup (the check
+   looks for "there is no downgrade"). Follow the last release's notes:
+   what an upgrader must do first (security, backup, a setting to check),
+   the download and requirements, a short "What's new and what changed",
+   and the version's `changelogs.txt` block under "Full changelog (for
+   developers)". `.github/` is not in the zip, so the file can land after
+   the release checks without changing the tested tree.
+
+3. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 
    ```bash
    git checkout master && git pull   # after the version branch is merged
@@ -125,7 +137,7 @@ This is the normal path. CI builds and publishes; you only tag.
    git push origin v1.9.59
    ```
 
-3. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
+4. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
@@ -136,9 +148,9 @@ This is the normal path. CI builds and publishes; you only tag.
      YAML),
    - writes a job summary with the artifact name, size, and SHA256, and
    - publishes a GitHub Release for the tag with the zip attached and
-     auto-generated release notes.
+     `.github/release-notes/<version>.md` as its notes.
 
-4. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
+5. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
    attached and the version in the filename matches the tag. The build has
    already run `release-tree.php verify` on its contents; a spot check that
    `vendor/autoload.php` and `go-cli/dist/linux-amd64/p202` exist, and that
@@ -151,7 +163,7 @@ This is the normal path. CI builds and publishes; you only tag.
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
 
-5. **Do a full docs pass, the same day.** The docs readers find first still
+6. **Do a full docs pass, the same day.** The docs readers find first still
    describe the previous version until someone changes them. Read the new
    version's changelog, then check **every** guide on the site and **every**
    page on ReadMe against it, not only the pages below, and fix whatever the

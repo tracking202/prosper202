@@ -80,6 +80,26 @@ jobs:
           fi
           echo "Tag ${GITHUB_REF_NAME} matches version.php (v${version})."
 
+      - name: Check the release notes
+        # The Release's notes are .github/release-notes/<version>.md, written
+        # before the tag, and they must say that an upgrade needs a database
+        # backup (RELEASING.md, "Upgrades are one-way"). Checked before the
+        # build so a missing file costs seconds, not the build.
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(php -r 'require "202-config/version.php"; echo PROSPER202_VERSION;')"
+          notes=".github/release-notes/${version}.md"
+          if [ ! -f "${notes}" ]; then
+            echo "::error::${notes} is missing. Write the release's notes there and tag again (RELEASING.md)." >&2
+            exit 1
+          fi
+          if ! grep -q 'there is no downgrade' "${notes}"; then
+            echo "::error::${notes} does not say that an upgrade needs a database backup and has no downgrade (RELEASING.md, \"Upgrades are one-way\")." >&2
+            exit 1
+          fi
+          echo "path=${notes}" >> "$GITHUB_OUTPUT"
+
       - name: Build release artifact
         id: build
         run: |
@@ -115,5 +135,5 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/prosper202-*.zip
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
           fail_on_unmatched_files: true
