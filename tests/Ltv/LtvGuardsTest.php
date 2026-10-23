@@ -133,7 +133,7 @@ final class LtvGuardsTest extends TestCase
 
         $repo->breakdown(new LtvQuery(7, 1700000000, 1700086400), 'campaign', 25, 0);
 
-        $queries = $read->statementsContaining('SUM(click_cpc)');
+        $queries = $read->statementsContaining('SUM(sc.click_cpc)');
         self::assertCount(1, $queries);
         self::assertStringContainsString('ltv_cac', $queries[0]->sql);
         // Bind order follows SQL text: spend subquery (user, from, to), then

@@ -97,6 +97,7 @@ final class ClickRetention
         // behind they would outlive a later deletion of their account.
         '202_identity_observations',
         '202_clicks_visitor',
+        '202_click_latest_visits',
         '202_clicks',
     ];
 
@@ -113,6 +114,8 @@ final class ClickRetention
         '202_attribution_credits' => 'a conversion\'s credits, kept with the conversion: its totals stay whole; breakdowns join the click',
         '202_attribution_rollup_dirty_clicks' => 'rollup marks: resolving a click that is gone marks the hours of the journeys that still hold it',
         '202_attribution_backfill' => 'next_click_id and through_click_id are the ledger backfill\'s cursor, not a click\'s row',
+        '202_reclick_backfill' => 'next_click_id and through_click_id are the re-click backfill\'s cursor,'
+            . ' not a click\'s row',
         '202_identity_merges' => 'a merge of two visitors, with the click that proved it: the visitors stay merged, and the row goes with its account',
         '202_app_installs' => 'app installs, pruned by AppRetention on their own windows',
         '202_revenue_events' => 'the LTV revenue ledger: money, kept with the customer',

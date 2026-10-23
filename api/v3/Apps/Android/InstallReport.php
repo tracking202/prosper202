@@ -9,6 +9,7 @@ use Api\V3\Controllers\AppPostbacksController;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\MysqliStatements;
 use Api\V3\Support\ResponseSanitizer;
+use Prosper202\Click\LatestVisit;
 
 /**
  * The Android half of GET /apps/report (plan §5.6): what the installs the
@@ -115,7 +116,11 @@ final class InstallReport
         'ctit_long' => "SUM(CASE WHEN i.ctit_flag = 'long' THEN 1 ELSE 0 END)",
     ];
 
-    /** Joined for the campaign dimension and filter: the click's campaign, the owner's own clicks only. */
+    /**
+     * Joined for the campaign dimension and filter: the click's campaign, the
+     * owner's own clicks only. Every statement that joins it reads the
+     * filters (buildFilters()), which keep the click's latest visit.
+     */
     private const CLICK_JOIN = 'LEFT JOIN 202_clicks c ON c.click_id = i.click_id AND c.user_id = i.user_id';
 
     /** An outcome's ledger row, which its revenue is read from (revenue()). */
@@ -378,7 +383,9 @@ final class InstallReport
      */
     private function buildFilters(array $params): array
     {
-        $where = ['i.user_id = ?'];
+        // An install on a re-clicked click is one row, at the latest visit;
+        // one with no click row keeps its NULLs (NOT EXISTS over a NULL id).
+        $where = ['i.user_id = ?', LatestVisit::isLatest('c')];
         $binds = [$this->userId];
         $types = 'i';
 

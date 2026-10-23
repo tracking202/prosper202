@@ -99,11 +99,11 @@ final class LtvDatabaseIntegrationTest extends TestCase
         }
     }
 
-    private function insertClick(int $clickId, float $payout = 10.0, float $cpc = 0.0): void
+    private function insertClick(int $clickId, float $payout = 10.0, float $cpc = 0.0, int $campaignId = 7): void
     {
         $db = self::$db;
-        $db->query("INSERT INTO 202_clicks SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
-        $db->query("INSERT INTO 202_clicks_spy SET click_id=$clickId, user_id=1, aff_campaign_id=7, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
+        $db->query("INSERT INTO 202_clicks SET click_id=$clickId, user_id=1, aff_campaign_id=$campaignId, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
+        $db->query("INSERT INTO 202_clicks_spy SET click_id=$clickId, user_id=1, aff_campaign_id=$campaignId, click_payout=$payout, click_cpc=$cpc, click_lead=0, click_time=1700000000");
     }
 
     /** @return array<string, mixed> */
@@ -1583,14 +1583,13 @@ CHILD;
                 aff_campaign_name='{$name}', aff_campaign_url='https://example.com/offer-{$id}'");
         }
 
-        // Purchase journeys (campaign comes from the conversion log):
+        // Purchase journeys (each conversion takes its click's campaign):
         //  c1: A then B            (A->B adjacent)
         //  c2: A then C then B     (A->C and C->B adjacent, A->B eventual)
         //  c3: A then D, D voided  (deleted sales must leave no transitions)
         $buy = function (int $clickId, string $ref, int $campaignId, int $convTime, string $tx): int {
-            $this->insertClick($clickId);
+            $this->insertClick($clickId, 10.0, 0.0, $campaignId);
             $log = $this->log($clickId);
-            $log['campaign_id'] = (string) $campaignId;
             $log['conv_time'] = $convTime;
             $result = p202RecordConversion(self::$db, $log, '', true, '10.0', $tx, ['customer_ref' => $ref], []);
 
