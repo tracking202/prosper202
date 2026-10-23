@@ -7,6 +7,7 @@ namespace Prosper202\User;
 use Prosper202\Click\TrackingDomain;
 use Prosper202\Ltv\MysqlEngagementRepository;
 use Prosper202\Ltv\MysqlPersonalizationRepository;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 
 /**
  * Every preference `PUT /users/{id}/preferences` writes, and the rule the
@@ -23,7 +24,8 @@ use Prosper202\Ltv\MysqlPersonalizationRepository;
  * Owners: Personal settings (202-account/account.php) for the profile
  * choices, the report pages (functions-report-prefs.php,
  * functions-ui-partials.php p202_report_ranges()) for the report defaults,
- * Integrations (202-account/api-integrations.php) for the network secrets,
+ * Integrations (202-account/api-integrations.php) for the network secrets
+ * (PayKickstartKeys for PayKickstart's, a list),
  * and LTV › Settings (tracking202/ajax/ltv_settings.php) for the LTV values.
  */
 final class PreferenceRules
@@ -78,6 +80,7 @@ final class PreferenceRules
     private const SPECIAL = [
         'user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email',
         'user_ltv_personalization_fields', 'user_ltv_score_weights', 'user_ltv_rec_fatigue',
+        'paykickstart_ipn_secret_keys',
     ];
 
     private function __construct()
@@ -188,6 +191,10 @@ final class PreferenceRules
                 return self::personalizationFields($value);
             case 'user_ltv_score_weights':
                 return self::scoreWeights($value);
+            case 'paykickstart_ipn_secret_keys':
+                // The whole list: the keys cannot be read back, so a caller
+                // adding one sends every key it keeps (PayKickstartKeys).
+                return PayKickstartKeys::serialize(PayKickstartKeys::parse($value));
             case 'user_ltv_rec_fatigue':
                 $value = trim($value);
                 if ($value !== '' && preg_match('/^\d{1,3}(,\d{1,4})?$/D', $value) !== 1) {

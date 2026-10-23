@@ -40,8 +40,17 @@ final class WebEventPathsTest extends TestCase
     private const EXEMPT = [
         // ClickBank's INS carries a receipt and an order, never an event:
         // its payload is ClickBank's, not something an operator templates.
-        'tracking202/static/cb202.php' => 'ClickBank INS has no event parameter',
+        'tracking202/static/cb202.php' => 'ClickBank\'s INS names its own transaction types',
+        // Its events are PayKickstart's (sales, refund), each decided by the
+        // payment-notification processor, never a template's `event=`.
+        'tracking202/static/paykickstart.php' => 'PayKickstart\'s IPN names its own events',
     ];
+
+    /**
+     * Records for an endpoint that builds it: the payment notifications'
+     * Receiver, whose Processor calls p202RecordLegacyConversion().
+     */
+    private const RECORDING_CLASSES = ['Prosper202\\PaymentNotification\\Receiver'];
 
     private const RECORDERS = ['p202RecordConversion', 'p202RecordLegacyConversion'];
 
@@ -112,6 +121,9 @@ final class WebEventPathsTest extends TestCase
                     $first = $first === null ? $at : min($first, $at);
                 }
             }
+            foreach (self::constructions($tokens) as $at) {
+                $first = $first === null ? $at : min($first, $at);
+            }
             if ($first !== null) {
                 $recording[$relative] = [$tokens, $first];
             }
@@ -132,6 +144,45 @@ final class WebEventPathsTest extends TestCase
         foreach (self::EVENT_ENDPOINTS as $relative) {
             self::assertArrayHasKey($relative, $recording, $relative . ' is listed as an event endpoint but records nothing');
         }
+    }
+
+    /**
+     * Positions of `new` of a RECORDING_CLASSES class, fully qualified as
+     * the endpoints write it.
+     *
+     * @param list<mixed> $tokens
+     * @return list<int>
+     */
+    private static function constructions(array $tokens): array
+    {
+        $out = [];
+        foreach ($tokens as $i => $t) {
+            if (!is_array($t) || $t[0] !== T_NEW) {
+                continue;
+            }
+            $class = self::neighbour($tokens, $i, 1);
+            if (is_array($class) && in_array(ltrim($class[1], '\\'), self::RECORDING_CLASSES, true)) {
+                $out[] = $i;
+            }
+        }
+
+        return $out;
+    }
+
+    public function testTheReceiverRecordsThroughALegacyRecorder(): void
+    {
+        $tokens = self::tokens('202-config/PaymentNotification/Processor.php');
+        $records = self::callsTo($tokens, 'p202RecordLegacyConversion');
+        self::assertNotSame([], $records, 'RECORDING_CLASSES names a class that records');
+        $endpoints = array_map(
+            static fn (string $p): string => substr($p, strlen(self::root()) + 1),
+            glob(self::root() . '/tracking202/static/*.php') ?: []
+        );
+        $builders = ['tracking202/static/cb202.php', 'tracking202/static/paykickstart.php'];
+        self::assertSame($builders, array_values(array_filter(
+            $endpoints,
+            static fn (string $relative): bool => self::constructions(self::tokens($relative)) !== []
+        )), 'the scan reads the endpoint that builds the Receiver');
     }
 
     public function testEveryGoalEngineBuiltOutsideTheTestsHasANotifier(): void

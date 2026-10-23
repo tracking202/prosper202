@@ -12,6 +12,7 @@ use Api\V3\Exception\WriteCommittedException;
 use Api\V3\Exception\ValidationException;
 use Api\V3\Support\StatementHelpers;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\Report\AccountZone;
 use Prosper202\User\CurrencyChange;
 use Prosper202\User\ExchangeRates;
@@ -850,7 +851,8 @@ class UsersController
             $row['chart_time_range'] = $chartRow['chart_time_range'];
         }
 
-        return ['data' => $row];
+        // Never the PayKickstart IPN keys themselves: how many are stored.
+        return ['data' => PayKickstartKeys::withoutKeys($row)];
     }
 
     /**

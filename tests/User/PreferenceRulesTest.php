@@ -77,6 +77,22 @@ final class PreferenceRulesTest extends TestCase
         yield 'p13n email' => ['user_ltv_personalization_fields', 'first_name,email'];
         yield 'secret too long' => ['cb_key', str_repeat('k', 251)];
         yield 'secret not a string' => ['ipqs_api_key', 12];
+        yield 'a PayKickstart key too short' => ['paykickstart_ipn_secret_keys', 'good-key-0001,short'];
+        yield 'PayKickstart keys as a list' => ['paykickstart_ipn_secret_keys', ['good-key-0001']];
+    }
+
+    public function testPayKickstartKeysAreAListOneForEachCampaign(): void
+    {
+        $column = 'paykickstart_ipn_secret_keys';
+        self::assertSame(\Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys::COLUMN, $column);
+        self::assertContains($column, PreferenceRules::columns());
+        [$clean, $errors] = self::validate([$column => " first-key-0001, second-key-0002\nfirst-key-0001 "]);
+        self::assertSame([], $errors);
+        self::assertSame([$column => "first-key-0001\nsecond-key-0002"], $clean);
+        self::assertSame([[$column => ''], []], self::validate([$column => '']), '"" removes them');
+
+        [, $errors] = self::validate([$column => 'good-key-0001,short']);
+        self::assertSame('Key 2 is 5 characters long; a PayKickstart IPN secret key is 8 to 128.', $errors[$column]);
     }
 
     /** @dataProvider refused */

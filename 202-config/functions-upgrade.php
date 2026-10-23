@@ -4430,6 +4430,9 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
+                // 202_users_pref gains paykickstart_ipn_secret_keys, the keys
+                // PayKickstart's product IPN is verified with (PayKickstartKeys).
+                \Prosper202\Database\Tables\UserTables::usersPref(),
             ]);
 
             if ($step_ok) {

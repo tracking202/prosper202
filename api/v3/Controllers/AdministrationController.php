@@ -12,6 +12,7 @@ use Api\V3\Support\PayloadKeys;
 use Prosper202\Click\ClickRetention;
 use Prosper202\Click\TrackingBaseUrl;
 use Prosper202\Database\Connection;
+use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 use Prosper202\User\SignInOutcome;
 
 /**
@@ -83,7 +84,9 @@ final class AdministrationController
         'jvzoo' => ['JVZoo', 'IPN URL', 'tracking202/static/jvzoo.php', 'jvzoo_ipn_secret_key'],
         'zaxaa' => ['Zaxaa', 'ZPN URL', 'tracking202/static/zpn.php', 'zaxaa_api_signature'],
         'slack' => ['Slack', 'Prosper202 webhook', 'tracking202/static/slack.php', 'user_slack_incoming_webhook'],
-        'paykickstart' => ['PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', null],
+        'paykickstart' => [
+            'PayKickstart', 'IPN URL', 'tracking202/static/paykickstart.php', 'paykickstart_ipn_secret_keys',
+        ],
     ];
 
     private readonly Connection $conn;
@@ -662,7 +665,8 @@ final class AdministrationController
             $domain = $this->one('SELECT user_tracking_domain FROM 202_users_pref WHERE user_id = ? LIMIT 1', 'i', [self::INSTALL_OWNER]);
             $base = TrackingBaseUrl::buildForResponse((string) ($domain['user_tracking_domain'] ?? ''), $server ?? $_SERVER, dirname(__DIR__, 3));
             $prefs = $this->one(
-                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook
+                'SELECT cb_key, cb_verified, jvzoo_ipn_secret_key, zaxaa_api_signature, user_slack_incoming_webhook,
+                        paykickstart_ipn_secret_keys
                  FROM 202_users_pref WHERE user_id = ? LIMIT 1',
                 'i',
                 [$this->userId]
@@ -679,6 +683,12 @@ final class AdministrationController
                 ];
                 if ($key === 'clickbank') {
                     $entry['verified'] = (int) ($prefs['cb_verified'] ?? 0) === 1;
+                }
+                if ($key === 'paykickstart') {
+                    // One key for each PayKickstart campaign; never the keys.
+                    $keys = $prefs['paykickstart_ipn_secret_keys'] ?? null;
+                    $entry['keys_stored'] = count(PayKickstartKeys::stored(is_string($keys) ? $keys : null)['keys']);
+                    $entry['secret_stored'] = $entry['keys_stored'] > 0;
                 }
                 $list[] = $entry;
             }

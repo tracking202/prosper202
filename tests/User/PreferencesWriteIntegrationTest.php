@@ -174,4 +174,38 @@ final class PreferencesWriteIntegrationTest extends TestCase
         self::assertSame('1', (string) self::$db->query('SELECT COUNT(*) FROM 202_charts WHERE user_id = ' . self::USER)->fetch_row()[0], 'updated, not duplicated');
         self::assertSame('days', $this->prefs()['chart_time_range']);
     }
+
+    /**
+     * GET /users/{id}/preferences answers with the account's row, and the
+     * PayKickstart IPN keys are never in it: how many are stored, in the
+     * column's place, on the GET and on the PUT's answer.
+     */
+    public function testPayKickstartKeysAreWrittenAndNeverServed(): void
+    {
+        $users = new UsersController(self::$db);
+        $column = 'paykickstart_ipn_secret_keys';
+        $answer = $users->updatePreferences(self::USER, [$column => 'pk-key-one-0001, pk-key-two-0002']);
+
+        foreach ([$answer['data'], $this->prefs()] as $served) {
+            self::assertArrayNotHasKey($column, $served);
+            self::assertSame(2, $served['paykickstart_ipn_keys_stored']);
+            self::assertStringNotContainsString('pk-key-', (string) json_encode($served));
+        }
+        $stored = self::$db->query("SELECT $column FROM 202_users_pref WHERE user_id = " . self::USER)->fetch_row()[0];
+        self::assertSame("pk-key-one-0001\npk-key-two-0002", $stored);
+
+        try {
+            $users->updatePreferences(self::USER, [$column => 'pk-key-one-0001,short']);
+            self::fail('a key that is not one was written');
+        } catch (ValidationException $e) {
+            self::assertSame(
+                [$column => 'Key 2 is 5 characters long; a PayKickstart IPN secret key is 8 to 128.'],
+                $e->getFieldErrors()
+            );
+        }
+        self::assertSame(2, $this->prefs()['paykickstart_ipn_keys_stored'], 'nothing written');
+
+        $users->updatePreferences(self::USER, [$column => '']);
+        self::assertSame(0, $this->prefs()['paykickstart_ipn_keys_stored']);
+    }
 }
