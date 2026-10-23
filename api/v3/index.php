@@ -105,7 +105,14 @@ if ($path === '/apps/installs' || preg_match('#^/apps/installs/([^/]+)/events$#D
         // Nothing was committed (every write is one transaction that rolled
         // back), so a 5xx is the truthful answer and the SDK's retry is safe.
         error_log('p202 android intake: ' . $androidError->getMessage());
-        Bootstrap::errorResponse('The install could not be recorded; retry later', 500);
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            header('Retry-After: 300');
+        }
+        Bootstrap::errorResponse(
+            $pending ?? 'The install could not be recorded; retry later',
+            $pending !== null ? 503 : 500
+        );
         exit;
     }
     foreach ($androidResult['headers'] ?? [] as $androidHeader => $androidValue) {
@@ -1629,7 +1636,16 @@ try {
     }
 
 } catch (AuthException $e) {
-    Bootstrap::errorResponse($e->getMessage(), $e->getCode() ?: 401);
+    $code = $e->getCode() ?: 401;
+    $message = $e->getMessage();
+    if ($code >= 500) {
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        if ($pending !== null) {
+            [$message, $code] = [$pending, 503];
+        }
+    }
+    Bootstrap::errorResponse($message, $code);
 } catch (ValidationException $e) {
     Bootstrap::errorResponse($e->getMessage(), 422, $e->getFieldErrors() ? ['field_errors' => $e->getFieldErrors()] : []);
 } catch (ConflictException $e) {
@@ -1639,15 +1655,18 @@ try {
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
+    $message = $e->getMessage();
     if ($code >= 500) {
-        // The answer names no cause; the log keeps it.
+        // The answer names no cause but a pending upgrade; the log keeps it.
         error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+        $pending = Bootstrap::pendingUpgrade($db);
+        [$message, $code] = $pending !== null ? [$pending, 503] : ['Internal server error', $code];
     }
-    $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
 } catch (\Throwable $e) {
     error_log(p202UncaughtLogLine('API v3 answered 500', $e));
-    Bootstrap::errorResponse('Internal server error', 500);
+    $pending = Bootstrap::pendingUpgrade($db);
+    Bootstrap::errorResponse($pending ?? 'Internal server error', $pending !== null ? 503 : 500);
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────

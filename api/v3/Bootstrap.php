@@ -100,6 +100,18 @@ final class Bootstrap
         self::jsonResponse($body, $status);
     }
 
+    /**
+     * The answer to a 5xx while the database's schema is not this code's
+     * version (the files deployed, the upgrade not run): the schema is the
+     * likely cause, and /system/health still answers healthy. Null otherwise.
+     */
+    public static function pendingUpgrade(\mysqli $db): ?string
+    {
+        require_once dirname(__DIR__, 2) . '/202-config/version.php';
+
+        return \Prosper202\Database\SchemaVersion::pendingUpgrade($db, \PROSPER202_VERSION);
+    }
+
     /** @internal */
     public static function resetDb(): void
     {

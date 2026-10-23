@@ -481,7 +481,8 @@ Empty response body.
 | 409 | Conflict (version/etag mismatch on update: an `If-Match` header, or a body's `version`/`etag`) |
 | 422 | Unprocessable Entity (validation errors) |
 | 429 | Too Many Requests (rate limit exceeded) |
-| 503 | Service Unavailable |
+| 500 | Internal Server Error (the cause is in the server's error log, not the answer) |
+| 503 | Service Unavailable: the database cannot be reached, or the install's files are newer than its database. In the second case the message says so, naming both versions (`the database needs an upgrade: its schema is version 1.9.78 and this code is version 1.9.79. …`), and an admin runs the upgrade at `202-config/upgrade.php`. Between deploying the files and running the upgrade, a request that touches what the upgrade adds fails this way; the rest answer as usual, and `GET /system/health` still answers healthy. The app intakes (`POST /apps/installs`, its events, the Apple postback endpoints) answer the same 503, which their SDK and devices retry like any 5xx. A write made before the failure keeps its 500 saying the record exists, because a retry would make a second one. The legacy v1/v2 report API answers the same 503 in its `msg`. |
 
 ## Rate Limits
 
