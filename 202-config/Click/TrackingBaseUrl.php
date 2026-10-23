@@ -10,21 +10,24 @@ use Prosper202\Http\RequestHost;
  * The base every tracking link, pixel and landing-page snippet this install
  * hands out starts with: `scheme://host[:port]/<install path>/`.
  *
- * The setup pages build it as 'http://' . getTrackingDomain() .
- * get_absolute_url(): the tracking domain is user 1's preference, or the
- * host the request arrived at when it is empty (domainForResponse(); it was
- * this server's own name and port), and the path is where the install
- * sits under the document root. The API built its own from the CALLER's
+ * The host is the stored tracking domain (the caller's for a link handed
+ * back, the owner's for a URL sent on), or with none the host the request
+ * arrived at (domainForResponse(); it was this server's own name and port)
+ * or the server's own name (build()), and the path is where the install sits
+ * under the document root. The API built its own from the caller's
  * preference and nothing else, so on a fresh install (an empty domain)
  * every tracking URL was a 404, a host-only domain — the form Personal
  * settings stores — gave a link with no scheme, and an install in a
  * subdirectory lost the directory. This is the pages' rule, in a form the
  * API can call: no globals, the server values passed in.
  *
- * One difference, chosen: the scheme. The pages write 'http://' always;
- * here a domain stored with a scheme keeps it, and otherwise the scheme the
- * request arrived on is used, so an install reached over HTTPS hands out
- * HTTPS links.
+ * The scheme is https unless the install says it is http-only: a domain
+ * stored with a scheme keeps it (storedScheme()), and otherwise the scheme
+ * the request arrived on is used — the install's own URL, which whoever
+ * asked has just reached it on. The pages and the API build on
+ * buildForResponse() alike (p202TrackingBaseForResponse(),
+ * TrackingBaseLookup), and HandBuiltLinkSchemeTest refuses a link built on
+ * a scheme chosen anywhere else.
  *
  * forRequest() and requestUrl() are the other base: this install on the
  * origin the request itself arrived at, for the URLs a response points
@@ -68,14 +71,31 @@ final class TrackingBaseUrl
         if ($host === '') {
             $host = self::serverHost($server);
         }
-        if (preg_match('#^\s*(https?)://#i', $storedDomain, $m) === 1) {
-            $scheme = strtolower($m[1]);
-        } else {
+        $scheme = self::storedScheme($storedDomain);
+        if ($scheme === null) {
             require_once dirname(__DIR__) . '/request-https.php';
             $scheme = p202_request_is_https($server) ? 'https' : 'http';
         }
 
         return $scheme . '://' . $host . self::installPath($server, $installRoot);
+    }
+
+    /** The scheme a tracking domain was saved with, `http` or `https`; null when it was saved without one. */
+    public static function storedScheme(string $storedDomain): ?string
+    {
+        return preg_match('#^\s*(https?)://#i', $storedDomain, $m) === 1 ? strtolower($m[1]) : null;
+    }
+
+    /**
+     * The scheme buildForResponse() takes from the stored domain, or null
+     * when it takes the request's: a domain with no host in it is not used
+     * at all, its scheme included.
+     *
+     * @param string $storedDomain the account's user_tracking_domain, as stored
+     */
+    public static function storedSchemeForResponse(string $storedDomain): ?string
+    {
+        return TrackingDomain::normalize($storedDomain) === '' ? null : self::storedScheme($storedDomain);
     }
 
     /**

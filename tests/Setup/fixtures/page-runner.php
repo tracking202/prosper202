@@ -19,7 +19,9 @@ declare(strict_types=1);
  * env:  P202_TEST_DB_HOST/PORT/USER/PASS/NAME, P202_TEST_REPORT_USER,
  *       P202_TEST_SESSION_DIR (where the session file is written),
  *       P202_TEST_GET / P202_TEST_POST (JSON objects; a POST makes the
- *       request a POST), P202_TEST_AJAX=1 (sends X-Requested-With)
+ *       request a POST), P202_TEST_AJAX=1 (sends X-Requested-With),
+ *       P202_TEST_SERVER (a JSON object of $_SERVER values, laid over the
+ *       request's: HTTPS, X-Forwarded-Proto, DOCUMENT_ROOT)
  * Prints the page's output; a page that dies prints what it printed first.
  */
 
@@ -52,6 +54,9 @@ $_SERVER = array_merge($_SERVER, [
     'REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => 'p202-page-runner',
     'REQUEST_METHOD' => $post === [] ? 'GET' : 'POST',
 ]);
+foreach (json_decode((string) (getenv('P202_TEST_SERVER') ?: '{}'), true, 8, JSON_THROW_ON_ERROR) as $key => $value) {
+    $_SERVER[$key] = $value;
+}
 if (getenv('P202_TEST_AJAX') === '1') {
     $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
 }

@@ -9,7 +9,8 @@
       "Fixed: A site whose name has www. inside it (awww.example.com) is filed as its own domain, not with the name it makes without it (aexample.com). Clicks already filed stay where they are",
       "Changed: The page that connects an AI assistant shows the app's name and site as what the approval link says, and that whoever started the connection gets the access; it no longer calls them verified. Allow a connection only if you started it yourself",
       "Changed: After an upgrade, tracking links look up their ids afresh instead of reading what the previous version cached, so the first clicks after an upgrade each make one more database read",
-      "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address"
+      "Changed: When a cron run was recorded in the last five minutes, turning AutoCron on in Settings no longer simply refuses: it says why AutoCron may not be needed and offers to turn it on anyway, since anyone can open the cron address",
+      "Fixed: Get Links hands out https:// links when you use Prosper202 over HTTPS or save your tracking domain with https://, the same links the API and p202 tracker get-url give; it wrote http:// always. The Postback / Pixel and API integrations pages follow a tracking domain saved with https:// or http:// too"
     ]
   },
   "1.9.78": {
