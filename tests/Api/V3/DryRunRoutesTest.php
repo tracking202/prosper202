@@ -66,6 +66,7 @@ final class DryRunRoutesTest extends TestCase
             'POST /conversions/subids/reset',
             'POST /conversions/uploads',
             'POST /system/retention/delete-before',
+            'PUT /rotators/{id}/rules',
         ], $reads, 'the writes whose handlers preview');
         self::assertSame($reads, $listed, '$writePreviewRouter lists exactly the writes whose handlers preview');
     }

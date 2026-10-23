@@ -596,6 +596,15 @@ func (c *Client) Put(path string, body interface{}) ([]byte, error) {
 	return c.do("PUT", path, nil, body)
 }
 
+// PutDryRun asks a PUT whose route previews (`?dry_run=1` on PUT
+// /rotators/{id}/rules) what it would write, and writes nothing. Every
+// server with that route reads the parameter, and one without it answers
+// 404, so unlike DeletePreview no capability is asked first. A dry run is a
+// read, so --staged never stamps it.
+func (c *Client) PutDryRun(path string, body interface{}) ([]byte, error) {
+	return c.do("PUT", path, map[string]string{"dry_run": "1"}, body)
+}
+
 // Patch sends a partial update: the server changes only the fields the body
 // names (the /ltv customer, company and field updates). It goes through the
 // same request path as Put, so --staged stamps it the same way and a server

@@ -240,7 +240,6 @@ var searchKnownMisses = map[string]string{
 	"setup-code-002-an-advanced-page-names-its-offers":                      "asks for the buttons' links; nothing says \"code\" (landing-page code fourth)",
 	"setup-code-004-a-traffic-source-variable-reaches-the-link":             "\"pass it along as adid\" names no variable; the link ranks the tracker first",
 	"setup-link-002-the-agent-knows-whose-key-it-holds":                     "\"which user does this key act as\" carries no word whoami's text uses; whoami second",
-	"setup-link-003-a-rule-that-redirects-to-a-url-delivers-the-click":      "a redirector name, an address and a URL crowd out \"add a rule\"",
 	"staged-001-apply-writes-the-reviewed-payload":                          "the task is a create with --staged; the expected command is the apply step (fourth)",
 	"triage-002-no-sale-value-given-is-not-invented":                        "\"losing money\" is not read as losers (fifth)",
 	"update-001-a-cost-set-on-one-campaign-only":                            "a campaign name and two days crowd out \"record that cost on those clicks\" (sixth)",

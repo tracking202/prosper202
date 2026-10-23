@@ -2899,6 +2899,134 @@ paths:
                     $ref: "#/components/schemas/RotatorRule"
         "422":
           $ref: "#/components/responses/ValidationError"
+    put:
+      tags: [Rotators]
+      summary: Replace the rule set
+      description: |
+        Setup › Redirectors' save as one call: the body lists every rule the
+        redirector is to have, in the order the redirects try them (the
+        first active rule whose criteria all match sends the visitor), and
+        the set is written in one transaction, or not at all. Read the set
+        with `GET /rotators/{id}/rules`, change it, and send it back as
+        `{"rules": [...]}`: a GET body sent back changes nothing.
+
+        A rule sent with the `id` of one of the redirector's rules is that
+        rule, changed to what is sent; it keeps its id, so its clicks and
+        report rows stay its own, and so do its criteria and redirects sent
+        with their ids. A rule without an `id` is added. A rule of the
+        redirector the set leaves out is removed, which needs the role
+        permission `remove_rotator_rule`, as on the page (`403` otherwise,
+        with nothing written). A kept rule sent without `splittest` or
+        `status` keeps its own; a new rule's are `0` and `1`. The rules keep
+        the order sent, but a rule's criteria and redirects come back in id
+        order, the new ones after the kept, and their order in the body is
+        not kept (every criterion has to match and a redirect is drawn by
+        weight, so it decides nothing).
+
+        Each rule needs a `rule_name`, at least one criterion (the value
+        `ALL` matches every visitor) and at least one redirect. A rule that
+        is not a split test has one redirect; each redirect of a split test
+        needs a `weight`, and at least one weight above 0. Every campaign and
+        landing page a redirect names must be one of your live ones. Each
+        criterion's value is stored as the page stores it: split on commas
+        and trimmed (`all` as `ALL`); a device is lower case. Every key is
+        checked, at every level; a problem is a `422` naming its place
+        (`rules.1.redirects.0.redirect_campaign`), with every problem in the
+        set reported at once and nothing written. A set has at least one
+        rule, and at most 200; a rule at most 100 criteria and 100 redirects.
+
+        `?dry_run=1` writes nothing and answers the set as it would be
+        stored (a new rule, criterion or redirect with `id: null`), in the
+        order the write reads it back, and the changes, after the same
+        checks. Stageable (`?staged=1`). PATCH is a
+        `405`: the set is replaced whole.
+      operationId: setRotatorRules
+      parameters:
+        - $ref: "#/components/parameters/writeDryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rules]
+              properties:
+                rules:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    allOf:
+                      - $ref: "#/components/schemas/RotatorRuleCreate"
+                      - type: object
+                        required: [rule_name, criteria, redirects]
+                        properties:
+                          id:
+                            type: integer
+                            description: One of the redirector's rules, to keep it; leave it out for a new rule.
+                          rotator_id:
+                            type: integer
+                            description: As GET answers it (this redirector's id); may be left out.
+      responses:
+        "200":
+          description: >-
+            The set as stored (as `GET /rotators/{id}/rules` answers it), or
+            as it would be stored with `dry_run=1`, and what changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      dry_run: {type: boolean}
+                      rotator_id: {type: integer}
+                      rules:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RotatorRule"
+                      changes:
+                        type: object
+                        properties:
+                          added: {type: integer}
+                          updated: {type: integer}
+                          unchanged: {type: integer}
+                          removed: {type: integer}
+                          rules:
+                            type: array
+                            description: Each rule of the set in order, then each rule removed.
+                            items:
+                              type: object
+                              properties:
+                                action:
+                                  type: string
+                                  enum: [add, update, keep, remove]
+                                id:
+                                  type: integer
+                                  nullable: true
+                                rule_name: {type: string}
+                                position:
+                                  type: integer
+                                  nullable: true
+                                  description: The rule's place in the set, from 1; null for a rule removed.
+                                changed:
+                                  type: array
+                                  description: For an update, what differs.
+                                  items:
+                                    type: string
+                                    enum: [rule_name, splittest, status, position, criteria, redirects]
+        "202":
+          description: Staged (`?staged=1`); nothing was written.
+        "403":
+          description: The set removes a rule and the role lacks `remove_rotator_rule`.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          description: PATCH; send the whole set with PUT.
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /rotators/{id}/rules/{ruleId}:
     parameters:
@@ -12183,7 +12311,10 @@ components:
               value:
                 type: string
                 description: >-
-                  Comma-separated; countries as Name(CC), e.g. "United States(US)".
+                  Comma-separated, stored with each value trimmed and the empty
+                  ones dropped (`all` as `ALL`, which matches every visitor);
+                  countries as Name(CC), e.g. "United States(US)"; devices in
+                  lower case (a capital never matches, so it is a 422).
                   For type ip, single IPv4 or IPv6 addresses, stored in canonical
                   form; a value that is not an address (a range included) is a 422.
         redirects:

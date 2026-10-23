@@ -46,6 +46,11 @@ final class RotatorTables
         );
     }
 
+    /**
+     * A redirector's rules are tried in `position` order, then by id (the
+     * order they had before 1.9.79, when every rule held 0): the first whose
+     * criteria all match sends the visitor (Prosper202\Rotator\RuleOrder).
+     */
     public static function rotatorRules(): SchemaDefinition
     {
         return SchemaBuilder::fromRawSql(
@@ -56,6 +61,7 @@ final class RotatorTables
                 `rule_name` varchar(255) NOT NULL DEFAULT '',
                 `splittest` tinyint(1) NOT NULL DEFAULT '0',
                 `status` int(11) DEFAULT NULL,
+                `position` int(11) unsigned NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
         );
