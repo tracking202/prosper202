@@ -771,7 +771,9 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * may undo) from one an operator made (which it must not). A row that is
      * already deleted is left exactly as it is, unmarked, and null returned.
      *
-     * Inside a transaction the caller holds (see recordInTransaction()).
+     * Inside a transaction the caller holds (see recordInTransaction()),
+     * whose first lock is the row's click: the row is read before the lock,
+     * so lockClick() refuses a caller that did not lock it first.
      * Returns the click whose value changed, or null.
      */
     public function retireGoalRowInTransaction(int $convId, int $userId, SupersededReason $reason): ?int
@@ -811,8 +813,10 @@ final class MysqlConversionRepository implements ConversionRepositoryInterface
      * key is what guarantees there is no second row for the outcome to
      * conflict with; the key check is what ties this row to it.
      *
-     * Inside a transaction the caller holds; lock order click, then
-     * conversion, as on every path here. Returns the click whose value may
+     * Inside a transaction the caller holds, which has locked the click
+     * first: the row is read before the lock, so lockClick() refuses
+     * anything else. Lock order click, then conversion, as on every path
+     * here. Returns the click whose value may
      * have changed (for refreshClickReport() after commit), or null when
      * nothing was written.
      *

@@ -885,12 +885,14 @@ paths:
                         nullable: true
                         description: >-
                           Null when there is nothing to bring over (a fresh
-                          install) or the walk is done. While it runs, the
-                          reports count a click it has not reached at each
-                          of its visits.
+                          install) or the walk is done with no click stepped
+                          over. While it runs, the reports count a click it
+                          has not reached at each of its visits, and once it
+                          is done they count a click it stepped over that way.
                         properties:
                           in_progress:
                             type: boolean
+                            description: False once the walk is done, which it reports only when it stepped over a click
                           started_at:
                             type: integer
                             description: Unix time of the upgrade that started it
@@ -903,6 +905,29 @@ paths:
                           percent:
                             type: integer
                             description: Share of the click ids up to the newest at the upgrade walked so far
+                          stalled_at_click_id:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              The click the walk is stopped at, which failed in
+                              the last run; null while nothing fails. Each run
+                              tries it again, and the server's error log says why,
+                              until it has failed in 10 runs in a row over an hour
+                              and is stepped over.
+                          failed_runs:
+                            type: integer
+                            description: How many runs in a row stalled_at_click_id has failed; 0 while nothing fails
+                          failing_since:
+                            type: integer
+                            nullable: true
+                            description: Unix time of the first of those runs; null while nothing fails
+                          skipped_clicks:
+                            type: integer
+                            description: Clicks stepped over after failing in 10 runs in a row over an hour; each counts at every one of its visits
+                          last_skipped_click_id:
+                            type: integer
+                            nullable: true
+                            description: The latest of those by id; null while there are none. The error log names each
                           note:
                             type: string
         "403":

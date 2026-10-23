@@ -19,23 +19,56 @@ final class SchemaVersion
      */
     public static function mismatch(\mysqli $db, string $codeVersion): ?string
     {
-        try {
-            $result = $db->query('SELECT version FROM 202_version');
-        } catch (\mysqli_sql_exception $e) {
-            return 'cannot read the schema version from 202_version (' . $e->getMessage() . '); open 202-config/upgrade.php on the site to repair it.';
+        $stored = self::stored($db);
+        if (isset($stored['error'])) {
+            return 'cannot read the schema version from 202_version (' . $stored['error'] . '); open 202-config/upgrade.php on the site to repair it.';
         }
-        if (!$result instanceof \mysqli_result) {
-            return 'cannot read the schema version from 202_version (' . $db->error . '); open 202-config/upgrade.php on the site to repair it.';
-        }
-        $row = $result->fetch_assoc();
-        $result->free();
-        $stored = is_array($row) ? (string) ($row['version'] ?? '') : '';
-        if ($stored === $codeVersion) {
+        if ($stored['version'] === $codeVersion) {
             return null;
         }
 
-        return 'the database needs an upgrade: its schema is version ' . ($stored !== '' ? $stored : '(none recorded)')
+        return 'the database needs an upgrade: its schema is version ' . ($stored['version'] !== '' ? $stored['version'] : '(none recorded)')
             . ' and this code is version ' . $codeVersion
             . '. Nothing was run. Open 202-config/upgrade.php on the site (signed in) to upgrade it; cron jobs run again once it has.';
+    }
+
+    /**
+     * What an answer that has already failed says while the files are
+     * deployed and the upgrade has not run, when a statement can fail on the
+     * older schema. Null when the schema is current, or its version cannot be
+     * read or names none: the answer then claims no cause, as it did. It
+     * never throws, being asked only on an error path.
+     */
+    public static function pendingUpgrade(\mysqli $db, string $codeVersion): ?string
+    {
+        try {
+            $stored = self::stored($db);
+        } catch (\Throwable) {
+            return null;
+        }
+        if (isset($stored['error']) || $stored['version'] === '' || $stored['version'] === $codeVersion) {
+            return null;
+        }
+
+        return 'the database needs an upgrade: its schema is version ' . $stored['version']
+            . ' and this code is version ' . $codeVersion
+            . '. Open 202-config/upgrade.php on the site (signed in) to upgrade it.';
+    }
+
+    /** @return array{version: string}|array{error: string} */
+    private static function stored(\mysqli $db): array
+    {
+        try {
+            $result = $db->query('SELECT version FROM 202_version');
+        } catch (\mysqli_sql_exception $e) {
+            return ['error' => $e->getMessage()];
+        }
+        if (!$result instanceof \mysqli_result) {
+            return ['error' => $db->error];
+        }
+        $row = $result->fetch_assoc();
+        $result->free();
+
+        return ['version' => is_array($row) ? (string) ($row['version'] ?? '') : ''];
     }
 }

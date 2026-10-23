@@ -171,10 +171,11 @@ final class MysqliQueryResultIsTestedTest extends TestCase
             . ' on; a statement that then fails is logged by executePartitionSql(). As'
             . ' SchemaInstaller::disableStrictMode().',
         ],
-        '202-config/Database/SchemaVersion.php::mismatch' => [
+        '202-config/Database/SchemaVersion.php::stored' => [
             1,
-            'A version that cannot be read is answered as a mismatch naming the failure, never as current'
-            . ' (CLAUDE.md #11): sync-worker.php writes it to stderr and exits 1 before any work.',
+            'A version that cannot be read is answered as the failure: mismatch() names it as a mismatch, never'
+            . ' as current (CLAUDE.md #11), and sync-worker.php exits 1 before any work; pendingUpgrade(), asked'
+            . ' only by an answer that has already failed, adds no cause to it.',
         ],
         '202-config/functions-upgrade.php::_upgrade_query_run' => [
             1,

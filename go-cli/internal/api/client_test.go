@@ -520,6 +520,16 @@ func TestHintFor(t *testing.T) {
 	if !strings.Contains(deactivated, "switched off") || !strings.Contains(deactivated, "`p202 user update <user_id> --user-active 1`") || strings.Contains(deactivated, "set-key") {
 		t.Errorf("a deactivated account's 401 hint = %q", deactivated)
 	}
+	// Between deploy and upgrade the server says so in a 503 (SchemaVersion::
+	// pendingUpgrade()); `system health` answers healthy then, so the generic
+	// 5xx hint is a dead end.
+	pending := HintFor(&APIError{Status: 503, Message: "the database needs an upgrade: its schema is version 1.9.78 and this code is version 1.9.79. Open 202-config/upgrade.php on the site (signed in) to upgrade it."})
+	if !strings.Contains(pending, "202-config/upgrade.php") || strings.Contains(pending, "system health") {
+		t.Errorf("a pending upgrade's 503 hint = %q", pending)
+	}
+	if h := HintFor(&APIError{Status: 503, Message: "Service unavailable"}); !strings.Contains(h, "system health") {
+		t.Errorf("another 503's hint = %q", h)
+	}
 	if h := HintFor(nil); h != "" {
 		t.Error("nil should produce no hint")
 	}
