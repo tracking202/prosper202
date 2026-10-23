@@ -3,7 +3,8 @@
     "version": "1.9.79",
     "logs": [
       "Changed: A visitor who comes back through a redirector link (a re-click) is counted once in every report, under the visit they made last, with the traffic source and cost of their first visit, and a conversion is credited to that last visit. Update CPC chooses such a click by its first visit and sets the cost of every visit",
-      "Changed: After the upgrade, the cron job brings the clicks re-clicked before 1.9.79 to one visit each, a little every minute; until it reaches one, the reports count it at each of its visits. Keep the cron job running"
+      "Changed: After the upgrade, the cron job brings the clicks re-clicked before 1.9.79 to one visit each, a little every minute; until it reaches one, the reports count it at each of its visits. Keep the cron job running",
+      "Fixed: The CLI's TOTAL row across profiles (report summary, dashboard) computes EPC, CPC, conversion rate, ROI and CPA from the summed figures instead of adding each profile's, and never adds money in different currencies; GET /reports/summary now says which currency its money is in"
     ]
   },
   "1.9.78": {

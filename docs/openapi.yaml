@@ -2230,7 +2230,9 @@ paths:
         parameter the endpoint does not take, a list where one value goes, or
         a value outside a filter's form is a 422 whose `field_errors` names
         the parameter (they used to be ignored, and the answer covered
-        everything).
+        everything). The ratios are MySQL's DECIMAL division of the sums,
+        truncated where it stops (9 decimals, 18 for roi) and rounded half
+        away from zero to 4 decimals for conv_rate and 9 for the others.
       operationId: reportSummary
       parameters:
         - $ref: "#/components/parameters/period"
@@ -2262,7 +2264,18 @@ paths:
                 type: object
                 properties:
                   data:
-                    $ref: "#/components/schemas/ReportMetrics"
+                    allOf:
+                      - $ref: "#/components/schemas/ReportMetrics"
+                      - type: object
+                        properties:
+                          currency:
+                            type: string
+                            example: USD
+                            description: >-
+                              The account currency the money is in (USD when
+                              the account has none set). Servers before 1.9.79
+                              do not answer it; a client adding two servers'
+                              money adds it only when both state the same one.
         "422":
           $ref: "#/components/responses/ValidationError"
 
@@ -11996,19 +12009,22 @@ components:
           type: number
         epc:
           type: number
-          description: Earnings per click
+          description: >-
+            Earnings per click, total_income / total_clicks (0 with no clicks).
+            Every ratio is computed from the summed figures, never from other
+            ratios
         avg_cpc:
           type: number
-          description: Average cost per click
+          description: Average cost per click, total_cost / total_clicks (0 with no clicks)
         conv_rate:
           type: number
-          description: Conversion rate (percentage)
+          description: Conversion rate (percentage), total_leads / total_click_throughs × 100 (0 with no click-throughs)
         roi:
           type: number
-          description: Return on investment (percentage)
+          description: Return on investment (percentage), total_net / total_cost × 100 (0 with no cost)
         cpa:
           type: number
-          description: Cost per acquisition
+          description: Cost per acquisition, total_cost / total_leads (0 with no leads)
 
     # ── Rotators ───────────────────────────────────────────────────────
 
