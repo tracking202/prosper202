@@ -695,7 +695,7 @@ $keyIntegrations = [
 	],
 	'clickbank' => [
 		'title' => 'ClickBank', 'icon' => 'clickbank.png', 'help' => 'clickbank',
-		'desc' => 'Update conversions automatically from ClickBank’s Instant Notification Service.',
+		'desc' => 'Update conversions from ClickBank’s Instant Notifications: put tid=[[subid]] on your HopLink.',
 		'extra' => '',
 		'flag' => 'change_cb_key', 'field' => 'cb_key', 'label' => 'ClickBank secret key', 'error' => 'cb_key',
 		'endpoint' => ['INS URL', $trackingBase . 'tracking202/static/cb202.php'],
@@ -722,7 +722,7 @@ $keyIntegrations = [
 		'endpoint' => ['Prosper202 webhook', $trackingBase . 'tracking202/static/slack.php'],
 	],
 ];
-$cb_crypto_ok = extension_loaded('mcrypt') || function_exists("openssl_decrypt");
+$cb_crypto_ok = function_exists('openssl_decrypt');
 
 template_top('API Integrations');
 ?>
@@ -970,7 +970,7 @@ template_top('API Integrations');
 				<div class="p202-panel__body">
 					<p class="text-secondary"><?php echo $e($integration['desc']); ?><?php echo $integration['extra'] !== '' ? ' ' . $integration['extra'] . '.' : ''; ?></p>
 					<?php if ($isClickbank && !$cb_crypto_ok) { ?>
-						<?php echo p202_flash('bad', 'The mcrypt (or OpenSSL) PHP extension is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
+						<?php echo p202_flash('bad', 'The OpenSSL PHP extension, which decrypts ClickBank’s notifications, is required for this integration. Install it, or ask your hosting provider for assistance.'); ?>
 					<?php } else { ?>
 						<?php if ($integration['endpoint'] !== null) {
 							echo $endpoint($integration['endpoint'][0], $integration['endpoint'][1]);

@@ -12,6 +12,52 @@ Clickbank doesn't support Postback or custom conversion pixels, so to get real-t
 
 **Video:** [Setting Up Prosper202 and Clickbank Instant Notification](https://www.youtube.com/watch?v=M6zo3XuExL0&feature=youtu.be)
 
+Prosper202 takes ClickBank's Instant Notification Service (INS), version 6.0
+or later (8.0 is current), and records each sale on the click that sent the
+buyer. Every Prosper202 account that sells or promotes through ClickBank sets
+it up for itself, under **Account › API integrations › ClickBank**:
+
+1. Make the campaign's offer URL your HopLink with `tid=[[subid]]` added, such
+   as `https://affiliate.vendor.hop.clickbank.net/?tid=[[subid]]`. A tracker
+   fills `[[subid]]` with the click id, and ClickBank sends it back as the
+   order's first tracking code. An affiliate on version 8.0 can use
+   `extclid=[[subid]]` instead: it is read when the order has no tracking
+   code.
+2. Save your ClickBank account's **secret key** on the page (ClickBank: up to
+   16 capital letters and digits, under Vendor Settings › My Site › Advanced
+   Tools). Each notification is encrypted with it, and the account whose key
+   decrypts it is the one it records for. A key that two Prosper202 accounts
+   store is refused (`409`), since it cannot say whose sale it is: keep it in
+   the account it belongs to.
+3. In ClickBank, paste the page's INS URL
+   (`https://<your tracking domain>/tracking202/static/cb202.php`), choose
+   version 8.0, and press **Test URL**: the test marks the key Verified on the
+   page and posts to your Slack webhook, if you have one.
+
+What each notification does, and the status ClickBank's INS log shows for it
+(ClickBank sends a notification again every four hours, five times, until it
+is answered with a 2xx):
+
+| Notification | Prosper202 | Status |
+| ------------ | ---------- | ------ |
+| `SALE` | a conversion on the click, source `clickbank`, under its `receipt`, worth its `totalAccountAmount` (USD) | `200 recorded` |
+| the same `SALE` again | nothing; a retry stating another amount is refused | `200 duplicate` / `409` |
+| `TEST` | the key is marked Verified | `200 test` |
+| every other type | nothing | `200 ignored` |
+| a sale with no tracking code | nothing: no click to credit | `200 no_click` |
+| a tracking code that is not a click of the account | nothing | `404` |
+| a notification no stored key decrypts | nothing | `403` |
+| a key more than one account stores | nothing | `409` |
+| an account that counts in a currency other than USD | nothing: ClickBank's amounts are USD, and Prosper202 does not convert them | `422` |
+| a malformed field (a tracking code such as `42.9`, an amount such as `1,000.00`) | nothing | `400`, naming the field |
+| a legacy notification (version 4.0 or earlier, signed with `cverify`) | nothing | `415`, saying to choose version 8.0 |
+| a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+| a notification that could not be recorded just now | nothing that a retry would double: a receipt is recorded once | `500` |
+
+Each notification is logged in the server's error log in one line: the
+outcome, the type, the click, the receipt and the account, never a key or the
+buyer's details.
+
 ## PayKickstart
 
 For a **vendor** selling through PayKickstart: Prosper202 records each sale and

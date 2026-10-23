@@ -40,7 +40,7 @@ final class WebEventPathsTest extends TestCase
     private const EXEMPT = [
         // ClickBank's INS carries a receipt and an order, never an event:
         // its payload is ClickBank's, not something an operator templates.
-        'tracking202/static/cb202.php' => 'ClickBank INS has no event parameter',
+        'tracking202/static/cb202.php' => 'ClickBank\'s INS names its own transaction types',
         // Its events are PayKickstart's (sales, refund), each decided by the
         // payment-notification processor, never a template's `event=`.
         'tracking202/static/paykickstart.php' => 'PayKickstart\'s IPN names its own events',
@@ -178,7 +178,8 @@ final class WebEventPathsTest extends TestCase
             static fn (string $p): string => substr($p, strlen(self::root()) + 1),
             glob(self::root() . '/tracking202/static/*.php') ?: []
         );
-        self::assertSame(['tracking202/static/paykickstart.php'], array_values(array_filter(
+        $builders = ['tracking202/static/cb202.php', 'tracking202/static/paykickstart.php'];
+        self::assertSame($builders, array_values(array_filter(
             $endpoints,
             static fn (string $relative): bool => self::constructions(self::tokens($relative)) !== []
         )), 'the scan reads the endpoint that builds the Receiver');

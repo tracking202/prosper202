@@ -16,6 +16,7 @@ final class InboundRequest
      * @param string $senderAddress the address the conversion row keeps: the
      *        provider's server, never a visitor's (VisitorIp)
      * @param string $peerAddress REMOTE_ADDR, which the request cannot choose: the one the log names
+     * @param string $body the raw body, for a provider that does not post a form (ClickBank's JSON)
      */
     public function __construct(
         public readonly string $method,
@@ -24,14 +25,16 @@ final class InboundRequest
         public readonly string $senderAddress = '',
         public readonly string $peerAddress = '',
         public readonly string $userAgent = '',
+        public readonly string $body = '',
     ) {
     }
 
     /**
      * @param array<string, mixed> $server $_SERVER
      * @param array<array-key, mixed> $post $_POST
+     * @param string $body php://input, for a provider that needs it
      */
-    public static function fromGlobals(array $server, array $post): self
+    public static function fromGlobals(array $server, array $post, string $body = ''): self
     {
         $text = static fn (mixed $v): string => is_string($v) ? $v : '';
 
@@ -42,6 +45,7 @@ final class InboundRequest
             VisitorIp::fromServer($server),
             $text($server['REMOTE_ADDR'] ?? ''),
             $text($server['HTTP_USER_AGENT'] ?? ''),
+            $body,
         );
     }
 }

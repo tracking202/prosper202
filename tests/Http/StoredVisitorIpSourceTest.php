@@ -46,14 +46,10 @@ final class StoredVisitorIpSourceTest extends TestCase
 
     /** @var array<string, array<string, string>> file => allowed value => why */
     private const ALLOWED = [
-        'tracking202/static/cb202.php' => [
-            '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'ClickBank\'s INS notification: the address is'
-                . ' ClickBank\'s server, never a visitor\'s, and connect.php (this endpoint\'s bootstrap)'
-                . ' has no privacy state',
-        ],
         '202-config/PaymentNotification/Processor.php' => [
-            '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN): the address is'
-                . ' the provider\'s server, never a visitor\'s, as in cb202.php (InboundRequest::fromGlobals())',
+            '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN, ClickBank\'s'
+                . ' INS): the address is the provider\'s server, never a visitor\'s (InboundRequest::fromGlobals()),'
+                . ' and connect.php, the endpoints\' bootstrap, has no privacy state',
         ],
         '202-config/functions-shared.php' => [
             '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() off the click path'
