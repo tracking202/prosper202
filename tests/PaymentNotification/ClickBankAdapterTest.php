@@ -113,12 +113,22 @@ final class ClickBankAdapterTest extends TestCase
     }
 
     /** @param array<string, mixed> $order */
-    private static function refused(array $order): string
+    private static function refused(array $order, OutcomeKind $kind = OutcomeKind::MALFORMED): string
     {
         $refusal = self::refusal(static fn () => self::parsed($order));
-        self::assertSame(OutcomeKind::MALFORMED, $refusal->outcome->kind);
+        self::assertSame($kind, $refusal->outcome->kind, $refusal->getMessage());
 
         return $refusal->getMessage();
+    }
+
+    /** @param array<string, mixed> $order */
+    private static function assertNoClick(array $order): void
+    {
+        self::assertSame(
+            'Verified. The ' . $order['transactionType'] . ' of receipt ' . $order['receipt'] . ' carries no tracking'
+            . ' code (the HopLink had no tid=[[subid]]), so it names no click; nothing was recorded.',
+            self::refused($order, OutcomeKind::NO_CLICK)
+        );
     }
 
     public function testANotificationEncryptedByTheOpensslCommandLineDecryptsAndReads(): void
@@ -282,9 +292,9 @@ final class ClickBankAdapterTest extends TestCase
     {
         $none = self::sale();
         unset($none['trackingCodes']);
-        self::assertNull(self::parsed($none)->clickId);
-        self::assertNull(self::parsed(self::sale(['trackingCodes' => []]))->clickId);
-        self::assertNull(self::parsed(self::sale(['trackingCodes' => ['']]))->clickId);
+        self::assertNoClick($none);
+        self::assertNoClick(self::sale(['trackingCodes' => []]));
+        self::assertNoClick(self::sale(['trackingCodes' => ['']]));
         self::assertSame(42, self::parsed(self::sale(['trackingCodes' => ['42', 'other']]))->clickId);
         self::assertSame(42, self::parsed(self::sale(['trackingCodes' => [42]]))->clickId);
 
@@ -298,7 +308,7 @@ final class ClickBankAdapterTest extends TestCase
             'trackingCodes is not a list',
             self::refused(self::sale(['trackingCodes' => '42']))
         );
-        self::assertNull(self::parsed(self::sale(['trackingCodes' => null]))->clickId);
+        self::assertNoClick(self::sale(['trackingCodes' => null]));
         self::assertStringStartsWith(
             'trackingCodes is not a list',
             self::refused(self::sale(['trackingCodes' => ['a' => '42']]))
@@ -315,9 +325,9 @@ final class ClickBankAdapterTest extends TestCase
 
         self::assertSame(42, self::parsed($extclid('42'))->clickId);
         self::assertSame(7, self::parsed($extclid('42', ['7']))->clickId);
-        self::assertNull(self::parsed($extclid(''))->clickId);
+        self::assertNoClick($extclid(''));
         $none = self::sale(['trackingCodes' => [], 'affiliateTrackingParameters' => []]);
-        self::assertNull(self::parsed($none)->clickId);
+        self::assertNoClick($none);
         self::assertSame(
             'extclid is "abc", which is not a click id. The HopLink carries extclid=[[subid]], which a Prosper202'
             . ' tracker fills with the click id; send buyers through the tracker.',

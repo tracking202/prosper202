@@ -151,7 +151,7 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
             throw self::malformed('The ' . $shown . ' carries no totalAccountAmount.');
         }
 
-        return new Notification($kind, $shown, $receipt, null, $amount, 'USD', self::clickId($order));
+        return new Notification($kind, $shown, $receipt, null, $amount, 'USD', self::clickId($order, $shown, $receipt));
     }
 
     public function confirmTest(Connection $conn, int $accountId): void
@@ -228,12 +228,28 @@ final class ClickBankAdapter implements ProviderAdapter, ConfirmsTestNotificatio
     /**
      * The click the order names: its first tracking code (a HopLink's
      * tid=[[subid]]), or where it has none the extclid that version 8.0
-     * sends an affiliate (extclid=[[subid]]); null when it names neither.
-     * A value that is not a click id is refused rather than read as none.
+     * sends an affiliate (extclid=[[subid]]). One that names neither is
+     * answered as no_click (200), saying so; a value that is not a click id
+     * is refused rather than read as none.
      *
      * @param array<string, mixed> $order
      */
-    private static function clickId(array $order): ?int
+    private static function clickId(array $order, string $type, string $receipt): int
+    {
+        $clickId = self::namedClick($order);
+        if ($clickId === null) {
+            throw Refusal::of(
+                OutcomeKind::NO_CLICK,
+                'Verified. The ' . $type . ' of receipt ' . $receipt . ' carries no tracking code (the HopLink had'
+                . ' no tid=[[subid]]), so it names no click; nothing was recorded.'
+            );
+        }
+
+        return $clickId;
+    }
+
+    /** @param array<string, mixed> $order */
+    private static function namedClick(array $order): ?int
     {
         $codes = $order['trackingCodes'] ?? [];
         if (!is_array($codes) || !array_is_list($codes)) {

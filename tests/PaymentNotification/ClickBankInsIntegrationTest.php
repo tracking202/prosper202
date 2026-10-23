@@ -339,7 +339,13 @@ final class ClickBankInsIntegrationTest extends TestCase
         $outcome = $this->post(['trackingCodes' => []], self::FIRST_KEY);
 
         self::assertOutcome(OutcomeKind::NO_CLICK, 200, $outcome);
+        self::assertSame('Verified. The SALE of receipt CWOGBZLN carries no tracking code (the HopLink had no'
+            . ' tid=[[subid]]), so it names no click; nothing was recorded.', $outcome->message);
         self::assertSame([], self::conversions());
+        self::assertStringContainsString(
+            'ClickBank notification from 203.0.113.9: no_click (200): Verified. The SALE of receipt CWOGBZLN',
+            (string) file_get_contents($this->log)
+        );
         self::assertOutcome(
             OutcomeKind::MALFORMED,
             400,
