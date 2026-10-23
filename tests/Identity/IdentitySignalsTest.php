@@ -84,6 +84,15 @@ final class IdentitySignalsTest extends TestCase
         self::assertFalse(RequestSignals::consentGiven([], false), 'a campaign with capture off');
     }
 
+    /** Present, only 1 gives consent: a refusal spelled otherwise is still one. */
+    public function testConsentFailsClosedOnAnUnreadableValue(): void
+    {
+        self::assertTrue(RequestSignals::consentGiven(['p202_consent' => ' 1 ']));
+        foreach (['false', 'off', 'no', '00', '', 'true', ['0'], ['1']] as $value) {
+            self::assertFalse(RequestSignals::consentGiven(['p202_consent' => $value]), var_export($value, true));
+        }
+    }
+
     public function testCampaignSettingFailsClosedOnAnUnreadableValue(): void
     {
         self::assertTrue(RequestSignals::campaignAllows(null), 'no campaign');
