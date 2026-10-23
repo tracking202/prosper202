@@ -101,6 +101,11 @@ the set is written in one transaction: all of it, or nothing.
   nothing is written.
 - A kept rule sent without `splittest` or `status` keeps its own; a new rule's
   are `0` and `1`.
+- **The rules keep the order sent; their criteria and redirects do not.** A
+  rule's criteria and redirects come back in id order, the new ones after the
+  kept, whatever their order in the body (every criterion has to match, and a
+  redirect is drawn by weight, so their order decides nothing). Reordering
+  them alone changes nothing.
 - As on the page, each rule needs a `rule_name`, at least one criterion (the
   value `ALL` matches every visitor) and at least one redirect; a rule that is
   not a split test has exactly one redirect; each redirect of a split test
@@ -110,8 +115,9 @@ the set is written in one transaction: all of it, or nothing.
   (`rules.1.redirects.0.redirect_campaign`), with nothing written.
 
 `?dry_run=1` writes nothing and answers the set as it would be stored (a new
-rule, criterion or redirect has `id: null`) with what changes. The answer
-of a write is the same, with the set as stored:
+rule, criterion or redirect has `id: null`), in the order the write reads it
+back, with what changes. The answer of a write is the same, with the set as
+stored:
 
 ```json
 {

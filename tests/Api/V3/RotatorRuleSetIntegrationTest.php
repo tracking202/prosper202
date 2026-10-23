@@ -422,6 +422,137 @@ final class RotatorRuleSetIntegrationTest extends TestCase
         self::assertSame($preview['rules'], $written['rules'], 'the preview is the set the write stored');
     }
 
+    /**
+     * The same body, previewed and then written, answers the same data: a rule's
+     * criteria and destinations come back in id order (new ones after the
+     * kept, as sent), whatever their order in the body, and the rules in the
+     * order sent.
+     *
+     * @return array<string, array{callable(list<array<string, mixed>>): list<array<string, mixed>>, list<string>}>
+     */
+    public static function bodiesToPreview(): array
+    {
+        $reversed = static fn (array $rule): array => [
+            'criteria' => array_reverse($rule['criteria']),
+            'redirects' => array_reverse($rule['redirects']),
+        ] + $rule;
+
+        return [
+            'nested entries reordered, ids kept' => [
+                static fn (array $read): array => [$reversed($read[0]), $read[1]],
+                ['keep', 'keep'],
+            ],
+            'new entries among the kept ones' => [
+                static fn (array $read): array => [
+                    [
+                        'criteria' => [
+                            $read[0]['criteria'][2],
+                            ['type' => 'platform', 'statement' => 'is_not', 'value' => 'Linux'],
+                            $read[0]['criteria'][0],
+                        ],
+                        'redirects' => [
+                            ['redirect_url' => 'https://d.example/', 'weight' => 10, 'name' => 'D'],
+                            $read[0]['redirects'][1],
+                            ['redirect_url' => 'https://e.example/', 'weight' => 5, 'name' => 'E'],
+                            $read[0]['redirects'][0],
+                        ],
+                    ] + $read[0],
+                    $read[1],
+                ],
+                ['update', 'keep'],
+            ],
+            'rules reordered, a new one first' => [
+                static fn (array $read): array => [
+                    [
+                        'rule_name' => 'new', 'splittest' => 1,
+                        'criteria' => [
+                            ['type' => 'device', 'value' => 'tablet'],
+                            ['type' => 'browser', 'value' => 'Safari'],
+                        ],
+                        'redirects' => [
+                            ['redirect_url' => 'https://y.example/', 'weight' => 1],
+                            ['redirect_url' => 'https://x.example/', 'weight' => 2],
+                        ],
+                    ],
+                    $read[1],
+                    $reversed($read[0]),
+                ],
+                ['add', 'keep', 'update'],
+            ],
+        ];
+    }
+
+    /**
+     * @dataProvider bodiesToPreview
+     * @param callable(list<array<string, mixed>>): list<array<string, mixed>> $body
+     * @param list<string> $actions
+     */
+    public function testADryRunAnswersWhatTheWriteThenReadsBack(callable $body, array $actions): void
+    {
+        $campaign = self::campaign(self::USER);
+        $id = $this->rotator();
+        $this->set($id, [
+            [
+                'rule_name' => 'office', 'splittest' => 1,
+                'criteria' => [
+                    ['type' => 'ip', 'statement' => 'is', 'value' => '203.0.113.7'],
+                    ['type' => 'device', 'statement' => 'is', 'value' => 'desktop'],
+                    ['type' => 'country', 'statement' => 'is_not', 'value' => 'Canada(CA)'],
+                ],
+                'redirects' => [
+                    ['redirect_url' => 'https://a.example/', 'weight' => 50, 'name' => 'A'],
+                    ['redirect_url' => 'https://b.example/', 'weight' => 30, 'name' => 'B'],
+                    ['redirect_campaign' => $campaign, 'weight' => 20, 'name' => 'C'],
+                ],
+            ],
+            [
+                'rule_name' => 'everyone',
+                'criteria' => [['type' => 'country', 'value' => 'ALL']],
+                'redirects' => [['redirect_campaign' => $campaign]],
+            ],
+        ]);
+        $read = $this->rotators()->listRules($id)['data'];
+        $sent = $body($read);
+        $before = self::stored($id);
+
+        $preview = $this->set($id, $sent, true);
+        self::assertSame($before, self::stored($id), 'a dry run writes nothing');
+        $written = $this->set($id, $sent);
+        self::assertTrue($preview['dry_run']);
+        self::assertFalse($written['dry_run']);
+        self::assertSame($actions, array_column($written['changes']['rules'], 'action'));
+        self::assertSame(
+            array_column($sent, 'rule_name'),
+            array_column($written['rules'], 'rule_name'),
+            'the rules keep the order sent'
+        );
+        if ($actions === ['keep', 'keep']) {
+            self::assertSame($before, self::stored($id), 'a body that only reorders entries writes nothing');
+        }
+
+        // Field for field, once the ids the write gave new rows are taken out
+        // (a preview has none to give).
+        $held = ['rules' => array_column($read, 'id'), 'criteria' => [], 'redirects' => []];
+        foreach ($read as $rule) {
+            $held['criteria'] = [...$held['criteria'], ...array_column($rule['criteria'], 'id')];
+            $held['redirects'] = [...$held['redirects'], ...array_column($rule['redirects'], 'id')];
+        }
+        $readBack = $written;
+        foreach ($readBack['rules'] as &$rule) {
+            $newRule = !in_array($rule['id'], $held['rules'], true);
+            $rule['id'] = $newRule ? null : $rule['id'];
+            foreach (['criteria', 'redirects'] as $list) {
+                foreach ($rule[$list] as &$entry) {
+                    $entry['id'] = in_array($entry['id'], $held[$list], true) ? $entry['id'] : null;
+                    $entry['rule_id'] = $newRule ? null : $entry['rule_id'];
+                }
+                unset($entry);
+            }
+        }
+        unset($rule);
+        self::assertSame(['dry_run' => true] + $readBack, $preview, 'the preview is the set the write reads back');
+    }
+
     /** A statement that fails part way through leaves the set as it was: one transaction. */
     public function testAFailurePartWayThroughLeavesTheSetWhole(): void
     {

@@ -2917,7 +2917,11 @@ paths:
         redirector the set leaves out is removed, which needs the role
         permission `remove_rotator_rule`, as on the page (`403` otherwise,
         with nothing written). A kept rule sent without `splittest` or
-        `status` keeps its own; a new rule's are `0` and `1`.
+        `status` keeps its own; a new rule's are `0` and `1`. The rules keep
+        the order sent, but a rule's criteria and redirects come back in id
+        order, the new ones after the kept, and their order in the body is
+        not kept (every criterion has to match and a redirect is drawn by
+        weight, so it decides nothing).
 
         Each rule needs a `rule_name`, at least one criterion (the value
         `ALL` matches every visitor) and at least one redirect. A rule that
@@ -2932,8 +2936,9 @@ paths:
         rule, and at most 200; a rule at most 100 criteria and 100 redirects.
 
         `?dry_run=1` writes nothing and answers the set as it would be
-        stored (a new rule, criterion or redirect with `id: null`) and the
-        changes, after the same checks. Stageable (`?staged=1`). PATCH is a
+        stored (a new rule, criterion or redirect with `id: null`), in the
+        order the write reads it back, and the changes, after the same
+        checks. Stageable (`?staged=1`). PATCH is a
         `405`: the set is replaced whole.
       operationId: setRotatorRules
       parameters:

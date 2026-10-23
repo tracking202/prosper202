@@ -1029,8 +1029,8 @@ class RotatorsController
             $status = $held === null ? 1 : ($held['status'] === null ? null : (int) $held['status']);
         }
         $parts = $this->ruleParts($rule, $held);
-        $criteria = $parts['criteria'] ?? [];
-        $redirects = $parts['redirects'] ?? [];
+        $criteria = self::inStoredOrder($parts['criteria'] ?? []);
+        $redirects = self::inStoredOrder($parts['redirects'] ?? []);
 
         if ($splittest === 0 && count($redirects) > 1) {
             throw new ValidationException('A rule that is not a split test has one destination', [
@@ -1065,6 +1065,24 @@ class RotatorsController
             'redirects' => $redirects,
             'held' => $held,
         ];
+    }
+
+    /**
+     * A rule's criteria or destinations in the order GET reads them back: the
+     * kept ones by id, then the new ones as sent, each insert taking a higher
+     * id. Their order in a body means nothing to the redirects (every
+     * criterion has to match, and a destination is drawn by weight), so it is
+     * not kept, and a dry run answers the order the write will read back.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array<string, mixed>>
+     */
+    private static function inStoredOrder(array $entries): array
+    {
+        $kept = array_values(array_filter($entries, static fn (array $e): bool => $e['id'] !== null));
+        usort($kept, static fn (array $a, array $b): int => $a['id'] <=> $b['id']);
+
+        return [...$kept, ...array_values(array_filter($entries, static fn (array $e): bool => $e['id'] === null))];
     }
 
     /**
