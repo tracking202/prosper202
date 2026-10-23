@@ -122,9 +122,9 @@ final class LookupRepositoryFactoryTest extends TestCase
         self::bootstrapCache();
         $GLOBALS['memcacheWorking'] = true;
         $GLOBALS['p202TestCache'] = [
-            md5('c1-id' . 'x' . 'install-a') => '77',
-            md5('country-id' . 'US' . 'install-a') => 12,
-            md5('browser-id' . 'Chrome' . 'install-a') => 5,
+            md5('c1-id' . 'x' . self::ns()) => '77',
+            md5('country-id' . 'US' . self::ns()) => 12,
+            md5('browser-id' . 'Chrome' . self::ns()) => 5,
             md5('c2-id' . 'x' . 'install-b') => 99,
         ];
         $GLOBALS['p202TestCacheReads'] = [];
@@ -152,10 +152,10 @@ final class LookupRepositoryFactoryTest extends TestCase
             self::assertSame('mysqli object is not fully initialized', $e->getMessage());
         }
         self::assertSame([
-            md5('c1-id' . 'x' . 'install-a'),
-            md5('country-id' . 'US' . 'install-a'),
-            md5('browser-id' . 'Chrome' . 'install-a'),
-            md5('c2-id' . 'x' . 'install-a'),
+            md5('c1-id' . 'x' . self::ns()),
+            md5('country-id' . 'US' . self::ns()),
+            md5('browser-id' . 'Chrome' . self::ns()),
+            md5('c2-id' . 'x' . self::ns()),
         ], $GLOBALS['p202TestCacheReads']);
         self::assertSame([], $GLOBALS['p202TestCacheWrites']);
     }
@@ -189,6 +189,42 @@ final class LookupRepositoryFactoryTest extends TestCase
         $GLOBALS['memcacheWorking'] = false;
 
         self::assertInstanceOf(MysqlTrackingRepository::class, LookupRepositoryFactory::tracking(mysqli_init()));
+    }
+
+    /**
+     * An id cached under the namespace before 1.9.79 (the install alone) or
+     * under another version is not read: an upgrade starts cold.
+     *
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testAnIdAnotherVersionCachedIsNotRead(): void
+    {
+        self::onTheClickPath(true);
+        self::bootstrapCache();
+        $GLOBALS['memcacheWorking'] = true;
+        $GLOBALS['p202TestCache'] = [
+            md5('c1-id' . 'x' . 'install-a') => 77,
+            md5('c1-id' . 'x' . "install-a\0" . '1.9.78') => 78,
+        ];
+        $GLOBALS['p202TestCacheReads'] = [];
+
+        try {
+            $answer = LookupRepositoryFactory::tracking(mysqli_init())->findOrCreateC1('x');
+            self::fail('c1 was answered ' . $answer . ' from another version\'s entry');
+        } catch (\Error $e) {
+            self::assertSame('mysqli object is not fully initialized', $e->getMessage());
+        }
+        self::assertSame([md5('c1-id' . 'x' . self::ns())], $GLOBALS['p202TestCacheReads']);
+        self::assertSame("install-a\0" . PROSPER202_VERSION, LookupRepositoryFactory::cacheNamespace());
+    }
+
+    /** The namespace the factory keys by: the install's, with this code's version. */
+    private static function ns(): string
+    {
+        require_once __DIR__ . '/../../202-config/version.php';
+
+        return "install-a\0" . PROSPER202_VERSION;
     }
 
     /** connect2.php's constant, and the shipped p202OnTheClickPath() that reads it. */

@@ -510,7 +510,8 @@ function RunSecondsCronjob()
         // (Prosper202\Click\ReClickBackfill). Before the attribution worker,
         // whose rollup takes the clicks this marks. A no-op once done, and on
         // an install that never had such a click. A click that fails is
-        // logged by the walk and is where the next run starts.
+        // logged by the walk and is where the next run starts, until it has
+        // failed for an hour of runs and is stepped over.
         try {
             (new \Prosper202\Click\ReClickBackfill(new \Prosper202\Database\Connection($db)))
                 ->run(time() + \Prosper202\Click\ReClickBackfill::RUN_SECONDS);

@@ -18,9 +18,11 @@ use Prosper202\Repository\PositiveId;
  * the frozen 1.8.2 rung emptied 202_browsers and 202_platforms), so a cached
  * id goes stale only when the insert that made it is rolled back, and the
  * one lookup made inside a caller's transaction (rtr.php's redirect URL)
- * holds its writes until the commit. Code that removes lookup rows has to
- * make the entries naming them unreachable too (a new key subject), and a
- * database restored from a backup needs memcached restarted.
+ * holds its writes until the commit. Each version reads only the ids it
+ * cached (LookupRepositoryFactory::cacheNamespace()), but code that removes
+ * lookup rows has to make the entries naming them unreachable too (a new
+ * key subject), and a database restored from a backup needs memcached
+ * restarted.
  */
 final readonly class MemcacheIdCache implements IdCache
 {

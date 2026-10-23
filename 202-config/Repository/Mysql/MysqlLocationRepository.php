@@ -290,7 +290,9 @@ final readonly class MysqlLocationRepository implements LocationRepositoryInterf
             $host = trim($parts[0]);
         }
 
-        return str_replace('www.', '', $host);
+        // Only a leading www. is the same site: str_replace() took it out
+        // anywhere, and awww.example.com was filed as aexample.com.
+        return str_starts_with($host, 'www.') ? substr($host, 4) : $host;
     }
 
     private static function packed(string $address): string
