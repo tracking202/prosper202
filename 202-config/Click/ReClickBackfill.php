@@ -37,8 +37,12 @@ use Prosper202\DataEngine\ClickRollupSql;
  *
  * A click that fails is logged, naming it, and the run ends there with the
  * cursor at that click, so the next run starts with it: a failure is
- * retried, never stepped over. A click whose rows name more than one
- * account is left as it is, logged, and counted.
+ * retried, never stepped over. The click, how many runs in a row it failed
+ * and since when are kept with the cursor until a run gets past it, and
+ * progress() says the walk is stopped there: a click that fails every
+ * minute holds back every click after it, which a percentage alone read as
+ * a walk under way. A click whose rows name more than one account is left
+ * as it is, logged, and counted.
  *
  * Two of a click's rows in its latest second are both its latest visit, and
  * every per-row sum counts the click twice (the report rollup, keyed by
@@ -144,6 +148,9 @@ final class ReClickBackfill
             $next = $failed ?? $stopped ?? max($end + 1, $chunkStart);
             $finished = $failed === null && $stopped === null && $next > $through;
             $this->moveCursor($chunkStart, $next, $done, $finished);
+            if ($failed !== null) {
+                $this->recordFailure($failed);
+            }
 
             foreach ($done as $count => $n) {
                 $out[$count] += $n;
@@ -162,14 +169,16 @@ final class ReClickBackfill
      *
      * @return array{
      *     next_click_id: int, through_click_id: int, started_at: int, finished_at: int|null,
-     *     reclicked_clicks: int, same_second_ties: int, mixed_accounts: int
+     *     reclicked_clicks: int, same_second_ties: int, mixed_accounts: int,
+     *     failed_click_id: int|null, failed_runs: int, failing_since: int|null
      * }|null
      */
     public function state(): ?array
     {
         $stmt = $this->conn->prepareWrite(
             'SELECT next_click_id, through_click_id, started_at, finished_at, reclicked_clicks, same_second_ties,'
-            . ' mixed_accounts FROM 202_reclick_backfill WHERE backfill_id = 1'
+            . ' mixed_accounts, failed_click_id, failed_runs, failing_since FROM 202_reclick_backfill'
+            . ' WHERE backfill_id = 1'
         );
         $row = $this->conn->fetchOne($stmt);
         if ($row === null) {
@@ -191,16 +200,22 @@ final class ReClickBackfill
             'reclicked_clicks' => $int('reclicked_clicks'),
             'same_second_ties' => $int('same_second_ties'),
             'mixed_accounts' => $int('mixed_accounts'),
+            'failed_click_id' => $row['failed_click_id'] === null ? null : $int('failed_click_id'),
+            'failed_runs' => $int('failed_runs'),
+            'failing_since' => $row['failing_since'] === null ? null : $int('failing_since'),
         ];
     }
 
     /**
      * What a report says while the walk is unfinished: null once it is done
-     * (or never started), else how far it is.
+     * (or never started), else how far it is, and, when the run stopped at a
+     * click that failed, which click, in how many runs in a row and since
+     * when (stalled_at_click_id, failed_runs, failing_since; null, 0 and
+     * null while nothing fails).
      *
      * @return array{
      *     in_progress: true, started_at: int, reclicked_clicks: int, same_second_ties: int, percent: int,
-     *     note: string
+     *     stalled_at_click_id: int|null, failed_runs: int, failing_since: int|null, note: string
      * }|null
      */
     public function progress(): ?array
@@ -211,6 +226,16 @@ final class ReClickBackfill
         }
         $percent = $s['through_click_id'] <= 0 ? 100
             : (int) floor(100 * min($s['next_click_id'], $s['through_click_id']) / $s['through_click_id']);
+        $note = 'Clicks re-clicked through a redirector before the upgrade are still being brought to one'
+            . ' visit each; until this finishes, reports over dates before the upgrade count such a click at'
+            . ' each of its visits, under that visit\'s traffic source and cost.';
+        if ($s['failed_click_id'] !== null) {
+            $note = 'The walk is stopped at click ' . $s['failed_click_id'] . ', which has failed in '
+                . $s['failed_runs'] . ' run' . ($s['failed_runs'] === 1 ? '' : 's') . ' in a row; the server\'s'
+                . ' error log says why ("p202 re-click backfill: click ' . $s['failed_click_id'] . ' ..."), and each'
+                . ' cron run tries it again. Until it gets past, reports over dates before the upgrade count it,'
+                . ' and every re-clicked click after it, at each of its visits.';
+        }
 
         return [
             'in_progress' => true,
@@ -218,9 +243,10 @@ final class ReClickBackfill
             'reclicked_clicks' => $s['reclicked_clicks'],
             'same_second_ties' => $s['same_second_ties'],
             'percent' => $percent,
-            'note' => 'Clicks re-clicked through a redirector before the upgrade are still being brought to one'
-                . ' visit each; until this finishes, reports over dates before the upgrade count such a click at'
-                . ' each of its visits, under that visit\'s traffic source and cost.',
+            'stalled_at_click_id' => $s['failed_click_id'],
+            'failed_runs' => $s['failed_runs'],
+            'failing_since' => $s['failing_since'],
+            'note' => $note,
         ];
     }
 
@@ -264,17 +290,41 @@ final class ReClickBackfill
         if ($to === $from && array_sum($done) === 0 && !$finished) {
             return;
         }
+        // A failed click the cursor has moved past is no longer where the
+        // walk is stopped. The assignments run left to right, so the click
+        // is cleared last.
         $move = $this->conn->prepareWrite(
             'UPDATE 202_reclick_backfill SET next_click_id = ?, reclicked_clicks = reclicked_clicks + ?,'
-            . ' same_second_ties = same_second_ties + ?, mixed_accounts = mixed_accounts + ?, finished_at = ?'
+            . ' same_second_ties = same_second_ties + ?, mixed_accounts = mixed_accounts + ?, finished_at = ?,'
+            . ' failed_runs = IF(failed_click_id < ?, 0, failed_runs),'
+            . ' failing_since = IF(failed_click_id < ?, NULL, failing_since),'
+            . ' failed_click_id = IF(failed_click_id < ?, NULL, failed_click_id)'
             . ' WHERE backfill_id = 1 AND next_click_id = ?'
         );
-        $this->conn->bind($move, 'iiiiii', [
+        $this->conn->bind($move, 'iiiiiiiii', [
             $to, $done['reclicked_clicks'], $done['same_second_ties'], $done['mixed_accounts'],
-            $finished ? ($this->clock)() : null, $from,
+            $finished ? ($this->clock)() : null, $to, $to, $to, $from,
         ]);
         if ($this->conn->executeUpdate($move) !== 1) {
             throw new \RuntimeException('the re-click backfill cursor moved under this run (expected ' . $from . ')');
+        }
+    }
+
+    /**
+     * Keep the click the run stopped at with the cursor: another run in a row
+     * for the same click, or the first for a new one. The assignments run
+     * left to right, so the click is written last.
+     */
+    private function recordFailure(int $clickId): void
+    {
+        $stmt = $this->conn->prepareWrite(
+            'UPDATE 202_reclick_backfill SET failed_runs = IF(failed_click_id <=> ?, failed_runs + 1, 1),'
+            . ' failing_since = IF(failed_click_id <=> ?, failing_since, ?), failed_click_id = ?'
+            . ' WHERE backfill_id = 1'
+        );
+        $this->conn->bind($stmt, 'iiii', [$clickId, $clickId, ($this->clock)(), $clickId]);
+        if ($this->conn->executeUpdate($stmt) !== 1) {
+            throw new \RuntimeException('the re-click backfill could not record that click ' . $clickId . ' failed');
         }
     }
 

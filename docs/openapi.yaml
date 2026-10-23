@@ -898,6 +898,20 @@ paths:
                           percent:
                             type: integer
                             description: Share of the click ids up to the newest at the upgrade walked so far
+                          stalled_at_click_id:
+                            type: integer
+                            nullable: true
+                            description: >-
+                              The click the walk is stopped at, which failed in
+                              the last run; null while nothing fails. Each run
+                              tries it again, and the server's error log says why.
+                          failed_runs:
+                            type: integer
+                            description: How many runs in a row stalled_at_click_id has failed; 0 while nothing fails
+                          failing_since:
+                            type: integer
+                            nullable: true
+                            description: Unix time of the first of those runs; null while nothing fails
                           note:
                             type: string
         "403":

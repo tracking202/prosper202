@@ -253,8 +253,8 @@ SQL;
      * the click's record rather than its rows: the same predicate, joined in
      * the other order. A click with no record, almost every click the click
      * path rolls up, is one primary key probe; begun from 202_clicks, its id
-     * probed every partition of the table (2 ms a click on 160 weekly
-     * partitions, measured on MySQL 8.0, against 0.7 ms).
+     * probed every partition of the table (1.1 ms a click on 158 weekly
+     * partitions, against 0.5 ms, measured on MariaDB 10.11).
      */
     public static function deleteEarlierVisitsOfClick(string $table, int $clickId): string
     {

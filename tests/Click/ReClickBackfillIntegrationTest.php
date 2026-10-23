@@ -425,7 +425,8 @@ final class ReClickBackfillIntegrationTest extends TestCase
      * A click that fails is logged once, naming it, without the values the
      * server's words quote; its transaction leaves nothing, the clicks before
      * it in the chunk are done, and the cursor stops at it, so the next run
-     * starts there.
+     * starts there. The walk's progress says it is stopped at that click and
+     * how many runs in a row it failed, until a run gets past it.
      */
     public function testAFailedClickIsLoggedAndIsWhereTheNextRunStarts(): void
     {
@@ -441,15 +442,33 @@ final class ReClickBackfillIntegrationTest extends TestCase
 
         try {
             $did = $this->walk();
+            $stopped = $this->backfill()->progress();
+            $again = $this->walk();
+            $stillStopped = $this->backfill()->progress();
         } finally {
             self::q('DROP TRIGGER IF EXISTS p202_test_record_refused');
         }
+        self::assertSame(
+            [22, 1, self::NOW],
+            [$stopped['stalled_at_click_id'] ?? null, $stopped['failed_runs'] ?? null, $stopped['failing_since'] ?? null]
+        );
+        self::assertStringContainsString('stopped at click 22', (string) ($stopped['note'] ?? ''));
+        self::assertSame([0, 22], [$again['reclicked_clicks'] ?? null, $again['failed_click_id'] ?? null]);
+        self::assertSame(
+            [22, 2, self::NOW],
+            [
+                $stillStopped['stalled_at_click_id'] ?? null,
+                $stillStopped['failed_runs'] ?? null,
+                $stillStopped['failing_since'] ?? null,
+            ],
+            'another run in a row, since the first'
+        );
 
         self::assertSame([1, 22, false], [$did['reclicked_clicks'] ?? null, $did['failed_click_id'] ?? null,
             $did['finished'] ?? null]);
         self::assertSame(22, $this->backfill()->state()['next_click_id'] ?? null);
         $lines = array_values(array_filter(explode("\n", $this->logged()), static fn (string $l): bool => $l !== ''));
-        self::assertCount(1, $lines, $this->logged());
+        self::assertCount(2, $lines, $this->logged());
         self::assertStringContainsString('p202 re-click backfill: click 22 ', $lines[0]);
         self::assertStringNotContainsString('v-secret-9', $lines[0]);
         self::assertSame(
@@ -464,7 +483,12 @@ final class ReClickBackfillIntegrationTest extends TestCase
         self::assertTrue($this->walk()['finished'] ?? null);
         self::assertSame((string) ($at + 3600), self::recorded(22));
         self::assertSame((string) ($at + 3600), self::recorded(23));
-        self::assertSame(3, $this->backfill()->state()['reclicked_clicks'] ?? null);
+        $state = $this->backfill()->state();
+        self::assertSame(
+            ['reclicked_clicks' => 3, 'failed_click_id' => null, 'failed_runs' => 0, 'failing_since' => null],
+            array_intersect_key((array) $state, array_flip(['reclicked_clicks', 'failed_click_id', 'failed_runs', 'failing_since'])),
+            'past the click, the failure is cleared'
+        );
     }
 
     /**
