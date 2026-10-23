@@ -8,6 +8,9 @@
 parameters:
     level: max
     phpVersion: 80300
+    # The constants version.php and the config define at run time.
+    bootstrapFiles:
+        - phpstan-legacy-stubs.php
     paths:
         - 202-config/Repository
         - 202-config/Click/ClickExit.php

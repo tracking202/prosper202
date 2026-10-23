@@ -430,7 +430,11 @@ Two amplifiers, both of which turned this from a blip into a breach:
   directory and its database; the first fix named the database alone, and
   fell back to the shared namespace wherever the database settings were not
   in scope (found by review) — a fallback is a namespace too
-  (`SystemHashNamesTheDatabaseTest`).
+  (`SystemHashNamesTheDatabaseTest`). A namespace is also a claim about
+  when: the click path's ids are cached for 30 days, and an upgrade can
+  change which rows stand or what a lookup answers, so the namespace carries
+  the code's version too (`LookupRepositoryFactory::cacheNamespace()`) and
+  each upgrade starts cold.
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -448,6 +452,13 @@ the rule is `DataScope::userId()`, and `PublisherSessionReadsTest` lists
 every other read of the key with what it decides. When a flag's *absence*
 is the common case, find every reader and check they agree on what absence
 means; a notice-silencing rewrite preserves whichever meaning was there.
+
+A switch whose absence has a meaning needs a second answer for a value it
+cannot read. `p202_consent` withheld the visitor's signals only for `0`, so
+`false`, `off`, `00` and a list gave consent, while `campaignAllows()` twenty
+lines below read anything but `1` as off: #5 inside one class. Present, it
+gives consent only as `1` now, on the tracking link and on the landing page
+(`IdentitySignalsTest`, `identity-landing.spec.js`).
 
 State found where this install's own state would be is the same question.
 `ServerStateStore` renamed the pre-1.9.75 shared temp directory into a new
@@ -580,6 +591,14 @@ owner emailed a genuine key on a link to the stranger's host. The link is
 now the stored tracking domain (`PasswordResetLink`), with no link at all
 when none is stored. Before taking a host, a scheme or a path from the
 request, ask who will follow the URL.
+
+A claim shown to a person is the same split. The AI-connect consent page
+said an app was "verified there as claude.ai" of a domain the approval link
+carried, and nothing signs that link: anyone could start a connection of
+their own and send a signed-in owner a link naming Claude, and the owner's
+Allow gave the access to whoever started it. The page shows the name and
+site as the link's words now, and says who gets the access
+(`AiConnectTest::testTheApprovalPageVouchesForNothingTheLinkSays`).
 
 A fallback names an address too, and the same question decides it.
 `getTrackingDomain()` fell back to `SERVER_NAME` and `SERVER_PORT` — where the
@@ -1218,7 +1237,11 @@ own page had just sent, on installs with no cron job at all, and the tile,
 that did not exist. The ping is marked (`Prosper202\Cron\CronRun`), the one
 write is a scheduler's, and `PagePingIsNotACronRunTest` lists every file that
 names the table with what it reads. When a record answers "did X happen",
-list who else writes it.
+list who else writes it. A scheduler is still anyone: the cron's address
+needs no sign-in, so a stranger requesting it once a minute kept Settings
+refusing AutoCron. A record anyone can write is advice, never a gate:
+Settings now says why it left AutoCron off and takes the owner's word that
+the run was not their cron job's (`tests/live/autocron-switch.sh`).
 
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
