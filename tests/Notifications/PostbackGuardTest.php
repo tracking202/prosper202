@@ -156,6 +156,29 @@ final class PostbackGuardTest extends TestCase
         self::assertStringContainsString($why, self::refused($guard, 'http://pb.network.example/pb'));
     }
 
+    /**
+     * Every spelling the export and LTV webhooks refuse as a host's answer,
+     * over http and on a network's port, under no allowlist and under one
+     * admitting every network (WebhookGuardTest::nonPublicAnswers()).
+     *
+     * @dataProvider \Tests\Attribution\WebhookGuardTest::nonPublicAnswers
+     */
+    public function testEverySpellingAHostCanResolveToIsRefused(string $address, string $why, bool $never): void
+    {
+        $canonical = (string) inet_ntop((string) inet_pton($address));
+        foreach (['http://pb.network.example:8080/pb?c=[[subid]]', 'https://pb.network.example/pb'] as $url) {
+            $message = self::refused(self::guard(['pb.network.example' => [self::PUBLIC, $address]]), $url);
+            self::assertStringContainsString('resolves to ' . $canonical . ', ', $message);
+            self::assertStringContainsString($why, $message);
+        }
+        $wide = self::guard(['pb.network.example' => [$address]], '0.0.0.0/0, ::/0');
+        if ($never) {
+            self::assertStringContainsString($why, self::refused($wide, 'http://pb.network.example/pb'));
+        } else {
+            self::assertSame($canonical, $wide->checkPostback('http://pb.network.example/pb')->pinned());
+        }
+    }
+
     public function testAHostThatResolvesToNothingIsNotAVerdictOnTheUrl(): void
     {
         $this->expectException(WebhookUnresolved::class);
