@@ -40,6 +40,21 @@ jobs:
       - name: Note when the review started
         run: echo "REVIEW_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
+      # The whole diff, where the review reads it with Read and Grep: a large
+      # one does not fit one `gh pr diff` answer, and paging it takes a pipe
+      # or a redirect, which the allowed tools refuse (one review stopped
+      # there and answered CLEAN).
+      - name: Fetch the diff for the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .p202-review
+          gh pr diff "$PR" -R "$REPO" > .p202-review/pr.diff
+          test -s .p202-review/pr.diff
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
@@ -57,12 +72,17 @@ jobs:
           # publish the verdict and a count and keep the review encrypted for
           # the maintainers (see adversarial-review.yml, which does the same).
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          # The plugin's read tools; the tools that post are denied, so no
-          # settings source can grant them back.
+          # The plugin's read tools and the file readers; the tools that post
+          # are denied, so no settings source can grant them back. A run ends
+          # when the model stops, and the plugin's agents ran in the
+          # background and were lost: three reviews answered CLEAN with none
+          # of them reported. The appended prompt runs them in the foreground,
+          # and `complete` is how a run says it did not finish.
           claude_args: >-
-            --allowedTools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+            --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
             --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue comment:*),Bash(git push:*)"
-            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["FINDINGS","CLEAN"],"description":"FINDINGS when the review found any issue"},"findings":{"type":"integer","minimum":0,"description":"How many issues the review lists"},"report":{"type":"string","minLength":1,"description":"The whole review in Markdown, every issue with its file and line"}},"required":["verdict","findings","report"],"additionalProperties":false}'
+            --append-system-prompt "This run ends when you stop. Launch every agent with run_in_background set to false and wait for its report before the next step: an agent still running when you answer is lost. The pull request's whole diff is in .p202-review/pr.diff and its files are checked out: read them with Read, Grep and Glob rather than paging command output. Set complete to true only if every step of the review ran: every agent you launched reported, every issue you found was validated, and you read the whole diff. Otherwise set complete to false and say in report what did not run."
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["FINDINGS","CLEAN"],"description":"FINDINGS when the review found any issue"},"findings":{"type":"integer","minimum":0,"description":"How many issues the review lists"},"complete":{"type":"boolean","description":"true only when every step of the review ran to its end; false when any agent did not report, any issue went unvalidated or the diff was not read in full"},"report":{"type":"string","minLength":1,"description":"The whole review in Markdown, every issue with its file and line"}},"required":["verdict","findings","complete","report"],"additionalProperties":false}'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
@@ -98,6 +118,11 @@ jobs:
           if ! [[ "$findings" =~ ^[0-9]+$ ]]; then
             echo "::error::the review returned no finding count"
             exit 1
+          fi
+          # Only a literal true is a finished review: a missing or other value
+          # is not. The report is still kept, for what did run.
+          if [ "$(jq -r '.complete == true' <<<"$result")" != true ]; then
+            verdict='NOT FINISHED'
           fi
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
           mkdir -m 700 "$GNUPGHOME"
@@ -135,7 +160,11 @@ jobs:
             echo "$marker"
             echo "## Code review: ${VERDICT}"
             echo
-            echo "For ${HEAD_SHA}: ${FINDINGS} issue(s). The review is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            if [ "$VERDICT" = 'NOT FINISHED' ]; then
+              echo "For ${HEAD_SHA}: the review did not finish, so this PR has not been reviewed. What did run is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            else
+              echo "For ${HEAD_SHA}: ${FINDINGS} issue(s). The review is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            fi
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
@@ -145,3 +174,11 @@ jobs:
           else
             gh pr comment "$PR" -R "$REPO" --body-file "$body"
           fi
+
+      # After the verdict is published and the report kept: an unfinished
+      # review fails the check rather than passing as CLEAN.
+      - name: Fail an unfinished review
+        if: steps.findings.outputs.verdict == 'NOT FINISHED'
+        run: |
+          echo "::error::the code review did not finish, so this PR has not been reviewed (the partial report is in this run's review-findings artifact, encrypted)"
+          exit 1

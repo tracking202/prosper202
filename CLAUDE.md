@@ -134,6 +134,14 @@ tried again. Whoever reads the result reads the status, not the prose: an
 endpoint another process calls answers its failure in the status
 (`DataEngineHourAnswersItsFailureTest`).
 
+A verdict is a status line too. The Claude Code Review workflow's schema
+offered FINDINGS or CLEAN, and its plugin's agents ran in the background,
+which a headless run does not wait for: three reviews in a row (1.9.79's
+restore and its ledger lock among them) answered CLEAN while their own
+reports said no agent had reported. The schema now carries `complete`, and
+an unfinished run answers NOT FINISHED and fails its check. A result type
+with no way to say "this did not run" will say something else.
+
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.
 
