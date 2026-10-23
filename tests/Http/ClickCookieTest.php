@@ -117,12 +117,12 @@ final class ClickCookieTest extends TestCase
             . 'on plain HTTP only its -legacy twin exists');
 
         // The readers, through the helper: without a floor a tree whose
-        // readers all vanished would pass.
+        // readers all vanished would pass. (go.php reads its cookie once.)
         $through = 0;
         foreach (SourceScan::phpFiles() as $path => $source) {
             $through += preg_match_all("/(?:getCookie202|ClickCookie::value)\\([^)]*'tracking202/", $source);
         }
-        self::assertGreaterThanOrEqual(11, $through);
+        self::assertGreaterThanOrEqual(10, $through);
     }
 
     /** @return iterable<string, array{string, int}> */

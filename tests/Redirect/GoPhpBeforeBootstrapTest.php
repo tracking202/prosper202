@@ -21,7 +21,7 @@ final class GoPhpBeforeBootstrapTest extends TestCase
 {
     /**
      * @param array<string, string> $get
-     * @param array<string, string> $cookies
+     * @param array<string, string|list<string>> $cookies
      * @return array{int, string, string} exit code, stdout, stderr
      */
     private static function runGo(array $get, array $cookies = []): array
@@ -194,5 +194,18 @@ final class GoPhpBeforeBootstrapTest extends TestCase
         self::assertSame('', $stderr, 'go.php reached a class it did not load');
         self::assertSame(0, $exit);
         self::assertSame(['outbound' => $outbound, 'lp' => false], json_decode(trim($stdout), true));
+    }
+
+    /**
+     * A cookie sent as a list (tracking202outbound[]=…) reached redirect(),
+     * which takes a string, and the visitor got a TypeError's 500. It is no
+     * URL, so the visitor goes on to lp.php as with no cookie.
+     */
+    public function testAnOutboundCookieThatIsNoUrlSendsTheVisitorOnToLp(): void
+    {
+        [, $stdout, $stderr] = self::runGo(['lpip' => '999999999'], ['tracking202outbound' => ['x']]);
+        self::assertStringNotContainsString('TypeError', $stderr);
+        $lines = explode("\n", trim($stdout));
+        self::assertTrue(json_decode((string) end($lines), true)['lp'] ?? null, 'lp.php was not reached');
     }
 }

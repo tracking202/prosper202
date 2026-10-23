@@ -41,13 +41,13 @@ $redirect_site_url = '';
 
 // Simple LP redirect
 if (isset($_GET['lpip']) && is_numeric($_GET['lpip'])) {
-    if (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound') !== null) {
-        $tracking202outbound = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound');
-    } else {
-        require_once substr(__DIR__, 0, -21) . '/tracking202/redirect/lp.php';
+    // A cookie sent as a list is no URL (redirect() takes a string): the
+    // visitor goes on to lp.php, as with no cookie.
+    $tracking202outbound = \Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202outbound');
+    if (is_string($tracking202outbound)) {
+        RedirectHelper::redirect($tracking202outbound);
     }
-
-    RedirectHelper::redirect($tracking202outbound);
+    require_once substr(__DIR__, 0, -21) . '/tracking202/redirect/lp.php';
 }
 
 // Advanced LP redirect
