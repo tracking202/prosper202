@@ -76,8 +76,9 @@ if ($_SERVER['REQUEST_METHOD'] == "POST") {
                         if ($rotatorConn->fetchOne($owned) === null) {
                             return false;
                         }
-                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ? WHERE id = ?');
-                        $rotatorConn->bind($rename, 'si', [$renameName, $renameId]);
+                        $rename = $rotatorConn->prepareWrite('UPDATE 202_rotators SET name = ?'
+                            . ' WHERE id = ? AND user_id = ?');
+                        $rotatorConn->bind($rename, 'sii', [$renameName, $renameId, $renameUserId]);
                         $rotatorConn->executeUpdate($rename);
 
                         return true;
@@ -142,13 +143,13 @@ if (isset($_GET['delete_rotator_id'])) {
                         return false;
                     }
                     foreach ([
-                        'DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?',
-                        'DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)',
-                        'DELETE FROM 202_rotator_rules WHERE rotator_id = ?',
-                        'DELETE FROM 202_rotators WHERE id = ?',
-                    ] as $deleteSql) {
+                        ['DELETE FROM 202_rotator_rules_criteria WHERE rotator_id = ?', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotator_rules_redirects WHERE rule_id IN (SELECT id FROM 202_rotator_rules WHERE rotator_id = ?)', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotator_rules WHERE rotator_id = ?', [$deleteRotatorId]],
+                        ['DELETE FROM 202_rotators WHERE id = ? AND user_id = ?', [$deleteRotatorId, $deleteUserId]],
+                    ] as [$deleteSql, $deleteParams]) {
                         $stmt = $rotatorConn->prepareWrite($deleteSql);
-                        $rotatorConn->bind($stmt, 'i', [$deleteRotatorId]);
+                        $rotatorConn->bind($stmt, str_repeat('i', count($deleteParams)), $deleteParams);
                         $rotatorConn->executeUpdate($stmt);
                     }
 
