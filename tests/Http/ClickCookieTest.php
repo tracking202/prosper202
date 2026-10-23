@@ -26,7 +26,7 @@ final class ClickCookieTest extends TestCase
      */
     private const COMPUTED_ELSEWHERE = [
         // $cookies[self::VISITOR_COOKIE]: p202vid, the visitor identity cookie.
-        '202-config/Identity/RequestSignals.php' => ['123: ?'],
+        '202-config/Identity/RequestSignals.php' => ['131: ?'],
     ];
 
     /** @return iterable<string, array{array<string, mixed>, mixed}> */

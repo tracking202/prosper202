@@ -50,6 +50,11 @@ final class PayKickstartAdapter implements ProviderAdapter
         return ConversionSource::PAYKICKSTART;
     }
 
+    public function signatureField(): string
+    {
+        return 'hash';
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(

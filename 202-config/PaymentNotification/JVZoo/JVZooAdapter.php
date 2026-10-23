@@ -75,6 +75,11 @@ final class JVZooAdapter implements ProviderAdapter
         return ConversionSource::JVZOO;
     }
 
+    public function signatureField(): string
+    {
+        return 'cverify';
+    }
+
     public function storedSecrets(Connection $conn): array
     {
         $stmt = $conn->prepareRead(

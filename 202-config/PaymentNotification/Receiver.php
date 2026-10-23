@@ -66,7 +66,8 @@ final class Receiver
             if ($verification === null) {
                 return [new Outcome(
                     OutcomeKind::UNVERIFIED,
-                    'The notification\'s hash does not verify with any ' . $name . ' secret key stored in'
+                    'The notification\'s ' . $this->provider->signatureField() . ' does not verify with any '
+                    . $name . ' secret key stored in'
                     . ' Prosper202 (Account > API integrations > ' . $name . '); nothing was recorded.'
                 ), null];
             }
