@@ -135,12 +135,16 @@ endpoint another process calls answers its failure in the status
 (`DataEngineHourAnswersItsFailureTest`).
 
 A verdict is a status line too. The Claude Code Review workflow's schema
-offered FINDINGS or CLEAN, and its plugin's agents ran in the background,
-which a headless run does not wait for: three reviews in a row (1.9.79's
-restore and its ledger lock among them) answered CLEAN while their own
-reports said no agent had reported. The schema now carries `complete`, and
-an unfinished run answers NOT FINISHED and fails its check. A result type
-with no way to say "this did not run" will say something else.
+offered FINDINGS or CLEAN, and three reviews in a row (the re-click work, its
+restore into 1.9.79 and the ledger lock) answered CLEAN, 0 findings, while
+their own reports said they had not finished: two ended with their agents
+still running in the background, which a headless run does not wait for, and
+one could not read a diff too long for one `gh pr diff` answer. Both review
+workflows' schemas now carry `complete`, and an unfinished run answers NOT
+FINISHED and fails its check; the agents run in the foreground, and the
+diff is a file the job writes with git, since GitHub's diff endpoint refuses
+a PR of more than 300 files (1.9.78's release PR had 481). A result type with
+no way to say "this did not run" will say something else.
 
 ### 2. Dead code referencing nonexistent schema
 Never reference DB columns, tables, or config keys without verifying they exist in the actual schema. Code that calls `prepare()` with nonexistent columns fails silently or crashes depending on the error handling path. When adding features that touch the DB, confirm the schema first.

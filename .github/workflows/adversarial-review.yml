@@ -75,10 +75,34 @@ jobs:
       id-token: write
 
     steps:
+      # Depth 2: the PR's merge commit and both its parents, for the diff below.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 2
+
+      # The whole diff, in a file the review reads, made from the merge
+      # commit: GitHub's diff endpoint refuses a PR of more than 300 files
+      # (406; 1.9.78's release PR had 481), so `gh pr diff` cannot show it.
+      - name: Write the diff for the review
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify -q 'HEAD^2' > /dev/null; then
+            echo "::error::the checkout is not the PR's merge commit, so its diff could not be written"
+            exit 1
+          fi
+          # Made here, never taken from the PR: one that brings its own (a
+          # symbolic link, say) would have this write wherever it points.
+          if [ -e .p202-review ] || [ -L .p202-review ]; then
+            echo "::error::the PR's tree has a .p202-review, where the review's diff is written"
+            exit 1
+          fi
+          mkdir .p202-review
+          git diff --no-color --no-ext-diff 'HEAD^1' HEAD > .p202-review/pr.diff
+          if [ ! -s .p202-review/pr.diff ]; then
+            echo "::error::the PR changes nothing against its base, so there is nothing to review"
+            exit 1
+          fi
 
       - name: Adversarial review
         id: review
@@ -110,16 +134,19 @@ jobs:
           claude_args: >-
             ${{ vars.ADVERSARIAL_REVIEW_MODEL && format('--model {0}', vars.ADVERSARIAL_REVIEW_MODEL) || '' }}
             --setting-sources user
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
             --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue:*),Bash(git push:*)"
-            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","NON-BLOCKING","CLEAN"]},"findings":{"type":"integer","minimum":0,"description":"How many findings the report lists"},"report":{"type":"string","minLength":1}},"required":["verdict","findings","report"],"additionalProperties":false}'
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","NON-BLOCKING","CLEAN"]},"findings":{"type":"integer","minimum":0,"description":"How many findings the report lists"},"complete":{"type":"boolean","description":"true only when the whole diff was read and every question answered from it"},"report":{"type":"string","minLength":1}},"required":["verdict","findings","complete","report"],"additionalProperties":false}'
           prompt: |
             You are the second reviewer on ${{ github.repository }} PR
             ${{ github.event.pull_request.number }}. A general review already
             ran. Do not repeat it. Your job is to try to break this diff.
 
             You can read files and run `gh pr diff` and `gh pr view` for this
-            PR; nothing else that runs commands or writes is available.
+            PR; nothing else that runs commands or writes is available. The
+            PR's whole diff is in .p202-review/pr.diff: read it with Read and
+            Grep. GitHub does not answer `gh pr diff` for a PR of more than
+            300 files.
 
             Read CLAUDE.md first, in full. Its "Error patterns to avoid"
             section is a list of defects that actually shipped in this
@@ -177,7 +204,9 @@ jobs:
             Markdown: your answer to each of the ten questions, every finding
             with its file and line and failure mode, and one sentence saying
             which of the ten questions you could not evaluate from the diff
-            alone.
+            alone. `complete` is true only if you read the whole diff and
+            answered every question from it; otherwise it is false, and the
+            report says what you could not read or do.
 
       # The report can say how a defect could be used, and this repository
       # is public, so it goes nowhere the public can read: not in a comment,
@@ -212,6 +241,11 @@ jobs:
           if ! [[ "$findings" =~ ^[0-9]+$ ]]; then
             echo "::error::the review returned no finding count"
             exit 1
+          fi
+          # Only a literal true is a finished review: a missing or other value
+          # is not. The report is still kept, for what did run.
+          if [ "$(jq -r '.complete == true' <<<"$result")" != true ]; then
+            verdict='NOT FINISHED'
           fi
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
           mkdir -m 700 "$GNUPGHOME"
@@ -252,9 +286,13 @@ jobs:
             echo "$marker"
             echo "## Adversarial review: ${VERDICT}"
             echo
-            echo "For ${HEAD_SHA}: ${FINDINGS} finding(s). The report is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            if [ "$VERDICT" = 'NOT FINISHED' ]; then
+              echo "For ${HEAD_SHA}: the review did not finish, so this push has not been reviewed in full. What did run lists ${FINDINGS} finding(s), encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            else
+              echo "For ${HEAD_SHA}: ${FINDINGS} finding(s). The report is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+            fi
             echo
-            echo "Rewritten on every push; the check fails on BLOCKING."
+            echo "Rewritten on every push; the check fails on BLOCKING and on a review that did not finish."
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
 
@@ -270,5 +308,9 @@ jobs:
 
           if [ "$VERDICT" = BLOCKING ]; then
             echo "::error::adversarial review: BLOCKING (the report is in this run's review-findings artifact, encrypted)"
+            exit 1
+          fi
+          if [ "$VERDICT" = 'NOT FINISHED' ]; then
+            echo "::error::the adversarial review did not finish, so this push has not been reviewed (the partial report is in this run's review-findings artifact, encrypted)"
             exit 1
           fi

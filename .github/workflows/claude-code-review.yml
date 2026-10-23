@@ -32,28 +32,40 @@ jobs:
       id-token: write
 
     steps:
+      # Depth 2: the PR's merge commit and both its parents, for the diff below.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 2
 
       - name: Note when the review started
         run: echo "REVIEW_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
-      # The whole diff, where the review reads it with Read and Grep: a large
-      # one does not fit one `gh pr diff` answer, and paging it takes a pipe
-      # or a redirect, which the allowed tools refuse (one review stopped
-      # there and answered CLEAN).
-      - name: Fetch the diff for the review
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
+      # The whole diff, in a file the review reads with Read and Grep, made
+      # from the merge commit rather than asked of GitHub: its diff endpoint
+      # refuses a PR of more than 300 files (406; 1.9.78's release PR had
+      # 481), and a diff it does answer can be too long for one `gh pr diff`
+      # and cannot be paged, since the allowed tools refuse a pipe or a
+      # redirect (one review stopped there and answered CLEAN).
+      - name: Write the diff for the review
         run: |
           set -euo pipefail
-          mkdir -p .p202-review
-          gh pr diff "$PR" -R "$REPO" > .p202-review/pr.diff
-          test -s .p202-review/pr.diff
+          if ! git rev-parse --verify -q 'HEAD^2' > /dev/null; then
+            echo "::error::the checkout is not the PR's merge commit, so its diff could not be written"
+            exit 1
+          fi
+          # Made here, never taken from the PR: one that brings its own (a
+          # symbolic link, say) would have this write wherever it points.
+          if [ -e .p202-review ] || [ -L .p202-review ]; then
+            echo "::error::the PR's tree has a .p202-review, where the review's diff is written"
+            exit 1
+          fi
+          mkdir .p202-review
+          git diff --no-color --no-ext-diff 'HEAD^1' HEAD > .p202-review/pr.diff
+          if [ ! -s .p202-review/pr.diff ]; then
+            echo "::error::the PR changes nothing against its base, so there is nothing to review"
+            exit 1
+          fi
 
       - name: Run Claude Code Review
         id: claude-review
@@ -75,9 +87,10 @@ jobs:
           # The plugin's read tools and the file readers; the tools that post
           # are denied, so no settings source can grant them back. A run ends
           # when the model stops, and the plugin's agents ran in the
-          # background and were lost: three reviews answered CLEAN with none
-          # of them reported. The appended prompt runs them in the foreground,
-          # and `complete` is how a run says it did not finish.
+          # background and were lost: two reviews answered CLEAN with their
+          # agents still running (a third, unable to read the diff, above).
+          # The appended prompt runs them in the foreground, and `complete` is
+          # how a run says it did not finish.
           claude_args: >-
             --allowedTools "Read,Grep,Glob,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
             --disallowedTools "mcp__github_comment__update_claude_comment,mcp__github_inline_comment__create_inline_comment,Bash(gh api:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh issue comment:*),Bash(git push:*)"
@@ -161,7 +174,7 @@ jobs:
             echo "## Code review: ${VERDICT}"
             echo
             if [ "$VERDICT" = 'NOT FINISHED' ]; then
-              echo "For ${HEAD_SHA}: the review did not finish, so this PR has not been reviewed. What did run is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
+              echo "For ${HEAD_SHA}: the review did not finish, so this PR has not been reviewed in full. What did run lists ${FINDINGS} issue(s), encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
             else
               echo "For ${HEAD_SHA}: ${FINDINGS} issue(s). The review is encrypted for the maintainers in the \`review-findings\` artifact of [this run](${RUN_URL})."
             fi
