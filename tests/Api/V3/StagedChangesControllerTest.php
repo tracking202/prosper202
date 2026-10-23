@@ -554,6 +554,7 @@ final class StagedChangesControllerTest extends TestCase
             'zaxaa_api_signature' => 'zaxaa-live-signature',
             'lpo_site_key' => 'lpo-live-site-key',
             'lpo_bridge_config' => '{"webhook_id":3,"ctx_key":"deadbeef"}',
+            'paykickstart_ipn_secret_keys' => 'pk-campaign-key-0001,pk-campaign-key-0002',
         ] as $field => $value) {
             try {
                 $ctl->stage('PUT', '/users/5/preferences', [$field => $value], null);

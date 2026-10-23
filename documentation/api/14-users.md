@@ -63,7 +63,7 @@ API keys are masked after the first 8 characters in list responses. The full key
 
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
-| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (they include the account's integration secrets) |
+| `GET` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Get user preferences (they include the account's integration secrets, the PayKickstart IPN keys excepted) |
 | `PUT` | `/users/{id}/preferences` | Self with `access_to_personal_settings`, or a user you may manage | Update preferences |
 
 ## User Fields
@@ -85,7 +85,8 @@ API keys are masked after the first 8 characters in list responses. The full key
 the rule of the settings page that owns it, before anything is written; a key
 not in this table is refused with `422` naming it rather than dropped, and a
 free-text value given as `""` clears it. `GET` returns the whole preferences
-row.
+row, but never the PayKickstart IPN secret keys: `paykickstart_ipn_keys_stored`
+says how many are stored, in their place.
 
 | Field | Values | Set on |
 | ----- | ------ | ------ |
@@ -104,6 +105,7 @@ row.
 | `chart_time_range` | `hours`, `days` | Overview chart (kept in `202_charts`, where the chart reads it) |
 | `user_slack_incoming_webhook` | an `https://` URL, or `""` | Integrations |
 | `ipqs_api_key`, `cb_key`, `zaxaa_api_signature`, `jvzoo_ipn_secret_key` | up to 250 characters, or `""`; changing `cb_key` resets `cb_verified` | Integrations |
+| `paykickstart_ipn_secret_keys` | the keys PayKickstart's product IPN is verified with, one for each PayKickstart campaign, separated by commas, spaces or new lines: at most 20, each 8 to 128 letters, digits and punctuation other than the comma. The list **replaces** every stored key (none can be read back), so send them all; `""` removes them. A key that is not one is refused by its place in the list (`Key 2 is 5 characters long; …`), never by its text | Integrations |
 | `user_ltv_customer_cparam` | `0` (off), `1`-`4` (c1-c4) | LTV › Settings |
 | `user_ltv_personalization_fields` | comma list of `first_name`, `last_name`, `company`, `city`, `country`, `cf:<field_key>`, `rec:next_offer` | LTV › Settings |
 | `user_ltv_score_weights` | `volume:N,time:N,scroll:N,video:N,recency:N` summing to 100, or `""` for the defaults | LTV › Settings |

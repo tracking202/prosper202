@@ -518,6 +518,16 @@ case "$ask" in
             "$day" "$tz" "$(printf '%s' "$preview" | jq -r '.data.clicks')" \
             "$(printf '%s' "$preview" | jq -r '[.data.rows | to_entries[] | select(.value > 0) | "\(.key) \(.value)"] | join(", ")')" "$day"
         ;;
+    *PayKickstart*"IPN secret key"*)
+        # The key from the ask is the account's one PayKickstart key (the
+        # flag replaces the stored list); the reply never repeats it.
+        key=$(printf '%s' "$ask" | sed -n 's/.*IPN secret key \([^ ]*\).*/\1/p')
+        uid=$(p202 config test --json | jq -r '.data.user_id')
+        p202 user prefs update "$uid" --paykickstart-ipn-secret-keys "$key" --json >/dev/null
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="paykickstart")')
+        printf 'Saved the key: %s PayKickstart IPN secret key(s) stored, per `p202 system integrations`. Paste %s into the IPN Integration tab of each product, and make the campaign'"'"'s offer URL your PayKickstart checkout link with subid=[[subid]] added, so each IPN names the click its sale is recorded on.\n' \
+            "$(printf '%s' "$entry" | jq -r '.keys_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
+        ;;
     *"paste into ClickBank"*)
         entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="clickbank")')
         printf 'Paste %s into ClickBank as the Instant Notification (INS) URL, per `p202 system integrations`. The ClickBank secret key is %s.\n' \

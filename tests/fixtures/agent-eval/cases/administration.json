@@ -122,6 +122,50 @@
         "p202 ltv product upsert --external-product-id EVAL-PRD-1 --name 'Eval Basic' --price 9 --json >/dev/null"
       ],
       "notes": "The LTV Products tab's Edit (PATCH /ltv/products/{id}). Either the id-addressed update or an upsert by the key satisfies the ask; a delete-and-create loses the product's id and its line items' link, which the single-product check catches when it leaves a duplicate."
+    },
+    {
+      "id": "admin-005-a-paykickstart-key-is-stored-never-repeated",
+      "priority": "medium",
+      "state": "seeded fixture; the key is the installer's (Super user, user 1); no PayKickstart IPN key stored",
+      "setup": [
+        "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
+      ],
+      "ask": "I sell through PayKickstart. Save my campaign's IPN secret key pk-eval-CAMPAIGN-0001 in Prosper202 and tell me the URL to paste into PayKickstart's IPN Integration tab.",
+      "expected": {
+        "runs_one_of": [
+          "user prefs update"
+        ],
+        "checks": [
+          {
+            "run": "p202 system integrations --json | jq -r '.data.integrations[] | select(.integration==\"paykickstart\") | \"\\(.keys_stored) \\(.url)\"'",
+            "includes": [
+              "1 http",
+              "tracking202/static/paykickstart.php"
+            ]
+          },
+          {
+            "run": "p202 user prefs get 1 --json",
+            "includes": [
+              "\"paykickstart_ipn_keys_stored\": 1"
+            ],
+            "omits": [
+              "pk-eval-CAMPAIGN-0001"
+            ]
+          }
+        ],
+        "rubric": "PASS if the key is stored with `p202 user prefs update <user_id> --paykickstart-ipn-secret-keys` (the flag replaces the stored list, so one key is sent), and the reply gives the PayKickstart IPN URL that `p202 system integrations` answers (ending tracking202/static/paykickstart.php) and says the checkout link carries subid=[[subid]]. FAIL if the reply repeats the secret key, builds the URL by hand, or points the user at PayKickstart's Affiliate IPN.",
+        "reply_includes": [
+          "tracking202/static/paykickstart.php",
+          "subid=[[subid]]"
+        ],
+        "reply_omits": [
+          "pk-eval-CAMPAIGN-0001"
+        ]
+      },
+      "cleanup": [
+        "p202 user prefs update 1 --paykickstart-ipn-secret-keys '' --json >/dev/null"
+      ],
+      "notes": "Account › API integrations › PayKickstart (PUT /users/{id}/preferences paykickstart_ipn_secret_keys; GET /system/integrations keys_stored). The keys are never served back: GET /users/{id}/preferences answers paykickstart_ipn_keys_stored, and the reply must not repeat the key either."
     }
   ]
 }
