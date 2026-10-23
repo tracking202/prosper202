@@ -175,6 +175,32 @@ final class ReleaseTreeTest extends TestCase
         self::assertStringStartsWith("'vendor/acme/pkg/Src' and 'vendor/acme/pkg/src'", $problems[1]);
     }
 
+    /** The zip's own code is held to the case the zip spells its files and classes in. */
+    public function testVerifyReportsPathsAndClassNamesWrittenInAnotherCase(): void
+    {
+        $stage = $this->tree([
+            'vendor/autoload.php' => "<?php\n",
+            'vendor/composer/autoload_psr4.php' => "<?php\nreturn ['App\\\\' => [dirname(__DIR__, 2) . '/src']];\n",
+            'vendor/composer/autoload_namespaces.php' => "<?php\nreturn [];\n",
+            'vendor/composer/autoload_classmap.php' => "<?php\nreturn [];\n",
+            'src/Http/Helper.php' => "<?php\nnamespace App\\Http;\nfinal class Helper {}\n",
+            'pages/index.php' => "<?php\nrequire __DIR__ . '/../src/http/Helper.php';\nnew \\App\\Http\\helper();\n",
+        ]);
+        if (is_file("{$stage}/SRC/HTTP/HELPER.PHP")) {
+            self::markTestSkipped('the temp directory is on a case-insensitive filesystem');
+        }
+        $tree = new ReleaseTree($this->manifest(ship: ['vendor', 'src', 'pages']));
+
+        $problems = array_values(preg_grep('/found on a Mac/', $tree->verify($stage)));
+
+        self::assertSame([
+            "pages/index.php:2 writes 'src/http/Helper.php', which is 'src/Http/Helper.php' on disk: found on a Mac,"
+                . ' missing on Linux',
+            'pages/index.php:3 writes App\Http\helper, which the autoloader loads only as App\Http\Helper: found on'
+                . ' a Mac, not found on Linux',
+        ], $problems);
+    }
+
     public function testPruneRefusesAnUnclassifiedTreeBeforeDeletingAnything(): void
     {
         $stage = $this->tree(['index.php' => '', 'tests/a.php' => '', 'new-thing.md' => '']);

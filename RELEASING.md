@@ -225,8 +225,11 @@ with a probe file before starting, and `release-tree.php verify` checks every
 shipped file's exact path afterwards and refuses any two paths in the tree,
 `vendor/` included, that differ only in case (`check-manifest` refuses them among
 the tracked files on every pull request): a zip carrying such a pair breaks
-wherever it is extracted on a Mac or Windows, however it was built. On macOS,
-build in a Linux container:
+wherever it is extracted on a Mac or Windows, however it was built. It also
+refuses a path or class name the shipped code writes in another case than the
+tree holds it, which a Mac finds and Linux does not (`PathsKeepTheirCaseTest`
+and `ClassNamesKeepTheirCaseTest` ask the same of every pull request). On
+macOS, build in a Linux container:
 
 ```bash
 mkdir -p dist   # or the daemon creates it root-owned

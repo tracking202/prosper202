@@ -2182,6 +2182,21 @@ where a check quietly fails to check what it appears to.
   made on a Mac before the move keeps the `Redirect` spelling after a pull
   (git removes files, not a directory's spelling), so a fix to a path's case
   reaches a tree only through a fresh clone or a rename by hand.
+  The sweep after it read the tree for the other ways case breaks on Linux.
+  `PathsKeepTheirCaseTest` holds every path the shipped code writes to the
+  case of the file it names, and `ClassNamesKeepTheirCaseTest` every class
+  name to a spelling Composer's autoloader can load (`verify` asks both of
+  the zip). The second found the page controllers in `tracking202/analyze/`
+  and `tracking202/setup/`, declared `Tracking202\Analyze` and `Setup` and
+  loadable only because each page required them by hand; composer.json maps
+  those namespaces onto the lowercase directories now. Renaming a directory
+  to match was the wrong fix: a server upgraded by copying over the old files
+  keeps the old spelling beside the new one, the pair this entry began with.
+  SQL has no check: MySQL on Linux (`lower_case_table_names=0`) reads table
+  names and table aliases by case and columns not, so `202_Clicks`, or an
+  alias `c` written `C.`, runs on a Mac or Windows server and fails on Linux
+  (measured on MariaDB here), and CI's MySQL sees it only in SQL a test runs.
+  The sweep found none in 11,059 table names and 4,080 alias uses.
 - **Local green is not CI green when the environment carries ambient state.**
   A `--scope` check placed after `api.NewFromConfig()` passed here only
   because this sandbox has a URL configured; CI has none, so the config error

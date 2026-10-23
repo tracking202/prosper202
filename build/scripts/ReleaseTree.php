@@ -212,6 +212,7 @@ final class ReleaseTree
         $problems = array_merge(
             $problems,
             self::caseCollisions(self::stagedPaths($stage)),
+            self::verifyCase($stage),
             self::verifyVendor($stage),
             self::verifyPermissions($stage)
         );
@@ -308,6 +309,62 @@ final class ReleaseTree
         return $problems;
     }
 
+    /**
+     * The shipped code's paths and class names, held to the case the tree
+     * spells them in (pathCaseProblems(), classNameCaseProblems()).
+     *
+     * @return list<string> problems
+     */
+    private static function verifyCase(string $stage): array
+    {
+        $paths = self::stagedPaths($stage);
+        $text = [];
+        foreach ($paths as $path) {
+            if (!str_starts_with($path, 'vendor/')) {
+                $code = self::codeText("{$stage}/{$path}");
+                if ($code !== null) {
+                    $text[$path] = $code;
+                }
+            }
+        }
+        $problems = self::pathCaseProblems($text, $paths);
+        if (!is_file("{$stage}/vendor/autoload.php")) {
+            return $problems; // verifyVendor() reports it
+        }
+        try {
+            $loadable = self::autoloadableNames($stage);
+        } catch (\RuntimeException $e) {
+            $problems[] = $e->getMessage();
+
+            return $problems;
+        }
+        $php = [];
+        foreach (self::shippedPhpFiles($stage) as $relative) {
+            $php[$relative] = (string) self::codeText("{$stage}/{$relative}");
+        }
+
+        return array_merge($problems, self::classNameCaseProblems($php, $loadable));
+    }
+
+    /**
+     * A file's text when it is code a path or class name could be written in:
+     * not prose or data (a changelog names files it does not load), and not
+     * binary (the Go CLI ships beside the code).
+     */
+    public static function codeText(string $file): ?string
+    {
+        $notCode = '/\.(png|ico|swf|gif|woff2?|jpe?g|ttf|eot|mmdb|zip|phar|jar|exe|md|txt|json|lock|csv)$/i';
+        if (!is_file($file) || preg_match($notCode, $file) === 1) {
+            return null;
+        }
+        $text = file_get_contents($file);
+        if ($text === false) {
+            throw new \RuntimeException("cannot read {$file}");
+        }
+
+        return str_contains(substr($text, 0, 8000), "\0") ? null : $text;
+    }
+
     /** @return list<string> every path in the staged tree, relative to it */
     private static function stagedPaths(string $stage): array
     {
@@ -322,6 +379,194 @@ final class ReleaseTree
         }
 
         return $paths;
+    }
+
+    /**
+     * Paths written in the code in another case than the file or directory
+     * they name. A case-insensitive filesystem finds tracking202/Setup/x.php
+     * when the directory is tracking202/setup/, so the code works on a Mac and
+     * the include, link or asset is missing on Linux. Every path-like string
+     * in a source is read, whatever builds the rest of it (__DIR__, a variable,
+     * a host): its longest tail that names a real path when case is ignored
+     * must name one exactly. A lone word with no extension is too common to
+     * judge and is not read; nor is a path built from variables alone.
+     *
+     * @param array<string, string> $sources relative path => text
+     * @param list<string> $paths every real file, relative to the same root
+     * @return list<string> problems
+     */
+    public static function pathCaseProblems(array $sources, array $paths): array
+    {
+        $fold = static fn (string $s): string => mb_convert_case($s, MB_CASE_FOLD_SIMPLE, 'UTF-8');
+        $byLast = [];
+        foreach ($paths as $path) {
+            $parts = explode('/', trim($path, '/'));
+            for ($i = count($parts); $i >= 1; $i--) {
+                $prefix = array_slice($parts, 0, $i);
+                $byLast[$fold($parts[$i - 1])][implode('/', $prefix)] = $prefix;
+            }
+        }
+
+        $problems = [];
+        foreach ($sources as $source => $text) {
+            $pathLike = '~[A-Za-z0-9_@.\-]+(?:/[A-Za-z0-9_@.\-]+)+/?|[A-Za-z0-9_\-.]+\.[A-Za-z0-9]{1,5}\b~';
+            if (preg_match_all($pathLike, $text, $matches, PREG_OFFSET_CAPTURE) === false) {
+                // Not "no paths here": the file went unread.
+                throw new \RuntimeException("cannot scan {$source} for paths: " . preg_last_error_msg());
+            }
+            foreach ($matches[0] as [$token, $offset]) {
+                $segments = array_values(array_filter(
+                    explode('/', $token),
+                    static fn (string $s): bool => !in_array($s, ['', '.', '..'], true)
+                ));
+                if ($segments === []) {
+                    continue;
+                }
+                $candidates = $byLast[$fold($segments[count($segments) - 1])] ?? [];
+                for ($k = 0; $candidates !== [] && $k < count($segments); $k++) {
+                    $tail = array_slice($segments, $k);
+                    $length = count($tail);
+                    $folded = array_map($fold, $tail);
+                    $named = [];
+                    foreach ($candidates as $candidate) {
+                        $end = array_slice($candidate, -$length);
+                        if (count($end) === $length && array_map($fold, $end) === $folded) {
+                            $named[] = implode('/', $end);
+                        }
+                    }
+                    if ($named === []) {
+                        continue;
+                    }
+                    if ($length > 1 || preg_match('/\.[A-Za-z0-9]{1,5}$/', $tail[0]) === 1) {
+                        $written = implode('/', $tail);
+                        if (!in_array($written, $named, true)) {
+                            $line = substr_count($text, "\n", 0, $offset) + 1;
+                            $problems[] = "{$source}:{$line} writes '{$written}', which is '"
+                                . implode("' or '", array_unique($named)) . "' on disk: found on a Mac,"
+                                . ' missing on Linux';
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * The class names Composer's autoloader can load where case matters, as
+     * it can load them: each PHP file under a PSR-4 or PSR-0 directory, named
+     * by its path, and each classmap entry. Names a file's path spells in two
+     * ways (a narrower PSR-4 prefix over a lowercase directory) are both kept.
+     *
+     * @return array<string, list<string>> lowercased name => spellings that load
+     */
+    public static function autoloadableNames(string $root): array
+    {
+        $maps = [];
+        foreach (['autoload_psr4.php', 'autoload_namespaces.php', 'autoload_classmap.php'] as $file) {
+            $path = "{$root}/vendor/composer/{$file}";
+            if (!is_file($path)) {
+                throw new \RuntimeException("{$path} is missing; run composer install");
+            }
+            $maps[$file] = require $path;
+        }
+        $names = [];
+        $walk = static function (string $prefix, string $dir) use (&$names): void {
+            if (!is_dir($dir)) {
+                return;
+            }
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $file) {
+                /** @var \SplFileInfo $file */
+                $relative = substr($file->getPathname(), strlen($dir) + 1);
+                if (!str_ends_with($relative, '.php')) {
+                    continue;
+                }
+                $segments = explode('/', substr($relative, 0, -4));
+                foreach ($segments as $segment) {
+                    if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $segment) !== 1) {
+                        continue 2;
+                    }
+                }
+                $name = $prefix . implode('\\', $segments);
+                $names[strtolower($name)][$name] = true;
+            }
+        };
+        foreach ($maps['autoload_psr4.php'] as $prefix => $dirs) {
+            foreach ($dirs as $dir) {
+                $walk($prefix, rtrim($dir, '/'));
+            }
+        }
+        foreach ($maps['autoload_namespaces.php'] as $dirs) {
+            foreach ($dirs as $dir) {
+                $walk('', rtrim($dir, '/')); // PSR-0 names the whole path below the directory
+            }
+        }
+        foreach (array_keys($maps['autoload_classmap.php']) as $name) {
+            $names[strtolower($name)][$name] = true;
+        }
+
+        return array_map('array_keys', $names);
+    }
+
+    /**
+     * Class names a file writes, as PHP resolves them: qualified and imported
+     * names, unqualified ones where a class can stand, and string literals
+     * shaped like a qualified class name (handed to class_exists() or new).
+     *
+     * @return list<array{string, int}> name, line
+     */
+    public static function classNamesIn(string $code): array
+    {
+        $names = [];
+        foreach (self::referencesIn($code, true) as [$name, $kind, $line]) {
+            if (in_array($kind, ['class', 'name', 'import'], true)) {
+                $names[] = [$name, $line];
+            }
+        }
+        foreach (token_get_all($code) as $token) {
+            if (!is_array($token) || $token[0] !== T_CONSTANT_ENCAPSED_STRING) {
+                continue;
+            }
+            $body = substr($token[1], 1, -1);
+            $text = $token[1][0] === '"' ? stripcslashes($body) : str_replace('\\\\', '\\', $body);
+            if (preg_match('/^\\\\?[A-Za-z_]\w*(?:\\\\[A-Za-z_]\w*)+$/', $text) === 1) {
+                $names[] = [ltrim($text, '\\'), $token[2]];
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Class names written in another case than any spelling the autoloader
+     * can load. PHP's class names ignore case, Composer's file lookup does not
+     * where the filesystem does not: `new Foo\barHelper()` finds BarHelper.php
+     * on a Mac and nothing on Linux, unless something already loaded it.
+     *
+     * @param array<string, string> $sources relative path => code
+     * @param array<string, list<string>> $loadable autoloadableNames()
+     * @return list<string> problems
+     */
+    public static function classNameCaseProblems(array $sources, array $loadable): array
+    {
+        $problems = [];
+        foreach ($sources as $source => $code) {
+            foreach (self::classNamesIn($code) as [$name, $line]) {
+                $spellings = $loadable[strtolower($name)] ?? null;
+                if ($spellings === null || in_array($name, $spellings, true)) {
+                    continue;
+                }
+                $problems[] = "{$source}:{$line} writes {$name}, which the autoloader loads only as "
+                    . implode(' or ', $spellings) . ': found on a Mac, not found on Linux';
+            }
+        }
+
+        return $problems;
     }
 
     /** Whether a tracked path survives prune(). */
@@ -559,7 +804,9 @@ final class ReleaseTree
                 return true; // built in, or loaded by autoload.php itself
             }
             if (isset($declared[strtolower($name)])) {
-                return true; // class names are case-insensitive in PHP
+                // Present whatever the case it is written in; a spelling the
+                // autoloader cannot load is verifyCase()'s.
+                return true;
             }
             $file = $loader->findFile($name);
 
@@ -702,9 +949,18 @@ final class ReleaseTree
      * catch target or a bare qualified name, which is a class or a namespaced
      * constant.
      *
+     * With $unqualified, a name written without a namespace in a position a
+     * class can fill (one of those, the rest of an implements, extends, trait
+     * or catch list, a parameter, property, return or constant type) is
+     * listed too, as 'class', resolved as PHP resolves it: through an import
+     * when one has that alias (the import is then what the autoloader is
+     * asked for, so the name itself is not listed), otherwise under the
+     * current namespace. A word that only reads as a type there (a constant
+     * beside |, a constant before a variable) is listed as well.
+     *
      * @return list<array{0: string, 1: 'class'|'name'|'function'|'const'|'import', 2: int}>
      */
-    public static function referencesIn(string $code): array
+    public static function referencesIn(string $code, bool $unqualified = false): array
     {
         $tokens = token_get_all($code);
         $count = count($tokens);
@@ -716,6 +972,9 @@ final class ReleaseTree
         $namespaceOpen = false;
         $namespace = '';
         $aliases = []; // lowercased alias => imported class or namespace
+        // Inside an implements, extends, trait-use or catch list every name is
+        // a class; the list ends at one of these.
+        $classListEnds = [];
 
         $significant = static function (int $from, int $step) use ($tokens, $count): ?int {
             for ($k = $from; $k >= 0 && $k < $count; $k += $step) {
@@ -753,10 +1012,75 @@ final class ReleaseTree
             return 'name';
         };
 
+        // Whether an unqualified word stands where a class can: kindAt()'s
+        // class positions, a list kept open above, or a type.
+        $notClasses = [
+            'self', 'static', 'parent', 'int', 'float', 'string', 'bool', 'array', 'callable', 'iterable',
+            'object', 'mixed', 'void', 'never', 'null', 'false', 'true',
+        ];
+        $id = static fn (?int $k): mixed => $k === null ? null : (is_array($tokens[$k]) ? $tokens[$k][0] : $tokens[$k]);
+        $notBefore = [
+            T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION,
+            T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM, T_GOTO,
+        ];
+        $classAt = static function (
+            int $i,
+            bool $inList
+        ) use (
+            $tokens,
+            $significant,
+            $kindAt,
+            $notClasses,
+            $id,
+            $notBefore
+        ): bool {
+            if (in_array(strtolower($tokens[$i][1]), $notClasses, true)) {
+                return false;
+            }
+            $prev = $significant($i - 1, -1);
+            $next = $significant($i + 1, 1);
+            if (in_array($id($prev), $notBefore, true)) {
+                return false; // a member, a declaration's own name, a label
+            }
+            if ($id($prev) === T_CASE && $id($next) !== T_DOUBLE_COLON) {
+                return false; // an enum case; case Foo::BAR: names a class
+            }
+            if ($id($prev) === T_CONST) {
+                return $id($next) === T_STRING; // const Type NAME = …, not const NAME = …
+            }
+            if ($kindAt($i) === 'class' || $inList) {
+                return true;
+            }
+            $nextId = $id($next);
+            if ($nextId === '(') {
+                return false; // a call; new Foo( is a class position above
+            }
+            if ($nextId === T_VARIABLE || $nextId === T_ELLIPSIS || $nextId === '|' || $id($prev) === '|') {
+                return true; // Type $x, Type ...$x, A|B
+            }
+            // PHP 8.1 tokenizes every & as one of these two, never as '&'.
+            if ($nextId === T_AMPERSAND_FOLLOWED_BY_VAR_OR_VARARG) {
+                return true; // Type &$x
+            }
+            $and = T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG;
+            if ($nextId === $and || $id($prev) === $and) {
+                return true; // A&B
+            }
+            $colon = $id($prev) === '?' ? $significant($prev - 1, -1) : $prev;
+            if ($id($colon) === ':' && $id($significant($colon - 1, -1)) === ')') {
+                return true; // ): Type, ): ?Type
+            }
+
+            return false;
+        };
+
         for ($i = 0; $i < $count; $i++) {
             $token = $tokens[$i];
 
             if (!is_array($token)) {
+                if (in_array($token, $classListEnds, true)) {
+                    $classListEnds = [];
+                }
                 if ($token === '{') {
                     $stack[] = $namespaceOpen ? 'ns' : 'other';
                     $namespaceOpen = false;
@@ -793,6 +1117,9 @@ final class ReleaseTree
                 case T_USE:
                     $next = $significant($i + 1, 1);
                     if ($next === null || $tokens[$next] === '(' || in_array('other', $stack, true)) {
+                        if ($next !== null && $tokens[$next] !== '(') {
+                            $classListEnds = [';', '{'];
+                        }
                         break; // closure use (...) or trait use
                     }
                     $text = '';
@@ -812,6 +1139,25 @@ final class ReleaseTree
                         $refs[] = [$name, $kind, $token[2]];
                     }
                     $i = $j - 1; // resume at the ';'
+                    break;
+
+                case T_IMPLEMENTS:
+                case T_EXTENDS:
+                    $classListEnds = ['{'];
+                    break;
+
+                case T_CATCH:
+                    $classListEnds = [')'];
+                    break;
+
+                case T_STRING:
+                    if (!$unqualified || !$classAt($i, $classListEnds !== [])) {
+                        break;
+                    }
+                    if (isset($aliases[strtolower($token[1])])) {
+                        break; // the import is what is asked for, and is listed
+                    }
+                    $refs[] = [ltrim($namespace . '\\' . $token[1], '\\'), 'class', $token[2]];
                     break;
 
                 case T_NAME_FULLY_QUALIFIED:
@@ -1058,7 +1404,7 @@ final class ReleaseTree
     }
 
     /** @return list<string> */
-    private static function trackedFiles(string $repoRoot): array
+    public static function trackedFiles(string $repoRoot): array
     {
         $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = proc_open(['git', '-C', $repoRoot, 'ls-files', '-z'], $descriptors, $pipes);

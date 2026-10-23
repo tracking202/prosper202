@@ -32,7 +32,7 @@ use Tracking202\Apps\AppIcons;
 use Tracking202\Apps\RegisteredApps;
 use Tracking202\Apps\StoreListing;
 
-require_once __DIR__ . '/_base/SetupController.php';
+require_once __DIR__ . '/SetupController.php';
 require_once __DIR__ . '/../../202-config/functions-install-helpers.php';
 require_once __DIR__ . '/_includes/app_goals.php';
 
