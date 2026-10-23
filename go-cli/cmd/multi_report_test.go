@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"net/http"
@@ -13,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"p202/internal/api"
 )
 
 // summaryServers serves one GET /reports/summary answer per profile and
@@ -418,6 +423,149 @@ func TestAllProfilesFailingKeepsTheirCategory(t *testing.T) {
 		if got := exitCodeForError(err); got != want {
 			t.Errorf("%s: exit code = %d, want %d", profiles, got, want)
 		}
+	}
+}
+
+// answerAfter serves one answer after a delay, so a test decides which
+// profile's failure arrives first.
+func answerAfter(t *testing.T, delay time.Duration, status int, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// Failures of different kinds -- whichever arrives first -- give the error
+// no category and no hint of any one of them: a 422 beside an unreadable
+// answer, a 422 beside a profile with no URL (both exit 1, categories
+// validation and none), a refused key beside a masked one (both auth, exit
+// 2, hints apart). It used to take the first arrival's whenever the exit
+// codes matched, so two identical runs could answer differently.
+func TestAllProfilesFailingDifferentlyInheritNothing(t *testing.T) {
+	const slow = 150 * time.Millisecond
+	invalid := `{"message":"Invalid period","field_errors":{"period":"Valid values: today, yesterday"}}`
+	type side struct {
+		status int
+		body   string
+		noURL  bool
+	}
+	// alone is how each side fails by itself, as Execute would answer it.
+	alone := func(t *testing.T, sd side) (string, int, string) {
+		t.Helper()
+		tmp := t.TempDir()
+		setTestHome(t, tmp)
+		p := map[string]interface{}{"api_key": "solo-key-123456"}
+		if !sd.noURL {
+			p["url"] = answerAfter(t, 0, sd.status, sd.body)
+		}
+		writeTestConfigWithProfiles(t, tmp, "solo", map[string]map[string]interface{}{"solo": p})
+		_, _, err := executeCommand("report", "summary", "--profiles", "solo", "--json")
+		if err == nil {
+			t.Fatalf("%+v alone did not fail", sd)
+		}
+		return api.ErrorCategory(err), exitCodeForError(err), hintFor(err)
+	}
+	for name, c := range map[string]struct {
+		pair     [2]side
+		sameExit bool // the shape the exit-code comparison let through
+	}{
+		"422 and malformed JSON": {pair: [2]side{{status: 422, body: invalid}, {status: 200, body: `{"data":{"total_clicks":`}}},
+		"422 and no URL":         {pair: [2]side{{status: 422, body: invalid}, {noURL: true}}, sameExit: true},
+		"401 and masked": {pair: [2]side{{status: 401, body: `{"message":"Invalid API key"}`},
+			{status: 200, body: `{"data":{"total_clicks":null},"masked":true}`}}, sameExit: true},
+	} {
+		pair := c.pair
+		c0, e0, h0 := alone(t, pair[0])
+		c1, e1, h1 := alone(t, pair[1])
+		if (e0 == e1) != c.sameExit || (c0 == c1 && h0 == h1) {
+			t.Fatalf("%s: alone they fail as (%q, %d, %q) and (%q, %d, %q), not the shape this case is for", name, c0, e0, h0, c1, e1, h1)
+		}
+		for _, firstSlow := range []bool{false, true} {
+			for _, swapNames := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/first slow %v/names swapped %v", name, firstSlow, swapNames), func(t *testing.T) {
+					tmp := t.TempDir()
+					setTestHome(t, tmp)
+					names := [2]string{"a", "b"}
+					if swapNames {
+						names = [2]string{"b", "a"}
+					}
+					profiles := map[string]map[string]interface{}{}
+					for i, sd := range pair {
+						delay := time.Duration(0)
+						if (i == 0) == firstSlow {
+							delay = slow
+						}
+						p := map[string]interface{}{"api_key": names[i] + "-key-123456"}
+						if !sd.noURL {
+							p["url"] = answerAfter(t, delay, sd.status, sd.body)
+						}
+						profiles[names[i]] = p
+					}
+					writeTestConfigWithProfiles(t, tmp, "a", profiles)
+
+					stdout, _, err := executeCommand("report", "summary", "--profiles", "a,b", "--json")
+					if err == nil || strings.TrimSpace(stdout) != "" {
+						t.Fatalf("err %v, stdout %q", err, stdout)
+					}
+					if c := api.ErrorCategory(err); c != "" {
+						t.Errorf("the error took the category %q of one failure", c)
+					}
+					if h := api.HintFor(err); h != "" {
+						t.Errorf("the error took the hint %q of one failure", h)
+					}
+					if errors.Unwrap(err) != nil {
+						t.Errorf("the error unwraps to %v", errors.Unwrap(err))
+					}
+					if got := exitCodeForError(err); got != ExitValidation {
+						t.Errorf("exit code = %d, want %d", got, ExitValidation)
+					}
+					if !strings.HasPrefix(err.Error(), "all profile requests failed: a: ") || !strings.Contains(err.Error(), "; b: ") {
+						t.Errorf("error %q does not name a, then b, whichever failed first", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+// One JSON value, as json.Unmarshal reads one: content after it makes the
+// profile a failed one, the server's failure; whitespace after it does not.
+func TestASummaryWithMoreAfterItsJSONIsRefused(t *testing.T) {
+	ok := `{"data":{"total_clicks":4,"currency":"USD"}}`
+	for name, body := range map[string]string{
+		"garbage":          ok + " garbage",
+		"a second object":  ok + `{"data":{"total_clicks":99}}`,
+		"a second, spaced": ok + "\n" + `{"data":{"total_clicks":99}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			summaryServers(t, map[string]string{"bad": body, "good": ok})
+			got, _ := runMultiSummary(t, "report", "summary", "--profiles", "bad,good", "--json")
+			if len(got.Errors) != 1 || !strings.HasPrefix(got.Errors[0], "bad: the server's answer is not a summary") {
+				t.Fatalf("errors = %v, want bad named as failed", got.Errors)
+			}
+			if got.Aggregated["total_clicks"] != 4.0 {
+				t.Errorf("TOTAL = %v, want good's alone", got.Aggregated)
+			}
+
+			summaryServers(t, map[string]string{"bad": body})
+			stdout, _, err := executeCommand("report", "summary", "--profiles", "bad", "--json")
+			if err == nil || strings.TrimSpace(stdout) != "" {
+				t.Fatalf("err %v, stdout %q", err, stdout)
+			}
+			if c := api.ErrorCategory(err); c != "server" || exitCodeForError(err) != ExitServer {
+				t.Errorf("category %q exit %d, want server, %d", c, exitCodeForError(err), ExitServer)
+			}
+		})
+	}
+
+	summaryServers(t, map[string]string{"a": ok + " \n\t\r\n", "b": ok})
+	got, _ := runMultiSummary(t, "report", "summary", "--profiles", "a,b", "--json")
+	if len(got.Errors) != 0 || got.Aggregated["total_clicks"] != 8.0 {
+		t.Errorf("trailing whitespace refused: errors %v, TOTAL %v", got.Errors, got.Aggregated)
 	}
 }
 

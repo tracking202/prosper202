@@ -1043,9 +1043,11 @@ otherwise; `meta.currencies` gives each profile's currency (`null` where its
 server does not state one). A profile whose request fails, whose role sees
 masked figures, or whose answer holds a count or amount that is not a number is
 named in `errors` (and on stderr) and left out of the TOTAL; when every profile
-fails, the command fails naming each, with the failure's category and exit code
-when every profile failed the same way (every server unreachable: `network`,
-exit 3).
+fails, the command fails naming each (in profile order), with the failure's
+category, exit code and hint only when every profile failed with the same three
+(every server unreachable: `network`, exit 3). An answer that is not one JSON
+summary (malformed, or with anything but whitespace after it) is a failed
+profile, `server`.
 
 ### Breakdown
 
