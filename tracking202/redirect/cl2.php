@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-use Tracking202\Redirect\RedirectHelper;
+use Prosper202\Http\RedirectHelper;
 
 // Goes on when the database is out of reach: it never reads the database.
 $p202OutageFallback = true;

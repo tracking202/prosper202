@@ -125,8 +125,8 @@ final class GoPhpBeforeBootstrapTest extends TestCase
         $tree = sys_get_temp_dir() . '/p202-go-' . bin2hex(random_bytes(4));
         $files = [
             'tracking202/redirect/go.php' => (string) file_get_contents($repo . '/tracking202/redirect/go.php'),
-            'tracking202/Redirect/RedirectHelper.php' => (string) file_get_contents(
-                $repo . '/tracking202/Redirect/RedirectHelper.php'
+            '202-config/Http/RedirectHelper.php' => (string) file_get_contents(
+                $repo . '/202-config/Http/RedirectHelper.php'
             ),
             '202-config/Http/ClickCookie.php' => (string) file_get_contents($repo . '/202-config/Http/ClickCookie.php'),
             '202-config/connect2.php' => self::STAND_IN_BOOTSTRAP,
@@ -156,7 +156,7 @@ final class GoPhpBeforeBootstrapTest extends TestCase
             foreach (array_keys($files) as $path) {
                 @unlink($tree . '/' . $path);
             }
-            $dirs = ['tracking202/redirect', 'tracking202/Redirect', 'tracking202', '202-config/Http', '202-config'];
+            $dirs = ['tracking202/redirect', 'tracking202', '202-config/Http', '202-config'];
             foreach ($dirs as $dir) {
                 @rmdir($tree . '/' . $dir);
             }

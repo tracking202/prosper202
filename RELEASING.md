@@ -216,13 +216,17 @@ missing): `php`, `composer`, `go`, `git`, `zip`. The script exports the current
 `HEAD`, so commit your changes first — uncommitted edits won't be included.
 
 **The build needs a case-sensitive filesystem, so it refuses to run on a Mac's
-default disk.** Git tracks `tracking202/Redirect/` (`RedirectHelper.php`) beside
-`tracking202/redirect/` (the click endpoints). A case-insensitive filesystem
-merges the two, and the zip then carries `dl.php`, `go.php` and `rtr.php` under
-`Redirect/`, which a Linux host serves as 404s: every tracking link breaks. The
-script checks with a probe file before starting, and `release-tree.php verify`
-checks every shipped file's exact path afterwards. On macOS, build in a Linux
-container:
+default disk.** A case-insensitive filesystem merges two paths that differ only
+in case, so the zip would carry one spelling and a Linux host would not find the
+other: until 1.9.79 `tracking202/Redirect/` sat beside `tracking202/redirect/`
+(the click endpoints), and a zip built on a Mac carried `dl.php`, `go.php` and
+`rtr.php` under `Redirect/`, which a Linux host serves as 404s. The script checks
+with a probe file before starting, and `release-tree.php verify` checks every
+shipped file's exact path afterwards and refuses any two paths in the tree,
+`vendor/` included, that differ only in case (`check-manifest` refuses them among
+the tracked files on every pull request): a zip carrying such a pair breaks
+wherever it is extracted on a Mac or Windows, however it was built. On macOS,
+build in a Linux container:
 
 ```bash
 mkdir -p dist   # or the daemon creates it root-owned

@@ -52,14 +52,15 @@ trap 'rm -rf "$STAGE_ROOT"' EXIT
 mkdir -p "$DIST_DIR" "$STAGE" "$TOOLS/build/scripts"
 
 # --- the tree must be staged on a case-sensitive filesystem ---
-# Git tracks tracking202/Redirect/ (RedirectHelper.php) next to
-# tracking202/redirect/ (the click endpoints). A case-insensitive filesystem,
-# macOS's default, merges them on extraction, and the zip then puts dl.php,
-# go.php and rtr.php under Redirect/, where a Linux host serves them as 404s.
+# A case-insensitive filesystem, macOS's default, merges two paths that differ
+# only in case before release-tree.php verify can see them, and the zip then
+# carries one spelling. Until 1.9.79 tracking202/Redirect/ sat beside
+# tracking202/redirect/, and a zip built on a Mac put dl.php, go.php and
+# rtr.php under Redirect/, where a Linux host serves them as 404s.
 touch "$STAGE_ROOT/case-probe"
 if [ -e "$STAGE_ROOT/CASE-PROBE" ]; then
-    echo "Error: $STAGE_ROOT is on a case-insensitive filesystem, which would merge" >&2
-    echo "tracking202/Redirect/ into tracking202/redirect/ and break click tracking." >&2
+    echo "Error: $STAGE_ROOT is on a case-insensitive filesystem, which merges paths that" >&2
+    echo "differ only in case before the release tree can be checked for them." >&2
     echo "Build on Linux (the Release workflow does), or set TMPDIR to a case-sensitive volume." >&2
     exit 1
 fi

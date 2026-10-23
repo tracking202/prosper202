@@ -240,11 +240,11 @@ final class FallbackRedirectScriptsTest extends TestCase
 
     private static function script(string $repo, string $name): string
     {
-        foreach (['/tracking202/redirect/', '/tracking202/Redirect/'] as $dir) {
-            if (is_file($repo . $dir . $name)) {
-                return $repo . $dir . $name;
-            }
+        $path = $repo . '/tracking202/redirect/' . $name;
+        if (!is_file($path)) {
+            self::fail("$name not found");
         }
-        self::fail("$name not found");
+
+        return $path;
     }
 }

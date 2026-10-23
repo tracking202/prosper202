@@ -1,20 +1,12 @@
 <?php
 declare(strict_types=1);
 
-use Tracking202\Redirect\RedirectHelper;
+use Prosper202\Http\RedirectHelper;
 
-// go.php is a direct public entry point that uses RedirectHelper before any
-// bootstrap (connect2.php) loads the Composer autoloader, so pull in the
-// self-contained class explicitly. The class lives in the PSR-4 directory
-// tracking202/Redirect/ (capital R), while this script sits in lowercase
-// tracking202/redirect/; reference it via ../Redirect/ so the path is correct
-// on case-sensitive (Linux production) filesystems. A bare
-// __DIR__ . '/RedirectHelper.php' would resolve to the lowercase directory and
-// fatal with "Failed opening required" everywhere except case-insensitive macOS.
-require_once __DIR__ . '/../Redirect/RedirectHelper.php';
-// ClickCookie, for the same reason: it reads the outbound cookie below
-// before any bootstrap loads the autoloader (GoPhpBeforeBootstrapTest runs
-// this script without one).
+// go.php uses RedirectHelper and ClickCookie before any bootstrap
+// (connect2.php) loads the Composer autoloader, so it loads both itself
+// (GoPhpBeforeBootstrapTest runs this script without one).
+require_once __DIR__ . '/../../202-config/Http/RedirectHelper.php';
 require_once __DIR__ . '/../../202-config/Http/ClickCookie.php';
 
 $vars = explode(' ', base64_decode((string) RedirectHelper::getStringParam('202v')));

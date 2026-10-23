@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Tracking202\Redirect;
+namespace Prosper202\Http;
 
 class RedirectHelper
 {

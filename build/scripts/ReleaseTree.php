@@ -115,7 +115,7 @@ final class ReleaseTree
             }
         }
 
-        return $problems;
+        return array_merge($problems, self::caseCollisions($files));
     }
 
     /**
@@ -209,7 +209,12 @@ final class ReleaseTree
         if ($tracked !== null) {
             $problems = array_merge($problems, $this->verifyTrackedPaths($stage, $tracked));
         }
-        $problems = array_merge($problems, self::verifyVendor($stage), self::verifyPermissions($stage));
+        $problems = array_merge(
+            $problems,
+            self::caseCollisions(self::stagedPaths($stage)),
+            self::verifyVendor($stage),
+            self::verifyPermissions($stage)
+        );
 
         $result = self::resolveInChild($stage);
         if (is_string($result)) {
@@ -236,9 +241,8 @@ final class ReleaseTree
 
     /**
      * Every tracked file the manifest ships must be in the tree at exactly its
-     * tracked path. Git tracks tracking202/Redirect/ beside tracking202/redirect/;
-     * extracted on a case-insensitive filesystem the two merge, and the click
-     * endpoints land in Redirect/, where a Linux host serves them as 404s.
+     * tracked path. Staged on a case-insensitive filesystem, a tracked path can
+     * be there only under another spelling, which a Linux host does not find.
      *
      * @param list<string> $tracked
      * @return list<string> problems
@@ -262,6 +266,62 @@ final class ReleaseTree
         }
 
         return $problems;
+    }
+
+    /**
+     * Paths that differ only in case are one path on the default filesystems
+     * of macOS and Windows, where most zips are extracted and many checkouts
+     * made before the files are uploaded. There the two merge into whichever
+     * spelling was written first, and on the Linux host they are copied to the
+     * other spelling is missing. Until 1.9.79 tracking202/Redirect/ (one class)
+     * sat beside tracking202/redirect/ (the click endpoints), and the zip
+     * extracted on a Mac put every endpoint under Redirect/, so every tracking
+     * link answered 404 (#250). Directories are compared, not only files: a
+     * directory is where those two merged.
+     *
+     * @param list<string> $paths root-relative paths
+     * @return list<string> problems
+     */
+    public static function caseCollisions(array $paths): array
+    {
+        $spellings = [];
+        foreach ($paths as $path) {
+            $prefix = '';
+            foreach (explode('/', trim($path, '/')) as $part) {
+                $prefix = $prefix === '' ? $part : "{$prefix}/{$part}";
+                $spellings[mb_convert_case($prefix, MB_CASE_FOLD_SIMPLE, 'UTF-8')][$prefix] = true;
+            }
+        }
+        ksort($spellings, SORT_STRING);
+
+        $problems = [];
+        foreach ($spellings as $variants) {
+            if (count($variants) < 2) {
+                continue;
+            }
+            $names = array_keys($variants);
+            sort($names, SORT_STRING);
+            $problems[] = "'" . implode("' and '", $names) . "' differ only in case: extracted on a Mac or"
+                . ' Windows they merge into one, and a Linux host then finds the other missing; rename one';
+        }
+
+        return $problems;
+    }
+
+    /** @return list<string> every path in the staged tree, relative to it */
+    private static function stagedPaths(string $stage): array
+    {
+        $paths = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($stage, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ($iterator as $file) {
+            /** @var \SplFileInfo $file */
+            $paths[] = substr($file->getPathname(), strlen($stage) + 1);
+        }
+
+        return $paths;
     }
 
     /** Whether a tracked path survives prune(). */

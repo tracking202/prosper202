@@ -81,7 +81,8 @@ final class ClickSiteUrlLookupsAreHeldTest extends TestCase
             if (!str_contains($source, self::METHOD) || str_contains($file, '/Repository/')) {
                 continue;
             }
-            // Case-folded: a macOS checkout merges tracking202/Redirect into redirect.
+            // Case-folded: a macOS checkout made before 1.9.79 merged
+            // tracking202/redirect into Redirect, and a pull does not rename it.
             $key = strtolower($file);
             foreach ((new HeldLookupScan($source))->calls(self::METHOD) as [$line, $argument, $isHeld]) {
                 if ($isHeld) {

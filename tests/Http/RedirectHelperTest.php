@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace Tests\Redirect;
+namespace Tests\Http;
 
 use PHPUnit\Framework\TestCase;
-use Tracking202\Redirect\RedirectHelper;
+use Prosper202\Http\RedirectHelper;
 
 /**
- * Tests for RedirectHelper used by cl.php and dl.php.
+ * Tests for RedirectHelper, used by cl.php, cl2.php, go.php and lpc.php.
  *
  * RedirectHelper validates and sanitizes URL parameters from $_GET.
  * If these break, redirects fail or produce XSS/injection vulnerabilities.

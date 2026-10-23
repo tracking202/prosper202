@@ -38,8 +38,8 @@ jobs:
 
       - name: Check the runner's PHP and Composer
         # 8.3 matches composer.json's platform pin. The extensions are the ext-*
-        # requirements in composer.lock's runtime packages, plus tokenizer for
-        # build/scripts/release-tree.php.
+        # requirements in composer.lock's runtime packages, plus tokenizer and
+        # mbstring for build/scripts/release-tree.php.
         run: |
           php -v
           composer --version
@@ -50,7 +50,7 @@ jobs:
               exit(1);
           }
           $missing = array_filter(
-              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer'],
+              ['openssl', 'pcre', 'json', 'curl', 'libxml', 'simplexml', 'iconv', 'tokenizer', 'mbstring'],
               fn ($e) => !extension_loaded($e)
           );
           if ($missing) {

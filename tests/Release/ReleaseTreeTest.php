@@ -92,6 +92,89 @@ final class ReleaseTreeTest extends TestCase
         self::assertStringContainsString("'go-ci'", $problems[1]);
     }
 
+    /** @return iterable<string, array{list<string>, list<string>}> paths, the spellings each problem names */
+    public static function caseFoldedPaths(): iterable
+    {
+        yield 'two directories (#250)' => [
+            ['tracking202/Redirect/RedirectHelper.php', 'tracking202/redirect/dl.php', 'tracking202/index.php'],
+            ["'tracking202/Redirect' and 'tracking202/redirect'"],
+        ];
+        yield 'two files' => [['docs/README.md', 'docs/Readme.md'], ["'docs/README.md' and 'docs/Readme.md'"]];
+        yield 'a file and a directory' => [['lib/Util', 'lib/util/a.php'], ["'lib/Util' and 'lib/util'"]];
+        yield 'top level' => [['App/a.php', 'app/b.php'], ["'App' and 'app'"]];
+        yield 'below a shared directory' => [
+            ['vendor/pkg/Src/A.php', 'vendor/pkg/src/b.php'],
+            ["'vendor/pkg/Src' and 'vendor/pkg/src'"],
+        ];
+        yield 'three spellings, one problem' => [
+            ['x/Lib/a', 'x/lib/b', 'x/LIB/c'],
+            ["'x/LIB' and 'x/Lib' and 'x/lib'"],
+        ];
+        yield 'two pairs' => [
+            ['B/x', 'b/y', 'a/C', 'a/c'],
+            ["'a/C' and 'a/c'", "'B' and 'b'"],
+        ];
+        yield 'beyond ASCII' => [['Ä/a', 'ä/b'], ["'Ä' and 'ä'"]];
+        yield 'none: one path listed twice' => [['a/B.php', 'a/B.php'], []];
+        yield 'none: distinct names' => [['tracking202/redirect/dl.php', '202-config/Http/RedirectHelper.php'], []];
+    }
+
+    /**
+     * Two paths that differ only in case are one path on the filesystems most
+     * zips are extracted on (macOS, Windows), so the zip breaks there however
+     * it was built; until 1.9.79 every tracking link did (#250).
+     *
+     * @dataProvider caseFoldedPaths
+     * @param list<string> $paths
+     * @param list<string> $named
+     */
+    public function testCaseCollisionsReportsPathsThatDifferOnlyInCase(array $paths, array $named): void
+    {
+        $problems = ReleaseTree::caseCollisions($paths);
+
+        self::assertCount(count($named), $problems, implode("\n", $problems));
+        foreach ($named as $i => $spellings) {
+            self::assertStringStartsWith("{$spellings} differ only in case", $problems[$i]);
+        }
+    }
+
+    /** The pull-request check reads git's paths, which a Mac's disk cannot have merged. */
+    public function testCheckTrackedReportsTrackedPathsThatDifferOnlyInCase(): void
+    {
+        $tree = new ReleaseTree($this->manifest(ship: ['tracking202']));
+
+        $problems = $tree->checkTracked(['tracking202/Redirect/RedirectHelper.php', 'tracking202/redirect/dl.php']);
+
+        self::assertCount(1, $problems, implode("\n", $problems));
+        self::assertStringStartsWith(
+            "'tracking202/Redirect' and 'tracking202/redirect' differ only in case",
+            $problems[0]
+        );
+        self::assertSame([], $tree->checkTracked(['tracking202/redirect/dl.php', 'tracking202/index.php']));
+    }
+
+    /** The release check reads the staged tree, vendor/ included, which no tracked-file check sees. */
+    public function testVerifyReportsStagedPathsThatDifferOnlyInCase(): void
+    {
+        $stage = $this->tree([
+            'app/Redirect/Helper.php' => '',
+            'app/redirect/dl.php' => '',
+            'vendor/acme/pkg/Src/A.php' => '',
+            'vendor/acme/pkg/src/b.php' => '',
+            'app/index.php' => '',
+        ]);
+        if (is_file("{$stage}/APP/INDEX.PHP")) {
+            self::markTestSkipped('the temp directory is on a case-insensitive filesystem');
+        }
+        $tree = new ReleaseTree($this->manifest(ship: ['app', 'vendor']));
+
+        $problems = array_values(preg_grep('/differ only in case/', $tree->verify($stage)));
+
+        self::assertCount(2, $problems, implode("\n", $problems));
+        self::assertStringStartsWith("'app/Redirect' and 'app/redirect'", $problems[0]);
+        self::assertStringStartsWith("'vendor/acme/pkg/Src' and 'vendor/acme/pkg/src'", $problems[1]);
+    }
+
     public function testPruneRefusesAnUnclassifiedTreeBeforeDeletingAnything(): void
     {
         $stage = $this->tree(['index.php' => '', 'tests/a.php' => '', 'new-thing.md' => '']);
@@ -140,10 +223,10 @@ final class ReleaseTreeTest extends TestCase
     }
 
     /**
-     * Git tracks tracking202/Redirect/ beside tracking202/redirect/. Staged on
-     * a case-insensitive filesystem the two merge and the click endpoints land
-     * in Redirect/, which a Linux host serves as 404s. A file that is in the
-     * tree only under a different case must count as missing, on every OS.
+     * Staged on a case-insensitive filesystem, a tracked file can be in the
+     * tree only under another spelling (until 1.9.79 the click endpoints
+     * landed in tracking202/Redirect/ that way), which a Linux host does not
+     * find. It must count as missing, on every OS.
      */
     public function testVerifyReportsTrackedFilesNotAtTheirExactPath(): void
     {

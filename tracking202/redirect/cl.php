@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-use Tracking202\Redirect\RedirectHelper;
+use Prosper202\Http\RedirectHelper;
 
 require_once substr(__DIR__, 0, -21) . '/202-config/connect2.php';
 
