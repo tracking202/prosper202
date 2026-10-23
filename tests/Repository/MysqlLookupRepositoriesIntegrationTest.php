@@ -874,7 +874,7 @@ final class MysqlLookupRepositoriesIntegrationTest extends TestCase
         self::assertSame($id, $tracking->findOrCreateC1('through the factory'));
         self::assertSame(0, self::rowsIn('202_tracking_c1'), 'the second lookup was the cache\'s');
         self::assertSame(
-            [[md5('c1-id' . 'through the factory' . 'install-a'), $id, 2592000]],
+            [[md5('c1-id' . 'through the factory' . LookupRepositoryFactory::cacheNamespace()), $id, 2592000]],
             $GLOBALS['p202TestCacheWrites']
         );
     }
