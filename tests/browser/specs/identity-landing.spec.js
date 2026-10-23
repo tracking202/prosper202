@@ -209,6 +209,20 @@ module.exports = {
     },
 
     {
+      name: 'On the landing-page URL, anything but 1 is a refusal, as the tracker reads it',
+      async run(ctx) {
+        const { page, expect } = ctx;
+        for (const value of ['false', 'off', '00', '']) {
+          const beacon = await openLanding(ctx, '?p202_consent=' + value);
+          expect.eq(beacon.searchParams.get('p202_consent'), '0', 'p202_consent=' + value + ' refuses');
+          await page.evaluate(() => window.p202.consent(true));
+        }
+        const given = await openLanding(ctx, '?p202_consent=1');
+        expect.eq(given.searchParams.get('p202_consent'), null, 'p202_consent=1 is consent');
+      },
+    },
+
+    {
       name: 'A refusal set before the snippet, or by a script after it, stops the very first beacon',
       async run(ctx) {
         const { page, expect } = ctx;

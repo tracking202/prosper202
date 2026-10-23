@@ -31,6 +31,11 @@ final class RequestSignals
      * campaign that has identity capture turned off. The journey is then one
      * touch.
      *
+     * Absent, the parameter gives consent; present, only `1` does. A refusal
+     * spelled `false`, `off`, `00` or as a list read as consent when only
+     * `0` refused, and an unreadable privacy switch must not resolve to
+     * capturing (CLAUDE.md #11, as campaignAllows() reads its setting).
+     *
      * @param array<string, mixed> $get
      */
     public static function consentGiven(array $get, bool $campaignAllows = true): bool
@@ -38,9 +43,12 @@ final class RequestSignals
         if (!$campaignAllows) {
             return false;
         }
-        $value = $get[self::CONSENT_PARAM] ?? null;
+        if (!array_key_exists(self::CONSENT_PARAM, $get)) {
+            return true;
+        }
+        $value = $get[self::CONSENT_PARAM];
 
-        return !(is_string($value) && trim($value) === '0');
+        return is_string($value) && trim($value) === '1';
     }
 
     /**

@@ -252,10 +252,13 @@ function p202Lpid() {
 	return p202Store('get', P202_LPID_KEY) === id ? id : '';
 }
 
-// A refusal given before this script runs: ?p202_consent=0 on the page URL,
-// or `window.p202 = {consent: false}` set by the page's consent tool ahead of
-// the snippet.
-if (t202GetVar(P202_CONSENT_KEY) === '0' || (window.p202 && window.p202.consent === false)) {
+// A refusal given before this script runs: ?p202_consent on the page URL as
+// anything but 1 (the tracker reads it so too, RequestSignals::consentGiven(),
+// and as PHP does, the last of several), or `window.p202 = {consent: false}`
+// set by the page's consent tool ahead of the snippet.
+var p202ConsentParam = _params.getAll(P202_CONSENT_KEY).pop();
+var p202Refused = p202ConsentParam !== undefined && p202ConsentParam.trim() !== '1';
+if (p202Refused || (window.p202 && window.p202.consent === false)) {
 	p202Store('set', P202_CONSENT_KEY, '0');
 	p202Store('del', P202_LPID_KEY);
 }
