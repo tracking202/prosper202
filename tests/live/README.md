@@ -64,6 +64,16 @@ seeder fails, rather than checking whatever the previous run left behind.
 `tests/fixtures/agent-eval/ci/install-instance.sh` stands up an instance from
 nothing if you do not have one.
 
+A fresh install's account starts at privacy `eu` (1.9.79), which holds back a
+visitor GeoIP cannot place, and that is every click a pass makes from
+127.0.0.1: the address is stored masked (127.0.0.0) and no click or `p202vid`
+cookie is set. A pass whose subject is not privacy expects every visitor
+tracked in full, so set the account to `disabled` before running one
+(`p202 user prefs update 1 --user-pref-privacy disabled`; `seed.sh` does it
+for the eval fixture). Measured on a fresh instance: `legacy-pixels.sh`
+(2 failures) and `identity-graph.sh` (18) fail at `eu` and pass at
+`disabled`; `click-path-reads.sh` passes at either.
+
 ## The passes
 
 | script | |

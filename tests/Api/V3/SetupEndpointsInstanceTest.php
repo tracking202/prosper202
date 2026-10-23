@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Api\V3;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\InstancePrivacy;
 
 /**
  * The Setup endpoints over HTTP, against a running instance: P202_BASE with
@@ -48,6 +49,8 @@ final class SetupEndpointsInstanceTest extends TestCase
     private static array $roleKeys = [];
     /** @var list<int> */
     private static array $users = [];
+    /** The install's privacy setting before the run, put back after. */
+    private static ?string $privacy = null;
 
     public static function setUpBeforeClass(): void
     {
@@ -65,6 +68,8 @@ final class SetupEndpointsInstanceTest extends TestCase
         self::$run = 'set' . bin2hex(random_bytes(4));
         $run = self::$run;
         try {
+            // The landing page's visitor is this runner, and its click cookie is the subject.
+            self::$privacy = InstancePrivacy::trackInFull(self::$base, self::$key);
             self::$ids['category'] = self::create('aff-networks', ['aff_network_name' => "$run cat"], 'aff_network_id');
             self::$ids['campaign'] = self::create('campaigns', [
                 'aff_campaign_name' => "$run offer", 'aff_campaign_url' => "https://offer.example/$run?s=[[subid]]",
@@ -125,6 +130,9 @@ final class SetupEndpointsInstanceTest extends TestCase
     {
         foreach (self::$users as $userId) {
             self::call(self::$key, 'DELETE', '/users/' . $userId);
+        }
+        if (self::$privacy !== null) {
+            InstancePrivacy::restore(self::$base, self::$key, self::$privacy);
         }
     }
 
