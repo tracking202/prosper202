@@ -69,8 +69,8 @@ final class LastClickFromAddressIntegrationTest extends TestCase
         $v4Other = $locations->findOrCreateIp('198.51.100.7');
         $v6 = $locations->findOrCreateIp('2001:db8:abcd:12::9');
         $masked = $locations->findOrCreateIp('203.0.113.0');
-        // A second 202_ips row for the same address, as the legacy writer
-        // (INDEXES::insert_ip) and the repository could each leave one.
+        // A second 202_ips row for the same address, as installs keep from
+        // when two writers of the index could each leave one.
         self::q("INSERT INTO 202_ips SET ip_address = '203.0.113.9'");
         $v4Duplicate = (int) self::$db->insert_id;
 

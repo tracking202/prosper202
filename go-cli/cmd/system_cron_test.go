@@ -269,6 +269,44 @@ func TestSystemCronStaleOrNeverRanExitsPartialFailure(t *testing.T) {
 	})
 }
 
+// From 1.9.78 a signed-in page's ping runs the tiers and records no
+// execution, so the per-minute tier can be fresh while the cron is not
+// scheduled: the warning and exit 5 stand, and a note says what ran.
+func TestSystemCronNotesTiersOnlyAPagePingRan(t *testing.T) {
+	logs := func(at time.Time) []map[string]interface{} {
+		if at.IsZero() {
+			return nil
+		}
+		return []map[string]interface{}{{"id": 1, "last_execution_time": strconv.FormatInt(at.Unix(), 10)}}
+	}
+	cases := []struct {
+		name     string
+		minute   time.Time
+		lastExec time.Time
+		status   string
+		note     bool
+	}{
+		{"pinged, never scheduled", cronNow.Add(-30 * time.Second), time.Time{}, cronStatusNeverRan, true},
+		{"pinged since a stale execution", cronNow.Add(-30 * time.Second), cronNow.Add(-2 * time.Hour), cronStatusStale, true},
+		{"scheduled and ticking", cronNow.Add(-30 * time.Second), cronNow.Add(-30 * time.Second), cronStatusOK, false},
+		{"nothing ran lately", cronNow.Add(-20 * time.Minute), time.Time{}, cronStatusNeverRan, false},
+		{"stale, nothing ran since", cronNow.Add(-2 * time.Hour), cronNow.Add(-2 * time.Hour), cronStatusStale, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := cronRows("secon", 1, func(int) time.Time { return tc.minute })
+			sum := summarizeCron(jobs, logs(tc.lastExec), cronNow)
+			if sum.Status != tc.status {
+				t.Errorf("status = %s, want %s", sum.Status, tc.status)
+			}
+			noted := len(sum.Notes) == 1 && strings.Contains(sum.Notes[0], "the per-minute tier ran 30s ago with no execution recorded: a signed-in page's ping")
+			if noted != tc.note || (!tc.note && len(sum.Notes) != 0) {
+				t.Errorf("notes = %v, want the page-ping note: %v", sum.Notes, tc.note)
+			}
+		})
+	}
+}
+
 func TestSystemCronRawPrintsEveryRow(t *testing.T) {
 	jobs := append(cronRows("hourl", 150, minutesAgo(0)), cronRows("secon", 150, minutesAgo(0))...)
 

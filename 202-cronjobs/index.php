@@ -68,6 +68,8 @@ function getDatabaseConnection(): mysqli
         throw new Exception("Database connection failed");
     }
 
+    $startedAt = time();
+
     if (RunSecondsCronjob() == true) {
         if (RunHourlyCronJob() == true) {
             RunDailyCronjob();
@@ -77,6 +79,19 @@ function getDatabaseConnection(): mysqli
     } else {
         AutoOptimizeDatabase();
         ClearOldClicks();
+    }
+
+    // The cron job's last run, which Account › Settings, health.php, the
+    // /system routes and `p202 system cron` read: a scheduler's run that held
+    // the lock and got through its tiers (a tier statement that fails throws past this),
+    // due or not, stamped with the time it started. A signed-in page's ping
+    // runs the same work and is not recorded (CronRun).
+    if (\Prosper202\Cron\CronRun::isScheduled(PHP_SAPI, $_GET)) {
+        cronQuery(
+            $db,
+            'REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, ' . $startedAt . ')',
+            'the record of this run'
+        );
     }
 
     // Remove lock file on successful completion
@@ -90,6 +105,15 @@ function getDatabaseConnection(): mysqli
     if (file_exists($lockFile)) {
         unlink($lockFile);
     }
+    // A run that stopped says so where it is read: exit 1 on the command
+    // line, 500 over HTTP while nothing has been sent.
+    if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg') {
+        fwrite(STDERR, 'Prosper202 (index.php): ' . $e->getMessage() . PHP_EOL);
+        exit(1);
+    }
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
 }
 
 function flushOutput(): void
@@ -98,85 +122,86 @@ function flushOutput(): void
     flush();
 }
 
+/**
+ * One of the tiers' own statements. A failure throws to the catch at the
+ * top, which ends the run and says so: a tier that could not ask whether it
+ * ran, or record that it did, neither runs twice nor reports itself done.
+ */
+function cronQuery(mysqli $db, string $sql, string $what): mysqli_result|true
+{
+    $result = $db->query($sql);
+    if ($result === false) {
+        error_log('Cron job: ' . $what . ' failed: ' . p202FailedQueryMessage($db->errno, $db->error)
+            . ' [errno ' . $db->errno . ']');
+        throw new \Prosper202\Database\Exceptions\QueryException($what . ' failed [errno ' . $db->errno . ']');
+    }
+
+    return $result;
+}
+
 
 function RunDailyCronjob()
 {
     try {
-        try {
-            $db = getDatabaseConnection();
-        } catch (Exception $e) {
-            error_log("RunDailyCronjob: Database connection failed - " . $e->getMessage());
-            return false;
-        }
-
-        //check to run the daily cronjob
-        $now = time();
-
-        $today_day = date('j', $now);
-        $today_month = date('n', $now);
-        $today_year = date('Y', $now);
-
-        //the click_time is recorded in the middle of the day
-        $cronjob_time = mktime(12, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
-        $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        $mysql['cronjob_type'] = $db->real_escape_string('daily');
-
-        //check to make sure this cronjob doesn't already exist
-        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
-        $check_result = $db->query($check_sql);
-
-        if ($check_result === false) {
-            try {
-                error_log("RunDailyCronjob: Query failed - " . $db->error);
-            } catch (\Error $e) {
-                error_log("RunDailyCronjob: Query failed (error inaccessible)");
-            }
-            return false;
-        }
-
-        $check_count = $check_result->num_rows;
-
-        if ($check_count == 0) {
-            echo 'Processing Daily Jobs...';
-            flushOutput();
-
-            //if a cronjob hasn't run today, record it now.
-            $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-            $insert_result = $db->query($insert_sql);
-
-            /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
-            //this function runs everyday at midnight to clear out the temp clicks_memory table
-            //Every account's rows, on purpose: the install's own housekeeping,
-            //by age alone, and nothing is read on any account's behalf.
-            $from = $now - 86400;
-
-            //this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
-            //we want to keep our SPY TABLE, low
-            $click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
-            $click_result = $db->query($click_sql);
-
-            //clear the last 24 hour ip addresses
-            $last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
-            $last_ip_result = $db->query($last_ip_sql);
-            $last_ip_affected_rows = $db->affected_rows;
-
-            /* -------- NOW DELETE ALL THE OLD CRONJOB ENTRIES STUFF --------- */
-            $mysql['cronjob_time'] = (int)$mysql['cronjob_time'] - 86400;
-            $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
-            $delete_result = $db->query($delete_sql);
-
-            // Log the execution
-            $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-            $log_result = $db->query($log_sql);
-
-            echo 'Done';
-            flush();
-            return true;
-        } else {
-            return false;
-        }
+        $db = getDatabaseConnection();
     } catch (Exception $e) {
-        error_log("RunDailyCronjob Exception: " . $e->getMessage());
+        error_log("RunDailyCronjob: Database connection failed - " . $e->getMessage());
+        return false;
+    }
+
+    //check to run the daily cronjob
+    $now = time();
+
+    $today_day = date('j', $now);
+    $today_month = date('n', $now);
+    $today_year = date('Y', $now);
+
+    //the click_time is recorded in the middle of the day
+    $cronjob_time = mktime(12, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
+    $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
+    $mysql['cronjob_type'] = $db->real_escape_string('daily');
+
+    //check to make sure this cronjob doesn't already exist
+    $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
+    $check_result = cronQuery($db, $check_sql, 'the daily tier\'s check for today\'s run');
+
+    $check_count = $check_result->num_rows;
+
+    if ($check_count == 0) {
+        echo 'Processing Daily Jobs...';
+        flushOutput();
+
+        // Today's run is recorded once its work is done (below): a run that
+        // fails part way is tried again with the next hour's run (this tier
+        // runs when the hourly one does), and every step is safe to repeat.
+        $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
+
+        /* -------- THIS CLEARS OUT THE CLICK SPY MEMORY TABLE --------- */
+        //this function runs everyday at midnight to clear out the temp clicks_memory table
+        //Every account's rows, on purpose: the install's own housekeeping,
+        //by age alone, and nothing is read on any account's behalf.
+        $from = $now - 86400;
+
+        //this makes it so we only have the most recent last 24 hour stuff, anything older, kill it.
+        //we want to keep our SPY TABLE, low
+        $click_sql = "DELETE FROM 202_clicks_spy WHERE click_time < $from";
+        cronQuery($db, $click_sql, 'the daily clear of the click spy table');
+
+        //clear the last 24 hour ip addresses
+        $last_ip_sql = "DELETE FROM 202_last_ips WHERE time < $from";
+        cronQuery($db, $last_ip_sql, 'the daily clear of the last addresses');
+
+        /* -------- NOW DELETE ALL THE OLD CRONJOB ENTRIES STUFF --------- */
+        $mysql['cronjob_time'] = (int)$mysql['cronjob_time'] - 86400;
+        $delete_sql = "DELETE FROM 202_cronjobs WHERE cronjob_time < " . $mysql['cronjob_time'] . "";
+        cronQuery($db, $delete_sql, 'the daily clear of old cron records');
+
+        cronQuery($db, $insert_sql, 'the daily tier\'s record of today\'s run');
+
+        echo 'Done';
+        flush();
+        return true;
+    } else {
         return false;
     }
 }
@@ -184,86 +209,70 @@ function RunDailyCronjob()
 function RunHourlyCronJob()
 {
     try {
-        try {
-            $db = getDatabaseConnection();
-        } catch (Exception $e) {
-            error_log("RunHourlyCronJob: Database connection failed - " . $e->getMessage());
-            return false;
-        }
-
-        //check to run the hourly cronjob
-        $now = time();
-
-        $today_day = date('j', $now);
-        $today_month = date('n', $now);
-        $today_year = date('Y', $now);
-        $today_hour = date('G', $now);
-
-        //the click_time is recorded at the start of the hour
-        $cronjob_time = mktime((int)$today_hour, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
-        $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        // cronjob_type is char(5): a longer name is stored cut short and never
-        // matches the check below, so the hour's row was never found and this
-        // tier ran every minute. 'hour' is the name 1.9.55 wrote; 'hourl' is
-        // what the six-letter 'hourly' was stored as, still on the day of the
-        // upgrade until the daily prune. CronjobTypesFitTheColumnTest.
-        $mysql['cronjob_type'] = $db->real_escape_string('hour');
-
-        //check to make sure this cronjob doesn't already exist
-        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type IN ('" . $mysql['cronjob_type'] . "', 'hourl') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
-        $check_result = $db->query($check_sql);
-
-        if ($check_result === false) {
-            try {
-                error_log("RunHourlyCronJob: Query failed - " . $db->error);
-            } catch (\Error $e) {
-                error_log("RunHourlyCronJob: Query failed (error inaccessible)");
-            }
-            return false;
-        }
-
-        $check_count = $check_result->num_rows;
-
-        if ($check_count == 0) {
-            echo 'Processing Hourly Jobs...';
-            flushOutput();
-
-            //if a cronjob hasn't run this hour, record it now.
-            $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-            $insert_result = $db->query($insert_sql);
-
-            // Landing Page Optimizer (segments-v2 G10): push the dimension
-            // snapshot for paired users the dictionary CRUD flagged dirty.
-            // Self-contained and never fatal — the nightly full sync
-            // (202-cronjobs/lpo_dimensions.php) remains the backstop.
-            PushDirtyLpoDimensions();
-
-            // App measurement retention (202-cronjobs/app-retention.php is
-            // the same prune with a report and options). No default
-            // scheduler runs that file, and the receiver's opportunistic
-            // pass covers only Apple postbacks and only while they arrive,
-            // so without this nothing aged out Android install rows at all.
-            PruneAppRetention();
-
-            // Product analytics a page recorded and could not deliver (held
-            // back by the throttle, then the tab closed, or a backlog left by
-            // a portal outage). Hourly, not every minute: each failed try
-            // spends one of an event's five attempts.
-            DeliverPendingAnalytics();
-
-            // Log the execution
-            $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-            $log_result = $db->query($log_sql);
-
-            echo 'Done<br>';
-            ob_flush();
-            flush();
-            return true;
-        } else {
-            return false;
-        }
+        $db = getDatabaseConnection();
     } catch (Exception $e) {
-        error_log("RunHourlyCronJob Exception: " . $e->getMessage());
+        error_log("RunHourlyCronJob: Database connection failed - " . $e->getMessage());
+        return false;
+    }
+
+    //check to run the hourly cronjob
+    $now = time();
+
+    $today_day = date('j', $now);
+    $today_month = date('n', $now);
+    $today_year = date('Y', $now);
+    $today_hour = date('G', $now);
+
+    //the click_time is recorded at the start of the hour
+    $cronjob_time = mktime((int)$today_hour, 0, 0, (int)$today_month, (int)$today_day, (int)$today_year);
+    $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
+    // cronjob_type is char(5): a longer name is stored cut short and never
+    // matches the check below, so the hour's row was never found and this
+    // tier ran every minute. 'hour' is the name 1.9.55 wrote; 'hourl' is
+    // what the six-letter 'hourly' was stored as, still on the day of the
+    // upgrade until the daily prune. CronjobTypesFitTheColumnTest.
+    $mysql['cronjob_type'] = $db->real_escape_string('hour');
+
+    //check to make sure this cronjob doesn't already exist
+    $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type IN ('" . $mysql['cronjob_type'] . "', 'hourl') AND cronjob_time='" . $mysql['cronjob_time'] . "'";
+    $check_result = cronQuery($db, $check_sql, 'the hourly tier\'s check for this hour\'s run');
+
+    $check_count = $check_result->num_rows;
+
+    if ($check_count == 0) {
+        echo 'Processing Hourly Jobs...';
+        flushOutput();
+
+        // Recorded once the work is done (below): a run that fails part way
+        // is tried again the next minute.
+        $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
+
+        // Landing Page Optimizer (segments-v2 G10): push the dimension
+        // snapshot for paired users the dictionary CRUD flagged dirty.
+        // Self-contained and never fatal — the nightly full sync
+        // (202-cronjobs/lpo_dimensions.php) remains the backstop.
+        PushDirtyLpoDimensions();
+
+        // App measurement retention (202-cronjobs/app-retention.php is
+        // the same prune with a report and options). No default
+        // scheduler runs that file, and the receiver's opportunistic
+        // pass covers only Apple postbacks and only while they arrive,
+        // so without this nothing aged out Android install rows at all.
+        PruneAppRetention();
+
+        // Product analytics a page recorded and could not deliver (held
+        // back by the throttle, then the tab closed, or a backlog left by
+        // a portal outage). Hourly, not every minute: each failed try
+        // spends one of an event's five attempts.
+        DeliverPendingAnalytics();
+
+        cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
+
+        echo 'Done<br>';
+        ob_flush();
+        flush();
+        return true;
+    } else {
         return false;
     }
 }
@@ -408,188 +417,175 @@ function PushDirtyLpoDimensions()
 function RunSecondsCronjob()
 {
     try {
-        try {
-            $db = getDatabaseConnection();
-        } catch (Exception $e) {
-            error_log("RunSecondsCronjob: Database connection failed - " . $e->getMessage());
-            return false;
-        }
-
-        //check to run the 1minute cronjob
-        $now = time();
-
-        $everySeconds = 60; // Changed to 60 seconds for performance
-
-        $today_second = date('s', $now);
-        $today_minute = date('i', $now);
-        $today_hour = date('G', $now);
-        $today_day = date('j', $now);
-        $today_month = date('n', $now);
-        $today_year = date('Y', $now);
-
-        $today_second = (int)ceil((int)$today_second / $everySeconds);
-        if ($today_second == 0) $today_second++;
-
-        //record cronjob time
-        $cronjob_time = mktime((int)$today_hour, (int)$today_minute, (int)$today_second, (int)$today_month, (int)$today_day, (int)$today_year);
-
-        $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
-        // 'secon', not 'second': cronjob_type is char(5), and a six-letter
-        // name is stored as 'secon' while the check below asks for 'second',
-        // so it never found the minute's row (CronjobTypesFitTheColumnTest).
-        $mysql['cronjob_type'] = $db->real_escape_string('secon');
-
-        //check to make sure this cronjob doesn't already exist
-        $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
-        $check_result = $db->query($check_sql);
-
-        if ($check_result === false) {
-            try {
-                error_log("RunSecondsCronjob: Query failed - " . $db->error);
-            } catch (\Error $e) {
-                error_log("RunSecondsCronjob: Query failed (error inaccessible)");
-            }
-            return false;
-        }
-
-        $check_count = $check_result->num_rows;
-
-        if ($check_count == 0) {
-            echo 'Processing Seconds Jobs...';
-            flushOutput();
-
-            //if a cronjob hasn't run, record it now.
-            $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
-            $insert_result = $db->query($insert_sql);
-
-            /* -------- THIS RUNS THE DELAYED QUERIES --------- */
-            $delayed_sql = "
-                SELECT delayed_sql
-                FROM 202_delayed_sqls
-                WHERE delayed_time <=" . $now . "
-            ";
-            $delayed_result = $db->query($delayed_sql);
-
-            if ($delayed_result !== false) {
-                while ($delayed_row = $delayed_result->fetch_assoc()) {
-                    //run each sql
-                    $update_sql = $delayed_row['delayed_sql'];
-                    $update_result = $db->query($update_sql);
-
-                    if ($update_result === false) {
-                        try {
-                            error_log("Delayed SQL failed: " . $update_sql . " - Error: " . $db->error);
-                        } catch (\Error $e) {
-                            error_log("Delayed SQL failed: " . $update_sql . " (error inaccessible)");
-                        }
-                    }
-                }
-            }
-
-            //delete all old delayed sqls
-            $delayed_sql = "DELETE FROM 202_delayed_sqls WHERE delayed_time <=" . $now;
-            $delayed_result = $db->query($delayed_sql);
-
-            // Log the execution
-            $log_sql = "REPLACE INTO 202_cronjob_logs (id, last_execution_time) VALUES (1, " . $now . ")";
-            $log_result = $db->query($log_sql);
-
-            // Process DataEngine tasks
-            try {
-                $de = new DataEngine();
-                if ($de->isDatabaseConnected()) {
-                    $de->processDirtyHours();
-                    $de->processClickUpgrade();
-                }
-            } catch (Exception $e) {
-                error_log("DataEngine processing failed: " . $e->getMessage());
-            }
-
-            // Multi-touch attribution: drain the conversion outbox into
-            // journeys and credits (202-cronjobs/attribution-worker.php is
-            // the same run for deployments that schedule it on its own; the
-            // named lock keeps the two from overlapping). A failure here
-            // loses nothing — every pending row stays for the next run — so
-            // it is logged and the rest of the cron carries on.
-            try {
-                $attribution = \Prosper202\Attribution\AttributionWorker::runExclusive(
-                    new \Prosper202\Database\Connection($db),
-                    20
-                );
-                if ($attribution !== null && ($attribution->processed() > 0 || $attribution->backfill !== null)) {
-                    echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
-                }
-            } catch (\Throwable $e) {
-                error_log('Attribution worker failed: ' . $e->getMessage());
-            }
-
-            // Attribution exports whose time has come (202-cronjobs/
-            // attribution-exports.php is the same run on its own). A job's
-            // failure is recorded on its row; only a database error lands
-            // here, and every job it did not reach is still pending.
-            try {
-                $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
-                if ($exports['completed'] + $exports['failed'] + $exports['retrying'] + $exports['lost'] > 0) {
-                    echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed'
-                        . ($exports['lost'] > 0 ? ', ' . (int) $exports['lost'] . ' taken by another run or deleted' : '') . '<br>';
-                }
-            } catch (\Throwable $e) {
-                error_log('Attribution export runner failed: ' . $e->getMessage());
-            }
-
-            // Android intake (plan §5.2, §5.3, §5.6): decode Play Integrity
-            // verdicts and settle pending_click installs. Every default
-            // scheduler runs only this file, so without this call an
-            // integrity_mode=require install stayed pending_integrity for
-            // good and a pending_click install never settled.
-            // 202-cronjobs/app-installs.php is the same run on its own; the
-            // job's named lock keeps the two from overlapping. It runs
-            // before the notification send below so an install it settles
-            // has its postback sent in the same run. A row's failure stays
-            // due for the next run and is logged by the pass that met it.
-            try {
-                if (\Api\V3\Apps\Android\AndroidIntakeJob::installed($db)) {
-                    $intake = \Api\V3\Apps\Android\AndroidIntakeJob::runExclusive($db);
-                    if ($intake === null) {
-                        echo 'Android intake: another run holds the lock; skipped<br>';
-                    } else {
-                        $intakeSummary = \Api\V3\Apps\Android\AndroidIntakeJob::summary($intake);
-                        echo nl2br(htmlspecialchars($intakeSummary, ENT_QUOTES)) . '<br>';
-                        $failedInstalls = $intake['integrity']['failed'] + $intake['settle']['failed'];
-                        if ($failedInstalls > 0) {
-                            error_log('Android intake: ' . $failedInstalls . ' install(s) failed; ' . $intakeSummary);
-                        }
-                    }
-                }
-            } catch (\Throwable $e) {
-                error_log('Android intake failed: ' . $e->getMessage());
-            }
-
-            // Traffic-source postbacks for goal outcomes, web and app alike
-            // (plan §5.8, §5.10), queued in the notification outbox with the
-            // conversions they announce. 202-cronjobs/app-installs.php sends
-            // them too; each row is claimed by a compare-and-set on its
-            // attempt count, so two senders never send one row. A send's
-            // failure is recorded on its row and retried with backoff.
-            try {
-                $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
-                if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
-                    echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
-                        . (int) $notifications['failed'] . ' failed<br>';
-                }
-            } catch (\Throwable $e) {
-                error_log('Notification outbox failed: ' . $e->getMessage());
-            }
-
-            echo 'Done<br>';
-            ob_flush();
-            flush();
-            return true;
-        } else {
-            return false;
-        }
+        $db = getDatabaseConnection();
     } catch (Exception $e) {
-        error_log("RunSecondsCronjob Exception: " . $e->getMessage());
+        error_log("RunSecondsCronjob: Database connection failed - " . $e->getMessage());
+        return false;
+    }
+
+    //check to run the 1minute cronjob
+    $now = time();
+
+    $everySeconds = 60; // Changed to 60 seconds for performance
+
+    $today_second = date('s', $now);
+    $today_minute = date('i', $now);
+    $today_hour = date('G', $now);
+    $today_day = date('j', $now);
+    $today_month = date('n', $now);
+    $today_year = date('Y', $now);
+
+    $today_second = (int)ceil((int)$today_second / $everySeconds);
+    if ($today_second == 0) $today_second++;
+
+    //record cronjob time
+    $cronjob_time = mktime((int)$today_hour, (int)$today_minute, (int)$today_second, (int)$today_month, (int)$today_day, (int)$today_year);
+
+    $mysql['cronjob_time'] = $db->real_escape_string((string)$cronjob_time);
+    // 'secon', not 'second': cronjob_type is char(5), and a six-letter
+    // name is stored as 'secon' while the check below asks for 'second',
+    // so it never found the minute's row (CronjobTypesFitTheColumnTest).
+    $mysql['cronjob_type'] = $db->real_escape_string('secon');
+
+    //check to make sure this cronjob doesn't already exist
+    $check_sql = "SELECT  *  FROM 202_cronjobs WHERE cronjob_type='" . $mysql['cronjob_type'] . "' AND cronjob_time='" . $mysql['cronjob_time'] . "'";
+    $check_result = cronQuery($db, $check_sql, 'the minute tier\'s check for this minute\'s run');
+
+    $check_count = $check_result->num_rows;
+
+    if ($check_count == 0) {
+        echo 'Processing Seconds Jobs...';
+        flushOutput();
+
+        //if a cronjob hasn't run, record it now.
+        $insert_sql = "INSERT INTO 202_cronjobs SET cronjob_type='" . $mysql['cronjob_type'] . "', cronjob_time='" . $mysql['cronjob_time'] . "'";
+        cronQuery($db, $insert_sql, 'the minute tier\'s record of this minute\'s run');
+
+        /* -------- THIS RUNS THE DELAYED QUERIES --------- */
+        $delayed_sql = "
+            SELECT delayed_sql
+            FROM 202_delayed_sqls
+            WHERE delayed_time <=" . $now . "
+        ";
+        $delayed_result = cronQuery($db, $delayed_sql, 'the read of the delayed statements');
+
+        // Taken off the queue before they run (the rows are already read),
+        // so a delete that fails runs none of them, rather than all again.
+        $delayed_sql = "DELETE FROM 202_delayed_sqls WHERE delayed_time <=" . $now;
+        cronQuery($db, $delayed_sql, 'the clear of the delayed statements');
+
+        while ($delayed_row = $delayed_result->fetch_assoc()) {
+            //run each sql
+            $update_sql = $delayed_row['delayed_sql'];
+            // Nothing in the tree queues one any more: a stored statement
+            // the server refuses is logged and dropped, or one that can
+            // never run would stop this tier every minute.
+            if ($db->query($update_sql) === false) {
+                error_log('Delayed SQL failed [errno ' . $db->errno . ']: '
+                    . p202FailedQueryMessage($db->errno, $db->error) . ' | ' . p202RedactedStatement($update_sql));
+            }
+        }
+
+        // Process DataEngine tasks: two jobs, so the one that fails does not
+        // keep the other from running.
+        try {
+            $de = new DataEngine();
+            if ($de->isDatabaseConnected()) {
+                $de->processDirtyHours();
+            }
+        } catch (Exception $e) {
+            error_log("DataEngine dirty hours failed: " . $e->getMessage());
+        }
+        try {
+            $de = new DataEngine();
+            if ($de->isDatabaseConnected()) {
+                $de->processClickUpgrade();
+            }
+        } catch (Exception $e) {
+            error_log("DataEngine rebuild failed: " . $e->getMessage());
+        }
+
+        // Multi-touch attribution: drain the conversion outbox into
+        // journeys and credits (202-cronjobs/attribution-worker.php is
+        // the same run for deployments that schedule it on its own; the
+        // named lock keeps the two from overlapping). A failure here
+        // loses nothing — every pending row stays for the next run — so
+        // it is logged and the rest of the cron carries on.
+        try {
+            $attribution = \Prosper202\Attribution\AttributionWorker::runExclusive(
+                new \Prosper202\Database\Connection($db),
+                20
+            );
+            if ($attribution !== null && ($attribution->processed() > 0 || $attribution->backfill !== null)) {
+                echo 'Attribution: ' . htmlspecialchars($attribution->summary(), ENT_QUOTES) . '<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('Attribution worker failed: ' . $e->getMessage());
+        }
+
+        // Attribution exports whose time has come (202-cronjobs/
+        // attribution-exports.php is the same run on its own). A job's
+        // failure is recorded on its row; only a database error lands
+        // here, and every job it did not reach is still pending.
+        try {
+            $exports = (new \Prosper202\Attribution\ExportRunner(new \Prosper202\Database\Connection($db)))->run(15);
+            if ($exports['completed'] + $exports['failed'] + $exports['retrying'] + $exports['lost'] > 0) {
+                echo 'Attribution exports: ' . (int) $exports['completed'] . ' completed, ' . (int) $exports['failed'] . ' failed'
+                    . ($exports['lost'] > 0 ? ', ' . (int) $exports['lost'] . ' taken by another run or deleted' : '') . '<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('Attribution export runner failed: ' . $e->getMessage());
+        }
+
+        // Android intake (plan §5.2, §5.3, §5.6): decode Play Integrity
+        // verdicts and settle pending_click installs. Every default
+        // scheduler runs only this file, so without this call an
+        // integrity_mode=require install stayed pending_integrity for
+        // good and a pending_click install never settled.
+        // 202-cronjobs/app-installs.php is the same run on its own; the
+        // job's named lock keeps the two from overlapping. It runs
+        // before the notification send below so an install it settles
+        // has its postback sent in the same run. A row's failure stays
+        // due for the next run and is logged by the pass that met it.
+        try {
+            if (\Api\V3\Apps\Android\AndroidIntakeJob::installed($db)) {
+                $intake = \Api\V3\Apps\Android\AndroidIntakeJob::runExclusive($db);
+                if ($intake === null) {
+                    echo 'Android intake: another run holds the lock; skipped<br>';
+                } else {
+                    $intakeSummary = \Api\V3\Apps\Android\AndroidIntakeJob::summary($intake);
+                    echo nl2br(htmlspecialchars($intakeSummary, ENT_QUOTES)) . '<br>';
+                    $failedInstalls = $intake['integrity']['failed'] + $intake['settle']['failed'];
+                    if ($failedInstalls > 0) {
+                        error_log('Android intake: ' . $failedInstalls . ' install(s) failed; ' . $intakeSummary);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('Android intake failed: ' . $e->getMessage());
+        }
+
+        // Traffic-source postbacks for goal outcomes, web and app alike
+        // (plan §5.8, §5.10), queued in the notification outbox with the
+        // conversions they announce. 202-cronjobs/app-installs.php sends
+        // them too; each row is claimed by a compare-and-set on its
+        // attempt count, so two senders never send one row. A send's
+        // failure is recorded on its row and retried with backoff.
+        try {
+            $notifications = (new \Prosper202\Notifications\NotificationOutbox(new \Prosper202\Database\Connection($db)))->sendDue(200);
+            if ($notifications['sent'] + $notifications['failed'] + $notifications['retrying'] > 0) {
+                echo 'Traffic-source notifications: ' . (int) $notifications['sent'] . ' sent, ' . (int) $notifications['retrying'] . ' retrying, '
+                    . (int) $notifications['failed'] . ' failed<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('Notification outbox failed: ' . $e->getMessage());
+        }
+
+        echo 'Done<br>';
+        ob_flush();
+        flush();
+        return true;
+    } else {
         return false;
     }
 }
@@ -650,11 +646,12 @@ function ClearOldClicks()
     }
 
     try {
-        $slack_result = $db->query("SELECT user_slack_incoming_webhook FROM 202_users_pref WHERE user_id = 1 AND user_slack_incoming_webhook != ''");
-        if ($slack_result === false) {
-            error_log('ClearOldClicks: the Slack webhook could not be read: ' . $db->error);
-            return;
-        }
+        $slack_result = cronQuery(
+            $db,
+            "SELECT user_slack_incoming_webhook FROM 202_users_pref"
+                . " WHERE user_id = 1 AND user_slack_incoming_webhook != ''",
+            'the read of the Slack webhook'
+        );
         $slack_row = $slack_result->fetch_assoc();
         if (!empty($slack_row['user_slack_incoming_webhook']) && class_exists('Slack')) {
             if ($report['before'] !== null) {
@@ -663,7 +660,14 @@ function ClearOldClicks()
                 // The day an id was scheduled from: the marker's click,
                 // which that deletion keeps.
                 $day = $db->query('SELECT click_time FROM 202_clicks WHERE click_id = ' . (int) $report['marker'] . ' LIMIT 1');
-                $dayRow = $day === false ? null : $day->fetch_assoc();
+                $dayRow = null;
+                if ($day === false) {
+                    // Named by the click instead, which is what the setting held.
+                    error_log('ClearOldClicks: the marker click could not be read: '
+                        . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+                } else {
+                    $dayRow = $day->fetch_assoc();
+                }
                 $date = is_array($dayRow) ? date('Y-m-d', (int) $dayRow['click_time']) : 'click ' . (int) $report['marker'];
             }
             $slack = new Slack($slack_row['user_slack_incoming_webhook']);

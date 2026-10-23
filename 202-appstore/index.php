@@ -33,8 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 			p202_account_flash('info', 'Nothing was changed: the key shown is masked. Paste a new key to replace it.');
 			p202_account_redirect('202-appstore/');
 		}
-		if ($key !== '' && !clickserver_api_key_validate($key)) {
-			$errors['clickserver_api_key'] = 'This API Key appears invalid.';
+		if (($keyError = p202_check_clickserver_key($key)) !== null) {
+			$errors['clickserver_api_key'] = $keyError;
 		} else {
 			$conn = new \Prosper202\Database\Connection($db);
 			$stmt = $conn->prepareWrite('UPDATE 202_users SET clickserver_api_key = ? WHERE user_id = ?');

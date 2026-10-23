@@ -226,13 +226,13 @@ In table mode (including `--table`, `--csv` and `-q`) the same information is tw
 | 3 | network | Connection timeout, DNS failure, unreachable server | Check the URL; `p202 config test` |
 | 4 | server | API returned a 5xx error, or a 402 that is not the install's licence refusal (a proxy, WAF or host in front of the install answered it) | Retry after a wait; `p202 system health` (for that 402, check what serves the URL in `p202 config show`) |
 | 5 | partial_failure | Bulk operation completed with some failures, or a check found a problem (`system health`, `system cron`, `rotator check`, `campaign check-urls`) | stderr lists the failed items; a check still prints its rows on stdout |
-| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli`. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; with any other failure among them it is a generic failure (exit 1), and each item's own error says what it needs | Start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes); do not change the key or the URL |
+| 6 | licence | The install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402). The install recognises the Go CLI by its User-Agent; the API itself stays open to other clients with the same key, and `GET /capabilities` reports the verdict as `cli`. An install with no ClickServer API key is also refused. A key the install cannot read (a missing row or failed read) counts as no answer, so the Go CLI is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; with any other failure among them it is a generic failure (exit 1), and each item's own error says what it needs | If no ClickServer key is stored, set the account owner's ClickServer API key on the install. Otherwise start the 7-day trial at the link in the hint, then retry (the install re-checks a refusal within five minutes). Keep the CLI's REST API key and URL unchanged |
 
 Decision procedure for an agent:
 
 1. Exit code 0: parse stdout as JSON.
 2. Otherwise read the envelope on stderr. If `hint` is present, it is the intended next action: follow it, then retry. Do not guess at flags.
-3. `category: auth`, `network` and `licence` are environment problems, not input problems; do not vary the command, fix what the hint names (for `licence`, the install's ClickServer key needs an active Pro subscription; the CLI's own config is fine).
+3. `category: auth`, `network` and `licence` are environment problems, not input problems; do not vary the command, fix what the hint names (for `licence`, set the account owner's ClickServer key on the install if none is stored, or activate Pro on the stored key; keep the CLI's REST API key and URL unchanged). An unreadable ClickServer key counts as no answer and allows the Go CLI.
 4. `category: server`: safe to retry read-only commands (list, get, report, forecast) after a short wait; do not retry creates blindly (see Idempotency).
 5. `field_errors`: change exactly those fields.
 
@@ -1175,7 +1175,8 @@ p202 system metrics    [--json]     # Admin only; sync counters, queue, alerts
 
 # Account › Settings — Admin and a role with access_to_settings:
 p202 system info       [--json]     # versions (database_upgrade_needed), PHP limits, memcache, clicks, DB size, cron, DataEngine
-p202 system login-log  [--limit 1-500] [--json]   # newest first: user_name, login_time, ip_address, login_success
+p202 system login-log  [--limit 1-500] [--status passed|failed|not_completed] [--json]   # newest first: user_name, login_time, ip_address, status, login_success
+                       # not_completed: the password was right but a database failure stopped the sign-in; the throttle counts failed alone
 p202 system retention show [--json]               # auto_delete_days, scheduled_deletion
 p202 system retention set --days 0-36500 [--force]                 # asks when it keeps less than now
 p202 system retention delete-before --date YYYY-MM-DD [--dry-run] [--force]   # irreversible; always previews
@@ -1208,16 +1209,49 @@ p202 system integrations [--json]   # notification URLs per integration; secret_
 
 ## Tool-use schema hints
 
-If you are defining this CLI as a tool for an LLM, here are recommendations:
+### MCP: use `p202 mcp`
+
+An AI app that speaks MCP (Claude Desktop, Claude Code, Cursor, ...) needs no
+hand-written tool: `p202 mcp` is an MCP server on stdin/stdout whose tools are
+the CLI's commands, one tool per command, each with an input schema generated
+from the command's flags and MCP's read-only/destructive hints, so the app asks
+before a write.
+
+```
+claude mcp add prosper202 -- p202 mcp --read-only    # reads only
+claude mcp add prosper202 -- p202 --staged mcp       # writes become proposals
+claude mcp add prosper202 -- p202 mcp                # reads and writes
+```
+
+- The server uses the profile active when it starts (or `--profile`); every
+  tool call runs one `p202 mcp call <tool>` with the server's `--profile`,
+  `--staged` and `--read-only`, which the model's arguments cannot change.
+- A write tool (deletes included) runs with `--force`: the app's approval of
+  the tool call is the confirmation. Do not set the app to always allow the
+  delete tools; a delete tool's description tells the model to preview with
+  `dry_run: true` first.
+- With `--staged`, `change_apply` and `change_discard` are not offered: the
+  person applies a proposal (`p202 change apply <id>`), not the assistant.
+- `p202 mcp tools` prints the tool list as JSON; `p202 mcp call <tool> --input
+  '<json>'` runs one tool as the app would.
+- For claude.ai and other hosted apps there is Tracking202's hosted MCP server
+  (`https://mcp.tracking202.com/mcp`): the person approves the connection on
+  their own install, signed in as their own user, and chooses read only,
+  propose changes, or read and change. It needs Prosper202 1.9.78 on https.
+
+If you are defining this CLI as a tool for an LLM some other way, here are
+recommendations:
 
 ### Minimum tool definition
 
-A single "execute p202 command" tool is sufficient. The LLM constructs the full command string.
+A single "execute p202 command" tool works, but the host cannot tell a read
+from a delete, so it asks before every call or before none. Prefer the split
+below, or `p202 mcp`.
 
 ```json
 {
   "name": "p202",
-  "description": "Execute a Prosper202 CLI command. Always include --json for parseable output and --force for delete operations.",
+  "description": "Execute a Prosper202 CLI command. Always include --json for parseable output. A delete or other confirmed write needs --force (there is no terminal to answer its question); preview it with --dry-run first.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -1233,13 +1267,14 @@ A single "execute p202 command" tool is sufficient. The LLM constructs the full 
 
 ### Granular tool definitions
 
-For tighter control, define separate tools per operation category:
+For tighter control, define separate tools per operation category, so the
+host can let reads run and ask before writes:
 
 - `p202_list` -- List any resource type
 - `p202_get` -- Get a single resource by ID
 - `p202_create` -- Create a resource with fields
 - `p202_update` -- Update a resource
-- `p202_delete` -- Delete a resource (always include --force)
+- `p202_delete` -- Delete a resource: mark it destructive so the host asks every time; it runs with --force once approved, after a --dry-run preview
 - `p202_report` -- Generate reports
 - `p202_forecast` -- Forecast a metric or all core metrics (read-only)
 - `p202_system` -- System diagnostics
@@ -1249,7 +1284,7 @@ For tighter control, define separate tools per operation category:
 If embedding this CLI as a tool for an LLM agent, include this in the system prompt:
 
 ```
-You have access to the Prosper202 CLI (p202) for managing an affiliate tracking platform.
+You have access to the Prosper202 CLI (p202) for managing a self-hosted campaign tracking and marketing analytics platform.
 
 Rules:
 - Always append --json to get structured output
@@ -1291,7 +1326,7 @@ Rules:
 | report | Yes | None (read-only) |
 | forecast | Yes | None (read-only; deterministic for the same history) |
 
-For agents that may retry on failure: list, get, update, delete, and report commands are safe to retry. A bare create is not -- a retry may produce duplicates. When a retry may happen, pass `--idempotency-key <stable-key>` on the create (servers with `features.create_idempotency`; the retry replays the recorded response with `idempotent_replay: true`), or use the API's `bulk-upsert` endpoints, which require an `Idempotency-Key` header. Exceptions: `user apikey create` never replays (the response contains the secret), and LTV write endpoints follow their own upsert/dedup semantics.
+For agents that may retry on failure: list, get, update, delete, and report commands are safe to retry. A bare create is not -- a retry may produce duplicates. When a retry may happen, pass `--idempotency-key <stable-key>` on the create (servers with `features.create_idempotency`; the retry replays the recorded response with `idempotent_replay: true`), or use the API's `bulk-upsert` endpoints, which require an `Idempotency-Key` header (a bulk-upsert row answered `"retryable": true` was not stored: send it again under a new key; one answered `"unconfirmed": true` may have been: look it up first). Exceptions: `user apikey create` never replays (the response contains the secret), and LTV write endpoints follow their own upsert/dedup semantics.
 
 A key is scoped to your account and identifies one request, so it must travel with the exact request it was minted for. Retry the same command with the same field values; reusing the key for anything else — changed values, or a different resource — is refused with `422` (`category: validation`) rather than treated as a new create. One key per create, not one per turn.
 

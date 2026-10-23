@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Prosper202\Click\ClickRecord;
+use Prosper202\Click\ClickRequest;
+use Prosper202\Click\DynamicBid;
 use Prosper202\Click\TrackingBaseUrl;
 
 #only allow numeric t202ids, reject 0 as invalid
@@ -9,6 +12,8 @@ $t202id = $_GET['t202id'] ?? '';
 if (!is_numeric($t202id) || (int)$t202id <= 0) die();
 
 # check to see if mysql connection works, if not fail over to cached stored redirect urls
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once(substr(__DIR__, 0, -21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0, -21) . '/202-config/class-dataengine-slim.php');
 
@@ -20,9 +25,6 @@ if (p202IsSpeculativeRequest()) {
 	p202DeclineSpeculativeRequest();
 }
 
-$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
-$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
-
 // Enable processing to continue even if the client disconnects.
 // This is necessary to ensure that critical operations, such as database updates
 // or logging, are completed even if the user closes their browser or loses connection.
@@ -33,8 +35,9 @@ ignore_user_abort(true);
 
 function renderErrorPage(int $code, string $title, string $message, string $accentColor, string $svgIcon): void
 {
-	http_response_code($code);
-	die('<!DOCTYPE html>
+    p202NoStore();
+    http_response_code($code);
+    die('<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -120,74 +123,13 @@ if ($usedCachedRedirect == true) {
 			// the install token expands empty (plan §5.1).
 			$new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
 
-			//c1 string replace for cached redirect
-			if (isset($_GET['c1']) && $_GET['c1'] != '') {
-				$new_url = str_replace("[[c1]]", rawurlencode((string)$_GET['c1']), $new_url);
-			} else {
-				$new_url = str_replace("[[c1]]", "p202c1", $new_url);
-			}
-
-			//c2 string replace for cached redirect
-			if (isset($_GET['c2']) && $_GET['c2'] != '') {
-				$new_url = str_replace("[[c2]]", rawurlencode((string)$_GET['c2']), $new_url);
-			} else {
-				$new_url = str_replace("[[c2]]", "p202c2", $new_url);
-			}
-
-			//c3 string replace for cached redirect
-			if (isset($_GET['c3']) && $_GET['c3'] != '') {
-				$new_url = str_replace("[[c3]]", rawurlencode((string)$_GET['c3']), $new_url);
-			} else {
-				$new_url = str_replace("[[c3]]", "p202c3", $new_url);
-			}
-
-			//c4 string replace for cached redirect
-			if (isset($_GET['c4']) && $_GET['c4'] != '') {
-				$new_url = str_replace("[[c4]]", rawurlencode((string)$_GET['c4']), $new_url);
-			} else {
-				$new_url = str_replace("[[c4]]", "p202c4", $new_url);
-			}
-
-			//gclid string replace for cached redirect
-			if (isset($_GET['gclid']) && $_GET['gclid'] != '') {
-				$new_url = str_replace("[[gclid]]", rawurlencode((string)$_GET['gclid']), $new_url);
-			} else {
-				$new_url = str_replace("[[gclid]]", "p202gclid", $new_url);
-			}
-
-			//utm_source string replace for cached redirect
-			if (isset($_GET['utm_source']) && $_GET['utm_source'] != '') {
-				$new_url = str_replace("[[utm_source]]", rawurlencode((string)$_GET['utm_source']), $new_url);
-			} else {
-				$new_url = str_replace("[[utm_source]]", "p202utm_source", $new_url);
-			}
-
-			//utm_medium string replace for cached redirect
-			if (isset($_GET['utm_medium']) && $_GET['utm_medium'] != '') {
-				$new_url = str_replace("[[utm_medium]]", rawurlencode((string)$_GET['utm_medium']), $new_url);
-			} else {
-				$new_url = str_replace("[[utm_medium]]", "p202utm_medium", $new_url);
-			}
-
-			//utm_campaign string replace for cached redirect
-			if (isset($_GET['utm_campaign']) && $_GET['utm_campaign'] != '') {
-				$new_url = str_replace("[[utm_campaign]]", rawurlencode((string)$_GET['utm_campaign']), $new_url);
-			} else {
-				$new_url = str_replace("[[utm_campaign]]", "p202utm_campaign", $new_url);
-			}
-
-			//utm_term string replace for cached redirect
-			if (isset($_GET['utm_term']) && $_GET['utm_term'] != '') {
-				$new_url = str_replace("[[utm_term]]", rawurlencode((string)$_GET['utm_term']), $new_url);
-			} else {
-				$new_url = str_replace("[[utm_term]]", "p202utm_term", $new_url);
-			}
-
-			//utm_content string replace for cached redirect
-			if (isset($_GET['utm_content']) && $_GET['utm_content'] != '') {
-				$new_url = str_replace("[[utm_content]]", rawurlencode((string)$_GET['utm_content']), $new_url);
-			} else {
-				$new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
+			// c1-c4, gclid and the UTM values as sent, or p202<name> for one not sent
+			$cachedTokens = [
+				'c1', 'c2', 'c3', 'c4', 'gclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+			];
+			foreach ($cachedTokens as $token) {
+				$sent = ClickRequest::text($_GET, $token);
+				$new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
 			}
 
 			p202NoStore();
@@ -205,43 +147,25 @@ if ($usedCachedRedirect == true) {
 	);
 }
 
-//grab tracker data
-$mysql['tracker_id_public'] = $db->real_escape_string($t202id);
-$tracker_sql = "SELECT 202_trackers.user_id,
-						202_trackers.aff_campaign_id,
-						text_ad_id,
-						ppc_account_id,
-						click_cpc,
-						click_cpa,
-						click_cloaking,
-						aff_campaign_rotate,
-						aff_campaign_url,
-						aff_campaign_url_2,
-						aff_campaign_url_3,
-						aff_campaign_url_4,
-						aff_campaign_url_5,
-						aff_campaign_payout,
-						aff_campaign_cloaking,
-						202_aff_campaigns.identity_signals,
-						2cv.ppc_variable_ids,
-						2cv.parameters,
-                        user_timezone, 
-		                user_keyword_searched_or_bidded,
-                        user_pref_referer_data,
-                        user_pref_dynamic_bid,
-		                maxmind_isp 
-                        FROM 202_trackers 
-                        LEFT JOIN 202_users_pref USING (user_id) 
-            LEFT JOIN 202_users USING (user_id) 
-    			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)					                 
-				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
+// After the outage fallback above: with no connection there is nothing to build them on.
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
+$trackingRepo = \Prosper202\Repository\LookupRepositoryFactory::tracking($db);
 
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The tracker, with its campaign, text ad and traffic source when each is the
+// tracker's account's: one of another account's, named by an id the
+// tracker kept, was copied into this account's click.
+$dlTrackerId = \Prosper202\Click\PublicId::parse($t202id);
+$tracker_row = null;
+if ($dlTrackerId !== null) {
+    try {
+        $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->tracker($dlTrackerId);
+    } catch (\Throwable $dlReadError) {
+        record_mysql_error($db, 'reading tracker ' . $dlTrackerId, $dlReadError->getMessage());
+    }
+}
 
 // Check if tracker exists BEFORE using its data
-if (!$tracker_row) {
+if ($tracker_row === null) {
 	renderErrorPage(
 		404,
 		'Tracking Link Not Found',
@@ -278,25 +202,16 @@ date_default_timezone_set($tracker_row['user_timezone']);
 $mysql['aff_campaign_id'] = $db->real_escape_string((string)($tracker_row['aff_campaign_id'] ?? '0'));
 $mysql['ppc_account_id'] = $db->real_escape_string((string)($tracker_row['ppc_account_id'] ?? '0'));
 $mysql['user_pref_dynamic_bid'] = $db->real_escape_string((string)($tracker_row['user_pref_dynamic_bid'] ?? '0'));
-// set cpc use dynamic variable if set or the default if not
-if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-	$_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
-	if (is_numeric($_GET['t202b'])) {
-		$bid = number_format((float)$_GET['t202b'], 5, '.', '');
-		$mysql['click_cpc'] = $db->real_escape_string((string)$bid);
-	} else {
-		$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
-	}
-} else
-	$mysql['click_cpc'] = $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
+// The bid the link names when the account takes dynamic bids, else the tracker's CPC.
+$bid = $mysql['user_pref_dynamic_bid'] == '1' ? DynamicBid::fromRequest($_GET['t202b'] ?? null) : null;
+$mysql['click_cpc'] = $bid ?? $db->real_escape_string((string)($tracker_row['click_cpc'] ?? ''));
 
 $mysql['click_cpa'] = $db->real_escape_string((string)($tracker_row['click_cpa'] ?? ''));
 $mysql['click_payout'] = $db->real_escape_string((string)($tracker_row['aff_campaign_payout'] ?? ''));
 $mysql['click_time'] = time();
 $mysql['text_ad_id'] = $db->real_escape_string((string)($tracker_row['text_ad_id'] ?? '0'));
 
-/* ok, if $_GET['OVRAW'] that is a yahoo keyword, if on the REFER, there is a $_GET['q], that is a GOOGLE keyword... */
-//so this is going to check the REFERER URL, for a ?q=, which is the ACUTAL KEYWORD searched.
+// The referring page's query: its q is a searched keyword (ClickRequest::keyword()), its url the referer.
 $referer_url_parsed = [];
 $referer_url_query = '';
 $referer_query = [];
@@ -307,91 +222,32 @@ if (!empty($_SERVER['HTTP_REFERER'])) {
 	@parse_str($referer_url_query, $referer_query);
 }
 
-$keyword = '';
-switch ($tracker_row['user_keyword_searched_or_bidded']) {
-
-	case "bidded":
-		#try to get the bidded keyword first
-		if (isset($_GET['OVKEY'])) { //if this is a Y! keyword
-			$keyword = (string)$_GET['OVKEY'];
-		} elseif (isset($_GET['t202kw'])) {
-			$keyword = (string)$_GET['t202kw'];
-		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
-			$keyword = (string)$_GET['target_passthrough'];
-		} else { //if this is a zango, or more keyword
-			$keyword = (string)($_GET['keyword'] ?? '');
-		}
-		break;
-	case "searched":
-		#try to get the searched keyword
-		if (isset($referer_query['q'])) {
-			$keyword = $referer_query['q'];
-		} elseif (isset($_GET['OVRAW'])) { //if this is a Y! keyword
-			$keyword = (string)$_GET['OVRAW'];
-		} elseif (isset($_GET['target_passthrough'])) { //if this is a mediatraffic! keyword
-			$keyword = (string)$_GET['target_passthrough'];
-		} elseif (isset($_GET['keyword'])) { //if this is a zango, or more keyword
-			$keyword = (string)$_GET['keyword'];
-		} elseif (isset($_GET['search_word'])) { //if this is a eniro, or more keyword
-			$keyword = (string)$_GET['search_word'];
-		} elseif (isset($_GET['query'])) { //if this is a naver, or more keyword
-			$keyword = (string)$_GET['query'];
-		} elseif (isset($_GET['encquery'])) { //if this is a aol, or more keyword
-			$keyword = (string)$_GET['encquery'];
-		} elseif (isset($_GET['terms'])) { //if this is a about.com, or more keyword
-			$keyword = (string)$_GET['terms'];
-		} elseif (isset($_GET['rdata'])) { //if this is a viola, or more keyword
-			$keyword = (string)$_GET['rdata'];
-		} elseif (isset($_GET['qs'])) { //if this is a virgilio, or more keyword
-			$keyword = (string)$_GET['qs'];
-		} elseif (isset($_GET['wd'])) { //if this is a baidu, or more keyword
-			$keyword = (string)$_GET['wd'];
-		} elseif (isset($_GET['text'])) { //if this is a yandex, or more keyword
-			$keyword = (string)$_GET['text'];
-		} elseif (isset($_GET['szukaj'])) { //if this is a wp.pl, or more keyword
-			$keyword = (string)$_GET['szukaj'];
-		} elseif (isset($_GET['qt'])) { //if this is a O*net, or more keyword
-			$keyword = (string)$_GET['qt'];
-		} elseif (isset($_GET['k'])) { //if this is a yam, or more keyword
-			$keyword = (string)$_GET['k'];
-		} elseif (isset($_GET['words'])) { //if this is a Rambler, or more keyword
-			$keyword = (string)$_GET['words'];
-		} else {
-			$keyword = (string)($_GET['t202kw'] ?? '');
-		}
-		break;
-}
-
-if (str_starts_with((string) $keyword, 't202var_')) {
-	$t202var = substr((string) $keyword, strpos((string) $keyword, "_") + 1);
-
-	if (isset($_GET[$t202var])) {
-		$keyword = $_GET[$t202var];
-	}
-}
-
-$keyword = str_replace('%20', ' ', $keyword);
+$keyword = ClickRequest::keyword($_GET, $referer_query, $tracker_row['user_keyword_searched_or_bidded'] ?? null);
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string)$keyword_id);
 
 $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get 
+$clickCustom = [];
 //Get C1-C4 IDs
 for ($i = 1; $i <= 4; $i++) {
 	$custom = "c" . $i; //create dynamic variable
 	// Raw value: findOrCreateCustomVar() binds it as a parameter, so escaping
 	// here would store literal backslashes.
-	$custom_val = (string) ($_lGET[$custom] ?? '');
+	$custom_val = ClickRequest::text($_lGET, $custom);
 	$custom_val = str_replace('%20', ' ', $custom_val);
+    $clickCustom[$custom] = \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($custom_val);
 	$custom_id = $trackingRepo->findOrCreateCustomVar($custom, $custom_val); //get the id
 	$mysql[$custom . '_id'] = $db->real_escape_string((string)$custom_id); //save it
 }
 
-$mysql['gclid'] = $db->real_escape_string((string)($_GET['gclid'] ?? ''));
+// Raw: the writer binds it, so an escaped value was stored with its backslashes.
+$gclid = ClickRequest::text($_GET, 'gclid');
+$mysql['gclid'] = $gclid;
 
 $custom_var_ids = [];
 
 foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $ppcVariableId]) {
-	$variable = (string)($_GET[$value] ?? '');
+	$variable = ClickRequest::text($_GET, $value);
 
 	if (isset($variable) && $variable != '') {
 		$variable = str_replace('%20', ' ', $variable);
@@ -401,7 +257,7 @@ foreach (\Prosper202\Click\TrackerVariables::pairs($tracker_row) as [$value, $pp
 }
 
 //utm_source
-$utm_source = (string)($_GET['utm_source'] ?? '');
+$utm_source = ClickRequest::text($_GET, 'utm_source');
 if (isset($utm_source) && $utm_source != '') {
 	$utm_source = str_replace('%20', ' ', $utm_source);
 	$utm_source_id = $trackingRepo->findOrCreateUtm($utm_source, 'utm_source');
@@ -411,7 +267,7 @@ if (isset($utm_source) && $utm_source != '') {
 $mysql['utm_source_id'] = $db->real_escape_string((string)$utm_source_id);
 
 //utm_medium
-$utm_medium = (string)($_GET['utm_medium'] ?? '');
+$utm_medium = ClickRequest::text($_GET, 'utm_medium');
 if (isset($utm_medium) && $utm_medium != '') {
 	$utm_medium = str_replace('%20', ' ', $utm_medium);
 	$utm_medium_id = $trackingRepo->findOrCreateUtm($utm_medium, 'utm_medium');
@@ -421,7 +277,7 @@ if (isset($utm_medium) && $utm_medium != '') {
 $mysql['utm_medium_id'] = $db->real_escape_string((string)$utm_medium_id);
 
 //utm_campaign
-$utm_campaign = (string)($_GET['utm_campaign'] ?? '');
+$utm_campaign = ClickRequest::text($_GET, 'utm_campaign');
 if (isset($utm_campaign) && $utm_campaign != '') {
 	$utm_campaign = str_replace('%20', ' ', $utm_campaign);
 	$utm_campaign_id = $trackingRepo->findOrCreateUtm($utm_campaign, 'utm_campaign');
@@ -431,7 +287,7 @@ if (isset($utm_campaign) && $utm_campaign != '') {
 $mysql['utm_campaign_id'] = $db->real_escape_string((string)$utm_campaign_id);
 
 //utm_term
-$utm_term = (string)($_GET['utm_term'] ?? '');
+$utm_term = ClickRequest::text($_GET, 'utm_term');
 if (isset($utm_term) && $utm_term != '') {
 	$utm_term = str_replace('%20', ' ', $utm_term);
 	$utm_term_id = $trackingRepo->findOrCreateUtm($utm_term, 'utm_term');
@@ -441,7 +297,7 @@ if (isset($utm_term) && $utm_term != '') {
 $mysql['utm_term_id'] = $db->real_escape_string((string)$utm_term_id);
 
 //utm_content
-$utm_content = (string)($_GET['utm_content'] ?? '');
+$utm_content = ClickRequest::text($_GET, 'utm_content');
 if (isset($utm_content) && $utm_content != '') {
 	$utm_content = str_replace('%20', ' ', $utm_content);
 	$utm_content_id = $trackingRepo->findOrCreateUtm($utm_content, 'utm_content');
@@ -456,7 +312,7 @@ if (!isset($detect)) {
 	$detect = new DeviceDetect();
 }
 
-$device_id = PLATFORMS::get_device_info($db, $detect, $_GET['ua'] ?? '');
+$device_id = PLATFORMS::get_device_info($db, $detect, ClickRequest::text($_GET, 'ua'));
 $mysql['platform_id'] = $db->real_escape_string((string)($device_id['platform'] ?? '0'));
 $mysql['browser_id'] = $db->real_escape_string((string)($device_id['browser'] ?? '0'));
 $mysql['device_id'] = $db->real_escape_string((string)($device_id['device'] ?? '0'));
@@ -521,7 +377,36 @@ if (\Prosper202\Click\ClickCloaking::isOn($tracker_row)) {
 
 // Compute redirect URL (needed before redirect)
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+// The click's rows are written after the redirect, so its URL's tokens come
+// from the values in hand: read back, they are not there yet. The geo lookup,
+// kept off the redirect, runs before it only for a URL that names a place.
+$earlyGeoData = preg_match('/\[\[(country|country_code|region|city)\]\]/i', (string) $redirect_site_url)
+    ? getGeoData($ip_address)
+    : null;
+$redirect_site_url = replaceClickPlaceholders($redirect_site_url, (string) $click_id, [
+    'keyword' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedKeyword($keyword),
+    't202pubid' => $tracker_row['user_public_publisher_id'] ?? '',
+    'c1' => $clickCustom['c1'],
+    'c2' => $clickCustom['c2'],
+    'c3' => $clickCustom['c3'],
+    'c4' => $clickCustom['c4'],
+    'gclid' => ClickRecord::storedGclid($gclid),
+    // As stored: a value past the columns' 350 bytes is sent as cut.
+    'utm_source' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_source),
+    'utm_medium' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_medium),
+    'utm_campaign' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_campaign),
+    'utm_term' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_term),
+    'utm_content' => \Prosper202\Repository\Mysql\MysqlTrackingRepository::storedValue($utm_content),
+    'country' => $earlyGeoData['country'] ?? '',
+    'country_code' => $earlyGeoData['country_code'] ?? '',
+    'region' => $earlyGeoData['region'] ?? '',
+    'city' => $earlyGeoData['city'] ?? '',
+    // As stored: a tracker with no CPC stores 0.00000.
+    'cpc' => number_format((float) $mysql['click_cpc'], 5, '.', ''),
+    'cpa' => $tracker_row['click_cpa'] ?? '',
+    'payout' => $tracker_row['aff_campaign_payout'] ?? '',
+    'ppc_account_id' => $tracker_row['ppc_account_id'] ?? '',
+]);
 
 $cloaking_site_url = '';
 if ($cloaking_on === true) {
@@ -532,19 +417,17 @@ if ($cloaking_on === true) {
 // signed customer id): captured now, because the cookie has to go out with
 // the redirect, and linked after the click is stored. Consent withheld —
 // p202_consent=0, or the campaign's identity capture off — captures nothing.
-// A tracker with no campaign has NULL there, which leaves capture on (the
-// column's default); anything but '1' or '0' reads as off.
+// A tracker with no campaign leaves capture on; one whose campaign is not the
+// account's, or a setting that is neither '1' nor '0', reads as off.
 $clickIdentity = p202ClickIdentity(
 	$_GET,
-	\Prosper202\Identity\RequestSignals::campaignAllows(
-		array_key_exists('identity_signals', $tracker_row) ? $tracker_row['identity_signals'] : null
-	)
+	\Prosper202\Identity\RequestSignals::trackerRowAllows($tracker_row)
 );
 
 // Helper: compute remaining click data and record
-$computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity): void {
+$computeAndRecordClick = function () use ($db, &$mysql, $custom_var_ids, $trackingRepo, $locationRepo, $tracker_row, $referer_query, $redirect_site_url, $click_id, $clickRepo, $cloaking_on, $cloaking_site_url, $ip_address, $clickIdentity, $earlyGeoData): void {
 	// GEO lookup (deferred here so MaxMind reads stay off the redirect hot path)
-	$GeoData = getGeoData($ip_address);
+    $GeoData = $earlyGeoData ?? getGeoData($ip_address);
 	$country_id = $locationRepo->findOrCreateCountry($GeoData['country'] ?? '', $GeoData['country_code'] ?? '');
 	$mysql['country_id'] = (string) $country_id;
 	$region_id = $locationRepo->findOrCreateRegion($GeoData['region'] ?? '', $country_id);
@@ -575,42 +458,48 @@ $computeAndRecordClick = function () use (&$mysql, $custom_var_ids, $trackingRep
 
 	// Compute site URLs
 	if ($tracker_row['user_pref_referer_data'] == 't202ref') {
-		if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_GET['t202ref']);
+		if (is_string($_GET['t202ref'] ?? null) && $_GET['t202ref'] !== '') {
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_GET['t202ref']);
 		} else {
-			if (isset($referer_query['url'])) {
-				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+			if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
+				$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 			} else {
-				$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+				$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 			}
 		}
 	} else {
-		if (isset($referer_query['url'])) {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($referer_query['url']);
+		if (is_string($referer_query['url'] ?? null) && $referer_query['url'] !== '') {
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($referer_query['url']);
 		} else {
-			$click_referer_site_url_id = $locationRepo->findOrCreateSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
+			$click_referer_site_url_id = $locationRepo->findOrCreateClickSiteUrl($_SERVER['HTTP_REFERER'] ?? '');
 		}
 	}
 	$mysql['click_referer_site_url_id'] = (string) $click_referer_site_url_id;
 
 	$outbound_site_url = TrackingBaseUrl::requestUrl($_SERVER);
-	$click_outbound_site_url_id = $locationRepo->findOrCreateSiteUrl($outbound_site_url);
+	$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 	$mysql['click_outbound_site_url_id'] = (string) $click_outbound_site_url_id;
 
 	if ($cloaking_on && $cloaking_site_url !== '') {
-		$click_cloaking_site_url_id = $locationRepo->findOrCreateSiteUrl($cloaking_site_url);
+		$click_cloaking_site_url_id = $locationRepo->findOrCreateClickSiteUrl($cloaking_site_url);
 		$mysql['click_cloaking_site_url_id'] = (string) $click_cloaking_site_url_id;
 	} else {
 		$mysql['click_cloaking_site_url_id'] = '0';
 	}
-	$click_redirect_site_url_id = $locationRepo->findOrCreateSiteUrl($redirect_site_url);
+	$click_redirect_site_url_id = $locationRepo->findOrCreateClickSiteUrl($redirect_site_url);
 	$mysql['click_redirect_site_url_id'] = (string) $click_redirect_site_url_id;
 
-	// Record click via repository (all 9 tables in one atomic transaction)
-	$clickRecord = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql);
-	$clickRecord->clickId = $click_id;
-	$clickRecord->identity = $clickIdentity;
-	$clickRepo->recordClick($clickRecord);
+    // Every row in one transaction (MysqlClickRepository), its cache writes
+    // held until it commits; a failure is recorded, as rtr.php's is, and a
+    // redirect already queued stands (record_mysql_error()).
+    // Built outside the try: a record the builder refuses is a bug, not a
+    // database failure, and the uncaught handler logs it as one.
+    $dlClick = \Prosper202\Click\ClickRecordBuilder::fromLegacyArray($mysql, $click_id, $clickIdentity);
+    try {
+        p202WithHeldCacheWrites(static fn () => $clickRepo->recordClick($dlClick));
+    } catch (\Throwable $dlWriteError) {
+        record_mysql_error($db, 'recording click ' . $click_id, $dlWriteError->getMessage());
+    }
 };
 
 $urlvars = getPrePopVars($_GET);
@@ -663,17 +552,18 @@ $click_time = mktime(12, 0, 0, (int)$today_month, (int)$today_day, (int)$today_y
 $mysql['click_time'] = $db->real_escape_string((string)$click_time);
 
 
-if ($mysql['click_cpa'] != NULL) {
-	$insert_sql = "INSERT INTO 202_cpa_trackers
-                                   SET         click_id='" . $mysql['click_id'] . "',
-                                                           tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-	// Post-redirect: the visitor is already gone, so log a failure instead of
-	// dying (which would abandon the remaining bookkeeping below).
-	if ($db->query($insert_sql) === false) {
-		error_log('dl.php: failed to insert cpa_tracker for click ' . $mysql['click_id'] . ': ' . $db->error);
-	}
-}
-
 //set dirty hour
 $de = new DataEngine();
 $data = ($de->setDirtyHour($mysql['click_id']));
+
+// After the rollup, which does not read 202_cpa_trackers: a failure here is
+// the error page, recorded, with the redirect already queued kept and the
+// click's report row already written.
+if ($mysql['click_cpa'] != NULL) {
+    $insert_sql = "INSERT INTO 202_cpa_trackers
+                                   SET         click_id='" . $mysql['click_id'] . "',
+                                                           tracker_id_public=" . (int) $dlTrackerId;
+    if ($db->query($insert_sql) === false) {
+        record_mysql_error($db, $insert_sql);
+    }
+}

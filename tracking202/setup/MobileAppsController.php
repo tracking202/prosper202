@@ -624,18 +624,7 @@ class MobileAppsController extends SetupController
      */
     private function inTransaction(callable $work): void
     {
-        if (!$this->db->begin_transaction()) {
-            throw new \RuntimeException('Could not start a transaction for the rule.');
-        }
-        try {
-            $work();
-            if (!$this->db->commit()) {
-                throw new \RuntimeException('Could not commit the rule.');
-            }
-        } catch (\Throwable $e) {
-            $this->db->rollback();
-            throw $e;
-        }
+        (new Connection($this->db))->transaction($work);
     }
 
     private function removeRule(): void

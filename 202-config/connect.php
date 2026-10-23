@@ -284,15 +284,38 @@ require_once $autoloadPath;
 include_once(CONFIG_PATH . '/sessions.php');
 include_once(CONFIG_PATH . '/functions-tracking202.php');
 include_once(CONFIG_PATH . '/functions.php');
+if (!function_exists('p202PageUncaught')) {
+    /**
+     * A failure nothing on a signed-in page caught. A database failure (the
+     * cached reads throw one rather than answer "no row") is the database
+     * error page, recorded, as on the click path (p202ClickPathUncaught());
+     * anything else is logged, under a 500 either way. Not set on the
+     * command line, where a cron job's stderr and exit status are its answer.
+     */
+    function p202PageUncaught(\Throwable $e): void
+    {
+        if (!headers_sent()) {
+            http_response_code(500);
+        }
+        if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
+            record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
+        }
+        error_log(p202UncaughtLogLine('Uncaught on a page', $e));
+    }
+}
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    set_exception_handler('p202PageUncaught');
+}
 // The visitor's address (VisitorIp: the one reader of the forwarding
-// headers), once the autoloader and functions.php's ipAddress() are loaded.
-// Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
-$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
+// headers), once the autoloader and functions-shared.php's ipAddress() are
+// loaded. Under the CLI (cron workers) there is no REMOTE_ADDR and it is ''.
+// Never masked: on these pages it is the operator's own address, which the
+// sign-in log keeps as it arrived.
+$ip_address = ipAddress(\Prosper202\Http\VisitorIp::fromServer($_SERVER), false);
 include_once(CONFIG_PATH . '/functions-ui.php');
 include_once(CONFIG_PATH . '/template.php');
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-include_once(CONFIG_PATH . '/class-filterengine.php');
 
 include_once(CONFIG_PATH . '/functions-tracking202api.php');
 include_once(CONFIG_PATH . '/l10n.php');
@@ -302,7 +325,6 @@ include_once(CONFIG_PATH . '/User.class.php');
 include_once(CONFIG_PATH . '/Slack.class.php');
 include_once(CONFIG_PATH . '/Messaging/MessagingService.class.php');
 include_once(CONFIG_PATH . '/functions-db.php');
-include_once(CONFIG_PATH . '/functions-indexes.php');
 include_once(CONFIG_PATH . '/functions-icons.php');
 include_once(CONFIG_PATH . '/functions-api.php');
 include_once(CONFIG_PATH . '/functions-utils.php');
@@ -338,29 +360,9 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
     }
 }
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
-
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-// ipAddress() function has been moved to functions.php - using that implementation instead
-// to avoid duplicate function declaration errors
 
 // inet6_ntoa() is in functions-tracking202.php, loaded above, so code that
 // renders an address (HtmlReportFormatter) can be loaded without this file.
-
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
 
 try {
     $database = DB::getInstance();
@@ -373,8 +375,8 @@ try {
         $error = $db ? $db->connect_error : 'DB object is null';
         throw new Exception("MySQL Connection Error ({$errno}): {$error}");
     }
-    // Initialize $dbro as well
-    $dbro = $database->getConnectionro();
+    // Retained 202-config.php files may expose only the primary connection.
+    $dbro = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     if ($dbro === null || $dbro->connect_error) {
         $errno = $dbro ? $dbro->connect_errno : 'N/A';
         $error = $dbro ? $dbro->connect_error : 'DB RO object is null';
@@ -505,9 +507,17 @@ if (!str_contains((string) $_SERVER['PHP_SELF'], '202-config/install.php')) {
 if (!isset($_SESSION['ipv6']) || !$_SESSION['ipv6']) {
     $sql = "select inet6_ntoa(0x00000000000000000000000000000001) as ipv6";
     $result = $db->query($sql);
+    // Every server version.php accepts has INET6_NTOA: a failure is the
+    // database's, not "no IPv6", which the pages would have read for the
+    // rest of the request.
+    if ($result === false) {
+        p202_cli_fail('the database refused the IPv6 probe: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+        record_mysql_error($db, $sql);
+    }
 
-    withWritableSession(static function () use ($result): void {
-        $_SESSION['ipv6'] = $result ? 'ipv6' : '';
+    withWritableSession(static function (): void {
+        $_SESSION['ipv6'] = 'ipv6';
     });
 }
 
@@ -520,25 +530,30 @@ if (isset($_SESSION['ipv6']) && $_SESSION['ipv6'] != '') {
 }
 
 $user_sql = "SET session sql_mode= ''";
-$user_results = $db->query($user_sql);
+// The pages' SQL is written for the empty sql_mode: under the server's
+// default (strict on MySQL 8) some of their writes are refused or stored
+// differently.
+if ($db->query($user_sql) === false) {
+    p202_cli_fail('the database refused the session\'s sql_mode: '
+        . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    record_mysql_error($db, $user_sql);
+}
 
 function updateBlazerCache(&$mysql, $blazerCacheType = '')
 {
     global $db;
 
-    switch ($blazerCacheType) {
-        case 'ac':
-            $bc_results = ($db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1"));
+    if ($blazerCacheType != 'ac') {
+        return;
+    }
+    $bc_results = $db->query("SELECT DISTINCT tracker_id_public from 202_trackers WHERE aff_campaign_id = 1");
+    if ($bc_results === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException('MySQL query failed: '
+            . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
+    }
 
-            while ($bc_row = $bc_results->fetch_assoc()) {
-                $bc_key = "td_" . $bc_row['tracker_id_public'];
-                setCache($bc_key, $mysql['aff_campaign_url']);
-            }
-            break;
-
-        default:
-            # code...
-
-            break;
+    while ($bc_row = $bc_results->fetch_assoc()) {
+        $bc_key = "td_" . $bc_row['tracker_id_public'];
+        setCache($bc_key, $mysql['aff_campaign_url']);
     }
 }

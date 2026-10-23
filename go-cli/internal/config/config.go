@@ -58,6 +58,9 @@ func Path() string {
 }
 
 func Load() (*Config, error) {
+	if c, hosted, err := hostedConfig(); hosted {
+		return c, err
+	}
 	data, err := os.ReadFile(Path())
 	if err != nil {
 		if os.IsNotExist(err) {

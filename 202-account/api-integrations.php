@@ -51,15 +51,18 @@ function validateRequired($field_value, $error_key, $error_message, &$error)
 }
 
 /**
- * Update user preference in database
+ * Update user preference in database. Throws when the write fails: most
+ * callers wrote several in a row and read none of the answers.
  */
-function updateUserPreference($field_name, $value, $user_id, $db)
+function updateUserPreference($field_name, $value, $user_id, $db): void
 {
 	$escaped_value = $db->real_escape_string((string)$value);
 	$escaped_user_id = $db->real_escape_string((string)$user_id);
 
 	$sql = "UPDATE `202_users_pref` SET `{$field_name}` = '{$escaped_value}' WHERE `user_id` = '{$escaped_user_id}'";
-	return $db->query($sql);
+	if (_mysqli_query($db, $sql) === false) {
+		throw new RuntimeException('The ' . $field_name . ' setting could not be saved.');
+	}
 }
 
 /**
@@ -93,14 +96,23 @@ function processApiKeyUpdate($config, &$error, &$change_flag, $user_row, $slack,
 		$old_value = $user_row[$field_name] ?? '';
 
 		if ($new_value !== $old_value) {
-			if (!updateUserPreference($field_name, $new_value, $user_id, $db)) {
+			try {
+				updateUserPreference($field_name, $new_value, $user_id, $db);
+			} catch (RuntimeException $e) {
+				error_log('api-integrations.php: ' . $e->getMessage());
 				$error[$error_key] = 'This could not be saved just now; the old value is still in place. Try again.';
 				return false;
 			}
 
 			// Special handling for cb_key verification reset
 			if ($field_name === 'cb_key') {
-				updateUserPreference('cb_verified', '0', $user_id, $db);
+				try {
+					updateUserPreference('cb_verified', '0', $user_id, $db);
+				} catch (RuntimeException $e) {
+					error_log('api-integrations.php: ' . $e->getMessage());
+					$error[$error_key] = 'The key is saved, but it still shows as verified; save it again.';
+					return false;
+				}
 			}
 		}
 
@@ -145,14 +157,14 @@ $mysql['add_dni'] = $db->real_escape_string((string)($_GET['add_dni_network'] ??
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, 2u.install_hash, 2u.p202_customer_api_key FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
+$user_results = _mysqli_query($db, $user_sql);
 // A failed query must stop here, not read as an account with no settings:
 // this row supplies the install hash the DNI network lookup below sends
 // (CLAUDE.md #1). record_mysql_error() logs and exits.
 if (!$user_results) {
 	record_mysql_error($user_sql);
 }
-$user_row = $user_results->fetch_assoc() ?: [];
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'] ?? '';
 $editing_dni_network = false;
 $dniNetworks = getAllDniNetworks($user_row['install_hash']);
@@ -172,8 +184,13 @@ if (isset($_GET['cb_status']) && $_GET['cb_status'] == 1) {
 	$user_sql = "SELECT cb_verified
              FROM 202_users_pref
              WHERE user_id='" . $mysql['user_id'] . "'";
-	$user_results = $db->query($user_sql);
-	$user_row = $user_results ? $user_results->fetch_assoc() : null;
+	$cbStatus = _mysqli_query($db, $user_sql);
+	if ($cbStatus === false) {
+		http_response_code(503);
+		echo '<span class="p202-pill p202-pill--bad">Could not check</span>';
+		die();
+	}
+	$user_row = $cbStatus->fetch_assoc();
 	if (!is_array($user_row)) {
 		http_response_code(503);
 		echo '<span class="p202-pill p202-pill--bad">Could not check</span>';
@@ -189,11 +206,11 @@ $user_sql = "	SELECT 	*
 				 FROM   	`202_users`
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
-$user_result = $db->query($user_sql);
+$user_result = _mysqli_query($db, $user_sql);
 if (!$user_result) {
 	record_mysql_error($user_sql);
 }
-$user_row = $user_result->fetch_assoc() ?: [];
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $cb_verified = $user_row['cb_verified'];
 
@@ -409,7 +426,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['lpo_ctx_kw_save']) && $_POST['lpo_ctx_kw_save'] == '1' && array_key_exists('lpo_ctx_kw', $user_row)) {
 		$lpo_ctx_kw_new = !empty($_POST['lpo_ctx_kw']) ? '1' : '0';
 		if ($lpo_ctx_kw_new !== (string) ($user_row['lpo_ctx_kw'] ?? '1')) {
-			updateUserPreference('lpo_ctx_kw', $lpo_ctx_kw_new, $_SESSION['user_id'], $db);
+			try {
+				updateUserPreference('lpo_ctx_kw', $lpo_ctx_kw_new, $_SESSION['user_id'], $db);
+			} catch (RuntimeException $e) {
+				error_log('api-integrations.php: ' . $e->getMessage());
+				p202_account_flash('bad', 'The context token preference could not be saved; try again.');
+				p202_account_redirect('202-account/api-integrations.php#lpo');
+			}
 			lpo_ctx_pref_cache_bust($_SESSION['user_id']);
 			$user_row['lpo_ctx_kw'] = $lpo_ctx_kw_new;
 		}
@@ -420,21 +443,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 	if (isset($_POST['delete_dni_network'])) {
 		$deleteDniId = (int)$_POST['delete_dni_network'];
 		$mysql['deleteDniNetworkId'] = $db->real_escape_string((string)$deleteDniId);
-		$dniDeleted = $db->query("DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
-		$dniDeletedRows = $dniDeleted ? $db->affected_rows : 0;
-		if ($dniDeletedRows > 0) {
+		$dniDeleted = _mysqli_query($db, "DELETE FROM 202_dni_networks WHERE id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'");
+		if ($dniDeleted === false) {
+			p202_account_flash('bad', 'The network could not be removed; try again.');
+		} elseif ($db->affected_rows > 0) {
 			// Only the network this user owned: the classic query retired
 			// the affiliate network of whatever id it was handed.
 			$sql = "UPDATE 202_aff_networks SET aff_network_deleted = '1', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['deleteDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-			if ($db->query($sql)) {
+			if (_mysqli_query($db, $sql)) {
 				p202_account_flash('ok', 'The network is removed. Its offers stay in your campaigns; they stop updating.');
 			} else {
 				// The integration is gone; its category could not be retired.
 				error_log('api-integrations.php: the DNI category was not retired: ' . $db->error);
-				p202_account_flash('warn', 'The network is removed, but its campaign category could not be retired. If it is still listed under Setup › Campaign Categories, remove it there.');
+				p202_account_flash('bad', 'The network is removed, but its campaign category could not be retired. If it is still listed under Setup › Campaign Categories, remove it there.');
 			}
-		} elseif (!$dniDeleted) {
-			p202_account_flash('bad', 'The network could not be removed; try again.');
 		} else {
 			p202_account_flash('warn', 'That network was not found; nothing was removed.');
 		}
@@ -486,11 +508,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$dniSaved = false;
 					try {
 						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql): void {
-							if (!$db->query($sql)) {
+							if (!_mysqli_query($db, $sql)) {
 								throw new RuntimeException('the network: ' . $db->error);
 							}
 							$categorySql = "INSERT INTO 202_aff_networks SET dni_network_id = '" . (int) $db->insert_id . "', user_id = '" . $mysql['user_id'] . "', aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "'";
-							if (!$db->query($categorySql)) {
+							if (!_mysqli_query($db, $categorySql)) {
 								throw new RuntimeException('its category: ' . $db->error);
 							}
 						});
@@ -522,7 +544,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$dniSaved = false;
 					try {
 						(new \Prosper202\Database\Connection($db))->transaction(static function () use ($db, $sql, $mysql, &$dniFound): void {
-							if (!$db->query($sql)) {
+							if (!_mysqli_query($db, $sql)) {
 								throw new RuntimeException('the network: ' . $db->error);
 							}
 							if ($db->affected_rows < 1) {
@@ -530,7 +552,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								return;
 							}
 							$categorySql = "UPDATE 202_aff_networks SET aff_network_name = '" . $mysql['dniNetworkName'] . " (DNI)" . "', aff_network_time = '" . time() . "' WHERE dni_network_id = '" . $mysql['editing_dni_network_id'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-							if (!$db->query($categorySql)) {
+							if (!_mysqli_query($db, $categorySql)) {
 								throw new RuntimeException('its category: ' . $db->error);
 							}
 						});
@@ -554,22 +576,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 if (isset($_GET['edit_dni_network']) && !empty($_GET['edit_dni_network'])) {
 	$mysql['editDniNetworkId'] = $db->real_escape_string((string)$_GET['edit_dni_network']);
 	$sql_edit_dni = "SELECT * FROM 202_dni_networks WHERE id = '" . $mysql['editDniNetworkId'] . "' AND user_id = '" . $mysql['user_id'] . "'";
-	$edit_dni_result = $db->query($sql_edit_dni);
-	if ($edit_dni_result && $edit_dni_result->num_rows > 0) {
+	$edit_dni_result = _mysqli_query($db, $sql_edit_dni);
+	if ($edit_dni_result === false) {
+		record_mysql_error($db, $sql_edit_dni);
+	}
+	if ($edit_dni_result->num_rows > 0) {
 		$edit_dni_row = $edit_dni_result->fetch_assoc();
 		$editing_dni_network = true;
 	}
 }
 
 $dni_sql = "SELECT * FROM 202_dni_networks WHERE user_id = '1'";
-$dni_result = $db->query($dni_sql);
+$dni_result = _mysqli_query($db, $dni_sql);
+if ($dni_result === false) {
+	// Not "no networks": the page would offer to add ones that exist.
+	record_mysql_error($db, $dni_sql);
+}
 $dniRows = [];
-if ($dni_result) {
-	while ($dni_row = $dni_result->fetch_assoc()) {
-		$dniRows[] = $dni_row;
-		if ($dni_row['processed'] == false) {
-			$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
-		}
+while ($dni_row = $dni_result->fetch_assoc()) {
+	$dniRows[] = $dni_row;
+	if ($dni_row['processed'] == false) {
+		$dniProcesing['networks'][] = ['id' => $dni_row['id'], 'networkId' => $dni_row['networkId'], 'api_key' => $dni_row['apiKey'], 'type' => $dni_row['type']];
 	}
 }
 

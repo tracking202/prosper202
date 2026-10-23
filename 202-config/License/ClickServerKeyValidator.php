@@ -14,12 +14,11 @@ class ClickServerKeyValidator
     private const string VALIDATE_URL = 'https://my.tracking202.com/api/v2/validate-customers-key';
     private const string VALIDATE_HOST = 'my.tracking202.com';
     /**
-     * Redirect hops followed before the answer is "unknown": the same three
-     * the endpoint's two older callers allow (CURLOPT_MAXREDIRS in
-     * functions-tracking202.php; ClickServerKeyValidatorInterpretTest pins
-     * the parity), so an edge that answers with two hops does not turn this
-     * reader, alone, into a gate that never decides. Each hop costs a connect
-     * and a timeout on the request path; the hold-off marker bounds how often.
+     * Redirect hops followed before the answer is "unknown": three, as the
+     * endpoint's older callers allowed when they followed redirects
+     * themselves, so an edge that answers with two hops does not make a
+     * gate that never decides. Each hop costs a connect and a timeout on the
+     * request path; the hold-off marker bounds how often.
      */
     public const int MAX_REDIRECTS = 3;
 
@@ -46,6 +45,35 @@ class ClickServerKeyValidator
      */
     public static function check(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
     {
+        $answer = self::answer($key, $connectTimeoutSeconds, $timeoutSeconds);
+        if ($answer === null) {
+            return null;
+        }
+        [$status, $body] = $answer;
+        $verdict = self::interpret($status, $body);
+        if ($verdict === null) {
+            // The gate and the web check fail open on this, so without
+            // a line here nobody would know they had stopped deciding.
+            error_log(sprintf(
+                'ClickServerKeyValidator: unusable answer: HTTP %d, body %s',
+                $status,
+                json_encode(substr($body, 0, 200)) ?: '(unencodable)'
+            ));
+        }
+        return $verdict;
+    }
+
+    /**
+     * The service's own answer for a key, [status, body], after following
+     * redirects only to the service itself over HTTPS; null when no answer
+     * came (logged). Every caller of validate-customers-key goes through
+     * this, the installer's and the account page's raw readers included, so
+     * the key is never posted anywhere a redirect names.
+     *
+     * @return array{int, string}|null
+     */
+    public static function answer(string $key, int $connectTimeoutSeconds = 5, int $timeoutSeconds = 10): ?array
+    {
         // $timeoutSeconds bounds the whole attempt, redirect hops included:
         // each hop gets what is left of it, so a chain of slow redirects
         // cannot hold a request for MAX_REDIRECTS + 1 full timeouts.
@@ -68,25 +96,13 @@ class ClickServerKeyValidator
             }
             [$status, $body, $redirect] = $answer;
             if (!in_array($status, [301, 302, 307, 308], true)) {
-                $verdict = self::interpret($status, $body);
-                if ($verdict === null) {
-                    // The gate and the web check fail open on this, so without
-                    // a line here nobody would know they had stopped deciding.
-                    error_log(sprintf(
-                        'ClickServerKeyValidator: unusable answer from %s: HTTP %d, body %s',
-                        $url,
-                        $status,
-                        json_encode(substr($body, 0, 200)) ?: '(unencodable)'
-                    ));
-                }
-                return $verdict;
+                return [$status, $body];
             }
             // A redirect is followed by hand, one hop at a time, and only to the
             // service's own host over HTTPS (redirectTarget): curl's own
             // FOLLOWLOCATION would re-POST the key to whatever host the
-            // Location names, over whatever scheme. The two older callers of
-            // this endpoint (functions-tracking202.php) follow blindly; here a
-            // redirect elsewhere is "unknown", and said so.
+            // Location names, over whatever scheme. A redirect elsewhere is
+            // "unknown", and said so.
             $next = $hop < self::MAX_REDIRECTS ? self::redirectTarget($redirect) : null;
             if ($next === null) {
                 error_log(sprintf(

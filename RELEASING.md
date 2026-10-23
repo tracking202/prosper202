@@ -77,7 +77,8 @@ inserts conversions that strict mode refuses or that collide on
 `uniq_click_dedupe` — it can no longer record conversions at all.
 
 Every release's notes, and anyone walking an operator through an upgrade,
-must say so before the upgrade is started. The upgrade page
+must say so before the upgrade is started. The Release workflow refuses to
+publish notes that do not (see "Write the release notes" below). The upgrade page
 (`202-config/upgrade.php`) says it above its button on every upgrade
 (`#upgrade-backup-warning`). A backup means a full `mysqldump` (or the
 host's snapshot) of the Prosper202 database, taken after the site stops
@@ -109,9 +110,26 @@ This is the normal path. CI builds and publishes; you only tag.
    `$version_string` in `202-config/version.php` (e.g. `chore: release
    vX.Y.Z`), and every pull request for that version targets that branch.
    When the version is done, merge the version branch into master in one
-   pull request. See CLAUDE.md, "Branches".
+   pull request. See CLAUDE.md, "Branches". Before opening it, fetch and run
+   `scripts/check-release-merge.sh <version>`: the merge must give exactly
+   the version branch's tree. It would not if master holds a revert of the
+   version's own commits (as it did of 1.9.78's, #218 and #219): git counts
+   those commits as merged and keeps the revert, with nothing in the pull
+   request to show it. Bring master into the version branch with the revert
+   reverted, and run the check again.
 
-2. **Tag and push the tag.** The tag must be `v` + the exact version you set:
+2. **Write the release notes, on the version branch.** They are
+   `.github/release-notes/<version>.md`, and the Release workflow publishes
+   that file as the release's notes. It refuses to publish without it, or
+   with notes that do not say an upgrade needs a database backup (the check
+   looks for "there is no downgrade"). Follow the last release's notes:
+   what an upgrader must do first (security, backup, a setting to check),
+   the download and requirements, a short "What's new and what changed",
+   and the version's `changelogs.txt` block under "Full changelog (for
+   developers)". `.github/` is not in the zip, so the file can land after
+   the release checks without changing the tested tree.
+
+3. **Tag and push the tag.** The tag must be `v` + the exact version you set:
 
    ```bash
    git checkout master && git pull   # after the version branch is merged
@@ -119,20 +137,20 @@ This is the normal path. CI builds and publishes; you only tag.
    git push origin v1.9.59
    ```
 
-3. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
+4. **Let CI do the rest.** The [`Release` workflow](.github/workflows/release.yml)
    fires on `v*` tags. It:
    - runs on `ubuntu-24.04`, using the image's own PHP 8.3 and Composer
      (checked, with the extensions the build needs, before anything else) and
-     Go 1.22 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
+     Go 1.25 via `setup-go` (matching `composer.json` and `go-cli/go.mod`). No
      third-party action touches the release job's PHP, and every action is
      pinned to a commit SHA; Dependabot proposes the updates,
    - runs `build/scripts/package-release.sh` (no build logic is duplicated in
      YAML),
    - writes a job summary with the artifact name, size, and SHA256, and
    - publishes a GitHub Release for the tag with the zip attached and
-     auto-generated release notes.
+     `.github/release-notes/<version>.md` as its notes.
 
-4. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
+5. **Verify on the Releases page.** Confirm `prosper202-<version>.zip` is
    attached and the version in the filename matches the tag. The build has
    already run `release-tree.php verify` on its contents; a spot check that
    `vendor/autoload.php` and `go-cli/dist/linux-amd64/p202` exist, and that
@@ -144,6 +162,36 @@ This is the normal path. CI builds and publishes; you only tag.
 > No GitHub secrets are required — the workflow uses the auto-provided
 > `GITHUB_TOKEN` (with `contents: write`) to create the release and upload the
 > asset.
+
+6. **Do a full docs pass, the same day.** The docs readers find first still
+   describe the previous version until someone changes them. Read the new
+   version's changelog, then check **every** guide on the site and **every**
+   page on ReadMe against it, not only the pages below, and fix whatever the
+   release made wrong or out of date. At a minimum, that covers:
+   - **prosper.tracking202.com** (repo `tracking202/prosper202-marketing`):
+     - `documentation/tutorials-and-guides/upgrading.html`: the "Upgrading to
+       <version>" section, covering requirements, what changes for an
+       upgrader, the one-way backup note, and the changelog link at the new
+       tag.
+     - The "current release" in `partnering-with-us/partner-program.html`,
+       and "Latest release <version> (<date, PT>)" on `pro/index.html`.
+     - `documentation/cli/data/` (`commands.json` and examples) from the
+       release binary, then run `python3 documentation/build.py`.
+     - Every other guide under `documentation/` (setup steps, tutorials,
+       API, partner pages, runbooks), plus the release facts on the home and
+       Pro pages. Each guide's meta description is in `GUIDE_DESCRIPTIONS` in
+       `build.py`. Then run `build.py --check` and `check-links.py`.
+   - **prosper202.readme.io:** every summary in
+     `marketing202/scripts/readme-io/pages/`, kept in line with its site page.
+     Check them with `check_pages.py`, then publish them with
+     `readme_io.py push`.
+   - **The portal download** updates itself: `p202:sync-release` in
+     backend-api picks up the release within 10 minutes. Confirm
+     `browser-latest.txt` names the new zip. It does not touch the installs'
+     update feed (`/api/v2/premium-p202/version`), so installs are not
+     prompted to upgrade. Decide on each release whether they should be.
+   - **For a security release,** the docs describe how the new version
+     behaves. They never say what earlier versions allowed.
 
 ### Re-running a release
 
@@ -213,7 +261,7 @@ docker run --rm -v "$PWD":/src:ro -v "$PWD/dist":/out ubuntu:24.04 bash -c '
   the runtime code depending on it. The `known_unresolved` list in the
   manifest is for dead references only, each with the reason. It should
   shrink, never grow.
-- **Go build fails** — confirm `go version` is ≥ 1.22 and that
+- **Go build fails** — confirm `go version` is ≥ 1.25 and that
   `make -C go-cli all` succeeds on its own. Cross-compiles use
   `CGO_ENABLED=0`, so no C toolchain is needed.
 - **Zip name doesn't match the tag** — you tagged without bumping

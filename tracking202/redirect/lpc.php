@@ -14,31 +14,33 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-// Validate landing page id
-$landingId = RedirectHelper::getIntParam('lpip');
+// The landing page's id exactly: FILTER_VALIDATE_INT took 0, +12 and padded
+// whitespace.
+$landingId = \Prosper202\Click\PublicId::parse($_GET['lpip'] ?? null);
 if ($landingId === null) {
     RedirectHelper::redirect(p202InstallPath('202-404.php'));
 }
 
-$mysql['landing_page_id_public'] = $db->real_escape_string((string)$landingId);
-
 $varsParam = RedirectHelper::getStringParam('202vars');
 if ($varsParam !== null) {
-    $mysql['202vars'] = base64_decode((string) $db->real_escape_string($varsParam));
+    // Decoded as sent: it joins a URL, never a statement, and escaping
+    // base64 text changed nothing but needed a connection.
+    $mysql['202vars'] = base64_decode($varsParam);
 }
 
-$tracker_sql = "SELECT  aff_campaign_name,
-						  aff_campaign_rotate,
-						  aff_campaign_url,
-						  aff_campaign_url_2,
-						  aff_campaign_url_3,
-						  aff_campaign_url_4,
-						  aff_campaign_url_5
-				FROM    202_landing_pages LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				WHERE   landing_page_id_public='".$mysql['landing_page_id_public']."'";
-$tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
+// The landing page and its campaign, when the campaign is the page's
+// account's. The row carries the campaign's id, which a rotating campaign's
+// URL rotation is kept under: without it every such campaign turned one
+// shared rotation.
+try {
+    $tracker_row = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->landingPageOffer($landingId);
+} catch (\Throwable $lpcReadError) {
+    record_mysql_error($db, 'reading landing page ' . $landingId, $lpcReadError->getMessage());
+}
 
-if (!$tracker_row) { die(); }
+if ($tracker_row === null) {
+    die();
+}
 //DONT ESCAPE THE DESITNATIONL URL IT TOTALLY SCREWS UP
 $html['aff_campaign_name'] = htmlentities((string)($tracker_row['aff_campaign_name'] ?? ''), ENT_QUOTES, 'UTF-8');
 // The second cloaked hop, under this install's directory (p202InstallPath()).
@@ -47,10 +49,17 @@ $html['cloaked_hop'] = htmlspecialchars(p202InstallPath('tracking202/redirect/cl
 //modify the redirect site url to go through another cloaked link
 $redirect_site_url = rotateTrackerUrl($db, $tracker_row);
 
-// get the click id
-$mysql['click_id']=$db->real_escape_string((string)(getCookie202('tracking202subid') ?? ''));
+// The visitor's click, by its cookie, read exactly (ClickId): anything else
+// is no click, as no cookie was.
+$lpcClickId = \Prosper202\Click\ClickId::parse(getCookie202('tracking202subid'));
+$mysql['click_id'] = $lpcClickId === null ? '' : (string) $lpcClickId;
 
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url,$mysql['click_id']);
+$redirect_site_url = replaceTrackerPlaceholders(
+    $db,
+    $redirect_site_url,
+    $mysql['click_id'],
+    (int) $tracker_row['user_id']
+);
 
 //set dirty hour
 $de = new DataEngine();

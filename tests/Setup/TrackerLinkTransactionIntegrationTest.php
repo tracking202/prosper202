@@ -1,0 +1,324 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Setup;
+
+use PHPUnit\Framework\TestCase;
+
+/**
+ * Get Links' save (tracking202/ajax/generate_tracking_link.php) writes a
+ * tracker in one Connection::transaction(): an edit deletes the tracker and
+ * inserts it again, and a failure after the DELETE must leave the tracker
+ * the account had. The page runs as the account in a process of its own
+ * (fixtures/page-runner.php), as the web server runs it.
+ *
+ * Needs a 202-config.php (connect.php exits without one) and P202_TEST_DB_*.
+ *
+ * @group integration
+ */
+final class TrackerLinkTransactionIntegrationTest extends TestCase
+{
+    use \Tests\Report\ScratchReportDatabase;
+
+    private const USER = 990081;
+    private const ROLE = 990081;
+    private const CAMPAIGN = 990081;
+    /** A campaign the trigger below refuses a tracker on. */
+    private const REFUSED_CAMPAIGN = 990082;
+    private const NETWORK = 990081;
+    /** Another account, with a link of its own. */
+    private const OTHER = 990083;
+    private const THEIR_LINK = 99008399;
+
+    private static string $sessions = '';
+
+    /** @var list<string>|null 202_version as this class found it, put back after */
+    private static ?array $versions = null;
+
+    private static ?int $addedPermission = null;
+
+    public static function setUpBeforeClass(): void
+    {
+        $root = dirname(__DIR__, 2);
+        if (!is_file($root . '/202-config.php')) {
+            self::markTestSkipped('No 202-config.php: connect.php would exit before any page ran.'
+                . ' tests/run-integration-suites.sh writes one.');
+        }
+        if (!self::connectScratch()) {
+            return;
+        }
+        require_once $root . '/202-config/version.php';
+        $found = self::$db->query('SELECT version FROM 202_version');
+        $rows = $found instanceof \mysqli_result ? $found->fetch_all(MYSQLI_ASSOC) : [];
+        self::$versions = array_column($rows, 'version');
+        self::q('DELETE FROM 202_version');
+        self::row('202_version', ['version' => PROSPER202_VERSION]);
+        self::cleanUp();
+        self::seed();
+        self::$sessions = sys_get_temp_dir() . '/p202-tracker-link-' . getmypid();
+        if (!is_dir(self::$sessions) && !mkdir(self::$sessions, 0700)) {
+            throw new \RuntimeException('could not create ' . self::$sessions);
+        }
+    }
+
+    public static function tearDownAfterClass(): void
+    {
+        if (self::$db !== null) {
+            self::q('DROP TRIGGER IF EXISTS p202_test_refuse_tracker');
+            self::cleanUp();
+            if (self::$versions !== null) {
+                self::q('DELETE FROM 202_version');
+                foreach (self::$versions as $version) {
+                    self::row('202_version', ['version' => $version]);
+                }
+            }
+        }
+        if (self::$sessions !== '' && is_dir(self::$sessions)) {
+            array_map('unlink', glob(self::$sessions . '/sess_*') ?: []);
+            rmdir(self::$sessions);
+        }
+    }
+
+    protected function setUp(): void
+    {
+        self::requireScratch();
+        self::q('DELETE FROM 202_trackers WHERE user_id = ' . self::USER);
+    }
+
+    public function testALinkIsSavedAndAnEditReplacesItWhole(): void
+    {
+        $out = self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $created = self::trackers();
+        self::assertCount(1, $created, $out);
+        $public = (int) $created[0]['tracker_id_public'];
+        self::assertGreaterThan(0, $public, 'the public id was written in the same transaction');
+        self::assertStringContainsString('t202id=' . $public, $out);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => (string) $public,
+        ]);
+        $edited = self::trackers();
+        self::assertCount(1, $edited, $out);
+        self::assertNotSame($created[0]['tracker_id'], $edited[0]['tracker_id'], 'an edit writes the tracker again');
+        self::assertSame((string) $public, $edited[0]['tracker_id_public'], 'under the public id it had');
+        self::assertSame('1', $edited[0]['click_cloaking']);
+    }
+
+    public function testAnEditThatFailsAfterItsDeleteLeavesTheTrackerAsItWas(): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $before = self::trackers();
+        self::assertCount(1, $before);
+
+        self::q("CREATE TRIGGER p202_test_refuse_tracker BEFORE INSERT ON 202_trackers FOR EACH ROW
+            IF NEW.aff_campaign_id = " . self::REFUSED_CAMPAIGN . " THEN
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tracker refused by the test';
+            END IF");
+        try {
+            $out = self::save([
+                'aff_campaign_id' => (string) self::REFUSED_CAMPAIGN,
+                'edit_tracker' => '1',
+                'tracker_id' => (string) $before[0]['tracker_id_public'],
+            ]);
+        } finally {
+            self::q('DROP TRIGGER IF EXISTS p202_test_refuse_tracker');
+        }
+
+        $refused = self::requireScratch()->query("SELECT COUNT(*) FROM 202_mysql_errors WHERE user_id = " . self::USER
+            . " AND mysql_error_text = 'tracker refused by the test'");
+        self::assertInstanceOf(\mysqli_result::class, $refused);
+        self::assertSame('1', (string) $refused->fetch_row()[0], 'the failure the page recorded is the trigger\'s');
+        self::assertStringNotContainsString('t202id=', $out, 'no link for a save that failed');
+        self::assertSame($before, self::trackers(), 'the DELETE rolled back with the failed INSERT');
+    }
+
+    /** @return iterable<string, array{string}> the link's public id as a format, `%d` */
+    public static function idsThatNameNoLink(): iterable
+    {
+        // MySQL compared each as a number, and read it as the link's own id.
+        yield 'letters after the id' => ['%dabc'];
+        yield 'a zero before the id' => ['0%d'];
+        yield 'a sign before the id' => ['+%d'];
+        yield 'a space before the id' => [' %d'];
+        yield 'a decimal point' => ['%d.0'];
+        yield 'an exponent' => ['%de0'];
+        // Each made a new link in the edited one's place; the last said the
+        // edited one was updated.
+        yield 'none' => [''];
+        yield 'zero' => ['0'];
+        yield 'an id no link has' => ['999999999'];
+    }
+
+    /**
+     * An edit names its link by public id, read exactly: compared as text,
+     * the id with anything MySQL drops from a number named the link, which
+     * was deleted and written again with what the form sent. Anything that
+     * is not one of the account's links is refused, and nothing is written.
+     *
+     * @dataProvider idsThatNameNoLink
+     */
+    public function testAnEditOfAnythingButOneOfTheAccountsLinksIsRefused(string $format): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $before = self::trackers();
+        self::assertCount(1, $before);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => sprintf($format, (int) $before[0]['tracker_id_public']),
+        ]);
+
+        self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
+        self::assertStringNotContainsString('t202id=', $out, 'no link for an edit that was refused');
+        self::assertSame($before, self::trackers(), 'nothing was deleted, replaced or added');
+    }
+
+    /**
+     * Another account's link, named by its own public id written exactly, is
+     * not one of this account's: the edit is refused and neither account's
+     * links change.
+     */
+    public function testAnEditOfAnotherAccountsLinkIsRefused(): void
+    {
+        self::save(['aff_campaign_id' => (string) self::CAMPAIGN]);
+        $mine = self::trackers();
+        self::assertCount(1, $mine);
+        $theirs = self::trackers(self::OTHER);
+        self::assertSame((string) self::THEIR_LINK, $theirs[0]['tracker_id_public'] ?? null);
+
+        $out = self::save([
+            'aff_campaign_id' => (string) self::CAMPAIGN,
+            'click_cloaking' => '1',
+            'edit_tracker' => '1',
+            'tracker_id' => (string) self::THEIR_LINK,
+        ]);
+
+        self::assertStringContainsString('That tracking link is not one of yours, or it was removed.', $out);
+        self::assertSame($theirs, self::trackers(self::OTHER), 'the other account\'s link is not deleted or replaced');
+        self::assertSame($mine, self::trackers(), 'and this account\'s are as they were');
+    }
+
+    private static function cleanUp(): void
+    {
+        $tables = [
+            '202_user_role', '202_users_pref', '202_users', '202_aff_networks', '202_aff_campaigns',
+            '202_trackers', '202_mysql_errors',
+        ];
+        foreach ($tables as $table) {
+            self::q("DELETE FROM $table WHERE user_id IN (" . self::USER . ', ' . self::OTHER . ')');
+        }
+        self::q('DELETE FROM 202_role_permission WHERE role_id = ' . self::ROLE);
+        self::q('DELETE FROM 202_roles WHERE role_id = ' . self::ROLE);
+        if (self::$addedPermission !== null) {
+            self::q('DELETE FROM 202_permissions WHERE permission_id = ' . self::$addedPermission);
+            self::$addedPermission = null;
+        }
+    }
+
+    private static function seed(): void
+    {
+        $t = time();
+        $u = self::USER;
+        self::user($u);
+        self::row('202_users_pref', ['user_id' => $u]);
+        self::q("UPDATE 202_users SET p202_customer_api_key = 'page-runner' WHERE user_id = $u");
+        $setup = "permission_description = 'access_to_setup_section'";
+        $found = self::$db->query("SELECT permission_id FROM 202_permissions WHERE $setup");
+        $permission = $found instanceof \mysqli_result ? ($found->fetch_row()[0] ?? null) : null;
+        if ($permission === null) {
+            self::$addedPermission = self::insert("INSERT INTO 202_permissions SET $setup");
+            $permission = self::$addedPermission;
+        }
+        self::row('202_roles', ['role_id' => self::ROLE, 'role_name' => 'tracker link test']);
+        self::row('202_role_permission', ['role_id' => self::ROLE, 'permission_id' => (int) $permission]);
+        self::row('202_user_role', ['user_id' => $u, 'role_id' => self::ROLE]);
+        self::row('202_aff_networks', [
+            'aff_network_id' => self::NETWORK, 'user_id' => $u,
+            'aff_network_name' => 'Category', 'aff_network_time' => $t,
+        ]);
+        $o = self::OTHER;
+        self::user($o);
+        self::row('202_aff_campaigns', [
+            'aff_campaign_id' => $o, 'user_id' => $o, 'aff_network_id' => 0,
+            'aff_campaign_name' => 'Their Offer', 'aff_campaign_url' => 'https://their.example/',
+            'aff_campaign_payout' => 1, 'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => $t,
+        ]);
+        self::row('202_trackers', [
+            'tracker_id' => $o, 'user_id' => $o, 'tracker_id_public' => self::THEIR_LINK, 'aff_campaign_id' => $o,
+            'text_ad_id' => 0, 'ppc_account_id' => 0, 'landing_page_id' => 0, 'rotator_id' => 0,
+            'click_cpc' => 0.1, 'click_cloaking' => 0, 'tracker_time' => $t,
+        ]);
+        foreach ([self::CAMPAIGN, self::REFUSED_CAMPAIGN] as $campaign) {
+            self::row('202_aff_campaigns', [
+                'aff_campaign_id' => $campaign, 'user_id' => $u, 'aff_network_id' => self::NETWORK,
+                'aff_campaign_name' => 'Offer ' . $campaign, 'aff_campaign_url' => 'https://offer.example/' . $campaign,
+                'aff_campaign_payout' => 1, 'aff_campaign_foreign_payout' => 0, 'aff_campaign_time' => $t,
+            ]);
+        }
+    }
+
+    /** @return list<array<string, string>> the account's trackers, or another account's */
+    private static function trackers(int $user = self::USER): array
+    {
+        $found = self::requireScratch()->query('SELECT tracker_id, tracker_id_public, aff_campaign_id, click_cloaking'
+            . ' FROM 202_trackers'
+            . ' WHERE user_id = ' . $user . ' ORDER BY tracker_id');
+        self::assertInstanceOf(\mysqli_result::class, $found);
+
+        return array_map(static fn (array $r): array => array_map('strval', $r), $found->fetch_all(MYSQLI_ASSOC));
+    }
+
+    /**
+     * What Get Links' save printed for a direct link, with $fields over the
+     * form's other fields.
+     *
+     * @param array<string, string> $fields
+     */
+    private static function save(array $fields): string
+    {
+        self::requireScratch();
+        $post = $fields + [
+            'token' => 'SESSION',
+            'tracker_type' => '0',
+            'aff_network_id' => (string) self::NETWORK,
+            'method_of_promotion' => 'directlink',
+            'click_cloaking' => '0',
+            'cost_type' => 'cpc',
+            'cpc_dollars' => '0',
+            'cpc_cents' => '10',
+        ];
+        $env = [
+            'P202_TEST_REPORT_USER' => (string) self::USER,
+            'P202_TEST_SESSION_DIR' => self::$sessions,
+            'P202_TEST_GET' => '{}',
+            'P202_TEST_POST' => (string) json_encode($post),
+            'P202_TEST_AJAX' => '1',
+        ] + getenv();
+        $proc = proc_open(
+            [
+                PHP_BINARY, '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL & ~E_DEPRECATED',
+                __DIR__ . '/fixtures/page-runner.php', 'tracking202/ajax/generate_tracking_link.php',
+            ],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            $env
+        );
+        self::assertIsResource($proc);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $code = proc_close($proc);
+        self::assertNotSame(2, $code, "the runner could not set up: $err");
+        self::assertStringNotContainsString('Fatal error', $out . $err, $err);
+
+        return $out;
+    }
+}

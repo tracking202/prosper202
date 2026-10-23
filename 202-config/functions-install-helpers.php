@@ -125,6 +125,21 @@ if (!function_exists('install_license_key_is_valid')) {
     }
 }
 
+if (!function_exists('install_typed_license_key')) {
+    /**
+     * The licence key the installer was given, read once: the posted field,
+     * trimmed as the other key forms trim it, so the value checked with the
+     * licence service is the value stored. Anything but a string is no key.
+     *
+     * @param array<string, mixed> $post
+     */
+    function install_typed_license_key(array $post): string
+    {
+        $key = $post['user_api'] ?? '';
+        return is_string($key) ? trim($key) : '';
+    }
+}
+
 if (!function_exists('install_encode_response')) {
     /**
      * Encode an install AJAX payload to JSON. On a json_encode() failure (e.g. a

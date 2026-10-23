@@ -8,7 +8,35 @@ if (!file_exists(__DIR__ . '/version.php')) {
     die('Critical: Version file missing');
 }
 require_once(__DIR__ . '/version.php');
+// Before anything that can fail: the error page and the cached reads are
+// there, and they ask p202OnTheClickPath() which bootstrap this is.
+define('P202_CLICK_PATH', true);
 require_once(__DIR__ . '/mysql-error-args.php');
+require_once(__DIR__ . '/functions-shared.php');
+
+/**
+ * What the click path answers for a throw nothing caught: a 500, unless a
+ * redirect is already queued. dl.php records its click after setting
+ * Location, and where the server has no fastcgi_finish_request() nothing has
+ * been sent yet: a failure there loses the click, and must not lose the
+ * visitor too. The lookups and the click writers report a database failure
+ * as a QueryException, which ends at record_mysql_error() as a failed query
+ * does, recorded with the line outside the database layer that reached it
+ * (every failure there is thrown from the same few lines of Connection).
+ * Anything else is logged, with nothing about it shown.
+ */
+function p202ClickPathUncaught(\Throwable $e): void
+{
+    $status = http_response_code();
+    if (!headers_sent() && !(is_int($status) && $status >= 300 && $status < 400)) {
+        http_response_code(500);
+    }
+    if ($e instanceof \Prosper202\Database\Exceptions\QueryException) {
+        record_mysql_error($GLOBALS['db'] ?? null, 'uncaught at ' . p202UncaughtAt($e), $e->getMessage());
+    }
+    error_log(p202UncaughtLogLine('Uncaught on the click path', $e));
+}
+set_exception_handler('p202ClickPathUncaught');
 
 $_GET = array_change_key_case($_GET, CASE_LOWER);
 //fix for nginx with no server name set
@@ -25,9 +53,65 @@ DEFINE('CONFIG_PATH', __DIR__);
 mysqli_report(MYSQLI_REPORT_STRICT);
 include_once(ROOT_PATH . '/202-config.php');
 
-// Get database instance
-$database = DB::getInstance();
-$db = $database->getConnection();
+// A refused connection throws under MYSQLI_REPORT_STRICT. Caught, $db is null
+// and the redirects fall back to the URL they keep in memcache for an outage
+// (dl.php, lp.php, off.php); uncaught, every request was a 500 before any of
+// them could.
+try {
+    $database = DB::getInstance();
+    $db = $database->getConnection();
+} catch (\mysqli_sql_exception $connectError) {
+    error_log('The click path could not connect to the database: ' . $connectError->getMessage());
+    $db = null;
+}
+
+// The click writes are written for this sql_mode. A session that refuses it
+// is one they cannot use: logged, and read as no connection, as an outage is
+// (the URL kept for one, or the 503 page), so nothing is written under
+// another mode.
+if ($db instanceof \mysqli) {
+    // Strict when P202_SQL_STRICT is defined and truthy in config; permissive
+    // by default, for existing installs.
+    $user_sql = defined('P202_SQL_STRICT') && P202_SQL_STRICT
+        ? "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+        : "SET session sql_mode= ''";
+    if ($db->query($user_sql) === false) {
+        p202LogFailedQuery($db, $user_sql, ['file' => __FILE__, 'line' => __LINE__]);
+        $db = null;
+    }
+}
+
+/**
+ * The answer to a request the database is needed for and out of reach: the
+ * outage in the status, so a client or a monitor never reads it as served.
+ */
+function p202Unavailable(): never
+{
+    http_response_code(503);
+    header('Retry-After: 60');
+    header('Cache-Control: no-store');
+    die('Service temporarily unavailable');
+}
+
+/**
+ * End the request with p202Unavailable() when the bootstrap could not
+ * connect. A script that answers without the database (it keeps a URL for an
+ * outage, or never needs one) sets $p202OutageFallback = true before loading
+ * this file; every other one would only reach code that needs it. A script
+ * another may load after this file ran calls it itself (offrtr.php, through
+ * go.php).
+ */
+function p202RequireDatabase(?\mysqli $db): void
+{
+    if (!$db instanceof \mysqli) {
+        p202Unavailable();
+    }
+}
+
+// Read where the script set it: this file's scope is the including script's.
+if (($p202OutageFallback ?? null) !== true) {
+    p202RequireDatabase($db);
+}
 
 $whatCache = false;
 
@@ -67,44 +151,8 @@ if (extension_loaded('memcache') && class_exists('Memcache')) {
 }
 
 
-function setCache($key, $value, $exp = null)
-{
-    global $whatCache, $memcache;
-    // Default expiration time if not provided
-    if ($exp === null) {
-        $exp = 2592000; // 30 days in seconds
-    }
-    switch ($whatCache) {
-        case 'memcache':
-            return $memcache->set($key, $value, false, $exp);
-
-        case 'memcached':
-            return $memcache->set($key, $value, $exp);
-    }
-}
-
-function getCache(string $key, $default = false)
-{
-    global $memcache;
-    if ($memcache instanceof \Memcached || $memcache instanceof \Memcache) {
-        return call_user_func([$memcache, 'get'], $key);
-    }
-    return $default;
-}
-
 
 include_once(CONFIG_PATH . '/functions-auth.php');
-if (!function_exists('array_any')) {
-    function array_any(array $items, callable $callback): bool
-    {
-        foreach ($items as $key => $value) {
-            if ($callback($value, $key)) {
-                return true;
-            }
-        }
-        return false;
-    }
-}
 include_once(CONFIG_PATH . '/DeviceDetect.php');
 include_once(CONFIG_PATH . '/FraudDetectionIPQS.class.php');
 require ROOT_PATH . 'vendor/autoload.php';
@@ -116,34 +164,6 @@ if (!isset($tid)) {
         $tid = $t202id;
     } else {
         $tid = 1; // Default to user_id 1 if not set
-    }
-}
-
-// Initialize database connection using the DB class from 202-config.php
-if (!isset($db)) {
-    try {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-    } catch (Exception $e) {
-        // Log error but don't interrupt execution
-        error_log('Database connection error in connect2.php: ' . $e->getMessage());
-        $db = null; // dl.php checks if $db is falsey
-    }
-}
-
-//set sql mode - only if db connection is available
-if ($db) {
-    // Use strict mode when P202_SQL_STRICT is defined and truthy in config;
-    // defaults to permissive mode for backward compatibility with existing installs.
-    if (defined('P202_SQL_STRICT') && P202_SQL_STRICT) {
-        $user_sql = "SET session sql_mode= 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'";
-    } else {
-        $user_sql = "SET session sql_mode= ''";
-    }
-    try {
-        $user_results = $db->query($user_sql);
-    } catch (Exception $e) {
-        error_log('Error setting SQL mode in connect2.php: ' . $e->getMessage());
     }
 }
 
@@ -170,11 +190,15 @@ if (!isset($_SESSION['privacy'])) {
 				 FROM   	`202_users_pref`
 				 WHERE  	`202_users_pref`.`user_id`='1'";
 
-    $privacy = memcache_mysql_fetch_assoc($user_sql);
+    try {
+        // No connection (an outage): nothing to read, and no second attempt.
+        $privacy = $db instanceof \mysqli ? memcache_mysql_fetch_assoc($user_sql) : false;
+    } catch (\Prosper202\Database\Exceptions\QueryException $privacyReadError) {
+        $privacy = false;
+    }
     if ($privacy === false) {
-        // The read failed (memcache_mysql_fetch_assoc() answers false for a
-        // failed query, null for no row): hold back rather than track in
-        // full, as the app intakes do (PrivacySetting). It answered
+        // The read failed (logged where it failed): hold back rather than
+        // track in full, as the app intakes do (PrivacySetting). It answered
         // 'disabled' here — the most permissive setting standing in for one
         // nobody could read (CLAUDE.md #11).
         error_log('p202 privacy: user 1\'s user_pref_privacy could not be read; holding back for this request');
@@ -320,7 +344,9 @@ function p202ClickOwner(int $clickId): ?array
     }
     try {
         $conn = new \Prosper202\Database\Connection($db);
-        $stmt = $conn->prepareRead('SELECT user_id, aff_campaign_id FROM 202_clicks WHERE click_id = ?');
+        $stmt = $conn->prepareRead(
+            'SELECT c.user_id, c.aff_campaign_id FROM ' . \Prosper202\Click\LatestVisit::of('?') . ' AS c'
+        );
         $conn->bind($stmt, 'i', [$clickId]);
         $row = $conn->fetchOne($stmt);
     } catch (\Throwable $e) {
@@ -405,59 +431,6 @@ function p202VisitorMayBeInEu(): bool
     }
 
     return $mayBe;
-}
-
-function _mysqli_query($dbOrSql, $sql = null)
-{
-    if ($sql === null) {
-        $sql = (string) $dbOrSql;
-        $db = $GLOBALS['db'] ?? null;
-    } else {
-        $db = $dbOrSql;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        record_mysql_error((string) $sql);
-    }
-
-    $result = $db->query((string) $sql) or record_mysql_error($db, (string) $sql); //or die($db->error . '<br/><br/>' . $sql);
-    return $result;
-}
-
-// our own die, that will display the them around the error message
-function _die($message, ...$legacyArgs): never
-{
-    echo $message;
-    die();
-}
-
-// this funciton delays an SQL statement, puts in in a mysql table, to be cron jobbed out every 5 minutes
-function delay_sql($db, $delayed_sql): void
-{
-    $mysql['delayed_sql'] = $db->real_escape_string($delayed_sql);
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($db, $delayed_sql); // ($delayed_sql);
 }
 
 class FILTER
@@ -602,30 +575,46 @@ class FILTER
     // to compare before the mask.
     public static function checkLastIps($db, $user_id, $ip_id)
     {
-
-
-        $mysql['user_id'] = $db->real_escape_string($user_id);
-        $mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-        $check_sql = "SELECT * FROM 202_last_ips WHERE user_id='" . $mysql['user_id'] . "' AND ip_id='" . $mysql['ip_id'] . "'";
-        $check_result = _mysqli_query($db, $check_sql); // ($check_sql);
-        $check_row = $check_result->fetch_assoc();
-        $count = $check_result->num_rows;
-
-        if ($count > 0) {
+        $conn = new \Prosper202\Database\Connection($db);
+        $stmt = $conn->prepareWrite('SELECT 1 FROM 202_last_ips WHERE user_id = ? AND ip_id = ? LIMIT 1');
+        $conn->bind($stmt, 'ii', [(int) $user_id, (int) $ip_id]);
+        if ($conn->fetchOne($stmt) !== null) {
             // if this ip has been seen within the last 24 hours, filter it out.
             return true;
-        } else {
-
-            // else if this ip has not been recorded, record it now
-            $mysql['time'] = time();
-            $insert_sql = "INSERT INTO 202_last_ips SET user_id='" . $mysql['user_id'] . "', ip_id='" . $mysql['ip_id'] . "', time='" . $mysql['time'] . "'";
-            $insert_result = _mysqli_query($db, $insert_sql); // ($insert_sql);
-            return false;
         }
+
+        // else if this ip has not been recorded, record it now
+        $stmt = $conn->prepareWrite('INSERT INTO 202_last_ips (user_id, ip_id, time) VALUES (?, ?, ?)');
+        $conn->bind($stmt, 'iii', [(int) $user_id, (int) $ip_id, time()]);
+        $conn->executeInsert($stmt);
+        return false;
     }
 }
 
+
+
+/**
+ * Whether a rotator rule's redirect row can take a click, in rtr.php and
+ * offrtr.php alike. One naming a campaign or landing page that the joins,
+ * tied to the account, did not find (deleted, or another account's: CLAUDE.md
+ * #27) names nothing, and so does a row with no destination at all.
+ *
+ * @param array<string, mixed> $redirect a redirect row and its joins
+ *
+ * @return bool whether it names a destination of the account's
+ */
+function p202RuleRedirectIsUsable(array $redirect): bool
+{
+    if (!empty($redirect['redirect_campaign'])) {
+        return !empty($redirect['aff_campaign_id']);
+    }
+    if (!empty($redirect['redirect_lp'])) {
+        return !empty($redirect['landing_page_id']);
+    }
+
+    return !empty($redirect['redirect_url'])
+        || ($redirect['auto_monetizer'] ?? null) != null;
+}
 function rotateTrackerUrl($db, $tracker_row)
 {
 
@@ -633,7 +622,6 @@ function rotateTrackerUrl($db, $tracker_row)
     if (! $tracker_row['aff_campaign_rotate'])
         return $tracker_row['aff_campaign_url'];
 
-    $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
     $urls = [];
     array_push($urls, $tracker_row['aff_campaign_url']);
 
@@ -649,105 +637,125 @@ function rotateTrackerUrl($db, $tracker_row)
     $count = count($urls);
 
     // Atomic upsert to avoid TOCTOU race condition on concurrent requests
-    $mysql['count'] = $db->real_escape_string((string) $count);
-    $sql5 = "INSERT INTO 202_rotations SET aff_campaign_id='" . $mysql['aff_campaign_id'] . "', rotation_num=0
-             ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= " . ((int)$count - 1) . ", 0, rotation_num + 1)";
-    _mysqli_query($db, $sql5);
+    $conn = new \Prosper202\Database\Connection($db);
+    $stmt = $conn->prepareWrite(
+        'INSERT INTO 202_rotations SET aff_campaign_id = ?, rotation_num = 0'
+            . ' ON DUPLICATE KEY UPDATE rotation_num = IF(rotation_num >= ?, 0, rotation_num + 1)'
+    );
+    $conn->bind($stmt, 'ii', [(int) $tracker_row['aff_campaign_id'], $count - 1]);
+    $conn->executeUpdate($stmt);
     // Read back the current value
-    $sql5 = "SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id='" . $mysql['aff_campaign_id'] . "'";
-    $result5 = _mysqli_query($db, $sql5);
-    $row5 = $result5->fetch_assoc();
-    $num = $row5 ? (int) $row5['rotation_num'] : 0;
+    $stmt = $conn->prepareWrite('SELECT rotation_num FROM 202_rotations WHERE aff_campaign_id = ?');
+    $conn->bind($stmt, 'i', [(int) $tracker_row['aff_campaign_id']]);
+    $row5 = $conn->fetchOne($stmt);
+    $num = $row5 !== null ? (int) $row5['rotation_num'] : 0;
 
-    $url = $urls[$num];
-    return $url;
+    return $urls[$num];
 }
 
-function replaceTrackerPlaceholdersOpt($db, $url, $click_id, $mysql = [])
+/**
+ * The URL tokens of one click, from the values it is recorded with: what
+ * replaceTrackerPlaceholders() reads back from the click's rows, or what an
+ * endpoint that redirects before writing them holds (dl.php,
+ * record_simple.php). Values are raw; replaceTokens() URL-encodes them.
+ *
+ * @param array<string, scalar|null> $click keyword, t202pubid, c1-c4, gclid,
+ *     msclkid, fbclid, utm_source, utm_medium, utm_campaign, utm_term,
+ *     utm_content, country, country_code, region, city, cpc, cpa, payout,
+ *     ppc_account_id
+ * @return array<string, scalar|null>
+ */
+function p202ClickUrlTokens(string $clickId, array $click): array
 {
-
-    // get the tracker placeholder values
-    $mysql['click_id'] = $db->real_escape_string($click_id);
-    //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
-    $tokens = [
-        "subid" => $mysql['click_id'],
-        "t202kw" => $mysql['keyword'],
-        "t202pubid" => $mysql['t202pubid'],
-        "c1" => $mysql['c1'],
-        "c2" => $mysql['c2'],
-        "c3" => $mysql['c3'],
-        "c4" => $mysql['c4'],
-        "gclid" => $mysql['gclid'],
-        "msclkid" => $mysql['msclkid'],
-        "fbclid" => $mysql['fbclid'],
-        "utm_source" => $mysql['utm_source'],
-        "utm_medium" => $mysql['utm_medium'],
-        "utm_campaign" => $mysql['utm_campaign'],
-        "utm_term" => $mysql['utm_term'],
-        "utm_content" => $mysql['utm_content'],
-        "country" => $mysql['country'],
-        "country_code" => $mysql['country_code'],
-        "region" => $mysql['region'],
-        "city" => $mysql['city'],
-        "cpc" => round((float) $mysql['click_cpc'], 2),
-        "cpc2" => $mysql['click_cpc'],
-        "timestamp" => time(),
-        "payout" => $mysql['click_payout'],
-        "random" => mt_rand(1000000, 9999999),
-        "referer" => $mysql['referer'],
-        "sourceid" => $mysql['ppc_account']
-    ];
-
-    $url = (replaceTokens($url, $tokens));
-
-
-    return $url;
-}
-
-function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
-{
-
-    // get the tracker placeholder values
-
-    //$url = preg_replace('/\[\[subid\]\]/i', $mysql['click_id'], $url);
-
-    if (isset($mysql) && $mysql != '') {
-        $mysql['click_id'] = $db->real_escape_string((string)$click_id);
-        $tokens = @[
-            "subid" => $mysql['click_id'],
-            "t202kw" => $mysql['keyword'],
-            "t202pubid" => $mysql['public_pub_id'],
-            "c1" => $mysql['c1'],
-            "c2" => $mysql['c2'],
-            "c3" => $mysql['c3'],
-            "c4" => $mysql['c4'],
-            "gclid" => $mysql['gclid'],
-            "msclkid" => $mysql['msclkid'],
-            "fbclid" => $mysql['fbclid'],
-            "utm_source" => $mysql['utm_source'],
-            "utm_medium" => $mysql['utm_medium'],
-            "utm_campaign" => $mysql['utm_campaign'],
-            "utm_term" => $mysql['utm_term'],
-            "utm_content" => $mysql['utm_content'],
-            "country" => $mysql['country'],
-            "country_code" => $mysql['country_code'],
-            "region" => $mysql['region'],
-            "city" => $mysql['city'],
-            "cpc" => round((float) $mysql['click_cpc'], 2),
-            "cpc2" => $mysql['click_cpc'],
-            'cpa' => round((float) $mysql['click_cpa'], 2),
-            "timestamp" => time(),
-            "payout" => $mysql['click_payout'],
-            "random" => mt_rand(1000000, 9999999),
-            "referer" => $mysql['referer'],
-            "sourceid" => $mysql['ppc_account']
-        ];
-        $url = (replaceTokens($url, $tokens));
+    $text = static fn (string $key): string => (string) ($click[$key] ?? '');
+    $account = $text('ppc_account_id');
+    // A click with no CPA (click_cpa is NULL: not a CPA tracker) has none, and
+    // no click read back has no CPC either: round() would make each a 0 that
+    // reads as one. A stored click always has a CPC, 0 when it has no cost.
+    $cpc = $text('cpc') === '' ? '' : round((float) $text('cpc'), 2);
+    $cpa = $text('cpa') === '' ? '' : round((float) $text('cpa'), 2);
+    // The campaign's payout (2 places) and the click's (5) as one number.
+    $payout = $text('payout');
+    if (is_numeric($payout) && str_contains($payout, '.')) {
+        $payout = rtrim(rtrim($payout, '0'), '.');
     }
 
+    return [
+        'subid' => $clickId,
+        't202kw' => $text('keyword'),
+        't202pubid' => $text('t202pubid'),
+        'c1' => $text('c1'),
+        'c2' => $text('c2'),
+        'c3' => $text('c3'),
+        'c4' => $text('c4'),
+        'gclid' => $text('gclid'),
+        'msclkid' => $text('msclkid'),
+        'fbclid' => $text('fbclid'),
+        'utm_source' => $text('utm_source'),
+        'utm_medium' => $text('utm_medium'),
+        'utm_campaign' => $text('utm_campaign'),
+        'utm_term' => $text('utm_term'),
+        'utm_content' => $text('utm_content'),
+        'country' => $text('country'),
+        'country_code' => $text('country_code'),
+        'region' => $text('region'),
+        'city' => $text('city'),
+        'cpc' => $cpc,
+        'cpc2' => $text('cpc'),
+        'cpa' => $cpa,
+        'timestamp' => time(),
+        'payout' => $payout,
+        'random' => mt_rand(1000000, 9999999),
+        // Encoded here and again by replaceTokens(), as it always has been.
+        'referer' => urlencode((string) ($_SERVER['HTTP_REFERER'] ?? '')),
+        'sourceid' => $account === '0' ? '' : $account,
+    ];
+}
 
-    if (preg_match('/\[\[(.*)\]\]/', (string) $url)) {
-        $click_sql = "
+/**
+ * Fill a URL's [[tokens]] from one click's values (p202ClickUrlTokens()); a
+ * token they leave empty, or one no click has, comes out empty.
+ *
+ * @param array<string, scalar|null> $click
+ */
+function replaceClickPlaceholders($url, string $clickId, array $click): string
+{
+    return replaceTokens($url, p202ClickUrlTokens($clickId, $click), 1);
+}
+
+/**
+ * Fill a URL's [[tokens]] from the click's rows, read back by its id: for an
+ * endpoint that has written them (rtr.php inside its writer, a landing page's
+ * offer link on its click). One that redirects first hands the values it
+ * holds to replaceClickPlaceholders(): read back, they are not there yet.
+ *
+ * $ownerId is the account whose URL this is: the click is read only if it
+ * is that account's. Several callers take the click id from the visitor
+ * (lpc.php from a cookie), and its row carries another account's cost,
+ * payout and values (CLAUDE.md #27).
+ */
+function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
+{
+    // The tokens no click row is needed for first, so a URL that asks for
+    // nothing else (the common [[subid]]) is filled without the read below.
+    $url = replaceTokens($url, array_intersect_key(
+        p202ClickUrlTokens((string) $click_id, []),
+        array_flip(['subid', 'timestamp', 'random', 'referer'])
+    ));
+    if (!preg_match('/\[\[(.*)\]\]/', (string) $url)) {
+        return $url;
+    }
+
+    // Anything but a click id names no click: its tokens are blank, as for a
+    // click not there (compared as text, `12abc` read click 12).
+    $tokenClickId = \Prosper202\Click\ClickId::parse((string) $click_id);
+    if ($tokenClickId === null) {
+        return replaceClickPlaceholders($url, (string) $click_id, []);
+    }
+    $mysql['click_id'] = (string) $tokenClickId;
+    // The click's latest visit: a re-click adds a row. Named in the statement
+    // itself, so SingleClickReadsNameTheirVisitTest can see it.
+    $click_sql = "
 			SELECT 2c.click_id, 
                 2tc1.c1, 
                 2tc2.c2, 
@@ -770,7 +778,7 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
 		        2lc.country_code,
 		        2lr.region_name,
                 2u.user_public_publisher_id,
-		        2lc2.city_name FROM 202_clicks AS 2c 
+		        2lc2.city_name FROM " . \Prosper202\Click\LatestVisit::of($mysql['click_id']) . " AS 2c 
             	LEFT JOIN `202_clicks_advance` AS 2ca USING (`click_id`) 
             	LEFT OUTER JOIN 202_clicks_tracking AS 2ct ON (2ct.click_id = 2c.click_id) 
             	LEFT OUTER JOIN 202_tracking_c1 AS 2tc1 ON (2ct.c1_id = 2tc1.c1_id) 
@@ -778,7 +786,8 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
             	LEFT OUTER JOIN 202_tracking_c3 AS 2tc3 ON (2ct.c3_id = 2tc3.c3_id) 
             	LEFT OUTER JOIN 202_tracking_c4 AS 2tc4 ON (2ct.c4_id = 2tc4.c4_id) 
                 LEFT OUTER JOIN 202_cpa_trackers AS 2cpa ON (2cpa.click_id = 2c.click_id)
-                LEFT OUTER JOIN 202_trackers AS 2trk ON (2trk.tracker_id_public = 2cpa.tracker_id_public)
+                LEFT OUTER JOIN 202_trackers AS 2trk
+                    ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
             	LEFT JOIN `202_google` AS 2g on (2g.click_id=2c.click_id)
                 LEFT JOIN `202_bing` AS 2b on (2b.click_id=2c.click_id)
                 LEFT JOIN `202_facebook` AS 2f on (2f.click_id=2c.click_id) 
@@ -794,110 +803,47 @@ function replaceTrackerPlaceholders($db, $url, $click_id = '', $mysql = [])
                 LEFT JOIN `202_users` AS 2u ON (2u.`user_id` = 2c.`user_id`)
 		    WHERE
 				2c.click_id='" . $mysql['click_id'] . "'
+                AND 2c.user_id='" . $ownerId . "'
 		";
-
-        $click_result = _mysqli_query($db, $click_sql);
-        $click_row = $click_result->fetch_assoc();
-
-        // Check if click_row exists before processing
-        if ($click_row) {
-            $mysql['t202kw'] = $db->real_escape_string((string)($click_row['keyword'] ?? ''));
-            $mysql['t202pubid'] = $db->real_escape_string((string)($click_row['user_public_publisher_id'] ?? ''));
-            $mysql['c1'] = $db->real_escape_string((string)($click_row['c1'] ?? ''));
-            $mysql['c2'] = $db->real_escape_string((string)($click_row['c2'] ?? ''));
-            $mysql['c3'] = $db->real_escape_string((string)($click_row['c3'] ?? ''));
-            $mysql['c4'] = $db->real_escape_string((string)($click_row['c4'] ?? ''));
-            $mysql['gclid'] = $db->real_escape_string((string)($click_row['gclid'] ?? ''));
-            $mysql['msclkid'] = $db->real_escape_string((string)($click_row['msclkid'] ?? ''));
-            $mysql['fbclid'] = $db->real_escape_string((string)($click_row['fbclid'] ?? ''));
-            $mysql['utm_source'] = $db->real_escape_string((string)($click_row['utm_source'] ?? ''));
-            $mysql['utm_medium'] = $db->real_escape_string((string)($click_row['utm_medium'] ?? ''));
-            $mysql['utm_campaign'] = $db->real_escape_string((string)($click_row['utm_campaign'] ?? ''));
-            $mysql['utm_term'] = $db->real_escape_string((string)($click_row['utm_term'] ?? ''));
-            $mysql['utm_content'] = $db->real_escape_string((string)($click_row['utm_content'] ?? ''));
-            $mysql['payout'] = $db->real_escape_string((string)($click_row['click_payout'] ?? ''));
-            $mysql['cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['cpa'] = $db->real_escape_string((string)($click_row['click_cpa'] ?? ''));
-            $mysql['click_cpc'] = $db->real_escape_string((string)($click_row['click_cpc'] ?? ''));
-            $mysql['country'] = $db->real_escape_string((string)($click_row['country_name'] ?? ''));
-            $mysql['country_code'] = $db->real_escape_string((string)($click_row['country_code'] ?? ''));
-            $mysql['region'] = $db->real_escape_string((string)($click_row['region_name'] ?? ''));
-            $mysql['city'] = $db->real_escape_string((string)($click_row['city_name'] ?? ''));
-        } else {
-            // Initialize all fields with empty strings if no click data found
-            $mysql['t202kw'] = '';
-            $mysql['t202pubid'] = '';
-            $mysql['c1'] = '';
-            $mysql['c2'] = '';
-            $mysql['c3'] = '';
-            $mysql['c4'] = '';
-            $mysql['gclid'] = '';
-            $mysql['msclkid'] = '';
-            $mysql['fbclid'] = '';
-            $mysql['utm_source'] = '';
-            $mysql['utm_medium'] = '';
-            $mysql['utm_campaign'] = '';
-            $mysql['utm_term'] = '';
-            $mysql['utm_content'] = '';
-            $mysql['payout'] = '';
-            $mysql['cpc'] = '';
-            $mysql['cpa'] = '';
-            $mysql['click_cpc'] = '';
-            $mysql['country'] = '';
-            $mysql['country_code'] = '';
-            $mysql['region'] = '';
-            $mysql['city'] = '';
-        }
-        $mysql['referer'] = urlencode((string) $db->real_escape_string($_SERVER['HTTP_REFERER'] ?? ''));
-        if ($db->real_escape_string($click_row['ppc_account_id']) == '0') {
-            $mysql['ppc_account'] = '';
-        } else {
-            $mysql['ppc_account'] = $db->real_escape_string($click_row['ppc_account_id']);
-        }
-
-        //prepare $mysql to make sure none of the keys are unset
-
-        $_202keys = ['click_id', 't202kw', 't202pubid', 'c1', 'c2', 'c3', 'c4', 'gclid', 'msclkid', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc', 'cpa', 'click_payout', 'referer', 'ppc_account'];
-
-        foreach ($_202keys as $key) {
-            if (!isset($mysql[$key])) {
-                $mysql[$key] = '';
-            }
-        }
-
-        $tokens = [
-            "subid" => $mysql['click_id'],
-            "t202kw" => $mysql['t202kw'],
-            "t202pubid" => $mysql['t202pubid'],
-            "c1" => $mysql['c1'],
-            "c2" => $mysql['c2'],
-            "c3" => $mysql['c3'],
-            "c4" => $mysql['c4'],
-            "gclid" => $mysql['gclid'],
-            "msclkid" => $mysql['msclkid'],
-            "fbclid" => $mysql['fbclid'],
-            "utm_source" => $mysql['utm_source'],
-            "utm_medium" => $mysql['utm_medium'],
-            "utm_campaign" => $mysql['utm_campaign'],
-            "utm_term" => $mysql['utm_term'],
-            "utm_content" => $mysql['utm_content'],
-            "country" => $mysql['country'],
-            "country_code" => $mysql['country_code'],
-            "region" => $mysql['region'],
-            "city" => $mysql['city'],
-            "cpc" => round((float) $mysql['cpc'], 2),
-            "cpc2" => $mysql['cpc'],
-            "cpa" => round((float) $mysql['cpa'], 2),
-            // "timestamp" => time(), don't change the time it was already set
-            "payout" => $mysql['click_payout'],
-            "random" => mt_rand(1000000, 9999999),
-            "referer" => $mysql['referer'],
-            "sourceid" => $mysql['ppc_account']
-        ];
-
-        $url = (replaceTokens($url, $tokens, 1)); //call replace tokens and allow it to fill all unset tokens with blanks
+    // _mysqli_query() answers false for a failed statement, and the fetch
+    // false for a failed read: either is recorded, and the error page.
+    $failed = 'Reading click ' . $mysql['click_id'] . ' for its URL tokens failed';
+    $click_result = _mysqli_query($db, $click_sql);
+    if ($click_result === false) {
+        record_mysql_error($db, $click_sql, $failed);
     }
-    return $url;
+    $click_row = $click_result->fetch_assoc();
+    if ($click_row === false) {
+        record_mysql_error($db, $click_sql, $failed);
+    }
+    // No such click (a page reading an earlier one by a subid it was sent):
+    // its tokens are blank, as they always were.
+    $click_row ??= [];
+
+    return replaceClickPlaceholders($url, (string) $click_id, [
+        'keyword' => $click_row['keyword'] ?? null,
+        't202pubid' => $click_row['user_public_publisher_id'] ?? null,
+        'c1' => $click_row['c1'] ?? null,
+        'c2' => $click_row['c2'] ?? null,
+        'c3' => $click_row['c3'] ?? null,
+        'c4' => $click_row['c4'] ?? null,
+        'gclid' => $click_row['gclid'] ?? null,
+        'msclkid' => $click_row['msclkid'] ?? null,
+        'fbclid' => $click_row['fbclid'] ?? null,
+        'utm_source' => $click_row['utm_source'] ?? null,
+        'utm_medium' => $click_row['utm_medium'] ?? null,
+        'utm_campaign' => $click_row['utm_campaign'] ?? null,
+        'utm_term' => $click_row['utm_term'] ?? null,
+        'utm_content' => $click_row['utm_content'] ?? null,
+        'country' => $click_row['country_name'] ?? null,
+        'country_code' => $click_row['country_code'] ?? null,
+        'region' => $click_row['region_name'] ?? null,
+        'city' => $click_row['city_name'] ?? null,
+        'cpc' => $click_row['click_cpc'] ?? null,
+        'cpa' => $click_row['click_cpa'] ?? null,
+        'payout' => $click_row['click_payout'] ?? null,
+        'ppc_account_id' => $click_row['ppc_account_id'] ?? null,
+    ]);
 }
 
 function setClickIdCookie($click_id, $campaign_id = 0)
@@ -941,25 +887,6 @@ function setClickIdCookie($click_id, $campaign_id = 0)
     }
 }
 
-function setClickIdCookieForLp($click_id_public, $lp_public_id)
-{
-    if (trackingEnabled()) {
-        //set the cookie for the PIXEL to fire, expire in 30 days
-        $expire = time() + (60 *  60 * 24 * 30);
-        $expire_header = 60 *  60 * 24 * 30;
-        $path = '/';
-        // Domain: the request host without its port, none for an IP (CookieDomain).
-        $secure = TRUE;
-        $httponly = TRUE;
-
-
-        //legacy cookies
-        setcookie('tracking202rlp_' . $lp_public_id . '-legacy', (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER)]);
-
-        setcookie('tracking202rlp_' . $lp_public_id, (string) $click_id_public, ['expires' => $expire, 'path' => '/', 'domain' => \Prosper202\Http\CookieDomain::fromServer($_SERVER), 'secure' => $secure, 'httponly' => $httponly, 'samesite' => 'None']);
-    }
-}
-
 class PLATFORMS
 {
 
@@ -983,13 +910,15 @@ class PLATFORMS
         $ua = $detect->getUserAgent();
 
         if ($memcacheWorking) {
-            $key = md5("user-agent" . $ua . systemHash());
+            // Not "user-agent": entries under that subject name a device
+            // model found by its name alone, of whatever type clicked first.
+            $key = md5("user-agent-typed" . $ua . systemHash());
             $device_info = $memcache->get($key);
 
-            // A miss as well: an entry from before ua_device_family existed
-            // (ClickBotDetector would parse the agent again), and one from
-            // before the address verdict left the parse (no ua_only), which
-            // may hold another visitor's type 4.
+            // A miss as well: an entry without ua_device_family
+            // (ClickBotDetector would parse the agent again), or without
+            // ua_only, the mark of a parse with no address verdict in it
+            // (another visitor's type 4).
             if (! is_array($device_info)
                 || ! array_key_exists('ua_device_family', $device_info)
                 || ! array_key_exists('ua_only', $device_info)
@@ -1019,7 +948,10 @@ class PLATFORMS
             return $device_info;
         }
 
-        [$device_info['device'], $device_info['type']] = PLATFORMS::deviceModel($db, 'Bot', '4');
+        $bot = \Prosper202\Repository\DeviceType::Bot;
+        $device_info['device'] = \Prosper202\Repository\LookupRepositoryFactory::device($db)
+            ->findOrCreateDevice('Bot', $bot);
+        $device_info['type'] = (string) $bot->value;
 
         return $device_info;
     }
@@ -1036,107 +968,30 @@ class PLATFORMS
         // Before the rewrite to Desktop/Bot below; ClickBotDetector reads it.
         $uaDeviceFamily = (string) $result->device->family;
 
-        // Initialize type with default value
-        $type = "1"; // Default to Desktop
-        
-        // If is not mobile or tablet
-        if (! $detect->isMobile() && ! $detect->isTablet()) {
-
-            switch ($result->device->family) {
-                // Is Bot
-                case 'Bot':
-                    $type = "4";
-                    $result->device->family = "Bot";
-                    break;
-                // Is Desktop
-                case 'Other':
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-                // Default case for any other desktop device
-                default:
-                    $type = "1";
-                    $result->device->family = "Desktop";
-                    break;
-            }
+        $device = $uaDeviceFamily;
+        if ($detect->isTablet()) {
+            $type = \Prosper202\Repository\DeviceType::Tablet;
+        } elseif ($detect->isMobile()) {
+            $type = \Prosper202\Repository\DeviceType::Mobile;
+        } elseif ($uaDeviceFamily === 'Bot') {
+            $type = \Prosper202\Repository\DeviceType::Bot;
         } else {
-            // If tablet
-            if ($detect->isTablet()) {
-                $type = "3";
-                // If mobile
-            } else {
-                $type = "2";
-            }
+            $type = \Prosper202\Repository\DeviceType::Desktop;
+            $device = 'Desktop';
         }
 
-        // Select from DB and return ID's
-        $mysql['browser'] = $db->real_escape_string((string)$result->ua->family);
-        $mysql['platform'] = $db->real_escape_string((string)$result->os->family);
+        $devices = \Prosper202\Repository\LookupRepositoryFactory::device($db);
 
-
-
-        // Get browser ID
-        $browser_sql = "SELECT browser_id FROM 202_browsers WHERE browser_name='" . $mysql['browser'] . "'";
-        $browser_result = _mysqli_query($db, $browser_sql);
-        $browser_row = $browser_result->fetch_assoc();
-        if ($browser_row) {
-            $browser_id = $browser_row['browser_id'];
-        } else {
-            $browser_sql = "INSERT INTO 202_browsers SET browser_name='" . $mysql['browser'] . "'";
-            $browser_result = _mysqli_query($db, $browser_sql);
-            $browser_id = $db->insert_id;
-        }
-
-        // Get platform ID
-        $platform_sql = "SELECT platform_id FROM 202_platforms WHERE platform_name='" . $mysql['platform'] . "'";
-        $platform_result = _mysqli_query($db, $platform_sql);
-        $platform_row = $platform_result->fetch_assoc();
-        if ($platform_row) {
-            $platform_id = $platform_row['platform_id'];
-        } else {
-            $platform_sql = "INSERT INTO 202_platforms SET platform_name='" . $mysql['platform'] . "'";
-            $platform_result = _mysqli_query($db, $platform_sql);
-            $platform_id = $db->insert_id;
-        }
-
-        [$device_id, $device_type] = PLATFORMS::deviceModel($db, (string) $result->device->family, (string) $type);
-
-        $data = [
-            'browser' => $browser_id,
-            'platform' => $platform_id,
-            'device' => $device_id,
-            'type' => $device_type,
+        return [
+            'browser' => $devices->findOrCreateBrowser((string) $result->ua->family),
+            'platform' => $devices->findOrCreatePlatform((string) $result->os->family),
+            'device' => $devices->findOrCreateDevice($device, $type),
+            'type' => (string) $type->value,
             'ua_device_family' => $uaDeviceFamily,
             // Marks an entry with no address verdict in it; get_device_info()
             // treats a cached entry without it as a miss.
             'ua_only' => true,
         ];
-
-        return $data;
-    }
-
-    /**
-     * The 202_device_models id and device_type for $name, inserted with $type
-     * when the model is new.
-     *
-     * @return array{0: mixed, 1: mixed}
-     */
-    private static function deviceModel($db, string $name, string $type): array
-    {
-        $mysql['device'] = $db->real_escape_string($name);
-        $mysql['device_type'] = $db->real_escape_string($type);
-
-        $device_sql = "SELECT device_id, device_type FROM 202_device_models WHERE device_name='" . $mysql['device'] . "'";
-        $device_result = _mysqli_query($db, $device_sql);
-        $device_row = $device_result->fetch_assoc();
-        if ($device_row) {
-            return [$device_row['device_id'], $device_row['device_type']];
-        }
-
-        $device_sql = "INSERT INTO 202_device_models SET device_name='" . $mysql['device'] . "', device_type='" . $mysql['device_type'] . "'";
-        _mysqli_query($db, $device_sql);
-
-        return [$db->insert_id, $type];
     }
 
     /**
@@ -1241,1238 +1096,6 @@ class PLATFORMS
     }
 }
 
-class INDEXES
-{
-
-    // this returns the location_country_id, when a Country Code is given
-    public static function get_country_id($db, $country_name, $country_code)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['country_name'] = $db->real_escape_string($country_name);
-        $mysql['country_code'] = $db->real_escape_string($country_code);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("country-id" . $country_name . systemHash()));
-
-            if ($getID) {
-                $country_id = $getID;
-                return $country_id;
-            } else {
-
-                $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-                $country_result = _mysqli_query($db, $country_sql);
-                $country_row = $country_result->fetch_assoc();
-                if ($country_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $country_id = $country_row['country_id'];
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                    $country_result = _mysqli_query($db, $country_sql); // ($ip_sql);
-                    $country_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                }
-            }
-        } else {
-
-            $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-
-            $country_result = _mysqli_query($db, $country_sql);
-            $country_row = $country_result->fetch_assoc();
-            if ($country_row) {
-                // if this country already exists, return the location_country_id for it.
-                $country_id = $country_row['country_id'];
-
-                return $country_id;
-            } else {
-                // else if this doesn't exist, insert the new countryrow, and return the_id for this new row we found
-                $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                $country_result = _mysqli_query($db, $country_sql); // ($ip_sql);
-                $country_id = $db->insert_id;
-
-                return $country_id;
-            }
-        }
-    }
-
-    // this returns the location_city_id, when a City name is given
-    public static function get_city_id($db, $city_name, $country_id)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['city_name'] = $db->real_escape_string($city_name);
-        $mysql['country_id'] = $db->real_escape_string($country_id);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("city-id" . $city_name . $country_id . systemHash()));
-
-            if ($getID) {
-                $city_id = $getID;
-                return $city_id;
-            } else {
-
-                $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-                $city_result = _mysqli_query($db, $city_sql);
-                $city_row = $city_result->fetch_assoc();
-                if ($city_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $city_id = $city_row['city_id'];
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                    $city_result = _mysqli_query($db, $city_sql); // ($ip_sql);
-                    $city_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                }
-            }
-        } else {
-
-            $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-            $city_result = _mysqli_query($db, $city_sql);
-            $city_row = $city_result->fetch_assoc();
-            if ($city_row) {
-                // if this country already exists, return the location_country_id for it.
-                $city_id = $city_row['city_id'];
-
-                return $city_id;
-            } else {
-                // else if this doesn't exist, insert the new cityrow, and return the_id for this new row we found
-                $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                $city_result = _mysqli_query($db, $city_sql); // ($ip_sql);
-                $city_id = $db->insert_id;
-
-                return $city_id;
-            }
-        }
-    }
-
-    // this returns the location_region_id, when a Region name is given
-    public static function get_region_id($db, $region_name, $country_id)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['region_name'] = $db->real_escape_string($region_name);
-        $mysql['country_id'] = $db->real_escape_string($country_id);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("region-id" . $region_name . $country_id . systemHash()));
-
-            if ($getID) {
-                $region_id = $getID;
-                return $region_id;
-            } else {
-
-                $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-                $region_result = _mysqli_query($db, $region_sql);
-                $region_row = $region_result->fetch_assoc();
-                if ($region_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $region_id = $region_row['region_id'];
-                    // add to memcached
-                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
-                    return $region_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                    $region_result = _mysqli_query($db, $region_sql); // ($ip_sql);
-                    $region_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("region-id" . $region_name . $country_id . systemHash()), $region_id, $time);
-                    return $region_id;
-                }
-            }
-        } else {
-
-            $region_sql = "SELECT region_id FROM 202_locations_region WHERE region_name='" . $mysql['region_name'] . "' AND main_country_id='" . $mysql['country_id'] . "'";
-            $region_result = _mysqli_query($db, $region_sql);
-            $region_row = $region_result->fetch_assoc();
-            if ($region_row) {
-                // if this country already exists, return the location_country_id for it.
-                $region_id = $region_row['region_id'];
-
-                return $region_id;
-            } else {
-                // else if this doesn't exist, insert the new cityrow, and return the_id for this new row we found
-                $region_sql = "INSERT INTO 202_locations_region SET region_name='" . $mysql['region_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                $region_result = _mysqli_query($db, $region_sql); // ($ip_sql);
-                $region_id = $db->insert_id;
-
-                return $region_id;
-            }
-        }
-    }
-
-    // this returns the isp_id, when a isp name is given
-    public static function get_isp_id($db, $isp)
-    {
-        global $memcacheWorking, $memcache;
-
-        $mysql['isp'] = $db->real_escape_string($isp);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("isp-id" . $isp . systemHash()));
-
-            if ($getID) {
-                $isp_id = $getID;
-                return $isp_id;
-            } else {
-
-                $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($db, $isp_sql);
-                $isp_row = $isp_result->fetch_assoc();
-                if ($isp_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $isp_id = $isp_row['isp_id'];
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                    $isp_result = _mysqli_query($db, $isp_sql); // ($isp_sql);
-                    $isp_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                }
-            }
-        } else {
-
-            $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-            $isp_result = _mysqli_query($db, $isp_sql);
-            $isp_row = $isp_result->fetch_assoc();
-            if ($isp_row) {
-                // if this isp already exists, return the isp_id for it.
-                $isp_id = $isp_row['isp_id'];
-
-                return $isp_id;
-            } else {
-                // else if this doesn't exist, insert the new isp row, and return the_id for this new row we found
-                $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($db, $isp_sql); // ($isp_sql);
-                $isp_id = $db->insert_id;
-
-                return $isp_id;
-            }
-        }
-    }
-
-    // this returns the ip_id, when a ip_address is given
-    public static function get_ip_id($arg1, $arg2 = null)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($arg1 instanceof mysqli) {
-            $db = $arg1;
-            $ip = $arg2;
-        } else {
-            global $db;
-            $ip = $arg1;
-        }
-
-        if (!$db) {
-            return null;
-        }
-
-        // Handle both string and object input
-        if (is_string($ip)) {
-            $ip_address = $ip;
-            $ip_type = (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) ? 'ipv6' : 'ipv4';
-            $ip_object = new stdClass();
-            $ip_object->address = $ip_address;
-            $ip_object->type = $ip_type;
-        } else {
-            $ip_address = $ip->address ?? '';
-            $ip_type = $ip->type ?? 'ipv4';
-            $ip_object = $ip;
-        }
-
-        $mysql['ip_address'] = $db->real_escape_string($ip_address);
-
-        if ($ip_type == 'ipv6') {
-            $mysql['ip_address'] = $db->real_escape_string(inet6_aton($mysql['ip_address'])); //encode ipv6 for db insert
-        }
-
-        if ($ip_type === 'ipv6') {
-            $ip_sql = 'SELECT 202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address=("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
-        } else {
-            $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
-        }
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 7 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("ip-id" . $mysql['ip_address'] . systemHash()));
-
-            if ($getID) {
-                $ip_id = $getID;
-            } else {
-
-                $ip_result = _mysqli_query($db, $ip_sql);
-                $ip_row = $ip_result->fetch_assoc();
-                if ($ip_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $ip_id = $ip_row['ip_id'];
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                } else {
-                    //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip_object);
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                }
-            }
-        } else {
-            $ip_result = _mysqli_query($db, $ip_sql);
-            $ip_row = $ip_result->fetch_assoc();
-            if ($ip_row !== null && $ip_row['ip_id']) {
-                // if this ip already exists, return the ip_id for it.
-                $ip_id = $ip_row['ip_id'];
-            } else {
-                $ip_id = INDEXES::insert_ip($db, $ip_object);
-            }
-        }
-
-        //return the ip_id
-        return $ip_id;
-    }
-
-    public static function insert_ip($db, $ip)
-    {
-
-        $mysql['ip_address'] = $db->real_escape_string($ip->address);
-
-        //e
-        if ($ip->type == 'ipv6') {
-            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode ipv6 for db insert
-        }
-
-        if ($ip->type === 'ipv6') {
-            //insert the ipv6 ip address and get the ipv6_id
-            $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address=("' . $mysql['ip_address'] . '")';
-            // $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address='.$inet6_aton.'("'.$mysql['ip_address'].'")';
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ipv6_id = $db->insert_id;
-
-            //insert the ipv6_id as the ipv4 address for referencing later on
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $ipv6_id . "', location_id='0'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        } else {
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $mysql['ip_address'] . "', location_id='0'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        }
-    }
-    // this returns the site_domain_id, when a site_url_address is given
-    public static function get_site_domain_id($db, $site_url_address)
-    {
-        global $memcacheWorking, $memcache;
-
-        // Handle null or empty site_url_address
-        if ($site_url_address === null || $site_url_address === '') {
-            $site_url_address = '';
-        }
-
-        $parsed_url = @parse_url(trim((string) $db->real_escape_string((string)$site_url_address)));
-
-        if (isset($parsed_url)) {
-            if (isset($parsed_url['host'])) {
-                $site_domain_host = trim($parsed_url['host']);
-            } else {
-                $site_domain_host = explode('/', $parsed_url['path'], 2);
-                $site_domain_host = trim(array_shift($site_domain_host));
-                //$site_domain_host = trim();
-            }
-            $site_domain_host = str_replace('www.', '', $site_domain_host);
-        } else {
-            $site_domain_host = '';
-            $site_domain_host = '';
-        }
-
-        $mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
-
-        // if a cached key is found for this lpip, redirect to that url
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("domain-id" . $site_domain_host . systemHash()));
-
-            if ($getID) {
-                $site_domain_id = $getID;
-                return $site_domain_id;
-            } else {
-
-                $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($db, $site_domain_sql);
-                $site_domain_row = $site_domain_result->fetch_assoc();
-                if ($site_domain_row) {
-                    // if this site_domain_id already exists, return the site_domain_id for it.
-                    $site_domain_id = $site_domain_row['site_domain_id'];
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                    $site_domain_result = _mysqli_query($db, $site_domain_sql); // ($site_domain_sql);
-                    $site_domain_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                }
-            }
-        } else {
-
-            $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-            $site_domain_result = _mysqli_query($db, $site_domain_sql);
-            $site_domain_row = $site_domain_result->fetch_assoc();
-            if ($site_domain_row) {
-                // if this site_domain_id already exists, return the site_domain_id for it.
-                $site_domain_id = $site_domain_row['site_domain_id'];
-                // add to memcached
-                return $site_domain_id;
-            } else {
-                // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($db, $site_domain_sql); // ($site_domain_sql);
-                $site_domain_id = $db->insert_id;
-                return $site_domain_id;
-            }
-        }
-    }
-
-    // this returns the site_url_id, when a site_url_address is given
-    public static function get_site_url_id($dbOrSiteUrl, $site_url_address = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec
-
-        if ($site_url_address === null) {
-            $site_url_address = $dbOrSiteUrl;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrSiteUrl;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-        
-        // Handle null or empty site_url_address
-        if ($site_url_address === null || $site_url_address === '') {
-            $site_url_address = '';
-        }
-        
-        $site_domain_id = INDEXES::get_site_domain_id($db, $site_url_address);
-
-        $mysql['site_url_address'] = $db->real_escape_string((string)$site_url_address);
-        $mysql['site_domain_id'] = $db->real_escape_string((string)$site_domain_id);
-
-        if ($memcacheWorking) {
-            $time = 604800; // 7 days in sec
-            // get from memcached
-            $getURL = $memcache->get(md5("url-id" . $site_url_address . systemHash()));
-            if ($getURL) {
-                return $getURL;
-            } else {
-
-                $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-                $site_url_result = _mysqli_query($db, $site_url_sql);
-                $site_url_row = $site_url_result->fetch_assoc();
-                if ($site_url_row) {
-                    // if this site_url_id already exists, return the site_url_id for it.
-                    $site_url_id = $site_url_row['site_url_id'];
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                } else {
-
-                    $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                    $site_url_result = _mysqli_query($db, $site_url_sql); // ($site_url_sql);
-                    $site_url_id = $db->insert_id;
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                }
-            }
-        } else {
-
-            $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-            $site_url_result = _mysqli_query($db, $site_url_sql);
-            $site_url_row = $site_url_result->fetch_assoc();
-
-            if ($site_url_row) {
-                // if this site_url_id already exists, return the site_url_id for it.
-                $site_url_id = $site_url_row['site_url_id'];
-                return $site_url_id;
-            } else {
-
-                $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                $site_url_result = _mysqli_query($db, $site_url_sql); // ($site_url_sql);
-                $site_url_id = $db->insert_id;
-                return $site_url_id;
-            }
-        }
-    }
-
-    // this returns the keyword_id
-    public static function get_utm_id($dbOrUtmVar, $utm_var_or_type, $utm_type = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($utm_type === null) {
-            $utm_var = $dbOrUtmVar;
-            $utm_type = $utm_var_or_type;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrUtmVar;
-            $utm_var = $utm_var_or_type;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // only grab the first 350 characters of the utm variable
-        $utm_var = substr((string) $utm_var, 0, 350);
-
-        $mysql['utm_var'] = $db->real_escape_string($utm_var);
-        $mysql['utm_type'] = $db->real_escape_string($utm_type);
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getUtm = $memcache->get(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()));
-            if ($getUtm) {
-                return $getUtm;
-            } else {
-
-                $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                $utm_result = _mysqli_query($db, $utm_sql);
-                $utm_row = $utm_result->fetch_assoc();
-                if ($utm_row) {
-                    // if this already exists, return the id for it
-                    $utm_id_name = $mysql['utm_type'] . "_id";
-                    $utm_id = $utm_row[$utm_id_name];
-                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
-                    return $utm_id;
-                } else {
-
-                    $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                    $utm_result = _mysqli_query($db, $utm_sql);
-                    $utm_id = $db->insert_id;
-                    $setID = setCache(md5($mysql['utm_type'] . "_id" . $utm_var . systemHash()), $utm_id, $time);
-                    return $utm_id;
-                }
-            }
-        } else {
-
-            $utm_sql = "SELECT " . $mysql['utm_type'] . "_id FROM 202_" . $mysql['utm_type'] . " WHERE " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-            $utm_result = _mysqli_query($db, $utm_sql);
-            $utm_row = $utm_result->fetch_assoc();
-            if ($utm_row) {
-                // if this already exists, return the id for it
-                $utm_id_name = $mysql['utm_type'] . "_id";
-                $utm_id = $utm_row[$utm_id_name];
-                return $utm_id;
-            } else {
-
-                $utm_sql = "INSERT INTO 202_" . $mysql['utm_type'] . " SET " . $mysql['utm_type'] . "='" . $mysql['utm_var'] . "'";
-                $utm_result = _mysqli_query($db, $utm_sql);
-                $utm_id = $db->insert_id;
-                return $utm_id;
-            }
-        }
-    }
-
-    public static function get_variable_id($dbOrVariable, $variableOrPpcVariableId, $ppc_variable_id = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($ppc_variable_id === null) {
-            $variable = $dbOrVariable;
-            $ppc_variable_id = $variableOrPpcVariableId;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrVariable;
-            $variable = $variableOrPpcVariableId;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // only grab the first 350 characters of the variable
-        $variable = substr((string) $variable, 0, 350);
-
-        $mysql['var'] = $db->real_escape_string($variable);
-        $mysql['ppc_variable_id'] = $db->real_escape_string($ppc_variable_id);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $var_id = $memcache->get(md5($mysql['ppc_variable_id'] . $mysql['var'] . systemHash()));
-            if (!$var_id) {
-
-                $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_row = $var_result->fetch_assoc();
-                if ($var_row) {
-                    // if this already exists, return the id for it
-                    $var_id = $var_row['custom_variable_id'];
-                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
-                } else {
-
-                    $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
-                    $var_result = _mysqli_query($db, $var_sql);
-                    $var_id = $db->insert_id;
-                    $setID = setCache(md5($ppc_variable_id . $variable . systemHash()), $var_id, $time);
-                }
-            }
-        } else {
-
-            $var_sql = "SELECT custom_variable_id FROM 202_custom_variables WHERE ppc_variable_id = '" . $mysql['ppc_variable_id'] . "' AND variable = '" . $mysql['var'] . "'";
-            $var_result = _mysqli_query($db, $var_sql);
-            $var_row = $var_result->fetch_assoc();
-
-            if ($var_row) {
-                // if this already exists, return the id for it
-                $var_id = $var_row['custom_variable_id'];
-            } else {
-
-                $var_sql = "INSERT INTO 202_custom_variables SET ppc_variable_id = '" . $mysql['ppc_variable_id'] . "', variable = '" . $mysql['var'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_id = $db->insert_id;
-            }
-        }
-
-        return $var_id;
-    }
-
-    public static function get_variable_set_id($dbOrVariables, $variables = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec - Define $time
-
-        if ($variables === null) {
-            $variables = $dbOrVariables;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrVariables;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        $mysql['variables'] = $db->real_escape_string($variables);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getSet = $memcache->get(md5('variable_set' . $variables . systemHash()));
-            if ($getSet) {
-                return $getSet;
-            } else {
-                $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_row = $var_result->fetch_assoc();
-                if ($var_row) {
-                    // if this already exists, return the id for it
-                    $var_id = $var_row['variable_set_id'];
-                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
-                    return $var_id;
-                } else {
-
-                    $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
-                    $var_result = _mysqli_query($db, $var_sql);
-                    $var_id = $db->insert_id;
-                    $setID = setCache(md5('variable_set' . $variables . systemHash()), $var_id, $time);
-
-                    $var_sets = explode(",", (string) $mysql['variables']);
-                    $row = ''; // Initialize $row
-                    foreach ($var_sets as $var) {
-                        $row .= "(" .  $var_id . "," . $var . "),";
-                    }
-                    $row = "insert into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-
-                    _mysqli_query($db, $row);
-                    return $var_id;
-                }
-            }
-        } else {
-            $var_sql = "SELECT variable_set_id FROM 202_variable_sets WHERE variables = '" . $mysql['variables'] . "'";
-            $var_result = _mysqli_query($db, $var_sql);
-            $var_row = $var_result->fetch_assoc();
-
-            if ($var_row) {
-
-                // if this already exists, return the id for it
-                $var_id = $var_row['variable_set_id'];
-                return $var_id;
-            } else {
-                $var_sql = "INSERT INTO 202_variable_sets SET variables = '" . $mysql['variables'] . "'";
-                $var_result = _mysqli_query($db, $var_sql);
-                $var_id = $db->insert_id;
-                $var_sets = explode(",", (string) $mysql['variables']);
-                $row = ''; // Initialize $row
-                foreach ($var_sets as $var) {
-                    $row .= "(" .  $var_id . "," . $var . "),";
-                }
-
-                $row = "insert into `202_variable_sets2` (`variable_set_id`, `variables`) values " . rtrim($row, ',') . ";";
-
-                _mysqli_query($db, $row);
-                return $var_id;
-            }
-        }
-    }
-
-    // this returns the keyword_id
-    public static function get_keyword_id($dbOrKeyword, $keyword = null)
-    {
-        global $memcacheWorking, $memcache;
-        $time = 2592000; // 30 days in sec
-
-        if ($keyword === null) {
-            $keyword = $dbOrKeyword;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrKeyword;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-        // only grab the first 255 characters of keyword
-        // $keyword = substr($keyword, 0, 255);
-
-        $mysql['keyword'] = $db->real_escape_string($keyword);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getKeyword = $memcache->get(md5("keyword-id" . $keyword . systemHash()));
-            if ($getKeyword) {
-                return $getKeyword;
-            } else {
-
-                $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($db, $keyword_sql);
-                $keyword_row = $keyword_result->fetch_assoc();
-                if ($keyword_row) {
-                    // if this already exists, return the id for it
-                    $keyword_id = $keyword_row['keyword_id'];
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, $time);
-                    return $keyword_id;
-                } else {
-
-                    $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                    $keyword_result = _mysqli_query($db, $keyword_sql); // ($keyword_sql);
-                    $keyword_id = $db->insert_id;
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, $time);
-                    return $keyword_id;
-                }
-            }
-        } else {
-
-            $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-            $keyword_result = _mysqli_query($db, $keyword_sql);
-            $keyword_row = $keyword_result->fetch_assoc();
-            if ($keyword_row) {
-                // if this already exists, return the id for it
-                $keyword_id = $keyword_row['keyword_id'];
-                return $keyword_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($db, $keyword_sql); // ($keyword_sql);
-                $keyword_id = $db->insert_id;
-                return $keyword_id;
-            }
-        }
-    }
-
-    // this returns the c1 id
-    public static function get_custom_var_id($dbOrCustomVarName, $custom_var_name_or_data, $custom_var_data = null)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($custom_var_data === null) {
-            $custom_var_name = $dbOrCustomVarName;
-            $custom_var_data = $custom_var_name_or_data;
-            $database = DB::getInstance();
-            $db = method_exists($database, 'getConnection')
-                ? $database->getConnection()
-                : null;
-        } else {
-            $db = $dbOrCustomVarName;
-            $custom_var_name = $custom_var_name_or_data;
-        }
-
-        if (!$db instanceof \mysqli) {
-            return 0;
-        }
-
-        // only grab the first 350 charactesr of custom_var
-        $custom_var_data = substr((string) $custom_var_data, 0, 350);
-        $mysql[$custom_var_name] = $db->real_escape_string($custom_var_data);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getcustomvar = $memcache->get(md5($custom_var_name . "-id" . $custom_var_data . systemHash()));
-            if ($getcustomvar) {
-                return $getcustomvar;
-            } else {
-
-                $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                $custom_result = _mysqli_query($db, $custom_sql);
-                $custom_row = $custom_result->fetch_assoc();
-                if ($custom_row) {
-                    // if this already exists, return the id for it
-                    $custom_id = $custom_row[$custom_var_name . "_id"];
-                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id);
-                    return $custom_id;
-                } else {
-
-                    $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                    $custom_result = _mysqli_query($db, $custom_sql); // ($c1_sql);
-                    $custom_id = $db->insert_id;
-                    $setID = setCache(md5($custom_var_name . "-id" . $custom_var_data . systemHash()), $custom_id);
-                    return $custom_id;
-                }
-            }
-        } else {
-
-            $custom_sql = "SELECT " . $custom_var_name . "_id FROM 202_tracking_" . $custom_var_name . " WHERE " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-
-            $custom_result = _mysqli_query($db, $custom_sql);
-            $custom_row = $custom_result->fetch_assoc();
-
-            if ($custom_row) {
-                // if this already exists, return the id for it
-                $custom_id = $custom_row[$custom_var_name . "_id"];
-                return $custom_id;
-            } else {
-                // else if this id doesn't exist, insert the row and grab the id for it
-                $custom_sql = "INSERT INTO 202_tracking_" . $custom_var_name . " SET " . $custom_var_name . "='" . $mysql[$custom_var_name] . "'";
-                $custom_result = _mysqli_query($db, $custom_sql);
-                $custom_id = $db->insert_id;
-                return $custom_id;
-            }
-        }
-    }
-
-    // this returns the c1 id
-    public static function get_c1_id($db, $c1)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
-
-        $mysql['c1'] = $db->real_escape_string($c1);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc1 = $memcache->get(md5("c1-id" . $c1 . systemHash()));
-            if ($getc1) {
-                return $getc1;
-            } else {
-
-                $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($db, $c1_sql);
-                $c1_row = $c1_result->fetch_assoc();
-                if ($c1_row) {
-                    // if this already exists, return the id for it
-                    $c1_id = $c1_row['c1_id'];
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id);
-                    return $c1_id;
-                } else {
-
-                    $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                    $c1_result = _mysqli_query($db, $c1_sql); // ($c1_sql);
-                    $c1_id = $db->insert_id;
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id);
-                    return $c1_id;
-                }
-            }
-        } else {
-
-            $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-            $c1_result = _mysqli_query($db, $c1_sql);
-            $c1_row = $c1_result->fetch_assoc();
-            if ($c1_row) {
-                // if this already exists, return the id for it
-                $c1_id = $c1_row['c1_id'];
-                return $c1_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($db, $c1_sql); // ($c1_sql);
-                $c1_id = $db->insert_id;
-                return $c1_id;
-            }
-        }
-    }
-
-    // this returns the c2 id
-    public static function get_c2_id($db, $c2)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
-
-        $mysql['c2'] = $db->real_escape_string($c2);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc2 = $memcache->get(md5("c2-id" . $c2 . systemHash()));
-            if ($getc2) {
-                return $getc2;
-            } else {
-
-                $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($db, $c2_sql);
-                $c2_row = $c2_result->fetch_assoc();
-                if ($c2_row) {
-                    // if this already exists, return the id for it
-                    $c2_id = $c2_row['c2_id'];
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id);
-                    return $c2_id;
-                } else {
-
-                    $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                    $c2_result = _mysqli_query($db, $c2_sql); // ($c2_sql);
-                    $c2_id = $db->insert_id;
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id);
-                    return $c2_id;
-                }
-            }
-        } else {
-
-            $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-            $c2_result = _mysqli_query($db, $c2_sql);
-            $c2_row = $c2_result->fetch_assoc();
-            if ($c2_row) {
-                // if this already exists, return the id for it
-                $c2_id = $c2_row['c2_id'];
-                return $c2_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($db, $c2_sql); // ($c2_sql);
-                $c2_id = $db->insert_id;
-                return $c2_id;
-            }
-        }
-    }
-
-    // this returns the c3 id
-    public static function get_c3_id($db, $c3)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
-
-        $mysql['c3'] = $db->real_escape_string($c3);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc3 = $memcache->get(md5("c3-id" . $c3 . systemHash()));
-            if ($getc3) {
-                return $getc3;
-            } else {
-
-                $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($db, $c3_sql);
-                $c3_row = $c3_result->fetch_assoc();
-                if ($c3_row) {
-                    // if this already exists, return the id for it
-                    $c3_id = $c3_row['c3_id'];
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id);
-                    return $c3_id;
-                } else {
-
-                    $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                    $c3_result = _mysqli_query($db, $c3_sql); // ($c3_sql);
-                    $c3_id = $db->insert_id;
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id);
-                    return $c3_id;
-                }
-            }
-        } else {
-
-            $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-            $c3_result = _mysqli_query($db, $c3_sql);
-            $c3_row = $c3_result->fetch_assoc();
-            if ($c3_row) {
-                // if this already exists, return the id for it
-                $c3_id = $c3_row['c3_id'];
-                return $c3_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($db, $c3_sql); // ($c3_sql);
-                $c3_id = $db->insert_id;
-                return $c3_id;
-            }
-        }
-    }
-
-    // this returns the c4 id
-    public static function get_c4_id($db, $c4)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
-
-        $mysql['c4'] = $db->real_escape_string($c4);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc4 = $memcache->get(md5("c4-id" . $c4 . systemHash()));
-            if ($getc4) {
-                return $getc4;
-            } else {
-
-                $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($db, $c4_sql);
-                $c4_row = $c4_result->fetch_assoc();
-                if ($c4_row) {
-                    // if this already exists, return the id for it
-                    $c4_id = $c4_row['c4_id'];
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id);
-                    return $c4_id;
-                } else {
-
-                    $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                    $c4_result = _mysqli_query($db, $c4_sql); // ($c4_sql);
-                    $c4_id = $db->insert_id;
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id);
-                    return $c4_id;
-                }
-            }
-        } else {
-
-            $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-            $c4_result = _mysqli_query($db, $c4_sql);
-            $c4_row = $c4_result->fetch_assoc();
-            if ($c4_row) {
-                // if this already exists, return the id for it
-                $c4_id = $c4_row['c4_id'];
-                return $c4_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($db, $c4_sql); // ($c4_sql);
-                $c4_id = $db->insert_id;
-                return $c4_id;
-            }
-        }
-    }
-}
-
-function memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1, $minutes = 3)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    // Support legacy invocation styles:
-    //  - memcache_mysql_fetch_assoc($sql)
-    //  - memcache_mysql_fetch_assoc($db, $sql)
-    //  - memcache_mysql_fetch_assoc($sql, $allowCaching, $minutes)
-    //  - memcache_mysql_fetch_assoc($mysqliResult)
-    if ($arg1 instanceof mysqli_result) {
-        return $arg1->fetch_assoc();
-    }
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-            if (func_num_args() > 3) {
-                $minutes = (int) func_get_arg(3);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-        if (func_num_args() > 2) {
-            $minutes = (int) func_get_arg(2);
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return false;
-    }
-
-    if ($memcacheWorking == false) {
-        $result = _mysqli_query($connection, $sql);
-        if ($result === false) {
-            return false;
-        }
-        $row = $result->fetch_assoc();
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $result = _mysqli_query($connection, $sql);
-            if ($result === false) {
-                return false;
-            }
-            $row = $result->fetch_assoc();
-            return $row;
-        } else {
-            // Check if its set
-            $getCache = $memcache->get(md5($sql . systemHash()));
-
-            if ($getCache === false) {
-                // cache this data
-                $result = _mysqli_query($connection, $sql);
-                if ($result === false) {
-                    return false;
-                }
-                $fetchArray = $result->fetch_assoc();
-                $setCache = setCache(md5($sql . systemHash()), serialize($fetchArray), 60 * $minutes);
-
-                // store all this users memcache keys, so we can delete them fast later on
-
-
-                return $fetchArray;
-            } else {
-
-                // Data Cached — restrict to arrays only, no object instantiation
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
-function foreach_memcache_mysql_fetch_assoc($arg1, $arg2 = null, $allowCaching = 1)
-{
-    global $memcacheWorking, $memcache, $db;
-
-    $connection = null;
-    $sql = null;
-
-    if ($arg1 instanceof mysqli) {
-        $connection = $arg1;
-        if (is_string($arg2)) {
-            $sql = $arg2;
-            if (func_num_args() > 2) {
-                $allowCaching = (int) func_get_arg(2);
-            }
-        } else {
-            throw new InvalidArgumentException('SQL query string required when providing mysqli connection to foreach_memcache_mysql_fetch_assoc.');
-        }
-    } else {
-        $connection = $db;
-        $sql = (string) $arg1;
-        if ($arg2 !== null) {
-            $allowCaching = (int) $arg2;
-        }
-    }
-
-    if (!$connection || $sql === '') {
-        return [];
-    }
-
-    if ($memcacheWorking == false) {
-        $row = [];
-        $result = _mysqli_query($connection, $sql); // ($sql);
-        if ($result === false) {
-            return [];
-        }
-        while ($fetch = $result->fetch_assoc()) {
-            $row[] = $fetch;
-        }
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $row = [];
-            $result = _mysqli_query($connection, $sql); // ($sql);
-            if ($result === false) {
-                return [];
-            }
-            while ($fetch = $result->fetch_assoc()) {
-                $row[] = $fetch;
-            }
-            return $row;
-        } else {
-
-            $getCache = $memcache->get(md5($sql . systemHash()));
-            if ($getCache === false) {
-                // if data is NOT cache, cache this data
-                $row = [];
-                $result = _mysqli_query($connection, $sql); // ($sql);
-                if ($result === false) {
-                    return [];
-                }
-                while ($fetch = $result->fetch_assoc()) {
-                    $row[] = $fetch;
-                }
-
-                $setCache = setCache(md5($sql . systemHash()), serialize($row), 60 * 1);
-
-
-                return $row;
-            } else {
-                // if data is cached, returned the cache data Data Cached — restrict to arrays only
-                return unserialize($getCache, ['allowed_classes' => false]);
-            }
-        }
-    }
-}
-
 /**
  * The installation's install-token key: 32 bytes, null when none was minted.
  * Read once per process, and kept only when it was read: a missing or
@@ -2547,11 +1170,6 @@ function replaceTokens($url, $tokens = [], $fillblanks = 0)
     // pixels alike, so a path that never loads this file (POST /events,
     // the goal notifier) replaces tokens exactly as the tracker does.
     return \Prosper202\Conversion\TrafficSourcePixels::replaceTokens($url, $tokens, $fillblanks ? 1 : 0);
-}
-
-function rawurlencode202($token)
-{
-    return \Prosper202\Conversion\TrafficSourcePixels::encode($token);
 }
 
 function getGeoData($ip)
@@ -2695,12 +1313,6 @@ function getIspData($ip)
     return "Unknown ISP/Carrier";
 }
 
-function systemHash(): string
-{
-    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
-    return $hash;
-}
-
 function setPCIdCookie($click_id_public)
 {
     if (trackingEnabled()) {
@@ -2786,7 +1398,8 @@ function getPrePopVars($vars, bool $toOwnLandingPage = false)
     }
 
     foreach ($vars as $key => $value) {
-        if (! in_array($key, $stoplist)) {
+        // A list (x[]=1) has no one value to pass on: it went as x=Array.
+        if (! in_array($key, $stoplist) && is_string($value)) {
             $urlvars .= $key . "=" . $value . "&";
         }
     }
@@ -2818,92 +1431,6 @@ function setPrePopVars($urlvars, $redirect_site_url, $b64 = false)
     }
 
     return $redirect_site_url;
-}
-
-function record_mysql_error($dbOrSql, $sql = null): never
-{
-    global $server_row;
-
-    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
-    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
-    if (!$db instanceof \mysqli) {
-        $db = $GLOBALS['db'] ?? null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        $database = \DB::getInstance();
-        $db = method_exists($database, 'getConnection')
-            ? $database->getConnection()
-            : null;
-    }
-
-    if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
-        echo 'Database error. The webmaster has been notified.';
-        die();
-    }
-
-    // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
-
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
-
-
-    $ip_id = INDEXES::get_ip_id(p202StoredVisitorIp());
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
-
-    $mysql['user_id'] = $db->real_escape_string(strip_tags((string) $_SESSION['user_id']));
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
-
-    $report_sql = "INSERT     INTO  202_mysql_errors
-								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
-										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
-										user_id='" . $mysql['user_id'] . "',
-										ip_id='" . $mysql['ip_id'] . "',
-										site_id='" . $mysql['site_id'] . "',
-										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($db, $report_sql);
-
-    // email administration of the error
-    $to = $_SERVER['SERVER_ADMIN'];
-    $subject = 'mysql error reported - ' . $site_url;
-    $message = '<b>A mysql error has been reported</b><br/><br/>
-		
-					time: ' . date('r', time()) . '<br/>
-					server_name: ' . $_SERVER['SERVER_NAME'] . '<br/><br/>
-					
-					user_id: ' . $_SESSION['user_id'] . '<br/>
-					script_url: ' . $site_url . '<br/>
-					$_SERVER: ' . serialize($_SERVER) . '<br/><br/>
-					
-					. . . . . . . . <br/><br/>
-												 
-					_mysqli_query: ' . $sql . '<br/><br/>
-					 
-					mysql_error: ' . $clean['mysql_error_text'];
-    $from = $_SERVER['SERVER_ADMIN'];
-    $type = 3; // type 3 is mysql_error
-
-    // send_email($to,$subject,$message,$from,$type);
-
-    // report error to user and end page    
-?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
-
-
-<?php
-    $memcacheWorking = false;
-    $memcache = null;
-    die();
 }
 
 /**
@@ -2941,11 +1468,6 @@ function getSplitTestValue(array $values)
             return $key;
         }
     }
-}
-
-function get_absolute_url(): string
-{
-    return substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
 }
 
 /**
@@ -3070,22 +1592,6 @@ function p202LogRedirectHit(string $endpoint, string $decision): void
 }
 
 /**
- * Mark the current response uncacheable. Every tracking-redirect response
- * must send this BEFORE its Location header: a 302 stored by any browser or
- * intermediary cache can be replayed without reaching the server, so the
- * repeat click goes uncounted and the stale subid baked into the cached
- * Location misattributes any later conversion to the wrong click.
- */
-function p202NoStore(): void
-{
-    if (!headers_sent()) {
-        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        header('Pragma: no-cache');
-        header('Expires: 0');
-    }
-}
-
-/**
  * Decline a speculative fetch: record nothing and end the request with an
  * empty, NON-cacheable 204. The no-store headers are essential — without them
  * a prefetched/prerendered 204 can be stored and REUSED to satisfy the user's
@@ -3104,837 +1610,6 @@ function p202DeclineSpeculativeRequest(): never
     die();
 }
 
-/**
- * The tracking domain (`host[:port]`) of a URL handed back to the requester:
- * user 1's stored one, or the host this request arrived at
- * (TrackingBaseUrl::domainForResponse()). The functions-tracking202.php
- * copy's twin; its callers are listed in RequestHostSourceTest.
- */
-function getTrackingDomain(): string
-{
-    global $db;
-
-    $tracking_domain_sql = "
-		SELECT
-			`user_tracking_domain`
-		FROM
-			`202_users_pref`
-		WHERE
-			`user_id`='1'
-	";
-    $tracking_domain_result = _mysqli_query($db, $tracking_domain_sql);
-    if (!$tracking_domain_result instanceof \mysqli_result) {
-        // Read as "none stored", every URL would name the request's host
-        // instead of the domain the account configured.
-        throw new \RuntimeException('Unable to read the tracking domain');
-    }
-    $tracking_domain_row = $tracking_domain_result->fetch_assoc();
-    $stored = is_array($tracking_domain_row) ? (string) ($tracking_domain_row['user_tracking_domain'] ?? '') : '';
-
-    // host[:port] only: a stored full URL doubled the scheme in every link
-    // built from it (see TrackingDomain).
-    return \Prosper202\Click\TrackingBaseUrl::domainForResponse($stored, $_SERVER);
-}
-
-function updateLpClickDataForRotator($redirect_id, $click_id, $rotator_id, $rule_id)
-{
-    global $db;
-    $stmt = $db->prepare("REPLACE INTO 202_clicks_rotator SET click_id=?, rotator_id=?, rule_id=?, rule_redirect_id=?");
-    $stmt->bind_param('iiii', $click_id, $rotator_id, $rule_id, $redirect_id);
-    if (!$stmt->execute()) {
-        $stmt->close();
-        throw new \RuntimeException('Failed to update rotator click data: ' . $db->error);
-    }
-    $stmt->close();
-}
-
-function parseUaForRotatorCriteria($detect, $parser, $ua)
-{
-    $result = $parser->parse($ua);
-
-    if (!$detect->isMobile() && !$detect->isTablet()) {
-
-        switch ($result->device->family) {
-            //Is Bot
-            case 'Bot':
-                $result->device->family = "Bot";
-                break;
-            //Is Desktop
-            case 'Other':
-                $result->device->family = "Desktop";
-                break;
-        }
-    } else {
-        if ($detect->isTablet()) {
-            $result->device->family = "Tablet";
-            //If mobile 
-        } else {
-            $result->device->family = "Mobile";
-        }
-    }
-
-    return $result;
-}
-
-function ip_in_range($ip, $range)
-{
-    if (str_contains((string) $range, '/')) {
-        [$range, $netmask] = explode('/', (string) $range, 2);
-        if (str_contains($netmask, '.')) {
-            $netmask = str_replace('*', '0', $netmask);
-            $netmask_dec = ip2long($netmask);
-            return ((ip2long($ip) & $netmask_dec) == (ip2long($range) & $netmask_dec));
-        } else {
-            $x = explode('.', $range);
-            while (count($x) < 4) $x[] = '0';
-            [$a, $b, $c, $d] = $x;
-            $range = sprintf("%u.%u.%u.%u", empty($a) ? '0' : $a, empty($b) ? '0' : $b, empty($c) ? '0' : $c, empty($d) ? '0' : $d);
-            $range_dec = ip2long($range);
-            $ip_dec = ip2long($ip);
-
-            $wildcard_dec = 2 ** (32 - (int)$netmask) - 1;
-            $netmask_dec = ~$wildcard_dec;
-
-            return (($ip_dec & $netmask_dec) == ($range_dec & $netmask_dec));
-        }
-    } else {
-        if (str_contains((string) $range, '*')) {
-            $lower = str_replace('*', '0', $range);
-            $upper = str_replace('*', '255', $range);
-            $range = "$lower-$upper";
-        }
-
-        if (str_contains((string) $range, '-')) { // A-B format
-            [$lower, $upper] = explode('-', (string) $range, 2);
-            $lower_dec = (float)sprintf("%u", ip2long($lower));
-            $upper_dec = (float)sprintf("%u", ip2long($upper));
-            $ip_dec = (float)sprintf("%u", ip2long($ip));
-            return (($ip_dec >= $lower_dec) && ($ip_dec <= $upper_dec));
-        }
-
-        return false;
-    }
-}
-
-function getData($url)
-{
-    if (function_exists('curl_version')) {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-        $result = curl_exec($ch);
-        curl_close($ch);
-        return $result;
-    } else {
-        return false;
-    }
-}
-
-function getPublisher($pubid)
-{
-    global $db;
-
-    $publisher_id_sql = "
-		SELECT
-			`user_id`
-		FROM
-			`202_users`
-		WHERE
-			`user_public_publisher_id`='" . $pubid . "'";
-
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
-    $pubid_row = memcache_mysql_fetch_assoc($db, $publisher_id_sql);
-    if ($pubid_row) {
-        return $db->real_escape_string($pubid_row['user_id']);
-    } else {
-        return 1;
-    }
-}
-
-function getTokens($mysql)
-{
-    $tokens = [
-        "subid" => $mysql['click_id'],
-        "t202kw" => $mysql['t202kw'],
-        "c1" => $mysql['c1'],
-        "c2" => $mysql['c2'],
-        "c3" => $mysql['c3'],
-        "c4" => $mysql['c4'],
-        "gclid" => $mysql['gclid'],
-        "msclkid" => $mysql['msclkid'],
-        "fbclid" => $mysql['fbclid'],
-        "utm_source" => $mysql['utm_source'],
-        "utm_medium" => $mysql['utm_medium'],
-        "utm_campaign" => $mysql['utm_campaign'],
-        "utm_term" => $mysql['utm_term'],
-        "utm_content" => $mysql['utm_content'],
-        "cpc" => round($mysql['cpc'], 2),
-        "cpc2" => $mysql['cpc'],
-        "timestamp" => time(),
-        "payout" => $mysql['payout'],
-        "random" => mt_rand(1000000, 9999999),
-        "referer" => $mysql['referer'],
-        "sourceid" => $mysql['ppc_account_id'],
-        "transactionid" => $mysql['txid']
-    ];
-
-    return $tokens;
-}
-
-/**
- * @param bool|null $masked whether to mask it; null: when trackingEnabled() is false
- */
-function ipAddress($ip_address, ?bool $masked = null)
-{
-
-    $ip = new stdClass;
-
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-        $ip->address = '0.0.0.0';
-    }
-
-    if ($masked ?? !trackingEnabled()) {
-        $ip = maskIpAddress($ip);
-    }
-
-    $formatted = @inet_ntop(@inet_pton($ip->address));
-    if ($formatted !== false) {
-        $ip->address = $formatted; //format ip address in standard form
-    }
-    return $ip;
-}
-
-function maskIpAddress($ip)
-{
-    // The one mask (StoredVisitorIp::mask(): /24, /48 on the packed bytes),
-    // so the $ip_address global and every stored address agree.
-    if ($ip->type == 'ipv4' || $ip->type == 'ipv6') {
-        $ip->address = \Prosper202\Http\StoredVisitorIp::mask((string) $ip->address);
-    }
-
-    return $ip;
-}
-
-function inet6_ntoa($ip)
-{
-    return @inet_ntop($ip);
-}
-
-function inet6_aton($ip)
-{
-    return @inet_pton($ip);
-}
-
-function sanitizeIn($data) {
-    global $db;
-    if (!is_string($data)) {
-        return '';
-    }
-    return $db->real_escape_string($data);
-}
-
-function getTrackerDetail(&$mysql)
-{
-    global $db;
-    $tracker_sql = "SELECT 202_trackers.user_id,
-						202_trackers.aff_campaign_id,
-						text_ad_id,
-						ppc_account_id,
-						click_cpc,
-						click_cpa,
-						click_cloaking,
-						aff_campaign_rotate,
-						aff_campaign_url,
-						aff_campaign_url_2,
-						aff_campaign_url_3,
-						aff_campaign_url_4,
-						aff_campaign_url_5,
-						aff_campaign_payout,
-						aff_campaign_cloaking,
-						2cv.ppc_variable_ids,
-						2cv.parameters,
-                        user_timezone,
-		                user_keyword_searched_or_bidded,
-                        user_pref_referer_data,
-                        user_pref_dynamic_bid,
-		                maxmind_isp
-                        FROM 202_trackers
-                        LEFT JOIN 202_users_pref USING (user_id)
-                LEFT JOIN 202_users USING (user_id)
-    			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-
-
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
-    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-
-    //set all mysql vars
-    $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
-    $mysql['ppc_account_id'] = $db->real_escape_string($tracker_row['ppc_account_id']);
-    $mysql['user_pref_dynamic_bid'] = $db->real_escape_string($tracker_row['user_pref_dynamic_bid']);
-    $mysql['user_pref_referer_data'] = $db->real_escape_string($tracker_row['user_pref_referer_data']);
-    // set cpc use dynamic variable if set or the default if not
-    if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-        $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
-        if (is_numeric($_GET['t202b'])) {
-            $bid = number_format((float) $_GET['t202b'], 5, '.', '');
-            $mysql['click_cpc'] = $db->real_escape_string($bid);
-        } else {
-            $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
-        }
-    } else
-        $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
-
-    $mysql['click_cpa'] = $db->real_escape_string($tracker_row['click_cpa']);
-    $mysql['click_payout'] = $db->real_escape_string($tracker_row['aff_campaign_payout']);
-
-    $mysql['text_ad_id'] = $db->real_escape_string($tracker_row['text_ad_id']);
-
-    $mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($tracker_row['user_keyword_searched_or_bidded']);
-
-    $mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
-    $mysql['user_timezone'] = $db->real_escape_string($tracker_row['user_timezone']);
-
-    $mysql['aff_campaign_url'] = $db->real_escape_string($tracker_row['aff_campaign_url']);
-
-    return $tracker_row;
-}
-
-function getTrackerDetailPT(&$mysql)
-{
-    global $db;
-    $tracker_sql = "SELECT 202_trackers.user_id,
-						202_trackers.aff_campaign_id,
-						text_ad_id,
-						ppc_account_id,
-						click_cpc,
-						click_cpa,
-						click_cloaking,
-						aff_campaign_rotate,
-                        landing_page_url,
-						aff_campaign_url,
-						aff_campaign_url_2,
-						aff_campaign_url_3,
-						aff_campaign_url_4,
-						aff_campaign_url_5,
-						aff_campaign_payout,
-						aff_campaign_cloaking,
-						2cv.ppc_variable_ids,
-						2cv.parameters,
-                        user_timezone,
-		                user_keyword_searched_or_bidded,
-                        user_pref_referer_data,
-                        user_pref_dynamic_bid,
-		                maxmind_isp
-                        FROM 202_trackers
-                        LEFT JOIN 202_users_pref USING (user_id)
-                LEFT JOIN 202_users USING (user_id)
-    			LEFT JOIN 202_aff_campaigns USING (aff_campaign_id)
-				LEFT JOIN 202_ppc_accounts USING (ppc_account_id)
-                LEFT JOIN 202_landing_pages USING (landing_page_id)
-				LEFT JOIN (SELECT ppc_network_id, GROUP_CONCAT(ppc_variable_id ORDER BY ppc_variable_id) AS ppc_variable_ids, GROUP_CONCAT(parameter ORDER BY ppc_variable_id) AS parameters FROM 202_ppc_network_variables WHERE deleted = 0 GROUP BY ppc_network_id) AS 2cv USING (ppc_network_id)
-				WHERE tracker_id_public='" . $mysql['tracker_id_public'] . "'";
-
-
-    // @phpstan-ignore-next-line -- $db+sql overload defined in connect2.php
-    $tracker_row = memcache_mysql_fetch_assoc($db, $tracker_sql);
-
-    //set all mysql vars
-    $mysql['aff_campaign_id'] = $db->real_escape_string($tracker_row['aff_campaign_id']);
-    $mysql['ppc_account_id'] = $db->real_escape_string($tracker_row['ppc_account_id']);
-    $mysql['user_pref_dynamic_bid'] = $db->real_escape_string($tracker_row['user_pref_dynamic_bid']);
-    $mysql['user_pref_referer_data'] = $db->real_escape_string($tracker_row['user_pref_referer_data']);
-    // set cpc use dynamic variable if set or the default if not
-    if (isset($_GET['t202b']) && $mysql['user_pref_dynamic_bid'] == '1') {
-        $_GET['t202b'] = ltrim((string) $_GET['t202b'], '$');
-        if (is_numeric($_GET['t202b'])) {
-            $bid = number_format((float) $_GET['t202b'], 5, '.', '');
-            $mysql['click_cpc'] = $db->real_escape_string($bid);
-        } else {
-            $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
-        }
-    } else
-        $mysql['click_cpc'] = $db->real_escape_string($tracker_row['click_cpc']);
-
-    $mysql['click_cpa'] = $db->real_escape_string($tracker_row['click_cpa']);
-    $mysql['click_payout'] = $db->real_escape_string($tracker_row['aff_campaign_payout']);
-
-    $mysql['text_ad_id'] = $db->real_escape_string($tracker_row['text_ad_id']);
-
-    $mysql['user_keyword_searched_or_bidded'] = $db->real_escape_string($tracker_row['user_keyword_searched_or_bidded']);
-
-    $mysql['user_id'] = $db->real_escape_string($tracker_row['user_id']);
-    $mysql['user_timezone'] = $db->real_escape_string($tracker_row['user_timezone']);
-
-    $mysql['aff_campaign_url'] = $db->real_escape_string($tracker_row['aff_campaign_url']);
-
-    return $tracker_row;
-}
-
-function getClickId(): string
-{
-    global $db;
-
-    $click_sql = "INSERT INTO  202_clicks_counter SET click_id=DEFAULT";
-    $click_result = $db->query($click_sql) or record_mysql_error($db);
-
-    //now gather the info for the advance click insert
-    $click_id = $db->insert_id;
-    \Prosper202\Click\RecordedClicks::note((int) $click_id);
-    return $db->real_escape_string((string) $click_id);
-}
-
-function getClickIdPublic($click_id)
-{
-    global $db;
-
-    return $db->real_escape_string(random_int(1, 9) . $click_id . random_int(1, 9));
-}
-
-function insertClicks($mysql)
-{
-    global $db;
-    $click_sql = '';
-
-    if (!$mysql['ppc_account_id']) {
-        $mysql['ppc_account_id'] = '0';
-    }
-
-    if (!$mysql['click_cpc']) {
-        $mysql['click_cpc'] = '0';
-    }
-
-    switch ($mysql['lp_type']) {
-        case 'dl':
-        case 'rtr':
-            $click_sql = "INSERT IGNORE INTO 202_clicks
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',
-							aff_campaign_id = '" . $mysql['aff_campaign_id'] . "',
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',
-							click_cpc = '" . $mysql['click_cpc'] . "',
-							click_payout = '" . $mysql['click_payout'] . "',
-							click_alp = '" . $mysql['click_alp'] . "',
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',
-							click_time = '" . $mysql['click_time'] . "'";
-            break;
-        case 'slp':
-            $click_sql = "INSERT INTO   202_clicks
-			  SET           click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',
-							aff_campaign_id = '" . $mysql['aff_campaign_id'] . "',
-							landing_page_id='" . $mysql['landing_page_id'] . "',
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',
-							click_cpc = '" . $mysql['click_cpc'] . "',
-							click_payout = '" . $mysql['click_payout'] . "',
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',
-							click_alp = '" . $mysql['click_alp'] . "',
-							click_time = '" . $mysql['click_time'] . "'
-							ON DUPLICATE KEY UPDATE
-							 click_alp = '" . $mysql['click_alp'] . "'";
-            break;
-        case 'alp':
-            $click_sql = "INSERT INTO   202_clicks
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							user_id = '" . $mysql['user_id'] . "',
-							landing_page_id='" . $mysql['landing_page_id'] . "',
-							ppc_account_id = '" . $mysql['ppc_account_id'] . "',
-							click_cpc = '" . $mysql['click_cpc'] . "',
-							click_filtered = '" . $mysql['click_filtered'] . "',
-							click_bot = '" . $mysql['click_bot'] . "',
-							click_alp = '" . $mysql['click_alp'] . "',
-							click_time = '" . $mysql['click_time'] . "'
-							ON DUPLICATE KEY UPDATE
-							 click_alp = '" . $mysql['click_alp'] . "'";
-            break;
-    }
-
-    return $click_result = $db->query($click_sql) or record_mysql_error($db);
-}
-
-function insertGclid($mysql)
-{
-    global $db;
-    // insert gclid and utm vars
-    if ($mysql['gclid'] || $mysql['utm_source_id'] || $mysql['utm_medium_id'] || $mysql['utm_campaign_id'] || $mysql['utm_term_id'] || $mysql['utm_content_id']) {
-        $click_sql = "REPLACE INTO 202_google
-			  SET           click_id='" . $mysql['click_id'] . "',
-							gclid = '" . $mysql['gclid'] . "',
-                            utm_source_id = '" . $mysql['utm_source_id'] . "',
-                            utm_medium_id = '" . $mysql['utm_medium_id'] . "',
-                            utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
-                            utm_term_id = '" . $mysql['utm_term_id'] . "',
-                            utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db);
-    }
-}
-
-function getGclid($mysql)
-{
-    global $db;
-    // get click id
-    if (isset($mysql['gclid'])) {
-
-        $click_sql = "SELECT 202_google.click_id, click_id_public , click_time, c1,c2,c3,c4, keyword AS t202kw, `utm_campaign`, `utm_source`, `utm_source`, `utm_medium`, `utm_term`, `utm_content` FROM 202_google
-    LEFT JOIN 202_clicks_advance USING(click_id)
-    LEFT JOIN 202_keywords USING(keyword_id)
-    LEFT JOIN 202_clicks_tracking USING(click_id)
-    LEFT JOIN 202_tracking_c1 USING(c1_id)
-    LEFT JOIN 202_tracking_c2 USING(c2_id)
-    LEFT JOIN 202_tracking_c3 USING(c3_id)
-    LEFT JOIN 202_tracking_c4 USING(c4_id)
-    LEFT JOIN 202_utm_campaign USING(utm_campaign_id)
-    LEFT JOIN 202_utm_source USING(utm_source_id)
-    LEFT JOIN 202_utm_medium USING(utm_medium_id)
-    LEFT JOIN 202_utm_term USING(utm_term_id)
-    LEFT JOIN 202_utm_content USING(utm_content_id)
-    LEFT JOIN 202_clicks_record USING(click_id)
-    LEFT JOIN 202_clicks USING(click_id)
-    WHERE  gclid =  '" . $mysql['gclid'] . "'";
-        // $click_row = memcache_mysql_fetch_assoc($db,$click_sql);    
-        $click_result = $db->query($click_sql);
-        $click_row = $click_result->fetch_assoc();
-    } else {
-        $click_row = null;
-    }
-    return $click_row;
-}
-
-function getClickData($mysql)
-{
-    global $db;
-    // get click id
-    if (isset($mysql['click_id'])) {
-
-        $click_sql = "SELECT click_id,click_id_public, click_time, c1,c2,c3,c4, keyword AS t202kw,`utm_campaign`, `utm_source`, `utm_source`, `utm_medium`, `utm_term`, `utm_content` FROM 202_clicks
-	LEFT JOIN 202_clicks_tracking USING(click_id)
-	LEFT JOIN 202_clicks_record USING(click_id)
-    LEFT JOIN 202_clicks_advance USING(click_id)
-    LEFT JOIN 202_google USING(click_id)
-    LEFT JOIN 202_keywords USING(keyword_id)
-    LEFT JOIN 202_tracking_c1 USING(c1_id)
-    LEFT JOIN 202_tracking_c2 USING(c2_id)
-    LEFT JOIN 202_tracking_c3 USING(c3_id)
-    LEFT JOIN 202_tracking_c4 USING(c4_id)
-    LEFT JOIN 202_utm_campaign USING(utm_campaign_id)
-    LEFT JOIN 202_utm_source USING(utm_source_id)
-    LEFT JOIN 202_utm_medium USING(utm_medium_id)
-    LEFT JOIN 202_utm_term USING(utm_term_id)
-    LEFT JOIN 202_utm_content USING(utm_content_id)
-    WHERE  202_clicks.click_id =  '" . $mysql['click_id'] . "'
-    LIMIT 1";
-
-        // echo $click_sql;
-        // $click_row = memcache_mysql_fetch_assoc($db,$click_sql);    
-        $click_result = $db->query($click_sql);
-        $click_row = $click_result->fetch_assoc();
-    } else {
-        $click_row = null;
-    }
-    return $click_row;
-}
-
-function insertMsclkid($mysql)
-{
-    global $db;
-    // insert msclkid and utm vars
-    if ($mysql['msclkid'] || $mysql['utm_source_id'] || $mysql['utm_medium_id'] || $mysql['utm_campaign_id'] || $mysql['utm_term_id'] || $mysql['utm_content_id']) {
-        $click_sql = "REPLACE INTO   202_bing
-			  SET           click_id='" . $mysql['click_id'] . "',
-							msclkid = '" . $mysql['msclkid'] . "',
-                            utm_source_id = '" . $mysql['utm_source_id'] . "',
-                            utm_medium_id = '" . $mysql['utm_medium_id'] . "',
-                            utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
-                            utm_term_id = '" . $mysql['utm_term_id'] . "',
-                            utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db);
-    }
-}
-
-function insertFbclid($mysql)
-{
-    global $db;
-    // insert fbclid and utm vars
-    if ($mysql['fbclid'] || $mysql['utm_source_id'] || $mysql['utm_medium_id'] || $mysql['utm_campaign_id'] || $mysql['utm_term_id'] || $mysql['utm_content_id']) {
-        $click_sql = "REPLACE INTO 202_facebook
-			  SET           click_id='" . $mysql['click_id'] . "',
-							fbclid = '" . $mysql['fbclid'] . "',
-                            utm_source_id = '" . $mysql['utm_source_id'] . "',
-                            utm_medium_id = '" . $mysql['utm_medium_id'] . "',
-                            utm_campaign_id = '" . $mysql['utm_campaign_id'] . "',
-                            utm_term_id = '" . $mysql['utm_term_id'] . "',
-                            utm_content_id = '" . $mysql['utm_content_id'] . "'";
-        return $click_result = $db->query($click_sql) or record_mysql_error($db);
-    }
-}
-
-function insertClicksVariable($mysql, $tracker_row)
-{
-    global $db;
-    $custom_var_ids = [];
-
-    $ppc_variable_ids = explode(',', (string) $tracker_row['ppc_variable_ids']);
-    $parameters = explode(',', (string) $tracker_row['parameters']);
-
-    foreach ($parameters as $key => $value) {
-        if (isset($_GET[$value])) {
-            $variable = $db->real_escape_string($_GET[$value]);
-            if (isset($variable) && $variable != '') {
-                $variable = str_replace('%20', ' ', $variable);
-                $variable_id = INDEXES::get_variable_id($variable, $ppc_variable_ids[$key]);
-                $custom_var_ids[] = $variable_id;
-            }
-        }
-        /* this was causing a bug
-        else{
-            $custom_var_ids[] = '';
-        }*/
-    }
-
-    $total_vars = count($custom_var_ids);
-
-    if ($total_vars > 0) {
-
-        $variables = implode(",", $custom_var_ids);
-        $variable_set_id = INDEXES::get_variable_set_id($variables);
-
-        $mysql['variable_set_id'] = $db->real_escape_string($variable_set_id);
-
-        $var_sql = "INSERT IGNORE INTO 202_clicks_variable (click_id, variable_set_id) VALUES ('" . $mysql['click_id'] . "', '" . $mysql['variable_set_id'] . "')";
-        return $var_result = $db->query($var_sql) or record_mysql_error($db);
-    }
-}
-
-function insertClicksSite($mysql)
-{
-    global $db;
-    $click_sql = '';
-
-    switch ($mysql['lp_type']) {
-        case 'dl':
-        case 'rtr':
-            $click_sql = "INSERT IGNORE INTO 202_clicks_site
-			  SET           click_id='" . $mysql['click_id'] . "',
-							click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
-							click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-							click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'";
-            break;
-        case 'slp':
-            $click_sql = "REPLACE INTO  202_clicks_site
-			  SET           click_id='" . $mysql['click_id'] . "',
-							click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
-							click_landing_site_url_id='" . $mysql['click_landing_site_url_id'] . "',
-							click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-							click_cloaking_site_url_id='" . $mysql['click_cloaking_site_url_id'] . "',
-							click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'";
-            break;
-        case 'alp':
-            $click_sql = "INSERT IGNORE INTO   202_clicks_site
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							click_referer_site_url_id='" . $mysql['click_referer_site_url_id'] . "',
-							click_landing_site_url_id='" . $mysql['click_landing_site_url_id'] . "',
-							click_outbound_site_url_id='0',
-							click_cloaking_site_url_id='0',
-							click_redirect_site_url_id='0'
-							ON DUPLICATE KEY UPDATE
-							click_referer_site_url_id = '" . $mysql['click_referer_site_url_id'] . "',
-							click_landing_site_url_id='" . $mysql['click_landing_site_url_id'] . "'";
-            break;
-    }
-
-
-    return $click_result = $db->query($click_sql) or record_mysql_error($db);
-}
-
-function insertClicksRecord($mysql)
-{
-    global $db;
-    $click_sql = "INSERT IGNORE INTO   202_clicks_record
-			  SET           click_id='" . $mysql['click_id'] . "',
-							click_id_public='" . $mysql['click_id_public'] . "',
-							click_cloaking='" . $mysql['click_cloaking'] . "',
-							click_in='" . $mysql['click_in'] . "',
-							click_out='" . $mysql['click_out'] . "'";
-    return $click_result = $db->query($click_sql) or record_mysql_error($db);
-}
-
-function insertClicksAdvance($mysql)
-{
-    global $db;
-    $click_sql = "INSERT IGNORE INTO  202_clicks_advance
-			  SET           	click_id='" . $mysql['click_id'] . "',
-							text_ad_id='" . $mysql['text_ad_id'] . "',
-							keyword_id='" . $mysql['keyword_id'] . "',
-							ip_id='" . $mysql['ip_id'] . "',
-							country_id='" . $mysql['country_id'] . "',
-							region_id='" . $mysql['region_id'] . "',
-							isp_id='" . $mysql['isp_id'] . "',
-							city_id='" . $mysql['city_id'] . "',
-							platform_id='" . $mysql['platform_id'] . "',
-							browser_id='" . $mysql['browser_id'] . "',
-                            device_id='" . $mysql['device_id'] . "'";
-    return $click_result = $db->query($click_sql) or record_mysql_error($db);
-}
-
-function insertClicksTracking($mysql)
-{
-    global $db;
-    $click_sql = "INSERT IGNORE INTO
-		202_clicks_tracking
-	SET
-		click_id='" . $mysql['click_id'] . "',
-		c1_id = '" . $mysql['c1_id'] . "',
-		c2_id = '" . $mysql['c2_id'] . "',
-		c3_id = '" . $mysql['c3_id'] . "',
-		c4_id = '" . $mysql['c4_id'] . "'";
-    $click_result = $db->query($click_sql) or record_mysql_error($db);
-    return $click_result;
-}
-
-
-function processCacheRedirect(): void
-{
-    global $db, $memcacheWorking, $memcache;
-    $usedCachedRedirect = false;
-    if (!$db) $usedCachedRedirect = true;
-
-    #the mysql server is down, use the cached redirect
-    if ($usedCachedRedirect == true) {
-
-        $t202id = $_GET['t202id'];
-
-        //if a cached key is found for this t202id, redirect to that url
-        if ($memcacheWorking) {
-            $getUrl = getCache(md5('url_' . $t202id . systemHash()));
-            if ($getUrl) {
-
-                $new_url = str_replace("[[subid]]", "p202", $getUrl);
-                // No click is recorded while MySQL is down, so there is no
-                // click to sign: the install token expands empty (plan §5.1),
-                // never to a value an install could be credited through.
-                $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
-
-                // t202pubid string replace for cached redirect
-                if (isset($_GET['t202pubid']) && $_GET['t202pubid'] != '') {
-                    $new_url = str_replace("[[t202pubid]]", $_GET['t202pubid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[t202pubid]]", "t202pubid", $new_url);
-                }
-
-                //c1 string replace for cached redirect
-                if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                    $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-                }
-
-                //c2 string replace for cached redirect
-                if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                    $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-                }
-
-                //c3 string replace for cached redirect
-                if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                    $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-                }
-
-                //c4 string replace for cached redirect
-                if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                    $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-                } else {
-                    $new_url = str_replace("[[c4]]", "p202c4", $new_url);
-                }
-
-                //gclid string replace for cached redirect
-                if (isset($_GET['gclid']) && $_GET['gclid'] != '') {
-                    $new_url = str_replace("[[gclid]]", $_GET['gclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[gclid]]", "p202gclid", $new_url);
-                }
-
-                //msclkid string replace for cached redirect
-                if (isset($_GET['msclkid']) && $_GET['msclkid'] != '') {
-                    $new_url = str_replace("[[msclkid]]", $_GET['msclkid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[msclkid]]", "p202msclkid", $new_url);
-                }
-
-                //fbclid string replace for cached redirect
-                if (isset($_GET['fbclid']) && $_GET['fbclid'] != '') {
-                    $new_url = str_replace("[[fbclid]]", $_GET['fbclid'], $new_url);
-                } else {
-                    $new_url = str_replace("[[fbclid]]", "p202fbclid", $new_url);
-                }
-
-                //utm_source string replace for cached redirect
-                if (isset($_GET['utm_source']) && $_GET['utm_source'] != '') {
-                    $new_url = str_replace("[[utm_source]]", $_GET['utm_source'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_source]]", "p202utm_source", $new_url);
-                }
-
-                //utm_medium string replace for cached redirect
-                if (isset($_GET['utm_medium']) && $_GET['utm_medium'] != '') {
-                    $new_url = str_replace("[[utm_medium]]", $_GET['utm_medium'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_medium]]", "p202utm_medium", $new_url);
-                }
-
-                //utm_campaign string replace for cached redirect
-                if (isset($_GET['utm_campaign']) && $_GET['utm_campaign'] != '') {
-                    $new_url = str_replace("[[utm_campaign]]", $_GET['utm_campaign'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_campaign]]", "p202utm_campaign", $new_url);
-                }
-
-                //utm_term string replace for cached redirect
-                if (isset($_GET['utm_term']) && $_GET['utm_term'] != '') {
-                    $new_url = str_replace("[[utm_term]]", $_GET['utm_term'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_term]]", "p202utm_term", $new_url);
-                }
-
-                //utm_content string replace for cached redirect
-                if (isset($_GET['utm_content']) && $_GET['utm_content'] != '') {
-                    $new_url = str_replace("[[utm_content]]", $_GET['utm_content'], $new_url);
-                } else {
-                    $new_url = str_replace("[[utm_content]]", "p202utm_content", $new_url);
-                }
-
-                //show url or redirect to url
-                if (isset($_GET['202rdu']) && $_GET['202rdu'] != '') {
-                    echo $new_url;
-                } else {
-                    header('location: ' . $new_url);
-                }
-
-                die();
-            }
-        }
-        die();
-    }
-}
-
 function setDirtyHour($mysql)
 {
     $de = new DataEngine();
@@ -3944,234 +1619,6 @@ function setDirtyHour($mysql)
 function isSSL(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || intval($_SERVER['SERVER_PORT']) == intval(getservbyname('https', 'tcp'));
-}
-
-function getScheme(): string
-{
-    if (isSSL()) {
-        $scheme = 'https';
-    } else {
-        $scheme = 'http';
-    }
-
-    return $scheme;
-}
-
-function is_prefetch(): bool
-{
-    // Delegate to the one hardened detector so this legacy helper cannot drift
-    // back to exact-match matching (which missed "Purpose: prefetch;prerender"
-    // and let speculative hits double-count).
-    return p202IsSpeculativeRequest();
-}
-
-function getUTMParams(&$mysql)
-{
-    global $db;
-    //utm_source
-    $utm_source = $db->real_escape_string($_GET['utm_source']);
-    if (isset($utm_source) && $utm_source != '') {
-        $utm_source = str_replace('%20', ' ', $utm_source);
-        $utm_source_id = INDEXES::get_utm_id($utm_source, 'utm_source');
-    } else {
-        $utm_source_id = 0;
-    }
-    $mysql['utm_source_id'] = $db->real_escape_string($utm_source_id);
-    $mysql['utm_source'] = $db->real_escape_string($utm_source);
-
-    //utm_medium
-    $utm_medium = $db->real_escape_string($_GET['utm_medium']);
-    if (isset($utm_medium) && $utm_medium != '') {
-        $utm_medium = str_replace('%20', ' ', $utm_medium);
-        $utm_medium_id = INDEXES::get_utm_id($utm_medium, 'utm_medium');
-    } else {
-        $utm_medium_id = 0;
-    }
-    $mysql['utm_medium_id'] = $db->real_escape_string($utm_medium_id);
-    $mysql['utm_medium'] = $db->real_escape_string($utm_medium);
-
-    //utm_campaign
-    $utm_campaign = $db->real_escape_string($_GET['utm_campaign']);
-    if (isset($utm_campaign) && $utm_campaign != '') {
-        $utm_campaign = str_replace('%20', ' ', $utm_campaign);
-        $utm_campaign_id = INDEXES::get_utm_id($utm_campaign, 'utm_campaign');
-    } else {
-        $utm_campaign_id = 0;
-    }
-    $mysql['utm_campaign_id'] = $db->real_escape_string($utm_campaign_id);
-    $mysql['utm_campaign'] = $db->real_escape_string($utm_campaign);
-
-    //utm_term
-    $utm_term = $db->real_escape_string($_GET['utm_term']);
-    if (isset($utm_term) && $utm_term != '') {
-        $utm_term = str_replace('%20', ' ', $utm_term);
-        $utm_term_id = INDEXES::get_utm_id($utm_term, 'utm_term');
-    } else {
-        $utm_term_id = 0;
-    }
-    $mysql['utm_term_id'] = $db->real_escape_string($utm_term_id);
-    $mysql['utm_term'] = $db->real_escape_string($utm_term);
-
-    //utm_content
-    $utm_content = $db->real_escape_string($_GET['utm_content']);
-    if (isset($utm_content) && $utm_content != '') {
-        $utm_content = str_replace('%20', ' ', $utm_content);
-        $utm_content_id = INDEXES::get_utm_id($utm_content, 'utm_content');
-    } else {
-        $utm_content_id = 0;
-    }
-    $mysql['utm_content_id'] = $db->real_escape_string($utm_content_id);
-    $mysql['utm_content'] = $db->real_escape_string($utm_content);
-}
-
-function getCVars(&$mysql)
-{
-
-    global $db;
-
-    $_lGET = array_change_key_case($_GET, CASE_LOWER); //make lowercase copy of get 
-
-    //Get C1-C4 IDs
-    for ($i = 1; $i <= 4; $i++) {
-        $custom = "c" . $i; //create dynamic variable
-        $custom_val = $db->real_escape_string($_lGET[$custom]); // get the value
-
-        if (isset($custom_val) && $custom_val != '') { //if there's a value get an id
-            $custom_val = str_replace(' ', '+', $custom_val);
-            $custom_id = INDEXES::get_custom_var_id($custom, $custom_val); //get the id
-            $mysql[$custom . '_id'] = $db->real_escape_string($custom_id); //save it
-            $mysql[$custom] = $db->real_escape_string($custom_val); //save it
-        } else {
-            $mysql[$custom . '_id'] = '0';
-        }
-    }
-}
-
-function getReferer(&$mysql)
-{
-    global $db;
-
-    // Parse the referer URL query string
-    $referer_url_parsed = @parse_url((string) $_SERVER['HTTP_REFERER']);
-    $referer_url_query = $referer_url_parsed['query'] ?? ''; // Use null coalescing operator
-    $referer_query = []; // Initialize $referer_query as an empty array
-    @parse_str($referer_url_query, $referer_query);
-
-    // if user wants to use t202ref from url variable use that first if it's not set try and get it from the ref url
-    if ($mysql['user_pref_referer_data'] == 't202ref') {
-        if (isset($_GET['t202ref']) && $_GET['t202ref'] != '') { //check for t202ref value
-            $mysql['t202ref'] = $db->real_escape_string($_GET['t202ref']);
-            $click_referer_site_url_id = INDEXES::get_site_url_id($_GET['t202ref']);
-        } else { //if not found revert to what we usually do
-            if (isset($referer_query['url'])) {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
-            } else {
-                $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
-            }
-        }
-    } else { //user wants the real referer first
-
-        // now lets get variables for clicks site
-        // so this is going to check the REFERER URL, for a ?url=, which is the ACUTAL URL, instead of the google content, pagead2.google....
-        if (isset($referer_query['url'])) {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($referer_query['url']);
-        } else {
-            $click_referer_site_url_id = INDEXES::get_site_url_id($_SERVER['HTTP_REFERER'] ?? '');
-        }
-    }
-
-    $mysql['click_referer_site_url_id'] = $db->real_escape_string($click_referer_site_url_id);
-}
-
-function getForeignPayout($currency, $payout_currency, $payout)
-{
-    $fields = [
-        'currency' => $currency,
-        'payout_currency' => $payout_currency,
-        'payout' => $payout * 10000   //multiply by 10000 to get more accurate exchange rate
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/get-foreign-payout');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
-    $result = curl_exec($ch);
-
-    curl_close($ch);
-    $result = json_decode($result, true);
-
-    $result['exchange_payout'] /= 10000;
-    return $result;
-}
-
-function getDynamicEPVPixelId(&$mysql)
-{
-    global $db;
-
-    if (isset($mysql['ppc_account_id']) && isset($mysql['b202_fbpa_dynamic_epv']) && $mysql['ppc_account_id'] != '' && $mysql['b202_fbpa_dynamic_epv'] != '') {
-        $dynamic_epv_sql = "SELECT SUM(`income`)/SUM(`click_out`) as dynamic_epv_value, pixel_code AS pixel_id 
-                            FROM `202_dataengine` 
-                            LEFT JOIN `202_ppc_account_pixels` USING (`ppc_account_id`)
-                            WHERE `ppc_account_id`= " . $mysql['ppc_account_id'] . " AND `pixel_type_id`= 6 AND `click_time` >= UNIX_TIMESTAMP(TIMESTAMPADD(DAY,-7,NOW()))
-        
-        ";
-
-        $dynamic_epv_result = $db->query($dynamic_epv_sql);
-        $dynamic_epv_row = $dynamic_epv_result->fetch_assoc();
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['dynamic_epv_value']) {
-            $mysql['dynamic_epv_value'] = number_format($dynamic_epv_row['dynamic_epv_value'], 2);
-        } else {
-            $mysql['dynamic_epv_value'] = 0;
-        }
-
-        if ($dynamic_epv_row !== null && $dynamic_epv_row['pixel_id']) {
-            $mysql['pixel_id'] = $dynamic_epv_row['pixel_id'];
-        } else {
-            $mysql['pixel_id'] = 0;
-        }
-    }
-}
-
-function getPayout(&$mysql)
-{
-    global $db;
-
-    $sql = "
-    SELECT 
-        2c.click_payout
-    FROM `202_clicks` AS 2c    
-    WHERE 2c.`click_id` = {$mysql['click_id']}
-    LIMIT 1";
-
-    $sql_result = $db->query($sql);
-    $sql_row = $sql_result->fetch_assoc();
-
-    $mysql['click_payout'] = $sql_row !== null ? $db->real_escape_string($sql_row['click_payout']) : '0';
-}
-
-function getUrlVars202(): array
-{
-    $urlvarslist = [];
-    $temp = explode('&', (string) $_SERVER['QUERY_STRING']);
-
-    foreach ($temp as $key => $value) {
-        $subkv = explode('=', $value);
-        $key = $subkv[0];
-        $value = $subkv[1];
-        $urlvarslist[$key] = $value;
-    }
-
-    $urlvarslist = filter_var_array($urlvarslist, FILTER_SANITIZE_URL);
-
-    return $urlvarslist;
 }
 
 /** A click cookie, or its -legacy twin (Prosper202\Http\ClickCookie). */

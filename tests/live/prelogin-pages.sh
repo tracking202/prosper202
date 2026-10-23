@@ -174,7 +174,7 @@ STORED=$(Q "SELECT IFNULL(p202_customer_api_key, '') FROM 202_users WHERE user_i
 if grep -qF 'License key saved' "$OUT/lk-checked.html"; then
   eq "$STORED" "u7-not-a-key" "the service accepted the key; the page says saved and the key is stored"
 else
-  flash "$OUT/lk-checked.html" 'Invalid API key. Please check your key and try again.' "the service rejected the key, and the page says so"
+  flash "$OUT/lk-checked.html" 'Invalid API key; check it and retry.' "the service rejected the key, and the page says so"
   eq "$STORED" "$ORIG_LICENSE" "and the saved key is unchanged"
 fi
 restore

@@ -47,17 +47,10 @@ final class RequestHostSourceTest extends TestCase
             . ' (CURLOPT_RESOLVE), so a name the request claimed never takes the call off this machine',
         ],
         '202-config/connect.php' => [3, "maps nginx's catch-all server name `_` to the request's host"],
-        '202-config/connect2.php' => [
-            6,
-            "the same `_` mapping (3); the install fingerprint hash (1); the server_name column of 202_mysql_errors"
-            . ' and the error email (2)',
-        ],
-        '202-config/functions-tracking202.php' => [
-            4,
-            'the server_name column of 202_mysql_errors (1); the license'
-            . " service's click-server id, the Host header as sent (2); the install fingerprint hash (1)",
-        ],
-        // getTrackingDomain() (both copies) read SERVER_NAME and SERVER_PORT
+        '202-config/connect2.php' => [3, "the same `_` mapping"],
+        '202-config/functions-tracking202.php' => [2, "the license service's click-server id, the Host header as sent"],
+        '202-config/functions-shared.php' => [1, 'the install fingerprint hash (systemHash())'],
+        // getTrackingDomain() (both copies, then) read SERVER_NAME and SERVER_PORT
         // as its fallback, the address the server listens on rather than the
         // one a browser reaches; it is TrackingBaseUrl::domainForResponse()
         // now, and its callers are TRACKING_DOMAIN_CALLERS below.
@@ -364,25 +357,18 @@ final class RequestHostSourceTest extends TestCase
     }
 
     /**
-     * Executed, both copies: with no domain stored the answer is the host the
-     * request came in on, port included, not the server's name and port; a
-     * stored domain still wins. Each definition is run from its own source
-     * in a child PHP, with the database read stubbed.
+     * Executed: with no domain stored the answer is the host the request
+     * came in on, port included, not the server's name and port; a stored
+     * domain still wins. The one definition both bootstraps load is run from
+     * its source in a child PHP, with the database read stubbed.
      *
      * @return iterable<string, array{string, string}>
      */
     public static function definitions(): iterable
     {
-        yield 'functions-tracking202.php' => [
-            '202-config/functions-tracking202.php',
+        yield 'functions-shared.php' => [
+            '202-config/functions-shared.php',
             'function p202StoredTrackingDomain(): string { return $GLOBALS["stored"]; }',
-        ];
-        yield 'connect2.php' => [
-            '202-config/connect2.php',
-            'final class StubResult extends \mysqli_result { public function __construct() {} '
-                . 'public function fetch_assoc(): array|null|false '
-                . '{ return ["user_tracking_domain" => $GLOBALS["stored"]]; } }'
-                . ' function _mysqli_query($db, $sql) { return new StubResult(); }',
         ];
     }
 

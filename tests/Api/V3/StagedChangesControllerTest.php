@@ -48,14 +48,14 @@ final class StagedChangesControllerTest extends TestCase
         rmdir($dir);
     }
 
-    private function authFor(int $userId, string $scope = '*', string $role = 'user'): Auth
+    private function authFor(int $userId, string $scope = '*', string $role = 'user', string $bearer = 'key'): Auth
     {
         $db = $this->createMysqliMock([
             "SHOW COLUMNS FROM 202_api_keys LIKE 'scope'" => ['Field' => 'scope'],
             '202_api_keys' => ['user_id' => $userId, 'user_active' => 1, 'scope' => $scope],
             '202_user_role' => [['role_name' => $role]],
         ]);
-        return Auth::fromRequest(['Authorization' => 'Bearer key'], $db);
+        return Auth::fromRequest(['Authorization' => 'Bearer ' . $bearer], $db);
     }
 
     private function controller(Auth $auth): StagedChangesController
@@ -110,10 +110,149 @@ final class StagedChangesControllerTest extends TestCase
         $this->controller($this->authFor(5))->get($id);
     }
 
+    /** A key that may not read an area sees no proposal there, even its own user's. */
+    public function testAKeySeesOnlyTheProposalsOfAreasItReads(): void
+    {
+        $owner = $this->controller($this->authFor(5));
+        $campaign = $owner->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $user = $owner->stage('PUT', '/users/5', ['user_email' => 'a@example.com'], null)['data']['change_id'];
+
+        $narrow = $this->controller($this->authFor(5, 'campaigns:read,reports:read'));
+        $this->assertSame([$campaign], array_column($narrow->list([])['data'], 'change_id'));
+        $this->assertSame($campaign, $narrow->get($campaign)['data']['change_id']);
+        try {
+            $narrow->get($user);
+            $this->fail('a key without users:read read a users proposal');
+        } catch (NotFoundException) {
+        }
+
+        foreach (['*', 'read', 'write', 'read,stage'] as $wide) {
+            $all = $this->controller($this->authFor(5, $wide))->list([]);
+            $this->assertCount(2, $all['data'], $wide);
+        }
+    }
+
     public function testGetUnknownIdIsNotFound(): void
     {
         $this->expectException(NotFoundException::class);
         $this->controller($this->authFor(5))->get('chg_' . str_repeat('a', 24));
+    }
+
+    /** A change recorded with no area (an older record) is held to the area its path names. */
+    public function testAChangeWithNoRecordedAreaIsHeldToItsPathsArea(): void
+    {
+        $id = $this->controller($this->authFor(5))->stage('PUT', '/users/5', ['user_email' => 'a@example.com'], null)
+            ['data']['change_id'];
+        $this->store->updateStagedChange(5, $id, fn (array $c): array => ['resource_area' => ''] + $c);
+
+        $narrow = $this->controller($this->authFor(5, 'campaigns:write,campaigns:read'));
+        foreach (['apply', 'discard'] as $act) {
+            try {
+                $act === 'apply' ? $narrow->apply($id, fn () => ['data' => []]) : $narrow->discard($id);
+                $this->fail("a campaigns key could $act a users change recorded with no area");
+            } catch (AuthException $e) {
+                $this->assertStringContainsString('users:', $e->getMessage(), $act);
+            }
+        }
+        $out = $this->controller($this->authFor(5, 'users:write'))->discard($id);
+        $this->assertSame('discarded', $out['data']['status']);
+    }
+
+    /** A change whose area cannot be told at all needs a key that writes every area, unless its own key withdraws it. */
+    public function testAChangeWhoseAreaCannotBeToldNeedsAGlobalKey(): void
+    {
+        $owner = $this->controller($this->authFor(5, '*', 'user', 'owner-key'));
+        $first = $owner->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $second = $owner->stage('PUT', '/campaigns/43', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        foreach ([$first, $second] as $id) {
+            $this->store->updateStagedChange(
+                5,
+                $id,
+                fn (array $c): array => ['resource_area' => '', 'path' => '/no-such-area/1'] + $c
+            );
+        }
+
+        foreach (['campaigns:write,campaigns:read', 'read,stage'] as $scope) {
+            $other = $this->controller($this->authFor(5, $scope, 'user', 'other-key'));
+            foreach (['apply', 'discard'] as $act) {
+                try {
+                    $act === 'apply' ? $other->apply($first, fn () => ['data' => []]) : $other->discard($first);
+                    $this->fail("a $scope key could $act a change whose area cannot be told");
+                } catch (AuthException $e) {
+                    $this->assertStringContainsString('cannot be told', $e->getMessage(), "$scope $act");
+                }
+            }
+        }
+        $writer = $this->controller($this->authFor(5, 'write', 'user', 'other-key'));
+        $this->assertSame('discarded', $writer->discard($first)['data']['status']);
+        $applied = $writer->apply($second, fn () => ['data' => ['ok' => true]]);
+        $this->assertSame('applied', $applied['data']['change']['status']);
+    }
+
+    /**
+     * A propose-only key withdraws its own proposals; it cannot discard the
+     * user's other ones. A key that may apply (`<area>:write`) may discard.
+     */
+    public function testOnlyTheProposingKeyOrAWriterMayDiscard(): void
+    {
+        $propose = 'campaigns:read,campaigns:stage';
+        $mine = $this->controller($this->authFor(5, $propose, 'user', 'ai-key'));
+        $own = $mine->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $this->assertSame('discarded', $mine->discard($own)['data']['status'], 'its own proposal');
+        foreach ($mine->list([])['data'] as $listed) {
+            $this->assertArrayNotHasKey('staged_by_key_ref', $listed, 'a reader sees the key digest');
+        }
+
+        $theirs = $this->controller($this->authFor(5, '*', 'user', 'person-key'))
+            ->stage('PUT', '/campaigns/43', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        try {
+            $mine->discard($theirs);
+            $this->fail('a propose-only key discarded a proposal another key made');
+        } catch (AuthException $e) {
+            $this->assertStringContainsString('campaigns:write', $e->getMessage());
+        }
+        $approver = $this->controller($this->authFor(5, 'read,campaigns:write', 'user', 'approver-key'));
+        $this->assertSame('discarded', $approver->discard($theirs)['data']['status'], 'the approver key');
+    }
+
+    /** A key that may not apply or discard leaves a stale claim as it is. */
+    public function testARefusedKeyChangesNothingOnAStaleClaim(): void
+    {
+        $id = $this->controller($this->authFor(5, '*', 'user', 'person-key'))
+            ->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $this->store->updateStagedChange(
+            5,
+            $id,
+            fn (array $c): array => ['status' => 'applying', 'applying_since' => time() - 86400] + $c
+        );
+        $reader = $this->controller($this->authFor(5, 'read', 'user', 'reader-key'));
+        foreach (['apply', 'discard'] as $act) {
+            try {
+                $act === 'apply' ? $reader->apply($id, fn () => ['data' => []]) : $reader->discard($id);
+                $this->fail("a read key could $act");
+            } catch (AuthException) {
+            }
+        }
+        $this->assertSame('applying', $this->store->getStagedChangeForUser(5, $id)['status'] ?? null);
+    }
+
+    /** A proposal recorded before the staging key was kept needs write access to discard. */
+    public function testAnOlderProposalWithNoKeyRecordNeedsWriteToDiscard(): void
+    {
+        $proposer = $this->controller($this->authFor(5, 'campaigns:read,campaigns:stage', 'user', 'ai-key'));
+        $id = $proposer->stage('PUT', '/campaigns/42', ['aff_campaign_payout' => '9.50'], null)['data']['change_id'];
+        $this->store->updateStagedChange(5, $id, function (array $c): array {
+            unset($c['staged_by_key_ref']);
+            return $c;
+        });
+        try {
+            $proposer->discard($id);
+            $this->fail('a stage key discarded a proposal that names no key');
+        } catch (AuthException $e) {
+            $this->assertStringContainsString('campaigns:write', $e->getMessage());
+        }
+        $writer = $this->controller($this->authFor(5, 'campaigns:write', 'user', 'ai-key'));
+        $this->assertSame('discarded', $writer->discard($id)['data']['status']);
     }
 
     public function testApplyDispatchesTheRecordedWriteAndStampsTheApplier(): void

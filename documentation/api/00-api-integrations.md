@@ -23,7 +23,7 @@ API keys are managed through **My Account > Personal Settings** in the Prosper20
 Create a separate API key for each integration so you can revoke access individually.
 
 A key works only while its user does: the keys of a user removed in
-**Account › Users** are `401 Invalid API key.`, and the keys of a user
+**My Account › User Management** are `401 Invalid API key.`, and the keys of a user
 switched off there (not Active) are `401` with `The account this API key
 belongs to is deactivated…` until the user is switched on again — on the
 legacy v1 and v2 APIs too, as the sign-in page refuses them. A deactivated
@@ -188,6 +188,26 @@ yours is the lookup key of a create, and the row is created with an id of its
 own. The body is a list of rows or `{"rows": [...]}`; any other key is
 refused.
 
+The rows are written up to 100 at a time, each hundred in one transaction. A
+row that fails is undone on its own and answered `error`; the rest are stored.
+A deadlock with another write rolls the whole hundred back, so it is written
+again from the start, up to three more times; if it still cannot be, every row
+of it is answered `error` with `"retryable": true` (counted in
+`summary.retryable`), none of it is stored, and the next hundred is written. A
+lock wait timeout is answered the same way at once, since each attempt would
+wait it out again, and so is a database failure after an earlier hundred was
+stored; the rows after either are not attempted and are answered `retryable`
+too. Send those rows again under a new `Idempotency-Key`, since the one you
+sent replays this answer. A failure before any row was stored is a `500`, and
+the key is not spent.
+
+A hundred whose commit (or rollback) the database did not confirm may or may
+not be stored: each row it wrote is answered `error` with `"unconfirmed": true`
+(counted in `summary.unconfirmed`), never `retryable`, a row it skipped or
+refused keeps its answer, and the rows after it are not attempted. Look the
+unconfirmed rows up before sending them again, since a create stored already
+would be stored twice.
+
 `p202 import`, `p202 sync` and the server-side sync jobs leave out the fields
 a write must not carry (ids, owner, public ids, `version`/`etag`, a
 redirector's rules) when they build a body from another record.
@@ -287,7 +307,7 @@ for someone who holds it to apply. The lifecycle endpoints:
 | `GET` | `/staged-changes` | `staged-changes:read` | Your staged changes (`?status=`, `?all=1` for every user's — admin only) |
 | `GET` | `/staged-changes/{id}` | `staged-changes:read` | One change, payload and preview included |
 | `POST` | `/staged-changes/{id}/apply` | the write scope of the change's area (e.g. `campaigns:write`) | Perform the recorded write, as the user who proposed it |
-| `POST` | `/staged-changes/{id}/discard` | `staged-changes:stage` | End the proposal without performing it |
+| `POST` | `/staged-changes/{id}/discard` | the write scope of the change's area, or its stage scope from the key that staged it | End the proposal without performing it |
 
 The contract, in the terms of Anthropic's commerce-agents reference:
 

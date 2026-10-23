@@ -38,6 +38,9 @@ final class RouteInventory
         "\$path === '/versions' && \$method === 'GET'" => ['GET /versions'],
         "\$path === '/system/health' && \$method === 'GET'" => ['GET /system/health'],
         "\$path === '/apps/schema'" => ['GET /apps/schema'],
+        "\$path === '/connect' && \$method === 'GET'" => ['GET /connect'],
+        "\$path === '/connect/token' && \$method === 'POST'" => ['POST /connect/token'],
+        "\$path === '/connect/revoke' && \$method === 'POST'" => ['POST /connect/revoke'],
     ];
 
     private const ROUTE_METHODS = ['get' => 'GET', 'post' => 'POST', 'put' => 'PUT', 'patch' => 'PATCH', 'delete' => 'DELETE'];

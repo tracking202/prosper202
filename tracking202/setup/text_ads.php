@@ -24,7 +24,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '".$mysql['user_own_id']."'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url'])) 
 	$slack = new Slack($user_row['url']);
@@ -203,11 +206,13 @@ if (isset($_GET['delete_text_ad_id'])) {
 								`text_ad_time`='".$mysql['text_ad_time']."'
 						WHERE   `user_id`='".$mysql['user_id']."'
 						AND     `text_ad_id`='".$mysql['text_ad_id']."'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($delete_sql)) {
-			$delete_success = true;
-			if($slack)
-				$slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
-		}
+        if ($db->query($delete_sql)) {
+            $delete_success = true;
+            if($slack)
+                $slack->push('ad_copy_deleted', ['name' => $_GET['delete_text_ad_name'], 'user' => $user_row['username']]);
+        } else {
+            record_mysql_error($delete_sql);
+        }
 	} else {
 		header('location: '.get_absolute_url().'tracking202/setup/text_ads.php');
 	}

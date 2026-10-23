@@ -40,8 +40,11 @@ $dt = new DateTime('now', $utc);
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
-$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
+$user_results = _mysqli_query($db, $user_sql);
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 
 if (!empty($user_row['url']))
@@ -92,18 +95,16 @@ if (isset($_POST['add_rest_api_key'])) {
 	$newKey = $postedKey !== '' ? $postedKey : bin2hex(random_bytes(32));
 	$keyUserId = (int)$_SESSION['user_id'];
 	$keyCreated = time();
-	$key_stmt = $db->prepare('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
-	if ($key_stmt === false) {
-		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->bind_param('isi', $keyUserId, $newKey, $keyCreated);
-	if (!$key_stmt->execute()) {
-		$key_stmt->close();
-		p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->close();
+    try {
+        $keyConn = new \Prosper202\Database\Connection($db);
+        $key_stmt = $keyConn->prepareWrite('INSERT INTO 202_api_keys (user_id, api_key, created_at) VALUES (?, ?, ?)');
+        $keyConn->bind($key_stmt, 'isi', [$keyUserId, $newKey, $keyCreated]);
+        $keyConn->execute($key_stmt);
+        $key_stmt->close();
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        p202_account_flash('bad', 'The API key could not be saved. Nothing was created; try again.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
 
 	if ($slack)
 		$slack->push('user_added_app_api_key', ['user' => $username]);
@@ -120,19 +121,15 @@ if (isset($_POST['remove_rest_api_key'])) {
 	$keyUserId = (int)$_SESSION['user_id'];
 	$removeKey = (string)($_POST['rest_api_key'] ?? '');
 	// scope to owner
-	$key_stmt = $db->prepare('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
-	if ($key_stmt === false) {
-		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$key_stmt->bind_param('si', $removeKey, $keyUserId);
-	if (!$key_stmt->execute()) {
-		$key_stmt->close();
-		p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
-		p202_account_redirect('202-account/account.php#api-keys');
-	}
-	$removed = $key_stmt->affected_rows;
-	$key_stmt->close();
+    try {
+        $keyConn = new \Prosper202\Database\Connection($db);
+        $key_stmt = $keyConn->prepareWrite('DELETE FROM 202_api_keys WHERE api_key = ? AND user_id = ?');
+        $keyConn->bind($key_stmt, 'si', [$removeKey, $keyUserId]);
+        $removed = $keyConn->executeUpdate($key_stmt);
+    } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+        p202_account_flash('bad', 'The API key could not be revoked. It still works; try again.');
+        p202_account_redirect('202-account/account.php#api-keys');
+    }
 
 	if ($removed < 1) {
 		p202_account_flash('warn', 'That API key was not found on this account; nothing was revoked.');
@@ -171,7 +168,7 @@ if (!empty($_GET['remove_user_stats202_app_key'])) {
 	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_stats202_app_key='' WHERE user_id='" . $mysql['user_id'] . "'";
-	if (!$db->query($sql)) {
+	if (!_mysqli_query($db, $sql)) {
 		error_log('account.php: the Stats202 app key was not removed: ' . $db->error);
 		p202_account_flash('bad', 'The Stats202 App Key could not be removed; try again.');
 		p202_account_redirect('202-account/account.php');
@@ -189,7 +186,7 @@ if (!empty($_GET['remove_user_api_key'])) {
 	}
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 	$sql = "UPDATE 202_users SET user_api_key='' WHERE user_id='" . $mysql['user_id'] . "'";
-	if (!$db->query($sql)) {
+	if (!_mysqli_query($db, $sql)) {
 		error_log('account.php: the Tracking202 API key was not removed: ' . $db->error);
 		p202_account_flash('bad', 'The Tracking202 API key could not be removed; try again.');
 		p202_account_redirect('202-account/account.php');
@@ -214,8 +211,11 @@ if (!$canPersonal) {
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
 }
 
-$user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+$user_result = _mysqli_query($db, $user_sql);
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 $currentUserEmail = isset($user_row['user_email']) ? (string)$user_row['user_email'] : '';
 
 /** The choices each preference offers, value => label; the form renders these and the handler admits only these. */
@@ -258,8 +258,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 							  	WHERE 	`user_email` = '" . $mysql['user_email'] . "'
 								AND   		`user_id`!='" . $mysql['user_id'] . "'
 								AND user_deleted != 1";
-				$count_result = $db->query($count_sql);
-				if ($count_result->num_rows > 0) {
+				$emailInUse = _mysqli_query($db, $count_sql);
+				if ($emailInUse === false) {
+					$error['user_email'] = 'Your email could not be checked; try again.';
+				} elseif ($emailInUse->num_rows > 0) {
 					$error['user_email'] = 'That email address is already being used.';
 				}
 			}
@@ -437,8 +439,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 								  	FROM  		`202_users`
 								  	WHERE 	`user_email` = '" . $mysql['user_email'] . "'
 								  	AND   		`user_id`!='" . $mysql['user_id'] . "'";
-				$count_result = $db->query($count_sql);
-				if ($count_result->num_rows > 0) {
+				$ownEmailInUse = _mysqli_query($db, $count_sql);
+				if ($ownEmailInUse === false) {
+					$error['user_email'] = 'Your email could not be checked; try again.';
+				} elseif ($ownEmailInUse->num_rows > 0) {
 					$error['user_email'] = 'That email address is already being used.';
 				}
 
@@ -446,8 +450,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 					$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 					$mysql['user_email'] = $db->real_escape_string($submittedEmail);
 					$sql = "UPDATE 202_users SET user_email = '" . $mysql['user_email'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-					if (!$db->query($sql)) {
-						$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your email could not be saved; try again.'];
+					if (!_mysqli_query($db, $sql)) {
+						p202_account_flash('bad', 'Your email could not be saved; try again.');
 					} else {
 						if ($slack && $submittedEmail !== $currentUserEmail) {
 							$slack->push('user_email_changed', ['user' => $username, 'old_email' => $currentUserEmail, 'new_email' => $submittedEmail]);
@@ -516,33 +520,30 @@ if (!empty($_POST['update_clickserver_api_key']) && $_POST['update_clickserver_a
 		p202_account_redirect($clickserverReturn);
 	}
 
-	$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+	$mysql['clickserver_api_key'] = $db->real_escape_string($csKey = trim((string) $_POST['clickserver_api_key']));
 
 	if (!preg_match('/\*/', (string) $_POST['clickserver_api_key'])) {
-		if (!clickserver_api_key_validate($mysql['clickserver_api_key']) && $mysql['clickserver_api_key'] != '') {
-			$keyErrors['clickserver_api_key'] = 'This API Key appears invalid.';
+		if (($csKeyError = p202_check_clickserver_key($csKey)) !== null) {
+			$keyErrors['clickserver_api_key'] = $csKeyError;
 		}
 
 		if (!$keyErrors || $mysql['clickserver_api_key'] == '') {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$mysql['clickserver_api_key'] = $db->real_escape_string((string)$_POST['clickserver_api_key']);
+			$mysql['clickserver_api_key'] = $db->real_escape_string($csKey);
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`clickserver_api_key`='" . $mysql['clickserver_api_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
-			$user_result = $db->query($user_sql);
-
-			if ($slack) {
-				if ($_POST['clickserver_api_key'] != ($user_row['clickserver_api_key'] ?? '')) {
+			$clickserverKeySaved = _mysqli_query($db, $user_sql);
+			if (!$clickserverKeySaved) {
+				p202_account_flash('bad', 'The ClickServer API key could not be saved; try again.');
+			} else {
+				if ($slack && $csKey != ($user_row['clickserver_api_key'] ?? '')) {
 					$slack->push('user_updated_clickserver_api_key', ['user' => $username]);
 				}
-			}
-
-			if ($user_result) {
 				p202_account_flash('ok', 'You have updated your Prosper202 ClickServer API Key.');
 				p202_account_redirect($clickserverReturn);
 			}
-			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The ClickServer API key could not be saved; try again.'];
 		} elseif ($clickserverReturn !== '202-account/account.php') {
 			p202_account_flash('bad', $keyErrors['clickserver_api_key']);
 			p202_account_redirect($clickserverReturn);
@@ -557,32 +558,33 @@ if (!empty($_POST['change_user_api_key']) && $_POST['change_user_api_key'] == '1
 		p202_account_redirect('202-account/account.php');
 	}
 
-	if (!preg_match('/\*/', (string) $_POST['user_api_key'])) {
-		if (!AUTH::is_valid_api_key($_POST['user_api_key'])) {
-			$keyErrors['user_api_key'] = 'This API Key appears invalid.';
+	if (!preg_match('/\*/', $typedKey = trim((string) $_POST['user_api_key']))) {
+		if (($typedKeyError = p202_check_typed_key($typedKey)) !== null) {
+			$keyErrors['user_api_key'] = $typedKeyError;
 		}
 
 		if (!$keyErrors) {
 
 			$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
-			$mysql['user_api_key'] = $db->real_escape_string((string)$_POST['user_api_key']);
+			$mysql['user_api_key'] = $db->real_escape_string($typedKey);
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`user_api_key`='" . $mysql['user_api_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
-			$user_result = $db->query($user_sql);
+			$apiKeySaved = _mysqli_query($db, $user_sql);
 
 			// Only a write that landed changes the session and says so: the
 			// session key is the one used against Tracking202 from here on,
 			// and a flash saying "updated" over an unchanged row is #1.
-			if ($user_result) {
-				$_SESSION['user_api_key'] = $_POST['user_api_key'];
-				$_SESSION['user_cirrus_link'] = $_POST['user_api_key'];
+			if (!$apiKeySaved) {
+				error_log('account.php: the Tracking202 API key was not saved: ' . $db->error);
+				p202_account_flash('bad', 'The Tracking202 API key could not be saved; try again.');
+			} else {
+				$_SESSION['user_api_key'] = $typedKey;
+				$_SESSION['user_cirrus_link'] = $typedKey;
 
 				p202_account_flash('ok', 'You have updated your Tracking202 API Key.');
 				p202_account_redirect('202-account/account.php');
 			}
-			error_log('account.php: the Tracking202 API key was not saved: ' . $db->error);
-			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The Tracking202 API key could not be saved; try again.'];
 		}
 	}
 }
@@ -611,16 +613,17 @@ if (!empty($_POST['change_user_stats202_app_key']) && $_POST['change_user_stats2
 			$user_sql = "	UPDATE 	`202_users`
 								SET     		`user_stats202_app_key`='" . $mysql['user_stats202_app_key'] . "'
 								WHERE  	`user_id`='" . $mysql['user_id'] . "'";
-			$user_result = $db->query($user_sql);
+			$statsKeySaved = _mysqli_query($db, $user_sql);
 
-			if ($user_result) {
+			if (!$statsKeySaved) {
+				error_log('account.php: the Stats202 app key was not saved: ' . $db->error);
+				p202_account_flash('bad', 'The Stats202 App Key could not be saved; try again.');
+			} else {
 				$_SESSION['user_stats202_app_key'] = $_POST['user_stats202_app_key'];
 
 				p202_account_flash('ok', 'You have updated your Stats202 App Key.');
 				p202_account_redirect('202-account/account.php');
 			}
-			error_log('account.php: the Stats202 app key was not saved: ' . $db->error);
-			$pageFlashes[] = ['kind' => 'bad', 'text' => 'The Stats202 App Key could not be saved; try again.'];
 		}
 	}
 }
@@ -634,17 +637,17 @@ if (!empty($_POST['update_p202_customer_api_key']) && $_POST['update_p202_custom
 	$mysql['p202_customer_api_key'] = $db->real_escape_string($postedCustomerKey);
 	$mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 	if ($postedCustomerKey !== '') {
-		$validate = validateCustomersApiKey($postedCustomerKey);
-		if ($validate['code'] != 200) {
-			$keyErrors['p202_customer_api_key'] = 'API key is not valid. Check your key and try again!';
+		if (($customerKeyError = p202_check_customer_key($postedCustomerKey)) !== null) {
+			$keyErrors['p202_customer_api_key'] = $customerKeyError;
 		}
 	}
 	if (!isset($keyErrors['p202_customer_api_key'])) {
-		if ($db->query("UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'")) {
+		if (!_mysqli_query($db, "UPDATE 202_users SET p202_customer_api_key = '" . $mysql['p202_customer_api_key'] . "' WHERE user_id = '" . $mysql['user_id'] . "'")) {
+			p202_account_flash('bad', 'Your Prosper202 customer API key could not be saved; try again.');
+		} else {
 			p202_account_flash('ok', $postedCustomerKey === '' ? 'Your Prosper202 customer API key was removed.' : 'Your Prosper202 customer API key is saved.');
 			p202_account_redirect('202-account/account.php#customer-key');
 		}
-		$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your Prosper202 customer API key could not be saved; try again.'];
 	}
 }
 
@@ -677,21 +680,17 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	if (!isset($_POST['user_pass']) || empty($_POST['user_pass'])) {
 		$passErrors['user_pass'] = 'You must enter your current password.';
 	} else {
-		$verify_stmt = $db->prepare('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
 		$stored = null;
 		$verified = false;
-		if ($verify_stmt) {
-			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
-			$verify_stmt->bind_param('i', $current_user_id);
-			if ($verify_stmt->execute()) {
-				$result = $verify_stmt->get_result();
-				if ($result !== false) {
-					$stored = $result->fetch_assoc();
-					$verified = true;
-				}
-			}
-			$verify_stmt->close();
-		}
+        try {
+            $passConn = new \Prosper202\Database\Connection($db);
+            $verify_stmt = $passConn->prepareWrite('SELECT user_pass FROM 202_users WHERE user_id = ? LIMIT 1');
+            $passConn->bind($verify_stmt, 'i', [(int) ($_SESSION['user_own_id'] ?? 0)]);
+            $stored = $passConn->fetchOne($verify_stmt);
+            $verified = true;
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception) {
+            // Said below; not counted as a wrong password.
+        }
 		if (!$verified) {
 			// Could not read the stored hash: say so, and do not count it as
 			// a wrong password (it is not one).
@@ -726,16 +725,19 @@ if (!empty($_POST['change_user_pass']) && $_POST['change_user_pass'] == '1') {
 	//if no user_pass errors
 	if (!$passErrors) {
 		$new_hash = hash_user_pass($newPass);
-		$update_stmt = $db->prepare('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
 		$passSaved = false;
-		if ($update_stmt) {
-			$current_user_id = (int) ($_SESSION['user_own_id'] ?? 0);
-			$update_stmt->bind_param('si', $new_hash, $current_user_id);
-			$passSaved = $update_stmt->execute();
-			$update_stmt->close();
-		}
+        $passError = '';
+        try {
+            $passConn = new \Prosper202\Database\Connection($db);
+            $update_stmt = $passConn->prepareWrite('UPDATE 202_users SET user_pass = ? WHERE user_id = ?');
+            $passConn->bind($update_stmt, 'si', [$new_hash, (int) ($_SESSION['user_own_id'] ?? 0)]);
+            $passConn->executeUpdate($update_stmt);
+            $passSaved = true;
+        } catch (\Prosper202\Database\Exceptions\QueryException | \mysqli_sql_exception $e) {
+            $passError = p202FailedQueryMessage(0, $e->getMessage());
+        }
 		if (!$passSaved) {
-			prosper_log('account', 'Failed to update password: ' . $db->error);
+            prosper_log('account', 'Failed to update password: ' . $passError);
 			$pageFlashes[] = ['kind' => 'bad', 'text' => 'Your password could not be changed. Your old password still works; try again.'];
 		} else {
 			p202_account_flash('ok', 'Your password is changed.');
@@ -749,8 +751,11 @@ $user_sql = "	SELECT 	*
 				 FROM   	`202_users`
 				 LEFT JOIN	`202_users_pref` USING (user_id)
 				 WHERE  	`202_users`.`user_id`='" . $mysql['user_id'] . "'";
-$user_result = $db->query($user_sql);
-$user_row = $user_result ? ($user_result->fetch_assoc() ?: []) : [];
+$user_result = _mysqli_query($db, $user_sql);
+if ($user_result === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_result, $user_sql) ?? [];
 
 $e = static fn (mixed $v): string => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 /** The stored value, or what the person typed on a refused submit. */
@@ -1053,7 +1058,7 @@ echo p202_account_render_flashes($extraFlashes);
 							$keyId = 'api-key-' . $index;
 							?>
 							<div class="mb-3" data-api-key-row>
-								<div class="form-text mt-0 mb-1">Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
+								<div class="form-text mt-0 mb-1"><?php echo (string)($apiKey['label'] ?? '') !== '' ? '<strong>' . $e((string)$apiKey['label']) . '</strong> · ' : ''; ?>Created <?php echo $e(date('M j, Y', (int)$apiKey['created_at'])); ?> · <span class="p202-pill<?php echo $scopeTone; ?>"><?php echo $e($scopeLabel); ?></span></div>
 								<div class="p202-code">
 									<pre class="p202-code__value p202-code__value--masked" id="<?php echo $keyId; ?>" data-p202-value="<?php echo $e($keyValue); ?>"><?php echo $e($maskKey($keyValue)); ?></pre>
 									<button type="button" class="btn btn-secondary btn-sm" data-p202-reveal="#<?php echo $keyId; ?>">Reveal</button>

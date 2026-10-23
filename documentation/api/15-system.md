@@ -14,7 +14,7 @@ System health checks, diagnostics, and administration.
 | `GET` | `/system/dataengine` | Admin | Data engine job status and pending work |
 | `GET` | `/system/metrics` | Admin | Comprehensive system metrics |
 | `GET` | `/system/info` | Admin + `access_to_settings` | What Account › Settings shows: versions, PHP limits, memcache, clicks, database size, cron, DataEngine |
-| `GET` | `/system/login-log` | Admin + `access_to_settings` | Sign-in attempts, newest first |
+| `GET` | `/system/login-log` | Admin + `access_to_settings` | Sign-in attempts, newest first: passed, failed or not completed |
 | `GET` `PUT` | `/system/retention` | Admin + `access_to_settings` | Automatic click-data deletion (days), and any scheduled one-off deletion |
 | `POST` | `/system/retention/delete-before` | Admin + `access_to_settings` | Schedule the deletion of click data from before a day (`?dry_run=1` previews) |
 | `GET` `PUT` | `/system/isp-lookup` | Admin + `access_to_settings` | MaxMind ISP and carrier lookup |
@@ -145,18 +145,45 @@ my.tracking202.com).
 by `$mchost` answers. `dataengine.minutes_left` counts one task a minute, as
 the page does. `keyword_preference` is the caller's.
 
+`cron_last_ran_at` is the last run a scheduler started: a cron job's or
+AutoCron's, as Settings' "Cron job last ran" tile reads it. Every signed-in
+page pings the cron as it loads, and from 1.9.78 that run does the cron's
+work without being counted, so an install with neither a cron job nor
+AutoCron answers `null`, or an old time, however busy its pages are.
+`GET /system/cron`'s `recent_logs` are the same record; its `jobs` are the
+tiers that ran, whoever started them.
+
 ### Sign-in log
 
-`GET /system/login-log?limit=50`
+`GET /system/login-log?limit=50&status=not_completed`
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `limit` | integer | 50 | 1-500; anything else is a `422` |
+| `status` | string | every attempt | `passed`, `failed` or `not_completed`: that outcome's attempts only; anything else is a `422` |
 
 Each row is `login_id`, `user_name` (as typed), `ip_address`, `login_time`
-(unix seconds) and `login_success` (boolean), newest first. Nothing else from
-`202_users_log` is served: it also holds each attempt's request snapshot and,
-on installs from before the password was filtered, the password typed.
+(unix seconds), `status` and `login_success`, newest first:
+
+```json
+{ "data": [ { "login_id": 812, "user_name": "ana", "ip_address": "198.51.100.7", "login_time": 1792039194, "login_success": false, "status": "not_completed" } ], "meta": { "limit": 50, "status": null } }
+```
+
+`status` is how the attempt ended: `passed`, `failed` (the user name or
+password was wrong or left out, or the database failed before the password
+was checked), or
+`not_completed` — the password was right, but a database failure stopped the
+sign-in (recording it, starting the session, or storing a re-hashed legacy
+password) and the user was asked to try again. The sign-in throttle (10
+failures per user name, 50 per address, in 15 minutes) counts `failed` alone,
+so a database hiccup never locks anyone out. `login_success` is true for
+`passed` alone. A row holding a value no version of Prosper202 writes answers
+`status: "unknown"`, which no `status` filter selects. `meta.status` is the
+filter asked for, or null.
+
+Nothing else from `202_users_log` is served: it also holds each attempt's
+request snapshot and, on installs from before the password was filtered, the
+password typed.
 
 ### Click-data retention
 

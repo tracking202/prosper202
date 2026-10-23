@@ -23,7 +23,7 @@ The binary is always named `p202` on every platform.
 
 ### Build from source
 
-Requires Go 1.22+.
+Requires Go 1.25+.
 
 ```bash
 cd go-cli
@@ -1625,7 +1625,9 @@ role lacks the page's permission is refused naming it.
 ```bash
 p202 system info                    # versions (and database_upgrade_needed), PHP limits, memcache,
                                     # clicks recorded, database size, cron last ran, DataEngine
-p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, passed/failed (default 50)
+p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, status (default 50)
+p202 system login-log --status not_completed  # right password, but a database failure stopped the
+                                    # sign-in (the throttle counts failed attempts alone)
 p202 system integrations --wide     # the INS/IPN/ZPN/webhook URLs to paste into ClickBank, JVZoo,
                                     # Zaxaa, Slack, PayKickstart; secret_stored, never the secret
 

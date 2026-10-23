@@ -55,13 +55,15 @@ final class UnverifiableInstalls
     }
 
     /**
-     * Settle the queue of a registration being deleted. Runs inside the
-     * caller's transaction and opens none (a nested begin would commit the
-     * caller's). Returns how many installs were settled.
+     * Settle the queue of a registration being deleted, inside the caller's
+     * transaction (refused outside one). Returns how many installs were
+     * settled.
      */
     public function settleForDeletedRegistration(int $userId, int $registrationId, int $now): int
     {
-        return $this->retire('registration_id = ? AND user_id = ?', 'ii', [$registrationId, $userId], self::DELETED_REASON, $now);
+        return $this->conn->joinTransaction(
+            fn (): int => $this->retire('registration_id = ? AND user_id = ?', 'ii', [$registrationId, $userId], self::DELETED_REASON, $now)
+        );
     }
 
     /**

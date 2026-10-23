@@ -33,13 +33,10 @@ class ReportsController
      * The dimensions after text_ad are the ones the Analyze pages and the
      * group overview had and the API did not:
      *  - ip: Analyze › IPs. An IPv6 address is a 202_ips row whose
-     *    ip_address holds its 202_ips_v6 row's id; the pages join that as
-     *    `2i6.ip_id = 2i.ip_address COLLATE …`, a number compared with
-     *    text, which leaves it to the server whether the IPv4 address
-     *    2.0.1.1 is IPv6 row 2 (`SELECT 2 = '2.0.1.1'` is 1 on MariaDB
-     *    10.11; the pages' join, measured there, did not match). Only an
-     *    all-digit ip_address is a reference here, compared as a number, and
-     *    a reference whose v6 row is gone is named null, not by its id.
+     *    ip_address holds its 202_ips_v6 row's id. Only an all-digit
+     *    ip_address is a reference, compared as a number (IpAddressSql, as
+     *    the pages join it), and a reference whose v6 row is gone is named
+     *    null, not by its id.
      *  - referer: Analyze › Referers, the referring domain; referer_url: the
      *    group overview's Referer, the whole URL.
      *  - device_type: the group overview's Device Type (Desktop, Mobile,

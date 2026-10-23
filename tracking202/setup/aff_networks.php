@@ -15,7 +15,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2u.install_hash, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -142,17 +145,19 @@ if (isset($_GET['delete_aff_network_id'])) {
 								`aff_network_time`='" . $mysql['aff_network_time'] . "'
 						WHERE   `user_id`='" . $mysql['user_id'] . "'
 						AND     `aff_network_id`='" . $mysql['aff_network_id'] . "'";
-		if ($delete_result = $db->query($delete_sql) or record_mysql_error($db, $delete_sql)) {
-			$delete_success = true;
+        if ($db->query($delete_sql)) {
+            $delete_success = true;
 
-			// Landing Page Optimizer (segments-v2 G10): mirror the save-path
-			// hook above — every dictionary mutation on this page flags the
-			// snapshot dirty for the hourly cron. DB-only — no HTTP here.
-			\Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
+            // Landing Page Optimizer (segments-v2 G10): mirror the save-path
+            // hook above — every dictionary mutation on this page flags the
+            // snapshot dirty for the hourly cron. DB-only — no HTTP here.
+            \Prosper202\Lpo\DimensionSync::markDirty($db, (int) ($_SESSION['user_id'] ?? 0));
 
-			if ($slack)
-				$slack->push('campaign_category_deleted', ['name' => $_GET['delete_aff_network_name'], 'user' => $user_row['username']]);
-		}
+            if ($slack)
+                $slack->push('campaign_category_deleted', ['name' => $_GET['delete_aff_network_name'], 'user' => $user_row['username']]);
+        } else {
+            record_mysql_error($db, $delete_sql);
+        }
 	} else {
 		header('location: ' . get_absolute_url() . 'tracking202/setup/aff_networks.php');
 	}

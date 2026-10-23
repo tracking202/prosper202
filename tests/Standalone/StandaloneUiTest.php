@@ -182,4 +182,22 @@ HTML;
         self::assertSame(1, substr_count($page, "document.cookie = 'user_api='"), 'one place sets it');
         self::assertStringContainsString("+ '; SameSite=Lax' + (window.location.protocol === 'https:' ? '; Secure' : '');", $page);
     }
+
+    /**
+     * On an installed app the key step sends a returning key on to sign-in,
+     * which never read it: the redirect carries nothing from the request.
+     */
+    public function testTheKeyStepRedirectCarriesNoRequestValue(): void
+    {
+        $page = (string) file_get_contents(dirname(__DIR__, 2) . '/202-config/get_apikey.php');
+        $found = preg_match_all('/\bheader\s*\((.*?)\);/s', $page, $calls);
+        self::assertGreaterThanOrEqual(1, $found, 'the scan finds the redirect');
+        foreach ($calls[1] as $arguments) {
+            self::assertDoesNotMatchRegularExpression(
+                '/\$_(GET|REQUEST|SERVER|COOKIE)|customers_api_key/',
+                $arguments,
+                "header($arguments)"
+            );
+        }
+    }
 }

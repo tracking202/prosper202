@@ -84,7 +84,7 @@ final class GroupOverviewIntegrationTest extends TestCase
     {
         $i = &self::$ids;
         foreach (['c1', 'c2', 'c3', 'c4'] as $c) {
-            // As INDEXES::get_c1_id() leaves them: one row per value, "" included.
+            // As findOrCreateC1()..C4() leave them: one row per value, "" included.
             $i["{$c}zero"] = self::insert("INSERT INTO 202_tracking_$c SET $c = '0'");
             $i["{$c}empty"] = self::insert("INSERT INTO 202_tracking_$c SET $c = ''");
             $i["{$c}word"] = self::insert("INSERT INTO 202_tracking_$c SET $c = 'go5731'");

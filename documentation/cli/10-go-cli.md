@@ -176,9 +176,9 @@ still needs the browser, see [UI parity](12-ui-parity.md).
 | `p202 change list` | Review staged writes awaiting approval |
 | `p202 eval run` | Run behavioral evals against an agent driving this instance |
 | `p202 system health` | Health check, plus a TLS certificate check of an https base URL made first, on its own connection (verified handshake, no HTTP request). Adds `tls_status` (`ok`, `expiring` within `--cert-warn-days` (default 21), `expired`, `hostname_mismatch`, `unknown_authority`, `invalid`, `unreachable`; `not_used` for http), `tls_not_after`, `tls_days_left`, `tls_issuer` and `tls_detail`. Exits 5 with the health object on stdout when `tls_status` is not `ok`/`not_used`; an expired certificate is reported as expired with a `certbot renew` hint, not as the network error the API call then hits |
-| `p202 system info` | Account › Settings for this install: code and database versions (`database_upgrade_needed`), PHP and MySQL versions, memcache, PHP limits, clicks recorded, database size, cron last ran, DataEngine progress. `system login-log [--limit 1-500]` lists sign-in attempts (user name, time, IP, passed). `system integrations` prints the ClickBank/JVZoo/Zaxaa/Slack/PayKickstart notification URLs and whether each secret is stored. `system metrics` prints sync counters, the job queue and alerts. Admin and a role with `access_to_settings` (`access_to_api_integrations` for integrations); a non-admin key exits 2 with a hint naming the role |
+| `p202 system info` | Account › Settings for this install: code and database versions (`database_upgrade_needed`), PHP and MySQL versions, memcache, PHP limits, clicks recorded, database size, cron last ran, DataEngine progress. `system login-log [--limit 1-500] [--status passed\|failed\|not_completed]` lists sign-in attempts (user name, time, IP, status: `not_completed` is a right password a database failure stopped, which the sign-in throttle does not count). `system integrations` prints the ClickBank/JVZoo/Zaxaa/Slack/PayKickstart notification URLs and whether each secret is stored. `system metrics` prints sync counters, the job queue and alerts. Admin and a role with `access_to_settings` (`access_to_api_integrations` for integrations); a non-admin key exits 2 with a hint naming the role |
 | `p202 system retention show` | Click-data retention, install-wide: `show`, `set --days 0-36500` (asks when it keeps less than now; `--force`), `delete-before --date YYYY-MM-DD` (schedules the cron job to delete every click all of whose visits were before the day; irreversible, so it always previews per-table counts and asks; `--dry-run` stops at the preview; the write carries the previewed `cutoff_time` and a 409 means run it again). `system isp-lookup show\|enable\|disable` is MaxMind ISP lookup (enable is refused while the ISP database is missing). None can be staged |
-| `p202 system cron` | Whether cron is ticking: per `cronjob_type` its row count and last run with age, and the last execution from `202_cronjob_logs` with its age. `hour` is labelled hourly and `secon` every minute; `hourl`, the `hourly` that development builds between 1.9.55 and 1.9.76 wrote, truncated by the `char(5)` column, is labelled so, with a note when it piles up. Exits 5 with the summary on stdout when the last execution is older than 5 minutes (`stale`) or missing (`never_ran`). `--raw` prints every row as the server returns it (under `--json`, added to the summary as `jobs`/`recent_logs`) |
+| `p202 system cron` | Whether cron is ticking: per `cronjob_type` its row count and last run with age, and the last execution from `202_cronjob_logs` with its age. The last execution is a scheduler's run, a cron job's or AutoCron's: from 1.9.78 the ping every signed-in page sends as it loads runs the tiers and records none, and a note says so when that is all that ran. `hour` is labelled hourly and `secon` every minute; `hourl`, the `hourly` that development builds between 1.9.55 and 1.9.76 wrote, truncated by the `char(5)` column, is labelled so, with a note when it piles up. Exits 5 with the summary on stdout when the last execution is older than 5 minutes (`stale`) or missing (`never_ran`). `--raw` prints every row as the server returns it (under `--json`, added to the summary as `jobs`/`recent_logs`) |
 
 All entities support standard CRUD operations (`list`, `get`, `create`, `update`, `delete`) where applicable. Five behaviors apply across the board on servers that advertise them in `/capabilities`:
 
@@ -491,6 +491,54 @@ p202 config unset-default report.period
 p202 config set-default output.format table   # json, table, ndjson or csv
 ```
 
+## MCP Server (AI Assistants)
+
+`p202 mcp` serves the CLI to AI apps over the Model Context Protocol, on
+stdin/stdout. The app starts it and calls its tools; each tool is one CLI
+command, with an input schema made from the command's flags and a read-only or
+destructive hint, so the app runs reads and asks before writes.
+
+```bash
+claude mcp add prosper202 -- p202 mcp --read-only    # reads only (start here)
+claude mcp add prosper202 -- p202 --staged mcp       # writes become proposals
+claude mcp add prosper202 -- p202 mcp                # reads and writes
+```
+
+Claude Desktop and Cursor take the same command in their MCP settings:
+
+```json
+{"mcpServers": {"prosper202": {"command": "/path/to/p202", "args": ["mcp", "--read-only"]}}}
+```
+
+- The server keeps the profile that was active when it started (or `--profile`).
+- A write tool runs with `--force` once the app's approval prompt is answered,
+  so do not set the app to always allow the delete tools; deleting a tracker
+  stops its links. Each delete tool takes `dry_run: true` for a preview.
+- With `--staged`, a write returns a change id and changes nothing; you apply
+  it with `p202 change apply <id>`. The assistant is not offered the apply and
+  discard tools.
+- `p202 mcp tools` lists the tools as JSON. `p202 mcp call <tool> --input
+  '<json>'` runs one as the app would (`--input -` reads the JSON from stdin).
+- An error comes back as the same JSON envelope as below, naming CLI flags
+  (`--aff-campaign-id`); the tool argument is the same name in snake_case.
+
+For claude.ai and other hosted AI apps, Tracking202 runs an MCP server at
+`https://mcp.tracking202.com/mcp`. You add that address as a connector, then
+sign in and approve the connection on your own install (Prosper202 1.9.78 or
+later, on https), choosing read only, propose changes, or read and change. The
+connection is an API key labelled `AI: <app> via mcp.tracking202.com` in
+My Account › Personal Settings › API keys; remove it there to disconnect. It needs a ClickServer Pro
+licence.
+
+To improve the connector, the hosted server records which tools the app calls, the names (not the
+values) of their arguments, whether they work, with the error when one fails (quoted values taken
+out), and a one-line description the app gives of what each request is for (each tool asks for it as
+`context`), which can repeat what was asked. Email addresses, web addresses and long numbers are
+removed first. The records are kept with the install's ClickServer licence for up to two years, so
+Tracking202 sees them for that customer's account; what the tools return is not recorded. When no tool fits a request, the app can call `get_more_tools`, which answers with the tools
+that may do it (ranked by `p202 search`) and records the request. `p202 mcp` on your own computer
+records nothing.
+
 ## Errors
 
 Every failure is reported on **stderr** with a category, the message, and,
@@ -627,7 +675,7 @@ those fields out of the bodies they build from another record.
 | 3 | Network error (connection timeout, DNS failure) |
 | 4 | Server error (5xx response, or a 402 that is not the install's licence refusal: a proxy, WAF or host in front of the install answered it) |
 | 5 | Partial failure (some items in bulk operation failed, or a check such as `system health` or `rotator check` found a problem; its rows stay on stdout) |
-| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the Pro trial or subscription page. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install remembers an allow for an hour and a refusal for five minutes, and allows the CLI when it cannot get an answer (`GET /capabilities` reports the verdict as `cli`). A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; otherwise it is a generic failure (exit 1) and each item's own error says what it needs |
+| 6 | Licence: the install's ClickServer API key has no active Pro subscription, so the install refuses the Go CLI (HTTP 402, category `licence`); the hint links the Pro trial or subscription page. The install tells the Go CLI apart by its User-Agent, so this is a licensing prompt for the product, not an access control on the API: the same key keeps answering the PHP CLI, curl and the web app. The install remembers an allow for an hour and a refusal for five minutes, and allows the CLI when it cannot get an answer (`GET /capabilities` reports the verdict as `cli`). A user with no ClickServer API key on the install is refused; a key the install cannot read (its row missing, or the read failing) counts as no answer, so it is allowed. A run that aggregates several requests (a shell batch, a multi-profile report, `exec`) exits 6 only when every failure in it was the refusal; otherwise it is a generic failure (exit 1) and each item's own error says what it needs |
 
 ## Telemetry
 

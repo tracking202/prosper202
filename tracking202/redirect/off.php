@@ -22,6 +22,8 @@ elseif (\Prosper202\Http\ClickCookie::value($_COOKIE, 'tracking202pci') !== null
 
 if (! is_numeric($acip))
     die();
+// Goes on when the database is out of reach: it falls back to the URL it keeps for an outage.
+$p202OutageFallback = true;
 include_once (substr(__DIR__, 0,-21) . '/202-config/connect2.php');
 include_once(substr(__DIR__, 0,-21) . '/202-config/class-dataengine-slim.php');
 
@@ -33,40 +35,9 @@ if (p202IsSpeculativeRequest()) {
 }
 
 
-if(getCookie202('tracking202subid') !== null) { //if there's a cookie use it
-    $click_id = getCookie202('tracking202subid');
-}
-
-// Nothing named the click: the visitor's last click by address. Only then —
-// a click the request names (?pci=, or the pci cookie) is the one below
-// resolves; this guess replaced it whenever the subid cookie was missing,
-// which is every visitor the privacy setting holds back (no cookies), and
-// their stored address is masked, so the guess was another visitor's click
-// in the same /24, or none.
-else if ($db && $pci === '') {
-    // Guarded on $db: when MySQL is down the BlazerCache fallback below handles
-    // the redirect, so we must not dereference a false $db here first.
-    $mysql['user_id'] = 1;
-    // The lookup is among the first account's clicks, stored under its
-    // setting, which is the install's (p202ApplyOwnerPrivacy()).
-    p202ApplyOwnerPrivacy($mysql['user_id']);
-    $daysago = time() - 86400; // 24 hours
-    // The visitor's last click by the address the click path stored
-    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
-    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
-        new \Prosper202\Database\Connection($db),
-        p202StoredVisitorIp(),
-        (int) $mysql['user_id'],
-        $daysago,
-        !trackingEnabled()
-    ) ?? [];
-    $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
-    $click_id = $mysql['click_id'];
-    $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
-    $mysql['click_id_public'] = $db->real_escape_string((string)($click_row1['click_id_public'] ?? ''));
-    $pci=$mysql['click_id_public'];
-
-}
+// The visitor's click by its subid cookie, read exactly (ClickId).
+$offSubidCookie = getCookie202('tracking202subid');
+$click_id = $offSubidCookie === null ? '' : (string) (\Prosper202\Click\ClickId::parse($offSubidCookie) ?? '');
 
 $usedCachedRedirect = false;
 if (! $db)
@@ -86,32 +57,10 @@ if ($usedCachedRedirect == true) {
             // No click is recorded: the install token expands empty (plan §5.1).
             $new_url = str_ireplace('[[p202_install_token]]', '', $new_url);
             
-            // c1 sring replace for cached redirect
-            if (isset($_GET['c1']) && $_GET['c1'] != '') {
-                $new_url = str_replace("[[c1]]", $_GET['c1'], $new_url);
-            } else {
-                $new_url = str_replace("[[c1]]", "p202c1", $new_url);
-            }
-            
-            // c2 sring replace for cached redirect
-            if (isset($_GET['c2']) && $_GET['c2'] != '') {
-                $new_url = str_replace("[[c2]]", $_GET['c2'], $new_url);
-            } else {
-                $new_url = str_replace("[[c2]]", "p202c2", $new_url);
-            }
-            
-            // c3 sring replace for cached redirect
-            if (isset($_GET['c3']) && $_GET['c3'] != '') {
-                $new_url = str_replace("[[c3]]", $_GET['c3'], $new_url);
-            } else {
-                $new_url = str_replace("[[c3]]", "p202c3", $new_url);
-            }
-            
-            // c4 sring replace for cached redirect
-            if (isset($_GET['c4']) && $_GET['c4'] != '') {
-                $new_url = str_replace("[[c4]]", $_GET['c4'], $new_url);
-            } else {
-                $new_url = str_replace("[[c4]]", "p202c4", $new_url);
+            // c1-c4 as sent, or p202<name> for one not sent: a list (c1[]=x) is none
+            foreach (['c1', 'c2', 'c3', 'c4'] as $token) {
+                $sent = \Prosper202\Click\ClickRequest::text($_GET, $token);
+                $new_url = str_replace("[[$token]]", $sent !== '' ? rawurlencode($sent) : "p202$token", $new_url);
             }
             
             $urlvars = getPrePopVars($urlvarslist);
@@ -124,24 +73,60 @@ if ($usedCachedRedirect == true) {
         }
     }
     
-    die("<h2>Error establishing a database connection - please contact the webhost</h2>");
+    p202Unavailable();
 }
 
+// The offer the link names, any account's: its account is the one whose
+// clicks the address lookup below searches and whose URL this is. It was
+// read for the first account only, so another account's offer reached
+// without a click went nowhere.
+$offOffer = null;
+$offOfferId = \Prosper202\Click\PublicId::parse($acip);
+if ($offOfferId !== null) {
+    try {
+        $offOffer = \Prosper202\Repository\LookupRepositoryFactory::reads($db)->offer($offOfferId);
+    } catch (\Throwable $offReadError) {
+        record_mysql_error($db, 'reading campaign ' . $offOfferId, $offReadError->getMessage());
+    }
+}
+
+// Nothing named the click: the visitor's last click by address. Only then —
+// a click the request names (?pci=, or the pci cookie) is the one below
+// resolves; this guess replaced it whenever the subid cookie was missing,
+// which is every visitor the privacy setting holds back (no cookies), and
+// their stored address is masked, so the guess was another visitor's click
+// in the same /24, or none.
+if ($offSubidCookie === null && $pci === '' && $offOffer !== null) {
+    $mysql['user_id'] = $db->real_escape_string((string) $offOffer['user_id']);
+    // The lookup is among the offer's account's clicks, stored under its
+    // setting (p202ApplyOwnerPrivacy()).
+    p202ApplyOwnerPrivacy($mysql['user_id']);
+    $daysago = time() - 86400; // 24 hours
+    // The visitor's last click by the address the click path stored
+    // (p202StoredVisitorIp), not the proxy's REMOTE_ADDR.
+    $click_row1 = \Prosper202\Click\LastClickFromAddress::find(
+        new \Prosper202\Database\Connection($db),
+        p202StoredVisitorIp(),
+        (int) $mysql['user_id'],
+        $daysago,
+        !trackingEnabled()
+    ) ?? [];
+    $mysql['click_id'] = $db->real_escape_string((string)($click_row1['click_id'] ?? ''));
+    $click_id = $mysql['click_id'];
+    $mysql['ppc_account_id'] = $db->real_escape_string((string)($click_row1['ppc_account_id'] ?? ''));
+    $mysql['click_id_public'] = $db->real_escape_string((string)($click_row1['click_id_public'] ?? ''));
+    $pci = $mysql['click_id_public'];
+}
+
+// The click's public id exactly (from the link, the pci cookie, go.php's 202v
+// or the address lookup). One that names no click is no click: compared as
+// text, MySQL read 12abc as 12, and a click with no public id (0) matched
+// any of the account's clicks without one, which was then rewritten.
+$offPciId = \Prosper202\Click\ClickId::parse($pci);
+
 /* OK FIRST IF THERE IS NO PUBLIC CLICK_ID, JUST REDIRECT TO THE NORMAL CAMPAIGN */
-if ($pci == '') {
-    $mysql['aff_campaign_id_public'] = $db->real_escape_string($acip);
- $aff_campaign_sql = "SELECT   aff_campaign_rotate, 
-									aff_campaign_url, 
-									aff_campaign_url_2, 
-									aff_campaign_url_3, 
-									aff_campaign_url_4, 
-									aff_campaign_url_5, 
-									aff_campaign_name, 
-									aff_campaign_cloaking 
-						    FROM 	202_aff_campaigns 
-						    WHERE 	aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
-						    AND 202_aff_campaigns.user_id=1";
-    $aff_campaign_row = memcache_mysql_fetch_assoc($db, $aff_campaign_sql);
+if ($offPciId === null) {
+    $aff_campaign_row = $offOffer;
     // The outage fallback follows this path too (as below, for a click with
     // a public id), including a campaign left without a URL.
     if ($memcacheWorking && is_array($aff_campaign_row)) {
@@ -158,7 +143,13 @@ if ($pci == '') {
     
     $redirect_site_url = rotateTrackerUrl($db, $aff_campaign_row);
     
-    $redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
+    // The click is read for the URL's tokens only if it is the offer's account's.
+    $redirect_site_url = replaceTrackerPlaceholders(
+        $db,
+        $redirect_site_url,
+        $click_id,
+        (int) $aff_campaign_row['user_id']
+    );
     $urlvars = getPrePopVars($urlvarslist);
     if (isset($urlvars)) {
         $redirect_site_url = setPrePopVars($urlvars, $redirect_site_url, false);
@@ -224,14 +215,11 @@ if ($pci == '') {
 /* ------------------------------------------------------- */
 /* ------------------------------------------------------- */
 
-$mysql['aff_campaign_id_public'] = $db->real_escape_string((string)$_GET['acip']);
-$mysql['click_id_public'] = $db->real_escape_string($pci);
-
 $info_sql = "
 	SELECT
 		2c.click_id,
 		2c.user_id,
-		(SELECT MIN(fc.click_time) FROM 202_clicks AS fc WHERE fc.click_id = 2cr.click_id) AS first_click_time,
+		2ac.user_id AS aff_campaign_user_id,
 		click_filtered,
 		landing_page_id,
 		click_cloaking,
@@ -252,10 +240,13 @@ $info_sql = "
 		202_clicks_record AS 2cr
 		LEFT JOIN 202_clicks AS 2c ON (2c.click_id = 2cr.click_id)
 		LEFT JOIN 202_clicks_site AS 2cs ON (2cs.click_id = 2cr.click_id)
+		LEFT JOIN 202_clicks_rotator AS cro ON (cro.click_id = 2cr.click_id)
 	WHERE
-		2ac.aff_campaign_id_public='" . $mysql['aff_campaign_id_public'] . "'
-		AND 2cr.click_id_public='" . $mysql['click_id_public'] . "'
+		2ac.aff_campaign_id_public=" . (int) $offOfferId . "
+		AND 2cr.click_id_public=" . (int) $offPciId . "
 		AND 2ac.user_id = 2c.user_id
+	" . \Prosper202\Click\LatestVisit::orderBy('2c', 'cro') . "
+	LIMIT 1
 ";
 // The offer and the click are named separately (an advanced landing page
 // lets the visitor choose among the account's offers, so the campaign may
@@ -265,7 +256,8 @@ $info_sql = "
 // random digits, into that account's campaign (CLAUDE.md #27). Another
 // account's campaign now names no row, the unknown-pair path below.
 
-$info_row = memcache_mysql_fetch_assoc($db, $info_sql);
+// Not cached: one click's row, which this page and a rotator re-click rewrite.
+$info_row = $offOfferId === null ? null : memcache_mysql_fetch_assoc($db, $info_sql, 0);
 
 // Guard BEFORE dereferencing: the public click id / campaign combo may not
 // exist (expired, mistyped, or a DB hiccup). Never crash the redirect — fall
@@ -301,101 +293,63 @@ $click_id = $info_row['click_id'];
 $mysql['click_id'] = $db->real_escape_string((string)$click_id);
 
 $mysql['aff_campaign_id'] = $db->real_escape_string((string)$info_row['aff_campaign_id']);
-$mysql['click_payout'] = $db->real_escape_string((string)$info_row['aff_campaign_payout']);
 
-// The click leaves the landing page for this offer: route it to the
-// offer's campaign and seed its payout with the campaign's. Only a click
-// that has not converted: a converted click's value belongs to its
-// conversion ledger (MysqlConversionLedger), and re-seeding it here would
-// leave the click disagreeing with its rows.
-$update_sql = "
-	UPDATE
-		202_clicks AS 2c
-		LEFT JOIN 202_clicks_spy AS 2cs ON (2c.click_id = 2cs.click_id)
-	SET
-		2c.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-		2cs.aff_campaign_id='" . $mysql['aff_campaign_id'] . "',
-		2c.click_payout='" . $mysql['click_payout'] . "',
-		2cs.click_payout='" . $mysql['click_payout'] . "'
-	WHERE
-		2c.click_id='" . $mysql['click_id'] . "'
-		AND 2c.click_lead = 0
-";
-// A click leaving its landing page for an offer takes the offer's
-// campaign. When the click is old enough for the attribution report
-// rollup to have summed it, the rewrite and its mark are one transaction
-// (RollupDirty::hotPathRewriteNeedsMark; AttributionRollup rule 2).
-$rollupMark = \Prosper202\Report\RollupDirty::hotPathRewriteNeedsMark($info_row['first_click_time'] ?? null);
-if ($rollupMark) {
-	$db->begin_transaction() or record_mysql_error($db);
-	\Prosper202\Report\RollupDirty::click(new \Prosper202\Database\Connection($db), (int) ($info_row['user_id'] ?? 0), (int) $mysql['click_id']);
-}
-// this function delays the sql, because UPDATING is very very slow
-//delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db);
-if ($rollupMark) {
-	$db->commit() or record_mysql_error($db);
-}
-
-$mysql['click_out'] = 1;
-
-// Initialize before the branch so the non-cloaked path doesn't read an
-// undefined variable at the $cloaking_on checks further down (matches dl.php/lp.php).
-$cloaking_on = false;
 // The setting the click keeps (record_adv.php: the tracker's, -1 when it
 // leaves the decision to the campaign), or the campaign's (ClickCloaking).
-if (\Prosper202\Click\ClickCloaking::isOn($info_row)) {
-    $cloaking_on = true;
-    $mysql['click_cloaking'] = 1;
-    // if cloaking is on, add in a click_id_public, because we will be forwarding them to a cloaked /cl/xxxx link
-} else {
-    $mysql['click_cloaking'] = 0;
-}
+$cloaking_on = \Prosper202\Click\ClickCloaking::isOn($info_row);
 
-$update_sql = "
-	UPDATE
-		202_clicks_record
-	SET
-		click_out='" . $mysql['click_out'] . "',
-		click_cloaking='" . $mysql['click_cloaking'] . "'
-	WHERE
-		click_id='" . $mysql['click_id'] . "'
-";
-//delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db);
-
+$locationRepo = \Prosper202\Repository\LookupRepositoryFactory::location($db);
 $outbound_site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-$click_outbound_site_url_id = INDEXES::get_site_url_id($db, $outbound_site_url);
-$mysql['click_outbound_site_url_id'] = $db->real_escape_string((string)$click_outbound_site_url_id);
+// The link the visitor came by: per click, with a &pci= (Get LP Code's PHP
+// redirect) or the traffic source's values, so it is looked up uncached.
+$click_outbound_site_url_id = $locationRepo->findOrCreateClickSiteUrl($outbound_site_url);
 
 $redirect_site_url = rotateTrackerUrl($db, $info_row);
 
-$redirect_site_url = replaceTrackerPlaceholders($db, $redirect_site_url, $click_id);
-
-$click_redirect_site_url_id = INDEXES::get_site_url_id($db, $redirect_site_url);
-$mysql['click_redirect_site_url_id'] = $db->real_escape_string((string)$click_redirect_site_url_id);
-
-$update_sql = "
-	UPDATE
-		202_clicks_site
-	SET
-		click_outbound_site_url_id='" . $mysql['click_outbound_site_url_id'] . "',
-		click_redirect_site_url_id='" . $mysql['click_redirect_site_url_id'] . "'
-	WHERE
-		click_id='" . $mysql['click_id'] . "'
-";
-//delay_sql($db, $update_sql);
-$click_result = $db->query($update_sql) or record_mysql_error($db);
-
-// alright now the updates,
-// WE WANT TO DELAY THESES UPDATES, in a MYSQL DATBASES? Or else the UPDATES lag the server, the UPDATES have to wait until it locks to update the server
-// so what happens is if there not delayed, if someone is pulling MASSIVE queries on the t202 website, it'll wait till they load before our update runs,
-// and that means if this update wasn't delayed it'd wait untill their queries were done on the site before moving forward. Massive slowness, so we update delays theses in cronjobs a at a lter time.
-
-// ADD TO CLICK SUMMARY TABLE?
-
-// update the click summary table if this is a 'real click'
-// if ($info_row['click_filtered'] == 0) {
+// The click leaves its landing page for this offer: it takes the offer's
+// campaign and, unless it has converted, its payout, and the redirect URL's
+// placeholders are read back from those rows. Written only when the click
+// is the offer's account's: the read above asks it too, and the writer asks
+// it again of the offer's account, not the click's.
+$offExitRecorded = false;
+try {
+    $offExit = new \Prosper202\Click\ClickExit(
+        (int) $info_row['aff_campaign_user_id'],
+        (int) $click_id,
+        offer: new \Prosper202\Click\OfferRoute(
+            (int) $info_row['aff_campaign_id'],
+            (string) $info_row['aff_campaign_payout']
+        ),
+        cloaking: $cloaking_on ? 1 : 0,
+        outboundSiteUrlId: (int) $click_outbound_site_url_id,
+    );
+    $offResolveRedirect = function () use ($db, &$redirect_site_url, $click_id, $info_row, $locationRepo): int {
+        $redirect_site_url = replaceTrackerPlaceholders(
+            $db,
+            $redirect_site_url,
+            $click_id,
+            (int) $info_row['user_id']
+        );
+        return $locationRepo->findOrCreateClickSiteUrl((string) $redirect_site_url);
+    };
+    $offClicks = new \Prosper202\Click\MysqlClickRepository(
+        \Prosper202\Repository\LookupRepositoryFactory::connection($db)
+    );
+    // The site URL lookup caches the ids of the rows it inserts: held until
+    // the transaction commits, and dropped with a rollback.
+    p202WithHeldCacheWrites(function () use (&$offExitRecorded, $offClicks, $offExit, $offResolveRedirect): void {
+        $offExitRecorded = $offClicks->recordExit($offExit, $offResolveRedirect);
+    });
+} catch (\Throwable $offWriteError) {
+    record_mysql_error(
+        $db,
+        'recording click ' . $mysql['click_id'] . ' leaving for its offer',
+        $offWriteError->getMessage()
+    );
+}
+if (!$offExitRecorded) {
+    die();
+}
 
 $mysql['landing_page_id'] = $db->real_escape_string((string)$info_row['landing_page_id']);
 $mysql['user_id'] = $db->real_escape_string((string)$info_row['user_id']);

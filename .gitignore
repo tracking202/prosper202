@@ -56,6 +56,7 @@ CLAUDE.md
 # Session files
 .ax-session/
 202-cronjobs/cron.lock
+202-config/cronjob.log
 
 # Go CLI build artifacts
 go-cli/prosper202-cli

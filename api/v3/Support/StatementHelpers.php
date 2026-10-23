@@ -61,21 +61,13 @@ trait StatementHelpers
     }
 
     /**
-     * Run $fn inside a transaction: checked begin, checked commit, rollback on
-     * any throwable. This is the only transaction primitive in api/v3 -- the
-     * controllers hand their multi-statement bodies to it as closures rather
-     * than opening a transaction themselves, so there is no second place for a
-     * commit check or a rollback to be forgotten.
-     *
-     * On the return-value checks: which mysqli failure mode applies depends on
-     * the entry point. api/v3/index.php never includes 202-config/connect.php,
-     * so this code runs under PHP's default mysqli_report(ERROR | STRICT) and a
-     * failed begin_transaction()/commit() throws mysqli_sql_exception before
-     * the `if` is reached. connect.php (the UI and cron paths) downgrades that
-     * to STRICT alone, where the same calls return false. The checks are kept
-     * so the helper is correct under both modes -- a trait cannot know which
-     * bootstrap loaded it -- and so the failure has the same DatabaseException
-     * shape as every other helper here.
+     * Run $fn inside a transaction: Connection::transaction(), which every
+     * transaction goes through. Its checked begin and commit, its rollback
+     * on any throwable, and its refusal to begin inside another transaction
+     * on the same connection (a nested begin commits the outer one) hold for
+     * the controllers as for everything else. A failed begin or commit is a
+     * QueryException, which the API answers as a 500 as it does this
+     * trait's DatabaseException.
      *
      * @template T
      * @param callable(): T $fn
@@ -83,29 +75,6 @@ trait StatementHelpers
      */
     protected function transaction(callable $fn): mixed
     {
-        // An ignored false here is the worst one: $fn() would run in
-        // autocommit, every statement would land individually, and the
-        // rollback below would have nothing to undo while the caller is told
-        // the operation failed.
-        if (!$this->db->begin_transaction()) {
-            throw new DatabaseException('Could not start transaction: ' . $this->db->error);
-        }
-        try {
-            $result = $fn();
-            if (!$this->db->commit()) {
-                // Thrown, not returned: the catch below is what rolls back, so
-                // a failed commit leaves nothing half-applied on a connection
-                // that may be reused.
-                throw new DatabaseException('Transaction commit failed: ' . $this->db->error);
-            }
-            return $result;
-        } catch (\Throwable $e) {
-            // rollback()'s own result is deliberately unchecked: $e is the root
-            // cause and must reach the caller. A rollback that also fails has
-            // nothing better to report, and replacing $e with it would hide why
-            // the work was abandoned.
-            $this->db->rollback();
-            throw $e;
-        }
+        return (new \Prosper202\Database\Connection($this->db))->transaction($fn);
     }
 }

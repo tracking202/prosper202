@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__, 2) . '/vendor/autoload.php';
+// For p202UncaughtLogLine(): a failure answered as a 500 is logged as the pages log theirs.
+require_once dirname(__DIR__, 2) . '/202-config/mysql-error-args.php';
+require_once dirname(__DIR__, 2) . '/202-config/functions-shared.php';
 
 // Load config at file scope so DB globals ($dbhost, $dbuser, etc.) are
 // available via the 'global' keyword in the DB class constructor.
@@ -31,6 +34,7 @@ try {
     Bootstrap::init();
     $db = Bootstrap::db();
 } catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 could not start, answered 503', $e));
     Bootstrap::errorResponse('Service unavailable', 503);
     exit;
 }
@@ -180,6 +184,50 @@ try {
         exit;
     }
 
+    // AI connections (Api\V3\Support\AiConnect, 202-account/connect-ai.php).
+    // GET /connect tells Tracking202's MCP server the install offers them,
+    // before anyone has signed in. POST /connect/token is that server
+    // exchanging a one-time approval for the connection's key, so it has no
+    // key to present yet: the code and its verifier are the credential.
+    // POST /connect/revoke (after authentication, below) is a connection's
+    // key removing itself. Neither write previews or proposes, so ?dry_run
+    // and ?staged are refused rather than ignored (CLAUDE.md #14).
+    if ($path === '/connect' && $method === 'GET') {
+        Bootstrap::jsonResponse(['data' => ['connect' => 1]]);
+        exit;
+    }
+    if ($path === '/connect/token' || $path === '/connect/revoke') {
+        $withheld = \Api\V3\Support\AiConnect::withheldFlag($queryParams);
+        if ($withheld !== null) {
+            Bootstrap::errorResponse($withheld . ' is not supported on ' . $path . '; it writes or does nothing', 422);
+            exit;
+        }
+    }
+    if ($path === '/connect/token' && $method === 'POST') {
+        // Only failed exchanges are counted, per address: every MCP server
+        // call can arrive from one shared address (a proxy, Cloudflare's
+        // Worker egress), so counting every exchange let junk requests turn
+        // real ones away. A good exchange is a 256-bit one-time code plus its
+        // verifier, so it is never refused; a failure past the limit is
+        // answered 429 (AiConnect::tokenWithFailureBudget: a source past its
+        // budget is refused before the work unless its code is a live one).
+        // The budget check reads only the presented code; the body goes
+        // whole to ConnectController::token, which refuses unknown keys.
+        $connectStore = new ServerStateStore();
+        $presentedCode = is_array($payload) ? ($payload['code'] ?? null) : null;
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::tokenWithFailureBudget(
+            $connectStore,
+            $presentedCode,
+            fn (): array => (new \Api\V3\Controllers\ConnectController($db, $connectStore))->token($payload)
+        );
+        if (($connectBody['rate_limited'] ?? false) === true) {
+            header('Retry-After: ' . (int) $connectBody['retry_after_seconds']);
+            Bootstrap::errorResponse('Rate limit exceeded', 429, ['retry_after_seconds' => $connectBody['retry_after_seconds']]);
+            exit;
+        }
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
     // Unauthenticated app schema, fetched by an app build at runtime so a
     // change on the server needs no store resubmission. An app binary cannot
     // hold an API key; the registration is selected by the app token in the
@@ -224,6 +272,14 @@ try {
     RequestContext::setActorUserId($userId);
     RequestContext::setApiKeyRef($auth->apiKeyRef());
 
+    // The key that authenticated removes itself, and only itself, whatever
+    // its scope: so before the limits, the CLI licence gate and the scopes.
+    if ($path === '/connect/revoke' && $method === 'POST') {
+        [$connectStatus, $connectBody] = \Api\V3\Support\AiConnect::revoke($db, Auth::bearerKey($headers));
+        Bootstrap::jsonResponse($connectBody, $connectStatus);
+        exit;
+    }
+
     // Lightweight fixed-window rate limits for high-impact operations.
     $stateStore = new ServerStateStore();
     $bucketKey = 'user:' . $userId;
@@ -255,16 +311,16 @@ try {
 
     // Pro-only Go CLI: requests from the Go CLI need this install's ClickServer
     // key to belong to an active Prosper202 ClickServer subscription (trials
-    // count). /capabilities and the API root stay open so the CLI can explain
-    // the refusal. Fails open when my.tracking202.com can't be reached (see
+    // count). /capabilities, the API root and three diagnostic reads stay
+    // open, so the CLI can explain the refusal (isCliGateExempt). Fails open
+    // when my.tracking202.com can't be reached (see
     // CapabilitiesController::cliAccess). The PHP bin/p202 CLI is not gated.
     // The check keys on the User-Agent the Go CLI sends — a licensing prompt,
     // not an access control (see isGoCliUserAgent) — and runs after the rate
     // limiter above, so a burst that is refused there never reaches
     // my.tracking202.com on a cold cache.
     if (\Api\V3\Controllers\CapabilitiesController::isGoCliUserAgent((string)($_SERVER['HTTP_USER_AGENT'] ?? ''))
-        && !in_array(rtrim($path, '/'), ['', '/capabilities'], true)
-        && $path !== '/system' && !str_starts_with($path, '/system/')   // diagnostics stay usable
+        && !\Api\V3\Controllers\CapabilitiesController::isCliGateExempt($method, $path)
         && !(new \Api\V3\Controllers\CapabilitiesController($db, $userId))->cliAccess()) {
         Bootstrap::errorResponse(
             'The Prosper202 CLI requires a Prosper202 ClickServer Pro licence on this install\'s '
@@ -1447,8 +1503,8 @@ try {
             // approver key (`read,campaigns:write`) out of *rejecting* a
             // proposal while leaving it able to approve one — an approval
             // queue that can only be drained by approving. The controller
-            // requires `<area>:stage`, which a proposer's `stage` key and an
-            // approver's `<area>:write` key both satisfy.
+            // requires `<area>:write` (an approver), or `<area>:stage` from
+            // the key that staged the change, withdrawing its own proposal.
             $scopeArea = null;
         }
         if ($method === 'POST' && preg_match('#^/staged-changes/[^/]+/apply$#', $path) === 1) {
@@ -1565,13 +1621,18 @@ try {
 } catch (ConflictException $e) {
     Bootstrap::errorResponse($e->getMessage(), 409, $e->getDetails() ? ['details' => $e->getDetails()] : []);
 } catch (WriteCommittedException $e) {
-    error_log('p202: ' . $e->getMessage() . ' cause: ' . ($e->getPrevious()?->getMessage() ?? 'unknown'));
+    error_log(p202UncaughtLogLine('API v3 write committed, then failed', $e));
     Bootstrap::errorResponse($e->getMessage(), $e->getHttpStatus());
 } catch (HttpException $e) {
     $code = $e->getHttpStatus();
+    if ($code >= 500) {
+        // The answer names no cause; the log keeps it.
+        error_log(p202UncaughtLogLine('API v3 answered ' . $code, $e));
+    }
     $message = $code >= 500 ? 'Internal server error' : $e->getMessage();
     Bootstrap::errorResponse($message, $code);
-} catch (\Throwable) {
+} catch (\Throwable $e) {
+    error_log(p202UncaughtLogLine('API v3 answered 500', $e));
     Bootstrap::errorResponse('Internal server error', 500);
 }
 

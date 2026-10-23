@@ -63,7 +63,7 @@ This file captures the API paths and payload/query expectations used by upcoming
   - `ppc-account pixel list|create|update|delete <ppc_account_id> [pixel_id]`: the same shape under `/api/v3/ppc-accounts/{id}/pixels`, body `{pixel_type_id, pixel_code, correction_url}` from `--type-id`, `--code`, `--correction-url` (`""` sent on update, to remove it)
   - A 404 from a server without `features.setup_section` is hinted as an old server; a 404 naming a record (`Landing page N not found`, `Traffic source account N not found`, `Pixel P not found on traffic source account N`, ...) names the list command for it; a 403 naming `access_to_setup_section` or `remove_traffic_source` (which `ppc-network variable` needs as well) names the roles that have it
 - The Administration commands (`system info|login-log|integrations|metrics`, `system retention show|set|delete-before`, `system isp-lookup show|enable|disable`)
-  - reads: `GET /api/v3/system/{info,login-log?limit=1-500,integrations,metrics,retention,isp-lookup}`; `--limit` is checked before the request; a 404 is "this server has no Administration API" (`features.administration`); a 403 `Admin access required.` is exit 2 with the role hint
+  - reads: `GET /api/v3/system/{info,login-log?limit=1-500&status=passed|failed|not_completed,integrations,metrics,retention,isp-lookup}`; `--limit` and `--status` are checked before the request (a `--status` an older server refuses as an unknown parameter is hinted to drop it); a 404 is "this server has no Administration API" (`features.administration`); a 403 `Admin access required.` is exit 2 with the role hint
   - writes refuse `--staged` before any request
   - `system retention set --days N`: `GET /api/v3/system/retention` (`data.auto_delete_days` required, else exit 4), the confirmation only when `N > 0` and (`current == 0` or `N < current`) (`--force` skips), then `PUT /api/v3/system/retention` with `{auto_delete_days: N}` (a JSON number)
   - `system retention delete-before --date D`: `POST /api/v3/system/retention/delete-before?dry_run=1` with `{before: D}` through `PostUpdate`; `data.before`, `data.cutoff_time`, `data.clicks` and `data.rows` are required (missing = exit 4). `--dry-run` stops there; `clicks` 0 writes nothing; otherwise the confirmation (`--force` skips), then the same POST without `dry_run`, adding `cutoff_time`; a `409` is exit 1 with "run the same command again"
@@ -86,7 +86,7 @@ This file captures the API paths and payload/query expectations used by upcoming
   - for an https base URL, first a DNS lookup, TCP connect and verified TLS handshake to its host (no HTTP bytes), through the same probe as `campaign check-urls`
   - then `GET /api/v3/system/health` (unauthenticated), attempted whatever the handshake found; the `tls_*` fields are merged into its `data` object
 - `system cron`
-  - `GET /api/v3/system/cron`: `data.jobs` (`cronjob_type`, `cronjob_time`, `last_run_human`, every row of `202_cronjobs`) and `data.recent_logs` (`id`, `last_execution_time`, `time_human`, up to 20); times may arrive as numeric strings
+  - `GET /api/v3/system/cron`: `data.jobs` (`cronjob_type`, `cronjob_time`, `last_run_human`, every row of `202_cronjobs`) and `data.recent_logs` (`id`, `last_execution_time`, `time_human`, up to 20; from 1.9.78 a scheduler's runs only, not a signed-in page's ping); times may arrive as numeric strings
   - summarized client-side; `--raw` keeps the server's arrays
 - `tracker create-with-url`
   - `POST /api/v3/trackers`

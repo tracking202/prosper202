@@ -534,6 +534,12 @@ case "$ask" in
                 "$(printf '%s' "$out" | jq -r '.error.message')" "$(printf '%s' "$out" | jq -r '.error.hint')"
         fi
         ;;
+    *"sign-in attempts on this install failed"*)
+        # The server filters by status: login_success false also covers a
+        # sign-in that was not completed.
+        names=$(p202 system login-log --status failed --json | jq -r '[.data[].user_name] | unique | join(", ")')
+        printf 'Failed sign-in attempts, per `p202 system login-log --status failed`, by user name: %s.\n' "${names:-none}"
+        ;;
     *"EVAL-PRD-1"*)
         id=$(p202 ltv products --limit 500 --json | jq -r '.data[] | select(.external_product_id=="EVAL-PRD-1") | .product_id' | head -1)
         if [ -z "$id" ]; then

@@ -16,8 +16,18 @@ namespace Tests\Support;
  * arguments are read as strings of their own, wherever the call sits. A
  * constant that holds a list gives each element as a string of its own.
  *
+ * Each string also gives the static calls among its own operands
+ * (`'… FROM ' . LatestVisit::of('?') . ' AS c'`), the class resolved as
+ * for a constant: what each argument is when it is a single string literal
+ * (null otherwise), and the offset in the text of the UNREAD that stands
+ * for the call. A call inside a parenthesised operand, or a call that
+ * starts the expression, is not one of the string's operands.
+ *
  * The reading RollupWritersAreMarkedTest does for table names, as a helper
  * other scans can share.
+ *
+ * @phpstan-type Call array{class: string, method: string, args: list<string|null>, offset: int}
+ * @phpstan-type Assembled array{line: int, text: string, calls: list<Call>}
  */
 final class AssembledStrings
 {
@@ -34,7 +44,7 @@ final class AssembledStrings
     private const NAMES = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED];
 
     /**
-     * @return list<array{line: int, text: string}>
+     * @return list<Assembled>
      */
     public static function of(string $source): array
     {
@@ -54,13 +64,14 @@ final class AssembledStrings
      *
      * @param list<mixed> $tokens
      * @param array{ns: string, uses: array<string, string>, classes: array<int, string>} $scope
-     * @param list<array{line: int, text: string}> $out
+     * @param list<Assembled> $out
      */
     private static function scan(array $tokens, int $from, int $to, array $scope, array &$out): void
     {
         $i = $from;
         while ($i < $to) {
-            $operand = self::operand($tokens, $i, $to, $scope, $out);
+            $calls = [];
+            $operand = self::operand($tokens, $i, $to, $scope, $out, $calls);
             if ($operand === null) {
                 $i++;
                 continue;
@@ -70,10 +81,15 @@ final class AssembledStrings
                 continue;
             }
             [$text, $next, $line] = $operand;
+            $chainCalls = [];
             while ($next < $to && ($tokens[$next] ?? null) === '.') {
-                $more = self::operand($tokens, $next + 1, $to, $scope, $out);
+                $partCalls = [];
+                $more = self::operand($tokens, $next + 1, $to, $scope, $out, $partCalls);
                 if ($more === null) {
                     break;
+                }
+                foreach ($partCalls as $call) {
+                    $chainCalls[] = $call + ['offset' => strlen($text)];
                 }
                 $text .= $more[0] ?? self::UNREAD;
                 $next = $more[1];
@@ -88,7 +104,7 @@ final class AssembledStrings
             if ($after === '.' || self::is($after, [T_CONCAT_EQUAL]) || $continued) {
                 $text .= self::UNREAD;
             }
-            $out[] = ['line' => $line, 'text' => $text];
+            $out[] = ['line' => $line, 'text' => $text, 'calls' => $chainCalls];
             $i = max($i + 1, $next);
         }
     }
@@ -97,25 +113,23 @@ final class AssembledStrings
      * The string an operand at $i contributes: [text, next index, line];
      * [null, next index] for an operand the scan cannot read (whose call
      * arguments and index expressions are scanned on their own); null when
-     * $i starts no operand it knows.
+     * $i starts no operand it knows. A static call the operand is goes to
+     * $calls.
      *
      * @param list<mixed> $tokens
      * @param array{ns: string, uses: array<string, string>, classes: array<int, string>} $scope
-     * @param list<array{line: int, text: string}> $out
+     * @param list<Assembled> $out
+     * @param list<array{class: string, method: string, args: list<string|null>}> $calls
      * @return array{0: string|null, 1: int, 2?: int}|null
      */
-    private static function operand(array $tokens, int $i, int $to, array $scope, array &$out): ?array
+    private static function operand(array $tokens, int $i, int $to, array $scope, array &$out, array &$calls): ?array
     {
         if ($i >= $to) {
             return null;
         }
         $t = $tokens[$i];
         if (is_array($t) && $t[0] === T_CONSTANT_ENCAPSED_STRING) {
-            $q = $t[1][0];
-            $body = substr($t[1], 1, -1);
-            $body = $q === "'" ? str_replace(['\\\\', "\\'"], ['\\', "'"], $body) : stripcslashes($body);
-
-            return [$body, $i + 1, $t[2]];
+            return [self::literal($t[1]), $i + 1, $t[2]];
         }
         if ($t === '"' || (is_array($t) && $t[0] === T_START_HEREDOC)) {
             $end = $t === '"' ? '"' : T_END_HEREDOC;
@@ -150,7 +164,7 @@ final class AssembledStrings
             if (is_array($value)) {
                 array_walk_recursive($value, static function ($v) use (&$out, $t): void {
                     if (is_string($v)) {
-                        $out[] = ['line' => $t[2], 'text' => $v];
+                        $out[] = ['line' => $t[2], 'text' => $v, 'calls' => []];
                     }
                 });
             }
@@ -158,6 +172,18 @@ final class AssembledStrings
             return [null, $i + 3];
         }
         if (self::is($t, self::UNREAD_OPERANDS)) {
+            $staticCall = self::is($t, [...self::NAMES, T_STATIC])
+                && self::is($tokens[$i + 1] ?? null, [T_DOUBLE_COLON])
+                && self::is($tokens[$i + 2] ?? null, [T_STRING])
+                && ($tokens[$i + 3] ?? null) === '(';
+            $class = $staticCall ? self::className($t[1], $scope, $i) : null;
+            if ($class !== null) {
+                $calls[] = [
+                    'class' => $class,
+                    'method' => $tokens[$i + 2][1],
+                    'args' => self::literalArgs($tokens, $i + 3, self::closing($tokens, $i + 3, $to)),
+                ];
+            }
             $next = $i + 1;
             while ($next < $to) {
                 $u = $tokens[$next];
@@ -185,7 +211,7 @@ final class AssembledStrings
         }
         if ($t === '@' || $t === '-' || self::is($t, self::CASTS)) {
             // A cast or a prefix: the operand it applies to, unread.
-            $inner = self::operand($tokens, $i + 1, $to, $scope, $out);
+            $inner = self::operand($tokens, $i + 1, $to, $scope, $out, $calls);
 
             return $inner === null ? null : [null, $inner[1]];
         }
@@ -295,12 +321,13 @@ final class AssembledStrings
     }
 
     /**
-     * The value of $class::$name as this file names it; null when the scan
-     * cannot resolve it (it is then unread).
+     * The class $class names where it is written at token $at, through the
+     * file's namespace and imports; null for `parent`, or `self`/`static`
+     * outside a class.
      *
      * @param array{ns: string, uses: array<string, string>, classes: array<int, string>} $scope
      */
-    private static function constantValue(string $class, string $name, array $scope, int $at): mixed
+    private static function className(string $class, array $scope, int $at): ?string
     {
         $lower = strtolower($class);
         if ($lower === 'self' || $lower === 'static') {
@@ -310,17 +337,77 @@ final class AssembledStrings
                     $fq = $declared;
                 }
             }
-        } elseif ($lower === 'parent') {
-            return null;
-        } elseif ($class[0] === '\\') {
-            $fq = substr($class, 1);
-        } else {
-            $first = strtolower(explode('\\', $class)[0]);
-            $rest = substr($class, strlen($first));
-            $fq = isset($scope['uses'][$first])
-                ? $scope['uses'][$first] . $rest
-                : ($scope['ns'] === '' ? '' : $scope['ns'] . '\\') . $class;
+
+            return $fq;
         }
+        if ($lower === 'parent') {
+            return null;
+        }
+        if ($class[0] === '\\') {
+            return substr($class, 1);
+        }
+        $first = strtolower(explode('\\', $class)[0]);
+        $rest = substr($class, strlen($first));
+
+        return isset($scope['uses'][$first])
+            ? $scope['uses'][$first] . $rest
+            : ($scope['ns'] === '' ? '' : $scope['ns'] . '\\') . $class;
+    }
+
+    /**
+     * Each argument of the call whose `(` is at $open and `)` at $close: its
+     * value when it is one string literal, null when it is anything else.
+     *
+     * @param list<mixed> $tokens
+     * @return list<string|null>
+     */
+    private static function literalArgs(array $tokens, int $open, int $close): array
+    {
+        $args = [];
+        $current = [];
+        $depth = 0;
+        for ($j = $open + 1; $j < $close; $j++) {
+            $u = $tokens[$j];
+            if (in_array($u, ['(', '[', '{'], true) || self::is($u, [T_CURLY_OPEN, T_DOLLAR_OPEN_CURLY_BRACES])) {
+                $depth++;
+            } elseif (in_array($u, [')', ']', '}'], true)) {
+                $depth--;
+            } elseif ($u === ',' && $depth === 0) {
+                $args[] = $current;
+                $current = [];
+                continue;
+            }
+            $current[] = $u;
+        }
+        if ($current !== []) {
+            $args[] = $current;
+        }
+
+        return array_map(
+            static fn (array $arg): ?string => count($arg) === 1 && self::is($arg[0], [T_CONSTANT_ENCAPSED_STRING])
+                ? self::literal($arg[0][1])
+                : null,
+            $args
+        );
+    }
+
+    /** What a quoted literal's source spells. */
+    private static function literal(string $source): string
+    {
+        $body = substr($source, 1, -1);
+
+        return $source[0] === "'" ? str_replace(['\\\\', "\\'"], ['\\', "'"], $body) : stripcslashes($body);
+    }
+
+    /**
+     * The value of $class::$name as this file names it; null when the scan
+     * cannot resolve it (it is then unread).
+     *
+     * @param array{ns: string, uses: array<string, string>, classes: array<int, string>} $scope
+     */
+    private static function constantValue(string $class, string $name, array $scope, int $at): mixed
+    {
+        $fq = self::className($class, $scope, $at);
         if ($fq === null) {
             return null;
         }

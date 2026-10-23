@@ -1,7 +1,6 @@
 <?php
 include_once(str_repeat("../", 1) . '202-config/connect.php');
 include_once(str_repeat("../", 1) . '202-config/functions-db.php');
-include_once(str_repeat("../", 1) . '202-config/functions-indexes.php');
 include_once(str_repeat("../", 1) . '202-config/functions-icons.php');
 include_once(str_repeat("../", 1) . '202-config/functions-api.php');
 include_once(str_repeat("../", 1) . '202-config/functions-utils.php');
@@ -37,8 +36,11 @@ if (!isset($userObj) || !$userObj->hasPermission('access_to_settings')) {
 $slack = false;
 $mysql['user_own_id'] = $db->real_escape_string((string) $_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url, maxmind_isp, user_time_register, 2up.user_auto_database_optimization_days FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
-$user_row = $user_results ? ($user_results->fetch_assoc() ?: []) : [];
+$user_results = _mysqli_query($db, $user_sql);
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql) ?? [];
 $username = $user_row['username'];
 $user_time_register = $user_row['user_time_register'];
 
@@ -56,57 +58,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_POST['autocron'])) {
-	$autocron = false;
-	if ($_POST['autocron'] == true) {
-		$endpoint = 'register';
-		$sql = "SELECT * FROM 202_cronjob_logs";
-		$result = _mysqli_query($sql);
-		if ($result && $result->num_rows > 0) {
-			$row = $result->fetch_assoc();
+    $turnOn = \Prosper202\Cron\AutoCronSwitch::posted($_POST['autocron']);
+    if ($turnOn === null) {
+        p202_account_flash('bad', 'AutoCron is set On or Off, and the form sent neither, so nothing was changed.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
+    if ($turnOn) {
+        $endpoint = 'register';
+        // Whether this install has its own cron job: the last run a scheduler
+        // recorded (Prosper202\Cron\AutoCronSwitch). The footer's ping, which
+        // this page sent as it loaded, records nothing (CronRun), so it no
+        // longer reads as "your own cron job ran".
+        $unchecked = 'Whether your own cron job is running could not be checked just now,'
+            . ' so AutoCron was not changed. Try again in a few minutes.';
+        $cron_sql = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
+        $cron_result = _mysqli_query($cron_sql);
+        if ($cron_result === false) {
+            p202_account_flash('bad', $unchecked);
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $on_sql = "SELECT auto_cron FROM 202_users_pref WHERE user_id = '" . $mysql['user_id'] . "'";
+        $on_result = _mysqli_query($on_sql);
+        if ($on_result === false) {
+            p202_account_flash('bad', $unchecked);
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+        $cron_row = p202FetchRow($cron_result, $cron_sql);
+        $on_row = p202FetchRow($on_result, $on_sql);
+        $lastRun = $cron_row === null ? null : (int) $cron_row['last_execution_time'];
+        $alreadyOn = $on_row !== null && (string) $on_row['auto_cron'] === '1';
+        if (\Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
+            p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
+            p202_account_redirect('202-account/administration.php#autocron');
+        }
+    } else {
+        $endpoint = 'deregister';
+    }
 
-			$last_five_minutes = time() - 300;
+    // Registering needs this install's address, and a read of it that fails
+    // throws rather than register the server's own name
+    // (p202StoredTrackingDomain()): said here, the setting left as it was,
+    // as Personal Settings says it for the daily email.
+    try {
+        $cron = callAutoCron($endpoint);
+    } catch (Throwable $e) {
+        error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
+        p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
+        p202_account_redirect('202-account/administration.php#autocron');
+    }
 
-			if ($row['last_execution_time'] < $last_five_minutes) {
-				$autocron = true;
-			}
-		} else {
-			$autocron = true;
-		}
-	} else {
-		$endpoint = 'deregister';
-		$autocron = true;
-	}
-
-	if (!$autocron) {
-		p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
-		p202_account_redirect('202-account/administration.php#autocron');
-	}
-
-	// Registering needs this install's address, and a read of it that fails
-	// throws rather than register the server's own name
-	// (p202StoredTrackingDomain()): said here, the setting left as it was,
-	// as Personal Settings says it for the daily email.
-	try {
-		$cron = callAutoCron($endpoint);
-	} catch (Throwable $e) {
-		error_log('AutoCron ' . $endpoint . ' failed: ' . $e->getMessage());
-		p202_account_flash('bad', 'This install\'s address could not be read just now, so AutoCron was not changed. Try again in a few minutes.');
-		p202_account_redirect('202-account/administration.php#autocron');
-	}
-
-	if (is_array($cron) && ($cron['status'] ?? null) === 'success') {
-		$mysql['auto_cron'] = $db->real_escape_string($_POST['autocron'] == true ? '1' : '0');
-		$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-		$sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
-		if (_mysqli_query($sql)) {
-			p202_account_flash('ok', $_POST['autocron'] == true ? 'AutoCron is on.' : 'AutoCron is off.');
-		} else {
-			p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
-		}
-	} else {
-		p202_account_flash('bad', 'The AutoCron service could not be reached, so the setting is unchanged. Try again in a few minutes.');
-	}
-	p202_account_redirect('202-account/administration.php#autocron');
+    $refusal = \Prosper202\Cron\AutoCronAnswer::refusal($cron);
+    if ($refusal === null) {
+        $mysql['auto_cron'] = $turnOn ? '1' : '0';
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $sql = "UPDATE 202_users_pref SET auto_cron = '" . $mysql['auto_cron'] . "' WHERE user_id = '" . $mysql['user_id'] . "'";
+        if (_mysqli_query($sql)) {
+            p202_account_flash('ok', $turnOn ? 'AutoCron is on.' : 'AutoCron is off.');
+        } else {
+            p202_account_flash('bad', 'AutoCron answered, but the setting could not be saved here; try again.');
+        }
+    } else {
+        p202_account_flash('bad', $refusal);
+    }
+    p202_account_redirect('202-account/administration.php#autocron');
 }
 
 if (isset($_POST['maxmind'])) {
@@ -204,7 +219,7 @@ if (isset($_POST['database_management'])) {
                 // same statement: this schedule replaces it.
                 $sql = "UPDATE 202_users_pref SET user_delete_data_before = '" . (int) $cutoff . "',"
                     . " user_delete_data_clickid = NULL WHERE user_id = '1'";
-                if ($db->query($sql)) {
+                if (_mysqli_query($db, $sql)) {
                     if ($slack) {
                         $slack->push('click_data_deleted', [
                             'user' => $username,
@@ -237,19 +252,26 @@ if (isset($_POST['auto_database_management'])) {
 		// User 1's row, where AutoOptimizeDatabase() reads it (as
 		// PUT /api/v3/system/retention writes it).
 		$sql = "UPDATE 202_users_pref SET user_auto_database_optimization_days = '" . $mysql['auto_database_management'] . "' WHERE user_id = '1'";
-		if ($db->query($sql)) {
+		if (!_mysqli_query($db, $sql)) {
+			p202_account_flash('bad', 'The automatic deletion setting could not be saved; try again.');
+		} else {
 			p202_account_flash('ok', (int) $postedDays === 0
 				? 'Automatic deletion is off; click data is kept.'
 				: 'Click data older than ' . (int) $postedDays . ' days is deleted automatically from now on.');
 			p202_account_redirect('202-account/administration.php#database');
 		}
-		$fieldErrors['auto_database_management'] = 'The setting could not be saved; try again.';
 	}
 }
 
-$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs";
-$cron_log_result = $db->query($cron_log_query);
-$last_cron_ran = $cron_log_result && $cron_log_result->num_rows > 0;
+// The last run a scheduler recorded: a cron job's or AutoCron's, never a
+// signed-in page's ping (Prosper202\Cron\CronRun).
+$cron_log_query = "SELECT last_execution_time FROM 202_cronjob_logs WHERE id = 1";
+$cron_log_result = _mysqli_query($db, $cron_log_query);
+if ($cron_log_result === false) {
+	// Not "never": a cron that ran would read the same.
+	record_mysql_error($db, $cron_log_query);
+}
+$last_cron_ran = $cron_log_result->num_rows > 0;
 if ($last_cron_ran) {
 	$cron_log_row = $cron_log_result->fetch_assoc();
 	$last_cron_job_execution_time = CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
@@ -258,8 +280,12 @@ if ($last_cron_ran) {
 }
 
 $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
-$de_result = $db->query($de_query);
-$de_row = $de_result ? $de_result->fetch_assoc() : null;
+$de_result = _mysqli_query($db, $de_query);
+if ($de_result === false) {
+	// Not "0 of 0": the report rebuild's progress is unknown, not done.
+	record_mysql_error($db, $de_query);
+}
+$de_row = $de_result->fetch_assoc();
 
 if ($de_row && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];
@@ -282,11 +308,13 @@ $click_row = memcache_mysql_fetch_assoc($click_sql);
 $clicks = $click_row['clicks'] ?? null;
 
 $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-$pref_result = _mysqli_query("SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'");
-$pref_row = $pref_result ? $pref_result->fetch_assoc() : null;
-if (!is_array($pref_row)) {
-	$pref_row = [];
+$pref_sql = "SELECT * FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
+$pref_result = _mysqli_query($pref_sql);
+if ($pref_result === false) {
+    // Read as no row, the page would say AutoCron and MaxMind are off.
+    record_mysql_error($pref_sql);
 }
+$pref_row = p202FetchRow($pref_result, $pref_sql) ?? [];
 
 /** What a deletion by date keeps, said under the form (ClickRetention's rule). */
 const P202_ADMIN_RECLICK_KEPT = 'A click visited again on or after the day is kept whole.';
@@ -306,7 +334,8 @@ function p202_admin_scheduled_deletion(): ?array
 {
     global $db;
 
-    $result = $db->query(
+    $result = _mysqli_query(
+        $db,
         "SELECT user_delete_data_before, user_delete_data_clickid FROM 202_users_pref WHERE user_id = '1'"
     );
     $row = $result instanceof mysqli_result ? $result->fetch_assoc() : false;
@@ -328,7 +357,8 @@ function p202_admin_scheduled_deletion(): ?array
         ];
     }
     if ($marker !== null) {
-        $result = $db->query(
+        $result = _mysqli_query(
+            $db,
             'SELECT click_time FROM `202_clicks` WHERE click_id <= ' . (int) $marker . ' ORDER BY click_id DESC LIMIT 1'
         );
         $click = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
@@ -353,7 +383,7 @@ function database_size()
 	$GB = 1024 * 1024 * 1024;
 	$decimals = 2;
 
-	$sql = $db->query("SHOW TABLE STATUS");
+	$sql = _mysqli_query($db, "SHOW TABLE STATUS");
 	if (!$sql) {
 		return 'unknown';
 	}
@@ -436,7 +466,7 @@ echo p202_account_render_flashes($extra);
 <div class="p202-tiles">
 	<div class="p202-tile"><div class="p202-tile__label">Clicks recorded</div><div class="p202-tile__value"><?php echo $clicks === null ? '–' : $e(number_format((float) $clicks)); ?></div><div class="p202-tile__sub">to date</div></div>
 	<div class="p202-tile"><div class="p202-tile__label">Database size</div><div class="p202-tile__value"><?php echo $e(database_size()); ?></div></div>
-	<div class="p202-tile<?php echo $last_cron_ran ? '' : ' is-bad'; ?>"><div class="p202-tile__label">Cron job last ran</div><div class="p202-tile__value"><?php echo $e($last_cron_job_execution_time); ?></div></div>
+	<div class="p202-tile<?php echo $last_cron_ran ? '' : ' is-bad'; ?>"><div class="p202-tile__label">Cron job last ran</div><div class="p202-tile__value"><?php echo $e($last_cron_job_execution_time); ?></div><div class="p202-tile__sub">a cron job or AutoCron</div></div>
 	<div class="p202-tile"><div class="p202-tile__label">DataEngine conversion</div><div class="p202-tile__value"><?php echo $e($de_ratio); ?>%</div><div class="p202-tile__sub"><?php echo $e($de_done . ' of ' . $de_total . ' tasks · ' . "{$d}d {$h}h {$m}m" . ' left'); ?></div></div>
 </div>
 
@@ -570,7 +600,7 @@ echo p202_account_render_flashes($extra);
 					</div>
 				<?php } else { ?>
 					<div class="p202-table-wrap">
-						<table class="table p202-table">
+						<table class="table p202-table" id="sign-in-attempts">
 							<thead><tr><th>Time</th><th>Username</th><th>IP address</th><th>Attempt</th></tr></thead>
 							<tbody>
 								<?php while ($user_log_row = $user_log_result->fetch_assoc()) {
@@ -579,7 +609,7 @@ echo p202_account_render_flashes($extra);
 										<td class="text-nowrap"><?php echo $e(date('M d, y \a\t g:ia', (int) $user_log_row['login_time'])); ?></td>
 										<td><?php echo $e($user_log_row['user_name']); ?></td>
 										<td><?php echo $e($ip); ?> · <a target="_blank" rel="noopener" href="https://whois.arin.net/ui/query.do?q=<?php echo rawurlencode($ip); ?>">ARIN</a> · <a target="_blank" rel="noopener" href="https://apps.db.ripe.net/search/query.html?searchtext=<?php echo rawurlencode($ip); ?>&amp;sources=RIPE_NCC">RIPE</a></td>
-										<td><?php echo $user_log_row['login_success'] == 0 ? '<span class="p202-pill p202-pill--bad">Failed</span>' : '<span class="p202-pill p202-pill--good">Passed</span>'; ?></td>
+										<td><?php echo p202_account_sign_in_attempt_pill($user_log_row['login_success']); ?></td>
 									</tr>
 								<?php } ?>
 							</tbody>

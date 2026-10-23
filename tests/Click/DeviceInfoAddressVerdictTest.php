@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Click;
 
+use mysqli;
 use PHPUnit\Framework\TestCase;
 use Prosper202\Click\ClickBotDetector;
+use Prosper202\Repository\DeviceType;
+use Prosper202\Repository\InMemory\InMemoryDeviceRepository;
+use Tests\Support\DeviceRepositoryStandIn;
 
 /**
  * botCheck() judges the request's address, and get_device_info() caches the
@@ -14,7 +18,8 @@ use Prosper202\Click\ClickBotDetector;
  * every later visitor with the same agent as a bot, click_bot and
  * click_filtered included, for as long as the entry lived. Runs the real
  * PLATFORMS class extracted from connect2.php, as DeviceInfoCarriesUaFamilyTest
- * does, against a cache that returns what was written to it.
+ * does, against a cache that returns what was written to it and an in-memory
+ * device repository where the factory would build the MySQL one.
  *
  * @runTestsInSeparateProcesses
  * @preserveGlobalState disabled
@@ -26,19 +31,24 @@ final class DeviceInfoAddressVerdictTest extends TestCase
     private const LISTED = '17.1.2.3';   // 17.0.0.0/8, a botCheck() range
     private const HUMAN = '203.0.113.7'; // in no range
 
+    private static InMemoryDeviceRepository $devices;
+    private static mysqli $db;
+
     protected function setUp(): void
     {
         $root = dirname(__DIR__, 2);
         require_once $root . '/202-config/DeviceDetect.php';
 
-        $src = (string) file_get_contents($root . '/202-config/connect2.php');
-        $start = strpos($src, "\nclass PLATFORMS\n");
-        $end = strpos($src, "\nclass INDEXES\n");
-        self::assertIsInt($start, 'class PLATFORMS not found in connect2.php');
-        self::assertIsInt($end);
+        require_once __DIR__ . '/../Config/fixtures/lift-function.php';
+        $connect2 = $root . '/202-config/connect2.php';
+        self::assertMatchesRegularExpression(
+            '/^class PLATFORMS$/m',
+            (string) file_get_contents($connect2),
+            'class PLATFORMS not found in connect2.php'
+        );
 
-        // No row is ever found, so every lookup inserts; an inserted device
-        // model's id says which model it was, so a test can tell Bot from Desktop.
+        // Stubs for what PLATFORMS calls. Its device repository is an
+        // in-memory one, whose ids tell the Bot model from the Desktop one.
         eval(<<<'PHP'
             function systemHash(): string { return 'test'; }
             function setCache($key, $value, $exp = null) {
@@ -46,12 +56,10 @@ final class DeviceInfoAddressVerdictTest extends TestCase
                 $GLOBALS['cacheWrites'][$key] = $value;
                 return true;
             }
-            function _mysqli_query($db, $sql) {
-                $GLOBALS['lastSql'] = $sql;
-                return new class { public function fetch_assoc() { return null; } };
-            }
             PHP);
-        eval('use UAParser\Parser; ' . substr($src, $start, $end - $start));
+        eval('use UAParser\Parser; ' . lift_class($connect2, 'PLATFORMS'));
+        self::$devices = new InMemoryDeviceRepository();
+        self::$db = DeviceRepositoryStandIn::connectionFor(self::$devices);
 
         $GLOBALS['cacheStore'] = [];
         $GLOBALS['cacheWrites'] = [];
@@ -69,6 +77,7 @@ final class DeviceInfoAddressVerdictTest extends TestCase
         $bot = self::click(self::LISTED);
         self::assertSame('4', (string) $bot['type'], 'the listed address is still a bot');
         self::assertSame(self::modelId('Bot'), $bot['device']);
+        self::assertNotSame(self::modelId('Desktop'), $bot['device']);
         self::assertTrue(ClickBotDetector::isBot(self::CHROME, $bot));
 
         $human = self::click(self::HUMAN);
@@ -145,40 +154,17 @@ final class DeviceInfoAddressVerdictTest extends TestCase
 
     private static function key(): string
     {
-        return md5('user-agent' . self::CHROME . 'test');
+        return md5('user-agent-typed' . self::CHROME . 'test');
     }
 
+    /** The Bot model is type 4 and the Desktop one type 1, as PLATFORMS stores them. */
     private static function modelId(string $name): int
     {
-        return 1000 + crc32($name) % 1000;
+        return self::$devices->findOrCreateDevice($name, $name === 'Bot' ? DeviceType::Bot : DeviceType::Desktop);
     }
 
-    private static function db(): object
+    private static function db(): mysqli
     {
-        return new class {
-            public function __get(string $name): int
-            {
-                if ($name !== 'insert_id') {
-                    throw new \LogicException($name);
-                }
-                // The id of whatever the last INSERT named: browsers and
-                // platforms get one too, device models get modelId(name).
-                if (preg_match("/INSERT INTO 202_device_models SET device_name='([^']*)'/", (string) $GLOBALS['lastSql'], $m)) {
-                    return 1000 + crc32($m[1]) % 1000;
-                }
-
-                return 7;
-            }
-
-            /** @param list<mixed> $args */
-            public function __call(string $name, array $args): string
-            {
-                if ($name !== 'real_escape_string') {
-                    throw new \BadMethodCallException($name);
-                }
-
-                return addslashes((string) $args[0]);
-            }
-        };
+        return self::$db;
     }
 }

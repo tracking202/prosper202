@@ -22,18 +22,7 @@ final class LocationRepositoryContractTest extends TestCase
 
     private static function buildCached(): CachedLocationRepository
     {
-        $store = [];
-
-        return new CachedLocationRepository(
-            new InMemoryLocationRepository(),
-            static function (string $key) use (&$store) {
-                return $store[$key] ?? false;
-            },
-            static function (string $key, mixed $value, int $ttl) use (&$store): void {
-                $store[$key] = $value;
-            },
-            'test-hash',
-        );
+        return new CachedLocationRepository(new InMemoryLocationRepository(), new ArrayIdCache(), 'test-hash');
     }
 
     /**
@@ -132,6 +121,18 @@ final class LocationRepositoryContractTest extends TestCase
     }
 
     /**
+     * Not an address is refused, not stored: a string of digits stored as
+     * an IPv4 row's text would read as the IPv6 row of that id.
+     *
+     * @dataProvider implementations
+     */
+    public function testFindOrCreateIpRefusesWhatIsNotAnAddress(LocationRepositoryInterface $repo): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $repo->findOrCreateIp('12345');
+    }
+
+    /**
      * @dataProvider implementations
      */
     public function testFindOrCreateSiteDomainReturnsStableId(LocationRepositoryInterface $repo): void
@@ -161,5 +162,20 @@ final class LocationRepositoryContractTest extends TestCase
     public function testFindOrCreateSiteUrlReturnsZeroForEmpty(LocationRepositoryInterface $repo): void
     {
         self::assertSame(0, $repo->findOrCreateSiteUrl(''));
+        self::assertSame(0, $repo->findOrCreateClickSiteUrl(''));
+    }
+
+    /**
+     * A click's own URL is the same row either way it is looked up.
+     *
+     * @dataProvider implementations
+     */
+    public function testAClicksOwnUrlIsTheSameRowAsTheUrl(LocationRepositoryInterface $repo): void
+    {
+        $id = $repo->findOrCreateClickSiteUrl('https://example.com/?s=1');
+
+        self::assertGreaterThan(0, $id);
+        self::assertSame($id, $repo->findOrCreateClickSiteUrl('https://example.com/?s=1'));
+        self::assertSame($id, $repo->findOrCreateSiteUrl('https://example.com/?s=1'));
     }
 }

@@ -123,6 +123,11 @@ func outputFlagConflict(f outputFlags) error {
 // resolveOutputMode settles the output globals before a command runs. An
 // error still leaves a format chosen, so the error prints in it.
 func resolveOutputMode(f outputFlags) error {
+	if mcpToolRun {
+		jsonOutput, ndjsonOutput, csvOutput, quietOutput, tableOutput = true, false, false, false, false
+		compactJSON, outputImplicit, outputSource = true, false, "mcp"
+		return nil
+	}
 	jsonOutput, ndjsonOutput, csvOutput, quietOutput, tableOutput = f.json, f.ndjson, f.csv, f.quiet, f.table
 	compactJSON, outputImplicit = false, false
 	outputSource = sourceFlag

@@ -118,6 +118,32 @@ SQL;
     private const KEY = ['click_id', 'click_time'];
 
     /**
+     * JOINS's first line, and the line forClick() puts in its place: 202_clicks
+     * read through its click_id key, which every install has had since 1.5.1
+     * (the table has no primary key).
+     */
+    private const CLICKS = 'FROM 202_clicks AS 2c';
+    private const CLICKS_BY_KEY = 'FROM 202_clicks AS 2c FORCE INDEX (`click_id`)';
+
+    /**
+     * The rollup of one click: the redirects, the pixels and the conversion
+     * ledger, each right after a click or its value changed.
+     *
+     * 202_clicks is read through its click_id key. While the table is small
+     * and cut into weekly partitions (a new install's) MariaDB 10.11 scans it
+     * instead (EXPLAIN type ALL; MySQL 8.0 uses the key), and an INSERT ...
+     * SELECT locks what it reads: the rollup held the gap at the end of
+     * 202_clicks_variable or 202_google, waited on a concurrent click's
+     * uncommitted 202_clicks row, and that click, inserting into the gap, was
+     * rolled back with errno 1213 and lost. A range rollup keeps the
+     * optimizer's choice.
+     */
+    public static function forClick(string $table, int $clickId): string
+    {
+        return self::build($table, self::CLICKS_BY_KEY, '2c.click_id=' . $clickId);
+    }
+
+    /**
      * Build the full INSERT ... SELECT ... ON DUPLICATE KEY UPDATE statement.
      *
      * A row that is already there takes every column the SELECT derives, so
@@ -146,9 +172,15 @@ SQL;
      *
      * @param string $table       Target table (202_dataengine or 202_dataengine_new).
      * @param string $whereClause SQL condition on the 202_clicks side, already
-     *                            escaped by the caller (e.g. "2c.click_id=123").
+     *                            escaped by the caller (e.g. "2c.click_time >= 1
+     *                            AND 2c.click_time <= 2"); one click is forClick()'s.
      */
     public static function insertSelect(string $table, string $whereClause): string
+    {
+        return self::build($table, self::CLICKS, $whereClause);
+    }
+
+    private static function build(string $table, string $clicks, string $whereClause): string
     {
         $updates = implode(",\n", array_map(
             static fn(string $column): string => $column . '=values(' . $column . ')',
@@ -157,7 +189,7 @@ SQL;
 
         return 'insert into ' . $table . '(' . implode(",\n", array_keys(self::COLUMNS)) . ")\n"
             . "SELECT\n" . implode(",\n", array_values(self::COLUMNS)) . "\n"
-            . self::JOINS . "\n"
+            . $clicks . substr(self::JOINS, strlen(self::CLICKS)) . "\n"
             . 'WHERE ' . $whereClause . "\n"
             . "on duplicate key update\n" . $updates;
     }

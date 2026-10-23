@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Prosper202\Database\Exceptions\QueryException;
 use Prosper202\DataEngine\ClickRollupSql;
 use Prosper202\DataEngine\GroupedReportDefinition;
 use Prosper202\DataEngine\GroupedReportRegistry;
@@ -100,6 +101,19 @@ class DataEngine
     public function foundRows(): int
     {
         return self::$found_rows;
+    }
+
+    /**
+     * A statement the server refused, logged with the server's words less
+     * the values they quote. The answer, what to throw, names only the step:
+     * dej.php prints what it catches to whoever fetched it.
+     */
+    private static function failedStep(mysqli $db, string $step): string
+    {
+        $tag = ' [errno ' . $db->errno . ']';
+        error_log('DataEngine ' . $step . ' failed: ' . p202FailedQueryMessage($db->errno, $db->error) . $tag);
+
+        return 'DataEngine ' . $step . ' failed' . $tag;
     }
 
     private function runCountQuery(string $countSql): int
@@ -689,11 +703,16 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
             // 'XX1,234.50', and a lowercase 'eur' rendered 'eur1,234.50'
             // instead of '€1,234.50'. Measured, not assumed — the old '$'
             // default was in fact fine.
-            $stored = null;
-            $result = self::$db->query("SELECT user_account_currency FROM 202_users_pref WHERE user_id = '" . ($this->mysql['user_id'] ?? '') . "'");
-            if ($result && ($row = $result->fetch_assoc())) {
-                $stored = $row['user_account_currency'] ?? null;
+            // A currency that could not be read is not the default one: every
+            // figure would be labelled in a currency the account may not use.
+            $db = self::$db;
+            $sql = "SELECT user_account_currency FROM 202_users_pref WHERE user_id = '"
+                . ($this->mysql['user_id'] ?? '') . "'";
+            $result = $db->query($sql);
+            if ($result === false) {
+                throw new QueryException(self::failedStep($db, 'currency read'));
             }
+            $stored = p202FetchRow($result, $sql)['user_account_currency'] ?? null;
             $this->formatter = new HtmlReportFormatter(
                 \Api\V3\Controllers\UsersController::normalizeCurrency($stored)
             );
@@ -754,11 +773,10 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         // click_id can originate from a caller-supplied cookie/request value;
         // cast to int so it cannot break out of the WHERE clause.
-        $dsql = ClickRollupSql::insertSelect('202_dataengine', '2c.click_id=' . (int) $click_id);
+        $dsql = ClickRollupSql::forClick('202_dataengine', (int) $click_id);
 
         if (!$db->query($dsql)) {
-            error_log('DataEngine setDirtyHour rollup failed: ' . $db->error);
-            return false;
+            throw new QueryException(self::failedStep($db, 'rollup of click ' . (int) $click_id));
         }
 
         return true;
@@ -771,12 +789,11 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
     {
         set_time_limit(0);
 
-        $delayed_result = self::$db->query("SELECT * FROM 202_dirty_hours where processed != 1");
-        if (!$delayed_result) {
-            // Legacy exit() here killed the whole cron run; log and let the
-            // remaining cron tasks proceed.
-            error_log('DataEngine processDirtyHours failed to read 202_dirty_hours: ' . self::$db->error);
-            return;
+        // Thrown, not exit(): the cron job logs it and runs its other jobs.
+        $db = self::$db;
+        $delayed_result = $db->query("SELECT * FROM 202_dirty_hours where processed != 1");
+        if ($delayed_result === false) {
+            throw new QueryException(self::failedStep($db, 'read of the dirty hours'));
         }
 
         while ($delayed_row = $delayed_result->fetch_assoc()) {
@@ -792,14 +809,15 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
             $this->getSummary($value('click_time_from'), $value('click_time_to'), $snippet);
 
-            if (!self::$db->query("UPDATE 202_dirty_hours set processed='1', deleted='1' where id=" . $delayed_row['id'])) {
-                error_log('DataEngine processDirtyHours flag update failed: ' . self::$db->error);
+            // Left unmarked, the hour is rolled up again next run.
+            if (!$db->query("UPDATE 202_dirty_hours set processed='1', deleted='1' where id=" . $delayed_row['id'])) {
+                throw new QueryException(self::failedStep($db, 'mark of dirty hour ' . (int) $delayed_row['id']));
             }
             flush();
         }
 
-        if (!self::$db->query("DELETE FROM 202_dirty_hours where deleted=1")) {
-            error_log('DataEngine processDirtyHours cleanup failed: ' . self::$db->error);
+        if (!$db->query("DELETE FROM 202_dirty_hours where deleted=1")) {
+            throw new QueryException(self::failedStep($db, 'cleanup of the dirty hours'));
         }
     }
 
@@ -815,7 +833,7 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
         if ($upgrade) {
             $sql = "UPDATE 202_dataengine_job SET processing = '1' WHERE time_from ='" . $from . "' AND time_to = '" . $to . "'";
             if (!$db->query($sql)) {
-                error_log('DataEngine getSummary job flag failed: ' . $db->error);
+                throw new QueryException(self::failedStep($db, 'claim of window ' . $from . '-' . $to));
             }
         }
 
@@ -831,8 +849,14 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
             $this->doQuery($query, $from, $to, $upgrade, $new);
         } catch (RuntimeException $e) {
             // Released, not finished: the next run takes the window again.
-            if ($upgrade && !$db->query("UPDATE 202_dataengine_job SET processing = '0' " . $job)) {
-                error_log('DataEngine getSummary job release failed: ' . $db->error);
+            if ($upgrade) {
+                if (!$db->query("UPDATE 202_dataengine_job SET processing = '0' " . $job)) {
+                    throw new QueryException(
+                        self::failedStep($db, 'release of claimed window ' . $from . '-' . $to),
+                        0,
+                        $e
+                    );
+                }
             }
             throw $e;
         }
@@ -840,8 +864,12 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
         // never reaches doSummary() (doQuery() returns at once), so a window
         // the cron job's processClickUpgrade() took stayed `processing` and
         // unprocessed for good, and no window after it was ever taken.
-        if ($upgrade && !$db->query("UPDATE 202_dataengine_job SET processing = '0', processed = '1' " . $job)) {
-            error_log('DataEngine getSummary job flag failed: ' . $db->error);
+        if ($upgrade) {
+            if (!$db->query("UPDATE 202_dataengine_job SET processing = '0', processed = '1' " . $job)) {
+                throw new QueryException(
+                    self::failedStep($db, 'mark of window ' . $from . '-' . $to . ' as processed')
+                );
+            }
         }
         return $query . "<br><br>";
     }
@@ -934,10 +962,11 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
         $end = time();
         $query = "SELECT (click_time - click_time % 3600) AS hourstart FROM 202_clicks WHERE click_time <= " . $end . " and click_time >= " . $start . " GROUP BY hourstart";
+        // Thrown to the 1.9.3 rung, which stops there: a window not queued
+        // here is rebuilt by nothing else.
         $result = $db->query($query);
-        if (!$result) {
-            error_log('DataEngine setRowsForOldClickUpgrade failed: ' . $db->error);
-            return;
+        if ($result === false) {
+            throw new QueryException(self::failedStep($db, 'read of the hours to rebuild'));
         }
 
         $full_day = [];
@@ -960,7 +989,9 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
 
                 $sql = "INSERT INTO 202_dataengine_job SET time_from = '" . $time_from . "', time_to = '" . $time_to . "'";
                 if (!$db->query($sql)) {
-                    error_log('DataEngine setRowsForOldClickUpgrade insert failed: ' . $db->error);
+                    throw new QueryException(
+                        self::failedStep($db, 'queueing of window ' . $time_from . '-' . $time_to)
+                    );
                 }
 
                 $full_day = [];
@@ -981,14 +1012,14 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
         }
 
         // Loop daily.
-        $result = $db->query("SELECT * FROM 202_dataengine_job WHERE processed = '0'");
-        if (!$result) {
-            error_log('DataEngine processClickUpgrade failed: ' . $db->error);
-            return;
+        $sql = "SELECT * FROM 202_dataengine_job WHERE processed = '0'";
+        $result = $db->query($sql);
+        if ($result === false) {
+            throw new QueryException(self::failedStep($db, 'read of the rebuild windows'));
         }
 
-        $row = $result->fetch_assoc();
-        if ($result->num_rows && !$row['processing']) {
+        $row = p202FetchRow($result, $sql);
+        if ($row !== null && !$row['processing']) {
             $time_from = $db->real_escape_string((string) $row['time_from']);
             $time_to = $db->real_escape_string((string) $row['time_to']);
             // Every account's clicks in the window, as the curl path's
@@ -1085,11 +1116,13 @@ ORDER BY 2st.ppc_network_id, name, 202_custom_variables.ppc_variable_id, variabl
             // series fall through to its zero-filled default.
             $result = false;
             if ($selectParts !== []) {
-                $result = self::$db->query($sqlObj);
+                $db = self::$db;
+                $result = $db->query($sqlObj);
                 if (!$result instanceof mysqli_result) {
                     // Not a chart of zeroes, which is what the series below
                     // fill an absent day with: the chart said "no traffic".
-                    error_log('DataEngine getChart query failed: ' . self::$db->error);
+                    error_log('DataEngine getChart query failed: '
+                        . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']');
                     throw new RuntimeException('DataEngine chart query failed');
                 }
             }

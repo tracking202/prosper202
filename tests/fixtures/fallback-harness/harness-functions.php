@@ -19,6 +19,19 @@ function setCache($key, $value, $exp = null)
     return true;
 }
 
+// The click path's setup reads (ClickPathReads) find the run's row in the
+// row cache, so a script reaches its refresh without a query; any other key
+// is the recorded memcache's.
+function getCache(string $key, $default = false)
+{
+    global $memcache, $p202Harness;
+    if (str_starts_with($key, 'p202-row2-')) {
+        return json_encode(['row' => $p202Harness['row']], JSON_THROW_ON_ERROR);
+    }
+
+    return $memcache->get($key);
+}
+
 function memcache_mysql_fetch_assoc($db, $sql)
 {
     global $p202Harness;

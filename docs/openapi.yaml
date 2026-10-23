@@ -3,7 +3,7 @@ info:
   title: Prosper202 API
   version: "3.0"
   description: |
-    REST API for the Prosper202 affiliate tracking platform.
+    REST API for the Prosper202 campaign tracking and marketing analytics platform.
 
     ## Authentication
     All endpoints require a Bearer token except `GET /system/health`, the
@@ -283,7 +283,11 @@ paths:
     get:
       tags: [System]
       summary: Cron job status
-      description: Current cron jobs and recent execution logs. Admin only.
+      description: >-
+        Current cron jobs and recent execution logs. Admin only. `jobs` are the
+        tiers that ran, whoever started the run; `recent_logs` record the runs a
+        scheduler started (a cron job or AutoCron). From 1.9.78 the ping every
+        signed-in page sends as it loads runs the tiers and is not logged.
       operationId: systemCron
       responses:
         "200":
@@ -432,7 +436,10 @@ paths:
                       cron_last_ran_at:
                         type: integer
                         nullable: true
-                        description: Unix seconds; null when the cron job never ran
+                        description: >-
+                          Unix seconds of the last run a scheduler started (a cron job or
+                          AutoCron; from 1.9.78 not the ping a signed-in page sends); null
+                          when none has run
                       cron_last_ran_seconds_ago:
                         type: integer
                         nullable: true
@@ -461,11 +468,21 @@ paths:
       summary: Sign-in attempts to this install
       description: |
         The attempts Account › Settings lists, newest first: the user name
-        typed, the time, the IP address and whether it passed. Only those
-        columns — the table also holds each attempt's request snapshot and,
-        on installs from before the password was filtered, the password typed;
-        neither is ever served. Throttled and token-refused attempts are not
-        recorded. Unknown parameters are refused.
+        typed, the time, the IP address and how it ended (`status`). Only
+        those columns — the table also holds each attempt's request snapshot
+        and, on installs from before the password was filtered, the password
+        typed; neither is ever served. Throttled and token-refused attempts
+        are not recorded. Unknown parameters are refused.
+
+        `status` is `passed`, `failed` (the user name or password was wrong
+        or left out, or the database failed before the password was checked)
+        or `not_completed`: the password was right, but a database failure
+        stopped the sign-in (recording it, starting the session, or storing a
+        re-hashed legacy password) and the user was asked to try again. The
+        sign-in throttle counts `failed` alone, so a database hiccup never
+        locks anyone out. `login_success` is true for `passed` alone. A row
+        holding a value no version writes answers `unknown`, which no
+        `status` filter selects.
 
         Admin (or Super user) with `access_to_settings`, and `system:read`.
       operationId: systemLoginLog
@@ -478,6 +495,14 @@ paths:
             default: 50
             minimum: 1
             maximum: 500
+        - name: status
+          in: query
+          description: >-
+            Only the attempts that ended so; without it, every attempt.
+            Anything else is a `422` naming `status`.
+          schema:
+            type: string
+            enum: [passed, failed, not_completed]
       responses:
         "200":
           description: Attempts, newest first
@@ -501,11 +526,20 @@ paths:
                           type: integer
                         login_success:
                           type: boolean
+                          description: True for `passed` alone.
+                        status:
+                          type: string
+                          enum: [passed, failed, not_completed, unknown]
                   meta:
                     type: object
                     properties:
                       limit:
                         type: integer
+                      status:
+                        type: string
+                        nullable: true
+                        enum: [passed, failed, not_completed]
+                        description: The status asked for; null for every attempt.
         "403":
           $ref: "#/components/responses/Forbidden"
         "422":
@@ -1659,7 +1693,10 @@ paths:
     get:
       tags: [Clicks]
       summary: Get a click
-      description: Full click details including geo, device, and custom variable lookups.
+      description: >-
+        Full click details including geo, device, and custom variable lookups.
+        A click a redirector link re-clicked has a row for each visit, each
+        listed by GET /clicks; this answers the latest.
       operationId: getClick
       responses:
         "200":
@@ -4022,6 +4059,13 @@ paths:
                         scope:
                           type: string
                           description: The key's scope; `*` for full-access keys
+                        label:
+                          type: string
+                          nullable: true
+                          description: >-
+                            What the key is for, when something named it. A key
+                            an AI app's connection created is labelled "AI:
+                            <app> via mcp.tracking202.com".
                         created_at:
                           type: integer
         "403":
@@ -4269,7 +4313,8 @@ paths:
         Performs the recorded write by re-dispatching it through the real
         route: validation, route authorization, and scope checks re-run
         against current state under the applier's credentials. Requires
-        the write scope of the change's area (for example `campaigns:write`).
+        the write scope of the change's area (for example `campaigns:write`);
+        a change whose area cannot be told requires `write` for every area.
         The staged→applied transition is atomic; a concurrent second apply
         gets 409. A failed apply returns the change to staged with the
         error recorded.
@@ -4286,7 +4331,12 @@ paths:
     post:
       tags: [StagedChanges]
       summary: Discard a staged change
-      description: Ends the proposal without performing it. Requires `staged-changes:stage`.
+      description: >-
+        Ends the proposal without performing it. Requires the write scope of
+        the change's area (as apply does), or the stage scope of that area
+        when the request bears the key that staged the change, which may
+        withdraw its own proposals. A change whose area cannot be told
+        requires `write` for every area, or `stage` from its own key.
       operationId: discardStagedChange
       responses:
         "200":
@@ -5655,6 +5705,146 @@ paths:
                         items:
                           type: string
 
+  /connect:
+    get:
+      tags:
+      - System
+      summary: Whether this install offers AI connections
+      description: >-
+        Unauthenticated. Tracking202's MCP server asks it before sending a
+        person to 202-account/connect-ai.php to approve a connection.
+      operationId: connectDiscovery
+      security: []
+      responses:
+        '200':
+          description: The install offers AI connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      connect:
+                        type: integer
+                        example: 1
+
+  /connect/token:
+    post:
+      tags:
+      - System
+      summary: Exchange an AI connection approval for its API key
+      description: >-
+        Called by Tracking202's MCP server, with no API key: the one-time code
+        the approval page sent it, and the verifier whose S256 challenge went
+        with the person (RFC 7636). A code works once and for five minutes.
+        The licence is decided first, as the install's CLI licence gate decides
+        it; the answer is then a new API key of the user who approved, with the
+        access they chose. The key's scope holds it to the areas the MCP
+        server's tools use (never users, system or sync). `?dry_run` and
+        `?staged` are refused.
+      operationId: connectToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, code_verifier]
+              properties:
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+      responses:
+        '200':
+          description: The connection's key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      api_key:
+                        type: string
+                      scope:
+                        type: string
+                        description: >-
+                          `<area>:read` for each area the MCP server's tools read, with
+                          `<area>:stage` (propose) or `<area>:write` (write) for the areas
+                          they change
+                      access:
+                        type: string
+                        enum: [read, propose, write]
+                        description: The access the person chose on the approval page
+                      user:
+                        type: object
+                        properties:
+                          user_id:
+                            type: integer
+                          user_name:
+                            type: string
+                      version:
+                        type: string
+                      licensed:
+                        type: boolean
+                        description: >-
+                          Always true: an approval the install's licence gate refuses
+                          answers 402 and no key is made. The gate lets an approval
+                          through when the licence service cannot answer, as it does for
+                          the CLI, so the MCP server checks licence_key_sha256 itself
+                      licence_key_sha256:
+                        type: string
+                        description: >-
+                          SHA-256 (hex) of the ClickServer API key whose licence decides
+                          for this user (theirs, else the install owner's), trimmed and
+                          lowercased first, as the licence service compares keys. The MCP
+                          server checks it with the licence service; the key itself is
+                          never sent. It is the hash the install reports, so the check
+                          shows that the install presented the hash of a paid licence key,
+                          not that the key is this install's own; obtaining another
+                          account's hash requires that account's key.
+        '400':
+          description: >-
+            invalid_request (a missing or malformed field) or invalid_grant
+            (the code was used, expired or never given, or the verifier does
+            not match)
+        '402':
+          description: >-
+            licence: the approving user's ClickServer API key (or the install
+            owner's) has no Pro licence; no key was made
+        '422':
+          description: An unknown field, or ?dry_run or ?staged
+        '500':
+          description: >-
+            The key or the licence key could not be read or written; nothing
+            was connected, and the approval is spent
+
+  /connect/revoke:
+    post:
+      tags:
+      - System
+      summary: Remove the API key this request bears
+      description: >-
+        Any key may remove itself, whatever its scope; it removes nothing
+        else. Tracking202's MCP server calls it when a connection cannot be
+        completed. `?dry_run` and `?staged` are refused.
+      operationId: connectRevoke
+      responses:
+        '200':
+          description: The key was removed
+        '401':
+          $ref: "#/components/responses/Unauthorized"
+        '404':
+          description: No key with exactly these characters
+        '422':
+          description: ?dry_run or ?staged
+
   /capabilities:
     get:
       tags:
@@ -5842,43 +6032,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -5923,43 +6077,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6004,43 +6122,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6085,43 +6167,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6166,43 +6212,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6247,43 +6257,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6328,43 +6302,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -6409,43 +6347,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      summary:
-                        type: object
-                        properties:
-                          created:
-                            type: integer
-                          updated:
-                            type: integer
-                          skipped:
-                            type: integer
-                          error:
-                            type: integer
-                      results:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            index:
-                              type: integer
-                            status:
-                              type: string
-                              enum:
-                              - created
-                              - updated
-                              - skipped
-                              - error
-                            message:
-                              type: string
-                            data:
-                              type: object
-                              additionalProperties: true
-                  idempotent_replay:
-                    type: boolean
+                $ref: '#/components/schemas/BulkUpsertResult'
         '422':
           $ref: '#/components/responses/ValidationError'
 
@@ -10207,6 +10109,75 @@ components:
   # ─── Schemas ─────────────────────────────────────────────────────────
 
   schemas:
+    # ── Bulk upsert ────────────────────────────────────────────────────
+
+    BulkUpsertResult:
+      type: object
+      properties:
+        data:
+          type: array
+          description: One answer per row, in the order the rows were sent
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+                description: The row's position in the rows sent
+              status:
+                type: string
+                enum: [created, updated, skipped, error]
+              message:
+                type: string
+                description: Why the row was skipped, or not stored
+              field_errors:
+                type: object
+                description: On a refused row, what each refused field was refused for
+                additionalProperties:
+                  type: string
+              retryable:
+                type: boolean
+                description: >-
+                  Present, and true, only on an `error` row nothing of which was stored for a
+                  reason that is not the row's own. The rows are written up to 100 at a time in
+                  one transaction. A deadlock with another write rolls the hundred back, and it
+                  is run again up to three times before every row of it is answered this way.
+                  A lock wait timeout is answered this way at once, as is a database failure
+                  after an earlier hundred was stored, and the rows after either are not
+                  attempted (answered this way too). Send such a row again under a new
+                  Idempotency-Key, since this one replays this answer.
+              unconfirmed:
+                type: boolean
+                description: >-
+                  Present, and true, only on an `error` row written in a hundred the database
+                  did not confirm was stored or rolled back (a commit or rollback that failed):
+                  it may or may not be stored, and the rows after it are not attempted. A row of
+                  that hundred that was skipped or refused keeps its own answer. Look it up
+                  before sending it again, since a create stored already would be stored twice.
+              data:
+                type: object
+                description: On a `created` or `updated` row, the record as stored
+                additionalProperties: true
+        summary:
+          type: object
+          properties:
+            created:
+              type: integer
+            updated:
+              type: integer
+            skipped:
+              type: integer
+            error:
+              type: integer
+            retryable:
+              type: integer
+              description: How many of the `error` rows are `retryable`
+            unconfirmed:
+              type: integer
+              description: How many of the `error` rows are `unconfirmed`
+        idempotent_replay:
+          type: boolean
+          description: True when this is the answer recorded for this Idempotency-Key, and nothing was written
+
     # ── Setup ──────────────────────────────────────────────────────────
 
     LandingPageCode:

@@ -23,8 +23,11 @@ die_if_auto_upgrade_disabled();
 ini_set('memory_limit', '-1');
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT install_hash, p202_customer_api_key FROM 202_users WHERE user_id = '" . $mysql['user_own_id'] . "'";
-$user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+$user_results = _mysqli_query($db, $user_sql);
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 $missing_api_key = true;
 if (!empty($user_row['p202_customer_api_key'])) {

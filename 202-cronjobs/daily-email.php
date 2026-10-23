@@ -8,8 +8,12 @@ try {
 	require_once __DIR__ . '/../202-config/connect.php';
 
 	$hash = "SELECT install_hash FROM 202_users WHERE user_id = '1'";
-	$result = $db->query($hash);
-	$row = $result instanceof mysqli_result ? $result->fetch_assoc() : null;
+    $result = $db->query($hash);
+    // A failed read is the database error page (a 500), not "Unauthorized!".
+    if ($result === false) {
+        record_mysql_error($db, $hash);
+    }
+    $row = p202FetchRow($result, $hash);
 
 	// User 1's install hash, constant-time, and never an empty one
 	// (InstallHash: hash_equals('', '') is true).
@@ -20,7 +24,10 @@ try {
 	// $db (singleton mysqli) is already established by connect.php and used above.
 
 	$user_sql = 'SELECT user_email, user_daily_email FROM 202_users LEFT JOIN 202_users_pref USING (user_id) WHERE user_id = 1';
-	$user_result = $db->query($user_sql);
+	$user_result = _mysqli_query($db, $user_sql);
+	if ($user_result === false) {
+		record_mysql_error($db, $user_sql);
+	}
 	$user_row = $user_result->fetch_assoc();
 
 	if (!$user_row['user_daily_email']) {
@@ -99,6 +106,10 @@ try {
 		print_r(json_decode($response));
 	}
 } catch (Exception $e) {
+    // A failure answers 500, not a 200 with "Error:" in the body.
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
 	echo "Error: " . $e->getMessage();
 	error_log("Daily Email Error: " . $e->getMessage());
 }

@@ -9,6 +9,7 @@ on:
       - 'phpstan.neon.dist'
       - 'phpstan-baseline.neon'
       - 'phpstan-legacy-stubs.php'
+      - 'phpstan-strict.neon'
       - '.github/workflows/php-lint.yml'
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - 'phpstan.neon.dist'
       - 'phpstan-baseline.neon'
       - 'phpstan-legacy-stubs.php'
+      - 'phpstan-strict.neon'
       - '.github/workflows/php-lint.yml'
 
 jobs:
@@ -117,3 +119,9 @@ jobs:
 
       - name: Run PHPStan
         run: vendor/bin/phpstan analyse -c phpstan.neon.dist --no-progress --error-format=github
+
+      # Level max, no baseline, over the code held to the modern-PHP
+      # standard (the lookup repositories): see phpstan-strict.neon.
+      - name: Run PHPStan (strict)
+        if: ${{ !cancelled() }}
+        run: vendor/bin/phpstan analyse -c phpstan-strict.neon --no-progress --error-format=github

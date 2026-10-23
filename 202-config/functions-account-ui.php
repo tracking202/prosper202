@@ -24,6 +24,90 @@ declare(strict_types=1);
 /** The sentence a refused token gets, on every Account page. */
 const P202_ACCOUNT_TOKEN_REFUSED = 'This form expired or did not come from this page, so nothing was saved. Reload the page and try again.';
 
+/** The sentence a key gets when the licence service could not be asked about it. */
+const P202_ACCOUNT_KEY_UNCHECKED = 'The key could not be checked with Tracking202 just now, so nothing was saved. '
+    . 'Try again in a minute.';
+
+/**
+ * Why a typed key may not be saved, from the licence service's answer for
+ * that key (ClickServerKeyValidator::check()), or null when it may. No
+ * answer is a refusal here: a key that could not be checked is not saved.
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
+ */
+function p202_typed_key_error(?array $licence): ?string
+{
+    if ($licence === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return $licence['valid'] ? null : 'This API Key appears invalid.';
+}
+
+/**
+ * The account page's Tracking202 key change: why the typed key may not be
+ * saved, asking the licence service about that key itself.
+ * AUTH::is_valid_api_key() answers from the session once the signed-in key
+ * has validated and lets an unanswered check through, which suits a page
+ * gate and not a key about to be saved.
+ */
+function p202_check_typed_key(string $key): ?string
+{
+    return p202_typed_key_error(\Prosper202\License\ClickServerKeyValidator::check(trim($key)));
+}
+
+/**
+ * Why a customer API key may not be saved, from the licence service's answer
+ * for it as ClickServerKeyValidator reads it, or null when it may: no answer
+ * (an outage, a gateway's error page) is "could not be checked", not
+ * "invalid", and is not saved either.
+ *
+ * @param array{valid: bool, paid: ?bool}|null $licence
+ */
+function p202_customer_key_error(?array $licence): ?string
+{
+    if ($licence === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return $licence['valid'] ? null : 'API key is not valid. Check your key and try again!';
+}
+
+/**
+ * Why a ClickServer API key may not be saved, from
+ * clickserver_api_key_validate()'s answer, or null when it may.
+ */
+function p202_clickserver_key_error(?bool $valid): ?string
+{
+    if ($valid === null) {
+        return P202_ACCOUNT_KEY_UNCHECKED;
+    }
+    return $valid ? null : 'This API Key appears invalid.';
+}
+
+/**
+ * An answer whose failure is in its status as in its body (CLAUDE.md #1):
+ * sets $status and returns the JSON the AJAX callers read.
+ */
+function p202_status_body(int $status, string $message): string
+{
+    http_response_code($status);
+    return (string) json_encode(['code' => $status, 'msg' => $message]);
+}
+
+/**
+ * The ClickServer key forms: p202_clickserver_key_error() for the key
+ * itself. An empty key removes the stored one and is not checked.
+ */
+function p202_check_clickserver_key(string $key): ?string
+{
+    return $key === '' ? null : p202_clickserver_key_error(clickserver_api_key_validate($key));
+}
+
+/** The account page's customer key form: p202_customer_key_error() for the key itself. */
+function p202_check_customer_key(string $key): ?string
+{
+    return p202_customer_key_error(\Prosper202\License\ClickServerKeyValidator::check($key));
+}
+
 /**
  * The hidden token field every Account form carries. The handlers check it
  * with AUTH::check_csrf_token(), the app's one implementation (constant-time,
@@ -90,7 +174,10 @@ function p202_account_redirect(string $path): never
 
 /**
  * The flashes a page shows: what the redirect queued, then what this request
- * adds, rendered in the kit's shape (p202_flash()).
+ * adds, rendered in the kit's shape (p202_flash()). They come in one
+ * [data-p202-flashes] block, which p202-ui.js moves into the panel the URL's
+ * fragment names: a redirect to "page.php#section" scrolls past the top of
+ * the page, where they render.
  *
  * @param list<array{kind: string, text: string}> $extra
  */
@@ -100,7 +187,7 @@ function p202_account_render_flashes(array $extra = []): string
     foreach (array_merge(p202_account_take_flashes(), $extra) as $flash) {
         $html .= p202_flash($flash['kind'], $flash['text']);
     }
-    return $html;
+    return $html === '' ? '' : '<div data-p202-flashes>' . $html . '</div>';
 }
 
 /**
@@ -121,6 +208,26 @@ function p202_account_field_error(array $errors, string $field): string
 function p202_account_invalid(array $errors, string $field): string
 {
     return isset($errors[$field]) && trim($errors[$field]) !== '' ? ' is-invalid' : '';
+}
+
+/**
+ * Account › Settings' pill for a sign-in attempt, from its stored
+ * login_success: a right password the sign-in could not complete is neither
+ * passed nor failed (the throttle does not count it), and a value no version
+ * writes is shown as it is.
+ */
+function p202_account_sign_in_attempt_pill(mixed $stored): string
+{
+    $outcome = \Prosper202\User\SignInOutcome::fromStored($stored);
+    $shown = is_scalar($stored) ? (string) $stored : get_debug_type($stored);
+
+    return match ($outcome) {
+        \Prosper202\User\SignInOutcome::Passed => '<span class="p202-pill p202-pill--good">Passed</span>',
+        \Prosper202\User\SignInOutcome::Failed => '<span class="p202-pill p202-pill--bad">Failed</span>',
+        \Prosper202\User\SignInOutcome::NotCompleted => '<span class="p202-pill p202-pill--warn"'
+            . ' title="The password was right; a database failure stopped the sign-in">Not completed</span>',
+        null => '<span class="p202-pill">Unknown (' . htmlspecialchars($shown, ENT_QUOTES, 'UTF-8') . ')</span>',
+    };
 }
 
 /**
@@ -321,12 +428,17 @@ function p202_account_save_user(\Prosper202\Database\Connection $conn, ?int $edi
 function p202_account_api_keys(mysqli $db, int $userId): array
 {
     $hasScope = \Api\V3\Auth::apiKeyScopeColumnExists($db);
+    // label came with 1.9.78; the files can land before its upgrade runs.
+    $hasLabel = \Api\V3\Auth::apiKeyLabelColumnExists($db);
     $conn = new \Prosper202\Database\Connection($db);
-    $stmt = $conn->prepareRead('SELECT api_key, created_at' . ($hasScope ? ', scope' : '') . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
+    $columns = 'api_key, created_at' . ($hasScope ? ', scope' : '') . ($hasLabel ? ', label' : '');
+    $stmt = $conn->prepareRead('SELECT ' . $columns
+        . ' FROM 202_api_keys WHERE user_id = ? ORDER BY created_at DESC');
     $conn->bind($stmt, 'i', [$userId]);
     $keys = [];
     foreach ($conn->fetchAll($stmt) as $row) {
         $row['scope'] = $hasScope ? ($row['scope'] ?? null) : null;
+        $row['label'] = $hasLabel ? ($row['label'] ?? null) : null;
         $keys[] = $row;
     }
     return $keys;

@@ -1,0 +1,91 @@
+name: Docker Image
+
+# Nothing built the Dockerfile before this: a change to it, to the entrypoint
+# or to composer.json reached Coolify and docker compose hosts unbuilt. This
+# builds the default (app) stage from a fresh pull, as a first deploy would,
+# and holds the image to the PHP release the Dockerfile names. The base is
+# pinned to a patch release (php:8.3.36-apache, not php:8.3-apache) because a
+# host with the moving tag cached keeps building on the PHP it pulled first;
+# the check refuses a FROM line that is not pinned that way.
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'build/scripts/docker-entrypoint.sh'
+      - 'build/scripts/write-config.php'
+      - '.github/workflows/docker-image.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'build/scripts/docker-entrypoint.sh'
+      - 'build/scripts/write-config.php'
+      - '.github/workflows/docker-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and boot the app image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the PHP release the Dockerfile pins
+        id: pin
+        run: |
+          version=$(sed -nE 's/^FROM php:([0-9]+\.[0-9]+\.[0-9]+)-apache AS base$/\1/p' Dockerfile)
+          if [ -z "$version" ]; then
+            echo "::error file=Dockerfile::the base stage must be FROM php:<major>.<minor>.<patch>-apache AS base; a moving tag keeps whatever PHP a host cached" >&2
+            grep -n '^FROM' Dockerfile >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Dockerfile pins PHP $version"
+
+      - name: Build
+        run: docker build --pull --tag prosper202-ci .
+
+      - name: Check the image's PHP and extensions
+        env:
+          PINNED: ${{ steps.pin.outputs.version }}
+        run: |
+          actual=$(docker run --rm --entrypoint php prosper202-ci -r 'echo PHP_VERSION;')
+          echo "image runs PHP $actual"
+          if [ "$actual" != "$PINNED" ]; then
+            echo "::error::the image runs PHP $actual, the Dockerfile pins $PINNED" >&2
+            exit 1
+          fi
+          modules=$(docker run --rm --entrypoint php prosper202-ci -m)
+          missing=0
+          for ext in mysqli pdo_mysql memcached 'Zend OPcache'; do
+            if ! grep -qxF "$ext" <<<"$modules"; then
+              echo "::error::extension not loaded: $ext" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Boot and serve a request
+        run: |
+          docker run --detach --name p202 --publish 127.0.0.1:8080:80 prosper202-ci
+          status=000
+          for _ in $(seq 1 30); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/health/ || true)
+            [ "$status" = 200 ] && break
+            sleep 1
+          done
+          docker logs p202
+          if [ "$status" != 200 ]; then
+            echo "::error::/health/ answered $status, not 200" >&2
+            exit 1
+          fi

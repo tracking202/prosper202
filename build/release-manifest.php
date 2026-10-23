@@ -90,6 +90,7 @@ return [
         'phpstan-baseline.neon',
         'phpstan-legacy-stubs.php',
         'phpstan.neon.dist',
+        'phpstan-strict.neon',
         'phpunit.ci.xml',
         'phpunit.xml',
         'scripts',              // lint and pattern-check scripts
@@ -155,11 +156,5 @@ return [
     // that run the zip), each with why that does not break a user. This list
     // exists to stop growing; anything new here means vendor/ is missing
     // something.
-    'known_unresolved' => [
-        // class-indexes.php is reached only through functions-indexes.php,
-        // which connect.php includes after functions-tracking202.php has
-        // declared INDEXES, so the file returns before its class is declared.
-        'IPRegistry\IPRegistry' => 'dead copy of INDEXES::get_ip_id() in 202-config/class-indexes.php;'
-            . ' never a Composer package',
-    ],
+    'known_unresolved' => [],
 ];

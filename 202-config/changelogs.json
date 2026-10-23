@@ -1,4 +1,33 @@
 {
+  "1.9.78": {
+    "version": "1.9.78",
+    "logs": [
+      "New: Connect an AI assistant (Claude, ChatGPT and other apps that use MCP) to your Prosper202. It reads your reports and campaigns and, only if you allow it, proposes or makes changes. You approve each connection on your own install, and remove it under My Account, Personal Settings, API keys. Needs Prosper202 ClickServer Pro",
+      "New: p202 mcp lets AI apps on your computer (Claude Desktop, Claude Code, Cursor) work with Prosper202 through the Go CLI: read only if you choose, or with every change made a proposal you apply yourself",
+      "Changed: A tracking link that cannot reach the database answers 503 (try again later) where it has nowhere saved to send the visitor, instead of a broken page",
+      "Changed: Two Prosper202 installs that share one memcache server no longer read each other's cached entries",
+      "Changed: The sign-in log shows whether each attempt passed, failed or did not complete (also GET /system/login-log and p202 system login-log)",
+      "Changed: Get Links refuses a cloaking setting other than the three it offers",
+      "Changed: The Docker image is built on PHP 8.3.36, which fixes two critical PHP security vulnerabilities. If you run Prosper202 in Docker, rebuild the image (on Coolify, redeploy; with docker compose, docker compose build --pull and docker compose up -d) and check that php -v in the web container says 8.3.36",
+      "Fixed: Security. This release fixes security problems on tracking links, landing pages, redirectors and the account pages. Update as soon as you can, then check My Account, User Management for users you do not recognise",
+      "Fixed: A new install stopped on step 2, \"Get your license key\", with a server error, so the key had to be entered by hand. The page now opens on a new install, before Prosper202 has created its database tables. On an install that is already set up, a license key sent back to that page is no longer repeated in the address of the sign-in page it moves you on to",
+      "Fixed: When the database refused a change or a read failed, several pages said the change was saved, showed an empty value (a cron job that never ran, no DNI networks, no ClickServer key) or stopped on a PHP error. They now say the save failed or show the database error page, and the error is recorded",
+      "Fixed: Direct links filled the offer URL's tokens ([[c1]] to [[c4]], [[t202kw]], [[gclid]], the UTM tokens and others) with nothing, and [[cpc]], [[payout]] and [[cpa]] wrongly. They carry the click's values again",
+      "Fixed: A redirector rule that sends visitors to a campaign with URL rotation always sent its first URL",
+      "Fixed: Keywords, place and ISP names, referring sites and device models longer than their columns were stored cut and stored again on every click, and an IPv6 visitor could be shown under another visitor's address",
+      "Fixed: Keywords, c1 to c4 and gclid values holding a quote or a backslash were stored with extra backslashes",
+      "Fixed: A redirector re-click lost the click's customer, text ad and first values",
+      "Fixed: A sign-in the database could not record ended on a blank page, and a right password could be logged as a failed sign-in",
+      "Fixed: The legacy reports API (v1 and v2) answered 500 for several reports and filters, and ignored a c1 to c4 filter of 0",
+      "Fixed: The Customer API key on Personal Settings is checked with Tracking202 before it is saved, and the page says the key could not be checked, rather than not valid, when Tracking202 does not answer",
+      "Fixed: The cron job reports its own database failures, and an hourly or daily job that fails part way is tried again at the next run instead of the next day. A brief database error no longer sends every signed-in page to the upgrade page",
+      "Fixed: Bulk upsert (API and CLI) says which rows were stored when the database rolls a batch back, marks the rows to send again, and a retry under the same Idempotency-Key no longer stores a batch twice",
+      "Fixed: Turning AutoCron on in Settings was refused on every install because opening a page counted as your cron job. It works now, and when the AutoCron service refuses a local or private address, Settings says to use a cron job",
+      "Fixed: A 202-config.php from an older install, without the read-only connection, no longer stops pages, Spy and the API with a PHP error",
+      "Fixed: p202 conversion simulate reads the click id from the field your offer URL puts [[subid]] in, and refuses instead of guessing when it cannot tell",
+      "Fixed: On a new install running MariaDB, clicks that arrived at the same moment could go unrecorded. They are all recorded now"
+    ]
+  },
   "1.9.77": {
     "version": "1.9.77",
     "logs": [

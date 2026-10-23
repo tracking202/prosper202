@@ -285,6 +285,9 @@ if [ -f "$VERIFY" ]; then
     expect_plan "plan: a workflow change selects actionlint" actionlint yes
     expect_plan "plan: a workflow change does not select phpstan" phpstan no
     rm -rf .github
+    printf 'parameters:\n    level: max\n' > phpstan-strict.neon
+    expect_plan "plan: a phpstan config change selects phpstan" phpstan yes
+    rm -f phpstan-strict.neon
     rm -rf 202-config
     mkdir -p sdk/ios-attribution && printf '// swift\n' > sdk/ios-attribution/P.swift
     expect_plan "plan: an sdk/ios-attribution change selects swift" swift yes
@@ -333,8 +336,30 @@ if [ -f "$VERIFY" ]; then
         printf '  FAIL  %-46s\n' "phpstan: the FAIL line carries the split"; fail=$((fail + 1))
         printf '%s\n' "$split_out" | grep -E "^--- phpstan|^  phpstan|environmental" | sed 's/^/        | /'
     fi
+    # ── phpstan tier runs both configs CI runs (php-lint.yml). It ran only
+    #    phpstan.neon.dist, so a finding only phpstan-strict.neon reports read
+    #    as PASS here and failed in CI. ──
+    fake_phpstan_by_config() { # $1 = dist answer, $2 = strict answer: ok | error | silent
+        printf '%s' "$1" > phpstan.neon.dist.answer
+        printf '%s' "$2" > phpstan-strict.neon.answer
+        printf '<?php\n$c = $argv[array_search("-c", $argv, true) + 1];\n$a = (string) file_get_contents(__DIR__ . "/" . $c . ".answer");\nif ($a === "ok") { echo " [OK] No errors\\n"; exit(0); }\nif ($a === "error") { echo " [ERROR] Found 1 error\\n"; exit(1); }\nexit(0);\n' > phpstan.phar
+    }
+    printf 'parameters:\n    level: max\n    paths:\n        - cli\n' > phpstan-strict.neon
+    fake_phpstan_by_config ok ok
+    expect_phpstan "phpstan: both configs clean PASSES" PASS
+    fake_phpstan_by_config ok error
+    expect_phpstan "phpstan: a finding only the strict config reports is FAIL" FAIL
+    fake_phpstan_by_config error ok
+    expect_phpstan "phpstan: a finding only the dist config reports is FAIL" FAIL
+    fake_phpstan_by_config ok silent
+    expect_phpstan "phpstan: a strict run that printed nothing is SKIP" SKIP
+    fake_phpstan_by_config silent error
+    expect_phpstan "phpstan: a strict finding beside a dist that did not run is FAIL" FAIL
+    rm -f phpstan-strict.neon
+    fake_phpstan_by_config ok error
+    expect_phpstan "phpstan: a tree without phpstan-strict.neon runs the dist config" PASS
     git rm -q -r cli >/dev/null 2>&1; git commit -qm "drop cli baseline" >/dev/null 2>&1
-    rm -rf vendor cli phpstan.neon.dist phpstan.phar phpstan-fake.json
+    rm -rf vendor cli phpstan.neon.dist phpstan.phar phpstan-fake.json phpstan.neon.dist.answer phpstan-strict.neon.answer
 
     # ── unit-tier interpreter classifier, against a workflow file we write ──
     eval "$(sed -n '/^ci_php_version() {/,/^}/p; /^local_php_version() {/,/^}/p; /^interpreter_mismatch_reason() {/,/^}/p' ./verify.sh)"

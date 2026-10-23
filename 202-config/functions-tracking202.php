@@ -2,73 +2,10 @@
 
 use UAParser\Parser;
 
+// The functions the click path's bootstrap shares (record_mysql_error(),
+// the cached reads, systemHash(), getTrackingDomain()).
 require_once __DIR__ . '/mysql-error-args.php';
-
-// This function will return true, if a user is logged in correctly, and false, if they are not.
-function record_mysql_error($dbOrSql, $sql = null): never
-{
-    // ($db), ($sql) and ($db, $sql) are all in use; see p202MysqlErrorArgs().
-    [$db, $sql] = p202MysqlErrorArgs($dbOrSql, $sql);
-    if (!$db instanceof \mysqli) {
-        $database = DB::getInstance();
-        $db = $database->getConnection();
-    }
-    if (!$db instanceof \mysqli) {
-        error_log('Database connection unavailable - SQL: ' . $sql);
-        echo 'Database error. The webmaster has been notified.';
-        die();
-    }
-
-    global $server_row;
-
-    // record the mysql error
-    $clean['mysql_error_text'] = mysqli_error($db);
-
-    // log the error server-side only
-    error_log('MySQL error: ' . $clean['mysql_error_text'] . ' | SQL: ' . $sql);
-
-    // The session's zone, for the footer's clock; this page counts nothing in
-    // it. AUTH::set_timezone() would read the account's zone from the
-    // database that has just failed, and a failed read there throws (a fatal
-    // in place of this page, with the error never recorded).
-    $sessionZone = is_string($_SESSION['user_timezone'] ?? null) ? $_SESSION['user_timezone'] : '';
-    if (\Prosper202\Report\AccountZone::isZone($sessionZone)) {
-        date_default_timezone_set($sessionZone);
-    }
-
-    $ip_id = INDEXES::get_ip_id(\Prosper202\Http\VisitorIp::fromServer($_SERVER));
-    $mysql['ip_id'] = $db->real_escape_string($ip_id);
-
-    $site_url = \Prosper202\Click\TrackingBaseUrl::requestUrl($_SERVER);
-    $site_id = INDEXES::get_site_url_id($site_url);
-    $mysql['site_id'] = $db->real_escape_string($site_id);
-
-    $mysql['user_id'] = isset($_SESSION['user_id']) ? $db->real_escape_string(strip_tags((string) $_SESSION['user_id'])) : 0;
-    $mysql['mysql_error_text'] = $db->real_escape_string($clean['mysql_error_text']);
-    $mysql['mysql_error_sql'] = $db->real_escape_string($sql);
-    $mysql['script_url'] = $db->real_escape_string(strip_tags((string) $_SERVER['SCRIPT_URL']));
-    $mysql['server_name'] = $db->real_escape_string(strip_tags((string) $_SERVER['SERVER_NAME']));
-    $mysql['mysql_error_time'] = time();
-
-    $report_sql = "INSERT     INTO  202_mysql_errors
-								SET     mysql_error_text='" . $mysql['mysql_error_text'] . "',
-										mysql_error_sql='" . $mysql['mysql_error_sql'] . "',
-										user_id='" . $mysql['user_id'] . "',
-										ip_id='" . $mysql['ip_id'] . "',
-										site_id='" . $mysql['site_id'] . "',
-										mysql_error_time='" . $mysql['mysql_error_time'] . "'";
-    $report_query = _mysqli_query($report_sql);
-
-    // report error to user and end page
-?>
-    <div class="alert alert-danger p202-flash" role="alert"><i class="bi bi-x-circle"></i><div class="p202-flash__body"><strong>A database error has occurred, and it has been recorded.</strong> If it keeps happening, email <?php $p202Admin = htmlspecialchars((string) ($_SERVER['SERVER_ADMIN'] ?? ''), ENT_QUOTES, 'UTF-8'); printf('<a href="mailto:%s">%s</a>', $p202Admin, $p202Admin); ?>.</div></div>
-
-
-<?php
-
-    template_bottom();
-    die();
-}
+require_once __DIR__ . '/functions-shared.php';
 
 /** A packed IPv6 address as text (inet_ntop(), quiet on a malformed value). */
 function inet6_ntoa($ip)
@@ -183,62 +120,6 @@ function grab_timeframe($unused = null): array
 }
 
 /**
- * The tracking domain as stored for the signed-in user, or for the primary
- * account without a session (CLI cron workers), like the connect2.php
- * variant — otherwise CLI could never resolve a configured domain and URL
- * builders would degrade to 'localhost'. '' when none is set.
- * Raw: it may carry a scheme, which p202TrackingBaseUrl() keeps.
- *
- * A read that fails throws, naming the account. It answered '' -- "none
- * stored" -- for a failed query too, and every caller builds on that: one
- * transient database error moved every link getTrackingDomain() builds to
- * the request's host, and the address p202TrackingBaseUrl() registers with
- * the hosted service to the server's own name, with nothing to say so
- * (CLAUDE.md #11: a lookup that cannot answer must not answer). The
- * connect2.php twin, getTrackingDomain(), throws the same way.
- *
- * $userId names the account instead. Whatever the server itself calls must
- * name one: every signed-in user sets their own domain on Personal
- * Settings, and a session-dependent read let any of them choose the host
- * the report rebuild fetched (process_dataengine_job.php reads user 1's).
- */
-function p202StoredTrackingDomain(?int $userId = null): string
-{
-    $lookup_user_id = $userId !== null
-        ? (string) $userId
-        : ((isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) ? (string) $_SESSION['user_id'] : '1');
-
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-    $failed = 'Unable to read the tracking domain of account ' . $lookup_user_id;
-    $tracking_domain_sql = "
-		SELECT
-			`user_tracking_domain`
-		FROM
-			`202_users_pref`
-		WHERE
-			`user_id`='" . $db->real_escape_string($lookup_user_id) . "'
-	";
-    try {
-        $tracking_domain_result = _mysqli_query($tracking_domain_sql);
-    } catch (\mysqli_sql_exception $e) {
-        // Strict reporting throws MySQL's sentence; name whose read it was.
-        throw new \RuntimeException($failed . ': ' . $e->getMessage(), 0, $e);
-    }
-    if (!$tracking_domain_result instanceof \mysqli_result) {
-        try {
-            $error = (string) $db->error;
-        } catch (\Error) {
-            $error = '';
-        }
-        throw new \RuntimeException($failed . ($error !== '' ? ': ' . $error : ''));
-    }
-    $row = $tracking_domain_result->fetch_assoc();
-
-    return is_array($row) && is_string($row['user_tracking_domain'] ?? null) ? $row['user_tracking_domain'] : '';
-}
-
-/**
  * This install's tracking base, `scheme://host[:port]/<install path>/`:
  * TrackingBaseUrl::build() over the install owner's (user 1's) stored
  * tracking domain (a stored scheme kept, the request's otherwise).
@@ -255,30 +136,47 @@ function p202StoredTrackingDomain(?int $userId = null): string
  * hosted service call it with the hash that authenticates the cron
  * callbacks (daily-email.php, dni.php) -- measured, signed in as user 2 this
  * answered `http://attacker.example/`.
+ *
+ * Before the installer has made an account there is no owner and nothing
+ * stored (its key step, get_apikey.php, runs before any table exists), so
+ * the base is the server's own name. is_installed() decides, not the read's
+ * error: once an account exists, a failed read still throws.
  */
 function p202TrackingBaseUrl(): string
 {
-    return \Prosper202\Click\TrackingBaseUrl::build(p202StoredTrackingDomain(1), $_SERVER, dirname(__DIR__));
+    $stored = is_installed() ? p202StoredTrackingDomain(1) : '';
+
+    return \Prosper202\Click\TrackingBaseUrl::build($stored, $_SERVER, dirname(__DIR__));
 }
 
 /**
- * The tracking domain (`host[:port]`) of the links, snippets and postback
- * URLs a page shows the person who asked for it: the stored one, or the host
- * this request arrived at (TrackingBaseUrl::domainForResponse(), which says
- * why not the server's own name and port). Its callers are listed, each with
- * why its URL goes back to the requester, in RequestHostSourceTest; a URL
- * sent to anyone else is p202TrackingBaseUrl(). Keep in step with the
- * connect2.php copy.
+ * The account's dash email as a JavaScript string, for the footer's support
+ * widget: written between quotes as stored, an address with a ' ended the
+ * string and broke the script.
  */
-function getTrackingDomain(): string
+function p202DashEmailJson(): string
 {
-    return \Prosper202\Click\TrackingBaseUrl::domainForResponse(p202StoredTrackingDomain(), $_SERVER);
+    $json = json_encode(
+        (string) getDashEmail(),
+        JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            | JSON_INVALID_UTF8_SUBSTITUTE
+    );
+
+    if ($json === false) {
+        error_log('The dash email could not be written into the footer script: ' . json_last_error_msg());
+
+        return '""';
+    }
+
+    return $json;
 }
 
 /**
  * The statement in every signed-in page's footer script (template.php) that
  * has the user's own browser ping this install's cron endpoint:
- * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/");`.
+ * `navigator.sendBeacon("//<tracking domain><install path>202-cronjobs/?page_ping=1");`.
+ * The query marks the run as a page's, which does the cron's work and is not
+ * recorded as the cron job's last run (Prosper202\Cron\CronRun).
  *
  * The ping is optional and the page above it has rendered, so a tracking
  * domain that cannot be read -- getTrackingDomain() throws rather than guess
@@ -288,7 +186,8 @@ function getTrackingDomain(): string
 function p202CronBeaconStatement(): string
 {
     try {
-        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/';
+        $url = '//' . getTrackingDomain() . get_absolute_url() . '202-cronjobs/?'
+            . \Prosper202\Cron\CronRun::pagePingQuery();
         $flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
             | JSON_THROW_ON_ERROR;
 
@@ -317,7 +216,7 @@ function query(
 {
     $database = DB::getInstance();
     if ($isspy) {
-        $db = $database->getConnectionro();
+        $db = \Prosper202\Database\ConnectionFactory::readConnectionOf($database);
     } else {
         $db = $database->getConnection();
     }
@@ -1031,893 +930,11 @@ function pcc_network_icon($ppc_network_name, $ppc_account_name)
     return $html['ppc_network_icon'];
 }
 
-class INDEXES
-{
-
-    // this returns the location_country_id, when a Country Code is given
-    function get_country_id($country_name, $country_code)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("country-id" . $country_name . systemHash()));
-
-            if ($getID) {
-                $country_id = $getID;
-                return $country_id;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['country_name'] = $db->real_escape_string($country_name);
-                $mysql['country_code'] = $db->real_escape_string($country_code);
-
-                $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-                $country_result = _mysqli_query($country_sql);
-                $country_row = $country_result->fetch_assoc();
-                if ($country_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $country_id = $country_row['country_id'];
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                    $country_result = _mysqli_query($country_sql); // ($ip_sql);
-                    $country_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("country-id" . $country_name . systemHash()), $country_id, $time);
-                    return $country_id;
-                }
-            }
-        } else {
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['country_name'] = $db->real_escape_string($country_name);
-            $mysql['country_code'] = $db->real_escape_string($country_code);
-
-            $country_sql = "SELECT country_id FROM 202_locations_country WHERE country_code='" . $mysql['country_code'] . "'";
-            $country_result = _mysqli_query($country_sql);
-            $country_row = $country_result->fetch_assoc();
-            if ($country_row) {
-                // if this country already exists, return the location_country_id for it.
-                $country_id = $country_row['country_id'];
-
-                return $country_id;
-            } else {
-                // else if this doesn't exist, insert the new countryrow, and return the_id for this new row we found
-                $country_sql = "INSERT INTO 202_locations_country SET country_code='" . $mysql['country_code'] . "', country_name='" . $mysql['country_name'] . "'";
-                $country_result = _mysqli_query($country_sql); // ($ip_sql);
-                $country_id = $db->insert_id;
-
-                return $country_id;
-            }
-        }
-    }
-
-    // this returns the location_city_id, when a City name is given
-    function get_city_id($city_name, $country_id)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("city-id" . $city_name . $country_id . systemHash()));
-
-            if ($getID) {
-                $city_id = $getID;
-                return $city_id;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['city_name'] = $db->real_escape_string($city_name);
-                $mysql['country_id'] = $db->real_escape_string($country_id);
-
-                $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "'";
-                $city_result = _mysqli_query($city_sql);
-                $city_row = $city_result->fetch_assoc();
-                if ($city_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $city_id = $city_row['city_id'];
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                    $city_result = _mysqli_query($city_sql); // ($ip_sql);
-                    $city_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("city-id" . $city_name . $country_id . systemHash()), $city_id, $time);
-                    return $city_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['city_name'] = $db->real_escape_string($city_name);
-            $mysql['country_id'] = $db->real_escape_string($country_id);
-
-            $city_sql = "SELECT city_id FROM 202_locations_city WHERE city_name='" . $mysql['city_name'] . "'";
-            $city_result = _mysqli_query($city_sql);
-            $city_row = $city_result->fetch_assoc();
-            if ($city_row) {
-                // if this country already exists, return the location_country_id for it.
-                $city_id = $city_row['city_id'];
-
-                return $city_id;
-            } else {
-                // else if this doesn't exist, insert the new cityrow, and return the_id for this new row we found
-                $city_sql = "INSERT INTO 202_locations_city SET city_name='" . $mysql['city_name'] . "', main_country_id='" . $mysql['country_id'] . "'";
-                $city_result = _mysqli_query($city_sql); // ($ip_sql);
-                $city_id = $db->insert_id;
-
-                return $city_id;
-            }
-        }
-    }
-
-    // this returns the isp_id, when a isp name is given
-    function get_isp_id($isp)
-    {
-        global $memcacheWorking, $memcache;
-
-        if ($memcacheWorking) {
-            $time = 604800; // 7 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("isp-id" . $isp . systemHash()));
-
-            if ($getID) {
-                $isp_id = $getID;
-                return $isp_id;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['isp'] = $db->real_escape_string($isp);
-
-                $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($isp_sql);
-                $isp_row = $isp_result->fetch_assoc();
-                if ($isp_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $isp_id = $isp_row['isp_id'];
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                    $isp_result = _mysqli_query($isp_sql); // ($isp_sql);
-                    $isp_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("isp-id" . $isp . systemHash()), $isp_id, $time);
-                    return $isp_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['isp'] = $db->real_escape_string($isp);
-
-            $isp_sql = "SELECT isp_id FROM 202_locations_isp WHERE isp_name='" . $mysql['isp'] . "'";
-            $isp_result = _mysqli_query($isp_sql);
-            $isp_row = $isp_result->fetch_assoc();
-            if ($isp_row) {
-                // if this isp already exists, return the isp_id for it.
-                $isp_id = $isp_row['isp_id'];
-
-                return $isp_id;
-            } else {
-                // else if this doesn't exist, insert the new isp row, and return the_id for this new row we found
-                $isp_sql = "INSERT INTO 202_locations_isp SET isp_name='" . $mysql['isp'] . "'";
-                $isp_result = _mysqli_query($isp_sql); // ($isp_sql);
-                $isp_id = $db->insert_id;
-
-                return $isp_id;
-            }
-        }
-    }
-
-    // this returns the ip_id, when a ip_address is given
-    public static function get_ip_id($ip)
-    {
-        global $db, $memcacheWorking, $memcache, $inet6_ntoa, $inet6_aton;
-
-        if (!isset($inet6_ntoa)) {
-            $inet6_ntoa = '';
-        }
-
-        if (!isset($inet6_aton)) {
-            $inet6_aton = '';
-        }
-
-        if (is_string($ip) || is_numeric($ip)) {
-            $ip = ipAddress($ip);
-        } elseif (is_array($ip)) {
-            $ip = (object) $ip;
-        }
-
-        if (!is_object($ip) || empty($ip->address)) {
-            return 0;
-        }
-
-        $ipType = $ip->type ?? (filter_var($ip->address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'ipv6' : 'ipv4');
-
-        $mysql['ip_address'] = $db->real_escape_string((string) $ip->address);
-
-        if ($inet6_ntoa === '' && $ipType === 'ipv6') {
-            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); //encode for db check
-        }
-
-        if ($ipType === 'ipv6' && $inet6_aton !== '') {
-            $ip_sql = 'SELECT  202_ips.ip_id FROM 202_ips_v6  INNER JOIN 202_ips on (202_ips_v6.ip_id = 202_ips.ip_address COLLATE utf8mb4_general_ci) WHERE 202_ips_v6.ip_address= ' . $inet6_aton . '("' . $mysql['ip_address'] . '") order by 202_ips.ip_id DESC limit 1';
-        } else {
-            $ip_sql = "SELECT ip_id FROM 202_ips WHERE ip_address='" . $mysql['ip_address'] . "'";
-        }
-
-        if ($memcacheWorking) {
-            $time = 2592000; // 7 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("ip-id" . $mysql['ip_address'] . systemHash()));
-
-            if ($getID) {
-                $ip_id = $getID;
-            } else {
-
-                $ip_result = _mysqli_query($ip_sql);
-                $ip_row = $ip_result->fetch_assoc();
-                if ($ip_row) {
-                    // if this ip_id already exists, return the ip_id for it.
-                    $ip_id = $ip_row['ip_id'];
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                } else {
-                    //insert ip
-                    $ip_id = INDEXES::insert_ip($db, $ip);
-                    // add to memcached
-                    $setID = setCache(md5("ip-id" . $mysql['ip_address'] . systemHash()), $ip_id, $time);
-                }
-            }
-        } else {
-            $ip_result = _mysqli_query($ip_sql);
-            $ip_row = $ip_result->fetch_assoc();
-            if ($ip_row !== null && $ip_row['ip_id']) {
-                // if this ip already exists, return the ip_id for it.
-                $ip_id = $ip_row['ip_id'];
-            } else {
-                //insert ip
-                $ip_id = INDEXES::insert_ip($db, $ip);
-            }
-        }
-
-        //return the ip_id
-        return $ip_id;
-    }
-
-    public static function insert_ip($db, $ip = null)
-    {
-        global $inet6_ntoa, $inet6_aton;
-
-        if (!isset($inet6_ntoa)) {
-            $inet6_ntoa = '';
-        }
-
-        if (!isset($inet6_aton)) {
-            $inet6_aton = '';
-        }
-
-        if ($ip === null && isset($GLOBALS['ip_address'])) {
-            $ip = $GLOBALS['ip_address'];
-        }
-
-        if (is_string($ip) || is_numeric($ip)) {
-            $ip = ipAddress($ip);
-        } elseif (is_array($ip)) {
-            $ip = (object) $ip;
-        }
-
-        if (!is_object($ip) || empty($ip->address)) {
-            return 0;
-        }
-
-        $ipType = $ip->type ?? (filter_var($ip->address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) ? 'ipv6' : 'ipv4');
-
-        $mysql['ip_address'] = $db->real_escape_string((string) $ip->address);
-
-        if ($inet6_ntoa === '' && $ipType === 'ipv6') {
-            $mysql['ip_address'] = inet6_aton($mysql['ip_address']); // encode for db check
-        }
-
-        if ($ipType === 'ipv6' && $inet6_aton !== '') {
-            // insert the ipv6 ip address and get the ipv6_id
-            $ip_sql = 'INSERT INTO 202_ips_v6 SET ip_address=' . $inet6_aton . '("' . $mysql['ip_address'] . '")';
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ipv6_id = $db->insert_id;
-
-            // insert the ipv6_id as the ipv4 address for referencing later on
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $ipv6_id . "'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        } else {
-            $ip_sql = "INSERT INTO 202_ips SET ip_address='" . $mysql['ip_address'] . "'";
-            $ip_result = _mysqli_query($db, $ip_sql); // ($ip_sql);
-            $ip_id = $db->insert_id;
-            return $ip_id;
-        }
-    }
-
-    // this returns the site_domain_id, when a site_url_address is given
-    public static function get_site_domain_id($site_url_address)
-    {
-        global $memcacheWorking, $memcache;
-
-        $parsed_url = @parse_url((string) $site_url_address);
-        $site_domain_host = $parsed_url['host'];
-        $site_domain_host = str_replace('www.', '', $site_domain_host);
-
-        // if a cached key is found for this lpip, redirect to that url
-        if ($memcacheWorking) {
-            $time = 2592000; // 30 days in sec
-            // get from memcached
-            $getID = $memcache->get(md5("domain-id" . $site_domain_host . systemHash()));
-
-            if ($getID) {
-                $site_domain_id = $getID;
-                return $site_domain_id;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
-
-                $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($site_domain_sql);
-                $site_domain_row = $site_domain_result->fetch_assoc();
-                if ($site_domain_row) {
-                    // if this site_domain_id already exists, return the site_domain_id for it.
-                    $site_domain_id = $site_domain_row['site_domain_id'];
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                } else {
-                    // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                    $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                    $site_domain_result = _mysqli_query($site_domain_sql); // ($site_domain_sql);
-                    $site_domain_id = $db->insert_id;
-                    // add to memcached
-                    $setID = setCache(md5("domain-id" . $site_domain_host . systemHash()), $site_domain_id, $time);
-                    return $site_domain_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['site_domain_host'] = $db->real_escape_string($site_domain_host);
-
-            $site_domain_sql = "SELECT site_domain_id FROM 202_site_domains WHERE site_domain_host='" . $mysql['site_domain_host'] . "'";
-            $site_domain_result = _mysqli_query($site_domain_sql);
-            $site_domain_row = $site_domain_result->fetch_assoc();
-            if ($site_domain_row) {
-                // if this site_domain_id already exists, return the site_domain_id for it.
-                $site_domain_id = $site_domain_row['site_domain_id'];
-                // add to memcached
-                return $site_domain_id;
-            } else {
-                // else if this doesn't exist, insert the new iprow, and return the_id for this new row we found
-                $site_domain_sql = "INSERT INTO 202_site_domains SET site_domain_host='" . $mysql['site_domain_host'] . "'";
-                $site_domain_result = _mysqli_query($site_domain_sql); // ($site_domain_sql);
-                $site_domain_id = $db->insert_id;
-                return $site_domain_id;
-            }
-        }
-    }
-
-    // this returns the site_url_id, when a site_url_address is given
-    public static function get_site_url_id($site_url_address)
-    {
-        global $memcacheWorking, $memcache;
-
-        $site_domain_id = INDEXES::get_site_domain_id($site_url_address);
-
-        if ($memcacheWorking) {
-            $time = 604800; // 7 days in sec
-            // get from memcached
-            $getURL = $memcache->get(md5("url-id" . $site_url_address . systemHash()));
-            if ($getURL) {
-                return $getURL;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['site_url_address'] = $db->real_escape_string($site_url_address);
-                $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
-
-                $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-                $site_url_result = _mysqli_query($site_url_sql);
-                $site_url_row = $site_url_result->fetch_assoc();
-                if ($site_url_row) {
-                    // if this site_url_id already exists, return the site_url_id for it.
-                    $site_url_id = $site_url_row['site_url_id'];
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                } else {
-
-                    $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                    $site_url_result = _mysqli_query($site_url_sql); // ($site_url_sql);
-                    $site_url_id = $db->insert_id;
-                    $setID = setCache(md5("url-id" . $site_url_address . systemHash()), $site_url_id, $time);
-                    return $site_url_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['site_url_address'] = $db->real_escape_string($site_url_address);
-            $mysql['site_domain_id'] = $db->real_escape_string($site_domain_id);
-
-            $site_url_sql = "SELECT site_url_id FROM 202_site_urls WHERE site_domain_id='" . $mysql['site_domain_id'] . "' and site_url_address='" . $mysql['site_url_address'] . "' limit 1";
-            $site_url_result = _mysqli_query($site_url_sql);
-            $site_url_row = $site_url_result->fetch_assoc();
-            if ($site_url_row) {
-                // if this site_url_id already exists, return the site_url_id for it.
-                $site_url_id = $site_url_row['site_url_id'];
-                return $site_url_id;
-            } else {
-
-                $site_url_sql = "INSERT INTO 202_site_urls SET site_domain_id='" . $mysql['site_domain_id'] . "', site_url_address='" . $mysql['site_url_address'] . "'";
-                $site_url_result = _mysqli_query($site_url_sql); // ($site_url_sql);
-                $site_url_id = $db->insert_id;
-                return $site_url_id;
-            }
-        }
-    }
-
-    // this returns the keyword_id
-    function get_keyword_id($keyword)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 255 charactesr of keyword
-        // $keyword = substr($keyword, 0, 255);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getKeyword = $memcache->get(md5("keyword-id" . $keyword . systemHash()));
-            if ($getKeyword) {
-                return $getKeyword;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['keyword'] = $db->real_escape_string($keyword);
-
-                $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($keyword_sql);
-                $keyword_row = $keyword_result->fetch_assoc();
-                if ($keyword_row) {
-                    // if this already exists, return the id for it
-                    $keyword_id = $keyword_row['keyword_id'];
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, 0);
-                    return $keyword_id;
-                } else {
-
-                    $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                    $keyword_result = _mysqli_query($keyword_sql); // ($keyword_sql);
-                    $keyword_id = $db->insert_id;
-                    $setID = setCache(md5("keyword-id" . $keyword . systemHash()), $keyword_id, 0);
-                    return $keyword_id;
-                }
-            }
-        } else {
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['keyword'] = $db->real_escape_string($keyword);
-
-            $keyword_sql = "SELECT keyword_id FROM 202_keywords WHERE keyword='" . $mysql['keyword'] . "'";
-            $keyword_result = _mysqli_query($keyword_sql);
-            $keyword_row = $keyword_result->fetch_assoc();
-            if ($keyword_row) {
-                // if this already exists, return the id for it
-                $keyword_id = $keyword_row['keyword_id'];
-                return $keyword_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $keyword_sql = "INSERT INTO 202_keywords SET keyword='" . $mysql['keyword'] . "'";
-                $keyword_result = _mysqli_query($keyword_sql); // ($keyword_sql);
-                $keyword_id = $db->insert_id;
-                return $keyword_id;
-            }
-        }
-    }
-
-    // this returns the c1 id
-    function get_c1_id($c1)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c1
-        $c1 = substr((string) $c1, 0, 350);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc1 = $memcache->get(md5("c1-id" . $c1 . systemHash()));
-            if ($getc1) {
-                return $getc1;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['c1'] = $db->real_escape_string($c1);
-
-                $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($c1_sql);
-                $c1_row = $c1_result->fetch_assoc();
-                if ($c1_row) {
-                    // if this already exists, return the id for it
-                    $c1_id = $c1_row['c1_id'];
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id, 0);
-                    return $c1_id;
-                } else {
-
-                    $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                    $c1_result = _mysqli_query($c1_sql); // ($c1_sql);
-                    $c1_id = $db->insert_id;
-                    $setID = setCache(md5("c1-id" . $c1 . systemHash()), $c1_id, 0);
-                    return $c1_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['c1'] = $db->real_escape_string($c1);
-
-            $c1_sql = "SELECT c1_id FROM 202_tracking_c1 WHERE c1='" . $mysql['c1'] . "'";
-            $c1_result = _mysqli_query($c1_sql);
-            $c1_row = $c1_result->fetch_assoc();
-            if ($c1_row) {
-                // if this already exists, return the id for it
-                $c1_id = $c1_row['c1_id'];
-                return $c1_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c1_sql = "INSERT INTO 202_tracking_c1 SET c1='" . $mysql['c1'] . "'";
-                $c1_result = _mysqli_query($c1_sql); // ($c1_sql);
-                $c1_id = $db->insert_id;
-                return $c1_id;
-            }
-        }
-    }
-
-    // this returns the c2 id
-    function get_c2_id($c2)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c2
-        $c2 = substr((string) $c2, 0, 350);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc2 = $memcache->get(md5("c2-id" . $c2 . systemHash()));
-            if ($getc2) {
-                return $getc2;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['c2'] = $db->real_escape_string($c2);
-
-                $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($c2_sql);
-                $c2_row = $c2_result->fetch_assoc();
-                if ($c2_row) {
-                    // if this already exists, return the id for it
-                    $c2_id = $c2_row['c2_id'];
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id, 0);
-                    return $c2_id;
-                } else {
-
-                    $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                    $c2_result = _mysqli_query($c2_sql); // ($c2_sql);
-                    $c2_id = $db->insert_id;
-                    $setID = setCache(md5("c2-id" . $c2 . systemHash()), $c2_id, 0);
-                    return $c2_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['c2'] = $db->real_escape_string($c2);
-
-            $c2_sql = "SELECT c2_id FROM 202_tracking_c2 WHERE c2='" . $mysql['c2'] . "'";
-            $c2_result = _mysqli_query($c2_sql);
-            $c2_row = $c2_result->fetch_assoc();
-            if ($c2_row) {
-                // if this already exists, return the id for it
-                $c2_id = $c2_row['c2_id'];
-                return $c2_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c2_sql = "INSERT INTO 202_tracking_c2 SET c2='" . $mysql['c2'] . "'";
-                $c2_result = _mysqli_query($c2_sql); // ($c2_sql);
-                $c2_id = $db->insert_id;
-                return $c2_id;
-            }
-        }
-    }
-
-    // this returns the c3 id
-    function get_c3_id($c3)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c3
-        $c3 = substr((string) $c3, 0, 350);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc3 = $memcache->get(md5("c3-id" . $c3 . systemHash()));
-            if ($getc3) {
-                return $getc3;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['c3'] = $db->real_escape_string($c3);
-
-                $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($c3_sql);
-                $c3_row = $c3_result->fetch_assoc();
-                if ($c3_row) {
-                    // if this already exists, return the id for it
-                    $c3_id = $c3_row['c3_id'];
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id, 0);
-                    return $c3_id;
-                } else {
-
-                    $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                    $c3_result = _mysqli_query($c3_sql); // ($c3_sql);
-                    $c3_id = $db->insert_id;
-                    $setID = setCache(md5("c3-id" . $c3 . systemHash()), $c3_id, 0);
-                    return $c3_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['c3'] = $db->real_escape_string($c3);
-
-            $c3_sql = "SELECT c3_id FROM 202_tracking_c3 WHERE c3='" . $mysql['c3'] . "'";
-            $c3_result = _mysqli_query($c3_sql);
-            $c3_row = $c3_result->fetch_assoc();
-            if ($c3_row) {
-                // if this already exists, return the id for it
-                $c3_id = $c3_row['c3_id'];
-                return $c3_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c3_sql = "INSERT INTO 202_tracking_c3 SET c3='" . $mysql['c3'] . "'";
-                $c3_result = _mysqli_query($c3_sql); // ($c3_sql);
-                $c3_id = $db->insert_id;
-                return $c3_id;
-            }
-        }
-    }
-
-    // this returns the c4 id
-    function get_c4_id($c4)
-    {
-        global $memcacheWorking, $memcache;
-
-        // only grab the first 350 charactesr of c4
-        $c4 = substr((string) $c4, 0, 350);
-
-        if ($memcacheWorking) {
-            // get from memcached
-            $getc4 = $memcache->get(md5("c4-id" . $c4 . systemHash()));
-            if ($getc4) {
-                return $getc4;
-            } else {
-
-                $database = DB::getInstance();
-                $db = $database->getConnection();
-
-                $mysql['c4'] = $db->real_escape_string($c4);
-
-                $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($c4_sql);
-                $c4_row = $c4_result->fetch_assoc();
-                if ($c4_row) {
-                    // if this already exists, return the id for it
-                    $c4_id = $c4_row['c4_id'];
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id, 0);
-                    return $c4_id;
-                } else {
-
-                    $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                    $c4_result = _mysqli_query($c4_sql); // ($c4_sql);
-                    $c4_id = $db->insert_id;
-                    $setID = setCache(md5("c4-id" . $c4 . systemHash()), $c4_id, 0);
-                    return $c4_id;
-                }
-            }
-        } else {
-
-            $database = DB::getInstance();
-            $db = $database->getConnection();
-
-            $mysql['c4'] = $db->real_escape_string($c4);
-
-            $c4_sql = "SELECT c4_id FROM 202_tracking_c4 WHERE c4='" . $mysql['c4'] . "'";
-            $c4_result = _mysqli_query($c4_sql);
-            $c4_row = $c4_result->fetch_assoc();
-            if ($c4_row) {
-                // if this already exists, return the id for it
-                $c4_id = $c4_row['c4_id'];
-                return $c4_id;
-            } else {
-                // else if this ip doesn't exist, insert the row and grab the id for it
-                $c4_sql = "INSERT INTO 202_tracking_c4 SET c4='" . $mysql['c4'] . "'";
-                $c4_result = _mysqli_query($c4_sql); // ($c4_sql);
-                $c4_id = $db->insert_id;
-                return $c4_id;
-            }
-        }
-    }
-}
-
 function runHourly($user_pref) {}
 
 function runWeekly($user_pref) {}
 
 
-
-function memcache_mysql_fetch_assoc($sql, $allowCaching = 1, $minutes = 5)
-{
-    global $memcacheWorking, $memcache;
-
-    if ($memcacheWorking == false) {
-        $result = _mysqli_query($sql);
-        $row = $result->fetch_assoc();
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $result = _mysqli_query($sql);
-            $row = $result->fetch_assoc();
-            return $row;
-        } else {
-
-            // Check if its set
-            $getCache = $memcache->get(md5($sql . systemHash()));
-
-            if ($getCache === false) {
-                // cache this data
-
-                $result = _mysqli_query($sql);
-                $fetchArray = $result->fetch_assoc();
-                //$setCache = $memcache->set(md5($sql . systemHash()), serialize($fetchArray), false, 60 * $minutes);
-                setCache(md5($sql . systemHash()), serialize($fetchArray),  60 * $minutes);
-
-                return $fetchArray;
-            } else {
-
-                // Data Cached
-                return unserialize($getCache);
-            }
-        }
-    }
-}
-
-function foreach_memcache_mysql_fetch_assoc($sql, $allowCaching = 1)
-{
-    global $memcacheWorking, $memcache;
-
-    if ($memcacheWorking == false) {
-        $row = [];
-        $result = _mysqli_query($sql); // ($sql);
-        while ($fetch = $result->fetch_assoc()) {
-            $row[] = $fetch;
-        }
-        return $row;
-    } else {
-
-        if ($allowCaching == 0) {
-            $row = [];
-            $result = _mysqli_query($sql); // ($sql);
-            while ($fetch = $result->fetch_assoc()) {
-                $row[] = $fetch;
-            }
-            return $row;
-        } else {
-
-            $getCache = $memcache->get(md5($sql . systemHash()));
-            if ($getCache === false) {
-                // if data is NOT cache, cache this data
-                $row = [];
-                $result = _mysqli_query($sql); // ($sql);
-                while ($fetch = $result->fetch_assoc()) {
-                    $row[] = $fetch;
-                }
-                $setCache = setCache(md5($sql . systemHash()), serialize($row), 60 * 5);
-
-                return $row;
-            } else {
-                // if data is cached, returned the cache data Data Cached
-                return unserialize($getCache);
-            }
-        }
-    }
-}
-
-// this function delays an SQL statement, puts iy in a mysql table, to be cronjobed out every 5 minutes
-function delay_sql($delayed_sql)
-{
-    if (is_string($delayed_sql))
-        $mysql['delayed_sql'] = str_replace("'", "''", $delayed_sql);
-    else
-        return false;
-    $mysql['delayed_time'] = time();
-
-    $delayed_sql = "INSERT INTO  202_delayed_sqls 
-
-					(
-						delayed_sql ,
-						delayed_time
-					)
-
-					VALUES 
-					(
-						'" . $mysql['delayed_sql'] . "',
-						'" . $mysql['delayed_time'] . "'
-					);";
-
-    $delayed_result = _mysqli_query($delayed_sql); // ($delayed_sql);
-}
-
-function user_cache_time($user_id)
-{
-    $database = DB::getInstance();
-    $db = $database->getConnection();
-
-    $mysql['user_id'] = $db->real_escape_string($user_id);
-    $sql = "SELECT cache_time FROM 202_users_pref WHERE user_id='" . $mysql['user_id'] . "'";
-    $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
-    return $row !== null ? $row['cache_time'] : null;
-}
 
 function get_user_data_feedback($user_id)
 {
@@ -1926,8 +943,15 @@ function get_user_data_feedback($user_id)
     $mysql['user_id'] = $db->real_escape_string((string)$user_id);
     $sql = "SELECT user_email, user_time_register, p202_customer_api_key, install_hash, user_hash, modal_status, vip_perks_status FROM 202_users WHERE user_id='" . $mysql['user_id'] . "'";
 
-    $result = _mysqli_query($sql);
-    $row = $result->fetch_assoc();
+    // Every signed-in page's header reads this: a failed read throws, and the
+    // page's handler shows the recorded error page.
+    $result = _mysqli_query($db, $sql);
+    if ($result === false) {
+        throw new \Prosper202\Database\Exceptions\QueryException(
+            'MySQL query failed: ' . p202FailedQueryMessage($db->errno, $db->error) . ' [errno ' . $db->errno . ']'
+        );
+    }
+    $row = p202FetchRow($result, $sql);
 
     if ($row === null) {
         return [
@@ -1979,75 +1003,82 @@ function clickserver_api_upgrade_url($key)
     return $download_url;
 }
 
-function clickserver_api_key_validate($key)
+/**
+ * Whether a ClickServer API key is valid for this install, as
+ * my.tracking202.com's auth answers: true, false, or null when no usable
+ * answer came (an outage, an error page). A caller must not read null as
+ * "invalid". The key and host are encoded into the query, the call is
+ * bounded, and no redirect is followed.
+ */
+function clickserver_api_key_validate($key): ?bool
 {
-    // Initiate curl
     $ch = curl_init();
-    // Disable SSL verification
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?apiKey=' . $key . '&clickserverId=' . base64_encode((string) $_SERVER['HTTP_HOST']));
-    // Execute
-    $result = curl_exec($ch);
-
-    $data = json_decode($result, true);
-
-    if ($data['isValidKey'] != 'true' || $data['isValidDomain'] != 'true') {
-        curl_close($ch);
-        return false;
+    if ($ch === false) {
+        return null;
     }
-    curl_close($ch);
-    return true;
-}
-
-function api_key_validate($key)
-{
-    $post = [];
-    $post['key'] = $key;
-    $fields = http_build_query($post);
-
-    // Initiate curl
-    $ch = curl_init();
-    // Set the url
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    // Disable SSL verification
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    // Will return the response, if false it print the response
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Set to post
-    curl_setopt($ch, CURLOPT_POST, true);
-    // Set post fields
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // Bound the call. With no timeouts set at all, curl waits up to 300s to
-    // connect and then indefinitely for the body, hanging whatever page called us.
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Follow redirects, keeping the POST body, so an HTTP->HTTPS redirect returns
-    // JSON rather than a redirect page that json_decode() turns into null.
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
-    // Execute
+    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v1/auth/?' . http_build_query([
+        'apiKey' => (string) $key,
+        'clickserverId' => base64_encode((string) ($_SERVER['HTTP_HOST'] ?? '')),
+    ]));
     $result = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        // echo 'error:' . curl_error($c);
-    }
-    // close connection
-    curl_close($ch);
-
-    $data = json_decode($result, true);
-    return $result;
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    return clickserver_auth_answer(is_string($result) ? $result : null, $status);
 }
 
-function systemHash(): string
+/**
+ * The auth service's answer read as clickserver_api_key_validate() reports
+ * it. A key the service rejects is invalid whatever else the answer holds or
+ * its status says; a verdict of valid counts only on a 2xx answer that holds
+ * both verdicts, each one the service sends. Anything else (no body, a body
+ * that is not the service's JSON, a failure status, a verdict missing or one
+ * it does not send) is null: no answer.
+ */
+function clickserver_auth_answer(?string $body, int $status): ?bool
 {
-    $hash = hash('ripemd160', ($_SERVER['HTTP_HOST'] ?? '') . ($_SERVER['SERVER_ADDR'] ?? ''));
-    return $hash;
+    $data = $body === null ? null : json_decode($body, true);
+    if (!is_array($data)) {
+        return null;
+    }
+    $verdict = static fn ($v): ?bool => match (true) {
+        $v === true, $v === 'true' => true,
+        $v === false, $v === 'false', $v === 0, $v === '0' => false,
+        default => null,
+    };
+    if (array_key_exists('isValidKey', $data) && $verdict($data['isValidKey']) === false) {
+        return false;
+    }
+    $answered = $status >= 200 && $status <= 299;
+    if (!$answered || !array_key_exists('isValidKey', $data) || !array_key_exists('isValidDomain', $data)) {
+        return null;
+    }
+    $key = $verdict($data['isValidKey']);
+    $domain = $verdict($data['isValidDomain']);
+    if ($key === null || $domain === null) {
+        return null;
+    }
+    return $key && $domain;
+}
+
+/**
+ * The licence service's raw answer for a key, as the installer and the
+ * fetch-a-key page read it: the body, or false when no answer came, which
+ * includes a body that is none of the service's own answers (a gateway's
+ * error page). Asked through ClickServerKeyValidator::answer(), which
+ * follows a redirect only to the service itself.
+ */
+function api_key_validate($key)
+{
+    $answer = \Prosper202\License\ClickServerKeyValidator::answer((string) $key);
+    if ($answer === null || \Prosper202\License\ClickServerKeyValidator::interpret($answer[0], $answer[1]) === null) {
+        return false;
+    }
+    return $answer[1];
 }
 
 function getBrowserIcon($name)
@@ -2565,38 +1596,6 @@ function getForeignPayout($currency, $payout_currency, $payout)
     return $result;
 }
 
-function validateCustomersApiKey($key)
-{
-    $fields = [
-        'key' => $key
-    ];
-
-    $fields = http_build_query($fields);
-
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, 'https://my.tracking202.com/api/v2/validate-customers-key');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
-    // A CONNECTTIMEOUT of 0 means curl's 300s default, and TIMEOUT 60 blocked the
-    // account page for a full minute whenever the licence API was slow.
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    // Follow redirects, keeping the POST body. Without this a 301 (an HTTP->HTTPS
-    // redirect at the edge, say) returns the redirect page instead of JSON,
-    // json_decode() yields null, and every caller then reports the key invalid
-    // because it only checks $validate['code'] != 200.
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
-    $result = curl_exec($ch);
-    curl_close($ch);
-    $result = json_decode($result, true);
-    return $result;
-}
-
 function validateRevContentCredentials($id, $secret)
 {
     $fields = [
@@ -2830,9 +1829,15 @@ function getDashEmail(): string|bool
     //get the main users dash email and api key from the db
     $sql = "SELECT user_dash_email,p202_customer_api_key FROM 202_users WHERE user_id ='" . $_SESSION['user_id'] . "'";
     $user_result = _mysqli_query($sql);
+    // Every signed-in page's footer reads this: a failed read (logged by
+    // _mysqli_query()) leaves the address unknown rather than the page cut
+    // off by a fatal.
+    if (!$user_result instanceof \mysqli_result) {
+        return false;
+    }
     $user_row = $user_result->fetch_assoc();
 
-    if ($user_row === null) {
+    if (!is_array($user_row)) {
         return false;
     }
 
@@ -2847,8 +1852,9 @@ function getDashEmail(): string|bool
                 //found it save to DB and return
                 $mysql['email'] = $db->real_escape_string($dashEmail['email']);
                 $sql = "UPDATE `202_users` SET user_dash_email='" . $mysql['email'] . "' WHERE user_id ='" . $_SESSION['user_id'] . "'";
-                $user_result = _mysqli_query($sql);
-                return ($mysql['email']);
+                _mysqli_query($sql);
+                // The address, not its copy escaped for the statement above.
+                return (string) $dashEmail['email'];
             }
         }
     }

@@ -540,9 +540,10 @@ class UsersController
     public function listApiKeys(int $userId): array
     {
         $hasScopeColumn = \Api\V3\Auth::apiKeyScopeColumnExists($this->db);
-        $columns = $hasScopeColumn
-            ? 'user_id, api_key, scope, created_at'
-            : 'user_id, api_key, created_at';
+        // label came with 1.9.78; the files can land before its upgrade runs.
+        $hasLabelColumn = \Api\V3\Auth::apiKeyLabelColumnExists($this->db);
+        $columns = 'user_id, api_key' . ($hasScopeColumn ? ', scope' : '')
+            . ($hasLabelColumn ? ', label' : '') . ', created_at';
         $stmt = $this->prepare("SELECT $columns FROM 202_api_keys WHERE user_id = ?");
         $this->bind($stmt, 'i', $userId);
         $this->execute($stmt, 'Query failed');

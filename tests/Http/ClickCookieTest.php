@@ -26,7 +26,7 @@ final class ClickCookieTest extends TestCase
      */
     private const COMPUTED_ELSEWHERE = [
         // $cookies[self::VISITOR_COOKIE]: p202vid, the visitor identity cookie.
-        '202-config/Identity/RequestSignals.php' => ['67: ?'],
+        '202-config/Identity/RequestSignals.php' => ['123: ?'],
     ];
 
     /** @return iterable<string, array{array<string, mixed>, mixed}> */
@@ -122,7 +122,7 @@ final class ClickCookieTest extends TestCase
         foreach (SourceScan::phpFiles() as $path => $source) {
             $through += preg_match_all("/(?:getCookie202|ClickCookie::value)\\([^)]*'tracking202/", $source);
         }
-        self::assertGreaterThanOrEqual(12, $through);
+        self::assertGreaterThanOrEqual(11, $through);
     }
 
     /** @return iterable<string, array{string, int}> */

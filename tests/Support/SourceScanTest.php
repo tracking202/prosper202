@@ -35,10 +35,14 @@ final class SourceScanTest extends TestCase
             . "\$db->autocommit(false);\n"                                // 18
             . "\$db->commit() ;\n"                                        // 19 space before ;
             . "if (\$x) \$db->commit();\n"                                // 20 brace-less if
-            . "else \$db->commit();\n";                                   // 21 brace-less else
+            . "else \$db->commit();\n"                                    // 21 brace-less else
+            . "\\mysqli_commit(\$db);\n"                                  // 22 fully qualified
+            . "namespace\\mysqli_commit(\$db);\n"                         // 23 namespace-relative
+            . "MySQLi_Commit(\$db);\n"                                     // 24 another case
+            . "\$db->Commit();\n";                                        // 25 another case
 
         self::assertSame(
-            [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 12, 14, 16, 17, 18, 19, 20, 21],
+            [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 12, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
             SourceScan::uncheckedCallStatements($source, self::TX_METHODS, self::TX_FUNCTIONS)
         );
     }
@@ -56,7 +60,10 @@ final class SourceScanTest extends TestCase
             . "\$db->rollback();\n"          // not in the list
             . "\$stmt->execute();\n"         // not in the list
             . "\$x->committed();\n"          // different name
-            . "\$c = new Commit(); commit();\n"; // bare function not in the function list
+            . "\$c = new Commit(); commit();\n" // bare function not in the function list
+            . "Other\\mysqli_commit(\$db);\n"    // another namespace's function
+            . "\\Other\\mysqli_commit(\$db);\n"  // the same, fully qualified
+            . "new \\mysqli_commit(\$db);\n";    // a class of that name
 
         self::assertSame([], SourceScan::uncheckedCallStatements($source, self::TX_METHODS, self::TX_FUNCTIONS));
     }

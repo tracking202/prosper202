@@ -338,15 +338,18 @@ phpstan_partial_vendor_split() { # $1 = json output; $2 = changed php files, new
     ' <<< "$1" 2>/dev/null || echo "? ?"
 }
 
-run_phpstan() {
+# One PHPStan run over config $1, its output printed. Returns PHPStan's exit
+# status, or TIER_COULD_NOT_RUN when it exited 0 without a result line.
+phpstan_config() {
     # --memory-limit is not optional locally. CI installs PHP through
     # setup-php, which leaves memory_limit uncapped; a stock local php.ini
     # caps it at 128M and PHPStan dies parsing the intl stubs. Without the
     # flag this tier reports FAIL for an environment reason and sends the
     # reader hunting a regression that is not there.
     local out rc
+    echo "phpstan -c $1:"
     # shellcheck disable=SC2086
-    out=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M 2>&1 )
+    out=$( $PHPSTAN_CMD analyse -c "$1" --no-progress --memory-limit=512M 2>&1 )
     rc=$?
     printf '%s\n' "$out"
     # A green exit with no output is not a clean analysis, it is an analysis
@@ -355,10 +358,19 @@ run_phpstan() {
     # PATH was a stub that echoed and exited 0, which is the worst possible
     # outcome for a check.
     if [ $rc -eq 0 ] && ! printf '%s' "$out" | grep -qE 'No errors|\[OK\]|Found [0-9]+ error'; then
-        COULD_NOT_RUN_REASON="PHPStan exited 0 but printed no result line; the analysis did not run (is \`php\` on PATH the real interpreter?)"
+        COULD_NOT_RUN_REASON="PHPStan exited 0 on $1 but printed no result line; the analysis did not run (is \`php\` on PATH the real interpreter?)"
         return $TIER_COULD_NOT_RUN
     fi
-    if [ $rc -ne 0 ] && [ "$VENDOR_STATE" = partial ]; then
+    return $rc
+}
+
+# The phpstan.neon.dist run. On a partial vendor its environmental errors
+# are separated out: when they are all it found, it could not run.
+phpstan_dist() {
+    local rc
+    phpstan_config phpstan.neon.dist
+    rc=$?
+    if [ $rc -ne 0 ] && [ $rc -ne $TIER_COULD_NOT_RUN ] && [ "$VENDOR_STATE" = partial ]; then
         local json split env other
         # shellcheck disable=SC2086
         json=$( $PHPSTAN_CMD analyse -c phpstan.neon.dist --no-progress --memory-limit=512M --error-format=json 2>/dev/null )
@@ -373,6 +385,45 @@ run_phpstan() {
         fi
     fi
     return $rc
+}
+
+phpstan_verdict() {
+    case "$1" in
+        0) echo passed ;;
+        "$TIER_COULD_NOT_RUN") echo "did not run" ;;
+        *) echo failed ;;
+    esac
+}
+
+# CI runs two PHPStan steps (.github/workflows/php-lint.yml): the custom rules
+# over the tree (phpstan.neon.dist) and level max over the files
+# phpstan-strict.neon lists. The tier ran only the first, so a finding only
+# the second reports read as PASS here and failed in CI. Either failing is a
+# FAIL; otherwise either not running is a SKIP; neither stands in for the
+# other.
+run_phpstan() {
+    local rc strict_rc dist_reason dist_note
+    phpstan_dist
+    rc=$?
+    if [ ! -f phpstan-strict.neon ]; then
+        [ $rc -eq 0 ] && PASS_NOTE="no phpstan-strict.neon in this tree; phpstan.neon.dist only"
+        return $rc
+    fi
+    dist_reason=$COULD_NOT_RUN_REASON
+    dist_note=$FAIL_NOTE
+    COULD_NOT_RUN_REASON=""
+    FAIL_NOTE=""
+    phpstan_config phpstan-strict.neon
+    strict_rc=$?
+    if [ "$(phpstan_verdict $rc)" = failed ] || [ "$(phpstan_verdict $strict_rc)" = failed ]; then
+        FAIL_NOTE="phpstan.neon.dist $(phpstan_verdict $rc), phpstan-strict.neon $(phpstan_verdict $strict_rc)${dist_note:+; $dist_note}"
+        return 1
+    fi
+    if [ $rc -ne 0 ] || [ $strict_rc -ne 0 ]; then
+        COULD_NOT_RUN_REASON="${dist_reason}${dist_reason:+${COULD_NOT_RUN_REASON:+; }}${COULD_NOT_RUN_REASON}"
+        return $TIER_COULD_NOT_RUN
+    fi
+    return 0
 }
 
 # The PHP minor version CI pins for the unit job, read from the workflow so
@@ -1074,6 +1125,8 @@ tiers_from_diff() {
         return
     fi
     echo "$files" | grep -q '\.php$'                    && tiers="$tiers phpstan phpcs unit"
+    # CI's PHPStan job also runs when only a config changes (php-lint.yml).
+    echo "$files" | grep -qE '^phpstan[^/]*\.neon(\.dist)?$' && tiers="$tiers phpstan"
     echo "$files" | grep -q '^go-cli/'                  && tiers="$tiers go golangci"
     # 202-config/Database/Tables/*.php hold the CREATE TABLE definitions the
     # installer runs, and 202-config/migrations/ the ALTERs; neither has

@@ -1,41 +1,15 @@
 <?php
 
 include_once(__DIR__ . '/functions-upgrade.php');
-
-// Add ipAddress function
-function ipAddress($ip_address): stdClass
-{
-    $ip = new stdClass;
-    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-        $ip->address = $ip_address;
-        if (filter_var($ip_address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            $ip->type = 'ipv4';
-        } else {
-            $ip->type = 'ipv6';
-        }
-    } else {
-        $ip->type = 'invalid';
-        $ip->address = '127.0.0.1'; // fallback
-    }
-    
-    // Skip the tracking check for now to avoid dependency issues
-    $ip->address = @inet_ntop(inet_pton($ip->address)); //format ip address in standard form
-    return $ip;
-}
-
-//our own die, that will display the them around the error message
+// The functions the click path's bootstrap shares (_mysqli_query(),
+// ipAddress(), get_absolute_url()).
+require_once __DIR__ . '/mysql-error-args.php';
+require_once __DIR__ . '/functions-shared.php';
 
 // Add prosper_log function
 function prosper_log($category, $message): void {
     // Simple logging function - you can expand this as needed
     error_log("[Prosper202][$category] $message");
-}
-
-function get_absolute_url(): string
-{
-	$absolutepath = substr(substr(__DIR__, 0, -10), strlen(realpath($_SERVER['DOCUMENT_ROOT'])));
-	$absolutepath = str_replace('\\', '/', $absolutepath);
-	return $absolutepath;
 }
 
 
@@ -49,39 +23,6 @@ function _die($message): never
 	die();
 }
 
-
-//our own function for controling mysqls and monitoring then.
-/**
- * Execute a MySQL query.
- *
- * Supports two calling conventions:
- * - _mysqli_query($sql) - uses global $db
- * - _mysqli_query($db, $sql) - uses provided $db
- *
- * @param \mysqli|string $db_or_sql Database connection or SQL query
- * @param string|null $sql SQL query (if first param is db connection)
- * @return \mysqli_result|bool
- */
-function _mysqli_query($db_or_sql, $sql = null): \mysqli_result|bool
-{
-	// Support both calling conventions:
-	//   _mysqli_query($sql)         — 1 arg, uses global $db
-	//   _mysqli_query($db, $sql)    — 2 args, uses provided $db
-	if ($sql === null) {
-		$sql = $db_or_sql;
-		global $db;
-	} else {
-		$db = $db_or_sql;
-	}
-
-	if ($db instanceof \mysqli) {
-		$result = @$db->query($sql);
-	} else {
-		$connection = $db->getConnection();
-		$result = @$connection->query($sql);
-	}
-	return $result;
-}
 
 function salt_user_pass($user_pass): string
 {

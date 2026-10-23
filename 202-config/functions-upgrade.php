@@ -36,16 +36,14 @@ if (!function_exists('_upgrade_query_run')) {
             $error = '';
 
             try {
-                $result = @$conn->query($sql);
+                $result = $conn->query($sql);
+                if ($result !== false) {
+                    return $result;
+                }
             } catch (\mysqli_sql_exception $e) {
                 // Covers environments that also enable MYSQLI_REPORT_ERROR.
-                $result = false;
                 $errno  = (int) $e->getCode();
                 $error  = $e->getMessage();
-            }
-
-            if ($result !== false) {
-                return $result;
             }
 
             if ($errno === 0) {
@@ -86,9 +84,10 @@ if (!function_exists('_upgrade_query')) {
      * instead of silently skipping a migration step; every other outcome preserves
      * _mysqli_query()'s contract exactly (the mysqli_result, or false).
      *
-     * Only autocommit statements flow through here; the one explicit-transaction
-     * block (the 1.9.57 migration) calls $connection->query() directly, so a
-     * per-statement retry never runs inside an open transaction.
+     * Only autocommit statements flow through here: no upgrade step calls
+     * Connection::transaction(), the one place a transaction begins
+     * (TransactionsBeginOnlyInConnectionTest), so a per-statement retry never
+     * runs inside one.
      *
      * @param  string|mixed $sql
      * @return \mysqli_result|bool
@@ -613,12 +612,22 @@ class PROSPER202
         $version_sql = "SELECT version FROM 202_version";
         $version_result = $db->query($version_sql);
 
-        // if the query fails (table doesn't exist), this is an older 1.0.0-1.0.2 release
         if ($version_result === false) {
-            return '1.0.2';
+            // No such table (1146): an older 1.0.0-1.0.2 release. Any other
+            // failure names no version, and read as 1.0.2 it would send the
+            // ladder up from there.
+            if ($db->errno === 1146) {
+                return '1.0.2';
+            }
+            throw new \Prosper202\Database\Exceptions\QueryException(
+                'MySQL query failed: ' . $db->error . ' [errno ' . $db->errno . ']'
+            );
         }
 
         $version_row = $version_result->fetch_assoc();
+        if ($version_row === false) {
+            throw new \Prosper202\Database\Exceptions\QueryException('MySQL fetch failed: ' . $version_sql);
+        }
         $prosper202_version = $version_row['version'] ?? null;
 
         // if there is no mysql version, this is an older 1.0.0-1.0.2 release, just return version 1.0.0 for simplicitly sake
@@ -4337,10 +4346,32 @@ class UPGRADE
             }
         }
 
-        //This will enable p202 to downgrade to this version if installed over a newer version
-        if (version_compare((string) $prosper202_version, '1.9.77', '>')) {
+        if ($prosper202_version == '1.9.77') {
 
-            $prosper202_version = '1.9.77';
+            // 202_api_keys gains label: the name a key is shown with in
+            // Account › API keys. A key an AI app's connection mints is
+            // labelled with the app (Api\V3\Support\AiConnect).
+            // A schema change for 1.9.78 belongs in this block, reconciled
+            // before the version is written.
+            $api_keys_ok = _upgrade_measurement_tables([\Prosper202\Database\Tables\UserTables::apiKeys()]);
+
+            if ($api_keys_ok) {
+                if (_upgrade_query("UPDATE 202_version SET version='1.9.78'") !== false) {
+                    $prosper202_version = '1.9.78';
+                } else {
+                    error_log('Prosper202 upgrade: failed to persist version 1.9.78; '
+                        . 'leaving version at 1.9.77 so the next run retries.');
+                }
+            } else {
+                error_log('Prosper202 upgrade: 202_api_keys could not be reconciled; '
+                    . 'leaving version at 1.9.77 so the next run retries.');
+            }
+        }
+
+        //This will enable p202 to downgrade to this version if installed over a newer version
+        if (version_compare((string) $prosper202_version, '1.9.78', '>')) {
+
+            $prosper202_version = '1.9.78';
             $sql = "UPDATE 202_version SET version='" . $prosper202_version . "'";
             $result = _upgrade_query($sql);
         }

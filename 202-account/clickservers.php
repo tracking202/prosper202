@@ -27,8 +27,12 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_id']);
 $user_sql = "	SELECT 	`clickserver_api_key`
 				 FROM   	`202_users`
 				 WHERE  	`202_users`.`user_id`='".$mysql['user_id']."'";
-$user_result = $db->query($user_sql);
-$user_row = $user_result ? $user_result->fetch_assoc() : null;
+$user_result = _mysqli_query($db, $user_sql);
+if ($user_result === false) {
+	// Not "no key": the page would ask for one the account has.
+	record_mysql_error($db, $user_sql);
+}
+$user_row = $user_result->fetch_assoc();
 $apiKey = (string)($user_row['clickserver_api_key'] ?? '');
 
 $clickservers = null;

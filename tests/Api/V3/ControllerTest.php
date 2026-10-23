@@ -348,6 +348,7 @@ final class ControllerTest extends TestCase
         $this->assertSame('skipped', $result['data'][0]['status']);
         $this->assertSame('error', $result['data'][1]['status']);
         $this->assertSame('error', $result['data'][2]['status']);
+        $this->assertArrayHasKey('name', $result['data'][2]['field_errors'] ?? [], json_encode($result['data'][2]));
     }
 
     public function testBulkUpsertHonorsConfigurableMaxRowsEnvLimit(): void

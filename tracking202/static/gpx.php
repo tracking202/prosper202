@@ -61,14 +61,14 @@ if (is_numeric($mysql['click_id'])) {
 	$cpa_sql = "SELECT 202_cpa_trackers.tracker_id_public, 202_trackers.click_cpa, 202_clicks.user_id, 202_clicks.aff_campaign_id, 202_clicks.click_lead, 202_clicks.click_time
 				FROM 202_clicks
 				LEFT JOIN 202_cpa_trackers USING (click_id) 
-				LEFT JOIN 202_trackers USING (tracker_id_public)  
+				LEFT JOIN 202_trackers ON (202_trackers.tracker_id_public = 202_cpa_trackers.tracker_id_public
+					AND 202_trackers.user_id = 202_clicks.user_id)
 				WHERE click_id = '".$mysql['click_id']."'";
-	$cpa_result = $db->query($cpa_sql);
-	if ($cpa_result === false) {
-		error_log('gpx: cpa lookup failed: ' . $db->error);
-		return;
-	}
-	$cpa_row = $cpa_result->fetch_assoc();
+    $cpa_result = $db->query($cpa_sql);
+    if ($cpa_result === false) {
+        record_mysql_error($db, $cpa_sql);
+    }
+    $cpa_row = p202FetchRow($cpa_result, $cpa_sql);
 	if (!$cpa_row) {
 		// Unknown click id; nothing to convert.
 		return;
@@ -121,15 +121,9 @@ if (is_numeric($mysql['click_id'])) {
 				$mysql['click_payout'] = $db->real_escape_string((string)$_GET['amount']);
 			}
 
-		// payout to record: pixel amount override if present, otherwise the click's own payout
+		// The pixel's amount, when it names one. Without one p202RecordConversion()
+		// reads no payout from here: the writer applies the campaign's default.
 		$click_payout_for_log = ($mysql['use_pixel_payout'] == 1) ? (string) ($_GET['amount'] ?? '0') : '0';
-		if ($mysql['use_pixel_payout'] != 1) {
-			$payout_sql = "SELECT click_payout FROM 202_clicks WHERE click_id = " . (int) $mysql['click_id'];
-			$payout_result = $db->query($payout_sql);
-			if ($payout_result && $payout_row = $payout_result->fetch_assoc()) {
-				$click_payout_for_log = (string) $payout_row['click_payout'];
-			}
-		}
 
 		// Atomic + idempotent: locks the click, dedupes on transaction id, and
 		// applies the click update and conversion_logs insert in one transaction.

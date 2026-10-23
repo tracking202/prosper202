@@ -31,7 +31,10 @@ $mysql['user_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $mysql['user_own_id'] = $db->real_escape_string((string)$_SESSION['user_own_id']);
 $user_sql = "SELECT 2u.user_name as username, 2up.user_slack_incoming_webhook AS url FROM 202_users AS 2u INNER JOIN 202_users_pref AS 2up ON (2up.user_id = 1) WHERE 2u.user_id = '" . $mysql['user_own_id'] . "'";
 $user_results = $db->query($user_sql);
-$user_row = $user_results->fetch_assoc();
+if ($user_results === false) {
+    record_mysql_error($user_sql);
+}
+$user_row = p202FetchRow($user_results, $user_sql);
 
 if (!empty($user_row['url']))
 	$slack = new Slack($user_row['url']);
@@ -346,20 +349,19 @@ $editId = $editing ? (int) ($_GET['edit_landing_page_id'] ?? 0) : 0;
 $action = $self . ($editing ? '?edit_landing_page_id=' . $editId : ($copying ? '?copy_landing_page_id=' . (int) ($_GET['copy_landing_page_id'] ?? 0) : ''));
 
 // Landing Page Optimizer deeplink: paired installs jump to the hosted create
-// page with context params; unpaired ones land on the pairing panel. Degrades
-// to unpaired before the upgrade adds the lpo_status pref column.
-$lpo_paired = false;
-$lpo_install_hash = '';
-try {
-	$lpo_result = $db->query("SELECT u.install_hash, up.lpo_status FROM 202_users AS u INNER JOIN 202_users_pref AS up ON (up.user_id = u.user_id) WHERE u.user_id = '" . $uid . "'");
-	$lpo_row = ($lpo_result instanceof mysqli_result) ? $lpo_result->fetch_assoc() : null;
-	$lpo_install_hash = trim((string) ($lpo_row['install_hash'] ?? ''));
-	// a pairing is only deeplinkable with a real install hash — a blank one
-	// would emit install= and break the hosted page, so treat it as unpaired
-	$lpo_paired = (string) ($lpo_row['lpo_status'] ?? '') === 'active' && $lpo_install_hash !== '';
-} catch (Throwable $lpo_lookup_error) {
-	// pre-upgrade schema; keep the panel link
+// page with context params; unpaired ones land on the pairing panel.
+// connect.php sends an install whose schema predates lpo_status to the
+// upgrade before this page runs, so a failed read is an error, not "unpaired".
+$lpo_sql = "SELECT u.install_hash, up.lpo_status FROM 202_users AS u INNER JOIN 202_users_pref AS up ON (up.user_id = u.user_id) WHERE u.user_id = '" . $uid . "'";
+$lpo_result = $db->query($lpo_sql);
+if ($lpo_result === false) {
+    record_mysql_error($lpo_sql);
 }
+$lpo_row = p202FetchRow($lpo_result, $lpo_sql);
+$lpo_install_hash = trim((string) ($lpo_row['install_hash'] ?? ''));
+// a pairing is only deeplinkable with a real install hash — a blank one
+// would emit install= and break the hosted page, so treat it as unpaired
+$lpo_paired = (string) ($lpo_row['lpo_status'] ?? '') === 'active' && $lpo_install_hash !== '';
 $lpo_create_base = \Prosper202\Lpo\PairingClient::saasBaseUrl() . '/api/customers/experiments/create';
 $optimizeLink = static function (array $page) use ($lpo_paired, $lpo_create_base, $lpo_install_hash, $base): string {
 	if ($lpo_paired) {

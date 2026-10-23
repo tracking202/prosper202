@@ -90,32 +90,16 @@ if (strlen($p202ChatInstallUrl) > 300 || preg_match('#^https?://#i', $p202ChatIn
 }
 
 try {
-    $p202ChatFingerprint = hash('sha256', json_encode(
-        [$p202ChatRequest, $p202ChatInstallUrl, CHAT_PASS_URL],
-        JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR
-    ));
+    $p202ChatFingerprint = ChatPassClient::fingerprint($p202ChatRequest, $p202ChatInstallUrl, CHAT_PASS_URL);
 } catch (\JsonException $e) {
     error_log('Prosper202 chat: the pass request could not be encoded: ' . $e->getMessage());
     $p202ChatAnswer(500, ['ok' => false, 'error' => 'internal']);
 }
 
 $p202ChatCached = $_SESSION['p202_chat_pass'] ?? null;
-$p202ChatPass = null;
-if (
-    $p202ChatRefresh === '0'
-    && is_array($p202ChatCached)
-    && ($p202ChatCached['for'] ?? null) === $p202ChatFingerprint
-    && is_string($p202ChatCached['pass'] ?? null)
-    && is_string($p202ChatCached['chat_url'] ?? null)
-    && is_int($p202ChatCached['expires_at_s'] ?? null)
-    && $p202ChatCached['expires_at_s'] - 3600 > time()
-) {
-    $p202ChatPass = [
-        'pass'         => $p202ChatCached['pass'],
-        'chat_url'     => $p202ChatCached['chat_url'],
-        'expires_at_s' => $p202ChatCached['expires_at_s'],
-    ];
-}
+$p202ChatPass = $p202ChatRefresh === '0'
+    ? ChatPassClient::keptPass($p202ChatCached, $p202ChatFingerprint, time())
+    : null;
 
 if ($p202ChatPass === null) {
     try {
@@ -131,7 +115,7 @@ if ($p202ChatPass === null) {
     }
     $p202ChatFresh = $p202ChatPass;
     withWritableSession(static function () use ($p202ChatFingerprint, $p202ChatFresh): void {
-        $_SESSION['p202_chat_pass'] = ['for' => $p202ChatFingerprint] + $p202ChatFresh;
+        $_SESSION['p202_chat_pass'] = ChatPassClient::keep($p202ChatFingerprint, $p202ChatFresh);
     });
 }
 

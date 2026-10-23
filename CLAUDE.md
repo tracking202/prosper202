@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Project
-Prosper202 — PHP 8.3 affiliate tracking platform with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
+Prosper202 — PHP 8.3 self-hosted campaign tracking and marketing analytics platform (clicks, conversions, attribution, app measurement, customer LTV) with REST API v3 (mysqli, PSR-4) and Symfony Console CLI.
 
 ## Branches: every version has its own, and master takes only finished versions
 - **All work for a new version is pull-requested into the branch named for
@@ -55,6 +55,76 @@ use for `null` (keep the zone the session took at sign-in), so a database
 error had every report page count "today" in a stale zone with nothing said,
 while the test listed it as graceful. A fallback that reads like an answer is
 the silent case again; it throws now.
+
+The admin pages' `_mysqli_query()` was the same false with nothing said at
+all: an `@` (which silenced nothing; the report modes this app sets raise no
+warning for a failed query) and a bare `return`. A call standing alone as a
+statement lost the failure outright: the remember-me sign-in stored no key
+and set its cookie anyway, and a failed read of the account's secret was
+read as "no secret", so a new one was minted over the stored one and every
+remembered browser of the account was signed out. It logs every failure now
+(`p202LogFailedQuery()`: the caller, MySQL's errno and words, the statement
+with its quoted values taken out, since some carry a secret — and MySQL's
+words too, which repeat a value as sent, its quotes unescaped: `Duplicate
+entry 'O'Brien' for key …`, so redacting the statement alone left the value
+in the line, found by review; and where a quoted value ends depends on the
+session's `sql_mode` — under `NO_BACKSLASH_ESCAPES` `'x\'` is whole, and
+read with escapes the next value was kept — so the line keeps only what a
+reading with escapes and one without both leave in), and
+`MysqliQueryResultIsNotDiscardedTest` refuses a call whose answer is thrown
+away. The next sweep read the other 81: 12 used the answer before any
+test or never read it (a failed ownership check was `->num_rows` on false,
+an \Error; a refused write set `$add_success = true`), and 17 tested it
+only to fold the failure into an answer (a failed preferences read showed
+AutoCron and MaxMind as off; a failed reset-key lookup said "no key was
+found"). `MysqliQueryResultIsTestedTest` now holds every result to a test
+for failure in the next condition that refuses there — throws, a call
+declared `never`, the legacy API's database error, the page's
+`$error[...]` — and lists each fold that remains, with the answer it gives
+and why. A bare `return` or `continue` in the failure branch is a fold: it
+hands the failure on as an answer. So is `if (_mysqli_query($sql)) { … }`
+with no `else`, which the first draft counted as tested because the call
+sat in the condition (found by review): the redirector removal nested three
+of them, and a refused second delete stopped it half way with nothing said.
+A call in a condition is tested only where the branch its false takes
+refuses (#21: naming a thing is not being guarded by it). And a refusal
+that only says so — `$error[...]`, a 'bad' flash — carries on past the
+if, so `if ($r === false) { $error['db'] = …; } $r->fetch_assoc();` read
+the false it had just reported (found by review): such a branch counts
+only when nothing reads the result on the path it goes on to, after the
+if or from the top of a loop around it (#22). The test itself has to run
+whenever the assignment did: the first draft took the first appearance in
+source order, so a test inside one branch of an `if`, or in an `elseif`,
+vouched for the other branch's use of the false (found by review).
+
+`$db->query()` is the same false under another name, and the check read
+only `_mysqli_query()`: 116 more results in 41 files went untested. Among
+them `PROSPER202::prosper202_version()` answered `'1.0.2'` for any failed
+read of `202_version`, not only a missing table, so one database error sent
+every page to the upgrade, and inside the ladder would have started it again
+from its first rung; and the redirector's rule save skipped its rule writes
+when the rotator's `UPDATE` failed and then died on a TypeError. The check
+reads every `->query(` from its receiver now (`$db`, `$this->db`, `$db?->`;
+any other receiver is reported), less a class's own `query()`. A fold still
+asks who is on the other end: on the click path the visitor goes on (a
+session that refuses its `sql_mode` reads as an outage, and a failed rollup
+of a click already recorded is logged), and a write that has landed is not
+answered as failed (#13). The v3 API answered every 500 with nothing logged
+at all; it writes `p202UncaughtLogLine()` now.
+
+The two bootstraps had a copy each of `_mysqli_query()` — the admin pages'
+logged and answered false, the click path's showed the error page and died
+— and of `record_mysql_error()`, the cached reads, `setCache()` and five
+more, drifted the same way: one name failed one way on a report page and
+another on a redirect, and a test standing in for one had to say which
+(#9). There is one copy of each now, in `functions-shared.php`, which both
+load first. `_mysqli_query()` logs and answers false everywhere, and the
+caller acts on the false; `memcache_mysql_fetch_assoc()` and its list twin
+throw a `QueryException` for a failed query instead of the `false` and `[]`
+that read as "no row" (on the click path the uncaught handler makes that
+the error page). What still differs between the two is asked of
+`p202OnTheClickPath()` where it matters. A function both bootstraps need
+goes there, never into each.
 
 A status line is a return value too. `dej.php` rolls up one hour for
 `process_dataengine_job.php`, which marks the hour processed when every call
@@ -282,6 +352,16 @@ so `StaticSqlSchemaTest` could not see the statement either. SQL that
 reaches a server only through a builder needs one run against a real
 server before it ships (`ListTimeFiltersIntegrationTest`).
 
+A stand-in for a function with two copies has to answer as the copy it
+stands in for. The error page's runner gave both `record_mysql_error()`s a
+`_mysqli_query()` that answered false, which connect2.php's never does (it
+calls the error page again): the test held a "the server refused the row"
+branch that cannot run on the click path, where a refused row re-entered
+the page and logged the server's words about it. The runner now gives each
+definition its own file's `_mysqli_query()` wherever the answer matters.
+There is one definition now (`functions-shared.php`, below in #1), and the
+runner runs it under each bootstrap.
+
 ### 10. Calling a capability done without an end-to-end pass
 Aggregate green suites are not coverage of the path you just wrote — the
 PHP, Go, and eval suites were all green while nothing exercised staged
@@ -320,7 +400,37 @@ Two amplifiers, both of which turned this from a blip into a breach:
   ask what the cached value costs if it is *wrong*, not just what it saves
   when right. (Cache on the object, not `spl_object_id()`: ids are reused
   after free, so a reconnect can inherit a freed connection's answer. A
-  `WeakMap` keyed by the connection cannot.)
+  `WeakMap` keyed by the connection cannot.) A cache is outside the
+  transaction too: moving `rtr.php`'s click writes into one put the site URL
+  lookup inside it, and that lookup caches the id of a row it inserts at
+  once, so a rollback left memcached naming a row that no longer existed and
+  every later click to the URL stored the dangling id for 7 days (found by
+  the adversarial review, reproduced live). Writes made inside a transaction
+  wait for its commit (`p202WithHeldCacheWrites()`). The same lookup is a
+  SELECT and then an INSERT with no unique key behind it (the install
+  partitions `202_site_urls` by its id, and a partitioned table's unique keys
+  must include that id), so concurrent first clicks on one new URL can store
+  it twice; each click names a valid row. That is left as it is, and written
+  at the lookup. Fixing a lookup does not fix the answers it already cached:
+  the IPv6 address lookup joined `202_ips_v6` to `202_ips` as numbers and
+  could answer an IPv4 visitor's row, and the corrected join kept the old
+  key, so every wrong id the old code had cached was still served for its 30
+  days (found by review, reproduced). When a lookup's answer changes, change
+  its key subject (`ip6-id`), and pin the old key unserved in a test. Nor
+  does it fix the same join elsewhere: Analyze › IPs and the group report
+  kept the numeric join until review found them, and on MariaDB no test
+  could tell (it happens to compare that join as text).
+  `Ipv6RowJoinIsGuardedTest` now holds every join of `202_ips_v6`, and
+  every comparison of an `ip_id` with an `ip_address` in the tree's SQL,
+  in whatever clause it is written.
+  A cache's namespace is a claim about whose values it holds:
+  `systemHash()` was the host and address, while every value it names is a
+  database's, so two installs on one host sharing a memcached read each
+  other's tracker rows and lookup ids. It names the install now, by its
+  directory and its database; the first fix named the database alone, and
+  fell back to the shared namespace wherever the database settings were not
+  in scope (found by review) — a fallback is a namespace too
+  (`SystemHashNamesTheDatabaseTest`).
 - **"Cheap and clearly right" is a claim, not an exemption.** That memoization
   was added mid-session with exactly that justification and no thought about
   its failure mode. The size of a change bounds how long the review takes, not
@@ -356,6 +466,16 @@ When adding a check, trace an actual bad value from the outermost entry point
 and confirm it *reaches* the check — this is #5 across layers rather than
 across sibling call sites.
 
+The guard can also sit below a layer that ends the request first. The click
+path's outage fallback (`if (!$db)` in dl.php, lp.php and off.php: send the
+visitor to the URL kept in memcache) did not run from 1.8.4 to 1.9.78: the
+bootstrap connected unguarded under `MYSQLI_REPORT_STRICT`, so a refused
+connection threw before any script reached its check, and dl.php built its
+repositories on the connection above its check as well — every request a
+500, the fallback's own fixes in between made to code that could not run.
+`tests/live/outage-fallback.sh` takes the database away from one server and
+runs the path.
+
 ### 13. Retry seams must know whether the write landed
 An exception says nothing about whether the database changed. `Controller::create()`
 inserts, then runs `afterCreate()`, `get()` and `recordChange()` with the row
@@ -368,6 +488,16 @@ commits the outer. The code that knows says so instead: handlers wrap their
 post-write steps and rethrow `WriteCommittedException`, and the seams refuse
 the retry. Any code that decides "safe to run this again" needs a fact, not an
 inference from an exception type.
+
+That implicit commit was silent wherever it happened: a nested transaction
+committed the outer one's work so far, and the outer's rollback then undid
+only what came after. `Connection::transaction()` now refuses to begin inside
+another on the same handle (a `LogicException`, before anything is written),
+so a value it returns has committed; work that belongs to the caller's
+transaction goes through `joinTransaction()`, which refuses when none is
+open. A transaction opened anywhere else is one the refusal cannot see, so
+Connection is the only place one begins or ends
+(`TransactionsBeginOnlyInConnectionTest`).
 
 ### 14. Safety flags must survive process and reset boundaries
 `--staged` promises a write becomes a proposal. The interactive shell resets
@@ -511,6 +641,14 @@ reason folding is right — and a column's collation lives in the upgrade
 too, not only the table definition (the reconciler compares names and
 nullability, not collations).
 
+The width is a transform too, and its unit is part of it. The c1-c4, UTM
+and variable values were cut at 350 bytes before every lookup, for
+VARCHAR(350) columns, which count characters: a value of 88 emoji lost its
+end, and two values sharing their first 350 bytes were one row (found by
+review; the column, measured, takes 350 four-byte characters).
+`StoredCutsMatchTheirColumnsTest` holds each cut to its column's width in
+its column's unit, characters for a VARCHAR and bytes for a TEXT.
+
 This differs from #15: there the discriminator was *inside* the lookup
 path, so no lookup could see it change. Here the mapping itself is
 many-to-one, so two things that should differ never get the chance to.
@@ -580,6 +718,26 @@ reads source can see it. `checks.flexContainersKeepTheirSpaces` in
 container with no `gap` whose children mix text and elements. The sibling
 lesson is that a class name is not a synonym: before using one for
 something that is not what the kit shows it doing, read its rule.
+
+An installer-written config persists across upgrades, including any class it
+defines. `202-config.php` can carry a `DB` class with `getConnection()` alone;
+the current sample having `getConnectionro()` does not add it to that file.
+Check an optional config method before calling it, and exercise a retained
+config as well as the current sample (`DatabaseConfigCompatibilityTest`).
+The guard first went into `connect.php` alone while the Spy query still
+called `getConnectionro()` itself; the replica is now read only through
+`ConnectionFactory::readConnectionOf()`, and the test refuses a call or a
+callable naming the method anywhere else.
+
+A message rendered where the page does not land is not said. Settings'
+forms post back to `administration.php#section`; the flashes rendered at the
+top of the page and the browser scrolled to the section, so the AutoCron
+refusal sat 650px above a 1280x800 screen (1,700px on a phone) and an owner
+refused three times saw nothing. `p202-ui.js` now moves
+`[data-p202-flashes]` into the panel the fragment names. The browser pass
+measures it at two sizes that scroll: at the harness's 1280x1000 the page
+does not, and the old placement passed there. A check of where something
+shows needs a viewport where it could fail to.
 
 ### 20. A checker only sees the syntax it follows
 
@@ -744,7 +902,12 @@ final token something else, `Other\name` is another function — and an
 unqualified name is the global one only in a file that declares no
 namespace and imports no function, which both tests now assert (a `use
 function Other\version_compare;` at the top of the ladder rebound the
-downgrade guard's comparison with every check green). And bounding the
+downgrade guard's comparison with every check green). The other direction
+is as silent: PHP 8 reads `\name` as one token (`T_NAME_FULLY_QUALIFIED`),
+not `T_STRING`, and names functions and methods without regard to case, so
+the discarded-result floor never saw `\_mysqli_query($sql);` or
+`_MYSQLI_QUERY($sql);`; `SourceScan::callableName()` reads every spelling
+of a global call, for each scan that names one. And bounding the
 guard call was not reading it: `install_csrf_ok($expected, $submitted)`
 was shown to decide the work and executed on token pairs, and never asked
 what the page hands it — `install_csrf_ok($_POST['token'],
@@ -949,7 +1112,41 @@ error was never recorded. CI's fresh database found it; locally the suite
 passed because a reused database still had the table. An error path must not
 ask the failing dependency again, and its test should not depend on whether
 the dependency happens to be healthy: the runner now records every statement
-the page asks the connection, and the page may ask none.
+the page asks the connection, and the page may ask none. That held for the
+body and not for the page: the runner stubbed the admin footer, which reads
+the account's dash email and the cron ping's tracking domain, and the dash
+email read called `fetch_assoc()` on the false a lost connection answers —
+a fatal after the alert, found by tracing a review question. The error page
+draws the footer without its reads (`template_bottom(false)`), and the
+runner draws the real one.
+
+The error page's own write is the same question asked of the connection's
+state. `record_mysql_error()` inserted its row on the connection that had
+just failed, inside whatever transaction the caller had open, and die()
+ended the request: the row went with the rollback at disconnect, and the
+page told the operator the error "has been recorded" over nothing (measured
+under `begin_transaction()` and `autocommit(false)`, both definitions).
+And the row's lookups went through `_mysqli_query()`, whose click-path copy
+calls `record_mysql_error()` when a statement fails: on a dead connection
+the error page recursed through itself until memory ran out, writing tens
+of thousands of log lines in one request. An error path ends the caller's transaction before it
+writes anything of its own, and anything it calls that can fail lands back
+in it at most once (`p202RecordMysqlErrorRow()`; the runner's `txn`,
+`autocommit_off`, `gone` and `lookup_fails` scenarios). The fix first kept
+the page's "it has been recorded" for the case where recording failed
+(found by review): the page's sentence is a status line too, and it
+follows what the recorder answers. And the page read the error from the
+connection, which a caller that has rolled back has already cleared: the
+rotator writer's failure was filed with a blank error and its message in the
+statement column (Get Links and the redirector breakdown did the same). A
+caller that caught the failure names it (`record_mysql_error()`'s third
+argument). Two of Get Links' five calls were fixed and three found a round
+later; `ErrorPageAfterRollbackNamesTheFailureTest` now holds every call made
+after a rollback, or in a catch block (a rollback made inside a call, as
+`Connection::transaction()` makes one, is not there to scan), to naming the
+failure. Its first draft read only the files that say "rollback", so the
+redirector breakdown, which only catches, passed a planted two-argument
+call: a scan's file filter is a claim about where the construct can be.
 
 ### 25. A writer's "none" must be the reader's "none"
 The redirects tell a rotator rule redirect's kind by `redirect_campaign !=
@@ -986,6 +1183,43 @@ They ask `NoTrafficSource::condition()` now, and `NoTrafficSourceTest`
 refuses the literal and any file handling the sentinel without it. When a
 rule is a spelling, one function should own the spelling.
 
+Two writers of one *row* is the same tell from the other side. A redirector
+re-click rewrote its click with `REPLACE`, which deletes the row and inserts
+another: every column the statement did not name went back to its default —
+the customer a conversion had linked, the reviewed flag, the public id every
+cl.php and pci.php link already handed out carried, the landing URL
+(measured). `REPLACE` is a write only where the statement owns every column
+of the row; a rewrite names what it changes (`INSERT … ON DUPLICATE KEY
+UPDATE` of its own columns), and the test is a row another writer has
+touched. `ClickRowsWrittenOnlyByTheWriterTest` holds a click's rows to one
+writer, `MysqlClickRepository`.
+
+A "none" that is also a lookup key finds every row that has none. A direct
+link's click without cloaking is stored with public id 0, and off.php looked
+the visitor's last click up by its public id: `click_id_public = '0'` matched
+each of the account's clicks stored without one, and the first was moved into
+the offer's campaign (measured live). Read a key the way its writer means it
+before using it (`ClickId::parse()` refuses 0), and treat "none" as no key.
+The first fix read the ids exactly in five click scripts and left pci.php,
+cl.php, record.php, record_adv.php, pb.php and px.php comparing them as text,
+where `pci=0` marked one of those clicks as gone and `cl.php?pci=0` served
+another account's offer URL (found by review, measured on the old code).
+`PublicIdsAreComparedAsNumbersTest` now refuses a public id compared with a
+quoted value anywhere in the served tree (the setup pages and the WordPress
+plugin's calls had six more: `12abc` opened, rewrote or made a page on record
+12), and `ClickPathReads` answers nothing for an id below 1 without asking.
+
+A stamp every caller writes is read as proof of one of them. Each tier of
+`202-cronjobs/index.php` stamped `202_cronjob_logs`, and every signed-in
+page's footer pings that file as it loads, so "the cron job last ran" meant
+"anyone ran it": Settings refused AutoCron as unneeded because of the ping its
+own page had just sent, on installs with no cron job at all, and the tile,
+`health.php`, `GET /system/info` and `p202 system cron` reported a cron job
+that did not exist. The ping is marked (`Prosper202\Cron\CronRun`), the one
+write is a scheduler's, and `PagePingIsNotACronRunTest` lists every file that
+names the table with what it reads. When a record answers "did X happen",
+list who else writes it.
+
 ### 26. A boundary stands in for a predicate only where its order holds
 Automatic click deletion was to delete clicks older than N days. It took
 `MIN(click_id)` of the expired clicks and deleted `click_id <` that — the ids
@@ -1016,6 +1250,15 @@ with the ones beside it. The same form computed the day's midnight with
 to PHP, so India and Ireland were cut hours off, and any day across a DST
 change an hour off (#29); a day is `DateTimeImmutable::createFromFormat('!Y-m-d',
 $day, $zone)`.
+
+The same re-click is the other half of this: a click id names one row per
+visit, so a read of "the click" that takes no order takes whichever visit
+the database returns first, usually the first (a re-click's offer URL
+carried the first visit's `[[cpc]]`). `LatestVisit` holds the order, and
+`SingleClickReadsNameTheirVisitTest` holds every read of one click's
+`202_clicks` row to it or to a listed reason; the conversion, pixel, goal
+and install reads are listed until it is decided which visit a conversion
+credits. Only `click_id` and `user_id` are the same on every visit's row.
 
 ### 27. A stored id is a claim about ownership that nothing re-checked
 A click names its campaign, traffic source and landing page by id; a
@@ -1062,6 +1305,16 @@ join exists to tie. Measured: any account's `acip` or `rpi` moved any
 click, named by a sequential id or a public id two random digits wide,
 into that account's campaign at its payout, or its rotator. When a script
 takes two ids from one request, compare their owners before the write.
+The click scripts now ask it where the write is made: a click leaving its
+landing page goes through `MysqlClickRepository::recordExit()`, which takes
+the account and refuses another account's click, offer or rotator (lp.php
+had no check, and marked whatever click its cookie named). The account
+handed in is the other record's — the offer's, the rotator's, the landing
+page's — never the click's own, which compares the click with itself and
+can refuse nothing (off.php's first draft did, behind a read that happened
+to tie them). And
+`ClickRowsWrittenOnlyByTheWriterTest` holds every other rewrite of a click's
+rows to a list that says why its clicks are the account's own.
 
 Tying a join is not the end of the change: the joined row is now NULL where
 it used to be another account's, and every consumer of the joined columns
@@ -1076,6 +1329,14 @@ landing page for a link that names one, fell through to building a direct
 link the link was never made as. Group by the expression you select, count
 a none row by the same NULL the join produced, and give a row whose record
 is not the account's no action rather than a different one.
+
+The tracking path's reads were the floor's last list of untied joins. They
+go through `ClickPathReads` now, prepared and tied, and an id the click
+copies from a tracker (its campaign, text ad, traffic source account,
+redirector) comes back 0 where the joined row is another account's, the
+"none" a tracker naming nothing always gave, so every consumer already reads
+it. The read is where the account is decided: a writer handed an id another
+account's read produced cannot tell it apart from its own.
 
 ### 28. A field's JSON type is part of the contract, and its readers are not in the server's tests
 17305ee made the API answer money as numbers rather than mysqli's decimal
@@ -1227,6 +1488,23 @@ side effect of the skipped code (flags, counters, cache writes, the "done"
 mark) and move each one to where the new path still runs it;
 `ClickUpgradeIntegrationTest` holds this one.
 
+Moving a write later is the same skip, seen from whoever read it. A latency
+change moved `dl.php`'s click rows after the redirect, and the redirect
+URL's placeholders (`[[c1]]`, `[[t202kw]]`, `[[country]]`) are filled by
+`replaceTrackerPlaceholders()`, which reads them back from those rows: on a
+direct link they are blank now (measured: `c1=&kw=` from a click carrying
+`c1=hello`), while `rtr.php`, whose rows were still written first, filled
+them. Before moving a write, find every reader of what it writes in the same
+request; `MysqlClickRepository` resolves the rotator's URL inside the click's
+transaction, after the rows, for that reason. An endpoint that redirects
+before its rows exist (`dl.php`, `record_simple.php`) fills the URL from the
+values it holds (`replaceClickPlaceholders()`), and the read-back is for one
+whose rows are written. The read-back's first pass had the opposite fault:
+it filled tokens before reading the click, from values no caller passed, and
+`round((float) null, 2)` is a 0 that reads like a cost, so `[[cpc]]` was 0 on
+every path while `[[cpc2]]`, left for the second pass, was right
+(`ClickUrlTokensInstanceTest`).
+
 ### 33. A tagged version's upgrade step is frozen
 `upgrade_needed()` compares the stored version with the code's, and the
 ladder runs only when they differ. v1.9.76 was tagged at this branch's merge
@@ -1254,6 +1532,41 @@ never run it. The ladder's error log carries only what a step could not do
 (`ScheduledDeletionUpgradeIntegrationTest` holds the 1.9.76 rung to logging
 nothing), and a ladder change runs the script locally before it is pushed
 (see the development notes for PHP 7.4 here).
+
+### 34. A lock error ends the transaction, not the statement
+Bulk-upsert wrote up to 100 rows in one `transaction()` and caught each row's
+throwable inside the callback, answered it as that row's error, and went on.
+A deadlock is not a row's: the server rolls the whole transaction back, so
+the rows before it were answered `created` with nothing stored, and the
+statements after it on the handle ran outside any transaction and committed
+one by one (measured on MariaDB 10.11). A catch inside a transaction that
+carries on has to know the transaction is still there: undo the one step
+with `Connection::withSavepoint()`, and pass a lock error up to whatever
+owns the transaction (a ROLLBACK TO that fails leaves it rollback-only, and
+Connection refuses to commit it). `CatchInsideTransactionPassesItOnTest`
+refuses a catch written in a `transaction()`/`joinTransaction()` callback
+that neither rethrows nor ends the request, unless it catches only types a
+database failure never is. It reads the callback's own text: a catch in a
+function the callback calls, or one that rethrows only part of what it
+caught, is not seen.
+
+The retry needed the same care. A deadlock is safe to run again at once; a
+lock wait timeout means another writer held the lock for the whole timeout
+(50 seconds by default), and three more attempts made one request wait
+about 200 seconds, past any proxy. And what a retry decides by has to be a
+fact the server set: `isMysqlError()` matched the errno tag anywhere in the
+message and the English words anywhere too, so `Duplicate entry 'Deadlock
+found'` read as a deadlock. An errno, where an exception carries one (a
+`mysqli_sql_exception`'s code, the ` [errno N]` Connection puts last), is
+the whole answer; words are read only from an exception that carries
+neither.
+
+A failure after part of a batch committed is #13 at the scale of a request:
+the bulk-upsert answered 500, which left its `Idempotency-Key` unspent, and
+the same rows sent again under it stored the committed hundred twice. Once
+anything may stand, every row is answered and the answer kept under the
+key; a commit the server did not confirm is `unconfirmed`, never
+`retryable`.
 
 ## Go CLI errors must be agent-actionable (`go-cli/`)
 
@@ -1670,6 +1983,13 @@ where a check quietly fails to check what it appears to.
   never happened and the test passed against the code it was supposed to
   fail. Print a marker (`assert old in s`, then re-grep the file) before
   believing the run.
+- **A case that two checks refuse proves neither.** The exit writer's
+  refusal cases named another account's rotator with this account's rule,
+  and another rotator's rule with no redirect of its own: the rule check,
+  then the redirect check, refused them first, so removing the rotator's
+  owner check, and then the rule check, left every test green. Build each
+  refusal case so the check it names is the only one it trips (every other
+  record it names is the right one), and plant the removal of each check.
 - **A backup is only a backup where you will read it back.** A plant harness
   copied each file to a fixed scratch path (`plant/keep`) before planting a
   defect, and that path
@@ -1721,7 +2041,11 @@ where a check quietly fails to check what it appears to.
   effect is satisfied by every failure there is; a refusal has to be
   asserted positively — the status the page answers with and the sentence
   the guard itself writes — and the sibling cases already did, one screen
-  up.
+  up. A scenario that expects a failure is the same trap: the error page's
+  `lookup_fails` runs passed on `Call to undefined function` (the runner
+  had not lifted the logger its real `_mysqli_query()` calls), which the
+  recorder's catch logged as the failure to record the scenario expected.
+  Assert which failure.
 - **A new lint rule is not done when it fires on the bug you wrote it for.**
   Run it against the whole clean tree first (a rule with false positives is
   worse than no rule — one draft produced 194), then plant a defect in *every*
