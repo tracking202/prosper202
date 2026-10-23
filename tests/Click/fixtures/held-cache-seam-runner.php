@@ -151,9 +151,9 @@ try {
 echo json_encode([
     'url' => $url,
     'answered' => $answered,
-    'url_key' => md5('url-id' . $url . systemHash()),
+    'url_key' => md5('url-id' . $url . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace()),
     'domain_key' => md5('domain-id' . \Prosper202\Repository\Mysql\MysqlLocationRepository::storedDomainHost((string) $url)
-        . systemHash()),
+        . \Prosper202\Repository\LookupRepositoryFactory::cacheNamespace()),
     'cached_by_then' => $cachedByThen,
     'cached' => $cache->written,
     'failure' => $failure,

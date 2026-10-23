@@ -81,6 +81,28 @@ final class AiConnectTest extends TestCase
         }
     }
 
+    /**
+     * Nothing signs the approval link, so anyone can write one naming any app
+     * and any site: the page calls neither verified, and says that whoever
+     * started the connection gets the access (the 1.9.78 page said
+     * "verified there as" of a value the link supplied).
+     */
+    public function testTheApprovalPageVouchesForNothingTheLinkSays(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 2) . '/202-account/connect-ai.php');
+        $markup = (string) preg_replace('/\s+/', ' ', (string) preg_replace('/<\?php.*?\?>/s', ' ', $source));
+        self::assertDoesNotMatchRegularExpression('/verif/i', $markup);
+        self::assertStringContainsString(
+            "The app's name and site are what the link says; this page cannot check them.",
+            $markup
+        );
+        self::assertStringContainsString(
+            'Whoever started the connection gets the access you choose: a link someone sent you connects their app'
+                . ' to your account.',
+            $markup
+        );
+    }
+
     public function testAnApprovalRequestFromTheMcpServerIsRead(): void
     {
         $read = AiConnect::readRequest(self::request());
