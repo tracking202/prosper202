@@ -421,6 +421,11 @@ final class AttributionWorkerIntegrationTest extends TestCase
         } finally {
             $other->close();
         }
+        // close() does not wait for the server to end the session: the lock
+        // was still held right after it in 7 of 1,000 tries (measured).
+        for ($i = 0; $i < 100 && (string) self::scalar("SELECT IS_FREE_LOCK('" . $name . "')") !== '1'; $i++) {
+            usleep(20000);
+        }
         self::assertNotNull(AttributionWorker::runExclusive($this->conn, 1), 'the lock is released with its session');
     }
 

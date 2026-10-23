@@ -125,6 +125,9 @@ final class LatestVisit
      * under the click's lock, after the row is written. The rows are read
      * plainly: a read inside INSERT ... SELECT would lock them, and the gap
      * after the newest click's rows is where every new click is inserted.
+     * Known limit: the record only rises, so a row a fast clock stamped
+     * ahead stays the latest visit, and later visits stamped before it are
+     * not counted, until a visit is stamped later still.
      */
     public static function refresh(Connection $conn, int $clickId): void
     {
