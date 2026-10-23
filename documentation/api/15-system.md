@@ -290,7 +290,8 @@ minutes.
     "base_url": "https://track.example.com/",
     "integrations": [
       { "integration": "clickbank", "name": "ClickBank", "label": "INS URL", "url": "https://track.example.com/tracking202/static/cb202.php", "secret_stored": true, "verified": false },
-      { "integration": "jvzoo", "name": "JVZoo", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php", "secret_stored": false },
+      { "integration": "jvzoo", "name": "JVZoo", "label": "Affiliate IPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=affiliate", "secret_stored": true },
+      { "integration": "jvzoo_vendor", "name": "JVZoo", "label": "Vendor JVZIPN URL", "url": "https://track.example.com/tracking202/static/jvzoo.php?role=vendor", "secret_stored": true },
       { "integration": "zaxaa", "name": "Zaxaa", "label": "ZPN URL", "url": "https://track.example.com/tracking202/static/zpn.php", "secret_stored": false },
       { "integration": "slack", "name": "Slack", "label": "Prosper202 webhook", "url": "https://track.example.com/tracking202/static/slack.php", "secret_stored": false },
       { "integration": "paykickstart", "name": "PayKickstart", "label": "IPN URL", "url": "https://track.example.com/tracking202/static/paykickstart.php", "secret_stored": true, "keys_stored": 2 }
@@ -311,3 +312,12 @@ checkout link's `subid=[[subid]]` names, and a refund reverses it (see
 [3rd party integrations](../tutorials-and-guides/09-3rd-party-integrations.md#paykickstart)).
 PayKickstart's Affiliate IPN carries no click and no signature, so it cannot
 update conversions; this URL answers it `415`, saying so.
+
+JVZoo has two URLs, both verified with the account's JVZIPN secret key
+(`secret_stored` is the same for both, and true only for a key the endpoint
+can sign with): `jvzoo` (`?role=affiliate`) for an affiliate's **Affiliate
+IPN**, where the click is the `tid=[[subid]]` on the affiliate link, and
+`jvzoo_vendor` (`?role=vendor`) for a product's **JVZIPN v1** URL, where the
+click is the `subid=[[subid]]` on the buy link. A sale or rebill is recorded,
+a refund or chargeback reverses it (see
+[3rd party integrations](../tutorials-and-guides/09-3rd-party-integrations.md#jvzoo)).

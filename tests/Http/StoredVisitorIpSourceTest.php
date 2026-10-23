@@ -52,8 +52,9 @@ final class StoredVisitorIpSourceTest extends TestCase
                 . ' has no privacy state',
         ],
         '202-config/PaymentNotification/Processor.php' => [
-            '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN): the address is'
-                . ' the provider\'s server, never a visitor\'s, as in cb202.php (InboundRequest::fromGlobals())',
+            '$request->senderAddress' => 'a payment provider\'s notification (PayKickstart\'s IPN, JVZoo\'s'
+                . ' JVZIPN): the address is the provider\'s server, never a visitor\'s, as in cb202.php'
+                . ' (InboundRequest::fromGlobals())',
         ],
         '202-config/functions-shared.php' => [
             '\Prosper202\Http\VisitorIp::fromServer($_SERVER)' => 'record_mysql_error() off the click path'

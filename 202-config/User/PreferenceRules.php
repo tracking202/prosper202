@@ -7,6 +7,7 @@ namespace Prosper202\User;
 use Prosper202\Click\TrackingDomain;
 use Prosper202\Ltv\MysqlEngagementRepository;
 use Prosper202\Ltv\MysqlPersonalizationRepository;
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 
 /**
@@ -25,7 +26,8 @@ use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
  * choices, the report pages (functions-report-prefs.php,
  * functions-ui-partials.php p202_report_ranges()) for the report defaults,
  * Integrations (202-account/api-integrations.php) for the network secrets
- * (PayKickstartKeys for PayKickstart's, a list),
+ * (PayKickstartKeys for PayKickstart's, a list; JVZooKey for JVZoo's, which
+ * its endpoint signs with),
  * and LTV › Settings (tracking202/ajax/ltv_settings.php) for the LTV values.
  */
 final class PreferenceRules
@@ -73,14 +75,13 @@ final class PreferenceRules
         'ipqs_api_key' => 250,
         'cb_key' => 250,
         'zaxaa_api_signature' => 250,
-        'jvzoo_ipn_secret_key' => 250,
     ];
 
     /** Everything else this class knows, handled by name in check(). */
     private const SPECIAL = [
         'user_tracking_domain', 'user_account_currency', 'user_slack_incoming_webhook', 'user_daily_email',
         'user_ltv_personalization_fields', 'user_ltv_score_weights', 'user_ltv_rec_fatigue',
-        'paykickstart_ipn_secret_keys',
+        'paykickstart_ipn_secret_keys', 'jvzoo_ipn_secret_key',
     ];
 
     private function __construct()
@@ -191,6 +192,10 @@ final class PreferenceRules
                 return self::personalizationFields($value);
             case 'user_ltv_score_weights':
                 return self::scoreWeights($value);
+            case 'jvzoo_ipn_secret_key':
+                // The endpoint reads the key through JVZooKey too, so a key
+                // stored here is one it can sign with.
+                return JVZooKey::parse($value);
             case 'paykickstart_ipn_secret_keys':
                 // The whole list: the keys cannot be read back, so a caller
                 // adding one sends every key it keeps (PayKickstartKeys).

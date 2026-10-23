@@ -528,6 +528,16 @@ case "$ask" in
         printf 'Saved the key: %s PayKickstart IPN secret key(s) stored, per `p202 system integrations`. Paste %s into the IPN Integration tab of each product, and make the campaign'"'"'s offer URL your PayKickstart checkout link with subid=[[subid]] added, so each IPN names the click its sale is recorded on.\n' \
             "$(printf '%s' "$entry" | jq -r '.keys_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
         ;;
+    *JVZoo*"Affiliate IPN"*)
+        # One JVZIPN key verifies both JVZoo URLs; an affiliate pastes the
+        # affiliate one, whose click is the tid. The reply never repeats the key.
+        key=$(printf '%s' "$ask" | sed -n 's/.*JVZIPN secret key \([^ ]*\).*/\1/p')
+        uid=$(p202 config test --json | jq -r '.data.user_id')
+        p202 user prefs update "$uid" --jvzoo-ipn-secret-key "$key" --json >/dev/null
+        entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="jvzoo")')
+        printf 'Saved your JVZIPN secret key (stored: %s, per `p202 system integrations`). Paste %s into JVZoo'"'"'s Affiliate IPN (Affiliates > Approved Products > the product'"'"'s Integrations), and make the campaign'"'"'s offer URL your JVZoo affiliate link with ?tid=[[subid]] added, so each notification names the click its sale is recorded on.\n' \
+            "$(printf '%s' "$entry" | jq -r '.secret_stored')" "$(printf '%s' "$entry" | jq -r '.url')"
+        ;;
     *"paste into ClickBank"*)
         entry=$(p202 system integrations --json | jq -c '.data.integrations[] | select(.integration=="clickbank")')
         printf 'Paste %s into ClickBank as the Instant Notification (INS) URL, per `p202 system integrations`. The ClickBank secret key is %s.\n' \

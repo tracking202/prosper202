@@ -783,9 +783,12 @@ paths:
       tags: [System]
       summary: The notification URLs Account › API integrations hands out
       description: |
-        The URL to paste into ClickBank (INS), JVZoo (IPN), Zaxaa (ZPN),
-        Slack and PayKickstart (the product IPN, set under each product's IPN
-        Integration tab), on this install's tracking base (user 1's tracking
+        The URL to paste into ClickBank (INS), JVZoo (two URLs, both verified
+        with the JVZIPN secret key: `jvzoo`, `?role=affiliate`, for an
+        affiliate's Affiliate IPN, and `jvzoo_vendor`, `?role=vendor`, for a
+        product's JVZIPN v1 URL), Zaxaa (ZPN), Slack and PayKickstart (the
+        product IPN, set under each product's IPN Integration tab), on this
+        install's tracking base (user 1's tracking
         domain or this server's name, and the install's path — the base
         tracker links use), and whether the caller has stored the secret
         each is checked with (`secret_stored`; for PayKickstart,
@@ -815,7 +818,7 @@ paths:
                           properties:
                             integration:
                               type: string
-                              enum: [clickbank, jvzoo, zaxaa, slack, paykickstart]
+                              enum: [clickbank, jvzoo, jvzoo_vendor, zaxaa, slack, paykickstart]
                             name:
                               type: string
                             label:
@@ -826,6 +829,10 @@ paths:
                             secret_stored:
                               type: boolean
                               nullable: true
+                              description: >-
+                                Whether a secret its endpoint can verify with is
+                                stored (JVZoo: a key that is one; PayKickstart:
+                                at least one key)
                             verified:
                               type: boolean
                               description: ClickBank only
@@ -11465,7 +11472,7 @@ components:
     ConversionSource:
       type: string
       description: What produced a ledger row.
-      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, app_install, goal, legacy_baseline]
+      enum: [pixel, postback, universal_pixel, api, subid_upload, revenue_upload, legacy_pixel, clickbank, paykickstart, jvzoo, app_install, goal, legacy_baseline]
 
     ClickConversion:
       type: object
@@ -12943,7 +12950,15 @@ components:
         ipqs_api_key: {type: string, maxLength: 250}
         cb_key: {type: string, maxLength: 250, description: ClickBank secret key; changing it resets cb_verified.}
         zaxaa_api_signature: {type: string, maxLength: 250}
-        jvzoo_ipn_secret_key: {type: string, maxLength: 250}
+        jvzoo_ipn_secret_key:
+          type: string
+          maxLength: 250
+          description: >-
+            The JVZIPN secret key (JVZoo, My Account › Account Details › Seller
+            Settings) that tracking202/static/jvzoo.php verifies both roles'
+            notifications with, stored trimmed; "" removes it. A value with a
+            line break, a control character or bytes that are not UTF-8 is a
+            422, since no notification would verify with it.
         paykickstart_ipn_secret_keys:
           type: string
           description: >-

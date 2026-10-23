@@ -79,6 +79,23 @@ final class PreferenceRulesTest extends TestCase
         yield 'secret not a string' => ['ipqs_api_key', 12];
         yield 'a PayKickstart key too short' => ['paykickstart_ipn_secret_keys', 'good-key-0001,short'];
         yield 'PayKickstart keys as a list' => ['paykickstart_ipn_secret_keys', ['good-key-0001']];
+        yield 'a JVZoo key of two lines' => ['jvzoo_ipn_secret_key', "first-line\nsecond-line"];
+        yield 'a JVZoo key too long' => ['jvzoo_ipn_secret_key', str_repeat('k', 251)];
+    }
+
+    /** The key its endpoint signs with is the one stored: JVZooKey's rule, trimmed. */
+    public function testTheJvzooKeyIsHeldToTheRuleItsEndpointReadsItBy(): void
+    {
+        $column = 'jvzoo_ipn_secret_key';
+        self::assertSame(\Prosper202\PaymentNotification\JVZoo\JVZooKey::COLUMN, $column);
+        self::assertContains($column, PreferenceRules::columns());
+        $stored = self::validate([$column => " 7hQe2LmZp4WvX9cRb31\n"]);
+        self::assertSame([[$column => '7hQe2LmZp4WvX9cRb31'], []], $stored);
+        self::assertSame([[$column => ''], []], self::validate([$column => '']), '"" removes it');
+
+        [, $errors] = self::validate([$column => "first-line\nsecond-line"]);
+        self::assertArrayHasKey($column, $errors, 'a key no notification would verify with is refused');
+        self::assertStringStartsWith('The key has a character that is not text', $errors[$column]);
     }
 
     public function testPayKickstartKeysAreAListOneForEachCampaign(): void

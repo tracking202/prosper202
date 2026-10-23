@@ -68,6 +68,83 @@ your PayKickstart account) and it is not signed. Leave the IPN URL out of the
 Affiliate IPN setting; if you have it there, Prosper202 answers it `415`,
 saying so.
 
+## JVZoo
+
+Prosper202 records each JVZoo sale and rebill on the click that sent the
+buyer, and a refund or chargeback takes it back, from JVZoo's JVZIPN. It works
+for an affiliate promoting a JVZoo product and for a vendor selling one; the
+two have their own URL under **Account › API integrations › JVZoo**, because
+the click comes from a different field for each.
+
+For an **affiliate**:
+
+1. Make the campaign's offer URL your JVZoo affiliate link with
+   `?tid=[[subid]]` added, such as
+   `https://www.jvzoo.com/c/12345/67890/?tid=[[subid]]`. A tracker fills
+   `[[subid]]` with the click id, and JVZoo sends the tid back in the
+   notification as `caffitid`.
+2. In JVZoo, under **Affiliates › Approved Products**, open the product's
+   **Integrations** and paste the page's **Affiliate IPN URL**
+   (`https://<your tracking domain>/tracking202/static/jvzoo.php?role=affiliate`)
+   into **Affiliate IPN**.
+
+For a **vendor**:
+
+1. Make the campaign's offer URL your product's JVZoo buy link with
+   `?subid=[[subid]]` added at its end, and send buyers to it through the
+   tracker (or a landing page's outbound link). JVZoo sends the buy link's
+   variables back in the notification as `cvendthru`, and `subid` is the click.
+2. In JVZoo, edit the product and, under **Advanced Settings**, choose
+   **JVZIPN v1** and paste the page's **Vendor JVZIPN URL**
+   (`https://<your tracking domain>/tracking202/static/jvzoo.php?role=vendor`)
+   as its JVZIPN URL. Not the v2 URL: JVZIPN v2's `cverify` covers five fields
+   and neither the amount nor the tid, so Prosper202 answers it `415`.
+
+Either way, store your **JVZIPN secret key** on the page (JVZoo shows it under
+**My Account › Account Details › Seller Settings**; one JVZoo account has one,
+for both roles). Prosper202 checks each notification's `cverify` with the
+stored keys, and the account whose key verifies it is the one it records for.
+The vendor URL never reads `caffitid`, which is whatever tid an affiliate
+chose, and the affiliate URL never reads `cvendthru`, which is the vendor's.
+For a subscription, set the campaign's **When a click converts more than
+once** (under Advanced) to **Add them up**, so each rebill adds to the sale.
+
+What each notification does, and the status JVZoo sees (anything but `200`
+is sent again every hour for 72 hours):
+
+| `ctransaction` | Prosper202 | Status |
+| -------------- | ---------- | ------ |
+| `SALE`, `BILL` (a rebill, under its own receipt) | a conversion on the click, source `jvzoo`, under its `ctransreceipt`, worth its `ctransamount` (what JVZoo pays you: an affiliate's commission, a vendor's share) | `200 recorded` |
+| the same `SALE` again | nothing; one stating another amount is refused | `200 duplicate` / `409` |
+| `RFND`, `CGBK`, `INSF` (an eCheck chargeback) | a reversal of the whole sale its `ctransreceipt` names (JVZoo refunds a payment whole); a sale is reversed once, so a chargeback after a refund changes nothing | `200 reversed` / `200 duplicate`, `404` when no such sale is on the click |
+| a `SALE` again after its refund (JVZoo's way of undoing a refund) | nothing: the answer names the reversal; delete it (`p202 conversion delete <id>`) to count the sale again | `409` |
+| `CANCEL-REBILL`, `UNCANCEL-REBILL` | nothing | `200 ignored` |
+| `TEST` | nothing | `200 test` |
+| a notification with no click (no tid, a tid that is not a click id, no `subid` in `cvendthru`) | nothing | `200 no_click` |
+| a click that is not one of the account's | nothing | `404` |
+| a `cverify` no stored key verifies | nothing | `403` |
+| a malformed field, a field JVZIPN v1 does not post, a URL with no `?role=` | nothing | `400`, naming it |
+| a notification that arrives while the database's upgrade has not run | nothing | `503`, naming the upgrade |
+
+A few things JVZoo's documentation leaves to the receiver:
+
+- **Amounts.** JVZoo's field table calls `ctransamount` pennies
+  (`1000` = $10.00) while its sample and its notifications state dollars
+  (`10.00`). Prosper202 reads a decimal such as `47.00` as dollars and refuses
+  a whole number such as `1000`, rather than guess which it is. JVZIPN states
+  no currency: the amount is recorded in the account's.
+- **Tests.** JVZoo marks no notification as a test. A test purchase (Test
+  Purchase Mode) is a real sale at a test price and is recorded; refund it in
+  JVZoo and the refund reverses it.
+- **The signature.** `cverify` is 8 hex digits (32 bits) and covers the values
+  but not the field names, so Prosper202 takes only the fields JVZIPN v1
+  documents. Use an `https://` URL, so that no one between JVZoo and the
+  install can read a signed notification.
+
+Each notification is logged in the server's error log in one line: the
+outcome, the type, the click, the receipt and the account, never the key or
+the buyer's details.
+
 ## Slack Integration
 
 If you love using Slack and use it often as part of your workflow, then you might want to integrate Prosper into Slack. Our team uses Slack and we thought what could we do to help improve the process. By integrating Prosper202 into Slack, it will enable you to know exactly what every team member does in Prosper202 as soon as it happens? These notifications could then trigger a meaningful conversation.

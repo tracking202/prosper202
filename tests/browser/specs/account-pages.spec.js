@@ -267,6 +267,34 @@ module.exports = {
     },
 
     {
+      name: 'API integrations: JVZoo shows an affiliate URL and a vendor URL, and saves its key trimmed from its disclosure',
+      async run(ctx) {
+        const { app, ui, db, expect, state } = ctx;
+        const stored = () => db.value("SELECT IFNULL(jvzoo_ipn_secret_key, '') FROM 202_users_pref WHERE user_id=" + state.owner);
+        const before = stored();
+        db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=NULL WHERE user_id=' + state.owner);
+        try {
+          await app.goto('/202-account/api-integrations.php');
+          const copies = await ui.page.$$eval('#jvzoo [data-p202-copy]', (els) => els.map((el) => el.getAttribute('data-p202-copy')));
+          expect.eq(copies.length, 2, 'two URLs to copy');
+          expect.match(copies[0] || '', /\/tracking202\/static\/jvzoo\.php\?role=affiliate$/, 'the affiliate\'s first');
+          expect.match(copies[1] || '', /\/tracking202\/static\/jvzoo\.php\?role=vendor$/, 'the vendor\'s second');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Not connected/, 'no key, not connected');
+          expect.ok(!(await ui.page.$eval('#jvzoo details.p202-disclosure', (d) => d.open)), 'the key form starts closed');
+          await ui.click('#jvzoo summary');
+          await ui.fill({ '#jvzoo_ipn_secret_key': '  u6-browser-JVZIPN-key  ' });
+          await app.submit('#jvzoo .p202-disclosure button[type="submit"]');
+          expect.match(await app.messages(), /Your JVZoo secret key was saved/, 'saving says so');
+          expect.eq(stored(), 'u6-browser-JVZIPN-key', 'and stores it trimmed, as the endpoint signs with it');
+          expect.match(await ui.page.textContent('#jvzoo .p202-pill'), /Connected/, 'connected once a key is stored');
+        } finally {
+          db.write('UPDATE 202_users_pref SET jvzoo_ipn_secret_key=' + (before === '' ? 'NULL' : "'" + before.replace(/'/g, "''") + "'")
+            + ' WHERE user_id=' + state.owner);
+        }
+      },
+    },
+
+    {
       name: 'API integrations: a key saves from its disclosure; a DNI network is removed only when confirmed',
       async run(ctx) {
         const { app, ui, db, expect, state } = ctx;

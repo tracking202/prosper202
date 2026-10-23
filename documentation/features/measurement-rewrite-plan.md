@@ -209,7 +209,7 @@ becomes a cache of it.**
 
    | Column | Values |
    |---|---|
-   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `app_install`, `goal`, `legacy_baseline` (below) |
+   | `source` | `pixel`, `postback`, `universal_pixel`, `api`, `subid_upload`, `revenue_upload`, `legacy_pixel`, `clickbank`, `paykickstart`, `jvzoo`, `app_install`, `goal`, `legacy_baseline` (below) |
    | `source_ref` | What generated it: goal id and version, upload batch id, API key id, app install row. Resolved by the UI into a name and a link |
    | `event_name` | The event that reached the goal, or the postback's `event=` value |
    | `payable` | `1` counts toward income and leads. `0` is a tracked outcome on a click: an unpaid goal, or an event reported for visibility. Outcomes on a subject with no click (an organic install) live only in `202_goal_outcomes`, §5.5 |

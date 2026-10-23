@@ -12,6 +12,8 @@
 
 declare(strict_types=1);
 
+use Prosper202\PaymentNotification\JVZoo\JVZooKey;
+use Prosper202\PaymentNotification\JVZoo\JVZooRole;
 use Prosper202\PaymentNotification\PayKickstart\PayKickstartKeys;
 
 include_once(str_repeat("../", 1) . '202-config/connect.php');
@@ -32,7 +34,6 @@ $mysql = [];
 
 // Initialize change status variables
 $change_cb_key = false;
-$change_jvzoo_secret_key = false;
 $change_zaxaa_api_signature = false;
 $change_user_slack_incoming_webhook = false;
 $change_ipqs_api_key = false;
@@ -276,16 +277,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 		}
 	}
 
-	// JVZoo Secret Key Update
+	// JVZoo's JVZIPN secret key, held to the rule its endpoint reads it by
+	// (JVZooKey), so a key saved here is one a notification verifies with.
 	if (isset($_POST['change_jvzoo_secret_key']) && $_POST['change_jvzoo_secret_key'] == '1') {
-		$config = [
-			'post_key' => 'jvzoo_ipn_secret_key',
-			'field_name' => 'jvzoo_ipn_secret_key',
-			'error_key' => 'jvzoo_secret_key_error',
-			'error_message' => 'JVZoo secret key can\'t be empty!',
-			'slack_event' => 'jvzoo_secret_key_updated'
-		];
-		if (processApiKeyUpdate($config, $error, $change_jvzoo_secret_key, $user_row, $slack, $username, $db)) {
+		$jvzooPosted = is_string($_POST['jvzoo_ipn_secret_key'] ?? null) ? $_POST['jvzoo_ipn_secret_key'] : '';
+		$jvzooOld = (string) ($user_row[JVZooKey::COLUMN] ?? '');
+		$jvzooKey = null;
+		try {
+			$jvzooKey = JVZooKey::parse($jvzooPosted);
+			if ($jvzooKey === '') {
+				throw new InvalidArgumentException('Paste your JVZIPN secret key: JVZoo shows it under My Account ›'
+					. ' Account Details › Seller Settings.');
+			}
+			if ($jvzooKey !== $jvzooOld) {
+				updateUserPreference(JVZooKey::COLUMN, $jvzooKey, $_SESSION['user_id'], $db);
+			}
+		} catch (InvalidArgumentException $jvzooRefused) {
+			$error['jvzoo_secret_key_error'] = $jvzooRefused->getMessage();
+			$jvzooKey = null;
+		} catch (RuntimeException $e) {
+			error_log('api-integrations.php: ' . $e->getMessage());
+			$error['jvzoo_secret_key_error'] = 'This could not be saved just now; the old value is still in place.'
+				. ' Try again.';
+			$jvzooKey = null;
+		}
+		if ($jvzooKey !== null) {
+			sendSlackNotification($slack, 'jvzoo_secret_key_updated', $username, $jvzooOld, $jvzooKey);
 			p202_account_flash('ok', 'Your JVZoo secret key was saved.');
 			p202_account_redirect('202-account/api-integrations.php#jvzoo');
 		}
@@ -700,13 +717,6 @@ $keyIntegrations = [
 		'flag' => 'change_cb_key', 'field' => 'cb_key', 'label' => 'ClickBank secret key', 'error' => 'cb_key',
 		'endpoint' => ['INS URL', $trackingBase . 'tracking202/static/cb202.php'],
 	],
-	'jvzoo' => [
-		'title' => 'JVZoo', 'icon' => 'jvzoo.png', 'help' => 'jvzoo',
-		'desc' => 'Update conversions from JVZoo’s Instant Payment Notification (JVZIPN).',
-		'extra' => '',
-		'flag' => 'change_jvzoo_secret_key', 'field' => 'jvzoo_ipn_secret_key', 'label' => 'JVZoo secret key', 'error' => 'jvzoo_secret_key_error',
-		'endpoint' => ['IPN URL', $trackingBase . 'tracking202/static/jvzoo.php'],
-	],
 	'zaxaa' => [
 		'title' => 'Zaxaa', 'icon' => 'zaxaa.png', 'help' => 'zaxaa',
 		'desc' => 'Update conversions from Zaxaa Payment Notification (ZPN).',
@@ -1000,6 +1010,78 @@ template_top('API Integrations');
 			</section>
 		</div>
 	<?php } ?>
+
+	<?php
+	$jvzooColumn = $user_row[JVZooKey::COLUMN] ?? null;
+	$jvzooColumn = is_string($jvzooColumn) ? $jvzooColumn : null;
+	$jvzooErrors = isset($error['jvzoo_secret_key_error'])
+		? [JVZooKey::COLUMN => (string) $error['jvzoo_secret_key_error']] : [];
+	?>
+	<div class="col-12 col-lg-6">
+		<section class="p202-panel h-100" id="jvzoo">
+			<div class="p202-panel__head">
+				<img src="<?php echo $e($base . '202-img/icons/integrations/jvzoo.png'); ?>" width="22" height="22"
+					alt="" class="rounded-1">
+				<h2 class="p202-panel__title">JVZoo</h2>
+				<?php echo $helpLink('jvzoo'); ?>
+				<?php if (JVZooKey::stored($jvzooColumn) !== null) { ?>
+					<span class="p202-pill p202-pill--good">Connected</span>
+				<?php } elseif (JVZooKey::unreadable($jvzooColumn)) { ?>
+					<span class="p202-pill p202-pill--warn">Key unreadable</span>
+				<?php } else { ?>
+					<span class="p202-pill">Not connected</span>
+				<?php } ?>
+			</div>
+			<div class="p202-panel__body">
+				<p class="text-secondary">Record each JVZoo sale and rebill on the click that sent the buyer, and take
+					it back on a refund or chargeback, from JVZoo’s JVZIPN.</p>
+				<p class="mb-1"><strong>Promoting a JVZoo product as an affiliate</strong></p>
+				<ol class="ps-3">
+					<li>Make the campaign’s offer URL your JVZoo affiliate link with
+						<code class="text-nowrap">?tid=[[subid]]</code> added, such as
+						<code>https://www.jvzoo.com/c/12345/67890/?tid=[[subid]]</code>. JVZoo sends the tid back in the
+						notification, and the sale is recorded on that click at your commission.</li>
+					<li>In JVZoo, under Affiliates › Approved Products, open the product’s Integrations and
+						paste this URL into Affiliate IPN.</li>
+				</ol>
+				<?php echo $endpoint('Affiliate IPN URL', JVZooRole::AFFILIATE->url($trackingBase)); ?>
+				<p class="mb-1"><strong>Selling your own product on JVZoo</strong></p>
+				<ol class="ps-3">
+					<li>Make the campaign’s offer URL your product’s JVZoo buy link with
+						<code class="text-nowrap">?subid=[[subid]]</code> added at its end, and send buyers
+						to it through the tracker (or a landing page’s outbound link), which fills it with the
+						click id. JVZoo sends the buy link’s variables back in the notification.</li>
+					<li>In JVZoo, edit the product and, under Advanced Settings, choose JVZIPN v1 and paste this URL as
+						its JVZIPN URL. (Not the v2 URL: v2 does not sign the amount or the click.)</li>
+				</ol>
+				<?php echo $endpoint('Vendor JVZIPN URL', JVZooRole::VENDOR->url($trackingBase)); ?>
+				<p>Both are verified with your JVZIPN secret key, which JVZoo shows under My Account ›
+					Account Details › Seller Settings; store it below. A notification it does not verify is
+					refused. For a subscription, set the campaign’s “When a click converts more than once”
+					(under Advanced) to “Add them up”, so each rebill adds to the sale.</p>
+				<details class="p202-disclosure"<?php echo $jvzooErrors ? ' open' : ''; ?>>
+					<summary><?php echo JVZooKey::stored($jvzooColumn) === null ? 'Connect' : 'Update'; ?>
+						<span class="p202-disclosure__hint">your JVZIPN secret key</span></summary>
+					<div class="p202-disclosure__body">
+						<form method="post" action="<?php echo $e($self . '#jvzoo'); ?>">
+							<input type="hidden" name="change_jvzoo_secret_key" value="1">
+							<?php echo p202_account_token_field(); ?>
+							<label class="form-label" for="jvzoo_ipn_secret_key">JVZIPN secret key</label>
+							<div class="input-group">
+								<input type="text"
+									class="form-control<?php
+										echo p202_account_invalid($jvzooErrors, JVZooKey::COLUMN); ?>"
+									id="jvzoo_ipn_secret_key" name="jvzoo_ipn_secret_key" required autocomplete="off"
+									spellcheck="false" value="<?php echo $e($fieldValue(JVZooKey::COLUMN)); ?>">
+								<button class="btn btn-secondary" type="submit">Save</button>
+							</div>
+							<?php echo p202_account_field_error($jvzooErrors, JVZooKey::COLUMN); ?>
+						</form>
+					</div>
+				</details>
+			</div>
+		</section>
+	</div>
 
 	<?php
 	$pkColumn = $user_row[PayKickstartKeys::COLUMN] ?? null;

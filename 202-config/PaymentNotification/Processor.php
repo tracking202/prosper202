@@ -128,6 +128,19 @@ final class Processor
                     $owner
                 );
             }
+            // A sale sent again after its refund (JVZoo's when a refund is
+            // undone) is not on file as counted, so it is no duplicate.
+            $reversal = $this->liveReversalOf($result['conv_id'], $owner);
+            if ($reversal !== null) {
+                return new Outcome(
+                    OutcomeKind::CONFLICT,
+                    'Transaction ' . $transactionId . ' on click ' . $n->clickId . ' is recorded and reversed by'
+                    . ' conversion ' . $reversal . '; this ' . $n->event . ' states the sale again. Nothing was'
+                    . ' changed: if the refund was undone, delete conversion ' . $reversal . ' to count the sale.',
+                    $result['conv_id'],
+                    $owner
+                );
+            }
 
             return new Outcome(
                 OutcomeKind::DUPLICATE,
@@ -349,6 +362,20 @@ final class Processor
             'reversed' => abs(Amount::toUnits((string) $row['reversed'])),
             'sale' => abs(Amount::toUnits((string) $row['sale'])),
         ];
+    }
+
+    /** The reversal that still nets a conversion, or null when none does. */
+    private function liveReversalOf(int $conversionId, int $owner): ?int
+    {
+        $conn = new Connection($this->db);
+        $stmt = $conn->prepareRead(
+            'SELECT conv_id FROM 202_conversion_logs WHERE reverses_conv_id = ? AND user_id = ? AND deleted = 0'
+            . ' ORDER BY conv_id LIMIT 1'
+        );
+        $conn->bind($stmt, 'ii', [$conversionId, $owner]);
+        $row = $conn->fetchOne($stmt);
+
+        return $row === null ? null : (int) $row['conv_id'];
     }
 
     private static function units(int $units): string
