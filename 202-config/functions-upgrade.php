@@ -2474,12 +2474,14 @@ class UPGRADE
             $result = _upgrade_query($sql);
 
             // The rebuild below reads 202_click_latest_visits (LatestVisit),
-            // which the 1.9.78 step converges: an install upgrading from
+            // which the 1.9.79 step converges: an install upgrading from
             // before 1.9.5 reaches this first, and without it the rebuild
             // failed here on every run. Empty, it reads every visit as
             // latest, as the rebuild did when this step was written.
             $sql = \Prosper202\Database\Tables\ClickTables::clickLatestVisits()->createStatement;
-            $result = _upgrade_query($sql);
+            if (_upgrade_query($sql) === false) {
+                error_log('Prosper202 upgrade: failed to create 202_click_latest_visits, which the 1.9.5 rebuild below reads');
+            }
 
             $de = new DataEngine();
             // PHPStan resolves DataEngine to the slim stub (see note above); the full class

@@ -78,7 +78,11 @@ final class CpcUpdate
     /** The clicks one write names. */
     private const CHUNK = 1000;
 
-    /** 202_clicks_spy.click_cpc is DECIMAL(4,2): a CPC above this does not fit it. */
+    /**
+     * 202_clicks_spy.click_cpc is DECIMAL(4,2), the Spy view's two decimals.
+     * A CPC above MAX is refused; from 99.995 to MAX it rounds past what the
+     * column holds, and the copy is held at this.
+     */
     private const SPY_MAX = '99.99';
 
     /** The method-of-promotion values, with what each means. */
