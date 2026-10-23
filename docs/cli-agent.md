@@ -1068,7 +1068,10 @@ p202 ltv integrations list | create --provider P [--name S] [--config JSON | --c
 - `ltv webhooks deliveries` lists one webhook's deliveries newest first (25
   by default): `status`, `attempts`, `next_attempt_at` (pending only),
   `last_status_code` and `last_response_body` (the last response or error,
-  e.g. `curl: …`, `blocked: …`); never the secret, never the payload. An
+  e.g. `curl: …`, `blocked: …`, or `expired: …` for a delivery still unsent
+  7 days after it was queued, which is never sent); never the secret, never
+  the payload. The minutely cron job sends what is due, so a `pending`
+  delivery whose `next_attempt_at` is past waits for the next cron run. An
   unknown webhook id is a 404 whose hint names `p202 ltv webhooks list`.
 - `ltv webhooks create` prints the signing secret once (`X-P202-Signature:
   sha256=HMAC(body, secret)`); `webhooks list` never shows it. `--events`

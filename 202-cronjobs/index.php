@@ -596,6 +596,28 @@ function RunSecondsCronjob()
             error_log('Notification outbox failed: ' . $e->getMessage());
         }
 
+        // LTV webhooks, the Landing Page Optimizer's pairing among them:
+        // the deliveries the /ltv writes queued (202-cronjobs/ltv_webhooks.php
+        // is the same run on its own; the dispatcher's named lock keeps the
+        // two from overlapping, and each delivery is claimed before it is
+        // sent). Last, under its own budget: a receiver that times out ends
+        // the run, not the jobs above. A delivery's failure is recorded on
+        // its row and retried with backoff; only a database error lands here.
+        try {
+            $ltvWebhooks = \Prosper202\Ltv\WebhookDispatcher::runExclusive(
+                new \Prosper202\Database\Connection($db),
+                time() + \Prosper202\Ltv\WebhookDispatcher::RUN_SECONDS
+            );
+            if ($ltvWebhooks === null) {
+                echo 'LTV webhooks: another run holds the lock; skipped<br>';
+            } elseif (\Prosper202\Ltv\WebhookDispatcher::didWork($ltvWebhooks)) {
+                $ltvSummary = \Prosper202\Ltv\WebhookDispatcher::summary($ltvWebhooks);
+                echo 'LTV webhooks: ' . htmlspecialchars($ltvSummary, ENT_QUOTES) . '<br>';
+            }
+        } catch (\Throwable $e) {
+            error_log('LTV webhooks failed: ' . $e->getMessage());
+        }
+
         echo 'Done<br>';
         ob_flush();
         flush();
