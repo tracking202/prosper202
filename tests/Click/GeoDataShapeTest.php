@@ -26,12 +26,16 @@ final class GeoDataShapeTest extends TestCase
         . ' public function city(string $ip): never { throw new \Exception("not in the database"); }'
         . ' public function close(): void {} } }';
 
+    /** The path getGeoData() reads, without the autoloader the child does not load. */
+    private const CITY_DATABASE = 'namespace Prosper202\GeoIp { final class CityDatabase {'
+        . ' public const PATH = "/nonexistent/GeoLite2-City.mmdb"; } }';
+
     /** @return list<string> the keys of the answer for 203.0.113.9 */
     private static function keys(bool $withReader): array
     {
         $source = (string) file_get_contents(SourceScan::repoRoot() . '/202-config/connect2.php');
         self::assertSame(1, preg_match('/^function getGeoData\(.*?^\}\n/ms', $source, $m));
-        $code = ($withReader ? self::STAND_IN : '')
+        $code = ($withReader ? self::STAND_IN : '') . self::CITY_DATABASE
             . ' namespace { use GeoIp2\Database\Reader;'
             . ' define("CONFIG_PATH", ' . var_export(SourceScan::repoRoot() . '/202-config', true) . ');'
             . $m[0]

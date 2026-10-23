@@ -266,6 +266,10 @@ function RunHourlyCronJob()
         // spends one of an event's five attempts.
         DeliverPendingAnalytics();
 
+        // The GeoIP database, refreshed with the operator's MaxMind account
+        // when a refresh is due (weekly once one has succeeded).
+        RefreshGeoIpDatabase();
+
         cronQuery($db, $insert_sql, 'the hourly tier\'s record of this hour\'s run');
 
         echo 'Done<br>';
@@ -274,6 +278,29 @@ function RunHourlyCronJob()
         return true;
     } else {
         return false;
+    }
+}
+
+/**
+ * The GeoIP database's refresh (Prosper202\GeoIp\GeoIpRefresh), run only
+ * when due: no MaxMind credentials stored is never; otherwise a week after
+ * the last check that got an answer, a day after a failure, and at once when
+ * the file is not the one the last refresh put in place (a container image
+ * redeployed over it). A failed refresh is logged and recorded on its row,
+ * which Account › Settings shows; only a database error reading or recording
+ * the row lands in the catch.
+ */
+function RefreshGeoIpDatabase(): void
+{
+    try {
+        $conn = new \Prosper202\Database\Connection(getDatabaseConnection());
+        $result = \Prosper202\GeoIp\GeoIpRefresh::forConnection($conn)->runIfDue();
+        if ($result !== null) {
+            echo 'GeoIP database: ' . htmlspecialchars($result->message, ENT_QUOTES) . '<br>';
+            flushOutput();
+        }
+    } catch (\Throwable $e) {
+        error_log('GeoIP refresh failed: ' . $e->getMessage());
     }
 }
 

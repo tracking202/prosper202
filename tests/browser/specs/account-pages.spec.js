@@ -368,6 +368,49 @@ module.exports = {
     },
 
     {
+      name: 'Settings: the GeoIP database panel gives the file\'s age, never sends a stored key back, and Remove asks first',
+      async run(ctx) {
+        const { app, ui, db, expect } = ctx;
+        const key = 'browserPass_0123456789abcdef_mmk';
+        db.write('DELETE FROM 202_geoip_refresh');
+        await app.goto('/202-account/administration.php');
+        const panel = await ui.page.evaluate(() => {
+          const p = document.querySelector('#geoip');
+          return p ? p.innerText : null;
+        });
+        expect.ok(panel !== null, 'the GeoIP database panel is on Settings');
+        expect.match(panel || '', /Built\s+[A-Z][a-z]{2} \d{1,2}, \d{4} · [\d,]+ days ago/, 'it gives the build date and the age', panel);
+        expect.ok(await ui.page.evaluate(() => document.querySelector('#geoip details.p202-disclosure').open),
+          'with no account stored, the set-up form is open');
+
+        await ui.fill({ '#geoip_account_id': '424242', '#geoip_license_key': key });
+        await app.submit('#geoip button[type="submit"]:has-text("Save")');
+        expect.match(await app.messages(), /Saved\. The cron job refreshes the GeoIP database/, 'saving says so');
+        expect.eq(db.value('SELECT account_id FROM 202_geoip_refresh WHERE refresh_id=1'), '424242', 'and stores the account ID');
+        // The shell scrolls to #geoip smoothly: waited for, not read at load.
+        await ui.untilInPage(() => {
+          const y = document.getElementById('geoip').getBoundingClientRect().y;
+          return y >= 0 && y < 120;
+        }, undefined, { describe: 'the redirect to land on #geoip', timeout: 5000 }).catch(() => {});
+        const seen = await ui.page.evaluate(() => {
+          const f = document.querySelector('[data-p202-flashes]');
+          const r = f ? f.getBoundingClientRect() : null;
+          return { inPanel: !!(f && f.closest('#geoip')), inView: !!r && r.y >= 0 && r.y + r.height <= window.innerHeight };
+        });
+        expect.ok(seen.inPanel && seen.inView, 'the message is in the GeoIP panel, in view', JSON.stringify(seen));
+        expect.eq(await ui.page.inputValue('#geoip_license_key'), '', 'the licence key box is empty: a stored key is never sent back');
+        expect.ok(!(await ui.page.content()).includes(key), 'and the page carries the key nowhere');
+
+        const asked = await app.confirmAnd('dismiss', '#geoip button:has-text("Remove the account")');
+        expect.match(asked || '', /Remove the MaxMind account ID and licence key\?/, 'Remove the account asks first', asked || '(no dialog)');
+        expect.eq(db.value('SELECT license_key FROM 202_geoip_refresh WHERE refresh_id=1'), key, 'saying no keeps the key');
+        await app.confirmAnd('accept', '#geoip button:has-text("Remove the account")');
+        expect.match(await app.messages(), /were removed, so the GeoIP database is no longer refreshed/, 'saying yes removes it, and says so');
+        expect.eq(db.value("SELECT CONCAT(account_id, license_key) FROM 202_geoip_refresh WHERE refresh_id=1"), '', 'both are cleared');
+      },
+    },
+
+    {
       name: 'Home: the getting started card can be dismissed, per browser',
       async run(ctx) {
         const { app, ui, expect } = ctx;

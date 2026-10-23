@@ -110,6 +110,7 @@ final class TableRegistry
     // Deployment-wide secrets (SecretTables): owned by the installation, not
     // by any user
     public const string DEPLOYMENT_SECRETS = '202_deployment_secrets';
+    public const string GEOIP_REFRESH = '202_geoip_refresh';
 
     // Identity graph (IdentityTables)
     public const string IDENTITY_KEYS = '202_identity_keys';

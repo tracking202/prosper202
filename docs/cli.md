@@ -1632,7 +1632,9 @@ role lacks the page's permission is refused naming it.
 
 ```bash
 p202 system info                    # versions (and database_upgrade_needed), PHP limits, memcache,
-                                    # clicks recorded, database size, cron last ran, DataEngine
+                                    # clicks recorded, database size, cron last ran, DataEngine,
+                                    # geoip_database (state, built_on, age_days) and geoip_refresh
+                                    # (credentials stored or not, last_outcome, last_error)
 p202 system login-log --limit 100   # sign-in attempts: user name, time, IP, status (default 50)
 p202 system login-log --status not_completed  # right password, but a database failure stopped the
                                     # sign-in (the throttle counts failed attempts alone)
