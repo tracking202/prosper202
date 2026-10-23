@@ -110,22 +110,22 @@ $accessChoices = [
 ];
 echo p202_standalone_card('Connect an AI assistant');
 ?>
+    <?php // The link's words: nothing signs them, so anyone can make a link that names any app. ?>
     <p>
-        Tracking202's MCP server (<?php echo $e($relayHost); ?>) says that
+        This link asks to connect an app that calls itself
+        <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
         <?php if ($request['client_domain'] !== '') { ?>
-        <strong><?php echo $e($request['client_name']); ?></strong>, verified there as
-        <strong><?php echo $e($request['client_domain']); ?></strong>,
-        <?php } else { ?>
-        an app calling itself <strong>&ldquo;<?php echo $e($request['client_name']); ?>&rdquo;</strong>
-        (a name it chose, not verified)
+        (<?php echo $e($request['client_domain']); ?>)
         <?php } ?>
-        asks to use this Prosper202 as <strong><?php echo $e($userName); ?></strong>, and that the connection
-        is handed to <strong><?php echo $e($request['redirect_host']); ?></strong>.
+        to this Prosper202 as <strong><?php echo $e($userName); ?></strong>, through Tracking202's MCP server
+        (<?php echo $e($relayHost); ?>), which hands the connection to
+        <strong><?php echo $e($request['redirect_host']); ?></strong>. The app's name and site are what the
+        link says; this page cannot check them.
     </p>
     <p class="small text-secondary">
-        Allow it only if you started connecting this app yourself, just now, in this browser: the connection
-        completes only in the browser that started it. Whatever you choose, it cannot see or change users,
-        API keys or this install's settings.
+        Allow it only if you started connecting this app yourself, just now. Whoever started the connection
+        gets the access you choose: a link someone sent you connects their app to your account. Whatever you
+        choose, it cannot see or change users, API keys or this install's settings.
     </p>
 <?php if ($error !== '') { ?>
     <div class="alert alert-danger p202-flash" role="alert">

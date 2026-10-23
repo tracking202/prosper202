@@ -95,10 +95,11 @@ final class AiConnect
      *
      * install is the address the person gave the MCP server; the page holds
      * it to its own (sameInstall()), so another install cannot bounce a
-     * person here with its own approval link. client_domain is set only for
-     * an app whose identity the MCP server verified (a client ID metadata
-     * document on that domain); client_name alone is what the app calls
-     * itself. redirect_host is where the MCP server hands the connection.
+     * person here with its own approval link. The MCP server sets
+     * client_domain only for an app it verified (a client ID metadata
+     * document on that domain), but nothing signs the link, so anyone can
+     * write one naming any app: the page shows both names as the link's
+     * claim. redirect_host is where the MCP server hands the connection.
      *
      * @param array<string, mixed> $params
      * @return array{state: string, code_challenge: string, client_name: string, client_domain: string,

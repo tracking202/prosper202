@@ -88,9 +88,12 @@ if (isset($_POST['autocron'])) {
         $on_row = p202FetchRow($on_result, $on_sql);
         $lastRun = $cron_row === null ? null : (int) $cron_row['last_execution_time'];
         $alreadyOn = $on_row !== null && (string) $on_row['auto_cron'] === '1';
-        if (\Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
-            p202_account_flash('info', 'Your own cron job ran in the last five minutes, so AutoCron is not needed and was left off.');
-            p202_account_redirect('202-account/administration.php#autocron');
+        // The record is advice: anyone can open the cron's address, so a run
+        // recorded is no proof of a cron job, and the owner may say so.
+        $noOwnJob = ($_POST['autocron_no_own_job'] ?? null) === '1';
+        if (!$noOwnJob && \Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently($lastRun, $alreadyOn, time())) {
+            p202_account_flash('info', \Prosper202\Cron\AutoCronSwitch::RAN_RECENTLY);
+            p202_account_redirect('202-account/administration.php?autocron=confirm#autocron');
         }
     } else {
         $endpoint = 'deregister';
@@ -125,39 +128,45 @@ if (isset($_POST['autocron'])) {
 }
 
 if (isset($_POST['maxmind'])) {
-	if ($_POST['maxmind'] == "true") {
-		// Same resolution as getisp() in connect2.php: P202_GEO_DIR (persistent
-		// volume on container deployments) or the in-docroot default.
-		$geo_dir = getenv('P202_GEO_DIR') ?: substr(__DIR__, 0, -12) . '/202-config/geo';
-		if (file_exists($geo_dir . '/GeoIP2-ISP.mmdb') || file_exists($geo_dir . '/GeoIPISP.dat')) {
-			$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-			$sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
-			if (_mysqli_query($sql)) {
-				if ($slack)
-					$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
-				p202_account_flash('ok', 'ISP and carrier lookup is on. Live traffic picks it up within five minutes.');
-			} else {
-				p202_account_flash('bad', 'ISP and carrier lookup could not be turned on; try again.');
-			}
-		} else {
-			p202_account_flash('bad', "The ISP database file isn't there, so lookup stays off. Upload GeoIP2-ISP.mmdb (or legacy GeoIPISP.dat) to "
-				. (getenv('P202_GEO_DIR') ?: '/202-config/geo') . ', then turn it on.');
-		}
-	}
+    $ispOn = \Prosper202\Http\PostedSwitch::read($_POST['maxmind'], 'true', 'false');
+    if ($ispOn === null) {
+        p202_account_flash(
+            'bad',
+            'ISP and carrier lookup is set On or Off, and the form sent neither, so nothing was changed.'
+        );
+        p202_account_redirect('202-account/administration.php#maxmind');
+    }
+    if ($ispOn) {
+        // Same resolution as getisp() in connect2.php: P202_GEO_DIR (persistent
+        // volume on container deployments) or the in-docroot default.
+        $geo_dir = getenv('P202_GEO_DIR') ?: substr(__DIR__, 0, -12) . '/202-config/geo';
+        if (file_exists($geo_dir . '/GeoIP2-ISP.mmdb') || file_exists($geo_dir . '/GeoIPISP.dat')) {
+            $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+            $sql = "UPDATE 202_users_pref SET maxmind_isp='1' WHERE user_id='" . $mysql['user_id'] . "'";
+            if (_mysqli_query($sql)) {
+                if ($slack)
+                    $slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Activated']);
+                p202_account_flash('ok', 'ISP and carrier lookup is on. Live traffic picks it up within five minutes.');
+            } else {
+                p202_account_flash('bad', 'ISP and carrier lookup could not be turned on; try again.');
+            }
+        } else {
+            p202_account_flash('bad', "The ISP database file isn't there, so lookup stays off. Upload GeoIP2-ISP.mmdb (or legacy GeoIPISP.dat) to "
+                . (getenv('P202_GEO_DIR') ?: '/202-config/geo') . ', then turn it on.');
+        }
+    } else {
+        $mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
+        $sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
+        if (_mysqli_query($sql)) {
+            if ($slack)
+                $slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Deactivated']);
+            p202_account_flash('ok', 'ISP and carrier lookup is off.');
+        } else {
+            p202_account_flash('bad', 'ISP and carrier lookup could not be turned off; try again.');
+        }
+    }
 
-	if ($_POST['maxmind'] == "false") {
-		$mysql['user_id'] = $db->real_escape_string((string) $_SESSION['user_id']);
-		$sql = "UPDATE 202_users_pref SET maxmind_isp='0' WHERE user_id='" . $mysql['user_id'] . "'";
-		if (_mysqli_query($sql)) {
-			if ($slack)
-				$slack->push('maxmind_isp_changed', ['user' => $username, 'type' => 'Deactivated']);
-			p202_account_flash('ok', 'ISP and carrier lookup is off.');
-		} else {
-			p202_account_flash('bad', 'ISP and carrier lookup could not be turned off; try again.');
-		}
-	}
-
-	p202_account_redirect('202-account/administration.php#maxmind');
+    p202_account_redirect('202-account/administration.php#maxmind');
 }
 
 if (isset($_POST['database_management'])) {
@@ -271,13 +280,11 @@ if ($cron_log_result === false) {
 	// Not "never": a cron that ran would read the same.
 	record_mysql_error($db, $cron_log_query);
 }
-$last_cron_ran = $cron_log_result->num_rows > 0;
-if ($last_cron_ran) {
-	$cron_log_row = $cron_log_result->fetch_assoc();
-	$last_cron_job_execution_time = CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
-} else {
-	$last_cron_job_execution_time = 'never';
-}
+$cron_log_row = p202FetchRow($cron_log_result, $cron_log_query);
+$last_cron_ran = $cron_log_row !== null;
+$last_cron_job_execution_time = $cron_log_row === null
+    ? 'never'
+    : CronJobLastExecution('@' . $cron_log_row['last_execution_time']);
 
 $de_query = "SELECT count(*) as total, sum(processed) as done FROM 202_dataengine_job";
 $de_result = _mysqli_query($db, $de_query);
@@ -285,7 +292,7 @@ if ($de_result === false) {
 	// Not "0 of 0": the report rebuild's progress is unknown, not done.
 	record_mysql_error($db, $de_query);
 }
-$de_row = $de_result->fetch_assoc();
+$de_row = p202FetchRow($de_result, $de_query);
 
 if ($de_row && $de_row['total'] != 0) {
 	$de_total = $de_row['total'];
@@ -436,6 +443,14 @@ $self = get_absolute_url() . '202-account/administration.php';
 $scheduledDeletion = p202_admin_scheduled_deletion();
 $autoDays = (string) ($_POST['auto_database_management'] ?? ($user_row['user_auto_database_optimization_days'] ?? '0'));
 $autoCronOn = !empty($pref_row['auto_cron']);
+// After Settings left AutoCron off for a recent run, the owner may say that
+// run was not their cron job's (AutoCronSwitch::RAN_RECENTLY).
+$autoCronAsksToConfirm = !$autoCronOn && ($_GET['autocron'] ?? null) === 'confirm' && $cron_log_row !== null
+    && \Prosper202\Cron\AutoCronSwitch::ownCronJobRanRecently(
+        (int) $cron_log_row['last_execution_time'],
+        false,
+        time()
+    );
 $maxmindOn = !empty($pref_row['maxmind_isp']);
 $geoDirShown = getenv('P202_GEO_DIR') ?: getTrackingDomain() . get_absolute_url() . '202-config/geo/';
 $yesNo = static fn (bool $on, string $yes = 'Yes', string $no = 'No'): string => $on
@@ -561,6 +576,17 @@ echo p202_account_render_flashes($extra);
 					<div class="form-text mb-2">Prosper202's hosted service calls this install's cron every few minutes, for installs without their own cron job.</div>
 					<button class="btn btn-secondary btn-sm" type="submit">Save</button>
 				</form>
+                <?php if ($autoCronAsksToConfirm) { ?>
+                <form method="post" action="<?php echo $e($self . '#autocron'); ?>" class="mt-3"
+                    id="autocron_no_own_job_form">
+                    <?php echo p202_account_token_field(); ?>
+                    <input type="hidden" name="autocron" value="1">
+                    <input type="hidden" name="autocron_no_own_job" value="1">
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">
+                        I have no cron job of my own: turn AutoCron on
+                    </button>
+                </form>
+                <?php } ?>
 			</div>
 		</section>
 
