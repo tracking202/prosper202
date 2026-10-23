@@ -259,13 +259,26 @@ p202 ltv company create --name Acme --domain acme.com
 
 ## Webhooks
 
-`POST /ltv/webhooks` registers an https endpoint (`url`; not a private,
-loopback or metadata address) for signed events. The response holds the
-webhook's `secret` once; it is never shown again. Each delivery is `POST
-{event, occurred_at, data}` with `X-P202-Signature: sha256=<HMAC-SHA256 of
-the body with the secret>` (and `X-P202-Event`, `X-P202-Delivery`),
-retried with backoff and failed after 6 attempts, which marks the webhook
-dead.
+`POST /ltv/webhooks` registers an https endpoint (`url`, on port 443 or
+8443) for signed events. The response holds the webhook's `secret` once; it
+is never shown again. Each delivery is `POST {event, occurred_at, data}`
+with `X-P202-Signature: sha256=<HMAC-SHA256 of the body with the secret>`
+(and `X-P202-Event`, `X-P202-Delivery`), retried with backoff and failed
+after 6 attempts, which marks the webhook dead.
+
+The URL is held to the export webhooks' rules
+([13-attribution.md](13-attribution.md#exports)): spelled plainly (no user
+name, fragment or backslash), and never a private, loopback, link-local
+(where cloud metadata answers) or other non-public address, in any
+spelling. An IPv4 address carried in IPv6 (`::ffff:169.254.169.254`,
+`64:ff9b::a9fe:a9fe`) is judged as that address, and the metadata endpoints
+(`168.63.129.16` among them) are refused by name. Saving refuses what shows
+without a lookup (a `422` on `url`); each delivery is checked again when it
+is sent, every address the host resolves to with it, and goes only to the
+address that passed, with no proxy and no redirects; a refused one is
+logged `blocked: …` and nothing is sent. A receiver on the operator's own
+network is admitted by `P202_WEBHOOK_ALLOW_NETWORKS` in `202-config.php`, the
+export webhooks' setting; link-local and metadata addresses never are.
 
 `events` is a list of the events this install sends — `customer.updated`,
 `revenue.recorded`, `subscription.changed`, `conversion.recorded`,

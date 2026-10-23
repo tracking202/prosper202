@@ -146,6 +146,44 @@ URL, and a removed pixel is erased with its correction URL. Beyond the form:
 the type must be one `202_pixel_types` names, and a Postback's URLs must be
 http(s) — the only ones the postback sender calls.
 
+**Where a postback goes.** This server sends a Postback pixel's URLs (and its
+correction URLs) itself, on behalf of whoever saved the pixel and of anyone
+who sends `gpb.php` a click id, so it sends them only to public addresses.
+When a postback is sent, its host is resolved, and it is refused if any
+address the host resolves to is private, loopback, link-local (where cloud
+metadata answers), carrier-grade NAT, multicast, reserved or another range
+that is not globally reachable, IPv4 or IPv6 (an IPv4 address carried inside
+IPv6, `::ffff:10.0.0.1`, is judged as that address). The connection goes to
+the address that passed, with the host pinned and no proxy, and each redirect
+the network answers with (at most 5) is checked the same way before it is
+followed. http:// and any port are fine. A refused postback is not sent: its
+outbox row is `failed` at once with the reason in `last_error`, it is not
+retried, the error log names the pixel and the host (never the URL's path or
+query, which can hold the network's key), and `gpb.php` and `upx.php` answer
+as they always have.
+
+Saving refuses what shows without a lookup, on `pixel_code` or
+`correction_url`: such an address written in the URL (in any spelling:
+`2130706433` and `0177.0.0.1` are refused by name), a local name
+(`localhost`, a single label, `.local`, `.internal`), a user name or password
+before the host, a scheme other than http(s). A host made of tokens
+(`http://[[c1]].network.example/`) is checked when it is filled. A URL the
+pixel already holds (saved by an earlier version) is not refused when the
+pixel is saved again, so `PUT` of a pixel's own `GET` body still works, but
+it is refused when it is sent. Setup › Traffic Sources refuses the same, in
+the same words.
+
+An operator whose network really receives postbacks on their own network
+admits it with the setting the export webhooks use, in `202-config.php`:
+
+```php
+define('P202_WEBHOOK_ALLOW_NETWORKS', '10.20.0.0/16');
+```
+
+Link-local addresses and the cloud metadata endpoints are never admitted, and
+an entry that does not parse holds every postback (each is kept and retried)
+until it is fixed.
+
 A code is stored as sent (only trimmed) and fired as stored: a Raw pixel's
 backslashes, `"a\\nb"` in a script included, read back byte for byte. The
 account form keeps them too (it read a Raw pixel through `stripslashes()`,

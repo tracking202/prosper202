@@ -11,9 +11,12 @@ declare(strict_types=1);
  * HTTP happens — never inline in ingest or API handling.
  *
  * Hardening:
- *  - SSRF guard re-checked at dispatch time (DNS may have changed since
- *    registration): https only, no private/loopback/reserved addresses,
- *    redirects are never followed.
+ *  - Each delivery is sent by Ltv\DeliverySender through the export
+ *    webhooks' sender and guard (Attribution\WebhookSender,
+ *    WebhookGuard::check()), re-checked at dispatch time (DNS may have
+ *    changed since registration): https only, no private, loopback,
+ *    link-local or metadata address in any spelling, pinned to the address
+ *    checked, no proxy, redirects never followed.
  *  - Payloads signed with HMAC-SHA256 over the exact body, sent as
  *    X-P202-Signature: sha256=<hex>, so receivers can authenticate us.
  *  - Failures back off exponentially (2^attempts minutes). After
@@ -28,8 +31,8 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/../202-config/connect.php';
 
 use Prosper202\Database\Connection;
+use Prosper202\Ltv\DeliverySender;
 use Prosper202\Ltv\MysqlWebhookRepository;
-use Prosper202\Validation\OutboundUrlGuard;
 
 set_time_limit(0);
 
@@ -40,6 +43,7 @@ if (!isset($db) || !($db instanceof mysqli)) {
 
 $conn = new Connection($db);
 $repo = new MysqlWebhookRepository($conn);
+$sender = new DeliverySender();
 
 $batchSize = 100;
 $delivered = 0;
@@ -49,8 +53,6 @@ try {
     foreach ($repo->duePending($batchSize) as $delivery) {
         $deliveryId = (int) $delivery['delivery_id'];
         $webhookId = (int) $delivery['webhook_id'];
-        $url = (string) $delivery['webhook_url'];
-        $body = (string) $delivery['payload'];
 
         // Claim before POSTing: overlapping cron runs both read the same
         // pending set, but only one worker wins this atomic UPDATE — the
@@ -66,57 +68,15 @@ try {
             continue;
         }
 
-        try {
-            $validatedIps = MysqlWebhookRepository::assertUrlAllowed($url);
-        } catch (Throwable $guard) {
-            $repo->recordAttempt($deliveryId, $webhookId, false, null, 'blocked: ' . $guard->getMessage());
-            $failed++;
-            continue;
-        }
-
-        $signature = MysqlWebhookRepository::signature($body, (string) $delivery['webhook_secret']);
-
-        $ch = curl_init($url);
-        if ($ch === false) {
-            $repo->recordAttempt($deliveryId, $webhookId, false, null, 'curl init failed');
-            $failed++;
-            continue;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'X-P202-Signature: ' . $signature,
-                'X-P202-Event: ' . (string) $delivery['event_name'],
-                'X-P202-Delivery: ' . $deliveryId,
-                'User-Agent: Prosper202-LTV-Webhook/1.0',
-            ],
-            CURLOPT_RETURNTRANSFER => true,
-        ]);
-        // Pin to an address the guard just validated, no redirects, https only,
-        // TLS verified -- one shared option set so no dispatcher can drop one.
-        curl_setopt_array($ch, OutboundUrlGuard::curlOptions($url, $validatedIps));
-
-        $responseBody = curl_exec($ch);
-        $statusCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $success = $responseBody !== false && $statusCode >= 200 && $statusCode < 300;
-        $repo->recordAttempt(
-            $deliveryId,
-            $webhookId,
-            $success,
-            $statusCode > 0 ? $statusCode : null,
-            $responseBody !== false ? (string) $responseBody : ('curl: ' . $curlError)
-        );
+        [$success, $statusCode, $responseBody] = $sender->post($delivery);
+        $repo->recordAttempt($deliveryId, $webhookId, $success, $statusCode, $responseBody);
 
         if ($success) {
             $delivered++;
         } else {
             $failed++;
-            error_log("ltv_webhooks: delivery {$deliveryId} to webhook {$webhookId} failed (status {$statusCode})");
+            error_log("ltv_webhooks: delivery {$deliveryId} to webhook {$webhookId} failed"
+                . ' (status ' . ($statusCode ?? 0) . ')');
         }
     }
 } catch (Throwable $e) {

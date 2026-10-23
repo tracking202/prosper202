@@ -37,6 +37,8 @@ if [ -z "$P202_PASS" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
@@ -61,6 +63,7 @@ CLICKS="$R,$RA,$ACC,$UP,$UP2,$SUB,$DEL,$API,$RT"
 ACIP_R=930100; ACIP_A=930101
 
 cleanup() {
+  p202_restore_postbacks
   mysql_q "$DB" <<SQL
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
 DELETE FROM 202_notification_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id IN ($CLICKS));
@@ -83,6 +86,8 @@ CAPTURE_DIR="$OUT/capture"; mkdir -p "$CAPTURE_DIR"; : > "$CAPTURE_DIR/pb"
 CAPTURE_PID=$!
 RETRY_PID=
 trap 'kill $CAPTURE_PID $RETRY_PID 2>/dev/null; cleanup' EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 sleep 1
 
 mysql_q "$DB" <<SQL

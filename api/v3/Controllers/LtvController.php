@@ -16,6 +16,7 @@ use Api\V3\Support\QueryInt;
 use Api\V3\Support\RequestFlag;
 use Api\V3\Support\StatementHelpers;
 use Api\V3\Support\TimeBound;
+use Prosper202\Attribution\WebhookRefused;
 use Prosper202\Database\Connection;
 use Prosper202\Ltv\LtvQuery;
 use Prosper202\Ltv\MysqlCompanyRepository;
@@ -32,7 +33,6 @@ use Prosper202\Ltv\MysqlSubscriptionRepository;
 use Prosper202\Ltv\MysqlWebhookRepository;
 use Prosper202\Ltv\RevenueReplay;
 use Prosper202\Ltv\SubscriptionNotFoundException;
-use Prosper202\Validation\OutboundUrlException;
 
 /**
  * /ltv endpoints: realized + predictive LTV reads, customer CRM management,
@@ -1087,7 +1087,7 @@ class LtvController
         $result = $this->wrap(function () use ($url, $events, $payload): array {
             try {
                 return $this->webhooks->create($this->userId, $url, $events);
-            } catch (OutboundUrlException $e) {
+            } catch (WebhookRefused $e) {
                 // The URL guard's refusal is the caller's to fix, named by
                 // the field it was sent in; wrap() takes an exception it does
                 // not know for the server's.

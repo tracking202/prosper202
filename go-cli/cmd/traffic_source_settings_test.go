@@ -76,6 +76,34 @@ func TestPixelCommandsSendThePagesFields(t *testing.T) {
 	}
 }
 
+// A postback the server would never call is refused on its field, and the
+// hint says what to point the flag at and which operator setting admits a
+// receiver on the operator's own network.
+func TestARefusedPostbackAddressNamesTheFlagAndTheAllowlist(t *testing.T) {
+	for _, tc := range []struct{ field, flag, message string }{
+		{"pixel_code", "--code", "169.254.169.254, which is a link-local address, where cloud metadata services answer. Postbacks are only sent to public addresses."},
+		{"correction_url", "--correction-url", "10.0.0.1, which is a private address. Postbacks are only sent to public addresses."},
+		{"pixel_code", "--code", "localhost is a single-label name, which only resolves inside a local network. Use the receiver's public host name."},
+	} {
+		newSetupServer(t, setupFeatures, func(r *http.Request) (int, string) {
+			return 422, `{"error":true,"message":"Invalid pixel","status":422,"field_errors":{"` + tc.field + `":"` + tc.message + `"}}`
+		})
+		_, _, err := executeCommand("ppc-account", "pixel", "create", "4", "--type-id", "4", "--code", "http://x/", "--json")
+		if err == nil {
+			t.Fatalf("%s: the refusal was not an error", tc.field)
+		}
+		if code := exitCodeForError(err); code != ExitValidation {
+			t.Errorf("%s: exit %d, want %d", tc.field, code, ExitValidation)
+		}
+		hint := hintFor(err)
+		for _, want := range []string{"Point " + tc.flag + " at the network's public postback URL", "P202_WEBHOOK_ALLOW_NETWORKS"} {
+			if !strings.Contains(hint, want) {
+				t.Errorf("%s: hint %q lacks %q", tc.field, hint, want)
+			}
+		}
+	}
+}
+
 func TestSettingsCommandsRefuseWhatTheyCanBeforeAnyRequest(t *testing.T) {
 	cases := []struct {
 		args []string

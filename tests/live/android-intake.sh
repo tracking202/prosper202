@@ -61,6 +61,8 @@ if [ -z "$P202_API_KEY" ]; then
 fi
 # shellcheck source=tests/live/guard.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard.sh"
+# shellcheck source=tests/live/loopback-postbacks.sh
+. "$(dirname "${BASH_SOURCE[0]}")/loopback-postbacks.sh"
 p202_require_scratch_db "$DB" || exit 2
 
 MYSQL_ARGS=(-u "$DB_USER")
@@ -162,6 +164,7 @@ OWNER=$(Q "SELECT user_id FROM 202_api_keys WHERE api_key='$P202_API_KEY'")
 [ -n "$OWNER" ] || { echo "the API key is not in $DB" >&2; exit 2; }
 
 cleanup() {
+  p202_restore_postbacks
   mysql_q "$DB" <<SQL
 SET SESSION sql_mode='';
 DELETE FROM 202_attribution_pending WHERE conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE campaign_id IN (SELECT aff_campaign_id FROM 202_aff_campaigns WHERE aff_campaign_name LIKE 'android-pass%'));
@@ -181,6 +184,8 @@ SQL
 }
 cleanup
 trap cleanup EXIT
+# The traffic source posts back to this machine (loopback-postbacks.sh).
+p202_allow_loopback_postbacks || exit 2
 
 # A previous run may have spent this peer's intake bucket (its last step
 # trips it on purpose): wait the window out rather than read 429s as defects.
@@ -495,8 +500,8 @@ eq "$(Q "SELECT CONCAT_WS('/', match_state, trusted, conversion_id IS NOT NULL, 
 eq "$(device POST "/apps/installs/$U8/events" "$TOKEN" "$OUT/e8.json")" 200 "its events are accepted now"
 eq "$(Q "SELECT GROUP_CONCAT(DISTINCT status) FROM 202_notification_pending WHERE kind='reached' AND destination=0 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" sent \
    "every queued postback to the accepting URL was sent"
-eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts, last_error LIKE '%/api/v3/pr5-refuses?%')) FROM 202_notification_pending WHERE kind='reached' AND destination=1 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "pending/1/1" \
-   "the refusing URL's rows were tried once and wait to retry, naming it"
+eq "$(Q "SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('/', status, attempts, last_error LIKE '% answered 4__')) FROM 202_notification_pending WHERE kind='reached' AND destination=1 AND status <> 'cancelled' AND conv_id IN (SELECT conv_id FROM 202_conversion_logs WHERE click_id=$C1)")" "pending/1/1" \
+   "the refusing URL's rows were tried once and wait to retry, saying what it answered"
 eq "$(Q "SELECT COUNT(*) FROM 202_notification_pending WHERE status='pending' AND attempts=0 AND notification_id <= $QUEUED_BEFORE")" 0 "and nothing queued before the run was left untried"
 # Every waiting row's backoff, spent (not just the refusing URL's: a row that
 # still carried the accepting URL would be resent too, and the log count
