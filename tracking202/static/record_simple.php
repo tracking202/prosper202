@@ -26,6 +26,8 @@ $_GET += [
     'gbraid' => '',
     'wbraid' => '',
     'ttclid' => '',
+    'msclkid' => '',
+    'fbclid' => '',
     'c1' => '',
     'c2' => '',
     'c3' => '',
@@ -119,7 +121,7 @@ $keyword = ClickRequest::keyword($_GET, $referer_query, $user_row['user_keyword_
 $keyword_id = $trackingRepo->findOrCreateKeyword($keyword);
 $mysql['keyword_id'] = $db->real_escape_string((string) $keyword_id);
 
-// The ad platforms' click ids (gclid, gbraid, wbraid, ttclid). Raw: the
+// The ad platforms' click ids (ClickRecord::AD_CLICK_IDS). Raw: the
 // writer binds them, so an escaped value was stored with its backslashes.
 $adClickIds = ClickRequest::adClickIds($_GET);
 foreach ($adClickIds as $adClickIdName => $adClickId) {

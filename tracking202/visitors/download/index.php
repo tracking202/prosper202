@@ -27,7 +27,7 @@ $reportView = p202_report_view_begin();
 2co.site_url_address AS outbound,2cod.site_domain_host AS outbound_host,
 2cc.site_url_address AS cloaking,2ccd.site_domain_host AS cloaking_host,
 2credir.site_url_address AS redirect,2credird.site_domain_host AS redirect_host,
-gclid, 2g.gbraid, 2g.wbraid, 2g.ttclid,
+gclid, 2g.gbraid, 2g.wbraid, 2g.ttclid, 2g.msclkid, 2g.fbclid,
 2uca.utm_campaign,2uco.utm_content,2um.utm_medium,2us.utm_source,2ut.utm_term
 FROM 202_dataengine AS 2c
 LEFT JOIN 202_clicks_record USING (click_id) 
@@ -104,6 +104,8 @@ LEFT JOIN 202_utm_term AS 2ut ON (2g.utm_term_id = 2ut.utm_term_id) ";
             "gbraid" . "\t" .
             "wbraid" . "\t" .
             "ttclid" . "\t" .
+            "msclkid" . "\t" .
+            "fbclid" . "\t" .
 	        "utm_campaign" . "\t" .
 	        "utm_content" . "\t" .
 	        "utm_medium" . "\t" .
@@ -221,6 +223,8 @@ $cell = static fn (mixed $value): string => str_replace(["\t", "\r", "\n"], ' ',
             $cell($click_row['gbraid'] ?? '') . "\t" .
             $cell($click_row['wbraid'] ?? '') . "\t" .
             $cell($click_row['ttclid'] ?? '') . "\t" .
+            $cell($click_row['msclkid'] ?? '') . "\t" .
+            $cell($click_row['fbclid'] ?? '') . "\t" .
 			$cell($click_row['utm_campaign'] ?? '') . "\t" .
 			$cell($click_row['utm_content'] ?? '') . "\t" .
 			$cell($click_row['utm_medium'] ?? '') . "\t" .

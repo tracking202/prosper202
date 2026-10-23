@@ -770,8 +770,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
             	2trk.click_cpa,
                 2c.ppc_account_id,
             	2g.gclid,
-                2b.msclkid,
-                2f.fbclid,
             	2us.utm_source,
             	2um.utm_medium,
             	2uca.utm_campaign,
@@ -792,8 +790,6 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
                 LEFT OUTER JOIN 202_trackers AS 2trk
                     ON (2trk.tracker_id_public = 2cpa.tracker_id_public AND 2trk.user_id = 2c.user_id)
             	LEFT JOIN `202_google` AS 2g on (2g.click_id=2c.click_id)
-                LEFT JOIN `202_bing` AS 2b on (2b.click_id=2c.click_id)
-                LEFT JOIN `202_facebook` AS 2f on (2f.click_id=2c.click_id) 
                 LEFT JOIN `202_utm_source` AS 2us ON (2g.utm_source_id = 2us.utm_source_id)
                 LEFT JOIN `202_utm_medium` AS 2um ON (2g.utm_medium_id = 2um.utm_medium_id)
                 LEFT JOIN `202_utm_campaign` AS 2uca ON (2g.utm_campaign_id = 2uca.utm_campaign_id) 
@@ -824,6 +820,8 @@ function replaceTrackerPlaceholders($db, $url, $click_id, int $ownerId)
     $click_row ??= [];
     // The ids 1.9.79 added, read apart (AdClickIdColumns::of()) and only for
     // a URL that asks for one, from a click the read above found the owner's.
+    // The msclkid and fbclid among them: 202_bing and 202_facebook, read here
+    // before, were written by no version in this repository's history.
     if ($click_row !== [] && \Prosper202\Click\AdClickIdColumns::namedIn((string) $url)) {
         $click_row += \Prosper202\Click\AdClickIdColumns::of(
             \Prosper202\Repository\LookupRepositoryFactory::connection($db),

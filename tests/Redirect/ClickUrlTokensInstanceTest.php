@@ -27,11 +27,15 @@ final class ClickUrlTokensInstanceTest extends TestCase
     private const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
         . 'Chrome/120.0 Safari/537.36';
     private const TOKENS = [
-        'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'utm_source', 'utm_term',
-        'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout', 'sourceid',
+        'subid', 't202kw', 'c1', 'c2', 'c3', 'c4', 'gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid',
+        'utm_source', 'utm_term', 'country', 'country_code', 'region', 'city', 'cpc', 'cpc2', 'cpa', 'payout',
+        'sourceid',
     ];
 
-    /** Google's iOS click ids and TikTok's, the lengths of real ones (34, 87 and 313 characters). */
+    /**
+     * Google's iOS click ids, TikTok's, Microsoft's and Meta's, the lengths
+     * of real ones (34, 87, 313, 32 and 200 characters).
+     */
     private const AD_CLICK_IDS = [
         'gbraid' => '0AAAAAgbraid-Shape_0123456789abcde',
         'wbraid' => 'Cj8KCQwbraid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345',
@@ -39,6 +43,10 @@ final class ClickUrlTokensInstanceTest extends TestCase
             . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
             . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
             . 'ttclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012',
+        'msclkid' => '8f2c1e7a9b0d4c3e5a6f7b8c9d0e1f2a',
+        'fbclid' => 'IwY2xjawfbclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            . 'fbclid-Shape_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            . '_aem_fbclid-Shape_0123456789abcdefghijklmn',
     ];
 
     private static string $base = '';

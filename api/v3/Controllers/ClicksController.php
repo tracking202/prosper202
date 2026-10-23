@@ -44,7 +44,7 @@ class ClicksController
                 p.platform_name, b.browser_name, dm.device_name, dt.type_name AS device_type,
                 su_ref.site_url_address AS referer, su_lp.site_url_address AS landing,
                 su_out.site_url_address AS outbound,
-                g.gclid, g.gbraid, g.wbraid, g.ttclid';
+                g.gclid, g.gbraid, g.wbraid, g.ttclid, g.msclkid, g.fbclid';
 
     private const DETAIL_JOINS = '
             LEFT JOIN 202_clicks_record cr ON c.click_id = cr.click_id

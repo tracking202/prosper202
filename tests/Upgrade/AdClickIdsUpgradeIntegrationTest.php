@@ -14,14 +14,14 @@ use Prosper202\Database\SchemaReconciler;
 use Prosper202\Database\Tables\TrackingTables;
 
 /**
- * The 1.9.78 -> 1.9.79 rung adds 202_google's gbraid, wbraid and ttclid as
- * the installer declares them; and before it has, code already on 1.9.79
- * records a click without them rather than losing it: the click path does
- * not ask whether the database is upgraded, and an install's files are
- * replaced before its upgrade runs.
+ * The 1.9.78 -> 1.9.79 rung adds 202_google's gbraid, wbraid, ttclid,
+ * msclkid and fbclid as the installer declares them; and before it has,
+ * code already on 1.9.79 records a click without them rather than losing
+ * it: the click path does not ask whether the database is upgraded, and an
+ * install's files are replaced before its upgrade runs.
  *
  * Each test starts from 202_google as a 1.9.78 install has it, without the
- * three columns. The rung runs as the upgrade page runs it
+ * five columns. The rung runs as the upgrade page runs it
  * (UPGRADE::upgrade_databases(), fixtures/ladder-runner.php).
  *
  * @group integration
@@ -82,7 +82,8 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         self::requireScratch();
         self::cleanUp();
         self::restoreColumns();
-        self::q('ALTER TABLE 202_google DROP COLUMN gbraid, DROP COLUMN wbraid, DROP COLUMN ttclid');
+        self::q('ALTER TABLE 202_google DROP COLUMN gbraid, DROP COLUMN wbraid, DROP COLUMN ttclid,'
+            . ' DROP COLUMN msclkid, DROP COLUMN fbclid');
         self::q('DELETE FROM 202_version');
         self::row('202_version', ['version' => '1.9.78']);
     }
@@ -102,7 +103,7 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
         }
     }
 
-    /** The three columns back where a test took them away, as the installer declares them. */
+    /** The five columns back where a test took them away, as the installer declares them. */
     private static function restoreColumns(): void
     {
         $reconciler = new SchemaReconciler(static fn (string $sql): mixed => self::$db->query($sql));
@@ -144,8 +145,14 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
     }
 
     /** A landing page click with the ids it came with; what was logged while it was recorded. */
-    private static function recordLogged(int $clickId, string $gclid, string $gbraid, string $ttclid): string
-    {
+    private static function recordLogged(
+        int $clickId,
+        string $gclid,
+        string $gbraid,
+        string $ttclid,
+        string $msclkid = '',
+        string $fbclid = ''
+    ): string {
         $log = tempnam(sys_get_temp_dir(), 'p202-adids-log');
         self::assertIsString($log);
         $before = ini_get('error_log');
@@ -159,6 +166,8 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
                 gclid: $gclid,
                 gbraid: $gbraid,
                 ttclid: $ttclid,
+                msclkid: $msclkid,
+                fbclid: $fbclid,
                 utmSourceId: 31,
                 clickIdPublic: '9' . $clickId,
             ));
@@ -173,7 +182,9 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
 
     public function testTheRungAddsTheColumnsAsTheInstallerDeclaresThem(): void
     {
-        self::assertStringNotContainsString('`ttclid`', self::createTable(), 'the test starts at 1.9.78');
+        foreach (['`ttclid`', '`msclkid`', '`fbclid`'] as $column) {
+            self::assertStringNotContainsString($column, self::createTable(), 'the test starts at 1.9.78');
+        }
 
         [$out, $err] = self::upgrade();
 
@@ -198,10 +209,17 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
     public function testAClickBeforeTheUpgradeIsStoredWithoutTheIdsItHasNoColumnFor(): void
     {
         $clickId = self::FIRST_CLICK;
-        $logged = self::recordLogged($clickId, 'Cj0gclid', '0AAAAgbraid', 'E.C.P.ttclid');
+        $logged = self::recordLogged(
+            $clickId,
+            'Cj0gclid',
+            '0AAAAgbraid',
+            'E.C.P.ttclid',
+            '9a3f6c1d2b7e4f08a1c5d9e3b6f2a7c4',
+            'IwAR2F4-dbP0'
+        );
 
         self::assertStringContainsString(
-            "p202 click: click $clickId is stored without the gbraid, ttclid it came with",
+            "p202 click: click $clickId is stored without the gbraid, ttclid, msclkid, fbclid it came with",
             $logged
         );
         foreach (self::TABLES as $table) {
@@ -212,13 +230,18 @@ final class AdClickIdsUpgradeIntegrationTest extends TestCase
             self::all("SELECT gclid, utm_source_id FROM 202_google WHERE click_id = $clickId")
         );
         self::assertSame(
-            ['gbraid' => '', 'wbraid' => '', 'ttclid' => ''],
+            array_fill_keys(AdClickIdColumns::ADDED, ''),
             AdClickIdColumns::of(new Connection(self::$db), $clickId)
         );
         $tokens = TrafficSourcePixels::clickTokens(new Connection(self::$db), self::USER, $clickId)['tokens'] ?? [];
         self::assertSame(
-            ['gclid' => 'Cj0gclid', 'gbraid' => '', 'wbraid' => '', 'ttclid' => ''],
+            ['gclid' => 'Cj0gclid'] + array_fill_keys(AdClickIdColumns::ADDED, ''),
             array_intersect_key($tokens, ClickRecord::AD_CLICK_IDS)
+        );
+        self::assertStringContainsString(
+            'click ' . ($clickId + 2) . ' is stored without the fbclid it came with',
+            self::recordLogged($clickId + 2, '', '', '', '', 'IwAR2F4-dbP0'),
+            'an fbclid alone is said too'
         );
 
         self::assertSame('', self::recordLogged($clickId + 1, 'Cj0other', '', ''), 'nothing dropped, nothing said');

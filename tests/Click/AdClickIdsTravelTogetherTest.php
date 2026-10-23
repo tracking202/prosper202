@@ -13,10 +13,11 @@ use Tests\Support\SourceScan;
  * ad click id a click keeps (ClickRecord::AD_CLICK_IDS), or its file lists
  * it in APART with why.
  *
- * The msclkid and fbclid were captured once: their tables, tokens and token
- * reads are still there, and the writer that filled the tables went with
- * the dead code it sat in, so [[msclkid]] and [[fbclid]] have filled with
- * nothing since, with no failure anywhere. A click id is carried by many
+ * The msclkid and fbclid had tables (202_bing, 202_facebook), tokens and a
+ * token read, and no version in this repository's history wrote them: their
+ * writers were connect2.php functions nothing called, so [[msclkid]] and
+ * [[fbclid]] filled with nothing, with no failure anywhere, until 1.9.79
+ * put them in this list. A click id is carried by many
  * lists (the request's defaults, the writer, the tokens, the token reads,
  * the landing page script, the API's columns, the Visitors download), and
  * an id missing from one is silent in every direction. The gclid is in all
@@ -99,6 +100,56 @@ final class AdClickIdsTravelTogetherTest extends TestCase
         self::assertSame($listed, $counts, 'APART holds each file\'s count exactly: lower it when one goes');
     }
 
+    /**
+     * 202_bing and 202_facebook, which no version in this repository's
+     * history wrote, are named only where they are kept: a statement that
+     * read them would read nothing, as the token read did until 1.9.79, and
+     * one that wrote them would be a second home for an id 202_google keeps.
+     * file => [how many times it names them, why], held exactly.
+     */
+    private const LEGACY_TABLES = [
+        '202-config/Database/Schema/TableRegistry.php' => [2, 'their names'],
+        '202-config/Database/Tables/TrackingTables.php' => [4, 'their definitions, which the installer creates'],
+        '202-config/functions-upgrade.php' => [2, 'the frozen rungs that created them'],
+        '202-config/Click/ClickRetention.php' => [2, 'deletes any rows an earlier version left, with their clicks'],
+    ];
+
+    public function testTheTablesNoVersionWroteAreNamedOnlyWhereTheyAreKept(): void
+    {
+        $counts = [];
+        foreach (SourceScan::phpFiles() as $file => $source) {
+            $tokens = token_get_all($source);
+            foreach ($tokens as $i => $token) {
+                if (!is_array($token)) {
+                    continue;
+                }
+                $named = 0;
+                if (in_array($token[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) {
+                    $named = preg_match_all('/(?<![A-Za-z0-9_])202_(?:bing|facebook)(?![A-Za-z0-9_])/i', $token[1]);
+                } elseif (
+                    $token[0] === T_STRING && in_array($token[1], ['BING', 'FACEBOOK'], true)
+                    && ($tokens[$i - 1][0] ?? null) === T_DOUBLE_COLON
+                    && str_ends_with((string) ($tokens[$i - 2][1] ?? ''), 'TableRegistry')
+                ) {
+                    $named = 1;
+                }
+                if ($named > 0) {
+                    $counts[$file] = ($counts[$file] ?? 0) + $named;
+                }
+            }
+        }
+
+        $listed = array_map(static fn (array $entry): int => $entry[0], self::LEGACY_TABLES);
+        ksort($listed);
+        ksort($counts);
+        self::assertSame(
+            $listed,
+            $counts,
+            'A file names 202_bing or 202_facebook: a click\'s msclkid and fbclid are 202_google\'s'
+            . ' (ClickRecord::AD_CLICK_IDS), and nothing writes those tables. List it with why, or read 202_google.'
+        );
+    }
+
     /** Each id the click keeps is a 202_google column, and a token the URLs fill. */
     public function testEachIdIsAColumnAndAToken(): void
     {
@@ -114,23 +165,41 @@ final class AdClickIdsTravelTogetherTest extends TestCase
     /** @return iterable<string, array{string, bool}> */
     public static function plantedSites(): iterable
     {
-        yield 'a list of every id' => ["<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid'];", true];
-        yield 'a list that lacks one' => ["<?php \$ids = ['gclid', 'gbraid', 'ttclid'];", false];
-        yield 'a statement across lines' => ["<?php f('gclid',\n 'gbraid',\n 'wbraid',\n 'ttclid');", true];
-        yield 'SQL that lacks them' => ['<?php $sql = "SELECT g.gclid FROM 202_google AS g";', false];
-        yield 'markup that lacks one' => ["<?php ?>\n\"gclid=\" + a, \"gbraid=\" + b, \"wbraid=\" + c,\n", false];
-        yield 'markup that has them' => [
-            "<?php ?>\n\"gclid=\" + a, \"gbraid=\" + b, \"wbraid=\" + c, \"ttclid=\" + d\n",
+        yield 'a list of every id' => [
+            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
             true,
         ];
-        yield 'a comment does not count' => ["<?php // gbraid wbraid ttclid\n\$a = 'gclid';", false];
+        yield 'a list that lacks one' => ["<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid'];", false];
+        yield 'a list that lacks the first of the others' => [
+            "<?php \$ids = ['gclid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
+            false,
+        ];
+        yield 'a statement across lines' => [
+            "<?php f('gclid',\n 'gbraid',\n 'wbraid',\n 'ttclid',\n 'msclkid',\n 'fbclid');",
+            true,
+        ];
+        yield 'SQL that lacks them' => ['<?php $sql = "SELECT g.gclid FROM 202_google AS g";', false];
+        yield 'markup that lacks one' => [
+            "<?php ?>\n\"gclid=\" + a, \"gbraid=\" + b, \"wbraid=\" + c, \"ttclid=\" + d, \"msclkid=\" + e,\n",
+            false,
+        ];
+        yield 'markup that has them' => [
+            "<?php ?>\n\"gclid=\" + a, \"gbraid=\" + b, \"wbraid=\" + c, \"ttclid=\" + d, \"msclkid=\" + e,"
+                . " \"fbclid=\" + f\n",
+            true,
+        ];
+        yield 'a comment does not count' => ["<?php // gbraid wbraid ttclid msclkid fbclid\n\$a = 'gclid';", false];
         yield 'another statement does not count' => [
-            "<?php \$a = 'gclid'; \$b = ['gbraid', 'wbraid', 'ttclid'];",
+            "<?php \$a = 'gclid'; \$b = ['gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'];",
             false,
         ];
         yield 'an interpolation does not end the statement' => [
-            "<?php \$a = \"gclid {\$x['y']} gbraid\" . 'wbraid ttclid';",
+            "<?php \$a = \"gclid {\$x['y']} gbraid\" . 'wbraid ttclid msclkid fbclid';",
             true,
+        ];
+        yield 'a longer name is not the id' => [
+            "<?php \$ids = ['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid_x'];",
+            false,
         ];
     }
 

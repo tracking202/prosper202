@@ -675,9 +675,11 @@ p202 click get 12345
 ```
 
 `click list` and `click get` carry the ad platforms' click ids the click
-arrived with — `gclid`, `gbraid`, `wbraid` (Google Ads' iOS click ids) and
-`ttclid` (TikTok's) — each `null` when it came with none. Direct links and
-landing pages record them; a redirector click has none. In the table they are
+arrived with — `gclid`, `gbraid`, `wbraid` (Google Ads' iOS click ids),
+`ttclid` (TikTok's), `msclkid` (Microsoft Advertising's) and `fbclid`
+(Meta's) — each `null` when it came with none. Direct links and landing pages
+record them; a redirector click has none, and a click recorded before 1.9.79
+has only its gclid. In the table they are
 columns like any other (cut at 42 characters unless `--wide`); `--json` gives
 them whole.
 

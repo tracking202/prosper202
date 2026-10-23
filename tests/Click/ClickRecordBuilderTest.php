@@ -53,6 +53,8 @@ final class ClickRecordBuilderTest extends TestCase
         'gbraid' => ['gbraid', '0AAAAAgbraid', '0AAAAAgbraid'],
         'wbraid' => ['wbraid', 'Cj4KCAwbraid', 'Cj4KCAwbraid'],
         'ttclid' => ['ttclid', 'E.C.P.ttclid', 'E.C.P.ttclid'],
+        'msclkid' => ['msclkid', 'cdd4afcccb1c9a4c', 'cdd4afcccb1c9a4c'],
+        'fbclid' => ['fbclid', 'IwAR2F4-dbP0l7Mn', 'IwAR2F4-dbP0l7Mn'],
         'utm_source_id' => ['utmSourceId', '131', 131],
         'utm_medium_id' => ['utmMediumId', '132', 132],
         'utm_campaign_id' => ['utmCampaignId', '133', 133],
@@ -129,7 +131,11 @@ final class ClickRecordBuilderTest extends TestCase
             self::assertSame('0', $click->clickCpc, "case $i");
             self::assertSame('0', $click->clickPayout, "case $i");
             self::assertSame('', $click->gclid, "case $i");
-            self::assertSame(['', '', ''], [$click->gbraid, $click->wbraid, $click->ttclid], "case $i: none is ''");
+            self::assertSame(
+                ['', '', '', '', ''],
+                [$click->gbraid, $click->wbraid, $click->ttclid, $click->msclkid, $click->fbclid],
+                "case $i: none is ''"
+            );
             self::assertSame(1, $click->clickIn, "case $i: a click is in unless it says otherwise");
             self::assertSame(0, $click->clickOut, "case $i");
             self::assertSame(0, $click->clickRedirectSiteUrlId, "case $i");
@@ -166,13 +172,14 @@ final class ClickRecordBuilderTest extends TestCase
     }
 
     /**
-     * gbraid and wbraid are cut at 150 characters, as the gclid; a ttclid at
-     * 1,000, since the real ones run to 340 and the gclid's 150 would have
-     * cut every one. Characters, not bytes, as each column counts them.
+     * gbraid, wbraid and msclkid are cut at 150 characters, as the gclid; a
+     * ttclid and an fbclid at 1,000, since real ttclids run to 340 and
+     * fbclids to 200, and the gclid's 150 would have cut them. Characters,
+     * not bytes, as each column counts them.
      */
     public function testEachAdClickIdIsCutToItsColumn(): void
     {
-        $widths = ['gbraid' => 150, 'wbraid' => 150, 'ttclid' => 1000];
+        $widths = ['gbraid' => 150, 'wbraid' => 150, 'ttclid' => 1000, 'msclkid' => 150, 'fbclid' => 1000];
         foreach ($widths as $key => $width) {
             $long = str_repeat('é', $width - 1) . 'xyz';
             $click = ClickRecordBuilder::fromLegacyArray([$key => $long] + self::given(), 1);
@@ -186,6 +193,12 @@ final class ClickRecordBuilderTest extends TestCase
         self::assertSame(337, strlen($ttclid));
         $click = ClickRecordBuilder::fromLegacyArray(['ttclid' => $ttclid] + self::given(), 1);
         self::assertSame($ttclid, $click->ttclid);
+        // An fbclid in the form with an _aem_ payload, 200 characters as a real one
+        // measured, past the 150 of 202_facebook's column.
+        $fbclid = 'IwY2xjaw' . str_repeat('Fbc1d-Shape_aBcD', 11) . '_aem_0IiQMcYBgFH';
+        self::assertSame(200, strlen($fbclid));
+        $click = ClickRecordBuilder::fromLegacyArray(['fbclid' => $fbclid] + self::given(), 1);
+        self::assertSame($fbclid, $click->fbclid);
     }
 
     /** What a URL's tokens send for a click about to be stored: each id as its column keeps it. */
@@ -193,16 +206,16 @@ final class ClickRecordBuilderTest extends TestCase
     {
         $stored = ClickRecord::storedAdClickIds(['gclid' => str_repeat('g', 200), 'ttclid' => 'E.C.P.x']);
 
-        self::assertSame(['gclid', 'gbraid', 'wbraid', 'ttclid'], array_keys($stored));
-        self::assertSame([str_repeat('g', 150), '', '', 'E.C.P.x'], array_values($stored));
+        self::assertSame(['gclid', 'gbraid', 'wbraid', 'ttclid', 'msclkid', 'fbclid'], array_keys($stored));
+        self::assertSame([str_repeat('g', 150), '', '', 'E.C.P.x', '', ''], array_values($stored));
     }
 
     public function testANameThatIsNoAdClickIdIsRefused(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('msclkid is not an ad click id a click keeps');
+        $this->expectExceptionMessage('dclid is not an ad click id a click keeps');
 
-        ClickRecord::storedAdClickId('msclkid', 'x');
+        ClickRecord::storedAdClickId('dclid', 'x');
     }
 
     /** One the builder did not cut, past its column, is refused by ClickRecord itself, naming it. */
@@ -242,7 +255,7 @@ final class ClickRecordBuilderTest extends TestCase
         yield "click_id_public 'x1'" => ['click_id_public', 'x1'];
         yield 'click_id_public negative' => ['click_id_public', -1];
         yield 'click_id_public a list' => ['click_id_public', ['1']];
-        foreach (['gclid', 'gbraid', 'wbraid', 'ttclid'] as $key) {
+        foreach (array_keys(ClickRecord::AD_CLICK_IDS) as $key) {
             yield "$key a list" => [$key, ['abc']];
             yield "$key a number" => [$key, 5];
         }
@@ -290,11 +303,11 @@ final class ClickRecordBuilderTest extends TestCase
         self::assertEquals(new RotatorRoute(7, 8, 9), $click->rotator);
         self::assertFalse($click->recordsCampaignRows);
         self::assertSame(
-            [0, '', '', '', '', 0, 0, 0, 0, 0],
+            [0, '', '', '', '', '', '', 0, 0, 0, 0, 0],
             [
                 $click->variableSetId, $click->gclid, $click->gbraid, $click->wbraid, $click->ttclid,
-                $click->utmSourceId, $click->utmMediumId, $click->utmCampaignId, $click->utmTermId,
-                $click->utmContentId,
+                $click->msclkid, $click->fbclid, $click->utmSourceId, $click->utmMediumId, $click->utmCampaignId,
+                $click->utmTermId, $click->utmContentId,
             ],
             'the redirector records no ad click ids, UTM values or tracking variables'
         );
@@ -331,7 +344,7 @@ final class ClickRecordBuilderTest extends TestCase
     public function testARedirectorClickGivenCampaignRowsIsRefused(string $name): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('records no gclid, gbraid, wbraid, ttclid');
+        $this->expectExceptionMessage('records no gclid, gbraid, wbraid, ttclid, msclkid, fbclid');
 
         new ClickRecord(
             ...['clickId' => 1, 'userId' => 1, 'clickTime' => 1, 'recordsCampaignRows' => false, $name => 'abc']

@@ -167,7 +167,7 @@ function p202_setup_code_box(string $value, array $options = []): string
 function p202_setup_placeholders(string $targetId, string $remember): string
 {
     $tokens = ['[[subid]]', '[[c1]]', '[[c2]]', '[[c3]]', '[[c4]]', '[[random]]', '[[referer]]', '[[gclid]]',
-        '[[gbraid]]', '[[wbraid]]', '[[ttclid]]',
+        '[[gbraid]]', '[[wbraid]]', '[[ttclid]]', '[[msclkid]]', '[[fbclid]]',
         '[[utm_source]]', '[[utm_medium]]', '[[utm_campaign]]', '[[utm_term]]', '[[utm_content]]',
         '[[payout]]', '[[cpc]]', '[[cpc2]]', '[[timestamp]]'];
     $buttons = '';

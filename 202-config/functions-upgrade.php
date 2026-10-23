@@ -4430,7 +4430,8 @@ class UPGRADE
             $step_ok = _upgrade_measurement_tables([
                 \Prosper202\Database\Tables\ClickTables::clickLatestVisits(),
                 \Prosper202\Database\Tables\ClickTables::reClickBackfill(),
-                // 202_google gains gbraid, wbraid and ttclid (Prosper202\Click\ClickRecord).
+                // 202_google gains gbraid, wbraid, ttclid, msclkid and fbclid
+                // (Prosper202\Click\ClickRecord).
                 \Prosper202\Database\Tables\TrackingTables::google(),
             ]);
 
